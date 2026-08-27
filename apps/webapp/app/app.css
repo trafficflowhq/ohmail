@@ -5287,3 +5287,144 @@ body.dnd-active * { cursor: grabbing !important; }
   padding: 24px;
   background: var(--scrim);
 }
+
+/* ── the signature block — every compose surface ──────────────────────────────────────────
+   The removable tail of the outgoing message (`SignatureBlock.tsx`; `signature.ts` owns the
+   model). A DISTINCT block below the writing area — its own hairline and its quiet tag are
+   what make "this is part of the message, and it is yours to strike" visible — never a second
+   editor competing with the message: the text sits at the body's own size, one ink step down,
+   because a signature is the message's furniture rather than its point. */
+.sig-block {
+  margin-top: 10px;
+  border: 1px solid var(--hair);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+.sig-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.sig-tag {
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink3);
+}
+/* The strike — a quiet ×, `.attach-remove`'s register: it acts on this one message, so it must
+   not look like it deletes the stored signature. */
+.sig-remove {
+  border: 0;
+  background: none;
+  color: var(--ink3);
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 4px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.sig-remove:hover:not(:disabled) {
+  color: var(--ink);
+}
+.sig-remove:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+/* The text IS editable in place — a bare textarea wearing the block's own chrome, so editing
+   does not jump the reader into a different-looking control. */
+.sig-text {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: none;
+  resize: none;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ink2);
+  padding: 2px 0 0;
+  outline: none;
+}
+
+/* ── the reply's subject line — plain text until pressed (item: subject editable in place) ──
+   A button wearing prose: the subject is a fact on most replies, so it renders calm at the
+   caption register, with the affordance named beside it and revealed by proximity rather than
+   shouted by chrome. The input it swaps to keeps the same size, so editing happens IN PLACE
+   rather than in a control that arrives from somewhere else. */
+.reply-subject {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  border: 0;
+  background: none;
+  padding: 0;
+  margin: 0 0 8px;
+  text-align: left;
+  cursor: text;
+  min-width: 0;
+}
+.reply-subject-text {
+  font-size: 12.5px;
+  color: var(--ink2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.reply-subject-hint {
+  font-size: 10.5px;
+  color: var(--ink3);
+  opacity: 0;
+  white-space: nowrap;
+}
+.reply-subject:hover .reply-subject-hint,
+.reply-subject:focus-visible .reply-subject-hint {
+  opacity: 1;
+}
+.reply-subject-input {
+  display: block;
+  width: 100%;
+  margin: 0 0 8px;
+  font-size: 12.5px;
+}
+
+/* ── the Signatures settings pane ─────────────────────────────────────────────────────────
+   One editor per mailbox: the address as the row label, the plain multi-line editor, then the
+   live preview drawn in the compose block's own chrome — what is approved here is what a
+   message will carry, so the preview borrows `.sig-block`'s framing rather than inventing a
+   second rendering. */
+.sig-settings {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--hair-soft);
+}
+.sig-settings:last-of-type {
+  border-bottom: 0;
+}
+.sig-settings .lab {
+  margin-bottom: 6px;
+}
+.sig-settings-editor {
+  display: block;
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.sig-settings-preview {
+  margin-top: 8px;
+  border: 1px solid var(--hair);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+.sig-preview-text {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ink2);
+  white-space: pre-wrap;
+}
+.sig-settings-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}

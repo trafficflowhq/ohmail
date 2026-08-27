@@ -104,6 +104,7 @@ import { RemoteImagesRow } from "./RemoteImagesRow";
 import { TrackingPixelsRow } from "./TrackingPixelsRow";
 import { AutoUnsubscribeRow } from "./AutoUnsubscribeRow";
 import { FoldersRow } from "./FoldersRow";
+import { SignaturesRow } from "./SignaturesRow";
 import { FoldersRailGroup } from "./FoldersRailGroup";
 import { useFolderVerbs } from "./folder-verbs";
 import { folderTailVerdict, folderUnreadCounts } from "./folders";
@@ -122,6 +123,7 @@ import {
   type MailSend as MailSendMutation,
 } from "./compose";
 import { appendRich, EMPTY_RICH, isRichEmpty, type RichValue } from "./rich-text";
+import { SIG_FOLLOWING, effectiveSignature, withSignature, type SignatureState } from "./signature";
 import { useDraftReply, type DraftedReply } from "./draft-reply";
 import { RichEditor } from "./RichEditor";
 import { TagPicker, placePicker, type TagPickerState } from "./TagPicker";
@@ -1776,9 +1778,21 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    */
   const [replyFromId, setReplyFromId] = useState<string | null>(null);
   const [replyAttachments, setReplyAttachments] = useState<ComposeAttachment[]>([]);
+  /**
+   * THE REPLY'S SIGNATURE BLOCK STATE and ITS SUBJECT AS EDITED — both per-message, both
+   * stored nowhere (the reply scratch serialises only the body). The signature follows the
+   * resolved sender until the reader strikes or edits the block (`signature.ts`); the subject
+   * is `null` while the derived `Re:` one stands, which keeps the untouched reply's wire
+   * byte-identical. They live HERE for the mounted-twice reason and RESET with the pick and
+   * the files below: a strike and a retitle belong to the message they were made on.
+   */
+  const [replySig, setReplySig] = useState<SignatureState>(SIG_FOLLOWING);
+  const [replySubjectEdit, setReplySubjectEdit] = useState<string | null>(null);
   useEffect(() => {
     setReplyFromId(null);
     setReplyAttachments([]);
+    setReplySig(SIG_FOLLOWING);
+    setReplySubjectEdit(null);
   }, [replyTo, replyMode]);
   /**
    * THE COMPOSE FORM, and why it lives up here rather than in `ComposeView`.
@@ -2780,6 +2794,18 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
       const parentMailbox = parent?.mailboxId ?? null;
       const from = resolveReplyFrom(fromOptions, parentMailbox, replyFromId);
       /**
+       * THE SIGNATURE, DERIVED EXACTLY AS THE BLOCK RENDERS IT — same state, same map, same
+       * resolved sender — and sealed into the mutation by `withSignature` at THIS press, so a
+       * send mid-edit ships the block's current text and never a torn mix. `null` (struck,
+       * empty, sender stores none, signatures not yet server-confirmed) leaves the mutation
+       * byte-identical to one built before signatures existed.
+       */
+      const sigText = effectiveSignature(
+        replySig,
+        consent.signaturesKnown ? consent.signatures : {},
+        from.mailboxId,
+      );
+      /**
        * THE INLINE FORWARD'S ARM — the same builder the editor's lock judged
        * (`forwardSend`/`forwardEnvelopePlan`, one derivation), sent on the INLINE surface so
        * the outcome lands on the dock's own lane (`inlineForwardKey`) rather than the compose
@@ -2790,7 +2816,10 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
       if (replyMode === "forward") {
         if (!parent) return;
         mailSend.send(
-          forwardSend(parent, {
+          // The signature seals into the forward's note, and the server appends the quoted
+          // original AFTER the body it is handed (`send-service.ts`) — so the block the editor
+          // showed sits ABOVE the quoted history in what the recipient reads.
+          withSignature(forwardSend(parent, {
             body: replyBody.text,
             ...(replyBody.html ? { html: replyBody.html } : {}),
             // The resolved sender, or the receiving mailbox — the editor's lock judged the
@@ -2799,7 +2828,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
             mailboxId: from.mailboxId ?? parent.mailboxId,
             ...(replyAttachments.length > 0 ? { attachments: replyAttachments } : {}),
             plan: forwardEnvelopePlan(replyEnvelope, fromOptions.map((o) => o.address)),
-          }),
+          }), sigText),
           { surface: "inline" },
         );
         return;
@@ -2821,7 +2850,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
       // with a known one, and a self-authored message could show Reply all over an envelope the
       // send then resolved to the plain reply. One question, one source.
       const plan = replyEnvelopePlan(parent, ownAddresses, replyAll, replyEnvelope);
-      mailSend.send({
+      mailSend.send(withSignature({
         kind: "mail_send",
         inReplyTo: messageId,
         // The PLAIN half in `body`, always — it is what `canSend` judges and what the
@@ -2846,14 +2875,21 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
         // FILES, when the user attached any — carried to the send request and stored nowhere
         // (`ComposeAttachment`). Absent on a plain reply, so the untouched mutation is unchanged.
         ...(replyAttachments.length > 0 ? { attachments: replyAttachments } : {}),
+        // THE SUBJECT, only when the reader retitled it — `null` attaches nothing, so the
+        // untouched reply's mutation stays byte-identical and `Engine.enrich` derives the
+        // `Re:` subject exactly as before. Threading never reads this text: the server sends
+        // `In-Reply-To`/`References` from the parent row whatever the subject says.
+        ...(replySubjectEdit !== null ? { subject: replySubjectEdit } : {}),
         ...replyEnvelopeOnWire(plan),
-      });
+      }, sigText));
     },
     // `ownAddresses` joins the list because the envelope now reads it (above). A memoised
     // callback that closed over it without declaring it would answer with the identity the
     // account had at the last shape change — which on a cold tab is the empty one, i.e. the
     // unknown-reader envelope, for as long as the closure lived.
-    [mailSend, replyTo, replyAll, replyMode, replyBody, replyEnvelope, replyFromId, replyAttachments, reader, version, fromOptions, ownAddresses],
+    [mailSend, replyTo, replyAll, replyMode, replyBody, replyEnvelope, replyFromId, replyAttachments,
+      replySig, replySubjectEdit, consent.signatures, consent.signaturesKnown,
+      reader, version, fromOptions, ownAddresses],
   );
 
   /**
@@ -3045,15 +3081,29 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    * has always done. When this send confirms, `onSendSettled` discards the stranded copy.
    */
   const sendCompose = useCallback(() => {
+    /**
+     * THE SIGNATURE, DERIVED EXACTLY AS THE BLOCK RENDERS IT — the form's own state, the
+     * server-confirmed map, and the SAME `composeFrom.mailboxId` the block was handed — sealed
+     * at this press by `withSignature`, so a send mid-edit ships the block's current text and
+     * never a torn mix. `null` (struck, empty, sender stores none, signatures not yet
+     * confirmed) leaves the mutation byte-identical to one built before signatures existed.
+     * Deliberately NOT serialized into `plan.mutation` itself: `canSend` judges the TYPED body,
+     * and a signature must never light Send up over an empty message.
+     */
+    const sigText = effectiveSignature(
+      compose.sig ?? SIG_FOLLOWING,
+      consent.signaturesKnown ? consent.signatures : {},
+      composeFrom.mailboxId,
+    );
     if (mailSend.stateOf(COMPOSE_SEND_KEY).phase === "unverified" && autosave.draftId) {
       recoverySeed.current = autosave.draftId;
       autosave.release();
       const { draftId: _stranded, ...fresh } = plan.mutation;
-      mailSend.send(fresh);
+      mailSend.send(withSignature(fresh, sigText));
       return;
     }
-    mailSend.send(plan.mutation);
-  }, [mailSend, plan, autosave]);
+    mailSend.send(withSignature(plan.mutation, sigText));
+  }, [mailSend, plan, autosave, compose.sig, composeFrom.mailboxId, consent.signatures, consent.signaturesKnown]);
 
   /**
    * ABANDONING THE COMPOSE — the row, the buffer and the form, in that order.
@@ -5052,6 +5102,16 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
       onReplyFrom: setReplyFromId,
       replyAttachments,
       onReplyAttachments: setReplyAttachments,
+      // The signature block's state and the account's stored map — held here for the
+      // mounted-twice reason the body is; `sendReply` serializes the same derivation the
+      // block renders. The map travels only once server-confirmed, so a block can never be
+      // drawn (or serialized) from a guess.
+      replySig,
+      onReplySig: setReplySig,
+      signatures: consent.signaturesKnown ? consent.signatures : undefined,
+      // The subject as edited — `null` keeps the untouched reply's wire byte-identical.
+      replySubjectEdit,
+      onReplySubject: setReplySubjectEdit,
       // The host's surface declaration rides beside the reply's files because it is the other
       // half of the same ceiling: `InlineReply` states and refuses against
       // `composeAttachCap(from.maxMessageBytes, THIS)`, the exact pair the send will enforce.
@@ -5097,7 +5157,8 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
       attachments, remoteImages,
     }),
     [ownAddresses, absoluteTime, toggleAbsoluteTime, replyTo, replyAll, replyMode, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome,
-      replyEnvelope, replyFromId, replyAttachments, sendSurfaceMaxTotalBytes, replyBook,
+      replyEnvelope, replyFromId, replyAttachments, replySig, replySubjectEdit,
+      consent.signatures, consent.signaturesKnown, sendSurfaceMaxTotalBytes, replyBook,
       openSenderMenu, ownNameOf, writeTo, openReply, openForward, openSubjectRule,
       conversationOf, bodyOfMessage, hydrateBody, hydrateThread, attachments, remoteImages,
       consent.foldersEnabled, reader],
@@ -5716,6 +5777,9 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
                 onFields={onComposeFields}
                 from={composeFrom}
                 sendSurfaceMaxTotalBytes={sendSurfaceMaxTotalBytes}
+                /* Server-confirmed only — before the live consent read lands the block cannot
+                   render, so a signature is never drawn (or serialized) from a guess. */
+                signatures={consent.signaturesKnown ? consent.signatures : undefined}
                 plan={plan}
                 send={mailSend.stateOf(COMPOSE_SEND_KEY)}
                 onSend={sendCompose}
@@ -5868,6 +5932,23 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
                     }}
                   />
                 )}
+                /* SIGNATURES — per-mailbox sign-off text (mail 0075). Built here, not injected,
+                   for `foldersSection`'s reason: it must write through the SAME `useConsentState`
+                   every compose surface's signature block reads, or a saved signature would not
+                   reach an open composer until the next boot. Gated on `signaturesKnown` (the
+                   editors render server-confirmed values only — a pane drawn before the live
+                   read landed would show empty editors over stored text) and on the mailbox
+                   facts being readable (an editor for an unnameable mailbox is a control over
+                   nothing). Absent on the demo and wherever no consent row is reachable. */
+                signaturesSection={
+                  demo || !consent.signaturesKnown || !facts || facts.length === 0 ? undefined : (
+                    <SignaturesRow
+                      mailboxes={facts}
+                      signatures={consent.signatures}
+                      setMailboxSignature={consent.setMailboxSignature}
+                    />
+                  )
+                }
                 screeningSection={demo ? undefined : (screeningSection ?? <ScreeningSection />)}
                 /* THE DORMANCY DIAL. Like `autoSuggestSection`, built here rather than injected from
                    `CloudShell` because it must write through the SAME `useConsentState` the

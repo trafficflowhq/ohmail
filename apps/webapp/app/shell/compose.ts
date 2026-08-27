@@ -10,6 +10,7 @@
  * and cannot drift into a second copy of the send rule.
  */
 import type { ComposeAttachment, EmailAddress, EngineMutation } from "@ohmail/client-engine";
+import type { SignatureState } from "./signature";
 
 /** The compose form, verbatim as typed. `to` is TEXT; `plan()` is what turns it into addresses. */
 export interface ComposeFields {
@@ -97,6 +98,15 @@ export interface ComposeFields {
    * which `composePlan` keeps `null` — a forward threads onto no conversation (`types.ts`).
    */
   forwardOf?: string | null;
+  /**
+   * THE SIGNATURE BLOCK'S STATE for this message — follows the From selector until the user
+   * removes or edits it, and then their choice wins (`signature.ts` owns the model and the
+   * serialization). Absent means `following`, which is what every buffer written before the
+   * field existed restores as. It lives on the FORM because a removal belongs to the message
+   * being written: leaving the view and coming back must not resurrect a struck block, and a
+   * reload restores it with the text it belongs to.
+   */
+  sig?: SignatureState;
 }
 
 export const EMPTY_COMPOSE: ComposeFields = {
@@ -171,6 +181,13 @@ export function readComposeDraft(): ComposeFields {
       forwardOf: typeof parsed.forwardOf === "string" && parsed.forwardOf.length > 0
         ? parsed.forwardOf
         : null,
+      // Guarded field-wise like its neighbours: only the three shapes the model names restore,
+      // and anything else — a buffer from before the field, or a value some other version wrote
+      // — reads back as `following`, which is the resting state.
+      ...(parsed.sig?.kind === "removed" ? { sig: { kind: "removed" as const } }
+        : parsed.sig?.kind === "edited" && typeof parsed.sig.text === "string"
+          ? { sig: { kind: "edited" as const, text: parsed.sig.text } }
+          : {}),
     };
   } catch {
     // Blocked storage, or a value some earlier version wrote in another shape. Either way an

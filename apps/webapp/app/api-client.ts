@@ -1114,6 +1114,13 @@ export interface ConsentStateWire {
    */
   folderMailboxesOff?: Record<string, string>;
   /**
+   * PER-MAILBOX SIGNATURES — `{ mailboxId: text }`, only the mailboxes that HAVE one (mail
+   * 0075). A mailbox absent from the map signs with nothing, which is the resting state; an
+   * absent MAP (an API deployed before mail 0075) reads the same way, which is the picture
+   * such a server actually serves.
+   */
+  signatures?: Record<string, string>;
+  /**
    * WHEN this account turned OFF auto-unsubscribe on screen-out, or null for the product default —
    * which is that screening a sender out, or marking them spam, also sends the sender's one-click
    * unsubscribe request.
@@ -1243,6 +1250,12 @@ export const consent = {
     api<{ folderMailboxesOff: Record<string, string> }>("/consent/settings", {
       method: "PATCH",
       body: { folderMailboxes: { [mailboxId]: enabled } },
+    }),
+  /** Per-mailbox signature (mail 0075): a string stores it, `null` clears it — the echo is the WHOLE map. */
+  setMailboxSignature: (mailboxId: string, signature: string | null) =>
+    api<{ signatures: Record<string, string> }>("/consent/settings", {
+      method: "PATCH",
+      body: { signatures: { [mailboxId]: signature } },
     }),
   setBlockRemoteImages: (blocked: boolean) =>
     api<{ blockRemoteImagesAt: string | null }>("/consent/settings", {

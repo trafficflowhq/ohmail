@@ -43,6 +43,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useTranslations } from "next-intl";
+import { replySubject } from "@ohmail/client-engine";
 import type {
   AddressBookEntry,
   ComposeAttachment,
@@ -73,13 +74,14 @@ import {
 } from "./compose-from";
 import {
   RecipientField,
-  ccBccOpen,
   focusMovedChip,
   gatedInvalid,
   moveRecipient,
   type RecipientMove,
   type RecipientRow,
 } from "./RecipientField";
+import { SignatureBlock } from "./SignatureBlock";
+import { SIG_FOLLOWING, type SignatureState } from "./signature";
 
 /*
  * The scratch-buffer helpers and `canSend` used to live here and now live in `mail-send.ts`,
@@ -170,6 +172,11 @@ export function InlineReply({
   attachments = [],
   onAttachments,
   sendSurfaceMaxTotalBytes,
+  signatures,
+  sig = SIG_FOLLOWING,
+  onSig,
+  subjectEdit = null,
+  onSubject,
 }: {
   message: EngineMessage;
   /**
@@ -265,6 +272,34 @@ export function InlineReply({
    * own announcement governs.
    */
   sendSurfaceMaxTotalBytes?: number | null;
+  /**
+   * THE ACCOUNT'S STORED SIGNATURES, server-confirmed — handed down only once the shell's
+   * consent read has answered (`signaturesKnown`). ABSENT means "cannot know" (the inert
+   * chrome, a bare harness, the desktop's standalone door), and then no block renders: a block
+   * drawn from a guess would serialize words the account may not sign with.
+   */
+  signatures?: Readonly<Record<string, string>>;
+  /**
+   * THE SIGNATURE BLOCK'S STATE for this message — held by the SHELL (mounted-twice, like
+   * `envelope` and `fromId`) and reset when the editor retargets: a removal belongs to the
+   * message it was struck on. Defaults to `following`, the resting state.
+   */
+  sig?: SignatureState;
+  /** Report a strike or an inline edit. ABSENT ⇒ nowhere to keep one ⇒ no block at all. */
+  onSig?: (next: SignatureState) => void;
+  /**
+   * THE SUBJECT AS EDITED, or `null` while the derived one (`Re:` + the parent's) stands —
+   * held by the SHELL for the mounted-twice reason every peer above states. `null` keeps the
+   * wire byte-identical to the untouched reply: no `subject` rides the mutation and
+   * `Engine.enrich` derives it exactly as before.
+   */
+  subjectEdit?: string | null;
+  /**
+   * Report a subject edit. ABSENT means this surface has nowhere to keep one — the inert
+   * chrome, a bare harness — and then the subject renders as the plain sentence it always
+   * was rather than a control nothing is listening to.
+   */
+  onSubject?: (subject: string) => void;
 }) {
   const t = useTranslations("reply");
   /** `compose` owns the forwarding honesty line — one sentence, both surfaces. */
@@ -381,6 +416,25 @@ export function InlineReply({
    */
   const recipients = replyRecipients(message, options.map((o) => o.address));
   const target = recipients?.[0] ?? null;
+
+  /**
+   * ── THE SUBJECT, EDITABLE IN PLACE (replies only) ────────────────────────────────────────
+   *
+   * A reply's subject used to be invisible here — derived at send (`Re:` + the parent's, the
+   * `replySubject` rule) and never shown. It now renders as CALM PLAIN TEXT in the head: not a
+   * form field, because on almost every reply it is a fact rather than a decision. Clicking it
+   * edits it in place, and editing exposes the FULL subject — the `Re:` prefix is part of the
+   * text, handled (derived exactly once, never re-stacked) rather than fought (locked or
+   * stripped behind the reader's back).
+   *
+   * The VALUE lives on the shell (`subjectEdit`, mounted-twice rule); only "is the input open"
+   * is local, and it closes when the editor retargets. Threading never depends on this text:
+   * the server sends `In-Reply-To`/`References` from the parent row whatever the subject says
+   * (`send-service.ts`), so ohmail keeps the conversation whole and no warning is owed.
+   */
+  const outgoingSubject = subjectEdit ?? replySubject(message.subject);
+  const [editingSubject, setEditingSubject] = useState(false);
+  useEffect(() => { setEditingSubject(false); }, [message.id]);
   // The head names people; the ENVELOPE is `recipients` itself, which `AppShell.sendReply` reads
   // and which is never touched here. So the two lines below are decoded for display (`idn.ts`) and
   // the comparison that decides whether the address adds anything stays on the stored strings.
@@ -638,6 +692,45 @@ export function InlineReply({
         <div className="reply-head">{headContent}</div>
       )}
 
+      {/* THE SUBJECT — plain text until pressed, an input while editing; see the note at
+          `outgoingSubject`. Replies only: a forward carries its own `Fwd:` subject through
+          `forwardSend` and its head already explains itself. Absent `onSubject` (the inert
+          chrome, a bare harness) renders the plain sentence rather than a dead control. */}
+      {mode === "reply" && onSubject ? (
+        editingSubject ? (
+          <input
+            className="c-input reply-subject-input"
+            type="text"
+            aria-label={t("subjectAria")}
+            value={outgoingSubject}
+            disabled={inFlight}
+            autoFocus
+            onChange={(e) => onSubject(e.target.value)}
+            onBlur={() => setEditingSubject(false)}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter" && e.key !== "Escape") return;
+              // Escape closes the INPUT, not the editor — the escape cascade's innermost rule.
+              // Native stopImmediatePropagation because the keymap registry is a sibling
+              // listener on `document` (the grip's measured reason, two blocks up).
+              e.preventDefault();
+              e.stopPropagation();
+              e.nativeEvent.stopImmediatePropagation();
+              setEditingSubject(false);
+            }}
+          />
+        ) : (
+          <button
+            type="button"
+            className="reply-subject"
+            disabled={inFlight}
+            onClick={() => setEditingSubject(true)}
+          >
+            <span className="reply-subject-text">{outgoingSubject}</span>
+            <span className="reply-subject-hint">{t("editSubject")}</span>
+          </button>
+        )
+      ) : null}
+
       {/* THE FORWARDING HONESTY LINE — `compose.forwardingNote`, the compose surface's own
           sentence, because the fact is the same fact: the body here is the user's note, and
           the quoted original plus its attachments are added by the SERVER at send. Without
@@ -699,6 +792,22 @@ export function InlineReply({
         editable={!inFlight}
         onChange={onChange}
       />
+
+      {/* THE SIGNATURE — the same distinct, removable block Compose renders, below the
+          writing area (`SignatureBlock`; `signature.ts` owns the model). On a reply there is
+          no quoted history in the outgoing body at all, and on a forward the server appends
+          the quote AFTER the body it is handed — so the signature the block shows always sits
+          ABOVE any quoted history in what the recipient reads. Rendered only where the shell
+          can hold its state (`onSig`) AND the stored signatures are server-confirmed. */}
+      {onSig && signatures !== undefined ? (
+        <SignatureBlock
+          sig={sig}
+          onSig={onSig}
+          signatures={signatures}
+          mailboxId={from.mailboxId}
+          disabled={inFlight}
+        />
+      ) : null}
 
       {/* ATTACHMENTS — files ride the send, never the account and never the scratch buffer
           (`compose-from`/`mail-send`: the reply buffer serialises only the body). Rendered only
@@ -824,16 +933,23 @@ function DraftReplyCard({
  * the shell holds.
  *
  * The markup deliberately mirrors `ComposeView`'s header rows — `.c-field`, the label gutter,
- * the `Cc/Bcc` toggle inside the To row, the error line under the row it belongs to —
- * because "wherever this appears" means the SAME field, not a cousin. What differs is
- * only what must: ids come from `useId` (this editor is mounted twice while the reader is
- * open, and `compose-to` may exist on another route's DOM at the same time), and the invalid
- * entries are parsed here from the strings rather than handed down from a plan, gated by the
- * same still-typing rule (`gatedInvalid`).
+ * the error line under the row it belongs to — because "wherever this appears" means the SAME
+ * field, not a cousin. What differs is only what must: ids come from `useId` (this editor is
+ * mounted twice while the reader is open, and `compose-to` may exist on another route's DOM at
+ * the same time), and the invalid entries are parsed here from the strings rather than handed
+ * down from a plan, gated by the same still-typing rule (`gatedInvalid`).
+ *
+ * ── CC AND BCC ARE ALREADY OPEN — NO SECOND CLICK ────────────────────────────────────────
+ *
+ * Opening this stack IS the "change recipients" act, so all three rows show at once. The
+ * compose form's fold (`ccBccOpen`) does not apply here, and used to: the head press revealed
+ * a To row with a second `Cc/Bcc` toggle inside it, so reaching a blind copy from a reply took
+ * two clicks about one decision. The rows keep whatever the user leaves in them — the strings
+ * are the shell's envelope state, so nothing here can fold a row back over its contents.
  *
  * Cross-row moves (drag, Alt+arrows) land in ONE `onEnvelope` via `moveRecipient`, for the
  * reason `ComposeView.moveChip` states: two onChange calls would each spread a stale copy of
- * the other row. Starting a drag opens the hidden Cc/Bcc rows so the drop target exists.
+ * the other row.
  */
 function ReplyRecipients({
   envelope,
@@ -856,14 +972,9 @@ function ReplyRecipients({
 }) {
   const t = useTranslations("compose");
   const base = useId();
-  const [showCcBcc, setShowCcBcc] = useState(false);
   const [focused, setFocused] = useState<Record<RecipientRow, boolean>>({
     to: false, cc: false, bcc: false,
   });
-  // The shared derivation — `ccBccOpen` in `RecipientField.tsx`: revealed by the toggle, and
-  // revealed AUTOMATICALLY when either row holds text, because a prefilled reply-all Cc must
-  // never hide recipients the user cannot see they have.
-  const open = ccBccOpen(envelope.cc, envelope.bcc, showCcBcc);
 
   const move = (mv: RecipientMove): void => {
     const next = moveRecipient(envelope, mv);
@@ -871,9 +982,8 @@ function ReplyRecipients({
     onEnvelope(next);
     focusMovedChip(`${base}-${mv.to}`, mv.entry);
   };
-  const dragOpen = (active: boolean): void => { if (active) setShowCcBcc(true); };
 
-  const row = (r: RecipientRow, extra?: ReactNode): ReactNode => {
+  const row = (r: RecipientRow): ReactNode => {
     const shown = gatedInvalid(envelope[r], focused[r], parseRecipients(envelope[r]).invalid);
     const errId = `${base}-${r}-error`;
     return (
@@ -891,9 +1001,7 @@ function ReplyRecipients({
             onFocusChange={(f) => setFocused((cur) => ({ ...cur, [r]: f }))}
             row={r}
             onMove={move}
-            onDragActive={dragOpen}
           />
-          {extra}
         </div>
         {shown.length > 0 ? (
           <p className="c-error" id={errId}>{t("toInvalid", { entries: shown.join(", ") })}</p>
@@ -905,29 +1013,11 @@ function ReplyRecipients({
   return (
     <div className="reply-rcpt">
       {/* From leads the stack — who this answers AS, then whom it answers TO. Every row below
-          shares the `.c-field` gutter, so toggling Cc/Bcc adds rows to one aligned block and
-          displaces nothing. */}
+          shares the `.c-field` gutter: one aligned block, all three recipient rows open. */}
       {fromRow}
-      {row(
-        "to",
-        !open ? (
-          <button
-            type="button"
-            className="c-ccbcc-toggle"
-            aria-expanded={false}
-            aria-controls={`${base}-cc ${base}-bcc`}
-            onClick={() => setShowCcBcc(true)}
-          >
-            {t("ccBcc")}
-          </button>
-        ) : null,
-      )}
-      {open ? (
-        <>
-          {row("cc")}
-          {row("bcc")}
-        </>
-      ) : null}
+      {row("to")}
+      {row("cc")}
+      {row("bcc")}
     </div>
   );
 }

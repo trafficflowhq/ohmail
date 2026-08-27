@@ -111,4 +111,10 @@ export const consentOverBridge: ConsentTransport = {
     patch<{ folderMailboxesOff: Record<string, string> }>({
       folderMailboxes: { [mailboxId]: enabled },
     }),
+  // Per-mailbox signature (mail 0075) — same shape, same forwarding rule: the write lands on
+  // the account's row through the hosted route, and the echo is the WHOLE map.
+  setMailboxSignature: (mailboxId, signature) =>
+    patch<{ signatures: Record<string, string> }>({
+      signatures: { [mailboxId]: signature },
+    }),
 };

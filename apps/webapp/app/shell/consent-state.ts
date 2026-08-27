@@ -78,6 +78,10 @@ export interface ConsentTransport {
   setMailboxFoldersEnabled: (
     mailboxId: string, enabled: boolean,
   ) => Promise<{ folderMailboxesOff: Record<string, string> }>;
+  /** Per-mailbox signature (mail 0075): a string stores, `null` clears; echoes the whole map. */
+  setMailboxSignature: (
+    mailboxId: string, signature: string | null,
+  ) => Promise<{ signatures: Record<string, string> }>;
 }
 
 /** The hosted transport — the browser talking to the API this app was written against. */
@@ -91,6 +95,8 @@ const CLOUD_CONSENT: ConsentTransport = {
   setFoldersEnabled: (enabled) => consentApi.setFoldersEnabled(enabled),
   setMailboxFoldersEnabled: (mailboxId, enabled) =>
     consentApi.setMailboxFoldersEnabled(mailboxId, enabled),
+  setMailboxSignature: (mailboxId, signature) =>
+    consentApi.setMailboxSignature(mailboxId, signature),
 };
 
 export interface ConsentState {
@@ -212,6 +218,20 @@ export interface ConsentState {
    */
   folderMailboxesKnown: boolean;
   /**
+   * PER-MAILBOX SIGNATURES — `{ mailboxId: text }`, only the mailboxes that have one (mail
+   * 0075). Read by the Settings pane's editors and by every compose surface's signature block;
+   * an absent key is "this mailbox signs with nothing", which is the resting state.
+   */
+  signatures: Record<string, string>;
+  /**
+   * Did {@link signatures} come from the LIVE wire (or a write's echo)? `folderMailboxesKnown`'s
+   * rule for the same reason: the boot cache carries no signatures, so a pane gated on `known`
+   * alone would render empty editors over stored text until the live read lands — and a compose
+   * block would silently omit a signature the account has. Surfaces that RENDER stored
+   * signatures gate on this flag; false means "not yet known", never "none".
+   */
+  signaturesKnown: boolean;
+  /**
    * THE ACCOUNT'S INTERFACE LANGUAGE, or `null` for "this account has no preference".
    *
    * The one field on this object whose null is a DEFERRAL rather than a switch position, and the
@@ -322,6 +342,11 @@ const RESTING: ConsentState = {
   // gated on `known`, so the resting value is never a switch somebody sees.
   folderMailboxesOff: {},
   folderMailboxesKnown: false,
+  // NO SIGNATURES AT REST — and `signaturesKnown: false` is what keeps that from being read as
+  // "none": a compose surface must not claim the account signs with nothing before the wire
+  // has said so.
+  signatures: {},
+  signaturesKnown: false,
   // NOTHING FROM AN ACCOUNT. Unlike `blockRemoteImages` above, resting null is not a safe
   // *position* — it is the absence of one, and it leaves the language this device remembered in
   // charge. See {@link ConsentState.locale}.
@@ -478,6 +503,13 @@ export function useConsentState(
    * argument — and rethrows on refusal so the row can say so.
    */
   setMailboxFoldersEnabled: (mailboxId: string, enabled: boolean) => Promise<Record<string, string>>;
+  /**
+   * Store or clear ONE mailbox's signature (mail 0075). Resolves to the whole signatures map
+   * as the DATABASE holds it — the echo, never the argument, because the editor renders
+   * server-confirmed text only — and rethrows on refusal so the pane can say the write did
+   * not land.
+   */
+  setMailboxSignature: (mailboxId: string, signature: string | null) => Promise<Record<string, string>>;
 } {
   const [state, setState] = useState<ConsentState>(RESTING);
   /**
@@ -594,6 +626,10 @@ export function useConsentState(
           // The LIVE answer, whatever it holds — an older API's absent map is a real "no
           // exceptions", so the switches may render over it.
           folderMailboxesKnown: true,
+          // Absent (an API before mail 0075) reads as "no signatures" — the picture that server
+          // actually serves, since nothing on it can store one.
+          signatures: wire.signatures ?? {},
+          signaturesKnown: true,
           // NORMALISED, not trusted. The column's CHECK and `consentSettings` both close the set,
           // so an unsupported string cannot arrive from a current server — and this is the boot
           // path, where a value that got through would make the client ask for a catalogue that
@@ -774,6 +810,19 @@ export function useConsentState(
       return off;
     }, []);
 
+  const setMailboxSignature = useCallback(
+    async (mailboxId: string, signature: string | null): Promise<Record<string, string>> => {
+      // The user's act outranks every read in flight — see `writeEpoch`.
+      writeEpoch.current += 1;
+      const res = await link.current.setMailboxSignature(mailboxId, signature);
+      const map = res.signatures ?? {};
+      // THE WHOLE MAP FROM THE ECHO — the exceptions dial's rule: the server answers with every
+      // stored signature after the write, so a stale tab heals on its own next write, and the
+      // editor renders what the database holds rather than what the keystroke hoped.
+      setState((prev) => ({ ...prev, signatures: map, signaturesKnown: true }));
+      return map;
+    }, []);
+
   const setBlockAutoUnsubscribe = useCallback(async (blocked: boolean): Promise<boolean> => {
     // The user's act outranks every read in flight — see `writeEpoch`. Bumped BEFORE the
     // request, so a re-ask racing this write is discarded whatever it answers.
@@ -806,5 +855,6 @@ export function useConsentState(
     setBlockAutoUnsubscribe,
     setFoldersEnabled,
     setMailboxFoldersEnabled,
+    setMailboxSignature,
   };
 }

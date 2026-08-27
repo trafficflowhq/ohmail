@@ -393,6 +393,7 @@ export function SettingsView({
   autoUnsubscribeSection,
   awaySection,
   foldersSection,
+  signaturesSection,
   desktopSection,
   devicesSection,
   defaultMailSection,
@@ -641,6 +642,18 @@ export function SettingsView({
    */
   foldersSection?: ReactNode;
   /**
+   * THE SIGNATURES PANE — the per-mailbox signature editors (mail 0075). This node IS the
+   * pane's content: absent ⇒ no pane and no nav entry.
+   *
+   * The same injection seam as {@link foldersSection} and for the same reason: it writes
+   * `PATCH /consent/settings` through the shell's `useConsentState`, because every compose
+   * surface's signature block reads the SAME hook's map — a pane with its own fetch would save
+   * a signature an open composer could not see. Present wherever the shell can reach a consent
+   * row (the Cloud client, the desktop's hosted door); absent on the demo and on a standalone
+   * install, structurally, rather than as editors that cannot store.
+   */
+  signaturesSection?: ReactNode;
+  /**
    * WHICH DOOR THIS INSTALL CAME IN BY — the desktop app's own pane, injected.
    *
    * The mirror image of {@link accountSection}. That one is absent on the desktop because a
@@ -761,6 +774,9 @@ export function SettingsView({
     // FOLDERS — directly after Tags, as in the rail (the feature's whole placement argument:
     // under Tags, subordinate, optional). Present IFF the shell wired the node.
     ...(foldersSection ? [["folders", t("folders.nav")] as [PaneId, string]] : []),
+    // SIGNATURES — with the mail-plumbing group, after Folders: per-mailbox text every outgoing
+    // message offers. Present IFF the shell wired the node (a consent row it can reach).
+    ...(signaturesSection ? [["signatures", t("signatures.nav")] as [PaneId, string]] : []),
     // THIS INSTALL. Present only in a build that has a native shell behind it, which is the
     // desktop app — a browser tab passes no node and gets no entry. It opens the account
     // administration group because on that surface it IS the account: the door, the mailbox
@@ -1104,6 +1120,13 @@ export function SettingsView({
             <SettingsSection>
               <p className="set-note-inline">{t("folders.intro")}</p>
               {foldersSection}
+            </SettingsSection>
+          ) : null}
+          {/* THE SIGNATURES PANE — one editor per mailbox, the intro first. */}
+          {shown === "signatures" ? (
+            <SettingsSection>
+              <p className="set-note-inline">{t("signatures.intro")}</p>
+              {signaturesSection}
             </SettingsSection>
           ) : null}
           {shown === "about" ? aboutSection : null}

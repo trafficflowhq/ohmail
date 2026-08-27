@@ -78,7 +78,7 @@ export type TriagePileId = (typeof TRIAGE_PILES)[number];
  */
 export const PANE_IDS = [
   "general", "notifications", "mailboxes", "screener", "away", "billing", "invites", "tags", "rules",
-  "folders", "about", "security", "account", "desktop", "devices",
+  "folders", "signatures", "about", "security", "account", "desktop", "devices",
 ] as const;
 export type PaneId = (typeof PANE_IDS)[number];
 

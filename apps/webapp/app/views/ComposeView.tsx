@@ -66,6 +66,8 @@ import { ComposeAttach, composeAttachCap } from "../components/ComposeAttach";
 import type { ComposeFields, ComposePlan } from "../shell/compose";
 import { worthSaving } from "../shell/compose-autosave";
 import { formatRecipientChips, type ResolvedFrom } from "../shell/compose-from";
+import { SignatureBlock } from "../shell/SignatureBlock";
+import { SIG_FOLLOWING } from "../shell/signature";
 
 /**
  * The id the From control points `aria-describedby` at when the sender was matched to the
@@ -81,6 +83,7 @@ export function ComposeView({
   onFields,
   from,
   sendSurfaceMaxTotalBytes,
+  signatures,
   plan,
   send,
   onSend,
@@ -107,6 +110,16 @@ export function ComposeView({
    * standalone door, where the sending mailbox's own announcement governs.
    */
   sendSurfaceMaxTotalBytes?: number | null;
+  /**
+   * THE ACCOUNT'S STORED SIGNATURES, server-confirmed — `useConsentState().signatures`, handed
+   * down only once `signaturesKnown` is true. ABSENT means "not known" (the demo, a surface
+   * with no consent row, the window before the live read lands), and then no block renders —
+   * a block drawn from a guess would serialize words the account may not sign with. The BLOCK's
+   * state itself lives on the form (`fields.sig`): a removal belongs to the message being
+   * written. The shell serializes the SAME derivation this view renders (`signature.ts`), so
+   * the block on screen and the tail of the sent body are one text.
+   */
+  signatures?: Readonly<Record<string, string>>;
   /** The same object `canSend` judges and `onSend` dispatches. */
   plan: ComposePlan;
   send: SendState;
@@ -629,6 +642,23 @@ export function ComposeView({
             editable={!inFlight}
             onChange={(v) => onFields({ ...fields, body: v.text, html: v.html })}
           />
+
+          {/* THE SIGNATURE — a distinct, removable block BELOW the writing area, never pasted
+              into the prose. It follows the From selector (switching the sender swaps it to
+              that mailbox's text) unless the user removed or edited it — their choice wins
+              (`signature.ts`). What it shows is exactly what the send appends, because the
+              shell serializes the same derivation this renders. Nothing renders while the
+              stored signatures are not server-confirmed (`signatures` absent), or when the
+              resolved sender stores none. */}
+          {signatures !== undefined ? (
+            <SignatureBlock
+              sig={fields.sig ?? SIG_FOLLOWING}
+              onSig={(next) => onFields({ ...fields, sig: next })}
+              signatures={signatures}
+              mailboxId={from.mailboxId}
+              disabled={inFlight}
+            />
+          ) : null}
 
           {/* THE ACTIONS, AT THE PANEL'S BOTTOM EDGE — `.reply-actions`' place in the reply.
               `.compose-foot` is what `margin-top: auto` acts on, so Send stays put whether the

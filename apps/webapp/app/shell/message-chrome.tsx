@@ -25,6 +25,7 @@ import type { AttachmentsChrome } from "./attachments";
 import type { SendState } from "./mail-send";
 import { EMPTY_RICH, type RichValue } from "./rich-text";
 import type { DraftReplyChrome } from "./InlineReply";
+import { SIG_FOLLOWING, type SignatureState } from "./signature";
 import type { ReplyEnvelopeEdit } from "./compose-from";
 import type { RemoteImagesChrome } from "./remote-images";
 
@@ -170,6 +171,28 @@ export interface MessageChrome {
    */
   replyAttachments: readonly ComposeAttachment[];
   onReplyAttachments?: (next: ComposeAttachment[]) => void;
+  /**
+   * THE REPLY'S SIGNATURE BLOCK STATE — held here beside the body (mounted-twice again) and
+   * serialized by `sendReply` from the SAME derivation the block renders (`signature.ts`).
+   * `onReplySig` is OPTIONAL like its peers: absent on the inert default, and then the editor
+   * renders no block at all rather than one nothing is listening to.
+   */
+  replySig: SignatureState;
+  onReplySig?: (next: SignatureState) => void;
+  /**
+   * THE ACCOUNT'S STORED SIGNATURES, server-confirmed — `useConsentState().signatures`, handed
+   * down only once `signaturesKnown` is true. ABSENT means "cannot know", and then no block
+   * renders anywhere in the pane.
+   */
+  signatures?: Readonly<Record<string, string>>;
+  /**
+   * THE REPLY'S SUBJECT AS EDITED — `null` while the derived `Re:` subject stands, which keeps
+   * the untouched reply's wire byte-identical. Held here for the mounted-twice reason every
+   * peer above states; `onReplySubject` absent renders the subject as plain text, never a dead
+   * control.
+   */
+  replySubjectEdit: string | null;
+  onReplySubject?: (subject: string) => void;
   /**
    * THE HOST'S OWN CEILING ON WHAT A SEND FROM THIS WINDOW CAN CARRY — `AppShell`'s
    * `sendSurfaceMaxTotalBytes` prop, forwarded so the reply editor's attach control states and
@@ -378,6 +401,8 @@ const MessageChromeContext = createContext<MessageChrome>({
   replyEnvelope: null,
   replyFromId: null,
   replyAttachments: [],
+  replySig: SIG_FOLLOWING,
+  replySubjectEdit: null,
   closeReply: noop,
   sendReply: noop,
   replySendState: () => ({ phase: "idle" }),

@@ -930,7 +930,10 @@
       "bullet": "Bulleted list",
       "ordered": "Numbered list",
       "quote": "Quote"
-    }
+    },
+    "signature": "Signature",
+    "signatureRemove": "Remove signature for this message",
+    "signatureAria": "Signature — part of this message; edit or remove it here"
   },
   "draftReply": {
     "verb": "Draft reply",
@@ -1136,7 +1139,21 @@
     "webAiSub": "Screener suggestions, drafts and summaries run on our servers.",
     "webAiNeedsPlan": "Included from the first paid plan upward. Your rules keep working without it.",
     "webInvoicesTitle": "Invoices and payment method",
-    "webBillingNote": "Receipts, invoice PDFs, card details and cancellation are handled by Stripe, which holds the authoritative record."
+    "webBillingNote": "Receipts, invoice PDFs, card details and cancellation are handled by Stripe, which holds the authoritative record.",
+    "signatures": {
+      "nav": "Signatures",
+      "title": "Signature",
+      "intro": "A signature is added under new messages and replies you write from that address. It appears in the message as its own block — you can edit it there or remove it for a single message.",
+      "note": "One signature per mailbox. Leave the field empty to sign with nothing.",
+      "placeholder": "Write a signature…",
+      "mailboxOn": "Added to messages you write from this address.",
+      "mailboxOff": "No signature — messages go out as written.",
+      "save": "Save",
+      "saving": "Saving…",
+      "revert": "Discard changes",
+      "preview": "Preview",
+      "failed": "That didn't save — your text is still here, try again."
+    }
   },
   "palette": {
     "placeholder": "Type a command…",
@@ -2158,7 +2175,9 @@
     "reasonUnknown": "the server refused it.",
     "toastSent": "Reply sent.",
     "toastForwarded": "Forwarded.",
-    "forwardHead": "Forward — you pick who receives it"
+    "forwardHead": "Forward — you pick who receives it",
+    "editSubject": "Edit subject",
+    "subjectAria": "Subject of this reply"
   },
   "rules": {
     "intro": "Every Screener decision writes a rule. These are yours.",

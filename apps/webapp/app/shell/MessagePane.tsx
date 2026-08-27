@@ -1552,6 +1552,16 @@ export function MessagePane({
          attach control there. */
       attachments={chrome.replyAttachments}
       onAttachments={chrome.onReplyAttachments}
+      /* THE SIGNATURE BLOCK — state on the chrome (mounted-twice), the stored map from the
+         shell's consent read, serialized by `sendReply` from the same derivation the block
+         renders. `onReplySig` absent on the inert chrome renders no block there. */
+      signatures={chrome.signatures}
+      sig={chrome.replySig}
+      onSig={chrome.onReplySig}
+      /* THE SUBJECT, editable in place on a reply — the edit lives on the chrome
+         (mounted-twice), `null` keeps the untouched wire byte-identical. */
+      subjectEdit={chrome.replySubjectEdit}
+      onSubject={chrome.onReplySubject}
       /* The host's ceiling on what a send can carry — the other half of the attach cap the
          editor states beside those files (`composeAttachCap(SIZE, THIS)`). Absent on the inert
          chrome and on every browser tab; `null` on the desktop's standalone door. */

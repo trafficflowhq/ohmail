@@ -930,7 +930,10 @@
       "bullet": "Aufzählung",
       "ordered": "Nummerierte Liste",
       "quote": "Zitat"
-    }
+    },
+    "signature": "Signatur",
+    "signatureRemove": "Signatur für diese Nachricht entfernen",
+    "signatureAria": "Signatur — Teil dieser Nachricht; hier bearbeiten oder entfernen"
   },
   "draftReply": {
     "verb": "Antwort entwerfen",
@@ -1136,7 +1139,21 @@
     "webAiSub": "Screener-Vorschläge, Entwürfe und Zusammenfassungen laufen auf unseren Servern.",
     "webAiNeedsPlan": "Ab dem ersten kostenpflichtigen Tarif enthalten. Deine Regeln funktionieren auch ohne.",
     "webInvoicesTitle": "Rechnungen und Zahlungsmittel",
-    "webBillingNote": "Belege, Rechnungs-PDFs, Kartendaten und Kündigung laufen über Stripe, wo auch die maßgeblichen Unterlagen liegen."
+    "webBillingNote": "Belege, Rechnungs-PDFs, Kartendaten und Kündigung laufen über Stripe, wo auch die maßgeblichen Unterlagen liegen.",
+    "signatures": {
+      "nav": "Signaturen",
+      "title": "Signatur",
+      "intro": "Eine Signatur wird unter neue Nachrichten und Antworten gesetzt, die du von dieser Adresse schreibst. Sie erscheint in der Nachricht als eigener Block — dort kannst du sie bearbeiten oder für eine einzelne Nachricht entfernen.",
+      "note": "Eine Signatur pro Postfach. Lass das Feld leer, um ohne Signatur zu senden.",
+      "placeholder": "Signatur schreiben…",
+      "mailboxOn": "Wird unter Nachrichten von dieser Adresse gesetzt.",
+      "mailboxOff": "Keine Signatur — Nachrichten gehen wie geschrieben raus.",
+      "save": "Speichern",
+      "saving": "Speichert…",
+      "revert": "Änderungen verwerfen",
+      "preview": "Vorschau",
+      "failed": "Das wurde nicht gespeichert — dein Text ist noch da, versuch es nochmal."
+    }
   },
   "palette": {
     "placeholder": "Befehl eingeben …",
@@ -2158,7 +2175,9 @@
     "reasonUnknown": "der Server hat es abgelehnt.",
     "toastSent": "Antwort gesendet.",
     "toastForwarded": "Weitergeleitet.",
-    "forwardHead": "Weiterleiten — du wählst, wer sie bekommt"
+    "forwardHead": "Weiterleiten — du wählst, wer sie bekommt",
+    "editSubject": "Betreff bearbeiten",
+    "subjectAria": "Betreff dieser Antwort"
   },
   "rules": {
     "intro": "Jede Screener-Entscheidung schreibt eine Regel. Das sind deine.",
