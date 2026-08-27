@@ -217,14 +217,18 @@ export function htmlToPlainText(html: string): string {
    */
   let lead = "";
   /**
-   * How much text the OPEN ANCHOR held when the current list item opened — the item-emptiness
-   * baseline (review rounds 7–10, which each falsified a cheaper heuristic in turn: `line`
-   * alone misses text buffering inside a wrapping anchor; "an anchor is open" is not evidence
-   * of content; the anchor's PENDING HREF is the anchor's own, emitted at its close wherever
-   * that lands, never the item's). An item has produced content exactly when its line is
-   * non-empty or the enclosing anchor's buffer GREW while the item was open.
+   * Per-OPEN-ITEM state, innermost last — the item-emptiness baseline and the pending marker
+   * that stood before the item opened (review rounds 7–11, which each falsified a cheaper
+   * shape in turn: `line` alone misses text buffering inside a wrapping anchor; "an anchor is
+   * open" is not evidence of content; the anchor's PENDING HREF is the anchor's own, emitted
+   * at its close wherever that lands, never the item's; and one SCALAR of this state lets a
+   * nested empty child overwrite — and then erase — its parent's unconsumed marker). An item
+   * has produced content exactly when its line is non-empty or the enclosing anchor's buffer
+   * GREW while the item was open; an item that produced nothing RESTORES the marker that
+   * stood when it opened, so an empty child hands its parent's pending `1. ` back instead of
+   * destroying it.
    */
-  let liAnchorBase = 0;
+  const liState: Array<{ base: number; savedLead: string }> = [];
   /**
    * The anchor currently open: its href, and the text seen inside it so far.
    *
@@ -392,7 +396,13 @@ export function htmlToPlainText(html: string): string {
         }
         if (name === "li") {
           flush();
-          liAnchorBase = open.anchor === null ? 0 : open.anchor.text.length;
+          // `lead` here is "" in ordinary flow (the flush consumed or cleared it) and an
+          // ANCESTOR's unconsumed marker under a block-wrapping anchor, where nothing has
+          // flushed yet — saved so an empty item can hand it back at its close.
+          liState.push({
+            base: open.anchor === null ? 0 : open.anchor.text.length,
+            savedLead: lead,
+          });
           const ctx = lists[lists.length - 1];
           // A stray `<li>` with no list around it still needs a marker; treat it as a bullet
           // rather than dropping it, because the sanitizer permits the tag and the reader will
@@ -474,17 +484,21 @@ export function htmlToPlainText(html: string): string {
           // (review round 6: `<ol><li><p></p></li></ol><p>after</p>` read "1. after").
           //
           // "EMPTY" IS A FACT ABOUT THIS ITEM, measured against the baseline its own open
-          // recorded (`liAnchorBase`): the line is empty and the enclosing anchor's buffer
-          // did not grow while the item was open. Reviews 7–10 falsified every cheaper
-          // heuristic — `line` alone misses text buffering inside a wrapping anchor (round 7),
-          // an open anchor is not itself evidence of content (round 8), and the anchor's
-          // pending HREF is the ANCHOR's content, emitted at its close onto whatever line is
-          // current there, never this item's (round 10, superseding round 9's reading of the
-          // href-only corner: an item that produced nothing carries no number, whatever its
-          // ancestors later emit — the alternative numbered prose that sits outside the item).
-          // The baseline comparison is O(1) per item; nothing here re-reads the href at all.
-          const grew = open.anchor !== null && open.anchor.text.length > liAnchorBase;
-          if (line === "" && !grew) lead = "";
+          // recorded: the line is empty and the enclosing anchor's buffer did not grow while
+          // the item was open. Reviews 7–11 falsified every cheaper shape — `line` alone
+          // misses text buffering inside a wrapping anchor (round 7); an open anchor is not
+          // itself evidence of content (round 8); the anchor's pending HREF is the ANCHOR's
+          // content, emitted at its close onto whatever line is current there, never this
+          // item's (round 10, superseding round 9's reading of the href-only corner:
+          // numbering prose that sits outside the item is the worse error); and a scalar of
+          // this state let a nested empty child erase its parent's unconsumed marker
+          // (round 11). An empty item RESTORES the marker that stood when it opened — the
+          // parent's pending `1. ` under a block-wrapping anchor, "" everywhere ordinary —
+          // and a non-empty item keeps its own marker pending for the flush that will carry
+          // its text. O(1) per item; nothing here reads the href at all.
+          const st = liState.pop() ?? { base: 0, savedLead: "" };
+          const grew = open.anchor !== null && open.anchor.text.length > st.base;
+          if (line === "" && !grew) lead = st.savedLead;
           return;
         }
         if (BLOCKS.has(name)) flush();
