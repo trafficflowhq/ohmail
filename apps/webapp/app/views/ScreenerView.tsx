@@ -2290,6 +2290,10 @@ function JunkSweepOffer({ sweep }: { sweep: JunkWindowControl["sweep"] }) {
     <div className="scn-junk-sweep" role="status">
       {sweep.phase === "done" ? (
         <b>{t("junkSweepDone")}</b>
+      ) : sweep.phase === "stranded" ? (
+        /* Candidates remain and none can move — nothing to press, nothing to call empty; the
+           per-mailbox lines below say exactly what stays and why. */
+        null
       ) : sweep.phase === "pending" ? (
         <>
           <b>{t("junkSweepTitle", { count: pv.movable })}</b>

@@ -422,27 +422,38 @@ export interface JunkSearchPage {
  * a mirror row parked at this mailbox's junk path was filed by US on the user's order. Bounded:
  * at most one IN() over the rows' mids. Mutates `origin` in place.
  */
+/**
+ * A Message-ID as a comparable key: trimmed, angle brackets off. The live envelope (imapflow)
+ * carries `<id@host>`; the mirror stores the id the parser kept, which is bare — so the two
+ * sides of the attribution join never met for a sweep-filed row until this normalisation (the
+ * first live proof of the sweep showed its own rows marked "filed by your mail server").
+ */
+const midKey = (raw: string): string => raw.trim().replace(/^<|>$/g, "");
+
 async function attributeOrigin(
   deps: ApiDeps, accountId: string, items: JunkItem[],
   boxes: Array<{ id: string; junkFolder: string | null }>,
 ): Promise<void> {
-  const mids = [...new Set(items.map((i) => i.messageIdHeader).filter((m): m is string => m !== null))];
-  if (mids.length === 0) return;
+  const keys = [...new Set(items.map((i) => i.messageIdHeader).filter((m): m is string => m !== null).map(midKey))];
+  if (keys.length === 0) return;
   const junkPathOf = new Map(boxes.map((b) => [b.id, b.junkFolder]));
+  // Both spellings are asked for, so a mirror row stored either way is found; the comparison
+  // below is on the normalised key regardless.
+  const wanted = [...new Set(keys.flatMap((k) => [k, `<${k}>`]))];
   const rows = await deps.db
     .select({ messageIdHeader: messages.messageIdHeader, mailboxId: messages.mailboxId, nativeLocator: messages.nativeLocator })
     .from(messages)
-    .where(and(eq(messages.accountId, accountId), inArray(messages.messageIdHeader, mids)));
+    .where(and(eq(messages.accountId, accountId), inArray(messages.messageIdHeader, wanted)));
   const filedByUs = new Set(
     rows
       .filter((r) => {
         const loc = r.nativeLocator as { folder?: string } | null;
-        return loc?.folder !== undefined && loc.folder === junkPathOf.get(r.mailboxId);
+        return r.messageIdHeader !== null && loc?.folder !== undefined && loc.folder === junkPathOf.get(r.mailboxId);
       })
-      .map((r) => `${r.mailboxId} ${r.messageIdHeader}`),
+      .map((r) => `${r.mailboxId} ${midKey(r.messageIdHeader!)}`),
   );
   for (const it of items) {
-    if (it.messageIdHeader !== null && filedByUs.has(`${it.mailboxId} ${it.messageIdHeader}`)) {
+    if (it.messageIdHeader !== null && filedByUs.has(`${it.mailboxId} ${midKey(it.messageIdHeader)}`)) {
       it.origin = "verdict";
     }
   }
@@ -731,8 +742,24 @@ export async function rescueJunk(
     if (err instanceof MessageGoneError) {
       // The provider (or another client) took it first — or the folder was renumbered. The
       // rescue fails honestly: never a phantom arrival, never a claim of a move that did not
-      // happen, and never a different message moved in this one's name.
-      throw new ServiceError("junk_message_gone", 410, "this message is no longer in the Junk folder — it may have been deleted there");
+      // happen, and never a different message moved in this one's name. With the second verb
+      // the allow was written BEFORE this, and stands — carried in `details` so the client can
+      // say both halves.
+      throw new ServiceError(
+        "junk_message_gone", 410, "this message is no longer in the Junk folder — it may have been deleted there",
+        allowed !== undefined ? { allowed } : undefined,
+      );
+    }
+    if (allowed !== undefined) {
+      // A move that failed for any OTHER reason (a timeout, a provider refusal) after the allow
+      // committed is a PARTIAL outcome, and the client must be able to report it as one: the
+      // message is still in Junk, but the sender's rules changed. A bare rethrow would read as
+      // "nothing happened" (review round on the client).
+      throw new ServiceError(
+        "junk_rescue_move_failed", 502,
+        "the move could not be made just now — the sender is allowed from now on regardless",
+        { allowed },
+      );
     }
     throw err;
   } finally {

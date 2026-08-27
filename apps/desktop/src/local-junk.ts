@@ -29,9 +29,12 @@
 import { bridgeFetch } from "./bridge-fetch.js";
 import type { JunkWire } from "../../webapp/app/shell/junk-window";
 
-/** Thrown for every non-2xx answer down the pipe; carries the status so the door can read a 410. */
+/**
+ * Thrown for every non-2xx answer down the pipe; carries the status so the door can read a 410,
+ * and the server's error CODE so it can read a partial outcome (`junk_rescue_move_failed`).
+ */
 export class JunkBridgeError extends Error {
-  constructor(readonly status: number, message: string) {
+  constructor(readonly status: number, readonly code: string | null, message: string) {
     super(message);
     this.name = "JunkBridgeError";
   }
@@ -39,12 +42,15 @@ export class JunkBridgeError extends Error {
 
 async function refusal(res: Response): Promise<JunkBridgeError> {
   let said: string | undefined;
+  let code: string | null = null;
   try {
-    said = ((await res.json()) as { error?: { message?: string } }).error?.message;
+    const body = (await res.json()) as { error?: { message?: string; code?: string } };
+    said = body.error?.message;
+    code = typeof body.error?.code === "string" ? body.error.code : null;
   } catch {
     /* Not JSON, or an empty body. The status is all there is. */
   }
-  return new JunkBridgeError(res.status, said ?? `the mail engine answered ${res.status}`);
+  return new JunkBridgeError(res.status, code, said ?? `the mail engine answered ${res.status}`);
 }
 
 async function jsonOf<T>(res: Response): Promise<T> {
@@ -78,6 +84,7 @@ export function junkVia(fetchImpl: (path: string, init?: RequestInit) => Promise
     sweepPreview: async () => jsonOf(await fetchImpl("/screener/junk/sweep")),
     sweepRequest: async () => jsonOf(await post("/screener/junk/sweep")),
     isGone: (err) => err instanceof JunkBridgeError && err.status === 410,
+    codeOf: (err) => (err instanceof JunkBridgeError ? err.code : null),
   };
 }
 
