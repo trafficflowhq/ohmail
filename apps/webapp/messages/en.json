@@ -1301,7 +1301,9 @@
     "hintCmdk": "everything, by name",
     "hintMove": "move",
     "hintRead": "read",
-    "hintScreen": "screen a sender"
+    "hintScreen": "screen a sender",
+    "calloutReadsTitle": "Reads has a waterline",
+    "calloutReads": "The line remembers where you stopped."
   },
   "views": {
     "title": "Three piles, not one inbox.",
@@ -1589,7 +1591,10 @@
     "note": "Compared as of August 2026, from each product's own published documentation.",
     "usLine": "ohmail's answer to every row is the same answer: it's your mailbox. Several of them, in fact — ohmail organizes two, five, ten IMAP mailboxes at once, drafts replies in your voice, learns your decisions into rules you can read and change, and never asks you to change your address, your provider, or your other mail apps.",
     "goodwill": "These are good products made by people who care about mail. The right model is the one that fits your life, and it may not be ours — that is a fine outcome. We only insist on one thing: the choice should stay yours, and so should the mailbox.",
-    "goodwillTitle": "Pick what fits you."
+    "goodwillTitle": "Pick what fits you.",
+    "offlineCrit": "Offline & local",
+    "offlineUs": "Runs fully on your machine and reads with the wifi off",
+    "offlineOthers": "Native apps, but the service lives in their cloud"
   },
   "data": {
     "title": "Where your mail lives.",
@@ -1618,7 +1623,15 @@
     "cloudCost": "From $9 a month, 14 days free.",
     "same": "Cloud is self-hosting, done for you: the same open server, the same organizer, the same mailbox as the master. What changes is whose machine holds the copy — and that we bill for running it.",
     "honest": "The fine print for Cloud: it is not end-to-end encrypted. The service reads mail to file and search it, and a small number of people with production database access could technically read it. Never sold, never mined, never used for anything but serving you.",
-    "aiNote": "AI on Cloud goes to Anthropic under commercial API terms: your mail is never used to train models, and requests are retained only briefly (currently up to 30 days); there is no zero-retention agreement yet. On every tier, a credential inside a message — a code, a login link, a reset token — is stripped before a request is built, and automatic routing skips that mail entirely. Structural, not a setting."
+    "aiNote": "AI on Cloud goes to Anthropic under commercial API terms: your mail is never used to train models, and requests are retained only briefly (currently up to 30 days); there is no zero-retention agreement yet. On every tier, a credential inside a message — a code, a login link, a reset token — is stripped before a request is built, and automatic routing skips that mail entirely. Structural, not a setting.",
+    "desktopBody": "Desktop is built so your mail never touches our servers: sync, rules and search all run on your machine. The app is a real mail client — it connects to your own IMAP server and organizes your mailbox locally, with no ohmail server in the loop — on macOS, Windows and Linux alike. Your mail is stored on your own disk, so it is there to read whether or not you have a network.",
+    "desktopNote": "Desktop-only is meant to be a complete way to use ohmail, forever — no account, no cloud, nothing of yours on our side, and not a trial version of anything. If you would rather have a hosted account, the same app can sign in to Cloud instead; that is a choice you make in the app, not a different download.",
+    "cloudOptional": "optional",
+    "cloudBody": "Cloud keeps a copy of your mail — bodies up to your plan's storage space, headers, subjects and senders, not just metadata — on EU servers, for one purpose: delivering sync, push and search to your devices. At the cap, new message content stops being stored. Mail keeps arriving and gets organized as usual, and the whole message stays in your mailbox on your own server — readable there in any mail client, while ohmail shows you the preview until you have room again. Nothing stored is ever deleted for space. Storage is encrypted at rest, connections between your devices and ohmail are encrypted in transit, and your mailbox credentials are additionally encrypted at the application level. It is not end-to-end encrypted — the service has to read mail to file and search it, and a small number of people with production database access could technically read it. Never sold, never mined, never used for anything but serving you. Deleting your account erases that data from live systems immediately and from backups within 30 days. The full privacy policy, naming exactly who can access what, publishes before the first real mailbox connects; the subprocessor and retention list linked in the footer is live today.",
+    "cloudNote": "Why a cloud exists at all: your phone can’t keep a connection to your mailbox open all day — the battery and the operating system won’t allow it. Something has to stay awake to notice new mail and tap you on the shoulder. That is what Cloud is for — push, the web app, and the mobile apps when they land — and doing that job is why it holds a copy of your mail rather than only your rules.",
+    "aiTerm": "AI",
+    "aiOptional": "optional, both tiers",
+    "aiBody": "AI requests go to Anthropic under commercial API terms: your mail is never used to train models, and Anthropic retains requests only briefly under its standard policy (currently up to 30 days). We have not yet negotiated a zero-retention agreement, and we will say so here when we do. Where mail carries a credential — a verification code, a login link, a reset token — the credential is stripped before the request is built, and automatic background routing skips that mail entirely. That's structural, not a setting. A live model has been connected in production exactly once, against the founder's own mailbox; the managed AI actions switch on for everyone with the beta, and the metering and spend limits that govern them are already in place."
   },
   "folders": {
     "title": "This is what your IMAP looks like.",

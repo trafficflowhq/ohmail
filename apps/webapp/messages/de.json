@@ -1301,7 +1301,9 @@
     "hintCmdk": "alles, beim Namen",
     "hintMove": "bewegen",
     "hintRead": "lesen",
-    "hintScreen": "einen Absender screenen"
+    "hintScreen": "einen Absender screenen",
+    "calloutReadsTitle": "Reads hat eine Wasserlinie",
+    "calloutReads": "Die Linie merkt sich, wo du aufgehört hast."
   },
   "views": {
     "title": "Drei Stapel statt eines Posteingangs.",
@@ -1589,7 +1591,10 @@
     "note": "Verglichen mit Stand August 2026, anhand der jeweils eigenen veröffentlichten Dokumentation.",
     "usLine": "Die Antwort von ohmail auf jede Zeile ist dieselbe: es ist dein Postfach. Genauer gesagt mehrere — ohmail organisiert zwei, fünf, zehn IMAP-Postfächer gleichzeitig, entwirft Antworten in deiner Stimme, macht aus deinen Entscheidungen Regeln, die du lesen und ändern kannst, und bittet dich nie, deine Adresse, deinen Anbieter oder deine anderen Mailprogramme zu wechseln.",
     "goodwill": "Das sind gute Produkte von Leuten, denen E-Mail wichtig ist. Das richtige Modell ist das, das zu deinem Leben passt, und es muss nicht unseres sein — das ist ein völlig gutes Ergebnis. Auf einem bestehen wir: die Wahl soll deine bleiben, und das Postfach auch.",
-    "goodwillTitle": "Nimm, was zu dir passt."
+    "goodwillTitle": "Nimm, was zu dir passt.",
+    "offlineCrit": "Offline & lokal",
+    "offlineUs": "Läuft vollständig auf deinem Rechner und liest mit ausgeschaltetem WLAN",
+    "offlineOthers": "Native Apps, aber der Dienst lebt in ihrer Cloud"
   },
   "data": {
     "title": "Wo deine Post liegt.",
@@ -1618,7 +1623,15 @@
     "cloudCost": "Ab 9 $ im Monat, 14 Tage gratis.",
     "same": "Die Cloud ist Selbst-Hosting, das wir für dich erledigen: derselbe offene Server, derselbe Organizer, dasselbe Postfach als Master. Was sich ändert, ist, wessen Maschine die Kopie hält — und dass wir fürs Betreiben Geld nehmen.",
     "honest": "Das Kleingedruckte zur Cloud: Sie ist nicht Ende-zu-Ende-verschlüsselt. Der Dienst liest Post, um sie abzulegen und zu durchsuchen, und sehr wenige Leute mit Zugang zur Produktionsdatenbank könnten sie technisch lesen. Nie verkauft, nie ausgewertet, nie für etwas anderes benutzt, als dir zu dienen.",
-    "aiNote": "KI in der Cloud geht unter kommerziellen API-Bedingungen an Anthropic: Deine Post wird nie zum Trainieren von Modellen verwendet, und Anfragen werden nur kurz aufbewahrt (derzeit bis zu 30 Tage); eine Vereinbarung über null Aufbewahrung gibt es noch nicht. Auf jeder Stufe wird ein Geheimnis in einer Mail — ein Code, ein Anmeldelink, ein Zurücksetzen-Token — entfernt, bevor eine Anfrage gebaut wird, und die automatische Einsortierung lässt solche Post ganz aus. Struktur, keine Einstellung."
+    "aiNote": "KI in der Cloud geht unter kommerziellen API-Bedingungen an Anthropic: Deine Post wird nie zum Trainieren von Modellen verwendet, und Anfragen werden nur kurz aufbewahrt (derzeit bis zu 30 Tage); eine Vereinbarung über null Aufbewahrung gibt es noch nicht. Auf jeder Stufe wird ein Geheimnis in einer Mail — ein Code, ein Anmeldelink, ein Zurücksetzen-Token — entfernt, bevor eine Anfrage gebaut wird, und die automatische Einsortierung lässt solche Post ganz aus. Struktur, keine Einstellung.",
+    "desktopBody": "Desktop ist so gebaut, dass deine Post unsere Server nie berührt: Synchronisierung, Regeln und Suche laufen alle auf deinem Rechner. Die App ist ein echter Mail-Client — sie verbindet sich mit deinem eigenen IMAP-Server und organisiert dein Postfach lokal, ohne ohmail-Server dazwischen — auf macOS, Windows und Linux gleichermaßen. Deine Post liegt auf deiner eigenen Festplatte, du kannst sie also lesen, ob du Netz hast oder nicht.",
+    "desktopNote": "Nur Desktop soll ein vollständiger Weg sein, ohmail zu nutzen, dauerhaft — kein Konto, keine Cloud, nichts von dir auf unserer Seite, und keine Testversion von irgendwas. Wenn du lieber ein gehostetes Konto hättest, kann sich dieselbe App stattdessen bei der Cloud anmelden; das entscheidest du in der App, es ist kein anderer Download.",
+    "cloudOptional": "optional",
+    "cloudBody": "Die Cloud hält eine Kopie deiner Post — Inhalte bis zum Speicherplatz deines Tarifs, Header, Betreffzeilen und Absender, nicht nur Metadaten — auf EU-Servern, zu einem Zweck: Synchronisierung, Push und Suche auf deine Geräte zu bringen. Ist der Speicher voll, werden neue Nachrichteninhalte nicht mehr gespeichert. Post kommt weiter an und wird wie gewohnt einsortiert, und die ganze Nachricht bleibt in deinem Postfach auf deinem eigenen Server — dort in jedem Mailprogramm lesbar, während ohmail dir die Vorschau zeigt, bis du wieder Platz hast. Nichts Gespeichertes wird je für Platz gelöscht. Der Speicher ist im Ruhezustand verschlüsselt, die Verbindungen zwischen deinen Geräten und ohmail sind auf dem Transportweg verschlüsselt, und deine Postfach-Zugangsdaten sind zusätzlich auf Anwendungsebene verschlüsselt. Es ist keine Ende-zu-Ende-Verschlüsselung — der Dienst muss Post lesen, um sie einzusortieren und durchsuchbar zu machen, und eine kleine Zahl von Personen mit Zugang zur Produktionsdatenbank könnte sie technisch lesen. Sie wird nie verkauft, nie ausgewertet und für nichts anderes benutzt, als dich zu bedienen. Löschst du dein Konto, verschwinden diese Daten sofort aus den laufenden Systemen und innerhalb von 30 Tagen aus den Backups. Die vollständige Datenschutzerklärung, die genau benennt, wer worauf zugreifen kann, erscheint, bevor das erste echte Postfach verbunden wird; die im Fußbereich verlinkte Liste der Auftragsverarbeiter und Aufbewahrungsfristen ist heute schon online.",
+    "cloudNote": "Warum es überhaupt eine Cloud gibt: Dein Handy kann keine Verbindung zu deinem Postfach den ganzen Tag offen halten — Akku und Betriebssystem lassen das nicht zu. Irgendetwas muss wach bleiben, um neue Post zu bemerken und dir auf die Schulter zu tippen. Dafür ist die Cloud da — Push, die Web-App und die Mobil-Apps, wenn sie kommen — und weil das ihre Aufgabe ist, hält sie eine Kopie deiner Post und nicht nur deine Regeln.",
+    "aiTerm": "KI",
+    "aiOptional": "optional, in beiden Tarifen",
+    "aiBody": "KI-Anfragen gehen unter kommerziellen API-Bedingungen an Anthropic: deine Post wird nie zum Trainieren von Modellen verwendet, und Anthropic behält Anfragen nach seiner Standardregel nur kurz (derzeit bis zu 30 Tage). Eine Vereinbarung über null Aufbewahrung haben wir noch nicht verhandelt, und wenn wir sie haben, steht es hier. Trägt eine Mail ein Geheimnis — einen Bestätigungscode, einen Anmeldelink, ein Zurücksetzen-Token —, wird es entfernt, bevor die Anfrage gebaut wird, und die automatische Einsortierung im Hintergrund lässt diese Mail ganz aus. Das ist Struktur, keine Einstellung. Ein echtes Modell war genau einmal in der Produktion verbunden, gegen das eigene Postfach des Gründers; die verwaltete KI geht mit der Beta für alle an, und die Abrechnung und die Ausgabegrenzen dafür stehen schon."
   },
   "folders": {
     "title": "So sieht dein IMAP aus.",
