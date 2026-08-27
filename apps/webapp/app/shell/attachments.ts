@@ -381,6 +381,45 @@ export function useMessageAttachments(
           .map((m) => m.id)
           .join(",")
       : "";
+  /**
+   * THE ONE QUEUE AND THE ONE CREW — shared across effect generations, and that sharing IS
+   * the concurrency bound. A crew spawned per effect run kept its budget only within its own
+   * generation: a drain re-keying the sweep mid-load spawned a replacement crew BESIDE the
+   * four workers still awaiting their reads, so the exact scenario the requeue exists for ran
+   * nine lists at once, and repeated re-keys could stack a whole long thread (review finding).
+   * Workers here outlive the effect run that pumped them: they take from whatever array the
+   * ref CURRENTLY holds, so replacing the queue retargets the standing crew instead of
+   * spawning a second one, and `listWorkers` never exceeds the cap for the hook's lifetime.
+   */
+  const pendingLists = useRef<string[]>([]);
+  const listWorkers = useRef(0);
+  const pump = useCallback((): void => {
+    while (listWorkers.current < SIBLING_LIST_CONCURRENCY && pendingLists.current.length > 0) {
+      listWorkers.current += 1;
+      void (async () => {
+        try {
+          for (;;) {
+            const id = pendingLists.current.shift();
+            if (id === undefined) return;
+            /*
+             * The release set is joined at DEQUEUE, not at enqueue. An unstarted id holds no
+             * engine state to release, and membership is also the replacement run's skip test
+             * — so an id enqueued-but-never-asked when the conversation changed mid-drain
+             * must NOT look already-owned: it would never be asked again and its strip would
+             * sit on the silent loading default until the selection moved (review finding).
+             * The recheck here keeps overlapping pumps idempotent.
+             */
+            if (loaded.current.has(id)) continue;
+            loaded.current.add(id);
+            await ask(id);
+          }
+        } finally {
+          listWorkers.current -= 1;
+        }
+      })();
+    }
+  }, [ask]);
+
   useEffect(() => {
     if (!available || !messageId || conversationKey === "") return;
     /*
@@ -388,45 +427,18 @@ export function useMessageAttachments(
      * would put one deadline-bound GET in the air per thread member at once — a long thread
      * as one volley, repeated on every within-thread selection move, with the queued tail
      * able to age out against `ATTACHMENT_LIST_TIMEOUT_MS` behind browser connection limits
-     * (review finding). So the sweep runs a fixed crew of workers over one queue — the same
-     * shape, and the same width, as the engine's own body-hydration cap. A cancelled worker
-     * simply stops taking, and the re-run re-queues whatever still matters — which is why
-     * ids join the release set at dequeue (see the worker).
+     * (review finding). The queue is REPLACED, never appended: whatever an earlier generation
+     * still had waiting either reappears in this conversation's own list or has stopped
+     * mattering, and the standing crew drains the new array from its next take.
      */
-    const queue: string[] = [];
-    for (const id of conversationKey.split(",")) {
-      if (loaded.current.has(id)) continue;
-      queue.push(id);
-    }
-    if (queue.length === 0) return;
-    let cancelled = false;
-    const worker = async (): Promise<void> => {
-      while (!cancelled) {
-        const id = queue.shift();
-        if (id === undefined) return;
-        /*
-         * The release set is joined at DEQUEUE, not at enqueue. An unstarted id holds no
-         * engine state to release, and membership is also the replacement run's skip test —
-         * so an id enqueued-but-never-asked when the conversation changed mid-drain (a sync
-         * landing another member re-keys this effect, and the cleanup cancels the crew) must
-         * NOT look already-owned: it would never be asked again and its strip would sit on
-         * the silent loading default until the selection moved (review finding). The recheck
-         * below is the overlap guard for a crew that outlived its own cancellation window.
-         */
-        if (loaded.current.has(id)) continue;
-        loaded.current.add(id);
-        await ask(id);
-      }
-    };
-    // The crew size is FIXED before the first worker runs: a worker takes its first id
-    // synchronously, so reading `queue.length` inside the loop condition would count the
-    // shrinking queue and under-spawn — two siblings got one worker (watched happen).
-    const crew = Math.min(SIBLING_LIST_CONCURRENCY, queue.length);
-    for (let i = 0; i < crew; i++) void worker();
+    const wanted = conversationKey.split(",").filter((id) => !loaded.current.has(id));
+    if (wanted.length === 0) return;
+    pendingLists.current = wanted;
+    pump();
     return () => {
-      cancelled = true;
+      pendingLists.current = [];
     };
-  }, [engine, messageId, available, conversationKey, ask]);
+  }, [engine, messageId, available, conversationKey, pump]);
 
   /**
    * ── A SESSION FAILURE MUST NOT OUTLIVE THE SESSION IT FAILED IN ──────────────────────────
