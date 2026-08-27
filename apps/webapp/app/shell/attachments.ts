@@ -389,14 +389,13 @@ export function useMessageAttachments(
      * as one volley, repeated on every within-thread selection move, with the queued tail
      * able to age out against `ATTACHMENT_LIST_TIMEOUT_MS` behind browser connection limits
      * (review finding). So the sweep runs a fixed crew of workers over one queue — the same
-     * shape, and the same width, as the engine's own body-hydration cap. Ids join the release
-     * set at ENQUEUE, so the cleanup owns even the not-yet-asked tail; a cancelled worker
-     * simply stops taking, and the re-run re-queues whatever still matters.
+     * shape, and the same width, as the engine's own body-hydration cap. A cancelled worker
+     * simply stops taking, and the re-run re-queues whatever still matters — which is why
+     * ids join the release set at dequeue (see the worker).
      */
     const queue: string[] = [];
     for (const id of conversationKey.split(",")) {
       if (loaded.current.has(id)) continue;
-      loaded.current.add(id);
       queue.push(id);
     }
     if (queue.length === 0) return;
@@ -405,6 +404,17 @@ export function useMessageAttachments(
       while (!cancelled) {
         const id = queue.shift();
         if (id === undefined) return;
+        /*
+         * The release set is joined at DEQUEUE, not at enqueue. An unstarted id holds no
+         * engine state to release, and membership is also the replacement run's skip test —
+         * so an id enqueued-but-never-asked when the conversation changed mid-drain (a sync
+         * landing another member re-keys this effect, and the cleanup cancels the crew) must
+         * NOT look already-owned: it would never be asked again and its strip would sit on
+         * the silent loading default until the selection moved (review finding). The recheck
+         * below is the overlap guard for a crew that outlived its own cancellation window.
+         */
+        if (loaded.current.has(id)) continue;
+        loaded.current.add(id);
         await ask(id);
       }
     };

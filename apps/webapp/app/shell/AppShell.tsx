@@ -1970,25 +1970,39 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    * preview left standing across the switch would render revoked bytes. Closing is derived from
    * the selection rather than remembered at every call site that can change it.
    */
+  const previewSelection = useRef<string | null>(null);
   useEffect(() => {
+    const before = previewSelection.current;
+    previewSelection.current = selectedOhbox?.id ?? null;
     if (!previewFor) return;
     /*
-     * Members of the ACTIVE conversation keep their previews. Sibling panels render attachment
-     * strips now, and the seam holds lists and bytes for the WHOLE conversation
-     * (`useMessageAttachments` — released together when the selection moves), so the revoke
-     * argument above binds to the selection, not to the focused id alone. Before this widening,
-     * a press on a sibling tile's eye recorded the sibling's id here and this effect closed the
-     * overlay in the same breath — the primary action on every previewable sibling file was a
-     * flash or a no-op (review finding). Anything OUTSIDE the open conversation still
-     * derive-closes exactly as before.
+     * Members of the ACTIVE conversation keep their previews — under a STANDING selection.
+     * Sibling panels render attachment strips now, and the seam holds lists and bytes for the
+     * WHOLE conversation (`useMessageAttachments`), so the focused-id-only test this replaces
+     * closed a sibling's overlay in the same breath its eye opened it — the primary action on
+     * every previewable sibling file was a flash or a no-op (review finding).
+     *
+     * Two bounds keep the widened guard honest (both review findings on the widening itself):
+     *
+     *  · ANY selection move closes the overlay — a within-thread move included, because the
+     *    seam's cleanup releases and revokes the whole conversation's byte state on exactly
+     *    that trigger, and an overlay held open across it would stand over revoked bytes and
+     *    re-fetch them on its own (`ensure` runs from its render effect). The previous
+     *    selection is a ref, not state: it is bookkeeping about the transition, and reading
+     *    it in render would make the transition a render input.
+     *
+     *  · `version` is a dependency, so the membership test is re-evaluated when the MIRROR
+     *    moves — a previewed sibling that a drain deletes, rethreads or twin-collapses away
+     *    no longer holds its overlay open on a stale answer.
      */
     const held =
+      before === (selectedOhbox?.id ?? null) &&
       selectedOhbox != null &&
       (previewFor.messageId === selectedOhbox.id ||
         threadOf(reader, selectedOhbox.id).some((m) => m.id === previewFor.messageId));
     if (!held) setPreviewFor(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [previewFor, selectedOhbox?.id]);
+  }, [previewFor, selectedOhbox?.id, version]);
 
   /**
    * What the reader is showing, read from the mirror on every render.
