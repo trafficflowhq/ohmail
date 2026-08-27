@@ -43,7 +43,7 @@
  * than reading a version that cannot change.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { threadOf, type OhmailEngine } from "@ohmail/client-engine";
 import { isAuthListFailure, type AttachmentItem, type AttachmentsView } from "../components/AttachmentStrip";
 import { desktopAttachmentsEnabled, openAttachmentWithSystemViewer } from "./open-attachment";
@@ -244,6 +244,16 @@ function useEngineNotice(engine: OhmailEngine): number {
 }
 
 /**
+ * `useLayoutEffect` in a browser; `useEffect` where there is nothing to lay out — the same
+ * module-scope choice `older-mail.ts` makes, for the same two reasons: hooks must be the same
+ * hook on every render, and a bare `useLayoutEffect` in a server render is a `console.error`
+ * (Next pre-renders client components). On the server there is no commit and no microtask
+ * racing a completion, so the passive fallback loses nothing there; in the browser the layout
+ * phase is the point — see the ref publication in `useMessageAttachments`.
+ */
+const useCommitEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
+
+/**
  * How many sibling LIST reads may be in the air at once. The same width as the engine's own
  * body-hydration cap (`hydrateThread` departs four bodies at a time), and for the same reason:
  * a thread's length must not translate into a burst the browser queues and the deadline then
@@ -420,16 +430,22 @@ export function useMessageAttachments(
    */
   const askRef = useRef(ask);
   /*
-   * THE COMMIT-PHASE PUBLICATION — declared ABOVE the sweep that fills the queue and pumps,
-   * because effects run in declaration order within a commit: by the time a worker exists to
-   * dereference these refs, they already name this commit's engine. The selected-id effect is
-   * declared earlier and does not consult the refs at ask time — it calls its own commit's
-   * `ask` directly — and its completion guard reads them only in a microtask, which cannot
-   * run until the whole passive-effect flush (this publication included) has finished.
+   * THE COMMIT-SCOPE PUBLICATION — a LAYOUT effect, not a passive one, and that is the whole
+   * point: passive effects flush after paint, and an already-queued promise continuation can
+   * run in the gap between the commit and that flush. A completion landing in the gap under a
+   * passive publication read the OLD refs — an obsolete result accepted, a calendar pass
+   * started, the crew's next take sent to a live engine from inside the demo (review finding,
+   * the round after render-time assignment was ruled out for abandoned-render reasons). The
+   * layout phase runs synchronously inside the commit, before any microtask, so by the time
+   * ANY continuation or worker can observe these refs they name the committed engine.
    */
-  useEffect(() => {
+  useCommitEffect(() => {
     engineRef.current = engine;
     askRef.current = ask;
+    // The old world's QUEUE retires with its engine, in the same synchronous phase: a worker
+    // resuming in the commit-to-passive gap must find nothing stale to take. The passive sweep
+    // refills it with the committed conversation when the flush arrives.
+    pendingLists.current = [];
   }, [engine, ask]);
   const pump = useCallback((): void => {
     while (listWorkers.current < SIBLING_LIST_CONCURRENCY && pendingLists.current.length > 0) {
