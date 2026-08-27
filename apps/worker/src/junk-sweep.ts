@@ -23,9 +23,10 @@
  * for `changesSince` to adopt, and nothing is husked or marked that did not land in Junk.
  */
 
-import { and, isNull, eq, sql } from "drizzle-orm";
-import { messages, type Tx } from "@trafficflow/db";
-import { FILING_BATCH_MAX, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
+import { eq } from "drizzle-orm";
+import { folderState, junkSweepCandidateWhere, messages, type Tx } from "@trafficflow/db";
+import { FILING_BATCH_MAX, type MailboxAdapter, type MoveManyResult } from "@trafficflow/core/adapters/imap";
+import type { NativeLocator } from "@trafficflow/core";
 import type { WorkerRepo, PendingFolderState } from "@trafficflow/core/adapters/drizzle-repo";
 import { completeFiling, SPAM_PILE, type SpecialFolderMap } from "./junk-filing.js";
 
@@ -61,19 +62,16 @@ export async function junkSweepPass(opts: {
 }): Promise<JunkSweepResult> {
   const { db, repo, adapter, accountId, mailboxId, execute, limit, guard } = opts;
 
-  // Physically in the pile, still alive in the mirror. `native_locator` is the primary
-  // instance's mirror, so this is exactly the set a per-message move can act on.
+  // Physically in the pile, still alive in the mirror, still DESIRED there — the ONE predicate
+  // the API's preview counts by too (`junkSweepCandidateWhere`, packages/db). `native_locator`
+  // is the primary instance's mirror, so this is exactly the set a per-message move can act on.
   const rows = await db.select({
     messageId: messages.id,
     subject: messages.subject,
     locator: messages.nativeLocator,
   }).from(messages)
-    .where(and(
-      eq(messages.mailboxId, mailboxId),
-      eq(messages.accountId, accountId),
-      isNull(messages.deletedAt),
-      sql`${messages.nativeLocator} ->> 'folder' = ${SPAM_PILE}`,
-    ))
+    .innerJoin(folderState, eq(folderState.messageId, messages.id))
+    .where(junkSweepCandidateWhere(accountId, mailboxId))
     .orderBy(messages.id)
     .limit(limit ?? 10_000);
 
@@ -100,6 +98,27 @@ export async function junkSweepPass(opts: {
     lastSetBy: "us", nativeLocator: { folder: SPAM_PILE, ref: c.ref },
   }));
 
+  /**
+   * THE COMPLETION RUNS OUTSIDE EVERY CATCH BELOW, and that is the fence's whole protection here.
+   * The IMAP half of a member may fail on its own account (a UID the server no longer holds, a
+   * refused MOVE) and is then SKIPPED and reported; the database half rides the repo's
+   * `transaction` — which, from the worker cycle, IS the fenced group — and a throw out of it
+   * is proof of lost leadership or a database fault, never evidence about a message. A catch
+   * around it would read a fence refusal as "skip this one and carry on", and a stale worker
+   * would keep issuing MOVEs beside the new leader. So it propagates, and the sweep aborts with
+   * everything consistent: moved-but-uncompleted members are adopted by the next cycle's
+   * `changesSince`, and the command stamp that requested the sweep is not retired.
+   */
+  const complete = async (p: PendingFolderState, newLoc: NativeLocator): Promise<void> => {
+    await repo.transaction(async (r) => {
+      await completeFiling(r, accountId, mailboxId, p, newLoc, special);
+      await r.recordAudit(accountId, "sweep.junk_filed",
+        { messageId: p.messageId, from: p.nativeLocator, newLocator: newLoc },
+        { action: "move", locator: newLoc, toFolder: SPAM_PILE });
+    });
+    result.moved.push(p.messageId);
+  };
+
   for (let i = 0; i < pending.length; i += FILING_BATCH_MAX) {
     const chunk = pending.slice(i, i + FILING_BATCH_MAX);
     // The leadership check before this chunk's IMAP writes — a refusal propagates, never caught
@@ -107,49 +126,43 @@ export async function junkSweepPass(opts: {
     if (guard) await guard();
     // The batched fast path when the adapter can prove it, per-message otherwise — the
     // reconciler's exact fallback shape, minus its deferral machinery: a sweep is one
-    // invocation, so a refusal is reported and left rather than scheduled.
-    let batched = false;
+    // invocation, so a refusal is reported and left rather than scheduled. ONLY the IMAP call
+    // sits in the try: its refusal is what selects the fallback.
+    let batched: MoveManyResult | null = null;
     if (typeof adapter.moveMany === "function") {
       try {
         const res = await adapter.moveMany(chunk.map((p) => p.nativeLocator!), junk);
-        if (res.batched) {
-          batched = true;
-          for (const p of chunk) {
-            const newLoc = res.moved.get(p.nativeLocator!.ref);
-            if (!newLoc) {
-              result.skipped.push({ messageId: p.messageId, reason: "gone from ohmail/Quarantine (sync adopts it)" });
-              continue;
-            }
-            await repo.transaction(async (r) => {
-              await completeFiling(r, accountId, mailboxId, p, newLoc, special);
-              await r.recordAudit(accountId, "sweep.junk_filed",
-                { messageId: p.messageId, from: p.nativeLocator, newLocator: newLoc },
-                { action: "move", locator: newLoc, toFolder: SPAM_PILE });
-            });
-            result.moved.push(p.messageId);
-          }
-        }
+        if (res.batched) batched = res;
       } catch {
-        batched = false;
+        batched = null;
       }
     }
-    if (batched) continue;
+    if (batched !== null) {
+      for (const p of chunk) {
+        const newLoc = batched.moved.get(p.nativeLocator!.ref);
+        if (!newLoc) {
+          result.skipped.push({ messageId: p.messageId, reason: "gone from ohmail/Quarantine (sync adopts it)" });
+          continue;
+        }
+        await complete(p, newLoc);
+      }
+      continue;
+    }
+    // The per-message fallback issues its own IMAP writes — the same fresh leadership read
+    // before them as before the batch it replaces.
+    if (guard) await guard();
     for (const p of chunk) {
+      let newLoc: NativeLocator;
       try {
-        const newLoc = await adapter.move(p.nativeLocator!, junk);
-        await repo.transaction(async (r) => {
-          await completeFiling(r, accountId, mailboxId, p, newLoc, special);
-          await r.recordAudit(accountId, "sweep.junk_filed",
-            { messageId: p.messageId, from: p.nativeLocator, newLocator: newLoc },
-            { action: "move", locator: newLoc, toFolder: SPAM_PILE });
-        });
-        result.moved.push(p.messageId);
+        newLoc = await adapter.move(p.nativeLocator!, junk);
       } catch (err) {
         result.skipped.push({
           messageId: p.messageId,
           reason: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
         });
+        continue;
       }
+      await complete(p, newLoc);
     }
   }
   return result;

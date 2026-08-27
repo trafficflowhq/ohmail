@@ -1,6 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import {
   pruneIdempotencyKeys, noticeSinkFor, setNoticeSink, accountSettings, mailboxCredentials, mailboxes,
+  messages, folderState, junkSweepCandidateWhere,
 } from "@trafficflow/db";
 import { makeOwnedDb, makeChangeWakeHub, type OwnedDb, type ChangeWakeFanout } from "@trafficflow/db/cloud";
 import {
@@ -56,6 +57,13 @@ import { acquireLeaderLock, leaderLockKeyFor, LockLostError, type LeaderLock } f
 import { startApiCron, type ApiCronHandle, type ApiCronTargetHealth } from "./api-cron.js";
 import { runSyncCycle, LeaderFencedError, type SyncDeps } from "./sync.js";
 import { junkSweepPass } from "./junk-sweep.js";
+
+/**
+ * How many Quarantine members one cycle's sweep slice may move — the filing budget's argument
+ * (`RECONCILE_MOVES_PER_CYCLE`) applied to the one-time sweep: a large pile rotates through the
+ * serial queue rather than holding it, and the command stands until the pile is drained.
+ */
+const JUNK_SWEEP_PER_CYCLE = 200;
 import { makeStorageCapResolver } from "./storage-cap.js";
 import { DeadLetterLedger, isDatabaseFault, isSharedDatabaseFault } from "./dead-letter.js";
 import { KnownSetCache } from "./known-set.js";
@@ -1858,11 +1866,31 @@ export async function startWorkerWithLock(
           junkSweep: {
             requested: async () => {
               const [row] = await db
-                .select({ at: sql<string | null>`${mailboxes.junkSweepRequestedAt}::text` })
+                .select({
+                  at: sql<string | null>`${mailboxes.junkSweepRequestedAt}::text`,
+                  off: mailboxes.foldersDisabledAt,
+                })
                 .from(mailboxes)
                 .where(eq(mailboxes.id, mb.mailboxId))
                 .limit(1);
-              return row?.at ?? null;
+              if (!row || row.at === null) return null;
+              if (row.off !== null) {
+                // Switched off under "Use folders" since the press (§17): an opted-out mailbox
+                // performs no move on the feature's account. The stale stamp is retired here
+                // — at its observed value — so the offer does not read "queued" for ever.
+                await db.update(mailboxes)
+                  .set({ junkSweepRequestedAt: null })
+                  .where(and(
+                    eq(mailboxes.id, mb.mailboxId),
+                    sql`${mailboxes.junkSweepRequestedAt} = ${row.at}::timestamptz`,
+                  ));
+                log.info("junk_sweep_command_dropped", {
+                  mailboxId: mb.mailboxId, accountId: mb.accountId,
+                  reason: "the mailbox was switched off under Use folders after the press; nothing moves",
+                });
+                return null;
+              }
+              return row.at;
             },
             run: (hooks) => {
               const fencedRepo = new Proxy(repo, {
@@ -1872,7 +1900,16 @@ export async function startWorkerWithLock(
               return junkSweepPass({
                 db: db as unknown as Tx, repo: fencedRepo, adapter: attachedAdapter,
                 accountId: mb.accountId, mailboxId: mb.mailboxId, execute: true, guard: hooks.guard,
+                limit: JUNK_SWEEP_PER_CYCLE,
               });
+            },
+            remaining: async () => {
+              const [row] = await db
+                .select({ n: sql<number>`count(*)::int` })
+                .from(messages)
+                .innerJoin(folderState, eq(folderState.messageId, messages.id))
+                .where(junkSweepCandidateWhere(mb.accountId, mb.mailboxId));
+              return Number(row?.n ?? 0);
             },
             clear: async (observed) => {
               await db.update(mailboxes)

@@ -1490,13 +1490,17 @@ export const MAIL_EXPECTED_MARKERS =
  *
  * `0075_mailbox_signature` is probed as `mailboxes.signature` — the per-mailbox signature
  * text, one nullable column read by the whole-row `MailboxService.list` select and by name in
- * `mailboxSignatures` (the `GET /consent` map). It is the newest entry, so it is the tag
- * below.
+ * `mailboxSignatures` (the `GET /consent` map).
+ *
+ * `0076_junk_sweep_request` is probed as `mailboxes.junk_sweep_requested_at` — the one-time
+ * Quarantine→Junk sweep's command stamp, one nullable column read by the whole-row
+ * `MailboxService.list` select and by name in the sweep preview (`GET /screener/junk/sweep`).
+ * It is the newest entry, so it is the tag below.
  */
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0075_mailbox_signature";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0076_junk_sweep_request";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */

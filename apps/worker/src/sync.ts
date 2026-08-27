@@ -226,18 +226,22 @@ export interface JunkSweepCommandPort {
   /**
    * The stamp as the SERVER renders it (`::text`), or null when no press is owed. Text, not a
    * Date: the clear compares against exactly this token, and a JS `Date` loses the microseconds
-   * a Postgres timestamptz keeps (`sync-kick.ts` measured the miss).
+   * a Postgres timestamptz keeps (`sync-kick.ts` measured the miss). A mailbox switched off
+   * under "Use folders" since the press answers null too (and the port retires the stale stamp
+   * itself): an opted-out mailbox performs no move on the feature's account.
    */
   requested(): Promise<string | null>;
   /**
-   * Run the sweep — `junkSweepPass` with `execute: true` — under the cycle's fences: `guard` is
-   * the fresh leadership read before every chunk's IMAP mutation, `write` the fenced group every
-   * completion write rides.
+   * Run ONE BOUNDED SLICE of the sweep — `junkSweepPass` with `execute: true` and a per-cycle
+   * limit — under the cycle's fences: `guard` is the fresh leadership read before every chunk's
+   * IMAP mutation, `write` the fenced group every completion write rides.
    */
   run(hooks: {
     guard: () => Promise<void>;
     write: <T>(fn: (repo: WorkerRepo) => Promise<T>) => Promise<T>;
   }): Promise<{ moved: string[]; skipped: ReadonlyArray<unknown>; junkFolder: string | null }>;
+  /** How many movable candidates the pile still holds AFTER the slice — what decides retirement. */
+  remaining(): Promise<number>;
   /** Retire ONLY the observed stamp — a press that landed mid-sweep survives for the next cycle. */
   clear(observed: string): Promise<void>;
 }
@@ -586,12 +590,24 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
   // organizer inside its serial cycle before the cursor is built, so this cycle's `changesSince`
   // already observes the moves. The pass is `junkSweepPass` — the operator CLI's exact function,
   // never a second implementation — with every IMAP mutation behind the same fresh leadership
-  // read (`guard`) and every completion write inside the fenced group (`write`). The stamp is
-  // retired AFTER the pass returns and only at the value observed, so a press that lands
-  // mid-sweep is served by the next cycle rather than lost; a pass that throws leaves the stamp
-  // standing and the next cycle tries again (the sweep is idempotent — a moved member is no
-  // longer a candidate). Only fence refusals leave this block: anything else is logged and the
-  // mailbox's mail flow continues, exactly as the folder-ops pass above.
+  // read (`guard`) and every completion write inside the fenced group (`write`).
+  //
+  // ONE BOUNDED SLICE PER CYCLE, RETIRED ONLY WHEN THE PILE IS DRAINED. The pass takes a
+  // per-cycle limit (the port's), so a large pile rotates through the serial queue the way the
+  // filing budget does instead of monopolizing it; after the slice the port re-counts what is
+  // still movable, and the stamp is retired ONLY when nothing is — or when the slice moved
+  // NOTHING at all, which is a pile the server refuses (every member skipped) and would
+  // otherwise be retried every cycle for ever. A retired-while-nonempty stamp is honest on
+  // screen: the preview reads `pending: false` with candidates left, so the offer returns with
+  // the remaining number and the person can press again. While the pile drains, `owesFiling`
+  // is raised so the caller re-kicks this mailbox rather than waiting out a poll interval.
+  //
+  // The clear compares the OBSERVED token, so a press that lands mid-sweep is served by the
+  // next cycle rather than lost; a pass that throws leaves the stamp standing and the next
+  // cycle tries again (the sweep is idempotent — a moved member is no longer a candidate). Only
+  // fence refusals leave this block: anything else is logged and the mailbox's mail flow
+  // continues, exactly as the folder-ops pass above.
+  let sweepOwesMore = false;
   if (deps.junkSweep !== undefined) {
     try {
       const observed = await deps.junkSweep.requested();
@@ -600,13 +616,24 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
           guard: () => fenceImapMutation(deps),
           write: (fn) => fencedGroup(deps, fn),
         });
+        const left = await deps.junkSweep.remaining();
+        const drained = left === 0;
+        const stuck = !drained && res.moved.length === 0;
+        if (drained || stuck) {
+          await deps.junkSweep.clear(observed);
+        } else {
+          sweepOwesMore = true;
+        }
         log?.info("junk_sweep_command_ran", {
           mailboxId, accountId, moved: res.moved.length, skipped: res.skipped.length,
-          junkFolder: res.junkFolder,
-          reason: "the account's user pressed the one-time Quarantine→Junk offer; the recorded " +
-            "command was executed inside this cycle and retired",
+          junkFolder: res.junkFolder, remaining: left,
+          retired: drained || stuck,
+          reason: drained
+            ? "the account's user pressed the one-time Quarantine→Junk offer; the pile is drained and the command retired"
+            : stuck
+              ? "the slice moved nothing — the server refused every member — so the command is retired rather than retried every cycle; the offer returns with what is left"
+              : "one bounded slice landed; the command stands and the mailbox is re-kicked for the next slice",
         });
-        await deps.junkSweep.clear(observed);
       }
     } catch (err) {
       rethrowFenced(err);
@@ -964,7 +991,7 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
 
   const { owesMore } = await reconcileMailbox(deps);
   if (firstDeferredError !== null) throw firstDeferredError;
-  return { hasBacklog: batch.hasBacklog ?? false, owesFiling: owesMore || folderOpsOweMore };
+  return { hasBacklog: batch.hasBacklog ?? false, owesFiling: owesMore || folderOpsOweMore || sweepOwesMore };
 }
 
 /**

@@ -1383,7 +1383,11 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       if (!mb || mb.exists === 0 || term.length === 0) return { uidValidity, items: [], truncated: false };
 
       const found = await this.client.search({ or: [{ from: term }, { subject: term }] }, { uid: true });
-      const uids = Array.isArray(found) ? [...found].sort((a, b) => b - a) : [];
+      // imapflow does NOT reject a refused SEARCH — it answers `false` (its declared return is
+      // `number[] | false`). Reading that as "no matches" would make a failed provider search
+      // an honest-looking empty answer; it is a failure, and the caller states it as one.
+      if (!Array.isArray(found)) throw new Error("the server refused the SEARCH");
+      const uids = [...found].sort((a, b) => b - a);
       if (uids.length === 0) return { uidValidity, items: [], truncated: false };
       const wanted = uids.slice(0, limit);
 

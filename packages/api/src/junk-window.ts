@@ -1,6 +1,7 @@
 import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import {
-  contacts, mailboxes, messageBodies, messages, recordChange, rules as rulesTbl, type Tx,
+  contacts, folderState, junkSweepCandidateWhere, mailboxes, messageBodies, messages, recordChange,
+  rules as rulesTbl, type Tx,
 } from "@trafficflow/db";
 import {
   FOLDER_PAGE_MAX, MessageGoneError, makeRef,
@@ -795,9 +796,6 @@ export async function rescueJunk(
    The worker executes; see the module header and `apps/worker/src/junk-sweep.ts`.
    ══════════════════════════════════════════════════════════════════════════════════════════ */
 
-/** The pile the sweep empties — the pre-§16 spam destination, still every flag-off verdict's. */
-const QUARANTINE_PILE = "ohmail/Quarantine";
-
 export interface JunkSweepMailbox {
   id: string;
   address: string;
@@ -818,8 +816,12 @@ export interface JunkSweepPreview {
 }
 
 /**
- * The dry run the offer shows — per connected mailbox, the pile's size and whether it can move.
- * One GROUP BY over `messages.native_locator`, one mailbox read; no dial, no write.
+ * The dry run the offer shows — per connected, PARTICIPATING mailbox, the pile's size and whether
+ * it can move. One count per mailbox over the sweep's own predicate (`junkSweepCandidateWhere`,
+ * shared with the worker's pass so the number offered is the number moved), one mailbox read; no
+ * dial, no write. A mailbox switched off under "Use folders" (§17, `folders_disabled_at`) is
+ * absent from the answer and can therefore never be stamped: an opted-out mailbox performs no
+ * move and no IMAP write on the feature's account.
  */
 export async function junkSweepPreview(deps: ApiDeps, accountId: string): Promise<JunkSweepPreview> {
   await requireFolders(deps, accountId);
@@ -829,19 +831,21 @@ export async function junkSweepPreview(deps: ApiDeps, accountId: string): Promis
       requestedAt: mailboxes.junkSweepRequestedAt,
     })
     .from(mailboxes)
-    .where(and(eq(mailboxes.accountId, accountId), ne(mailboxes.status, "disabled")));
-  if (boxes.length === 0) return { mailboxes: [], movable: 0, pending: false };
-  const counts = await deps.db
-    .select({ mailboxId: messages.mailboxId, n: sql<number>`count(*)::int` })
-    .from(messages)
     .where(and(
-      eq(messages.accountId, accountId),
-      inArray(messages.mailboxId, boxes.map((b) => b.id)),
-      isNull(messages.deletedAt),
-      sql`${messages.nativeLocator} ->> 'folder' = ${QUARANTINE_PILE}`,
-    ))
-    .groupBy(messages.mailboxId);
-  const countOf = new Map(counts.map((c) => [c.mailboxId, Number(c.n)]));
+      eq(mailboxes.accountId, accountId),
+      ne(mailboxes.status, "disabled"),
+      isNull(mailboxes.foldersDisabledAt),
+    ));
+  if (boxes.length === 0) return { mailboxes: [], movable: 0, pending: false };
+  const countOf = new Map<string, number>();
+  for (const b of boxes) {
+    const [row] = await deps.db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(messages)
+      .innerJoin(folderState, eq(folderState.messageId, messages.id))
+      .where(junkSweepCandidateWhere(accountId, b.id));
+    countOf.set(b.id, Number(row?.n ?? 0));
+  }
   const out: JunkSweepMailbox[] = boxes.map((b) => ({
     id: b.id, address: b.address,
     candidates: countOf.get(b.id) ?? 0,

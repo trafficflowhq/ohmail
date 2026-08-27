@@ -35,6 +35,9 @@ export const DB_VERSION = "0.0.0";
  * put every Cloud table into every consumer of this package — including the desktop engine's
  * shipped bundle. Hosted tables live on `@trafficflow/db/cloud`. */
 export * from "./schema-mail.js";
+// The one-time Quarantine→Junk sweep's candidate predicate — one clause the API's preview and
+// the worker's pass both count by. A pure predicate over the mail schema, nothing more.
+export { junkSweepCandidateWhere, JUNK_SWEEP_SOURCE_PILE } from "./junk-sweep.js";
 
 export {
   allocateSeq, allocateSeqRange, recordChange, recordChanges, minRetainedSeq, seqBounds,
