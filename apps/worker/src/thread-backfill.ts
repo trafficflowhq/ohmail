@@ -109,6 +109,9 @@ export interface ThreadBackfillDeps {
   deadlineMs?: number;
   /** TEST SEAM: the clock the deadline is measured on. */
   now?: () => number;
+  /** TEST SEAM: awaited at the start of each page's transaction, before the account-structure
+   * lock. Production callers never pass it. */
+  beforePageLock?: () => Promise<void> | void;
 }
 
 export interface ThreadBackfillResult {
@@ -180,6 +183,7 @@ export async function runThreadBackfill(deps: ThreadBackfillDeps): Promise<Threa
     // would let a zero budget make no progress at all and re-read the same rows for ever.
     if (page > 0 && deadline !== null && now() >= deadline) { stoppedBy = "deadline"; break; }
     const batch = await repo.transaction(async (tx) => {
+      if (deps.beforePageLock) await deps.beforePageLock();
       // Serialize against account erasure BEFORE the backlog lock — see
       // `ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS`: the two lock `threads`/`messages` in opposite
       // orders for reasons neither can give up, so instead of racing to acquire them,
