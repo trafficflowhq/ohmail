@@ -257,7 +257,12 @@ export function htmlToPlainText(html: string): string {
    * by {@link blankLine} at the closing tag.
    */
   const flush = (): void => {
-    const body = line.replace(/[ \t]+/g, " ").replace(/^[ \t]+|[ \t]+$/g, "");
+    // NBSP-only is EMPTY: `<p>&nbsp;</p>` is the common empty-paragraph placeholder, and a
+    // body of preserved-width characters with nothing beside them is a gap, not a line — the
+    // paragraph-close check reads it as blank, and this must agree or the output carries a
+    // space-only line AND the blank line.
+    const kept = line.replace(/[ \t]+/g, " ").replace(/^[ \t]+|[ \t]+$/g, "");
+    const body = kept.replace(/\u00a0/g, "").trim() === "" ? "" : kept;
     const marker = lead;
     line = "";
     lead = "";
@@ -297,7 +302,12 @@ export function htmlToPlainText(html: string): string {
    * capped by the final collapse, so `<br><br><br>` is one gap and not three.
    */
   const hardBreak = (): void => {
-    const body = line.replace(/[ \t]+/g, " ").replace(/^[ \t]+|[ \t]+$/g, "");
+    // NBSP-only is EMPTY: `<p>&nbsp;</p>` is the common empty-paragraph placeholder, and a
+    // body of preserved-width characters with nothing beside them is a gap, not a line — the
+    // paragraph-close check reads it as blank, and this must agree or the output carries a
+    // space-only line AND the blank line.
+    const kept = line.replace(/[ \t]+/g, " ").replace(/^[ \t]+|[ \t]+$/g, "");
+    const body = kept.replace(/\u00a0/g, "").trim() === "" ? "" : kept;
     const marker = lead;
     line = "";
     lead = "";
@@ -464,7 +474,11 @@ export function htmlToPlainText(html: string): string {
    * BETWEEN the recorded code spans and leaves their bytes alone. The spans are in the order
    * they were written and cannot overlap, so one pass over them is the whole of it.
    */
-  const collapse = (s: string): string => s.replace(/\n{3,}/g, "\n\n");
+  // The no-break spaces carried this far exist to SURVIVE the whitespace collapse, not to
+  // reach a recipient: prose ships the same width in ordinary spaces. INSIDE a recorded code
+  // span the bytes are the author's verbatim — an NBSP in pasted source stays an NBSP.
+  const collapse = (s: string): string =>
+    s.replace(/\n{3,}/g, "\n\n").replace(/\u00a0/g, " ");
   let result = "";
   let cursor = 0;
   for (const [start, end] of codeSpans) {
@@ -472,9 +486,7 @@ export function htmlToPlainText(html: string): string {
     cursor = end;
   }
   result += collapse(out.slice(cursor));
-  // The no-break spaces carried this far exist to SURVIVE the collapse above, not to reach a
-  // recipient: the delivered text/plain says the same width in ordinary spaces.
-  return result.replace(/\n+$/, "").replace(/\u00a0/g, " ");
+  return result.replace(/\n+$/, "");
 }
 
 /**

@@ -2973,6 +2973,21 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
     active: route.view === "compose",
   });
   releaseDraft.current = autosave.settled;
+  /**
+   * THE BLOCK STATE FOLLOWS THE ROW (review round 3). While autosave holds a row, the compose
+   * form's signature state mirrors into the editor meta under `draft:<rowId>` — the handle a
+   * reload cannot lose — so reopening the same row from Drafts (before or after a reload)
+   * restores a struck or edited block. `following` stores nothing: absence IS the resting
+   * state, and the meta dies with the row (`settle`, discard, cancel).
+   */
+  useEffect(() => {
+    if (!autosave.draftId) return;
+    const sig = compose.sig;
+    writeReplyMeta(
+      `draft:${autosave.draftId}`,
+      sig && sig.kind !== "following" ? { sig } : {},
+    );
+  }, [autosave.draftId, compose.sig]);
 
   /**
    * THE DRAFTS LIST, and the two things a row can do.
@@ -3057,22 +3072,17 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
         // for an oversight, and because the fix is a schema change, not a line in this function.
         //
         // THE SIGNATURE BLOCK'S STATE survives exactly as far as this device knows it (review
-        // rounds 1–2). The `drafts` row stores the message's prose and no block state, so a
+        // rounds 1–3). The `drafts` row stores the message's prose and no block state, so a
         // draft reopened from ANOTHER device re-offers the block in its resting `following`
         // state — visibly, below the editor, strikeable again; never silently inside the prose.
-        // On THIS device the state carries over when the row being reopened is the one autosave
-        // holds, OR — after a reload, when autosave starts empty — when the form (hydrated from
-        // the local buffer) holds EXACTLY this row's message: same prose, same audience, so the
-        // buffer's block state is this message's. Content-addressed rather than an id in the
-        // buffer, because contents that differ mean the row moved on elsewhere and the resting
-        // state is then the honest one. The full cross-device fix is a drafts column — a schema
-        // change, recorded rather than smuggled.
-        ...(compose.sig
-          && (autosave.draftId === d.id
-            || (compose.subject === d.subject
-              && compose.body === d.body
-              && compose.to === formatRecipientChips(d.to)))
-          ? { sig: compose.sig }
+        // On THIS device the state lives in the editor meta under the ROW's id (`draft:<id>` —
+        // see `ReplyEditorMeta`; the sync effect beside the autosave hook writes it), which is
+        // the one handle that survives a reload and names the same message: rounds 2–3 killed
+        // both weaker keys, the in-memory autosave id (empty after reload) and a content key
+        // (a rich draft's local text and server-derived text legitimately differ). The full
+        // cross-device fix is a drafts column — a schema change, recorded rather than smuggled.
+        ...(d.status === "draft" && readReplyMeta(`draft:${d.id}`).sig
+          ? { sig: readReplyMeta(`draft:${d.id}`).sig }
           : {}),
       };
       setCompose(seeded);
@@ -3093,11 +3103,13 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
       }
       go("compose");
     },
-    [draftRepliesHere, autosave, go, reader, version, compose],
+    [draftRepliesHere, autosave, go, reader, version],
   );
   const discardDraft = useCallback(
     (draftId: string) => {
       void engine.mutate({ kind: "draft_discard", draftId });
+      // The row's life ends; the block state keyed to it goes with it.
+      writeReplyMeta(`draft:${draftId}`, {});
       // The compose form may be holding the very row that was just deleted — discarding from the
       // list while it is open would otherwise leave autosave PATCHing a row that is gone, and the
       // next pause would report a 404 nobody could act on.
@@ -3173,6 +3185,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    * until the wire answers would make leaving a message feel like a network operation.
    */
   const cancelCompose = useCallback(() => {
+    if (autosave.draftId) writeReplyMeta(`draft:${autosave.draftId}`, {});
     void autosave.discard();
     // An abandoned RECOVERY is only abandoned: the fresh copy this compose made goes (above),
     // but the stranded row it was recovering stays in Drafts — nothing got delivered, so the

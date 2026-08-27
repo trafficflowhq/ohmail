@@ -177,9 +177,12 @@ export function writeReplyDraft(messageId: string, value: RichValue): void {
  * shape-based (`parseRichValue`: a bare string or the rich envelope) and growing it a third
  * shape would complicate every reader for two small fields. The LANE is the key, exactly as
  * the body scratch's is: a reply's meta lives under the message id, an inline forward's under
- * `fwd:<id>` — a half-written reply and a forward note on the same message are different
- * messages with different signatures. Cleared where the body scratch clears: in `settle`,
- * because "the send landed" means the whole per-message state is spent.
+ * `fwd:<id>`, and the compose form's under `draft:<rowId>` — the AUTOSAVED ROW's id, because
+ * that is the one handle that survives a reload and names the same message on this device
+ * (review rounds 2–3: a content key broke on rich drafts, whose local text and server-derived
+ * text legitimately differ). Cleared where the body scratch clears: in `settle`, because "the
+ * send landed" means the whole per-message state is spent — and by the draft verbs that end a
+ * row's life (`discardDraft`, the compose cancel).
  *
  * `subject` is absent while the derived `Re:` one stands; `sig` is absent while `following`
  * stands — absence IS the resting state, and a meta with neither field stores nothing.
@@ -363,6 +366,14 @@ export function useMailSend(
       if (m.inReplyTo === null) {
         if (key === COMPOSE_SEND_KEY) {
           clearComposeDraft();
+          // The delivered message's row is spent, and so is the block state keyed to it.
+          if (m.draftId) {
+            try {
+              window.localStorage.removeItem(replyMetaKey(`draft:${m.draftId}`));
+            } catch {
+              /* private mode refuses writes and therefore holds nothing to remove */
+            }
+          }
         } else {
           // The INLINE forward settled — the lane doubles as the scratch suffix, so the note
           // clears here exactly as a reply's draft does below. The compose form's autosave is

@@ -104,8 +104,12 @@ function escapeHtml(s: string): string {
  *
  * TABS EXPAND TO 4-COLUMN STOPS — column-aware, next multiple of four, not a fixed run —
  * and the three surfaces that show the text (`.sig-text`, the Settings editor and its
- * preview) declare `tab-size: 4`, so the markup's columns and the block's columns are the
- * same columns by construction. The PLAIN body half ships the user's raw text untransformed
+ * preview) declare `tab-size: 4`, so the stops agree for the plain ASCII text signatures are
+ * made of. STATED AS AN APPROXIMATION, deliberately: the column count is code units, so a
+ * combining mark or a wide glyph before a tab shifts the stop, and the surfaces render a
+ * proportional face in which no character-level encoding can promise pixel alignment — a
+ * signature that needs true columns needs a monospaced block, which is a design decision this
+ * module must not smuggle in. The PLAIN body half ships the user's raw text untransformed
  * (their tab is their character); only markup, which needs encoding anyway, expands.
  */
 const NBSP = "\u00a0";
