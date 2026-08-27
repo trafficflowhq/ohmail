@@ -2002,7 +2002,10 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
         id: messageInstances.id, folder: messageInstances.folder,
         uidvalidity: messageInstances.uidvalidity, uid: messageInstances.uid,
       }).from(messageInstances)
-        .leftJoin(mailboxFolders, and(
+        // INNER join — a survivor must live in a folder the inventory still KNOWS: an orphan
+        // instance whose folder row is gone (an interrupted earlier delete) would otherwise
+        // read as "epochless folder" and win a promotion into a deleted place.
+        .innerJoin(mailboxFolders, and(
           eq(mailboxFolders.mailboxId, messageInstances.mailboxId),
           eq(mailboxFolders.folder, messageInstances.folder),
         ))
@@ -2072,21 +2075,24 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     // SAME survivor question — a bulk delete here once removed a message's only primary row
     // without promotion, leaving a permanent locator into a deleted folder. Only entered once
     // the victims pick has drained (< limit), and bounded like it.
-    let stragglers: Array<{ messageId: string; hadPrimary: boolean }> = [];
+    let stragglerCount = 0;
     if (victims.length < limit) {
-      const rows = await this.db.select({
-        messageId: messageInstances.messageId, isPrimary: messageInstances.isPrimary,
-      }).from(messageInstances)
+      // Paged by MESSAGE, never by instance row: a row-level page could split one message's
+      // copies across pages — its primary unselected while the per-message delete below takes
+      // every row, bypassing promotion — and could under-fill while unselected messages
+      // remain, letting the caller read "clean" off a folder that still holds instances.
+      const group = await this.db.selectDistinct({ messageId: messageInstances.messageId })
+        .from(messageInstances)
         .where(and(eq(messageInstances.mailboxId, mailboxId), eq(messageInstances.folder, folder)))
         .orderBy(asc(messageInstances.messageId))
         .limit(limit);
-      const byMessage = new Map<string, boolean>();
-      for (const r of rows) byMessage.set(r.messageId, (byMessage.get(r.messageId) ?? false) || r.isPrimary);
-      stragglers = [...byMessage.entries()].map(([messageId, hadPrimary]) => ({ messageId, hadPrimary }));
-      for (const st of stragglers) {
-        await this.db.delete(messageInstances)
-          .where(and(eq(messageInstances.messageId, st.messageId), eq(messageInstances.folder, folder)));
-        if (!st.hadPrimary) continue;
+      stragglerCount = group.length;
+      for (const st of group) {
+        const removed = await this.db.delete(messageInstances)
+          .where(and(eq(messageInstances.messageId, st.messageId), eq(messageInstances.folder, folder)))
+          .returning({ isPrimary: messageInstances.isPrimary });
+        const hadPrimary = removed.some((r) => r.isPrimary);
+        if (!hadPrimary) continue;
         const [m] = await this.db.select({ deletedAt: messages.deletedAt }).from(messages)
           .where(eq(messages.id, st.messageId));
         if (!m || m.deletedAt !== null) continue;
@@ -2095,18 +2101,22 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
           await promote(st.messageId, survivor);
         } else {
           // The primary went to Trash with the sweep and nothing watched remains; the message
-          // still RENDERS elsewhere (its pending move can no longer complete — reconcile's
-          // gone-handling answers it honestly). A locator into the deleted folder would be a
-          // permanent lie; null states "no server copy known" and adoption heals a return.
+          // still RENDERS elsewhere. A locator into the deleted folder would be a permanent
+          // lie; null states "no server copy known" and adoption heals a return.
           await this.db.update(messages).set({ nativeLocator: null, updatedAt: now })
             .where(eq(messages.id, st.messageId));
         }
+        // The pending row is RETIRED with the copy it was about: its move's subject is in
+        // Trash. Kept, it would drive a same-folder move against the promoted survivor (whose
+        // destination precheck expunges the "old" copy — the survivor itself), or hang for
+        // ever in the null arm, where a pending row with no locator is never picked up.
+        await this.db.delete(folderState).where(eq(folderState.messageId, st.messageId));
         changes.push({ accountId, entityType: "message", entityId: st.messageId, op: "update", meta: null });
       }
     }
 
     await recordChangesTx(this.db as LedgerTx, changes);
-    return victims.length + stragglers.length;
+    return victims.length + stragglerCount;
   }
   async removeFolderRow(accountId: string, folderId: string): Promise<void> {
     await this.db.delete(mailboxFolders).where(eq(mailboxFolders.id, folderId));
