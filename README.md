@@ -63,7 +63,8 @@ Spam needs no AI at all: one press files the message into your mailbox's own
 Junk folder — where the mailbox has one — and the sender rule remembers, so
 the next mail from that sender never reaches the gate. Screening out or
 marking spam also sends the list's one-click unsubscribe on your behalf, where
-one is offered (on by default; a switch turns it off). Plain newsletters and
+one is offered (on by default; a switch turns it off; not yet in the
+standalone desktop app). Plain newsletters and
 receipts can be filed out of the Screener by deterministic rules alone, once
 you switch that on. ohmail deletes nothing on its own.
 

@@ -764,21 +764,32 @@ export const ANDROID_TAG_VAR = "NEXT_PUBLIC_ANDROID_RELEASE_TAG";
 /** Last-known Android tag, recorded by hand when the wiring landed (2026-08-27). */
 const LAST_KNOWN_ANDROID_TAG = "android-v0.11.2";
 
-/** @param {typeof fetch} fetcher injectable for the test next door */
+/**
+ * @param {typeof fetch} fetcher injectable for the test next door
+ *
+ * Paginated, because the list interleaves every release family: thirty newer desktop and
+ * server releases would push the whole Android family off page one, and a single-page read
+ * would then hand back {@link LAST_KNOWN_ANDROID_TAG} for ever — the exact staleness this
+ * fetch exists to prevent. Five pages bounds the walk (150 releases of headroom) and an
+ * empty page ends it early; only a genuinely missing family or a network refusal falls back.
+ */
 export async function androidReleaseTag(fetcher = fetch) {
   try {
-    const res = await fetcher(`${GITHUB_REPO_API}/releases?per_page=30`, {
-      headers: { accept: "application/vnd.github+json", "user-agent": "ohmail-build" },
-      signal: AbortSignal.timeout(3500),
-    });
-    if (!res.ok) throw new Error(`github answered ${res.status}`);
-    const body = await res.json();
-    if (!Array.isArray(body)) throw new Error("no release list");
-    const hit = body.find(
-      (r) => r && typeof r.tag_name === "string" && /^android-v\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/.test(r.tag_name) && !r.draft,
-    );
-    if (!hit) throw new Error("no android tag in the first page");
-    return hit.tag_name;
+    for (let page = 1; page <= 5; page += 1) {
+      const res = await fetcher(`${GITHUB_REPO_API}/releases?per_page=30&page=${page}`, {
+        headers: { accept: "application/vnd.github+json", "user-agent": "ohmail-build" },
+        signal: AbortSignal.timeout(3500),
+      });
+      if (!res.ok) throw new Error(`github answered ${res.status}`);
+      const body = await res.json();
+      if (!Array.isArray(body)) throw new Error("no release list");
+      const hit = body.find(
+        (r) => r && typeof r.tag_name === "string" && /^android-v\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/.test(r.tag_name) && !r.draft,
+      );
+      if (hit) return hit.tag_name;
+      if (body.length < 30) break; // the list ended without an android tag
+    }
+    throw new Error("no android tag in the release list");
   } catch {
     return LAST_KNOWN_ANDROID_TAG;
   }

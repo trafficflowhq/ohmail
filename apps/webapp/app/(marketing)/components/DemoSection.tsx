@@ -311,7 +311,14 @@ export function DemoSection() {
 
   /* scroll lock + focus, keyed on the state so the DOM the effect sees is the DOM the
      state describes. Escape is listened for on the window: it must work with focus on the
-     close control, on a dot, or nowhere in particular. */
+     close control, on a dot, or nowhere in particular.
+
+     The second listener is the half of the focus trap Tab-key handling cannot reach: a Tab
+     leaving the embedded app's last control never bubbles to this document — the browser
+     simply moves focus to the page's next control behind the dialog. `focusin` DOES fire
+     here when that happens, so focus landing outside the wrap while the dialog is open is
+     redirected to the dialog's first stop. Backward exits (shift-Tab off the first stop)
+     never reach this path: `onDialogKey` wraps them before the browser moves. */
   useEffect(() => {
     const root = document.documentElement;
     if (full) {
@@ -320,8 +327,18 @@ export function DemoSection() {
       const onKey = (e: KeyboardEvent) => {
         if (e.key === "Escape") closeFull();
       };
+      const onFocusIn = (e: FocusEvent) => {
+        const wrap = wrapRef.current;
+        if (!wrap || !(e.target instanceof Node) || wrap.contains(e.target)) return;
+        const first = wrap.querySelector<HTMLElement>("button:not([disabled]), a[href], iframe");
+        first?.focus();
+      };
       window.addEventListener("keydown", onKey);
-      return () => window.removeEventListener("keydown", onKey);
+      document.addEventListener("focusin", onFocusIn);
+      return () => {
+        window.removeEventListener("keydown", onKey);
+        document.removeEventListener("focusin", onFocusIn);
+      };
     }
     delete root.dataset.demoFull;
     return undefined;
@@ -527,18 +544,34 @@ export function DemoSection() {
     doc.addEventListener("keydown", go, { capture: true, once: true });
     doc.addEventListener("scroll", go, opts);
     /* Using the demo IS entering it: the first press inside the frame opens the full
-       window, and the press itself still lands in the app (nothing here prevents it).
-       Persistent, not `once` — after a return to the page the next press opens it again,
-       so the frame behaves the same way every time it is touched. */
+       window, and the press itself still lands in the app. On `pointerup`, NOT
+       `pointerdown`: by pointerup the click's targets are already resolved, so the
+       relayout the expansion causes cannot re-hit-test the release against a moved
+       control and swallow the visitor's first click — which is exactly what expanding
+       on pointerdown did. Persistent, not `once` — after a return to the page the next
+       press opens it again, so the frame behaves the same way every time it is touched. */
     const enter = () => {
       if (!fullRef.current) openFull(frameRef.current);
     };
-    doc.addEventListener("pointerdown", enter, { capture: true, passive: true });
-    /* Escape pressed INSIDE the app also returns to the page — in the bubble phase, so an
-       app surface that handles Escape itself (the palette, a sheet) and stops propagation
-       keeps its meaning, and only an unhandled Escape leaves the full window. */
+    doc.addEventListener("pointerup", enter, { capture: true, passive: true });
+    /* Escape pressed INSIDE the app returns to the page ONLY when the app has nothing of
+       its own for Escape to mean. The app's own consumers — the Reader, the command
+       palette, the reply run (all `role="dialog"`; the Reader also marks `body.reading`),
+       and any focused field (search, compose, a rename) — handle Escape without stopping
+       propagation or preventing default, so "was it handled" cannot be read off the event.
+       It is read off the DOM instead, BEFORE the app's handlers change it: a dialog on
+       screen or an editable element focused means this Escape belongs to the app, and only
+       an Escape arriving with the demo idle leaves the full window. */
     doc.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && fullRef.current) closeFull();
+      if (e.key !== "Escape" || !fullRef.current) return;
+      const active = doc.activeElement;
+      const busy =
+        doc.querySelector('[role="dialog"]') !== null ||
+        (doc.body?.classList.contains("reading") ?? false) ||
+        (active !== null &&
+          (active.matches("input, textarea, select, [contenteditable]") ||
+            (active as HTMLElement).isContentEditable === true));
+      if (!busy) closeFull();
     });
   }, [measure, openFull, closeFull]);
 
