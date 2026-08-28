@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, gt, inArray, isNull, ne, or } from "drizzle-orm";
+import { and, desc, eq, gt, gte, inArray, isNotNull, isNull, ne, or } from "drizzle-orm";
 import { devices, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
 import type { ServiceContext } from "../context.js";
 import { ServiceError } from "../errors.js";
@@ -658,6 +658,28 @@ export class SessionLifecycle {
               || now.getTime() - session.createdAt.getTime() <= ttls.absoluteTtlMs);
           if (renewable) return this.mintRotation(db, existing, now, ttls);
         }
+        // ── THE LOST-RESPONSE RECOVERY, past the grace window, cookie surface only ────────────
+        //
+        // A rotation is two halves: the server consumes the presented token and mints the next
+        // one, and the response carries the next one back into the browser's jar. When the
+        // second half is LOST — the lid closes mid-refresh, the network drops between commit
+        // and delivery — the jar keeps the OLD token, and the browser's next presentation of
+        // it, minutes or hours later, looked exactly like replayed theft and burned the family.
+        // Measured twice in production, one morning apart (2026-08-27: re-presented 29.5
+        // minutes after consumption, successor never used; 2026-08-28: 10.1 seconds, 114 ms
+        // past the old grace window). No grace width fixes the first shape; this does.
+        //
+        // The discriminator is USE: consumption only ever happens on presentation, so a jar
+        // that is stale always holds the family's NEWEST-CONSUMED token, and if the tail
+        // minted after it has never been consumed, nobody — owner or thief — ever USED the
+        // rotation the presenter lost. `recoverLostRotation` checks exactly that and, when it
+        // holds, consumes the dormant tail and mints afresh IN ONE CLAIM. If any descendant
+        // WAS used, this returns null and the presentation falls through to the sweep below:
+        // the theft reading stands wherever a second party actually spent the credential.
+        if (grace) {
+          const recovered = await this.recoverLostRotation(ctx, existing, now, ttls);
+          if (recovered) return recovered;
+        }
         // THE SWEEP LEAVES A ROW, and sweep + row are ONE TRANSACTION — with the sweep
         // REDONE ALONE if that transaction cannot commit. It used to leave nothing: the
         // client just started getting 401s, and the only record of WHY was raw session rows
@@ -787,6 +809,122 @@ export class SessionLifecycle {
       accessToken: newAccess, refreshToken: newRefresh, tokenType: "Bearer",
       expiresIn: Math.floor(this.cfg.accessTtlMs / 1000),
     };
+  }
+
+  /**
+   * Re-admit a stale cookie presentation whose family's tail was NEVER USED — the
+   * lost-response client — or answer `null`, which sends the caller to the reuse sweep.
+   *
+   * ── WHY THIS GRANTS NO PRIVILEGE A THIEF DID NOT ALREADY HAVE ───────────────────────────
+   *
+   * The precondition is that no token of the family minted after the presented one was ever
+   * consumed. A thief can only satisfy it by holding a stale token of a family whose owner
+   * stopped using it at exactly the theft point — and a thief in that position could have
+   * stolen the family's live TIP instead, which rotates for ever TODAY with no event written
+   * and no detection until the legitimate client returns. Recovery gives the stale-token holder
+   * that and strictly less: the acquisition is AUDITED (`refresh_recovered`), and it consumes
+   * the dormant tail, so the legitimate jar's next presentation of what it holds now finds a
+   * consumed successor and triggers the sweep — detection re-armed rather than removed. What
+   * the honest majority gets is their morning session back.
+   *
+   * Bounded five ways:
+   *  · FAMILY-BOUND — the mint reuses the presented row's account/user/session/family;
+   *    no scope change, no step-up stamp, no new session.
+   *  · TIME-BOUND — the presented token must be inside its own issued `expires_at`, the
+   *    session alive, and the surface's absolute cap (when one is set) respected.
+   *  · USE-BOUND — any consumption after the presented token's disqualifies, so the first
+   *    actual USE by a second holder ends recovery for ever on that family.
+   *  · SINGLE-WINNER — the dormant tail's consumption IS the claim: concurrent stale
+   *    presentations serialize on the row locks, exactly one performs the recovery, and a
+   *    loser converges through the fresh-consumption grace below instead of 401-ing (a 401
+   *    here would clear the jar the winner just refilled).
+   *  · COOKIE-ONLY — the `grace` flag gates it; the native/OAuth surfaces rotate serially,
+   *    have no lost-response shape a relaunch does not fix, and keep strict reuse.
+   *
+   * A fault inside the claim transaction answers `null`: fail CLOSED, into the sweep — a
+   * bookkeeping error must never widen admission, and the cost (an honest user signs in
+   * again) is exactly the pre-recovery behaviour.
+   */
+  private async recoverLostRotation(
+    ctx: ServiceContext,
+    existing: typeof refreshTokens.$inferSelect,
+    now: Date,
+    ttls: SurfaceTtls,
+  ): Promise<OAuthTokens | null> {
+    const db = asTx(ctx);
+    const consumedAt = existing.consumedAt!;
+    // The presented token's own window still stands — a rotation re-issues `expires_at` from
+    // its mint, so this bounds recovery at one rolling refresh window after the loss.
+    if (existing.expiresAt.getTime() <= now.getTime()) return null;
+    // The grace path's exact `renewable` reading: live session, inside any absolute cap.
+    const [session] = await db.select().from(sessions)
+      .where(eq(sessions.id, existing.sessionId)).limit(1);
+    const renewable = session != null && session.revokedAt == null
+      && (ttls.absoluteTtlMs == null
+        || now.getTime() - session.createdAt.getTime() <= ttls.absoluteTtlMs);
+    if (!renewable) return null;
+    // USE-BOUND: was anything minted after the presented token ever spent? Consumption only
+    // happens on presentation, so one consumed descendant means a second party (the legitimate client on
+    // another jar, or a thief) actually used the credential — the sweep's business, not ours.
+    // `>=` AND not-self, not `>`: two rotations can land in one millisecond (the wake herd is
+    // exactly a burst), and a strict comparison would read the second rotation's consumption
+    // as "not after" the first's — re-admitting a token whose descendant WAS spent. Equal
+    // stamps fail closed instead; the only cost is a sweep where a same-millisecond ancestor
+    // shares the stamp, which is the pre-recovery answer anyway.
+    const [usedAfter] = await db.select({ id: refreshTokens.id }).from(refreshTokens)
+      .where(and(
+        eq(refreshTokens.familyId, existing.familyId),
+        ne(refreshTokens.id, existing.id),
+        isNotNull(refreshTokens.consumedAt),
+        gte(refreshTokens.consumedAt, consumedAt),
+      )).limit(1);
+    if (usedAfter) return null;
+    try {
+      return await this.inTransaction(ctx, async (txCtx) => {
+        const tx = asTx(txCtx);
+        // THE CLAIM: consume the dormant tail. Row locks pick exactly one winner among
+        // concurrent recoveries; everyone else's UPDATE waits, re-evaluates, matches nothing.
+        const claimed = await tx.update(refreshTokens)
+          .set({ consumedAt: now })
+          .where(and(
+            eq(refreshTokens.familyId, existing.familyId),
+            isNull(refreshTokens.consumedAt),
+            isNull(refreshTokens.revokedAt),
+          ))
+          .returning({ id: refreshTokens.id });
+        if (claimed.length === 0) {
+          // No dormant tail left. Either a concurrent recovery won it instants ago — then the
+          // family shows a consumption newer than the presented token, fresh inside the grace
+          // window, and this loser converges exactly like a grace-loser (the shared jar takes
+          // whichever cookie lands last) — or the family genuinely has no live tip, which is
+          // the sweep's case. A 401 here is not an option: the cookie handler answers any
+          // refusal by clearing the jar, which would destroy the winner's just-written cookie.
+          const [fresh] = await tx.select().from(refreshTokens)
+            .where(and(
+              eq(refreshTokens.familyId, existing.familyId),
+              ne(refreshTokens.id, existing.id),
+              isNotNull(refreshTokens.consumedAt),
+              gte(refreshTokens.consumedAt, consumedAt),
+            ))
+            .orderBy(desc(refreshTokens.consumedAt)).limit(1);
+          if (fresh?.consumedAt
+            && now.getTime() - fresh.consumedAt.getTime() <= this.cfg.refreshReuseGraceMs) {
+            return this.mintRotation(tx, existing, now, ttls);
+          }
+          return null;
+        }
+        // Audited IN the claim's transaction: no recovery without its row while the
+        // bookkeeping works, and a bookkeeping fault rolls the claim back (the catch below
+        // answers null — the sweep, never a silent re-admission).
+        const [user] = await tx.select().from(users)
+          .where(eq(users.id, existing.userId)).limit(1);
+        await this.audit(tx, user ?? null, "refresh_recovered", undefined, txCtx,
+          `family=${existing.familyId} session=${existing.sessionId}`);
+        return this.mintRotation(tx, existing, now, ttls);
+      });
+    } catch {
+      return null;
+    }
   }
 
   protected async revokeFamily(db: Tx, familyId: string, now: Date): Promise<void> {

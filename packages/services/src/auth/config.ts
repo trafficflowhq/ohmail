@@ -116,40 +116,47 @@ export const DEFAULT_AUTH_CONFIG: Omit<AuthConfig, "rpID" | "rpName" | "origin">
   //    desktop app opened at least once a year does too.
   // ── THE REFRESH-ROTATION GRACE WINDOW (COOKIE SURFACE ONLY) ─────────────────────────────────
   //
-  // TEN SECONDS, and it is short on purpose. A browser shares ONE cookie jar across every tab and
-  // window, and the web client's refresh helper single-flights `POST /auth/refresh` only PER TAB —
-  // it has no cross-tab coordination — so the instant a second tab, a second window, or the
-  // sync client and the REST client both cross the fifteen-minute access-token expiry together,
-  // they read the SAME `tf_refresh` out of the jar and present it at once. Exactly one wins the
-  // rotation; without this window the loser's presentation of the now-consumed token was read as
-  // reuse and REVOKED THE WHOLE FAMILY, signing a working session out for the crime of being open
-  // in two tabs. That is the "Sync stopped — this session is no longer authorized" a signed-in
-  // user hit on a new tab or window.
+  // SIXTY SECONDS. A browser shares ONE cookie jar across every tab and window, so the instant a
+  // second tab, a second window, or the sync client and the REST client cross the fifteen-minute
+  // access-token expiry together, they read the SAME `tf_refresh` out of the jar and present it
+  // at once. Exactly one wins the rotation; without this window the loser's presentation of the
+  // now-consumed token was read as reuse and REVOKED THE WHOLE FAMILY, signing a working session
+  // out for the crime of being open in two tabs. That is the "Sync stopped — this session is no
+  // longer authorized" a signed-in user hit on a new tab or window.
   //
   // It applies ONLY to the cookie refresh path (`AuthService.refresh`'s `concurrentGrace`, passed
   // by the `/auth/refresh` COOKIE branch). A native/bearer client and the OAuth `refresh_token`
   // grant hold their token privately and rotate it serially — no shared jar, no per-tab
   // single-flight, so no benign race — and they keep the strict reuse response unchanged.
   //
-  // The legitimate race is bounded by the round trip of the winning refresh — the loser can only
-  // still be holding the old token until the winner's `Set-Cookie` lands in the shared jar, which
-  // is sub-second to a second or two on a slow connection. Ten seconds is margin over that, and
-  // nothing near long enough to matter to detection: a token is consumed the moment it rotates,
-  // and the real client rotates past it and never presents it again — so a presentation older
-  // than this window is a token someone kept, which is precisely the replayed-theft case reuse
-  // detection is FOR, and it still revokes.
+  // WHY SIXTY AND NOT TEN, because ten stood here and was measured failing in production
+  // (2026-08-28, a real account): this window was argued from "the loser holds the old token only
+  // until the winner's `Set-Cookie` lands, sub-second to a second or two", and that premise is
+  // FALSE at machine wake — the case where the race actually happens. A laptop opening its lid
+  // fires every suspended tab's queued refresh while the network is still re-associating; requests
+  // sit in flight for many seconds, and the family in question was revoked on a presentation
+  // arriving 10.1 seconds after its token was consumed — 114 milliseconds past the old window.
+  // The client now also single-flights refresh ACROSS tabs (`session-refresh.ts`, Web Locks),
+  // which removes the herd where the API exists; sixty seconds is the server-side bound for
+  // browsers without that API and for requests already in flight when the lock was introduced.
+  //
+  // Sixty seconds is still nothing to detection: a token is consumed the moment it rotates, the
+  // real client rotates past it and never presents it again — so a presentation older than this
+  // window is a token someone KEPT, the replayed-theft case, and it still revokes (unless the
+  // family's tail was never used at all — the lost-response recovery in `rotateRefresh`, which
+  // carries its own argument).
   //
   // THE RESIDUAL, STATED (OAuth 2.0 Security BCP / RFC 9700 §4.14.2): an attacker who can replay a
-  // stolen cookie refresh token WITHIN ten seconds of the real rotation gets a distinct live tip
+  // stolen cookie refresh token WITHIN sixty seconds of the real rotation gets a distinct live tip
   // that then rotates on its own chain — a parallel session that survives until the family is
   // revoked (a sign-out, a device revocation, or the next reuse detection outside this window).
   // That list no longer ends with `sessionAbsoluteTtlMs`, which is now null: the backstop this
   // paragraph used to name is gone, and the remaining ends are all ACTIONS rather than a timer.
-  // It requires real-time exfiltration AND hitting
-  // one ten-second window per rotation, and it is confined to the browser cookie surface. Shrinking
-  // it further would start signing honest multi-tab users out again; that is the trade this number
-  // buys, made deliberately and only where the race is real.
-  refreshReuseGraceMs: 10_000,
+  // It requires real-time exfiltration AND hitting one sixty-second window per rotation, and it
+  // is confined to the browser cookie surface. The widening from ten was bought deliberately:
+  // the ten-second version was signing out honest users every morning, and a detection that
+  // mostly detects lid-closes is not detection.
+  refreshReuseGraceMs: 60_000,
   loginTokenTtlMs: 5 * MIN,
   webauthnChallengeTtlMs: 5 * MIN,
   oauthCodeTtlMs: 60_000,           // short-TTL single-use code

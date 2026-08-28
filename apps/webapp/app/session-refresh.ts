@@ -27,8 +27,48 @@ import { markSessionAlive, markSessionDead, registerSessionProbe } from "./shell
 /** The one path that carries `tf_refresh`. Must equal `REFRESH_PATH` in `next.config.mjs`. */
 export const REFRESH_ENDPOINT = "/auth/refresh";
 
-/** The in-flight refresh, or null. Module-scoped: one per tab, which is one per cookie jar. */
+/** The in-flight refresh, or null. Module-scoped: one per tab; the jar is shared wider. */
 let inFlight: Promise<boolean> | null = null;
+
+/**
+ * ── THE CROSS-TAB LOCK, because the module-scoped promise above only covers ONE tab ─────────
+ *
+ * Every tab shares one cookie jar and one `tf_refresh`, and rotation consumes the presented
+ * token — so two tabs firing this refresh together present the SAME token and one of them is a
+ * "reuse". The server carries a grace window for exactly that, but the window is a bound, not a
+ * licence: at machine wake a whole browser's worth of suspended tabs fires at once over a
+ * network that is still re-associating, and a presentation was measured arriving 10.1 seconds
+ * after its token was consumed — past the old window, family revoked, user signed out.
+ *
+ * The Web Locks API is the browser's own cross-tab mutex: the first tab rotates while the rest
+ * QUEUE, and each queued tab's fetch then reads the JAR CURRENT AT SEND TIME — the winner's
+ * fresh cookie, not the stale one it woke up holding. Serial rotations are cheap and correct;
+ * skipping "unnecessary" ones is not worth a staleness heuristic. A browser without the API
+ * (or a lock manager that throws) falls back to today's per-tab behaviour, which the server's
+ * grace window and lost-response recovery still cover.
+ *
+ * DELIBERATELY NO TIMEOUT — not on the fetch, not on the lock wait. This request must outwait
+ * a serverless cold start (the pinned invariant in `session-resume.test.ts`: clamping it turns
+ * cold starts into sign-outs), and a queued tab inherits the same budget. The lock cannot jam
+ * for ever without a live page holding a fetch the browser itself never times out, which
+ * browsers do not allow: the network stack bounds the holder, the holder's settle frees the
+ * queue, and a closed or discarded tab releases its lock automatically.
+ */
+const REFRESH_LOCK = "ohmail:session-refresh";
+
+function withCrossTabLock(fn: () => Promise<boolean>): Promise<boolean> {
+  try {
+    const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
+    if (locks?.request) {
+      // `request` resolves with the callback's settled value; `.then` flattens the lib's
+      // nested-promise reading of that into the boolean it is at runtime.
+      return locks.request(REFRESH_LOCK, { mode: "exclusive" }, fn).then((v) => v);
+    }
+  } catch {
+    /* a lock manager that refuses is a browser without one */
+  }
+  return fn();
+}
 
 /**
  * Try to turn the refresh cookie into a live session. Resolves `true` on success.
@@ -38,7 +78,7 @@ let inFlight: Promise<boolean> | null = null;
  */
 export async function resumeSession(): Promise<boolean> {
   if (inFlight) return inFlight;
-  inFlight = (async () => {
+  inFlight = withCrossTabLock(async () => {
     try {
       /*
        * THE CSRF HEADER IS REQUIRED HERE, and the comment that used to stand in its place was
@@ -80,6 +120,8 @@ export async function resumeSession(): Promise<boolean> {
        * Absent cookie ⇒ no header, which is the genuinely session-less case where the guard does
        * not run.
        */
+      // Read INSIDE the lock, not before it: a queued tab must send the cookie and CSRF value
+      // current AFTER the winner's rotation landed, which is the whole point of queueing.
       const csrf = csrfToken();
       const res = await fetch(REFRESH_ENDPOINT, {
         method: "POST",
@@ -120,7 +162,7 @@ export async function resumeSession(): Promise<boolean> {
     } finally {
       inFlight = null;
     }
-  })();
+  });
   return inFlight;
 }
 

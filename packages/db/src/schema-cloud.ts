@@ -137,7 +137,7 @@ export const authEvents = pgTable("auth_events", {
   id: uuid("id").defaultRandom().primaryKey(),
   accountId: uuid("account_id"),                   // null for pre-account events
   userId: uuid("user_id"),                         // null for unknown-email attempts
-  event: text("event").notNull(),                  // AuthAuditEvent["event"] — login|login_failed|2fa_verified|2fa_failed|logout|device_revoked|recovery_used|lockout|enrollment_started|email_verified|desktop_link_issued|refresh_reuse_revoked
+  event: text("event").notNull(),                  // AuthAuditEvent["event"] — login|login_failed|2fa_verified|2fa_failed|logout|device_revoked|recovery_used|lockout|enrollment_started|email_verified|desktop_link_issued|refresh_reuse_revoked|refresh_recovered
   method: text("method"),                          // webauthn|totp|recovery_code|password
   ip: text("ip"),
   device: text("device"),

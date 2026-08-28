@@ -205,7 +205,17 @@ export interface AuthAuditEvent {
     // both are worth a row. The `device` field carries `family=<id> session=<id>` — the
     // machine-readable half an investigation starts from — instead of a user agent, which the
     // reuse presentation does not reliably have.
-    | "refresh_reuse_revoked";
+    | "refresh_reuse_revoked"
+    // The LOST-RESPONSE RECOVERY in `rotateRefresh` re-admitted a stale cookie presentation:
+    // a consumed token was re-presented outside the concurrency grace, but its family's tail
+    // had NEVER been used — the shape a browser leaves when a rotation committed server-side
+    // and the response never landed (lid closed mid-refresh; measured twice on one account,
+    // 2026-08-27/28). The dormant tail is consumed in the same act and a fresh rotation
+    // issued, so exactly one live tip exists afterwards. Recorded because recovery is the one
+    // place a stale token buys a working credential, and an investigation must be able to see
+    // every such re-admission next to the reuse sweeps. The `device` field carries
+    // `family=<id> session=<id>`, the reuse row's exact convention.
+    | "refresh_recovered";
   method?: "webauthn" | "totp" | "recovery_code" | "password";
   ip: string;
   device?: string;

@@ -278,6 +278,8 @@
     "stepUpLead": "Bestätige zuerst, dass du es bist. Verifiziere deinen zweiten Faktor, und es geht direkt hier weiter — ohne neue Anmeldung.",
     "stepUpPasskey": "Mit Passkey bestätigen",
     "stepUpTotpLabel": "Sechsstelliger Code aus deiner Authenticator-App",
+    "stepUpCodeHint": "Jeder Code gilt nur einmal. Hast du dich gerade mit einem Code angemeldet, warte auf den nächsten Code in deiner App.",
+    "stepUpLocked": "Zu viele Fehlversuche. Versuch es in {minutes, plural, one {einer Minute} other {# Minuten}} nochmal.",
     "stepUpVerify": "Code prüfen",
     "stepUpTotpToggle": "Stattdessen Einmal-Code verwenden",
     "stepUpPasskeyToggle": "Stattdessen Passkey verwenden",

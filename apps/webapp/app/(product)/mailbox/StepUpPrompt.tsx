@@ -20,7 +20,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@ohmail/ui";
-import { auth, assertPasskey, messageOf, webauthnAvailable } from "../../api-client";
+import { ApiError, auth, assertPasskey, messageOf, webauthnAvailable } from "../../api-client";
 
 interface Props {
   /** The re-verification succeeded — retry the verb that was refused. */
@@ -30,6 +30,24 @@ interface Props {
 
 export function StepUpPrompt({ onVerified, onCancel }: Props) {
   const t = useTranslations("devices");
+
+  /**
+   * The refusal, told honestly. A lockout (423 `account_locked`) carries `retryAfter` seconds
+   * in its details, and "too many failed attempts" without the "for how long" reads as
+   * for ever — the sentence must say when trying again is worth it. Everything else is the
+   * server's own message, verbatim, `messageOf`'s standing contract.
+   */
+  const refusalText = useCallback(
+    (err: unknown): string => {
+      if (err instanceof ApiError && err.code === "account_locked") {
+        const retryAfter = (err.details as { retryAfter?: unknown } | undefined)?.retryAfter;
+        const seconds = typeof retryAfter === "number" && retryAfter > 0 ? retryAfter : 15 * 60;
+        return t("stepUpLocked", { minutes: Math.max(1, Math.ceil(seconds / 60)) });
+      }
+      return messageOf(err);
+    },
+    [t],
+  );
   const [enrolled, setEnrolled] = useState<{ webauthn: boolean; totp: boolean } | null>(null);
   const [method, setMethod] = useState<"webauthn" | "totp">("totp");
   const [code, setCode] = useState("");
@@ -69,13 +87,13 @@ export function StepUpPrompt({ onVerified, onCancel }: Props) {
           await fn();
           if (alive.current) onVerified();
         } catch (err) {
-          if (alive.current) setError(messageOf(err));
+          if (alive.current) setError(refusalText(err));
         } finally {
           if (alive.current) setBusy(false);
         }
       })();
     },
-    [onVerified],
+    [onVerified, refusalText],
   );
 
   const withPasskey = () =>
@@ -151,6 +169,10 @@ export function StepUpPrompt({ onVerified, onCancel }: Props) {
                 </Button>
               </span>
             </div>
+            {/* Codes are single-use ACROSS doors: the one that just signed this person in is
+                spent, and the server refuses it with the wrong-code sentence on purpose. Said
+                here, before it happens, because the refusal itself may not explain. */}
+            <p className="set-note-inline">{t("stepUpCodeHint")}</p>
           </form>
           {enrolled?.webauthn && webauthnAvailable() ? (
             <button

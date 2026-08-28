@@ -278,6 +278,8 @@
     "stepUpLead": "Confirm it's you first. Verify your second factor and this continues right here — no need to sign in again.",
     "stepUpPasskey": "Confirm with passkey",
     "stepUpTotpLabel": "Six-digit code from your authenticator app",
+    "stepUpCodeHint": "Each code works once. If you just signed in with a code, wait for your app to show the next one.",
+    "stepUpLocked": "Too many failed attempts. Try again in {minutes, plural, one {# minute} other {# minutes}}.",
     "stepUpVerify": "Verify code",
     "stepUpTotpToggle": "Use a one-time code instead",
     "stepUpPasskeyToggle": "Use a passkey instead",

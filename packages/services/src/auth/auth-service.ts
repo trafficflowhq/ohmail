@@ -1652,7 +1652,7 @@ export class AuthService extends SessionLifecycle {
     // Single-use per timestep: reject any token whose step ≤ the last consumed one.
     const v = verifyTotp({ secret, token: b.code, now: ctx.now(), window: this.cfg.totpWindow, afterStep: numOrNull(row.lastConsumedStep) });
     if (!v.valid) {
-      await this.twofaFail(db, user, ctx);
+      await this.twofaRefused(db, user, ctx, this.replayedTotp(secret, b.code, ctx.now()));
       throw new ServiceError("unauthorized", 401, "two-factor verification failed");
     }
     // ADVANCE THE STEP CONDITIONALLY — this is what makes "single-use per timestep"
@@ -1674,8 +1674,10 @@ export class AuthService extends SessionLifecycle {
       .returning({ id: totpSecrets.id });
     if (advanced.length === 0) {
       // Somebody else consumed this timestep between our read and our write. Identical
-      // answer to a wrong code — the caller must not learn that their code was right.
-      await this.twofaFail(db, user, ctx);
+      // answer to a wrong code — the caller must not learn that their code was right — but
+      // it is a REPLAY by construction (the code verified; only the step was spent), so it
+      // is not counted toward the lockout. See {@link twofaRefused}.
+      await this.twofaRefused(db, user, ctx, true);
       throw new ServiceError("unauthorized", 401, "two-factor verification failed");
     }
     await this.consumeLoginToken(db, lt.id, ctx.now());
@@ -1742,7 +1744,7 @@ export class AuthService extends SessionLifecycle {
     const secret = await this.deps.keyProvider.decrypt(row.secretEnc, row.keyVersion);
     const v = verifyTotp({ secret, token: b.code, now: ctx.now(), window: this.cfg.totpWindow, afterStep: numOrNull(row.lastConsumedStep) });
     if (!v.valid) {
-      await this.twofaFail(db, user, ctx);
+      await this.twofaRefused(db, user, ctx, this.replayedTotp(secret, b.code, ctx.now()));
       throw new ServiceError("unauthorized", 401, "two-factor verification failed");
     }
     // The conditional advance, INCLUDING the fail-on-zero-rows arm — `totpVerify`'s exact
@@ -1761,7 +1763,9 @@ export class AuthService extends SessionLifecycle {
       ))
       .returning({ id: totpSecrets.id });
     if (advanced.length === 0) {
-      await this.twofaFail(db, user, ctx);
+      // A replay by construction — the code verified, the step was already spent. Same
+      // sentence, no lockout slot burned. See {@link twofaRefused}.
+      await this.twofaRefused(db, user, ctx, true);
       throw new ServiceError("unauthorized", 401, "two-factor verification failed");
     }
     // A TOTP code was just verified, here, by the holder of THIS session.
@@ -2558,6 +2562,46 @@ export class AuthService extends SessionLifecycle {
     await this.audit(db, user, "2fa_failed", undefined, ctx);
     // Surface lockout immediately if this failure crossed the threshold.
     await this.throttleCheck(db, `user:${user.id}`);
+  }
+
+  /**
+   * Was this refused code a REPLAY — a code that verifies against the secret but whose
+   * timestep the single-use guard already spent? The open verify (`afterStep: null`) is the
+   * same HMAC walk the guarded one just did, so the two can only disagree on the step bound.
+   */
+  private replayedTotp(secret: string, code: string, now: Date): boolean {
+    return verifyTotp({ secret, token: code, now, window: this.cfg.totpWindow, afterStep: null }).valid;
+  }
+
+  /**
+   * Finalize a refused TOTP presentation — as a counted failure, or as a REPLAY that must not
+   * burn a lockout slot.
+   *
+   * ── WHY A REPLAY DOES NOT COUNT, AND WHY THAT OPENS NO DOOR ────────────────────────────────
+   *
+   * The single-use-per-timestep guard means the code that just signed someone in FAILS when
+   * they type it again seconds later at the step-up sheet — correct security, and the sentence
+   * deliberately does not say why ("the caller must not learn that their code was right"). But
+   * counting those refusals as failed ATTEMPTS locked real people out: measured in production
+   * 2026-08-28 — five presentations of one just-consumed code inside eleven seconds, the same
+   * six digits still showing in the authenticator — reached `maxFailures` and produced a
+   * fifteen-minute lockout with nothing guessed by anybody.
+   *
+   * The lockout exists to price GUESSING, and a replay is not a guess: reaching this arm
+   * requires presenting a code that VERIFIES against the secret — exactly as hard as knowing
+   * the current code, i.e. holding the factor. Refunding the reserved slot therefore hands an
+   * attacker nothing a guesser could use (a guesser's wrong codes still count), and the
+   * OUTWARD refusal is byte-identical to the wrong-code arm, so no response oracle appears.
+   * The trail keeps the truth for investigations: the audit row says `2fa_failed` with a
+   * detail naming the replay, so five of these in a log read as a person re-typing a spent
+   * code, not as five guesses.
+   */
+  private async twofaRefused(
+    db: Tx, user: typeof users.$inferSelect, ctx: ServiceContext, replayed: boolean,
+  ): Promise<void> {
+    if (!replayed) return this.twofaFail(db, user, ctx);
+    await this.throttleRefund(db, `user:${user.id}`);
+    await this.audit(db, user, "2fa_failed", undefined, ctx, "single-use timestep replayed");
   }
 
   // ── Internal: user / factor helpers ─────────────────────────────────────────
