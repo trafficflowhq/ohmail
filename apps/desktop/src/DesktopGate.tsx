@@ -356,6 +356,8 @@ export function DesktopGate() {
     return <DoorChooser onEntered={(r) => { if (r.status) onStatus(r.status); else void refresh(); }} />;
   }
 
+  const status = shell.kind === "status" ? shell.status : null;
+
   /* THE HOSTED SESSION ENDED under a window that was already serving mail. Say so, in a
      sentence, and offer the way back — never a mailbox that silently stopped moving. The
      mirrored mail is kept on disk (sign-out freezes the directory) and returns with the
@@ -363,10 +365,25 @@ export function DesktopGate() {
   /* THE CLOUD DOOR'S AUTH STATE IS PENDING: the CURRENT engine's first answer has not landed —
      a first launch, or an engine just replaced/re-entered whose predecessor's answer no longer
      counts. Withhold the mail app — React would otherwise commit it once, over an engine whose
-     mail routes refuse — and draw the same skeleton a starting engine draws. Resolved in
-     milliseconds. */
+     mail routes refuse — and draw THE SAME WHOLE-WINDOW frame every other boot branch draws.
+
+     THE FULL GEOMETRY, NOT ROWS ALONE. On a cloud-door cold start this branch is the window for
+     the whole of the engine's climb — `authKey` is non-null from the first status that names the
+     door, and `/health` cannot answer before the engine serves — so a bare `<BootSkeleton
+     active />` here was the 0.12.0 boot frame: full-width rows with no rail, no panels, no
+     wrapper and no sentence, a stack of lines matching no window this app has ever shown. The
+     rail's EXISTENCE is certain at boot even while its contents are not, so every boot-phase
+     branch carries the three-column silhouette. The JSX shape is deliberately identical to the
+     two branches around it: React reconciles the three as one element, so the skeleton's grace
+     runs once across the branch hops instead of restarting at each. On a healthy relaunch this
+     still resolves in milliseconds, inside the grace, and nothing is drawn. */
   if (authKey !== null && !hostedAuthKnown) {
-    return <BootSkeleton active />;
+    return (
+      <div className="gate gate-boot">
+        <BootSkeleton active rail />
+        <BootStatus phase={status?.bootPhase} />
+      </div>
+    );
   }
 
   /* A PRE-AUTH cloud engine under a configured door: the sign-in surface, plainly — the app
@@ -422,7 +439,6 @@ export function DesktopGate() {
     );
   }
 
-  const status = shell.kind === "status" ? shell.status : null;
   const suggestDoor = suggestDoorFor(status);
   /**
    * IS THERE A HOSTED ACCOUNT BEHIND THIS WINDOW — the one gate every account-shaped surface below

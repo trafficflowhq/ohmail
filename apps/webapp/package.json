@@ -4,6 +4,7 @@
   "license": "AGPL-3.0-only",
   "dependencies": {
     "@tiptap/extension-link": "3.29.2",
+    "@tiptap/pm": "3.29.2",
     "@tiptap/react": "3.29.2",
     "@tiptap/starter-kit": "3.29.2",
     "dompurify": "3.4.13",

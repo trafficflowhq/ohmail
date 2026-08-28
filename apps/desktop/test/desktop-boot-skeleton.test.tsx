@@ -246,6 +246,96 @@ describe("the window while an engine is still coming up", () => {
   });
 });
 
+describe("every boot-phase branch draws the whole window — never rows alone", () => {
+  /**
+   * ═══ THE 0.12.0 BOOT FRAME, PINNED (owner report 2026-08-27: "still some random lines") ═══
+   *
+   * The rebuilt three-column silhouette WAS in the 0.12.0 tag — the wrong frame came from the
+   * GATE: the cloud door's pending-auth branch returned `<BootSkeleton active />`, the rows-only
+   * variant, with no `.gate-boot` wrapper (undimmed, in normal flow) and no sentence. And on a
+   * cloud-door COLD START that branch is not a milliseconds edge case, it is the window for the
+   * whole of the engine's climb: `authKey` is non-null from the first status that names the
+   * door, and `/health` cannot answer before the engine serves — so every cold boot was
+   * full-width anonymous bars over nothing. The rail's existence is certain at boot even while
+   * its contents are not, so every boot-phase branch must carry the full three-column geometry.
+   *
+   * MUTATION WATCH (each verified red before landing): drop `rail` from the pending-auth branch
+   * ⇒ the `boot-sk-window`/rail/reader assertions go red; drop the `.gate.gate-boot` wrapper ⇒
+   * the wrapper assertion goes red; drop `BootStatus` ⇒ the sentence assertion goes red. Same
+   * three mutations on the no-shell-answer branch against the second case.
+   */
+
+  /** A cloud-door engine whose `/health` has not answered — the cold start's whole climb. */
+  function shellCloudClimbing(): void {
+    host.__TAURI_INTERNALS__ = {
+      transformCallback: () => 1,
+      invoke: async (command, payload) => {
+        if (command === "engine_status") {
+          return { ...SERVING, mode: "cloud", address: "someone@ohmail.app" };
+        }
+        if (command === "plugin:event|listen") return null;
+        if (command === "engine_request") {
+          const url = String(payload?.url ?? "");
+          // The engine is still climbing: its first /health never lands inside this test.
+          if (url === "/health") return new Promise(() => {});
+          if (url.startsWith("/sync/snapshot")) return encode(200, EMPTY_SNAPSHOT);
+          if (url.startsWith("/mailboxes")) return encode(200, MAILBOX_LIST);
+          return encode(200, EMPTY_PAGE);
+        }
+        return null;
+      },
+    };
+  }
+
+  /** A shell that never answers `engine_status` — the frame before anything has been read. */
+  function shellUnanswered(): void {
+    host.__TAURI_INTERNALS__ = {
+      transformCallback: () => 1,
+      invoke: async (command) => {
+        if (command === "engine_status") return new Promise(() => {});
+        return null;
+      },
+    };
+  }
+
+  it("the cloud door's pending-auth wait is the three-column silhouette, framed, with the sentence", async () => {
+    shellCloudClimbing();
+    await render();
+    await advance(BOOT_SKELETON_GRACE_MS + 50);
+
+    const sk = skeleton();
+    expect(sk, "no silhouette over the cloud door's whole boot climb").not.toBeNull();
+    expect(sk!.classList.contains("boot-sk-window"), "rows alone — the 0.12.0 'random lines' frame")
+      .toBe(true);
+    expect(sk!.querySelector(".boot-sk-rail"), "no rail column").not.toBeNull();
+    expect(sk!.querySelector(".boot-sk-reader"), "no reading-pane frame").not.toBeNull();
+    expect(
+      sk!.parentElement?.classList.contains("gate-boot"),
+      "outside the gate frame — undimmed bars in normal flow",
+    ).toBe(true);
+    expect(text(), "a wait with no sentence over it").toContain("Opening your mailbox");
+    // Still only a silhouette: the withheld mail app must not have mounted around it.
+    expect(mountPoint!.querySelectorAll(".row").length).toBe(0);
+  });
+
+  it("no shell answer yet is the same three-column frame, saying only that it is opening", async () => {
+    shellUnanswered();
+    await render();
+    await advance(BOOT_SKELETON_GRACE_MS + 50);
+
+    const sk = skeleton();
+    expect(sk, "no silhouette while the shell's first answer is pending").not.toBeNull();
+    expect(sk!.classList.contains("boot-sk-window"), "rows alone before anything was read").toBe(true);
+    expect(sk!.querySelector(".boot-sk-rail"), "no rail column").not.toBeNull();
+    expect(
+      sk!.parentElement?.classList.contains("gate-boot"),
+      "outside the gate frame — undimmed bars in normal flow",
+    ).toBe(true);
+    // The no-phase sentence: nothing has been read, so nothing more specific may be claimed.
+    expect(text()).toContain("Opening…");
+  });
+});
+
 describe("the silhouette decides nothing — `mailMount` still routes", () => {
   it("no shell at all is the door chooser, never bars", async () => {
     /* `kind: "none"` — a development server, or the render check that loads the built files in a
