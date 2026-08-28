@@ -156,7 +156,7 @@ export async function runScheduledSendPass(
   const sends = deps.sends ?? sendService;
   const result: ScheduledSendPassResult = { claimed: 0, sent: 0, unverified: 0, failed: 0, deferred: 0 };
 
-  const rows = await claimDue(db, now(), batch, deps.accountEligible);
+  const rows = await claimDue(db, now(), batch, deps.accountEligible, log);
   result.claimed = rows.length;
 
   for (const row of rows) {
@@ -251,15 +251,21 @@ export async function runScheduledSendPass(
 export const SCHEDULED_SEND_SCAN_FACTOR = 4;
 
 /**
- * How many PAGES one claim may walk hunting eligible rows. Pages after the first EXCLUDE every
- * account already found ineligible (the query's own predicate, not a client-side skip), so a
- * parked account costs at most the one page that discovers it — this bound therefore limits how
- * many DISTINCT ineligible accounts one claim can step past per cycle, not how many parked ROWS.
- * Ten pages keeps the claim transaction small and indexed while letting a cycle clear nine
- * newly-suspended accounts before deferring the rest to the next minute; unbounded would let a
- * pathological backlog grow the transaction the serverless ceiling is already tight around.
+ * How many DISTINCT accounts one claim may consult the eligibility gate about before stopping —
+ * the walk's runaway brake, and deliberately NOT a page count. A page count was tried first and
+ * reviewed out: pages after the first exclude known-ineligible accounts, so each page discovers
+ * at least one new parked account or fills the batch — but a cap of N pages with no memory
+ * between invocations meant N+1 parked accounts starved everything behind them PERMANENTLY,
+ * every minute re-discovering the same N and exiting. Bounding by accounts examined makes the
+ * walk finish whenever fewer than this many distinct accounts are parked, however many rows
+ * each has parked (a parked account costs one page and one PK lookup, ever, per claim).
+ *
+ * Two hundred: each costs a PK lookup and at most one page read, so the saturated walk is still
+ * well inside the serverless ceiling — and two hundred distinct suspended accounts all owning
+ * due appointments in one minute is an operator-scale event, not a schedule, which is why
+ * hitting this brake is LOGGED as its own loud line rather than absorbed as a quiet defer.
  */
-export const SCHEDULED_SEND_SCAN_PAGES = 10;
+export const SCHEDULED_SEND_SCAN_ACCOUNTS = 200;
 
 /**
  * Claim what this invocation will attempt: DUE appointments first, then RECOVERY — rows whose
@@ -276,7 +282,8 @@ export const SCHEDULED_SEND_SCAN_PAGES = 10;
  */
 async function claimDue(
   db: Db, now: Date, batch: number,
-  accountEligible?: (accountId: string, db: Db) => Promise<boolean>,
+  accountEligible: ((accountId: string, db: Db) => Promise<boolean>) | undefined,
+  log: Logger,
 ): Promise<ClaimedRow[]> {
   return (db as unknown as Tx).transaction(async (tx) => {
     // One eligibility read per distinct account this claim touches, memoised for both arms —
@@ -306,7 +313,10 @@ async function claimDue(
     const pagedScan = async (base: () => ReturnType<typeof and>, want: number): Promise<Candidate[]> => {
       const taken: Candidate[] = [];
       let after: { sendAt: Date; id: string } | null = null;
-      for (let page = 0; page < SCHEDULED_SEND_SCAN_PAGES && taken.length < want; page++) {
+      // The walk runs until the batch fills or the candidates are EXHAUSTED — pages exclude
+      // known-ineligible accounts, so it always advances — and stops early only at the
+      // account-count brake, which is logged as saturation below (the state must be loud).
+      while (taken.length < want && eligibility.size < SCHEDULED_SEND_SCAN_ACCOUNTS) {
         const skip = ineligibleAccounts();
         const rows: Candidate[] = await tx.select({
           id: drafts.id, accountId: drafts.accountId, sendKey: drafts.sendKey,
@@ -329,10 +339,16 @@ async function claimDue(
         if (rows.length === 0) break;
         for (const row of rows) {
           if (taken.length >= want) break;
+          if (eligibility.size >= SCHEDULED_SEND_SCAN_ACCOUNTS && !eligibility.has(row.accountId)) break;
           if (await eligible(row.accountId)) taken.push(row);
         }
         const last = rows[rows.length - 1]!;
         after = { sendAt: last.sendAt as Date, id: last.id };
+      }
+      if (taken.length < want && eligibility.size >= SCHEDULED_SEND_SCAN_ACCOUNTS) {
+        // Operator-scale: this many distinct parked accounts owning due appointments in one
+        // claim is an incident, and a quiet defer here is how it would stay invisible.
+        log.error("scheduled_send_scan_saturated", { count: eligibility.size });
       }
       return taken;
     };
