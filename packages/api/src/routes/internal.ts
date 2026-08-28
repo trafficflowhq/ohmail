@@ -1,6 +1,5 @@
 import {
-  billingReconciliationRuns, isSuspended, runAlertPass, listOpenAlerts, newDeliveryStreak,
-  sinkHealthOf,
+  billingReconciliationRuns, runAlertPass, listOpenAlerts, newDeliveryStreak, sinkHealthOf,
   type AlertSink,
 } from "@trafficflow/db/cloud";
 import { sql } from "drizzle-orm";
@@ -775,16 +774,6 @@ export const internalRoutes: Route[] = [
           openSendAdapter: deps.services?.sendAdapter
             ?? ((mailboxId: string) => makeSendAdapter(deps, mailboxId)),
           ...(deps.services?.storageCapOf ? { resolveStorageCap: deps.services.storageCapOf } : {}),
-          // THE SUSPENSION GATE, injected here because the fact is the cloud half's
-          // (`account_suspensions`) and the pass ships in the desktop engine bundle, which may
-          // not name a cloud table. A suspended account's automation must not keep firing —
-          // the worker's roster makes the same ruling — so its due appointments stay
-          // `'scheduled'`, undialled, until the suspension lifts. The read runs on the HANDED
-          // handle (the claim transaction's own), never `deps.db`: on this host's pooled
-          // connection the captured form queued behind the transaction holding it and every
-          // poke timed out — the deadlock rule on `ScheduledSendPassDeps.accountEligible`.
-          accountEligible: async (accountId, handle) =>
-            !(await isSuspended(handle as unknown as Tx, accountId)),
           log,
           now: deps.now,
         });
