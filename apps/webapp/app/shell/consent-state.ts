@@ -744,127 +744,164 @@ export function useConsentState(
     void fetchLive();
   }, [active, reachable, settingsStamp, fetchLive]);
 
+  /**
+   * A WRITE'S ECHO APPLIES ONLY IN THE ERA IT WAS ISSUED IN — the setters' half of the
+   * wire-loss rule above. The desktop bridge deliberately lets an in-flight request finish
+   * against a replaced engine, so a hosted PATCH can resolve AFTER the switch to the
+   * standalone door; applied unconditionally, its echo would resurrect the departed account's
+   * answers over an engine that serves none of them (review-caught, round 3). `era` moves on
+   * exactly the transitions that change worlds — the boot effect's cleanup — so a same-world
+   * write always lands and a cross-world one never does. The setter still RESOLVES with the
+   * echo (the write really happened, on the account it was issued against); only this hook's
+   * state refuses it.
+   */
+  const applyEcho = useCallback(
+    (at: number, updater: (prev: ConsentState) => ConsentState): void => {
+      if (era.current === at) setState(updater);
+    },
+    [],
+  );
+
   const setAutoSuggest = useCallback(async (enabled: boolean): Promise<boolean> => {
     // The user's act outranks every read in flight — see `writeEpoch`. Bumped BEFORE the
     // request, so a re-ask racing this write is discarded whatever it answers.
     writeEpoch.current += 1;
+    const at = era.current;
     const res = await link.current.setAutoSuggest(enabled);
     const on = res.autoSuggestAt != null;
     // BOTH FIELDS FROM THE SAME ECHO. Setting the boolean from the server and the instant from
     // the argument (or leaving it stale) is how a row reads "On since <yesterday>" about a write
     // that was refused — the two must move together or not at all.
-    setState((prev) => ({ ...prev, autoSuggest: on, autoSuggestAt: res.autoSuggestAt ?? null }));
+    applyEcho(at, (prev) => ({ ...prev, autoSuggest: on, autoSuggestAt: res.autoSuggestAt ?? null }));
     return on;
-  }, []);
+  }, [applyEcho]);
 
   const setDormancyDays = useCallback(async (days: number | null): Promise<number> => {
     // The user's act outranks every read in flight — see `writeEpoch`. Bumped BEFORE the
     // request, so a re-ask racing this write is discarded whatever it answers.
     writeEpoch.current += 1;
+    const at = era.current;
     const res = await link.current.setDormancyDays(days);
     // FROM THE SERVER ECHO, never the argument — the server stores the default as NULL and reads it
     // back as the default number, so this is the window the partition memo must re-key on.
-    setState((prev) => ({ ...prev, dormancyDays: res.dormancyDays }));
+    applyEcho(at, (prev) => ({ ...prev, dormancyDays: res.dormancyDays }));
     return res.dormancyDays;
-  }, []);
+  }, [applyEcho]);
 
   const setBlockRemoteImages = useCallback(async (blocked: boolean): Promise<boolean> => {
     // The user's act outranks every read in flight — see `writeEpoch`. Bumped BEFORE the
     // request, so a re-ask racing this write is discarded whatever it answers.
     writeEpoch.current += 1;
+    const at = era.current;
     const res = await link.current.setBlockRemoteImages(blocked);
     const on = res.blockRemoteImagesAt != null;
     // BOTH FIELDS FROM THE SAME ECHO, as with auto-suggest — a row reading "Off since <yesterday>"
     // about a refused write is the failure that rule exists to prevent, and here the refused write
     // is the one that would start loading a sender's images.
-    setState((prev) => ({ ...prev, blockRemoteImages: on, blockRemoteImagesAt: res.blockRemoteImagesAt ?? null }));
+    applyEcho(at, (prev) => ({ ...prev, blockRemoteImages: on, blockRemoteImagesAt: res.blockRemoteImagesAt ?? null }));
     return on;
-  }, []);
+  }, [applyEcho]);
 
   const setBlockTrackingPixels = useCallback(async (blocked: boolean): Promise<boolean> => {
     // The user's act outranks every read in flight — see `writeEpoch`. Bumped BEFORE the
     // request, so a re-ask racing this write is discarded whatever it answers.
     writeEpoch.current += 1;
+    const at = era.current;
     const res = await link.current.setBlockTrackingPixels(blocked);
     // The echo is the OPT-OUT instant; the flag is its absence. Inverted exactly once, here.
     const on = res.loadTrackingPixelsAt == null;
-    setState((prev) => ({
+    applyEcho(at, (prev) => ({
       ...prev, blockTrackingPixels: on, loadTrackingPixelsAt: res.loadTrackingPixelsAt ?? null,
     }));
     return on;
-  }, []);
+  }, [applyEcho]);
 
   const setFoldersEnabled = useCallback(async (enabled: boolean): Promise<boolean> => {
     // The user's act outranks every read in flight — see `writeEpoch`. Bumped BEFORE the
     // request, so a re-ask racing this write is discarded whatever it answers.
     writeEpoch.current += 1;
+    const at = era.current;
     const res = await link.current.setFoldersEnabled(enabled);
     const on = res.foldersEnabledAt != null;
     // BOTH FIELDS FROM THE SAME ECHO — auto-suggest's rule: the boolean the shell gates on and
     // the instant the row displays must move together or not at all.
-    setState((prev) => ({ ...prev, foldersEnabled: on, foldersEnabledAt: res.foldersEnabledAt ?? null }));
+    applyEcho(at, (prev) => ({ ...prev, foldersEnabled: on, foldersEnabledAt: res.foldersEnabledAt ?? null }));
     // …AND THE DEVICE'S CACHED COPY MOVES WITH THEM. The boot cache paints the next reload's
     // first frame; leaving it at the pre-toggle answer would resurrect a rail the account just
     // turned off (or hide one it turned on) until — or unless — the live read lands. Only when
     // a cache row exists: no row means no stale copy to correct, and inventing one here would
-    // cache partition inputs this tab never confirmed.
+    // cache partition inputs this tab never confirmed. Era-guarded like the state echo — a
+    // cross-world completion must not write the departed account's flag into this device's
+    // cache either.
     const owner = readOwner();
-    if (owner !== null && bootCache.current !== null) {
+    if (era.current === at && owner !== null && bootCache.current !== null) {
       const next: ConsentBootCache = { ...bootCache.current, foldersEnabledAt: res.foldersEnabledAt ?? null };
       writeBootCache(CONSENT_BOOT_SCOPE, owner, next);
       bootCache.current = next;
     }
     return on;
-  }, []);
+  }, [applyEcho]);
 
   const setMailboxFoldersEnabled = useCallback(
     async (mailboxId: string, enabled: boolean): Promise<Record<string, string>> => {
       // The user's act outranks every read in flight — see `writeEpoch`.
       writeEpoch.current += 1;
+      const at = era.current;
       const res = await link.current.setMailboxFoldersEnabled(mailboxId, enabled);
       const off = res.folderMailboxesOff ?? {};
       // THE WHOLE MAP FROM THE ECHO — the server answers with every exception after the write,
       // so a stale tab that missed another device's toggle heals on its own next write.
-      setState((prev) => ({ ...prev, folderMailboxesOff: off, folderMailboxesKnown: true }));
+      applyEcho(at, (prev) => ({ ...prev, folderMailboxesOff: off, folderMailboxesKnown: true }));
       return off;
-    }, []);
+    }, [applyEcho]);
 
   const setMailboxSignature = useCallback(
     async (mailboxId: string, signature: string | null): Promise<Record<string, string>> => {
       // The user's act outranks every read in flight — see `writeEpoch`.
       writeEpoch.current += 1;
+      const at = era.current;
       const res = await link.current.setMailboxSignature(mailboxId, signature);
       const map = res.signatures ?? {};
       // THE WHOLE MAP FROM THE ECHO — the exceptions dial's rule: the server answers with every
       // stored signature after the write, so a stale tab heals on its own next write, and the
       // editor renders what the database holds rather than what the keystroke hoped.
-      setState((prev) => ({ ...prev, signatures: map, signaturesKnown: true }));
+      applyEcho(at, (prev) => ({ ...prev, signatures: map, signaturesKnown: true }));
       return map;
-    }, []);
+    }, [applyEcho]);
 
   const setBlockAutoUnsubscribe = useCallback(async (blocked: boolean): Promise<boolean> => {
     // The user's act outranks every read in flight — see `writeEpoch`. Bumped BEFORE the
     // request, so a re-ask racing this write is discarded whatever it answers.
     writeEpoch.current += 1;
+    const at = era.current;
     const res = await link.current.setBlockAutoUnsubscribe(blocked);
     // `== null` ⇒ the pass runs. The same collapse as the read above, for the same reason, and it
     // has to be spelled the same way in both places or a server that answered with the field
     // omitted would move the switch one way on load and the other on write.
     const on = res.blockAutoUnsubscribeAt == null;
-    setState((prev) => ({
+    applyEcho(at, (prev) => ({
       ...prev,
       autoUnsubscribe: on,
       blockAutoUnsubscribeAt: res.blockAutoUnsubscribeAt ?? null,
     }));
     return on;
-  }, []);
+  }, [applyEcho]);
 
   // Derived rather than stored, so neither can be left behind by a `setState` that forgot it:
   // both are facts about the BUILD and the mode, settled before the first render. `active` is
   // `!demo`; see {@link ConsentState.standalone} and {@link ConsentState.cloudClient} for why
   // these are now two questions rather than one.
+  //
+  // PRESENTED, NOT STORED: with no wire, the ANSWER is the resting values — synchronously, in
+  // the same render that observes the wire gone. The reset effect above runs after paint, so on
+  // the overlay door switch the commit BETWEEN "reachable flipped" and "the effect fired" would
+  // otherwise still present the departed account's rail and switches for one frame
+  // (review-caught, round 3). The effect keeps its job — clearing the STORED state so a later
+  // re-entry to the hosted door cannot open on the stale answer before its own fetch lands —
+  // and this derivation is what the render reads.
+  const presented = active && !reachable ? RESTING : state;
   return {
-    ...state,
+    ...presented,
     standalone: active && !reachable,
     cloudClient: apiConfigured(),
     setAutoSuggest,
