@@ -654,9 +654,13 @@ function splitTargetLines(state: EditorState, tr: Transaction, splitInner: boole
   // narrowing it to the text inside (what `between` does) would change which node the chained
   // toggle acts on: unquoting a selected `<ul>` must lift THE LIST, not the first line in it
   // (review-caught). Left exactly as the user made it; the stock toggles know node selections.
-  // The one wrapper case a node selection can reach — the blockquote itself — is handled by
-  // {@link applyQuote} BEFORE isolation is asked, so this bail stays unconditional.
-  if (sel instanceof NodeSelection) return true;
+  //
+  // EXCEPT a selected BLOCKQUOTE, which for the commands that reach here IS its run of lines:
+  // the list buttons on a node-selected quotation mean "list the quoted lines" (bailing made
+  // the toggle wrap only the first line and drop the quote — review-caught), and the quote
+  // button never brings one here at all, because {@link applyQuote} answers the wrapper's own
+  // node selection structurally before isolation is asked.
+  if (sel instanceof NodeSelection && sel.node.type.name !== "blockquote") return true;
   // A select-all is an AllSelection whose ends resolve to the DOCUMENT; `between` snaps both
   // ends into the outermost textblocks, which is what makes ⌘A + list one item per line.
   const textSel = sel instanceof TextSelection ? sel : TextSelection.between(sel.$from, sel.$to);
