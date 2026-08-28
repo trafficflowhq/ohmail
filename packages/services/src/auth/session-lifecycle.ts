@@ -524,6 +524,11 @@ export class SessionLifecycle {
       accountId: user.accountId, userId: user.id, sessionId: session!.id, familyId,
       tokenHash: hashToken(refreshToken),
       expiresAt: new Date(now.getTime() + ttls.refreshTtlMs),
+      // The SERVICE clock, never the column's `defaultNow()`: every stamp the rotation
+      // machinery reasons over (`consumed_at`, `expires_at`, the recovery classification's
+      // created-vs-consumed comparisons) comes from `ctx.now()`, and mixing the database's
+      // clock into one of them makes grace-window arithmetic depend on app↔db skew.
+      createdAt: now,
     });
 
     if (o.method) await this.audit(db, user, "2fa_verified", o.method, ctx);
@@ -669,16 +674,30 @@ export class SessionLifecycle {
         // minutes after consumption, successor never used; 2026-08-28: 10.1 seconds, 114 ms
         // past the old grace window). No grace width fixes the first shape; this does.
         //
-        // The discriminator is USE: consumption only ever happens on presentation, so a jar
-        // that is stale always holds the family's NEWEST-CONSUMED token, and if the tail
-        // minted after it has never been consumed, nobody — owner or thief — ever USED the
-        // rotation the presenter lost. `recoverLostRotation` checks exactly that and, when it
-        // holds, consumes the dormant tail and mints afresh IN ONE CLAIM. If any descendant
-        // WAS used, this returns null and the presentation falls through to the sweep below:
-        // the theft reading stands wherever a second party actually spent the credential.
+        // The discriminator is USE plus IDLE TIME: consumption only ever happens on
+        // presentation, so a stale jar always holds the family's newest-consumed token — and
+        // a tail still unconsumed after a FULL ACCESS WINDOW means no awake client is driving
+        // the session (an awake one is forced to rotate at access expiry). Both conditions,
+        // and the serialization that makes them honest under concurrency, live in
+        // `recoverLostRotation`; when they hold it consumes the dormant tail and mints afresh
+        // in one locked sequence. Otherwise it returns null and the presentation falls
+        // through to the sweep below: the theft reading stands wherever a second party
+        // actually spent the credential, and wherever an awake client still might.
         if (grace) {
           const recovered = await this.recoverLostRotation(ctx, existing, now, ttls);
           if (recovered) return recovered;
+        }
+        // A CLAIM-KILLED row is refused PLAINLY, never with the sweep. A recovery's claim
+        // stamps the dormant tail it consumes with `expires_at = consumed_at` (see the claim),
+        // because that consumption is not a PRESENTATION: nobody outside this server ever held
+        // the row's token in a spendable state after the kill. A late re-presentation of such
+        // a row is therefore either the double-lost jar (its recovery response was lost TOO —
+        // sign in again is the right answer) or a thief holding a token that was already dead;
+        // neither names a second live holder of the family's real chain, and sweeping would
+        // revoke the healthy line the recovery just re-established. Within the grace window
+        // the arm above has already converged it, exactly like any fresh consumption.
+        if (existing.expiresAt.getTime() <= existing.consumedAt.getTime()) {
+          throw new ServiceError("unauthorized", 401, "refresh token expired");
         }
         // THE SWEEP LEAVES A ROW, and sweep + row are ONE TRANSACTION — with the sweep
         // REDONE ALONE if that transaction cannot commit. It used to leave nothing: the
@@ -791,6 +810,9 @@ export class SessionLifecycle {
       accountId: base.accountId, userId: base.userId, sessionId: base.sessionId, familyId: base.familyId,
       tokenHash: hashToken(newRefresh),
       expiresAt: new Date(now.getTime() + ttls.refreshTtlMs),
+      // The service clock, for `establish`'s exact reason: the recovery classification
+      // compares this stamp against consumption stamps that all come from `ctx.now()`.
+      createdAt: now,
     });
     await db.update(sessions).set({
       accessTokenHash: hashToken(newAccess),
@@ -812,36 +834,46 @@ export class SessionLifecycle {
   }
 
   /**
-   * Re-admit a stale cookie presentation whose family's tail was NEVER USED — the
-   * lost-response client — or answer `null`, which sends the caller to the reuse sweep.
+   * Re-admit a stale cookie presentation whose family's tail was NEVER USED and whose client
+   * has been GONE for at least a full access window — the lost-response client — or answer
+   * `null`, which sends the caller to the reuse sweep.
    *
-   * ── WHY THIS GRANTS NO PRIVILEGE A THIEF DID NOT ALREADY HAVE ───────────────────────────
+   * ── WHY "UNCONSUMED SUCCESSOR" ALONE IS NOT PROOF, AND WHAT THE IDLE BOUND ADDS ──────────
    *
-   * The precondition is that no token of the family minted after the presented one was ever
-   * consumed. A thief can only satisfy it by holding a stale token of a family whose owner
-   * stopped using it at exactly the theft point — and a thief in that position could have
-   * stolen the family's live TIP instead, which rotates for ever TODAY with no event written
-   * and no detection until the legitimate client returns. Recovery gives the stale-token holder
-   * that and strictly less: the acquisition is AUDITED (`refresh_recovered`), and it consumes
-   * the dormant tail, so the legitimate jar's next presentation of what it holds now finds a
-   * consumed successor and triggers the sweep — detection re-armed rather than removed. What
-   * the honest majority gets is their morning session back.
+   * An unconsumed successor is the NORMAL state between two rotations: an awake client holds
+   * its fresh token idle until the access token expires (`accessTtlMs`), so for that whole
+   * window a thief replaying the just-rotated-past token would find a "dormant" tail on a
+   * perfectly healthy session — recovery without a bound would hand that thief a fresh pair
+   * while the legitimate client is still awake beside it. The idle bound closes that:
+   * recovery requires the presented token to have been consumed MORE than one full access
+   * window ago. An awake client's own sync traffic forces a rotation at access expiry, so a
+   * successor still unconsumed after that is a client that genuinely went away — the lid
+   * close, measured in production at 29.5 minutes and overnight. Inside the window the
+   * presentation takes the sweep, exactly the pre-recovery answer, which is loud.
    *
-   * Bounded five ways:
+   * The residual, stated: a thief holding the second-newest token of a family whose client
+   * slept immediately after rotating — before ever spending the successor — is re-admitted if
+   * they replay during that sleep. That window is the lost-response ambiguity itself: no
+   * server-side rule can tell those two apart, the act is AUDITED (`refresh_recovered`), it
+   * consumes the dormant tail (single live line, no quiet parallel chain), and the client's
+   * wake then presents a consumed token and re-arms detection.
+   *
+   * Bounded six ways:
    *  · FAMILY-BOUND — the mint reuses the presented row's account/user/session/family;
    *    no scope change, no step-up stamp, no new session.
    *  · TIME-BOUND — the presented token must be inside its own issued `expires_at`, the
    *    session alive, and the surface's absolute cap (when one is set) respected.
-   *  · USE-BOUND — any consumption after the presented token's disqualifies, so the first
-   *    actual USE by a second holder ends recovery for ever on that family.
-   *  · SINGLE-WINNER — the dormant tail's consumption IS the claim: concurrent stale
-   *    presentations serialize on the row locks, exactly one performs the recovery, and a
-   *    loser converges through the fresh-consumption grace below instead of 401-ing (a 401
-   *    here would clear the jar the winner just refilled).
+   *  · IDLE-BOUND — consumed more than `accessTtlMs` ago, the paragraph above.
+   *  · USE-BOUND — any consumption after the presented token's disqualifies (fresh ones
+   *    converge under grace; older ones sweep), re-checked INSIDE the session lock.
+   *  · SINGLE-WINNER — the session row is locked `FOR UPDATE` for the whole
+   *    classify-claim-mint sequence, so concurrent recoveries and the grace/recovery
+   *    interleavings serialize; a loser converges through the fresh-consumption grace
+   *    instead of 401-ing (a 401 here would clear the jar the winner just refilled).
    *  · COOKIE-ONLY — the `grace` flag gates it; the native/OAuth surfaces rotate serially,
    *    have no lost-response shape a relaunch does not fix, and keep strict reuse.
    *
-   * A fault inside the claim transaction answers `null`: fail CLOSED, into the sweep — a
+   * A fault inside the transaction answers `null`: fail CLOSED, into the sweep — a
    * bookkeeping error must never widen admission, and the cost (an honest user signs in
    * again) is exactly the pre-recovery behaviour.
    */
@@ -851,41 +883,104 @@ export class SessionLifecycle {
     now: Date,
     ttls: SurfaceTtls,
   ): Promise<OAuthTokens | null> {
-    const db = asTx(ctx);
     const consumedAt = existing.consumedAt!;
     // The presented token's own window still stands — a rotation re-issues `expires_at` from
     // its mint, so this bounds recovery at one rolling refresh window after the loss.
     if (existing.expiresAt.getTime() <= now.getTime()) return null;
-    // The grace path's exact `renewable` reading: live session, inside any absolute cap.
-    const [session] = await db.select().from(sessions)
-      .where(eq(sessions.id, existing.sessionId)).limit(1);
-    const renewable = session != null && session.revokedAt == null
-      && (ttls.absoluteTtlMs == null
-        || now.getTime() - session.createdAt.getTime() <= ttls.absoluteTtlMs);
-    if (!renewable) return null;
-    // USE-BOUND: was anything minted after the presented token ever spent? Consumption only
-    // happens on presentation, so one consumed descendant means a second party (the legitimate client on
-    // another jar, or a thief) actually used the credential — the sweep's business, not ours.
-    // `>=` AND not-self, not `>`: two rotations can land in one millisecond (the wake herd is
-    // exactly a burst), and a strict comparison would read the second rotation's consumption
-    // as "not after" the first's — re-admitting a token whose descendant WAS spent. Equal
-    // stamps fail closed instead; the only cost is a sweep where a same-millisecond ancestor
-    // shares the stamp, which is the pre-recovery answer anyway.
-    const [usedAfter] = await db.select({ id: refreshTokens.id }).from(refreshTokens)
-      .where(and(
-        eq(refreshTokens.familyId, existing.familyId),
-        ne(refreshTokens.id, existing.id),
-        isNotNull(refreshTokens.consumedAt),
-        gte(refreshTokens.consumedAt, consumedAt),
-      )).limit(1);
-    if (usedAfter) return null;
     try {
       return await this.inTransaction(ctx, async (txCtx) => {
         const tx = asTx(txCtx);
-        // THE CLAIM: consume the dormant tail. Row locks pick exactly one winner among
-        // concurrent recoveries; everyone else's UPDATE waits, re-evaluates, matches nothing.
+        // THE SERIALIZATION POINT: the session row, locked for the whole sequence. Without
+        // it, the descendant check raced the claim — a legitimate rotation could consume the
+        // tail between the read and the write, and both interleavings handed the stale
+        // presenter a mint despite a spent descendant. Every recovery of this
+        // family queues here; the classification below runs on a serialized view.
+        const [session] = await tx.select().from(sessions)
+          .where(eq(sessions.id, existing.sessionId)).limit(1).for("update");
+        // The grace path's exact `renewable` reading: live session, inside any absolute cap.
+        const renewable = session != null && session.revokedAt == null
+          && (ttls.absoluteTtlMs == null
+            || now.getTime() - session.createdAt.getTime() <= ttls.absoluteTtlMs);
+        if (!renewable) return null;
+        // USE-BOUND, in-lock: what happened after the presented token was consumed?
+        // `>=` AND not-self, not `>`: two rotations can land in one millisecond (the wake
+        // herd is a burst), and a strict comparison would read the second rotation's
+        // consumption as "not after" the first's.
+        //
+        // The classification reads THREE facts, each closing a measured hole:
+        //
+        //  · SPENDS — real presentations only: `expires_at > consumed_at`, because the claim
+        //    below stamps the rows it kills with `expires_at = consumed_at`, and a kill is
+        //    not a presentation. Without the distinction, one recovery's kill-stamps read as
+        //    "the chain continued in real use" to every LATER classification on the family,
+        //    and the round-3 pg net watched a healthy family get swept by exactly that.
+        //  · The verdict keys on the OLDEST spend: a live client
+        //    rotates every access window, so "within the grace of SOME rotation" recurs for
+        //    ever — an ancient token could simply wait for one. One stale spend proves the
+        //    chain continued, and no freshness of the latest rotation overrides it.
+        //  · LATE MINTS — rows created more than a grace window after the presented token's
+        //    own rotation cohort can only be recovery/convergence mints, so their existence
+        //    means this family was already recovered past this token: fresh ones converge
+        //    (the herd straggler arriving just after the winner), older ones refuse — which
+        //    is what makes recovery SINGLE-USE per presented token even though the kills no
+        //    longer masquerade as spends.
+        // BOTH evidence sets are always read, and ANY old evidence dominates: a fresh
+        // spend alone must not short-circuit to "racer", because a family that
+        // already recovered past this token carries its old recovery mint as late-mint
+        // evidence — and letting the fresh spend win would re-admit the once-recovered token
+        // whenever its replay is timed near a healthy rotation, the round-2 hole re-opened
+        // through the other evidence set.
+        const classify = async (): Promise<"quiet" | "racer" | "used"> => {
+          const [oldestSpend] = await tx.select().from(refreshTokens)
+            .where(and(
+              eq(refreshTokens.familyId, existing.familyId),
+              ne(refreshTokens.id, existing.id),
+              isNotNull(refreshTokens.consumedAt),
+              gte(refreshTokens.consumedAt, consumedAt),
+              gt(refreshTokens.expiresAt, refreshTokens.consumedAt),
+            ))
+            .orderBy(refreshTokens.consumedAt).limit(1);
+          const [oldestLateMint] = await tx.select().from(refreshTokens)
+            .where(and(
+              eq(refreshTokens.familyId, existing.familyId),
+              // NOT-SELF, like the spends query: a presented row whose own `created_at` sits
+              // ahead of its consumption stamp (clock skew between the minting request and
+              // the rotating one) must never classify as its own late mint.
+              ne(refreshTokens.id, existing.id),
+              gt(refreshTokens.createdAt,
+                new Date(consumedAt.getTime() + this.cfg.refreshReuseGraceMs)),
+            ))
+            .orderBy(refreshTokens.createdAt).limit(1);
+          const fresh = (at: Date): boolean =>
+            now.getTime() - at.getTime() <= this.cfg.refreshReuseGraceMs;
+          const verdicts: Array<"racer" | "used"> = [];
+          if (oldestSpend?.consumedAt) verdicts.push(fresh(oldestSpend.consumedAt) ? "racer" : "used");
+          if (oldestLateMint) verdicts.push(fresh(oldestLateMint.createdAt) ? "racer" : "used");
+          if (verdicts.includes("used")) return "used";
+          return verdicts.length > 0 ? "racer" : "quiet";
+        };
+        const verdict = await classify();
+        if (verdict === "racer") {
+          // Every spend after the presented token happened instants ago: the concurrent-
+          // recovery loser, or a stale presenter colliding with the one live rotation. It
+          // converges exactly like a grace-loser — the shared jar takes whichever cookie
+          // lands last.
+          return this.mintRotation(tx, existing, now, ttls);
+        }
+        if (verdict === "used") return null;   // a second holder in real use: the sweep's case
+        // IDLE-BOUND: nothing was spent since — but that is only evidence of a lost response
+        // once a full access window has passed (see the header). Inside it, refuse.
+        if (now.getTime() - consumedAt.getTime() <= this.cfg.accessTtlMs) return null;
+        // THE CLAIM: kill the dormant tail, leaving exactly one live line (the mint below).
+        // `expires_at = consumed_at` is the kill's SIGNATURE, chosen because it is
+        // self-describing rather than a flag: an expired token IS dead on every path. It is
+        // what lets `classify` above tell kills from spends, it keeps a killed row's
+        // within-grace presentation converging through the ordinary grace arm (that arm never
+        // reads expiry — the crossrace pg test's delivered-tail case), and it routes a LATE
+        // presentation of a killed row to the plain-401 arm in `rotateRefresh` instead of the
+        // sweep — a kill names no second holder of the family's real chain.
         const claimed = await tx.update(refreshTokens)
-          .set({ consumedAt: now })
+          .set({ consumedAt: now, expiresAt: now })
           .where(and(
             eq(refreshTokens.familyId, existing.familyId),
             isNull(refreshTokens.consumedAt),
@@ -893,25 +988,16 @@ export class SessionLifecycle {
           ))
           .returning({ id: refreshTokens.id });
         if (claimed.length === 0) {
-          // No dormant tail left. Either a concurrent recovery won it instants ago — then the
-          // family shows a consumption newer than the presented token, fresh inside the grace
-          // window, and this loser converges exactly like a grace-loser (the shared jar takes
-          // whichever cookie lands last) — or the family genuinely has no live tip, which is
-          // the sweep's case. A 401 here is not an option: the cookie handler answers any
-          // refusal by clearing the jar, which would destroy the winner's just-written cookie.
-          const [fresh] = await tx.select().from(refreshTokens)
-            .where(and(
-              eq(refreshTokens.familyId, existing.familyId),
-              ne(refreshTokens.id, existing.id),
-              isNotNull(refreshTokens.consumedAt),
-              gte(refreshTokens.consumedAt, consumedAt),
-            ))
-            .orderBy(desc(refreshTokens.consumedAt)).limit(1);
-          if (fresh?.consumedAt
-            && now.getTime() - fresh.consumedAt.getTime() <= this.cfg.refreshReuseGraceMs) {
-            return this.mintRotation(tx, existing, now, ttls);
-          }
-          return null;
+          // The tail vanished between the classification and the claim: the HOT PATH's token
+          // claim is a single autocommitting UPDATE that does not take the session lock, so a
+          // live rotation can spend the tail in that gap. Reclassify
+          // rather than fall through — `null` here would flow into the reuse sweep and revoke
+          // the very family whose rotation just succeeded, and the cookie handler would clear
+          // the jar that rotation had just refilled. A fresh spend converges; anything else
+          // is genuinely the sweep's case (no live tip at all).
+          return (await classify()) === "racer"
+            ? this.mintRotation(tx, existing, now, ttls)
+            : null;
         }
         // Audited IN the claim's transaction: no recovery without its row while the
         // bookkeeping works, and a bookkeeping fault rolls the claim back (the catch below

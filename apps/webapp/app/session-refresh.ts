@@ -56,16 +56,25 @@ let inFlight: Promise<boolean> | null = null;
  */
 const REFRESH_LOCK = "ohmail:session-refresh";
 
-function withCrossTabLock(fn: () => Promise<boolean>): Promise<boolean> {
-  try {
-    const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
-    if (locks?.request) {
-      // `request` resolves with the callback's settled value; `.then` flattens the lib's
-      // nested-promise reading of that into the boolean it is at runtime.
-      return locks.request(REFRESH_LOCK, { mode: "exclusive" }, fn).then((v) => v);
+async function withCrossTabLock(fn: () => Promise<boolean>): Promise<boolean> {
+  const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
+  if (locks?.request) {
+    try {
+      // `request` resolves with the callback's settled value once the grant releases.
+      return (await locks.request(REFRESH_LOCK, { mode: "exclusive" }, fn)) as boolean;
+    } catch {
+      // A REJECTED request — not just a throwing accessor — lands here too, and it must fall
+      // through to the lock-less run below. The first version returned the raw promise and
+      // caught only synchronous throws, so a lock manager refusing asynchronously (document
+      // no longer fully active, opaque origin) handed `resumeSession` a rejected promise:
+      // its never-rejects contract broke, and because `fn`'s own `finally` had never run,
+      // `inFlight` cached that rejection for the tab's whole life — every later refresh
+      // failing instantly with no fetch. `fn` itself never rejects (its body is one
+      // try/catch/finally answering booleans), and this origin never uses `steal`, so a
+      // rejection can only mean the callback was never granted: running it directly is the
+      // single retry it was owed, not a double refresh.
+      return fn();
     }
-  } catch {
-    /* a lock manager that refuses is a browser without one */
   }
   return fn();
 }
