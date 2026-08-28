@@ -229,9 +229,9 @@ The format: versioned JSON, documented in ohmail's published source
 Things to notice: every list is sorted by its natural key (the payload is
 canonicalized before writing, so identical configuration produces an
 identical payload — compare the JSON below the three metadata fields, or a
-hash of it; the envelope's `updatedAt` and `producer` and the message's own
-`Date` header differ between writes of the same configuration, so whole
-documents are not byte-comparable); the second rule is a spam verdict (a promoted rule to
+hash of it; the envelope's `updatedAt` and the message's own `Date` header
+change between writes of the same configuration, and `producer` can change
+too, so whole documents are not byte-comparable); the second rule is a spam verdict (a promoted rule to
 `ohmail/Quarantine`), the last a screen-out (`ohmail/Screened`) that was later
 disabled and kept; and the JSON sits after the human preamble, so the substring
 from the body's first `{` to its last `}` is the document.
