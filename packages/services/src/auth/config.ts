@@ -130,7 +130,7 @@ export const DEFAULT_AUTH_CONFIG: Omit<AuthConfig, "rpID" | "rpName" | "origin">
   // single-flight, so no benign race — and they keep the strict reuse response unchanged.
   //
   // WHY SIXTY AND NOT TEN, because ten stood here and was measured failing in production
-  // (2026-08-28, a real account): this window was argued from "the loser holds the old token only
+  // (2026-08-28, in production): this window was argued from "the loser holds the old token only
   // until the winner's `Set-Cookie` lands, sub-second to a second or two", and that premise is
   // FALSE at machine wake — the case where the race actually happens. A laptop opening its lid
   // fires every suspended tab's queued refresh while the network is still re-associating; requests
