@@ -2,9 +2,14 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
-import { EditorContent, Extension, useEditor, useEditorState, type Editor } from "@tiptap/react";
+import {
+  EditorContent, Extension, useEditor, useEditorState,
+  type ChainedCommands, type Editor,
+} from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
+import { TextSelection, type EditorState, type Transaction } from "@tiptap/pm/state";
+import type { ResolvedPos } from "@tiptap/pm/model";
 import { LinkPopover } from "./LinkPopover";
 import {
   EMPTY_RICH, escapeAsParagraphs, isRichEmpty, richToHtml, type RichValue,
@@ -541,9 +546,9 @@ function Toolbar({ editor, editable, linkOpen, onLinkToggle, onLinkClose }: {
       {btn("strike", active.strike, () => editor.chain().focus().toggleStrike().run())}
       {btn("code", active.code, () => applyCode(editor))}
       {btn("link", active.link, onLinkToggle, { "aria-haspopup": "dialog", "aria-expanded": linkOpen })}
-      {btn("bullet", active.bullet, () => editor.chain().focus().toggleBulletList().run())}
-      {btn("ordered", active.ordered, () => editor.chain().focus().toggleOrderedList().run())}
-      {btn("quote", active.quote, () => editor.chain().focus().toggleBlockquote().run())}
+      {btn("bullet", active.bullet, () => applyList(editor, "bulletList"))}
+      {btn("ordered", active.ordered, () => applyList(editor, "orderedList"))}
+      {btn("quote", active.quote, () => applyQuote(editor))}
       {/* Inside the bar so `position: absolute` anchors to the bar's own box, whatever height
           the row wraps to at 390px. Out of flow, so the buttons never move when it opens. */}
       {linkOpen && <LinkPopover editor={editor} onClose={onLinkClose} />}
@@ -582,6 +587,146 @@ const TOOLBAR_GLYPHS: Record<string, ReactNode> = {
   ),
   bullet: "•", ordered: "1.", quote: "❝",
 };
+
+/**
+ * ═══ BLOCK COMMANDS TAKE LINES, NOT TEXTBLOCKS ═══════════════════════════════════════════
+ *
+ * ── THE DEFECT THIS LAYER CLOSES ──────────────────────────────────────────────────────────
+ *
+ * Enter here is a hard break (`EnterAsHardBreak`), so a message typed line by line is ONE
+ * paragraph with `<br>`s in it. Every block command TipTap ships — `toggleBulletList`,
+ * `toggleOrderedList`, `toggleBlockquote`, `setBlockType` — resolves its target as "the
+ * textblocks the selection touches", which in an ordinary document is the current line and in
+ * this editor is the WHOLE MESSAGE. Reported exactly so: "list or code formats always mark the
+ * full text and not the current line". The multi-paragraph case was already right (measured:
+ * three `<p>`s, caret in the middle one, list takes only that one), which is what pins the
+ * defect on the hard-break line structure rather than on the toggles.
+ *
+ * ── THE RULE, WHICH IS EVERY OTHER EDITOR'S ───────────────────────────────────────────────
+ *
+ * A block command applies to LINES — the hard-break-delimited runs a person sees. No selection:
+ * the line the caret stands in. A selection: exactly the lines it touches, expanded outward to
+ * their boundaries (nobody selects a line to its exact ends before pressing Quote). A full
+ * select is all lines, which is the one case the old behaviour got right — but as one item per
+ * line, not the whole message inside a single bullet.
+ *
+ * ── HOW: THE BREAKS AT THE TARGET'S EDGES BECOME REAL SPLITS, THEN THE STOCK TOGGLE RUNS ──
+ *
+ * {@link splitTargetLines} rewrites the hard break on each side of the target lines into a
+ * paragraph split (and, for lists, every break inside the target too — three selected lines
+ * are three `<li>`s, not one item with breaks in it), then narrows the transaction's selection
+ * to the isolated lines. The stock toggle chained after it therefore wraps exactly what the
+ * user meant. Everything runs in ONE chain, hence one transaction and one undo step.
+ *
+ * The neighbouring lines necessarily become paragraphs of their own — a `<p>` cannot contain a
+ * `<ul>`, so no editor keeps "the line above a list" in the same block as the list. Marks are
+ * untouched: splitting moves nodes, it does not rebuild them, so bold inside a bulleted line
+ * survives (the code block is the one command that drops marks, and that is the node's own
+ * declared rule).
+ */
+
+/** The hard-break-delimited line edge on one side of `pos`, inside `$pos`'s textblock. */
+function lineEdge($pos: ResolvedPos, pos: number, dir: -1 | 1): number {
+  const blockStart = $pos.start();
+  let edge = dir === -1 ? blockStart : blockStart + $pos.parent.content.size;
+  $pos.parent.forEach((child, offset) => {
+    if (child.type.name !== "hardBreak") return;
+    const at = blockStart + offset;
+    // Looking left: the latest break that ends at or before `pos`. Looking right: the earliest
+    // break that starts at or after it. A caret sitting exactly on a break therefore belongs to
+    // the line that ENDS there, which is where the eye says it is.
+    if (dir === -1 && at + 1 <= pos && at + 1 > edge) edge = at + 1;
+    if (dir === 1 && at >= pos && at < edge) edge = at;
+  });
+  return edge;
+}
+
+/**
+ * Expand the selection to whole lines and turn the hard breaks at (and optionally inside) the
+ * target into paragraph splits, leaving the transaction's selection on the isolated lines.
+ *
+ * Always answers `true`: a selection this cannot resolve (no textblock to stand in) is left
+ * for the chained toggle's own semantics, never a refused button press.
+ */
+function splitTargetLines(state: EditorState, tr: Transaction, splitInner: boolean): boolean {
+  const sel = state.selection;
+  // A select-all is an AllSelection whose ends resolve to the DOCUMENT; `between` snaps both
+  // ends into the outermost textblocks, which is what makes ⌘A + list one item per line.
+  const textSel = sel instanceof TextSelection ? sel : TextSelection.between(sel.$from, sel.$to);
+  const { $from, $to, from, to, empty } = textSel;
+  if (!$from.parent.isTextblock || !$to.parent.isTextblock) return true;
+
+  const lineStart = lineEdge($from, from, -1);
+  const lineEnd = lineEdge($to, to, 1);
+
+  const splits = new Set<number>();
+  if (lineStart > $from.start()) splits.add(lineStart - 1);
+  if (lineEnd < $to.end()) splits.add(lineEnd);
+  if (splitInner) {
+    // `nodesBetween` visits a break only while it overlaps [lineStart, lineEnd), so the two
+    // boundary breaks — one ending at lineStart, one starting at lineEnd — are not re-added.
+    state.doc.nodesBetween(lineStart, lineEnd, (node, pos) => {
+      if (node.type.name === "hardBreak") splits.add(pos);
+    });
+  }
+
+  // Descending, so each delete+split leaves every EARLIER collected position untouched.
+  for (const pos of [...splits].sort((a, b) => b - a)) {
+    tr.delete(pos, pos + 1);
+    tr.split(pos);
+  }
+
+  // The mapped line range: bias inward on both ends, so a split exactly at an edge leaves the
+  // position inside the lines rather than in the neighbour it just created.
+  const start = tr.mapping.map(lineStart, 1);
+  const end = tr.mapping.map(lineEnd, -1);
+  if (empty) {
+    // A caret stays a caret — the command's TARGET is the line, but nothing was selected and
+    // nothing should read as selected afterwards. Clamped, because a split exactly at the
+    // caret can map it just outside the isolated line.
+    const caret = Math.min(Math.max(tr.mapping.map(from, -1), start), end);
+    tr.setSelection(TextSelection.create(tr.doc, caret));
+  } else {
+    // A range takes the whole lines, INCLUDING when no split was needed: a mid-line selection
+    // across two clean paragraphs still means both lines, and the toggle reads the selection.
+    tr.setSelection(TextSelection.create(tr.doc, start, end));
+  }
+  return true;
+}
+
+/**
+ * The list buttons. Inside a list already, TipTap's own toggle is right as shipped: same type
+ * lifts the touched item(s) back out, the other type converts — items ARE lines, so there is
+ * nothing to isolate. Outside one, the target lines are isolated first (every break becomes an
+ * item boundary), and then the stock toggle wraps exactly those.
+ */
+function applyList(editor: Editor, list: "bulletList" | "orderedList"): void {
+  const toggle = (c: ChainedCommands) =>
+    list === "bulletList" ? c.toggleBulletList() : c.toggleOrderedList();
+  if (editor.isActive("bulletList") || editor.isActive("orderedList")) {
+    toggle(editor.chain().focus()).run();
+    return;
+  }
+  toggle(
+    editor.chain().focus().command(({ state, tr }) => splitTargetLines(state, tr, true)),
+  ).run();
+}
+
+/**
+ * The quote button. One quote for the target lines, with the breaks INSIDE it kept as breaks —
+ * quoting three lines of prose is one quotation, not three (the difference from a list, where
+ * every line is its own item; `splitInner` is that difference, spelled as an argument).
+ */
+function applyQuote(editor: Editor): void {
+  if (editor.isActive("blockquote")) {
+    editor.chain().focus().toggleBlockquote().run();
+    return;
+  }
+  editor.chain().focus()
+    .command(({ state, tr }) => splitTargetLines(state, tr, false))
+    .toggleBlockquote()
+    .run();
+}
 
 /**
  * DOES THE SELECTION COVER MORE THAN ONE LINE?
@@ -667,8 +812,35 @@ function applyCode(editor: Editor): void {
     editor.chain().focus().toggleCode().run();
     return;
   }
+  /**
+   * The block, over WHOLE LINES. The selection is expanded and isolated first
+   * ({@link splitTargetLines}), for the two defects the exact-range replacement had:
+   *
+   *  · a mid-line selection put the block boundary mid-line, so half a sentence became code;
+   *  · the boundary break stayed behind in the neighbour — `<p>one<br></p>` before the block,
+   *    a dangling break that rendered (and SENT) as a stray blank line under "one". Measured,
+   *    not reasoned: that exact markup came out of the pre-fix command.
+   *
+   * After isolation the target lines are whole textblocks, so the replacement covers the
+   * NODES (`$pos.before()`/`after()`), which is what leaves no empty `<p>` where their content
+   * used to be. A selection that never resolved to textblocks (nothing to isolate) keeps the
+   * old exact-range behaviour, which is the select-all case the suite pins.
+   */
   editor.chain().focus()
-    .insertContentAt({ from, to }, { type: "codeBlock", content: [{ type: "text", text }] })
+    .command(({ state, tr }) => splitTargetLines(state, tr, false))
+    .command(({ state, commands }) => {
+      const sel = state.selection;
+      const lineText = state.doc.textBetween(sel.from, sel.to, "\n", "\n");
+      const $f = state.doc.resolve(sel.from);
+      const $t = state.doc.resolve(sel.to);
+      const range = $f.parent.isTextblock && $t.parent.isTextblock
+        ? { from: $f.before(), to: $t.after() }
+        : { from: sel.from, to: sel.to };
+      return commands.insertContentAt(range, {
+        type: "codeBlock",
+        content: [{ type: "text", text: lineText }],
+      });
+    })
     .run();
 }
 
