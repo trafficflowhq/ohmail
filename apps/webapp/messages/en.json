@@ -2346,7 +2346,8 @@
     "scheduledCancelTitle": "Cancel the scheduled send; the message stays here as a draft",
     "scheduleFailedNote": "This message wasn't sent at its scheduled time: {reason}",
     "scheduleCancelled": "Scheduled send cancelled. The message is in Drafts.",
-    "scheduleCancelTooLate": "Too late to cancel — this message is already being sent."
+    "scheduleCancelTooLate": "Too late to cancel — this message is already being sent.",
+    "scheduleCancelQueued": "No connection — the cancel hasn't reached the server yet. The message is still scheduled until it does."
   },
   "mailBody": {
     "blockedOne": "1 remote image blocked.",

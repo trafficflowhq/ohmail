@@ -192,7 +192,7 @@ export {
   ScheduleService, scheduleService, SCHEDULE_MAX_AHEAD_MS,
 } from "./schedule-service.js";
 export {
-  runScheduledSendPass, SCHEDULED_SEND_BATCH, SCHEDULED_SEND_EXPIRY_MS,
+  runScheduledSendPass, SCHEDULED_SEND_BATCH, SCHEDULED_SEND_EXPIRY_MS, SCHEDULED_SEND_SCAN_FACTOR,
   type ScheduledSendPassDeps, type ScheduledSendPassResult,
 } from "./schedule-send-pass.js";
 export {

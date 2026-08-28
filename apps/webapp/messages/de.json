@@ -2346,7 +2346,8 @@
     "scheduledCancelTitle": "Geplanten Versand abbrechen; die Nachricht bleibt hier als Entwurf",
     "scheduleFailedNote": "Diese Nachricht wurde zur geplanten Zeit nicht gesendet: {reason}",
     "scheduleCancelled": "Geplanter Versand abgebrochen. Die Nachricht liegt in den Entwürfen.",
-    "scheduleCancelTooLate": "Zu spät zum Abbrechen — diese Nachricht wird gerade gesendet."
+    "scheduleCancelTooLate": "Zu spät zum Abbrechen — diese Nachricht wird gerade gesendet.",
+    "scheduleCancelQueued": "Keine Verbindung — das Abbrechen hat den Server noch nicht erreicht. Die Nachricht ist bis dahin weiterhin geplant."
   },
   "mailBody": {
     "blockedOne": "1 externes Bild blockiert.",

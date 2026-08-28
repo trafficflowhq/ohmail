@@ -1,9 +1,11 @@
-import { setNoticeSink, noticeSinkFor } from "@trafficflow/db";
+import { setNoticeSink, noticeSinkFor, type Tx } from "@trafficflow/db";
 import { setupProdDatabase } from "@trafficflow/db/admin";
-import { makeOwnedDb, makeChangeWakeHub } from "@trafficflow/db/cloud";
-import { createLogger } from "@trafficflow/core";
+import { makeOwnedDb, makeChangeWakeHub, isSuspended } from "@trafficflow/db/cloud";
+import { createLogger, UNMETERED_STORAGE_CAP } from "@trafficflow/core";
+import { makeSendAdapter } from "@trafficflow/api";
+import { runScheduledSendPass } from "@trafficflow/services";
 import { loadServerConfig } from "./config.js";
-import { buildServerServices, oauthProviderFor, type ServerRuntime } from "./deps.js";
+import { buildDeps, buildServerServices, oauthProviderFor, type ServerRuntime } from "./deps.js";
 import { handleServerRequest } from "./handler.js";
 import { makeHttpServer } from "./http.js";
 import { mintFirstRunSetupToken, printSetupToken } from "./setup-token.js";
@@ -35,6 +37,15 @@ import { mintFirstRunSetupToken, printSetupToken } from "./setup-token.js";
 
 /** How long in-flight requests get after SIGTERM before their sockets are destroyed. */
 export const SHUTDOWN_GRACE_MS = 5_000;
+
+/**
+ * SEND LATER's clock on this host (mail 0077) — a minute, the hosted deployment's own cadence
+ * and for its reason: the appointment's stated precision is "±about a minute". The first pass
+ * runs shortly after listen so an appointment that came due during a restart is not a minute
+ * later than it already is.
+ */
+export const SCHEDULED_SEND_EVERY_MS = 60_000;
+export const SCHEDULED_SEND_FIRST_DELAY_MS = 15_000;
 
 async function main(): Promise<void> {
   const cfg = loadServerConfig(process.env);
@@ -91,10 +102,65 @@ async function main(): Promise<void> {
     logger.info("listening", { port: cfg.port, origin: cfg.origin });
   });
 
+  /**
+   * ── SEND LATER'S CLOCK RUNS IN THIS PROCESS, AND THAT IS THE DECISION ──────────────────────
+   *
+   * The hosted deployment drives `runScheduledSendPass` over HTTP because its API host is
+   * serverless — something external must supply the clock. THIS host is the opposite case: one
+   * always-on process that already holds the database, the key provider and the OAuth token
+   * provider, so the pass runs in-process on a settle-then-re-arm chain (never `setInterval`;
+   * a slow pass must not overlap itself). Without this, the schedule verbs would accept
+   * appointments no clock ever keeps on a box whose operator armed no internal cron — mail
+   * "scheduled" forever, which is the feature promising and never delivering. The internal
+   * HTTP route stays mounted for an operator who prefers an external scheduler; overlap
+   * between the two is safe by the claim's own `FOR UPDATE SKIP LOCKED`.
+   *
+   * `accountEligible` is the suspension gate: a suspended account's automation must not keep
+   * firing (the worker's roster makes the same ruling), so its due rows stay `'scheduled'`,
+   * untouched, until the suspension lifts. The storage cap is this host's typed UNMETERED —
+   * the same declaration its send route makes for the sent-copy projection.
+   */
+  let sendClock: ReturnType<typeof setTimeout> | null = null;
+  let sendClockStopped = false;
+  const armSendClock = (delayMs: number): void => {
+    if (sendClockStopped) return;
+    sendClock = setTimeout(() => {
+      void (async () => {
+        try {
+          const passDeps = buildDeps(new Request(cfg.origin), rt);
+          const r = await runScheduledSendPass(owned.db, {
+            openSendAdapter: (mailboxId) => makeSendAdapter(passDeps, mailboxId),
+            resolveStorageCap: async () => UNMETERED_STORAGE_CAP,
+            accountEligible: async (accountId) => !(await isSuspended(owned.db as unknown as Tx, accountId)),
+            log: logger,
+          });
+          if (r.claimed > 0) {
+            logger.info("scheduled_send_pass", {
+              claimed: r.claimed, sent: r.sent, unverified: r.unverified,
+              failed: r.failed, deferred: r.deferred,
+            });
+          }
+        } catch (err) {
+          // The pass absorbs per-row faults itself; this catches the claim. The appointments
+          // stand and the next minute asks again — one bad pass never kills the cadence.
+          logger.error("scheduled_send_pass_failed", { err });
+        } finally {
+          armSendClock(SCHEDULED_SEND_EVERY_MS);
+        }
+      })();
+    }, delayMs);
+    sendClock.unref();
+  };
+  armSendClock(SCHEDULED_SEND_FIRST_DELAY_MS);
+
   let stopping = false;
   const shutdown = (signal: string): void => {
     if (stopping) return;
     stopping = true;
+    // The clock first: a pass that has not started must not start over a closing pool. One
+    // already in flight finishes — its claim is small and the pool closes after `close()`.
+    sendClockStopped = true;
+    if (sendClock !== null) clearTimeout(sendClock);
     logger.info("shutdown_begin", { signal });
     server.close(() => {
       void (async () => {

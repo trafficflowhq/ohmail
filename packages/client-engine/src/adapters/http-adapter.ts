@@ -1669,10 +1669,27 @@ export class HttpAdapter implements EngineAdapter {
         throw await this.rejectionOf(res);
       }
       this.draftForKey.delete(idempotencyKey);
+      // THE SCHEDULED ROW RIDES THE ECHO — the route answers the draft DTO with its seq, and
+      // handing it back as a change is what keeps the Scheduled group populated across the
+      // confirm: the engine drops the optimistic overlay the moment this outcome resolves, and
+      // an empty `changes` would leave the group EMPTY until a background drain lands (or does
+      // not — a hidden tab aborts it). `draft_save`'s exact pattern, for `draft_discard`'s
+      // reason: read-your-writes must not depend on which path the next drain takes.
+      //
       // No providerMessageId — nothing left the building, so the engine materialises no Sent
-      // overlay (its gate reads exactly that field). The `scheduled` draft entity arrives on
-      // the background drain; the optimistic effect painted it already.
-      return { changes: [], seq, entityId: draftId };
+      // overlay (its gate reads exactly that field).
+      let dto: { id?: string; updatedAt?: string } = {};
+      try {
+        dto = (await res.json()) as { id?: string; updatedAt?: string };
+      } catch { /* an empty body degrades to the drain, exactly the pre-echo behaviour */ }
+      return {
+        changes: seq === null || !dto.id ? [] : [{
+          type: "draft", op: "update", id: dto.id, seq, updatedAt: dto.updatedAt ?? "",
+          entity: dto as unknown as Record<string, unknown>,
+        }],
+        seq,
+        entityId: draftId,
+      };
     }
 
     // ATTACHMENTS AND `forwardOf` RIDE THE SEND, not the draft. Attachment bytes are base64 on this

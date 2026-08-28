@@ -3158,30 +3158,45 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    * every PUT at a 409.
    */
   const scheduled = useMemo(() => scheduledSendsList(reader), [reader, version]);
+  /**
+   * ONLY `confirmed` IS A CANCELLATION. `queued` means the wire refused retryably and the
+   * intent is parked — the appointment STILL EXISTS server-side and its clock is still
+   * running, so saying "cancelled" (or opening the editor over it) would be the row promising
+   * something the server has not done, on the one surface whose whole content is a promise
+   * about time. The queued sentence says exactly that state; `rolled_back` is the server's own
+   * refusal (the claim won — "already being sent"). The overlay follows the same truth: a
+   * queued mutation keeps its optimistic effect, so the row shows un-scheduled while the
+   * banner says the cancel has not landed — user-always-wins, with the sentence carrying the
+   * doubt.
+   */
+  const cancelOutcomeToast = useCallback((res: { status: string }) => {
+    toast(res.status === "confirmed"
+      ? t("drafts.scheduleCancelled")
+      : res.status === "queued"
+        ? t("drafts.scheduleCancelQueued")
+        : t("drafts.scheduleCancelTooLate"));
+  }, [toast, t]);
   const cancelSchedule = useCallback(
     (draftId: string) => {
-      void engine.mutate({ kind: "draft_schedule_cancel", draftId }).then((res) => {
-        toast(res.status === "rolled_back"
-          ? t("drafts.scheduleCancelTooLate")
-          : t("drafts.scheduleCancelled"));
-      });
+      void engine.mutate({ kind: "draft_schedule_cancel", draftId }).then(cancelOutcomeToast);
     },
-    [engine, toast, t],
+    [engine, cancelOutcomeToast],
   );
   const editScheduled = useCallback(
     (d: EngineDraft) => {
       void engine.mutate({ kind: "draft_schedule_cancel", draftId: d.id }).then((res) => {
-        if (res.status === "rolled_back") {
-          toast(t("drafts.scheduleCancelTooLate"));
+        if (res.status !== "confirmed") {
+          // NOT opened: adopting a row whose appointment may still stand would point autosave
+          // at a frozen row (409 per PUT) and let edits race a send the user believes stopped.
+          cancelOutcomeToast(res);
           return;
         }
-        // The row is a plain draft now (optimistically at once, authoritatively on the drain);
-        // hand `openDraft` the same reading so it ADOPTS rather than treating the row as a
-        // stranded send.
+        // The row is a plain draft now, confirmed; hand `openDraft` the same reading so it
+        // ADOPTS rather than treating the row as a stranded send.
         openDraft({ ...d, status: "draft", sendAt: null });
       });
     },
-    [engine, openDraft, toast, t],
+    [engine, openDraft, cancelOutcomeToast],
   );
   const discardDraft = useCallback(
     (draftId: string) => {

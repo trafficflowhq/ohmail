@@ -88,6 +88,22 @@ export interface ScheduledSendPassDeps {
   openSendAdapter: OpenSendAdapter;
   /** The sent-copy projection's cap — absent means the projection refuses (`SendDeps`' rule). */
   resolveStorageCap?: (ctx: ServiceContext) => Promise<StorageCap>;
+  /**
+   * MAY THIS ACCOUNT'S AUTOMATION STILL FIRE? — the suspension gate, INJECTED because the fact
+   * lives in the cloud half (`account_suspensions`, read with `isSuspended` from
+   * `@trafficflow/db/cloud`) and this pass ships in the desktop engine bundle, which may not
+   * name a cloud table. The hosted route and the self-host clock inject the real read; the
+   * standalone door injects nothing, which resolves to ELIGIBLE — its store has no suspension
+   * concept, and the machine's own login is the boundary.
+   *
+   * Consulted INSIDE the claim transaction, before the flip, so an ineligible account's due
+   * rows are left exactly as they stand — still `'scheduled'`, re-examined next cycle, sent
+   * promptly once the suspension lifts, and never dialled meanwhile. The worker's own passes
+   * make the same ruling from the other end (a suspended account is in no shard's roster):
+   * "a suspended account's automation must not keep firing", and a pass that dials SMTP with
+   * retained credentials is exactly such automation.
+   */
+  accountEligible?: (accountId: string) => Promise<boolean>;
   log?: Logger;
   now?: () => Date;
   /** Test seams. */
@@ -130,7 +146,7 @@ export async function runScheduledSendPass(
   const sends = deps.sends ?? sendService;
   const result: ScheduledSendPassResult = { claimed: 0, sent: 0, unverified: 0, failed: 0, deferred: 0 };
 
-  const rows = await claimDue(db, now(), batch);
+  const rows = await claimDue(db, now(), batch, deps.accountEligible);
   result.claimed = rows.length;
 
   for (const row of rows) {
@@ -165,9 +181,13 @@ export async function runScheduledSendPass(
         result.unverified += 1;
         log.warn("scheduled_send_unverified", { draftId: row.id, accountId: row.accountId });
       } else if (res.status === "failed") {
-        // A terminally-failed prior reservation under this key. The appointment is over.
+        // A terminally-failed prior reservation under this key. The appointment is over — and
+        // `includeSending` is TRUE here alone, because "failed" is the reservation machinery's
+        // own word that the reservation is terminal, which is exactly the proof the close's
+        // 'sending' exclusion exists to demand.
         await closeAppointment(db, ctx, row,
-          "A prior send attempt under this schedule failed and was not delivered.", log);
+          "A prior send attempt under this schedule failed and was not delivered.", log,
+          { includeSending: true });
         result.failed += 1;
       } else {
         // `in_flight`: a live invocation already owns this key (two pokes overlapping in the
@@ -177,11 +197,16 @@ export async function runScheduledSendPass(
       }
     } catch (err) {
       if (err instanceof ServiceError) {
-        // Deterministic refusal — retrying it unchanged cannot succeed, so the honest ending
-        // is the sentence in the Drafts row. `reserve` throws inside its transaction, so the
-        // reservation rolled back and the row is an ordinary 'draft' again.
-        await closeAppointment(db, ctx, row, err.message, log);
-        result.failed += 1;
+        // Deterministic refusal. When `reserve` itself threw, it rolled back and the row is an
+        // ordinary 'draft' — the close lands and the sentence goes in the Drafts row. When the
+        // refusal came AFTER the reservation committed (`makeSendAdapter` refusing over deleted
+        // credentials is the measured shape), the row is 'sending' and the close DECLINES by
+        // its own predicate: the reservation stands, the recovery arm replays the key once the
+        // row is stale, and verify-by-Sent ends it terminally — so that outcome is counted as
+        // DEFERRED, because "failed" would be this pass writing up an ending it cannot prove.
+        const closed = await closeAppointment(db, ctx, row, err.message, log);
+        if (closed) result.failed += 1;
+        else result.deferred += 1;
         log.warn("scheduled_send_refused", { draftId: row.id, accountId: row.accountId, code: err.code });
       } else {
         // TRANSIENT — and where the fault landed decides who owns the retry. Re-arm, guarded
@@ -208,25 +233,63 @@ export async function runScheduledSendPass(
 }
 
 /**
+ * How many due candidates one claim EXAMINES to fill its batch of {@link SCHEDULED_SEND_BATCH}
+ * sends — four batches' worth. It exists for the eligibility gate: a suspended account's due
+ * rows are the OLDEST rows by construction (they sit unsent while the suspension lasts), so a
+ * scan that stopped at `batch` could fill itself entirely with rows it then refuses to flip
+ * and starve every other account behind them. Four is deliberately small — the scan is a
+ * per-minute indexed read, suspension is rare, and an account with more than nine due
+ * appointments parked behind a suspension delays other accounts by at most one cycle per
+ * batch it fills.
+ */
+export const SCHEDULED_SEND_SCAN_FACTOR = 4;
+
+/**
  * Claim what this invocation will attempt: DUE appointments first, then RECOVERY — rows whose
  * claim (or whole invocation) died mid-flight, identified by `send_key` standing on a row that
  * is `{SEND_STALE_AFTER_MS}` past due and no longer `'scheduled'`. Both under
  * `FOR UPDATE SKIP LOCKED`, so two hosts (or an overlapping poke) split the work instead of
  * double-claiming a row — and a user's `cancel`, which contends on the same row lock, either
  * wins outright or observes the claim's committed flip and answers "already being sent".
+ *
+ * The ELIGIBILITY GATE runs inside the transaction, before the flip, per account rather than
+ * per row (one read per distinct account this scan touched): an ineligible account's rows are
+ * left untouched — still `'scheduled'`, still due, dialled the cycle after the suspension
+ * lifts — and never counted toward the batch.
  */
-async function claimDue(db: Db, now: Date, batch: number): Promise<ClaimedRow[]> {
+async function claimDue(
+  db: Db, now: Date, batch: number,
+  accountEligible?: (accountId: string) => Promise<boolean>,
+): Promise<ClaimedRow[]> {
   return (db as unknown as Tx).transaction(async (tx) => {
-    const due = await tx.select({
+    const scan = batch * SCHEDULED_SEND_SCAN_FACTOR;
+    const candidates = await tx.select({
       id: drafts.id, accountId: drafts.accountId, sendKey: drafts.sendKey, sendAt: drafts.sendAt,
     }).from(drafts)
       .where(and(eq(drafts.status, "scheduled"), lte(drafts.sendAt, now), isNotNull(drafts.sendKey)))
       .orderBy(drafts.sendAt)
-      .limit(batch)
+      .limit(scan)
       .for("update", { skipLocked: true });
 
+    // One eligibility read per distinct account in the scan, memoised for both arms.
+    const eligibility = new Map<string, boolean>();
+    const eligible = async (accountId: string): Promise<boolean> => {
+      if (!accountEligible) return true;
+      const held = eligibility.get(accountId);
+      if (held !== undefined) return held;
+      const answer = await accountEligible(accountId);
+      eligibility.set(accountId, answer);
+      return answer;
+    };
+
+    const due: typeof candidates = [];
+    for (const row of candidates) {
+      if (due.length >= batch) break;
+      if (await eligible(row.accountId)) due.push(row);
+    }
+
     const staleBefore = new Date(now.getTime() - SEND_STALE_AFTER_MS);
-    const recovery = due.length >= batch ? [] : await tx.select({
+    const recoveryCandidates = due.length >= batch ? [] : await tx.select({
       id: drafts.id, accountId: drafts.accountId, sendKey: drafts.sendKey, sendAt: drafts.sendAt,
       status: drafts.status,
     }).from(drafts)
@@ -241,6 +304,10 @@ async function claimDue(db: Db, now: Date, batch: number): Promise<ClaimedRow[]>
       .orderBy(drafts.sendAt)
       .limit(batch - due.length)
       .for("update", { skipLocked: true });
+    const recovery: typeof recoveryCandidates = [];
+    for (const row of recoveryCandidates) {
+      if (await eligible(row.accountId)) recovery.push(row);
+    }
 
     if (due.length > 0) {
       await tx.update(drafts)
@@ -269,13 +336,15 @@ async function claimDue(db: Db, now: Date, batch: number): Promise<ClaimedRow[]>
  * an ordinary draft again — and a `draft` change emitted, because this is the one terminal
  * outcome `SendService`'s finalizers do not announce (they never ran, or ended in rollback).
  * Guarded on `send_key` so a re-scheduled row (fresh key) can never have its NEW appointment
- * closed by a stale failure from the old one.
+ * closed by a stale failure from the old one. Answers whether anything closed, so the caller's
+ * counters can tell a settled failure from a row the predicate protected.
  */
 async function closeAppointment(
   db: Db, ctx: ServiceContext, row: ClaimedRow, sentence: string, log: Logger,
-): Promise<void> {
+  opts: { includeSending?: boolean } = {},
+): Promise<boolean> {
   try {
-    await (db as unknown as Tx).transaction(async (tx) => {
+    return await (db as unknown as Tx).transaction(async (tx) => {
       const closed = await tx.update(drafts)
         .set({ status: "draft", sendAt: null, sendKey: null, sendError: sentence, updatedAt: ctx.now() })
         .where(and(
@@ -283,8 +352,19 @@ async function closeAppointment(
           // THE KEY IS THE GUARD: a re-scheduled row carries a fresh key, so a stale failure
           // from the old appointment can never close the new one.
           eq(drafts.sendKey, row.sendKey),
-          // And never a row that reached a real terminal status — its finalizer already spoke.
-          sql`${drafts.status} in ('draft', 'sending', 'scheduled')`,
+          // And never a row that is 'sending' or terminal — unless the CALLER proved the
+          // reservation terminal (`includeSending`, the failed-replay branch alone). 'sending'
+          // means a RESERVATION EXISTS (reserve commits the flip and the INSERT in one
+          // transaction) — a `ServiceError` thrown after that commit (the adapter factory
+          // refusing over deleted credentials is the measured shape) does NOT prove a
+          // rollback, and closing on it would clear the `send_key` the recovery arm replays,
+          // stranding a `pending` reservation nothing can ever resolve while the stuck-send
+          // alarm pages on it. Left standing, the recovery arm re-presents the key once the
+          // row is stale and verify-by-Sent ends it terminally. Terminal rows' finalizers
+          // already spoke.
+          opts.includeSending
+            ? sql`${drafts.status} in ('draft', 'sending', 'scheduled')`
+            : sql`${drafts.status} in ('draft', 'scheduled')`,
         ))
         .returning({ id: drafts.id });
       if (closed.length > 0) {
@@ -292,9 +372,11 @@ async function closeAppointment(
           accountId: ctx.accountId, entityType: "draft", entityId: row.id, op: "update", meta: null,
         });
       }
+      return closed.length > 0;
     });
   } catch (err) {
     // The next pass's recovery arm re-finds the row (the key still stands); nothing is lost.
     log.warn("scheduled_send_close_failed", { draftId: row.id, err });
+    return false;
   }
 }

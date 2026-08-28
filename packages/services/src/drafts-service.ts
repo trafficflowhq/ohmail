@@ -1,4 +1,4 @@
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, isNull, ne } from "drizzle-orm";
 import { claimIdempotencyKey, drafts, mailboxes, recordChange, threads, type Tx } from "@trafficflow/db";
 import type { EmailAddress } from "@trafficflow/core/mail";
 import type { ServiceContext } from "./context.js";
@@ -203,28 +203,36 @@ export class DraftsService {
       // because the send path flips the row to `sending` in its own transaction, and a check
       // that ran before this UPDATE took the row lock would let the move land on a row whose
       // send is already reserved under the old identity.
-      // A `scheduled` row is FROZEN (mail 0077): what the worker sends must be exactly what the
-      // user last saw when they pressed "Send later", and an edit landing while the claim is
-      // picking the row up would send words nobody reviewed at the time they chose. The edit
-      // flow is cancel → edit → schedule again — which also re-mints the send key, so "an
-      // edited message sends only its final content" is structural rather than a race. In the
-      // PREDICATE, not a prior read, for the same reason the mailbox move's status check is.
+      // A row WEARING AN APPOINTMENT is FROZEN (mail 0077): what the worker sends must be
+      // exactly what the user last saw when they pressed "Send later", and an edit landing
+      // while the claim is picking the row up would send words nobody reviewed at the time
+      // they chose. The predicate is `send_key IS NULL`, NOT `status <> 'scheduled'`, because
+      // the claim window is the case that matters: the worker's claim flips the row to
+      // 'draft' with the key standing, and a status-only freeze would let a stale client PUT
+      // win the row lock ahead of the reservation and change the content that sends. The key
+      // covers every phase of an appointment's life ('scheduled', the claim window, and
+      // 'sending' up to the finalizer that clears it) and nothing else — an ordinary draft
+      // never carries one. The edit flow is cancel → edit → schedule again, which re-mints
+      // the key, so "an edited message sends only its final content" is structural rather
+      // than a race. In the PREDICATE, not a prior read, for the same reason the mailbox
+      // move's status check is.
       const updated = await tx.update(drafts).set(set)
         .where(and(
           eq(drafts.id, id), eq(drafts.accountId, ctx.accountId),
           ne(drafts.status, "scheduled"),
+          isNull(drafts.sendKey),
           ...(movesMailbox ? [eq(drafts.status, "draft")] : []),
         ))
         .returning({ id: drafts.id });
       if (updated.length === 0) {
         // Zero rows is three different refusals, and they need different answers: a row that
-        // does not exist (or is another account's) is the standing 404; a `scheduled` row is
-        // refused the EDIT with the way forward named; a row past `draft` is refused the
-        // mailbox MOVE — so the caller learns the identity is fixed rather than that the
-        // draft vanished.
-        const [row] = await tx.select({ status: drafts.status }).from(drafts)
+        // does not exist (or is another account's) is the standing 404; a row wearing an
+        // appointment is refused the EDIT with the way forward named; a row past `draft` is
+        // refused the mailbox MOVE — so the caller learns the identity is fixed rather than
+        // that the draft vanished.
+        const [row] = await tx.select({ status: drafts.status, sendKey: drafts.sendKey }).from(drafts)
           .where(and(eq(drafts.id, id), eq(drafts.accountId, ctx.accountId))).limit(1);
-        if (row?.status === "scheduled") {
+        if (row && (row.status === "scheduled" || row.sendKey !== null)) {
           throw new ServiceError(
             "conflict", 409,
             "this message is scheduled to send; cancel the schedule to edit it",
@@ -248,20 +256,23 @@ export class DraftsService {
 
   async remove(ctx: ServiceContext, id: string): Promise<{ seq: number }> {
     const seq = await asTx(ctx).transaction(async (tx) => {
-      // A `scheduled` row refuses the delete with the way forward named, exactly as `update`
-      // refuses the edit: cancel first. Discarding it directly would race the worker's claim —
-      // a DELETE that loses the row lock lands after the reservation and destroys the record of
-      // a send that is happening anyway. Cancel is the verb that is race-safe by construction.
+      // A row WEARING AN APPOINTMENT refuses the delete with the way forward named, exactly as
+      // `update` refuses the edit: cancel first. The predicate is `send_key IS NULL` for
+      // `update`'s reason — the claim window ('draft', key standing) is precisely when a
+      // DELETE that wins the row lock lands ahead of the reservation and destroys the record
+      // of a send that is happening anyway. Cancel is the verb that is race-safe by
+      // construction.
       const deleted = await tx.delete(drafts)
         .where(and(
           eq(drafts.id, id), eq(drafts.accountId, ctx.accountId),
           ne(drafts.status, "scheduled"),
+          isNull(drafts.sendKey),
         ))
         .returning({ id: drafts.id });
       if (deleted.length === 0) {
-        const [row] = await tx.select({ status: drafts.status }).from(drafts)
+        const [row] = await tx.select({ status: drafts.status, sendKey: drafts.sendKey }).from(drafts)
           .where(and(eq(drafts.id, id), eq(drafts.accountId, ctx.accountId))).limit(1);
-        if (row?.status === "scheduled") {
+        if (row && (row.status === "scheduled" || row.sendKey !== null)) {
           throw new ServiceError(
             "conflict", 409,
             "this message is scheduled to send; cancel the schedule to discard it",
