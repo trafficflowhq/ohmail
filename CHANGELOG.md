@@ -20,7 +20,9 @@ Signed installers — a real Apple Developer ID and an Authenticode certificate.
 
 Folders you can manage from the app, a Junk window you can search and teach,
 per-mailbox signatures, and new mail that shows up in seconds instead of
-minutes. The version names a feature wave, so the minor moves.
+minutes. The version names a feature wave, so the minor moves. The Android
+app is at 0.11.2 as this ships and joins the 0.12 line with its own next
+release — each platform's version moves when its release does.
 
 ### Manage your mail server's folders
 
