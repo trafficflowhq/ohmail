@@ -131,7 +131,11 @@ async function main(): Promise<void> {
           const r = await runScheduledSendPass(owned.db, {
             openSendAdapter: (mailboxId) => makeSendAdapter(passDeps, mailboxId),
             resolveStorageCap: async () => UNMETERED_STORAGE_CAP,
-            accountEligible: async (accountId) => !(await isSuspended(owned.db as unknown as Tx, accountId)),
+            // On the HANDED handle (the claim transaction's own) — the deadlock rule on
+            // `ScheduledSendPassDeps.accountEligible`; a captured `owned.db` read would queue
+            // behind the transaction on a busy pool exactly as it did on the hosted host.
+            accountEligible: async (accountId, handle) =>
+              !(await isSuspended(handle as unknown as Tx, accountId)),
             log: logger,
           });
           if (r.claimed > 0) {

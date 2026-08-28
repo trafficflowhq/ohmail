@@ -779,8 +779,12 @@ export const internalRoutes: Route[] = [
           // (`account_suspensions`) and the pass ships in the desktop engine bundle, which may
           // not name a cloud table. A suspended account's automation must not keep firing —
           // the worker's roster makes the same ruling — so its due appointments stay
-          // `'scheduled'`, undialled, until the suspension lifts.
-          accountEligible: async (accountId) => !(await isSuspended(deps.db as unknown as Tx, accountId)),
+          // `'scheduled'`, undialled, until the suspension lifts. The read runs on the HANDED
+          // handle (the claim transaction's own), never `deps.db`: on this host's pooled
+          // connection the captured form queued behind the transaction holding it and every
+          // poke timed out — the deadlock rule on `ScheduledSendPassDeps.accountEligible`.
+          accountEligible: async (accountId, handle) =>
+            !(await isSuspended(handle as unknown as Tx, accountId)),
           log,
           now: deps.now,
         });
