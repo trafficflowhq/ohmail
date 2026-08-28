@@ -654,7 +654,14 @@ function splitTargetLines(state: EditorState, tr: Transaction, splitInner: boole
   // narrowing it to the text inside (what `between` does) would change which node the chained
   // toggle acts on: unquoting a selected `<ul>` must lift THE LIST, not the first line in it
   // (review-caught). Left exactly as the user made it; the stock toggles know node selections.
-  if (sel instanceof NodeSelection) return true;
+  //
+  // EXCEPT a selected BLOCKQUOTE, which is precisely its run of lines (review-caught in the
+  // next round): TipTap's toggle cannot derive a liftable range from the quote's own node
+  // selection, so an unconditional bail made the Quote button inert on it — while narrowing
+  // to the contents is exactly the unwrap that press means. The quote is the one wrapper a
+  // button here toggles that a node selection can land on: a selected list or code block is
+  // caught by its command's own isActive early-return before isolation is reached.
+  if (sel instanceof NodeSelection && sel.node.type.name !== "blockquote") return true;
   // A select-all is an AllSelection whose ends resolve to the DOCUMENT; `between` snaps both
   // ends into the outermost textblocks, which is what makes ⌘A + list one item per line.
   const textSel = sel instanceof TextSelection ? sel : TextSelection.between(sel.$from, sel.$to);
