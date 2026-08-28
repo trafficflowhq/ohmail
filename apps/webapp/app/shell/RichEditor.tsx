@@ -8,7 +8,7 @@ import {
 } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
-import { TextSelection, type EditorState, type Transaction } from "@tiptap/pm/state";
+import { NodeSelection, TextSelection, type EditorState, type Transaction } from "@tiptap/pm/state";
 import type { ResolvedPos } from "@tiptap/pm/model";
 import { LinkPopover } from "./LinkPopover";
 import {
@@ -650,6 +650,11 @@ function lineEdge($pos: ResolvedPos, pos: number, dir: -1 | 1): number {
  */
 function splitTargetLines(state: EditorState, tr: Transaction, splitInner: boolean): boolean {
   const sel = state.selection;
+  // A NODE selection — a whole list or block picked as a node — is not a run of lines, and
+  // narrowing it to the text inside (what `between` does) would change which node the chained
+  // toggle acts on: unquoting a selected `<ul>` must lift THE LIST, not the first line in it
+  // (review-caught). Left exactly as the user made it; the stock toggles know node selections.
+  if (sel instanceof NodeSelection) return true;
   // A select-all is an AllSelection whose ends resolve to the DOCUMENT; `between` snaps both
   // ends into the outermost textblocks, which is what makes ⌘A + list one item per line.
   const textSel = sel instanceof TextSelection ? sel : TextSelection.between(sel.$from, sel.$to);
