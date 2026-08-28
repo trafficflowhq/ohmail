@@ -659,6 +659,33 @@ function splitTargetLines(state: EditorState, tr: Transaction, splitInner: boole
   const lineStart = lineEdge($from, from, -1);
   const lineEnd = lineEdge($to, to, 1);
 
+  /**
+   * A ZERO-WIDTH LINE — the caret on an empty line, `<p>intro<br>│</p>` or `<p>a<br>│<br>b</p>`.
+   * Review-caught, then measured twice: an empty line has no interior for a mapping bias to
+   * hold on to, so mapping its one position inward from both sides lands on OPPOSITE sides of
+   * the surrounding splits — an inverted range whose clamp put the caret on the line ABOVE,
+   * and the button formatted a line the caret was not on. And no single bias serves both
+   * surrounding splits: +1 pushes the caret past the break AFTER the line (onto the next
+   * line), −1 keeps it before the break BEFORE it (onto the previous). So the empty line is
+   * isolated explicitly — the break after it first (the caret stays at the end of the first
+   * half), then the break before it (the caret moves into the split's second half, the empty
+   * paragraph itself) — with the caret TRACKED through each step rather than mapped.
+   */
+  if (lineStart === lineEnd && empty) {
+    let caret = lineStart;
+    if (lineEnd < $to.end()) {
+      tr.delete(caret, caret + 1);
+      tr.split(caret);
+    }
+    if (lineStart > $from.start()) {
+      tr.delete(caret - 1, caret);
+      tr.split(caret - 1);
+      caret += 1;
+    }
+    tr.setSelection(TextSelection.create(tr.doc, caret));
+    return true;
+  }
+
   const splits = new Set<number>();
   if (lineStart > $from.start()) splits.add(lineStart - 1);
   if (lineEnd < $to.end()) splits.add(lineEnd);
@@ -677,7 +704,8 @@ function splitTargetLines(state: EditorState, tr: Transaction, splitInner: boole
   }
 
   // The mapped line range: bias inward on both ends, so a split exactly at an edge leaves the
-  // position inside the lines rather than in the neighbour it just created.
+  // position inside the lines rather than in the neighbour it just created. (The zero-width
+  // line, where a bias has nothing to hold on to, returned above.)
   const start = tr.mapping.map(lineStart, 1);
   const end = tr.mapping.map(lineEnd, -1);
   if (empty) {
@@ -716,12 +744,16 @@ function applyList(editor: Editor, list: "bulletList" | "orderedList"): void {
  * The quote button. One quote for the target lines, with the breaks INSIDE it kept as breaks —
  * quoting three lines of prose is one quotation, not three (the difference from a list, where
  * every line is its own item; `splitInner` is that difference, spelled as an argument).
+ *
+ * The OFF direction is line-scoped too, and that is not free the way it is for lists. A list's
+ * items are lines, so TipTap's own lift already takes the item the caret stands in — but this
+ * command deliberately quotes several lines as ONE paragraph, so a bare `toggleBlockquote`
+ * would lift all of them together and pressing Quote on one line of a three-line quotation
+ * would unquote all three (review-caught). Isolating the caret's line first makes the lift
+ * take exactly that line out, splitting the quotation around it, which is what unquoting one
+ * line of a quotation has always meant.
  */
 function applyQuote(editor: Editor): void {
-  if (editor.isActive("blockquote")) {
-    editor.chain().focus().toggleBlockquote().run();
-    return;
-  }
   editor.chain().focus()
     .command(({ state, tr }) => splitTargetLines(state, tr, false))
     .toggleBlockquote()
