@@ -38,9 +38,10 @@ import {
 } from "react";
 import { Copy } from "../copy";
 import { useConnection } from "../net/connection";
-import { readFoldersEnabled, writeFoldersEnabled } from "../net/consent";
+import { readFoldersEnabled, writeFoldersEnabled, type FoldersConsent } from "../net/consent";
+import { readFolderSummary } from "../net/folder-ops";
 import * as Crypto from "expo-crypto";
-import { foldersFlag } from "./folders-flag";
+import { foldersFlag, freshestRead } from "./folders-flag";
 import {
   flushQueued,
   liveActions,
@@ -57,6 +58,7 @@ import {
   mirrorSettled,
   presentedOf,
   readerZone,
+  soleMessageMailbox,
   stableActions,
   type FolderEntity,
   type ScreenerRow,
@@ -139,7 +141,27 @@ export interface World {
     pending: boolean;
     /** Resolves `true` when the server confirmed the write; `false` is the failure sentence's cue. */
     setEnabled(on: boolean): Promise<boolean>;
+    /**
+     * The delete confirm's SERVER-truth numbers (`GET /folders/:id/summary`) — the mirror is
+     * windowed, so only the server can say "N messages across M folders". `null` is "could
+     * not count": the confirm still asks, with the uncounted sentence (the webapp's degrade).
+     */
+    summary(folderId: string): Promise<{ folders: number; messages: number } | null>;
+    /**
+     * The one mailbox a FIRST create can name when zero folder entities exist to derive a
+     * section from (`live.ts#soleMessageMailbox`) — `null` when the mirror names none or
+     * several, or when folders already exist (the sections carry the affordance then).
+     */
+    soleCreateMailboxId: string | null;
   };
+  /**
+   * THE ACCOUNT'S STORED SIGNATURES — `{ mailboxId: text }`, from the consent read (`GET
+   * /consent`, mail 0075), riding the folders flag's own cadence (boot + after every drain,
+   * so a signature saved in the webapp's Settings reaches an open phone). `null` until a read
+   * SUCCEEDS for this session — the webapp's `signaturesKnown` gate: the composer's block
+   * renders from a server-confirmed answer or not at all, never from a guess.
+   */
+  signatures: Readonly<Record<string, string>> | null;
   message(id: string): WorldMail | undefined;
   /**
    * WHAT BECAME OF A QUEUED SEND — how a locked composer settles. `pending` while the key
@@ -200,6 +222,10 @@ const NO_ACTIONS: WorldActions = {
   tagToggle: () => undefined,
   tagCreate: () => undefined,
   screenSender: () => undefined,
+  folderCreate: () => undefined,
+  folderRename: () => undefined,
+  folderDelete: () => undefined,
+  folderDismiss: () => undefined,
 };
 
 function emptyWorld(actions: WorldActions): World {
@@ -224,7 +250,11 @@ function emptyWorld(actions: WorldActions): World {
       items: () => ({ fresh: [], seen: [], unread: 0, total: 0 }),
       pending: false,
       setEnabled: () => Promise.resolve(false),
+      // Could-not-count, honestly: nothing is connected, so nothing can be counted.
+      summary: () => Promise.resolve(null),
+      soleCreateMailboxId: null,
     },
+    signatures: null,
     message: () => undefined,
     sendOutcome: () => "unknown",
     actions,
@@ -293,6 +323,15 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    */
   const [foldersOn, setFoldersOn] = useState(false);
   const [foldersPending, setFoldersPending] = useState(false);
+  /**
+   * The account's stored signatures, or `null` until a consent read SUCCEEDS this session
+   * (`signaturesKnown`, structurally — see {@link World.signatures}). They ride the SAME
+   * `GET /consent` the folders flag reads, on the machine's own cadence; the phone never
+   * WRITES a signature, so there is no user-wins epoch to keep — `freshestRead` (built per
+   * machine below) guards the one race that exists: two overlapping reads settling out of
+   * issue order.
+   */
+  const [signatures, setSignatures] = useState<Readonly<Record<string, string>> | null>(null);
   /** `conn.syncNow` behind a ref so the machine below keeps one identity across renders. */
   const syncNowRef = useRef(conn.syncNow);
   syncNowRef.current = conn.syncNow;
@@ -325,8 +364,15 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   const current = useRef<ReturnType<typeof foldersFlag> | null>(null);
   const machine = useMemo(() => {
     if (!session) return (current.current = null);
+    // The signatures ride the flag's read but keep their OWN ordering: the machine's epoch
+    // protects the flag against a user's write; nothing writes signatures from this phone, so
+    // freshest-successful-read-wins is the whole rule (`freshestRead`). Identity-gated like
+    // `apply` — a superseded session's late answer applies nothing.
+    const sigRead = freshestRead<FoldersConsent>((ans) => {
+      if (current.current === m) setSignatures(ans.signatures);
+    });
     const m = foldersFlag({
-      read: () => readFoldersEnabled(session),
+      read: () => sigRead(() => readFoldersEnabled(session)),
       write: (on) => writeFoldersEnabled(session, on),
       apply: (on) => { if (current.current === m) setFoldersOn(on); },
       drain: () => {
@@ -341,6 +387,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     setFoldersOn(false);
     setFoldersPending(false);
+    // The signatures are the outgoing session's answer — the next session starts unknown
+    // (account A's signature must never dress account B's composer); the tracker itself is
+    // rebuilt with the machine, so its tally starts over with it.
+    setSignatures(null);
     drainOwed.current = false; // the debt was the old session's; the new one owes nothing
     if (machine) void machine.refresh();
   }, [machine]);
@@ -503,12 +553,16 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           markSeen: (id, unread) => void acts.markSeen(id, unread),
           move: (id, dest) => void acts.move(id, dest),
           deleteMessage: (id) => void acts.deleteMessage(id),
-          sendReply: (id, body, all) => acts.sendReply(id, body, all),
-          sendForward: (id, to, body) => acts.sendForward(id, to, body),
+          sendReply: (id, body, all, sig) => acts.sendReply(id, body, all, sig),
+          sendForward: (id, to, body, sig) => acts.sendForward(id, to, body, sig),
           sendOutcome: (key) => outcomeOf(key),
           tagToggle: (id, tag, assigned) => void acts.tagToggle(id, tag, assigned),
           tagCreate: (id, name) => void acts.tagCreate(id, name),
           screenSender: (id, dest, scope) => void acts.screenSender(id, dest, scope),
+          folderCreate: (mailboxId, name) => void acts.folderCreate(mailboxId, name),
+          folderRename: (id, name) => void acts.folderRename(id, name),
+          folderDelete: (id) => void acts.folderDelete(id),
+          folderDismiss: (id) => acts.folderDismiss(id),
         }
       : NO_ACTIONS;
   /* One identity for the app's life — see the header for what per-version identity cost. */
@@ -572,8 +626,16 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           },
           pending: foldersPending,
           setEnabled: setFoldersEnabled,
+          // The one read the verbs need beside the engine (`net/folder-ops.ts`): the count
+          // goes to THIS session's server, and a superseded session answers "could not count".
+          summary: (folderId: string) => readFolderSummary(session, folderId),
+          // Only asked when there is no section to hang the first create on — one mirror
+          // pass, paid exactly in the zero-folders state it serves.
+          soleCreateMailboxId:
+            foldersOn && list.length === 0 ? soleMessageMailbox(engine.read()) : null,
         };
       })(),
+      signatures,
       message: (id) => liveMessage(engine, id, { now: new Date(), zone, foldersEnabled: foldersOn }),
       sendOutcome: outcomeOf,
       actions,
@@ -586,7 +648,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // failure sentence is part of what an unsettled screen renders.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, session, scopes, zone, actions, version, outcomeSeq, outcomeOf,
-    foldersOn, foldersPending, setFoldersEnabled, conn.syncing, conn.syncError]);
+    foldersOn, foldersPending, setFoldersEnabled, signatures, conn.syncing, conn.syncError]);
 
   return (
     <WorldContext.Provider value={world}>

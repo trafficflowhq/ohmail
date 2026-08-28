@@ -57,6 +57,12 @@ import {
   threadOf,
   triagePiles,
   winningStates,
+  withSignature,
+  SIG_FOLLOWING,
+  effectiveSignature,
+  folderNameError,
+  type FolderNameError,
+  type SignatureState,
   type BodyState,
   type EmailAddress,
   type EngineMessage,
@@ -153,6 +159,16 @@ export type WorldMail = Mail & {
   bodyState?: BodyState;
   /** Where the message physically is — what the move panel leaves out of its list. */
   folder: Folder;
+  /**
+   * THE MAILBOX THE MESSAGE ARRIVED IN — and therefore THE SENDING MAILBOX of every compose
+   * this screen can start: a reply's From is `Engine.enrich`'s own `parent.mailboxId` and the
+   * forward arm already passes the same id explicitly, so this is the one id the composer's
+   * signature block may follow (`effectiveSignature`; SIG-MOB). The projection used to carry
+   * no mailbox handle on purpose; it carries exactly this one now BECAUSE the block must
+   * derive from the id the mutation will put on the wire — a block keyed on anything else
+   * could show one mailbox's signature and serialize under another's send.
+   */
+  mailboxId: string;
   /** The pile the bar shows as pressed, or the resurface pin the Done slot answers to. */
   pile: WorldPileState;
   /**
@@ -228,6 +244,7 @@ function toMail(reader: EntityReader, m: EngineMessage, v: WorldView): WorldMail
     // (`physicalFolderOf` answers `physicalFolder ?? folder`, both `Folder` values on the
     // wire; its `string` return is the DTO's optional field being untyped, not a new shape.)
     folder: physical as Folder,
+    mailboxId: m.mailboxId,
     // The wire's `name` is nullable; the row shape's is not — a nameless sender reads as
     // their address, exactly as every list row already renders one.
     from: { name: m.from.name || m.from.address, address: m.from.address },
@@ -371,6 +388,23 @@ export function liveFolders(reader: EntityReader): FolderEntity[] {
  */
 export function liveFolderUnread(pres: EntityReader): Map<string, number> {
   return folderUnreadCounts(pres.list<EngineMessage>("message"));
+}
+
+/**
+ * THE ONE MAILBOX THE MIRROR'S MAIL NAMES, or `null` — what lets a fresh account with ZERO
+ * folder entities still offer its first `+ New folder` (a create must name WHICH mailbox; the
+ * webapp grows the section from its `GET /mailboxes` facts, which this phone does not read).
+ * Exactly one distinct `mailboxId` across the raw mirror's messages is an unambiguous answer;
+ * none or several is `null`, and the affordance waits for a mailbox read — offered from one,
+ * withheld at ambiguity, the same honest degradation `NO_OWN_ADDRESSES` documents.
+ */
+export function soleMessageMailbox(reader: EntityReader): string | null {
+  let found: string | null = null;
+  for (const m of reader.list<EngineMessage>("message")) {
+    if (found === null) found = m.mailboxId;
+    else if (found !== m.mailboxId) return null;
+  }
+  return found;
 }
 
 /**
@@ -868,10 +902,19 @@ export interface LiveWorldActions {
    * that cannot happen. The confirm ceremony is the sheet's job; this arm dispatches.
    */
   deleteMessage(messageId: string): Promise<boolean>;
-  /** Reply (or reply all) — `mail_send` with `inReplyTo`; the engine derives the envelope. */
-  sendReply(messageId: string, body: string, all: boolean): Promise<SendResult>;
-  /** Forward — `mail_send` with `forwardOf`, recipients the USER typed, the user's note as body. */
-  sendForward(messageId: string, to: EmailAddress[], body: string): Promise<SendResult>;
+  /**
+   * Reply (or reply all) — `mail_send` with `inReplyTo`; the engine derives the envelope.
+   * `sig` is the signature block's OWN derived text (`effectiveSignature`, computed once by
+   * the sheet for display and handed here verbatim — what is shown is what ships); `null`
+   * leaves the mutation byte-identical to one built before the block existed.
+   */
+  sendReply(messageId: string, body: string, all: boolean, sig?: string | null): Promise<SendResult>;
+  /**
+   * Forward — `mail_send` with `forwardOf`, recipients the USER typed, the user's note as
+   * body. The signature seals into the NOTE; the server appends the quoted original after
+   * the body it is handed, so the block sits above the quoted history (`signature.ts`).
+   */
+  sendForward(messageId: string, to: EmailAddress[], body: string, sig?: string | null): Promise<SendResult>;
   /** Put a tag on / take it off — `tag_assign`. */
   tagToggle(messageId: string, tag: WorldTag, assigned: boolean): Promise<boolean>;
   /** Tag-or-create: a name that does not exist yet, minted and put on this message in one act. */
@@ -881,6 +924,28 @@ export interface LiveWorldActions {
    * rule ladder (`sender-screening.ts#planScreeningChange`), in the phone's idiom.
    */
   screenSender(messageId: string, dest: Destination, scope: Scope): Promise<boolean>;
+
+  /* ── the folder verbs (FOLDERS-SPEC.md stage 2) — the webapp `useFolderVerbs` arms ────────
+   *
+   * USER-COMMANDED REAL IMAP OPERATIONS in the user's own mailbox, dispatched on the same
+   * engine mutations every client uses (`folder_create` / `folder_rename` / `folder_delete` /
+   * `folder_op_dismiss`). The optimism model is the family's: the mutation paints a PENDING
+   * MARKER (`FolderEntity.op`), the mailbox's `name` stays the truth until the worker lands
+   * the change, and the wake channel settles it in seconds. Success says NOTHING — the
+   * pending row itself is the feedback — and only `rolled_back` speaks, with the one failure
+   * sentence (`folder-verbs.ts`'s `speakIfRolledBack`, verbatim in intent). `queued` is not a
+   * failure: the command stands on the retry queue under its key, and the marker staying
+   * painted is truthful.
+   */
+
+  /** Create a folder — `name` is the FULL canonical path. Refused without a uuid source. */
+  folderCreate(mailboxId: string, name: string): Promise<boolean>;
+  /** Rename — `name` is the new FULL canonical path (rename and move are one act). */
+  folderRename(folderId: string, name: string): Promise<boolean>;
+  /** Delete — the caller has already confirmed (the sheet's ask-first ceremony). */
+  folderDelete(folderId: string): Promise<boolean>;
+  /** Dismiss a FAILED command — the refusal was read. Fire-and-forget, the webapp's own shape. */
+  folderDismiss(folderId: string): void;
 }
 
 export function liveActions(deps: LiveDeps): LiveWorldActions {
@@ -1277,32 +1342,34 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return { outcome, ...(outcome === "queued" && first ? { key: first.key } : {}) };
   };
 
-  const sendReply = async (messageId: string, body: string, all: boolean): Promise<SendResult> => {
+  const sendReply = async (messageId: string, body: string, all: boolean, sig: string | null = null): Promise<SendResult> => {
     const m = messageOf(messageId);
     const text = body.trim();
+    // The empty-body refusal is judged BEFORE the signature joins: a signature must never
+    // light Send up over an empty message (the webapp composer's own rule).
     if (!m || text === "") return { outcome: "failed" };
     // A plain reply leaves the envelope to `Engine.enrich` (to = the sender, the parent's
     // mailbox, thread and subject); reply-all carries the SAME envelope the sheet offered.
     const env = all ? replyAllRecipients(m, NO_OWN_ADDRESSES) : null;
     return sent(
-      engine.mutate({
-        kind: "mail_send",
+      engine.mutate(withSignature({
+        kind: "mail_send" as const,
         inReplyTo: messageId,
         body: text,
         ...(env ? { to: env.to, cc: env.cc } : {}),
-      }),
+      }, sig)),
       Copy.replySent,
     );
   };
 
-  const sendForward = async (messageId: string, to: EmailAddress[], body: string): Promise<SendResult> => {
+  const sendForward = async (messageId: string, to: EmailAddress[], body: string, sig: string | null = null): Promise<SendResult> => {
     const m = messageOf(messageId);
     // The `no_forward` refusal is client-side courtesy AND server-side law — the sheet never
     // offers the verb on such a message, and this arm refuses it too rather than trusting the UI.
     if (!m || to.length === 0 || m.sensitivity?.no_forward) return { outcome: "failed" };
     return sent(
-      engine.mutate({
-        kind: "mail_send",
+      engine.mutate(withSignature({
+        kind: "mail_send" as const,
         inReplyTo: null,
         forwardOf: messageId,
         subject: forwardSubject(m.subject),
@@ -1311,7 +1378,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         mailboxId: m.mailboxId,
         body,
         to,
-      }),
+      }, sig)),
       Copy.forwarded,
     );
   };
@@ -1419,10 +1486,39 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return ok;
   };
 
+  /* ── the folder verbs — see the interface's header for the whole optimism model ─────────── */
+
+  /** One folder command, spoken about ONLY on rollback — success's feedback is the pending row. */
+  const folderVerb = async (m: EngineMutation): Promise<boolean> => {
+    const ok = await watched(engine.mutate(m));
+    if (!ok) toast(Copy.folderVerbFailed);
+    return ok;
+  };
+
+  const folderCreate = (mailboxId: string, name: string): Promise<boolean> =>
+    // The client-local row id, replaced by the server's echo (`tag_create`'s two-ids rule).
+    // No uuid source ⇒ refused rather than minted weakly — `tagCreate`'s own posture.
+    deps.uuid
+      ? folderVerb({ kind: "folder_create", folderId: deps.uuid(), mailboxId, name })
+      : Promise.resolve(false);
+
+  const folderRename = (folderId: string, name: string): Promise<boolean> =>
+    folderVerb({ kind: "folder_rename", folderId, name });
+
+  const folderDelete = (folderId: string): Promise<boolean> =>
+    folderVerb({ kind: "folder_delete", folderId });
+
+  const folderDismiss = (folderId: string): void => {
+    // Fire-and-forget like the webapp's: dismissing a refusal that fails to dismiss leaves
+    // the refusal on screen, which is its own honest report.
+    void engine.mutate({ kind: "folder_op_dismiss", folderId });
+  };
+
   return {
     openMessage, hydrateMessage, hydrateHeld, sweepFeed, leaveFeed, decide, release, setPile,
     pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, move,
     deleteMessage, sendReply, sendForward, tagToggle, tagCreate, screenSender,
+    folderCreate, folderRename, folderDelete, folderDismiss,
   };
 }
 
@@ -1457,13 +1553,18 @@ export interface WorldActions {
   /** Delete — to the provider's native Trash, never an expunge. See {@link LiveWorldActions.deleteMessage}. */
   deleteMessage(messageId: string): void;
   /** Resolves to the send's result: `sent` closes, `failed` re-arms, `queued` locks the composer. */
-  sendReply(messageId: string, body: string, all: boolean): Promise<SendResult>;
-  sendForward(messageId: string, to: EmailAddress[], body: string): Promise<SendResult>;
+  sendReply(messageId: string, body: string, all: boolean, sig?: string | null): Promise<SendResult>;
+  sendForward(messageId: string, to: EmailAddress[], body: string, sig?: string | null): Promise<SendResult>;
   /** What became of a queued send's key — how a locked composer settles. See `World.sendOutcome`. */
   sendOutcome(key: string): "pending" | "confirmed" | "rolled_back" | "unverified" | "unknown";
   tagToggle(messageId: string, tag: WorldTag, assigned: boolean): void;
   tagCreate(messageId: string, name: string): void;
   screenSender(messageId: string, dest: Destination, scope: Scope): void;
+  /* The folder verbs — see {@link LiveWorldActions} for each arm's contract. */
+  folderCreate(mailboxId: string, name: string): void;
+  folderRename(folderId: string, name: string): void;
+  folderDelete(folderId: string): void;
+  folderDismiss(folderId: string): void;
 }
 
 /**
@@ -1498,12 +1599,16 @@ export function stableActions(current: () => WorldActions): WorldActions {
     markSeen: (id, unread) => void current().markSeen(id, unread),
     move: (id, dest) => void current().move(id, dest),
     deleteMessage: (id) => void current().deleteMessage(id),
-    sendReply: (id, body, all) => current().sendReply(id, body, all),
-    sendForward: (id, to, body) => current().sendForward(id, to, body),
+    sendReply: (id, body, all, sig) => current().sendReply(id, body, all, sig),
+    sendForward: (id, to, body, sig) => current().sendForward(id, to, body, sig),
     sendOutcome: (key) => current().sendOutcome(key),
     tagToggle: (id, tag, assigned) => void current().tagToggle(id, tag, assigned),
     tagCreate: (id, name) => void current().tagCreate(id, name),
     screenSender: (id, dest, scope) => void current().screenSender(id, dest, scope),
+    folderCreate: (mailboxId, name) => void current().folderCreate(mailboxId, name),
+    folderRename: (id, name) => void current().folderRename(id, name),
+    folderDelete: (id) => void current().folderDelete(id),
+    folderDismiss: (id) => void current().folderDismiss(id),
   };
 }
 
@@ -1591,6 +1696,11 @@ export function mirrorSettled(store: { getMeta<T>(key: string): T | undefined })
 /* Re-exported so the world layer and the suite spell the vocabulary identically. `FolderEntity`
  * rides through here because `live.ts` is the one state module on the engine's import
  * allow-list (`test/privacy.test.ts`) — the world layer and the screens take the type from
- * this seam, never from the package. */
-export { destDone, isPlace };
-export type { Destination, FolderEntity, Held, Mail, PileItem, PileKind, Place, Scope };
+ * this seam, never from the package. `SIG_FOLLOWING`/`effectiveSignature` (the composer's
+ * signature block) and `folderNameError` (the folder verbs' pre-wire honest sentence — the
+ * SERVER's own rules, shared through the engine) ride through on the same terms. */
+export { destDone, isPlace, SIG_FOLLOWING, effectiveSignature, folderNameError };
+export type {
+  Destination, FolderEntity, FolderNameError, Held, Mail, PileItem, PileKind, Place, Scope,
+  SignatureState,
+};

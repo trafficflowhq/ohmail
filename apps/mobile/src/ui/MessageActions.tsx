@@ -23,7 +23,7 @@
  * The AI drafter ("Draft reply") is not here at all — its offer/price/consent machinery is a
  * webapp shell machine with no engine verb; an absent control, never a dead one.
  */
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Copy } from "../copy";
@@ -31,11 +31,14 @@ import { useTheme } from "../theme";
 import { destLabel, DESTINATIONS, domainOf, type Destination, type Scope } from "../state/model";
 import {
   dayNine,
+  effectiveSignature,
   moveTargetsFor,
   moveTargetLabel,
   nextWeekNine,
   parseRecipients,
+  SIG_FOLLOWING,
   tomorrowNine,
+  type SignatureState,
   type WorldMail,
   type WorldTag,
 } from "../state/live";
@@ -43,6 +46,7 @@ import { useWorld } from "../state/world";
 import { Button, Rule, Tap, Txt } from "./base";
 import { Icon, type IconName } from "./Icon";
 import { Segmented } from "./Segmented";
+import { CancelRow, Sheet, SheetRow } from "./Sheet";
 
 /** Which surface is up. One at a time — a union, so two sheets cannot stack. */
 type Open =
@@ -371,7 +375,10 @@ function ScreeningSheet({ m, onClose }: { m: WorldMail; onClose: () => void }) {
   );
 }
 
-/* ── the composer — reply, reply all, forward; plain text, sent through the engine ─────────── */
+/* ── the composer — reply, reply all, forward; plain text, sent through the engine. The
+   sending mailbox's stored signature stands below the writing area as a distinct block —
+   removable, editable, serialized exactly as shown (SIG-MOB; `signature.ts` is the shared
+   model, `SignatureBlock.tsx` the webapp reference). ─────────────────────────────────────── */
 
 function ComposeSheet({
   m,
@@ -397,6 +404,13 @@ function ComposeSheet({
   const [phase, setPhase] = useState<"idle" | "sending" | "queued" | "unverified">("idle");
   /** The queued send's Idempotency-Key — what the settle effect follows through the ledger. */
   const [queuedKey, setQueuedKey] = useState<string | null>(null);
+  /**
+   * THE SIGNATURE BLOCK'S STATE (`signature.ts`, shared with the webapp composer): `following`
+   * until the user speaks, then their edit or their strike stands for THIS message. The sheet
+   * is mounted per compose and unmounts on close, so the state's lifetime IS the message's —
+   * the one-removal-one-message rule by construction.
+   */
+  const [sig, setSig] = useState<SignatureState>(SIG_FOLLOWING);
   const forward = mode === "forward";
 
   /**
@@ -426,14 +440,25 @@ function ComposeSheet({
   // commas/semicolons (never bare spaces: `Alice <alice@x.org>` is ONE entry), and a
   // display-named entry is validated on the address its angle brackets carry.
   const recipients = forward ? parseRecipients(to) : [];
+  // A signature never lights Send up on its own — `canSend` reads the body alone, deliberately.
   const canSend =
     phase === "idle" && (forward ? recipients !== null && recipients.length > 0 : body.trim() !== "");
+
+  /**
+   * WHAT THE BLOCK SHOWS — and exactly what the send appends (`effectiveSignature`, one
+   * derivation, two consumers). The sending mailbox is the row's own `mailboxId`: the mailbox
+   * the message arrived in, which is what `Engine.enrich` puts on a reply's wire and what the
+   * forward arm passes explicitly — this sheet has no From selector, so the resolution is the
+   * mutation's, made visible. `w.signatures === null` (not yet server-confirmed) renders no
+   * block and appends nothing: a signature is never drawn or serialized from a guess.
+   */
+  const sigText = w.signatures === null ? null : effectiveSignature(sig, w.signatures, m.mailboxId);
 
   const send = async () => {
     setPhase("sending");
     const result = forward
-      ? await w.actions.sendForward(m.id, recipients ?? [], body)
-      : await w.actions.sendReply(m.id, body, mode === "replyAll");
+      ? await w.actions.sendForward(m.id, recipients ?? [], body, sigText)
+      : await w.actions.sendReply(m.id, body, mode === "replyAll", sigText);
     if (result.outcome === "sent") {
       onClose();
       return;
@@ -537,6 +562,47 @@ function ComposeSheet({
               },
             ]}
           />
+          {/* THE SIGNATURE BLOCK — a DISTINCT, REMOVABLE element below the writing area
+              (`SignatureBlock.tsx` is the webapp reference; `signature.ts` owns the model).
+              Nothing renders when there is nothing to show — struck, edited to blank, the
+              sender stores nothing, or the map is not yet server-confirmed: absence is the
+              resting state, never a collapsed control. × strikes it for THIS message only;
+              typing edits it (the user's text stands whatever the resolution later says). */}
+          {sigText !== null ? (
+            <View
+              accessibilityLabel={Copy.sigLabel}
+              style={{
+                backgroundColor: t.c.tint2,
+                borderRadius: t.radius.card,
+                paddingHorizontal: 14,
+                paddingTop: 6,
+                paddingBottom: 10,
+              }}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <Txt variant="caption" tone="ink3">
+                  {Copy.sigLabel}
+                </Txt>
+                <View style={{ flex: 1 }} />
+                <Tap
+                  onPress={phase === "idle" ? () => setSig({ kind: "removed" }) : undefined}
+                  accessibilityRole="button"
+                  accessibilityLabel={Copy.sigRemove}
+                  style={{ padding: 8, marginRight: -8 }}
+                >
+                  <Icon name="x" size={13} color={t.c.ink3} />
+                </Tap>
+              </View>
+              <TextInput
+                value={sigText}
+                onChangeText={(text) => setSig({ kind: "edited", text })}
+                editable={phase === "idle"}
+                multiline
+                accessibilityLabel={Copy.sigAria}
+                style={[t.type.body, { color: t.c.ink2, paddingVertical: 0 }]}
+              />
+            </View>
+          ) : null}
           {phase === "queued" || phase === "unverified" ? (
             <Txt variant="caption" tone="ink3">
               {phase === "queued" ? Copy.replyQueued : Copy.replyUnverified}
@@ -600,87 +666,6 @@ function BarToggle({
       </Txt>
     </Tap>
   );
-}
-
-/** The bottom sheet: a backdrop press away from dismissal, the panel where the thumb is. */
-function Sheet({
-  open,
-  onClose,
-  label,
-  children,
-}: {
-  open: boolean;
-  onClose: () => void;
-  label: string;
-  children: ReactNode;
-}) {
-  const t = useTheme();
-  const insets = useSafeAreaInsets();
-  if (!open) return null;
-  return (
-    <Modal transparent animationType={t.reduceMotion ? "none" : "slide"} visible onRequestClose={onClose}>
-      <View style={{ flex: 1, justifyContent: "flex-end" }}>
-        <Pressable style={{ flex: 1 }} accessibilityLabel={Copy.moveCancel} onPress={onClose} />
-        <View
-          accessibilityViewIsModal
-          accessibilityLabel={label}
-          style={[
-            {
-              backgroundColor: t.c.float,
-              borderTopLeftRadius: t.radius.panel,
-              borderTopRightRadius: t.radius.panel,
-              paddingTop: 12,
-              paddingBottom: 8 + insets.bottom,
-            },
-            t.liftUp("l3"),
-          ]}
-        >
-          {children}
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
-/** One verb, one row. `on` draws the check — the tag sheet's assigned mark. */
-function SheetRow({
-  label,
-  icon,
-  on,
-  onPress,
-}: {
-  label: string;
-  icon?: IconName;
-  on?: boolean;
-  onPress: () => void;
-}) {
-  const t = useTheme();
-  return (
-    <Tap
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      style={({ pressed }) => ({
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 10,
-        paddingHorizontal: 16,
-        paddingVertical: 13,
-        backgroundColor: pressed ? t.c.tint : "transparent",
-      })}
-    >
-      {icon ? <Icon name={icon} size={14} color={t.c.ink2} /> : null}
-      <Txt variant="button" style={{ flexShrink: 1 }}>
-        {label}
-      </Txt>
-      <View style={{ flex: 1 }} />
-      {on ? <Icon name="check" size={14} color={t.c.accentInk} /> : null}
-    </Tap>
-  );
-}
-
-function CancelRow({ onPress }: { onPress: () => void }) {
-  return <SheetRow icon="x" label={Copy.moveCancel} onPress={onPress} />;
 }
 
 /** "Mon 1 Sep" for the picked-day rows — weekday, day, month, in the reader's locale defaults. */

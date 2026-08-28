@@ -45,6 +45,32 @@ export interface FoldersFlag {
   set(on: boolean): Promise<boolean>;
 }
 
+/**
+ * FRESHEST-SUCCESSFUL-READ-WINS — the read-only companion of {@link foldersFlag}'s seq pair,
+ * for an answer NOTHING ON THIS DEVICE EVER WRITES (the signatures map rides the flag's own
+ * `GET /consent`; the phone has no signature editor, so there is no user act to outrank and
+ * no epoch to keep). Two overlapping reads can settle out of issue order — the session's boot
+ * GET still in the air when a drain-completed refresh fires — and an older answer landing
+ * LAST must not overwrite the newer one. The wrapper applies an answer only while no newer
+ * read has APPLIED, and a `null` (could-not-ask) applies nothing: issuance alone supersedes
+ * nothing, exactly the flag machine's round-3 rule.
+ */
+export function freshestRead<T>(
+  apply: (ans: T) => void,
+): (ask: () => Promise<T | null>) => Promise<T | null> {
+  let seq = 0;
+  let applied = 0;
+  return async (ask) => {
+    const mine = ++seq;
+    const ans = await ask();
+    if (ans !== null && mine > applied) {
+      applied = mine;
+      apply(ans);
+    }
+    return ans;
+  };
+}
+
 export function foldersFlag(deps: FoldersFlagDeps): FoldersFlag {
   let epoch = 0;
   /**

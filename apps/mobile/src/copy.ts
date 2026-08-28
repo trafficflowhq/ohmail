@@ -148,7 +148,19 @@ export const Copy = {
   screenedEmptyTitle: "Nobody is screened out.",
   screenedEmptyHint: "Senders you say No to wait here — held, never deleted.",
   spamEmptyTitle: "No spam held.",
-  spamEmptyHint: "Suspected spam waits here for your eyes, never deleted unseen.",
+  /**
+   * REWORDED with the junk wave (FOLDERS-SPEC.md §16.1/§16.3): the old sentence — "Suspected
+   * spam waits here for your eyes, never deleted unseen" — stopped being true when the spam
+   * VERDICT started writing the message into the provider's own Junk folder, whose cleanup
+   * schedule is the provider's, not ours (the webapp retired its twin, `en.json`'s "nothing
+   * is deleted unseen", with the segment itself). What is still true, said plainly: suspects
+   * wait here, ohmail deletes nothing ON ITS OWN (the §16.3 claims-sweep scoping), and a
+   * confirmed verdict moves the mail to the mail server's Junk. This phone has no window into
+   * that folder — the webapp's Junk segment is a live server read this build does not make —
+   * so the sentence names where the mail went rather than promising a view of it.
+   */
+  spamEmptyHint:
+    "Suspected spam waits here for your eyes — ohmail never deletes it on its own. Mail you confirm as spam moves to your mail server's own Junk folder.",
 
   /* ---------------------------------------------------------------- triage */
 
@@ -187,6 +199,48 @@ export const Copy = {
   folderEmptyTitle: "No mail from this folder is on this phone.",
   folderEmptyHint:
     "This phone mirrors your server's recent mail. The folder itself lives on your mail server and may hold older mail there.",
+
+  /*
+   * THE FOLDER VERBS — stage 2 (FOLDERS-SPEC.md §18), the webapp rail's own strings
+   * (`en.json` rail.folder*), so create / rename / delete are named the same on the phone as
+   * in the browser; `test/folders-parity.test.ts` holds the equalities, ICU shapes resolved.
+   * The phone's copy deck is English like the rest of this file — the webapp catalogue
+   * carries the same keys in German for the surfaces that localize.
+   */
+  folderNew: "New folder",
+  folderNewSub: "New subfolder",
+  folderRename: "Rename",
+  folderDelete: "Delete…",
+  folderMenuAria: (name: string) => `Folder menu for ${name}`,
+  folderNamePlaceholder: "Folder name",
+  folderRenamePlaceholder: "New name",
+  folderCreating: "Being created on your mail server…",
+  folderRenaming: (name: string) => `Being renamed to ${name} on your mail server…`,
+  folderDeleting: "Being deleted — its messages move to your server’s Trash first…",
+  folderDismiss: "OK",
+  folderErrRefused: "Your mail server refused this change.",
+  folderErrBadName: "Your mail server uses one of these characters to separate folders — pick a different name.",
+  folderErrExists: "A folder with that name already exists.",
+  folderErrGone: "That folder no longer exists on your mail server.",
+  folderErrNoTrash: "This mailbox has no Trash folder, and ohmail never erases mail — delete the folder in your own mail client instead.",
+  folderNameEmpty: "Give the folder a name.",
+  folderNameSpaces: "The name can’t begin or end with a space.",
+  folderNameChars: "The name can’t contain % or *.",
+  folderNameLong: "That name is too long.",
+  folderNameReserved: "That name is reserved by your mailbox.",
+  folderNameTaken: "A folder with that name already exists.",
+  folderDeleteCounting: "Counting what moves…",
+  /** The ICU sentence (`rail.folderDeleteConfirm`), resolved — the parity test compares both. */
+  folderDeleteConfirm: (messages: number, folders: number) => {
+    const scope = folders === 1 ? "this folder" : `these ${folders} folders`;
+    const seen = messages === 0 ? "no messages" : messages === 1 ? "the 1 message" : `the ${messages} messages`;
+    const tail = folders === 1 ? "the folder is" : "the folders are";
+    return `Everything in ${scope} moves to the Trash on your mail server — ${seen} ohmail has seen, and anything it has not; ${tail} then removed.`;
+  },
+  folderDeleteConfirmUncounted: "Everything in it moves to the Trash on your mail server; the folder is then removed.",
+  folderDeleteGo: "Delete folder",
+  folderDeleteCancel: "Cancel",
+  folderVerbFailed: "That folder change didn’t reach your mailbox — nothing was changed.",
 
   /** Settings → Folders — the webapp catalogue's own strings (`settings.folders.*`). */
   foldersUseTitle: "Use folders",
@@ -405,6 +459,14 @@ export const Copy = {
   forwardToPlaceholder: "name@example.org, …",
   forwardNotePlaceholder: "Add a note (optional)",
   forwarded: "Forwarded.",
+  /*
+   * THE SIGNATURE BLOCK (`compose.signature*` in the webapp catalogue, word for word —
+   * `folders-parity.test.ts` pins them): the sending mailbox's stored signature as a
+   * distinct, removable, editable block below the writing area, serialized exactly as shown.
+   */
+  sigLabel: "Signature",
+  sigRemove: "Remove signature for this message",
+  sigAria: "Signature — part of this message; edit or remove it here",
   /** The tag picker (`tag.*`). */
   tagPlaceholder: "Tag this message…",
   tagNone: "No tags yet. Type a name to create your first.",

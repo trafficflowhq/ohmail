@@ -1,6 +1,6 @@
 /**
  * THE MORE SCREEN'S FOLDERS GROUP — the webapp rail's Folders group (FoldersRailGroup.tsx is
- * the reference), in the phone's list idiom (FOLDERS-SPEC.md §14/§15).
+ * the reference), in the phone's list idiom (FOLDERS-SPEC.md §14/§15, verbs §18).
  *
  * Rendered ONLY while "Use folders" is on — the caller withholds the node entirely otherwise,
  * so a flag-off More screen is the pre-feature screen (spec §10). What it renders, per mailbox
@@ -16,7 +16,34 @@
  *    the first 12 roots + a "Show all N…" expander. Filtered matches render flat wearing
  *    their parent path.
  *
- * Read-only, exactly like the webapp's foundation stage: no create, no rename, no menu.
+ * ── STAGE 2 — THE VERBS (spec §18): create, rename, delete, new subfolder ──────────────────
+ *
+ * USER-COMMANDED REAL IMAP OPERATIONS, dispatched through the injected {@link FolderVerbs}
+ * (the world layer owns the engine) and rendered in the phone's idiom — bottom sheets, never
+ * an anchored menu:
+ *
+ *  · `+ New folder` per mailbox section — the create names WHICH mailbox by construction.
+ *  · a `…` control per row → the VERB SHEET: Rename / New subfolder / Delete…. ABSENT while
+ *    a command is in flight (two commands on one folder have no defined order; the server
+ *    refuses them too) and on the read-only render (no `verbs` — the foundation group,
+ *    byte-for-byte).
+ *  · DELETE asks BEFORE the act, inside the sheet, with the SERVER-truth numbers ("N messages
+ *    across M folders move to Trash") — the phone's mirror is windowed, so only
+ *    `GET /folders/:id/summary` can count honestly; a failed count states the uncounted
+ *    sentence rather than inventing numbers. No Undo after (there is no un-delete on the wire).
+ *  · PENDING rows (`op` without `error`) render dimmed with the sentence under their leaf —
+ *    optimistically-pending, never pretended-done; a rename in flight wears its TARGET leaf
+ *    while `name` (every join) stays the mailbox's truth. FAILED rows carry the refusal
+ *    sentence inline and an OK dismiss — the only way past a refusal is reading it.
+ *  · names are validated with the SAME `folderNameError` the server runs (shared through the
+ *    engine), BEFORE the wire — the honest sentence appears in the name sheet, and the
+ *    server's 400 is the race, not the normal path.
+ *
+ * The one stated degradation against the webapp: a mailbox with ZERO folders has no section
+ * to hang `+ New folder` on — the webapp grows one from its `GET /mailboxes` facts, which
+ * this phone does not read. When the WHOLE account shows no folder entities and the mirror's
+ * mail names exactly one mailbox, the caller passes {@link soleMailboxId} and the invite line
+ * gains the create affordance; two ambiguous mailboxes wait for a mailbox read.
  */
 import { useState } from "react";
 import { TextInput, View } from "react-native";
@@ -29,31 +56,72 @@ import {
   folderParentOf,
   folderTree,
   folderUnreadDeep,
+  isFolderDescendant,
   visibleFolderRows,
   type FolderTreeRow,
 } from "../state/folders";
+import { folderNameError } from "../state/live";
 import type { FolderEntity } from "../state/world";
 import { Rule, Section, Tap, TapRow, Txt } from "./base";
 import { Icon } from "./Icon";
+import { CancelRow, Sheet, SheetRow } from "./Sheet";
 
 const branchKey = (mailboxId: string, path: string): string => `${mailboxId}|${path}`;
+
+/** The stage-2 verbs, dispatched by the world layer (the engine's mutations + the summary read). */
+export interface FolderVerbs {
+  /** `folder_create` — `name` is the FULL canonical path. */
+  create(mailboxId: string, name: string): void;
+  /** `folder_rename` — `name` is the new FULL canonical path. */
+  rename(folderId: string, name: string): void;
+  /** `folder_delete` — the caller has already confirmed. */
+  remove(folderId: string): void;
+  /** `folder_op_dismiss` — a FAILED command's refusal was read. */
+  dismiss(folderId: string): void;
+  /** The delete confirm's server-truth numbers; `null` when the read failed (say so, uncounted). */
+  summary(folderId: string): Promise<{ folders: number; messages: number } | null>;
+}
+
+/** Which sheet is up. One at a time — a union, so two sheets cannot stack. */
+type Open =
+  | null
+  | { kind: "menu"; folder: FolderEntity }
+  | { kind: "confirm"; folder: FolderEntity; counts: { folders: number; messages: number } | null; loading: boolean }
+  | { kind: "name"; mailboxId: string; parent: string | null; renaming: FolderEntity | null; value: string };
 
 export function FoldersGroup({
   folders,
   unread,
   onOpen,
+  verbs,
+  soleMailboxId,
 }: {
   /** The mirror's `folder` entities — already flag-gated by the world layer. */
   folders: FolderEntity[];
   /** Per-folder unread, keyed `mailboxId|name` — the world's one map, no second number. */
   unread: ReadonlyMap<string, number>;
   onOpen: (folderId: string) => void;
+  /** Absent ⇒ the read-only foundation group, byte-for-byte (no menus, no create). */
+  verbs?: FolderVerbs;
+  /**
+   * The account's ONE mailbox id when no folder entities exist to derive a section from —
+   * what lets a fresh account create its first folder. `null` when the mirror names none or
+   * several (see the header's stated degradation).
+   */
+  soleMailboxId?: string | null;
 }) {
   const t = useTheme();
   /** The opened branches, per visit — the spec's opened-set, see the header on persistence. */
   const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
   const [filter, setFilter] = useState<Record<string, string>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  /** The verb chrome: which sheet is up, and the name sheet's honest problem sentence. */
+  const [open, setOpen] = useState<Open>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const close = () => {
+    setOpen(null);
+    setProblem(null);
+  };
 
   /** Mailboxes in a stable order, each with its sorted tree — the reference's own grouping. */
   const byId = new Map<string, { id: string; label: string; folders: FolderEntity[] }>();
@@ -66,13 +134,99 @@ export function FoldersGroup({
     .sort((a, b) => a.label.localeCompare(b.label))
     .map((mb) => ({ ...mb, tree: folderTree(mb.folders) }));
 
-  const toggleBranch = (key: string, open: boolean) =>
+  const toggleBranch = (key: string, want: boolean) =>
     setOpened((held) => {
       const next = new Set(held);
-      if (open) next.add(key);
+      if (want) next.add(key);
       else next.delete(key);
       return next;
     });
+
+  /** The pre-wire honest sentence, or null when the name may go out — the server's own rules. */
+  const nameProblem = (own: readonly FolderEntity[], path: string): string | null => {
+    const err = folderNameError(path);
+    if (err !== null) {
+      return {
+        empty: Copy.folderNameEmpty,
+        spaces: Copy.folderNameSpaces,
+        control: Copy.folderNameChars,
+        wildcard: Copy.folderNameChars,
+        long: Copy.folderNameLong,
+        reserved: Copy.folderNameReserved,
+      }[err];
+    }
+    // A FAILED create's row does not hold the name — dismissing it frees the spelling, and
+    // the server judges the race (the webapp's own exception).
+    if (own.some((x) => x.name === path && !(x.op?.kind === "create" && x.op.error !== undefined))) {
+      return Copy.folderNameTaken;
+    }
+    return null;
+  };
+
+  /** Commit the name sheet: leaf → full path, validate, dispatch — rename or create. */
+  const commitName = (sheet: Extract<Open, { kind: "name" }>) => {
+    const trimmed = sheet.value.trim();
+    const own = byId.get(sheet.mailboxId)?.folders ?? [];
+    if (sheet.renaming !== null) {
+      const f = sheet.renaming;
+      const parent = folderParentOf(f.name);
+      const next = parent ? `${parent}/${trimmed}` : trimmed;
+      if (trimmed === "" || next === f.name) {
+        close(); // nothing said — the webapp's own silent abandon
+        return;
+      }
+      const bad = nameProblem(own, next);
+      if (bad !== null) {
+        setProblem(bad);
+        return;
+      }
+      // The OPENED-set follows the new name (spec §15's guarded rewrite, the client-local
+      // half): only this device can translate its own keys, for the subtree it can see.
+      setOpened((held) => {
+        const out = new Set(held);
+        for (const x of own) {
+          if (x.name === f.name || isFolderDescendant(x.name, f.name)) {
+            const oldKey = branchKey(sheet.mailboxId, x.name);
+            if (out.delete(oldKey)) out.add(branchKey(sheet.mailboxId, next + x.name.slice(f.name.length)));
+          }
+        }
+        return out;
+      });
+      close();
+      verbs?.rename(f.id, next);
+      return;
+    }
+    if (trimmed === "") {
+      close();
+      return;
+    }
+    const next = sheet.parent ? `${sheet.parent}/${trimmed}` : trimmed;
+    const bad = nameProblem(own, next);
+    if (bad !== null) {
+      setProblem(bad);
+      return;
+    }
+    // A subfolder's parent opens so the pending row is visible where it will live.
+    if (sheet.parent !== null) toggleBranch(branchKey(sheet.mailboxId, sheet.parent), true);
+    close();
+    verbs?.create(sheet.mailboxId, next);
+  };
+
+  /** The op marker's sentence — under the leaf while pending, the inline strip when failed. */
+  const opSentence = (f: FolderEntity): string | null => {
+    if (!f.op) return null;
+    if (f.op.error !== undefined) {
+      return ({
+        bad_name: Copy.folderErrBadName,
+        exists: Copy.folderErrExists,
+        gone: Copy.folderErrGone,
+        no_trash_folder: Copy.folderErrNoTrash,
+      } as Record<string, string>)[f.op.error] ?? Copy.folderErrRefused;
+    }
+    if (f.op.kind === "create") return Copy.folderCreating;
+    if (f.op.kind === "rename") return Copy.folderRenaming(folderLeafOf(f.op.to ?? f.name));
+    return Copy.folderDeleting;
+  };
 
   const row = (
     mb: { id: string; folders: FolderEntity[] },
@@ -88,74 +242,156 @@ export function FoldersGroup({
       : (unread.get(key) ?? 0);
     const leaf = folderLeafOf(f.name);
     const parent = folderParentOf(f.name);
+    const pending = f.op !== undefined && f.op.error === undefined;
+    const failed = f.op !== undefined && f.op.error !== undefined;
+    const sentence = opSentence(f);
+    /* A rename in flight wears its TARGET leaf — the commanded name, in the pending idiom —
+       while `name` (every join) stays the mailbox's truth until the worker lands the swap. */
+    const shownLeaf = pending && f.op!.kind === "rename" && f.op!.to ? folderLeafOf(f.op!.to) : leaf;
     return (
-      <View
-        key={f.id}
-        style={{ flexDirection: "row", alignItems: "center", paddingLeft: r.depth * 14 }}
-      >
-        {kids ? (
-          <Tap
-            onPress={() => toggleBranch(key, shut)}
-            accessibilityRole="button"
-            accessibilityLabel={shut ? Copy.folderExpand(leaf) : Copy.folderCollapse(leaf)}
-            style={{ paddingHorizontal: 8, paddingVertical: 12 }}
-          >
-            <Icon
-              name="chev"
-              size={12}
-              color={t.c.ink3}
-              style={{ transform: [{ rotate: shut ? "0deg" : "90deg" }] }}
-            />
-          </Tap>
-        ) : (
-          <View style={{ width: 28 }} />
-        )}
-        <TapRow
-          onPress={() => onOpen(f.id)}
-          accessibilityRole="link"
-          accessibilityLabel={count > 0 ? `${f.name}, ${count}` : f.name}
+      <View key={f.id}>
+        <View
           style={{
-            flex: 1,
-            paddingHorizontal: 8,
-            paddingVertical: 12,
-            minHeight: 46,
             flexDirection: "row",
             alignItems: "center",
-            gap: 10,
+            paddingLeft: r.depth * 14,
+            opacity: pending ? 0.55 : 1,
           }}
         >
-          <Icon name="folder" size={14} color={t.c.ink2} />
-          <View style={{ flexDirection: "row", alignItems: "baseline", flexShrink: 1 }}>
-            {flat && parent ? (
-              <Txt variant="caption" tone="ink3" numberOfLines={1}>
-                {parent}/
+          {kids ? (
+            <Tap
+              onPress={() => toggleBranch(key, shut)}
+              accessibilityRole="button"
+              accessibilityLabel={shut ? Copy.folderExpand(leaf) : Copy.folderCollapse(leaf)}
+              style={{ paddingHorizontal: 8, paddingVertical: 12 }}
+            >
+              <Icon
+                name="chev"
+                size={12}
+                color={t.c.ink3}
+                style={{ transform: [{ rotate: shut ? "0deg" : "90deg" }] }}
+              />
+            </Tap>
+          ) : (
+            <View style={{ width: 28 }} />
+          )}
+          <TapRow
+            onPress={() => onOpen(f.id)}
+            accessibilityRole="link"
+            accessibilityLabel={count > 0 ? `${f.name}, ${count}` : f.name}
+            style={{
+              flex: 1,
+              paddingHorizontal: 8,
+              paddingVertical: 12,
+              minHeight: 46,
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 10,
+            }}
+          >
+            <Icon name="folder" size={14} color={t.c.ink2} />
+            <View style={{ flexShrink: 1 }}>
+              <View style={{ flexDirection: "row", alignItems: "baseline" }}>
+                {flat && parent ? (
+                  <Txt variant="caption" tone="ink3" numberOfLines={1}>
+                    {parent}/
+                  </Txt>
+                ) : null}
+                <Txt variant="navLabel" numberOfLines={1}>
+                  {shownLeaf}
+                </Txt>
+              </View>
+              {pending && sentence !== null ? (
+                <Txt variant="caption" tone="ink3" numberOfLines={1}>
+                  {sentence}
+                </Txt>
+              ) : null}
+            </View>
+            <View style={{ flex: 1 }} />
+            {count > 0 ? (
+              <Txt variant="caption" tone="ink3" tabular>
+                {count}
               </Txt>
             ) : null}
-            <Txt variant="navLabel" numberOfLines={1}>
-              {leaf}
-            </Txt>
-          </View>
-          <View style={{ flex: 1 }} />
-          {count > 0 ? (
-            <Txt variant="caption" tone="ink3" tabular>
-              {count}
-            </Txt>
+          </TapRow>
+          {/* The … control — stage 2's verbs. Absent while a command is in flight and on the
+              read-only render, exactly the webapp's two absences. */}
+          {verbs && !f.op ? (
+            <Tap
+              onPress={() => {
+                setProblem(null);
+                setOpen({ kind: "menu", folder: f });
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={Copy.folderMenuAria(leaf)}
+              style={{ paddingHorizontal: 10, paddingVertical: 12 }}
+            >
+              <Icon name="more" size={14} color={t.c.ink3} />
+            </Tap>
           ) : null}
-        </TapRow>
+        </View>
+        {/* A FAILED command's refusal, inline with its dismiss — reading it is the way past. */}
+        {failed && sentence !== null ? (
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 8,
+              paddingLeft: 28 + r.depth * 14,
+              paddingRight: 8,
+              paddingBottom: 8,
+            }}
+          >
+            <Txt variant="caption" tone="ink3" style={{ flexShrink: 1 }}>
+              {sentence}
+            </Txt>
+            <View style={{ flex: 1 }} />
+            {verbs ? (
+              <Tap
+                onPress={() => verbs.dismiss(f.id)}
+                accessibilityRole="button"
+                accessibilityLabel={Copy.folderDismiss}
+                style={{ paddingHorizontal: 10, paddingVertical: 6 }}
+              >
+                <Txt variant="button" tone="ink2">{Copy.folderDismiss}</Txt>
+              </Tap>
+            ) : null}
+          </View>
+        ) : null}
       </View>
     );
   };
+
+  /** `+ New folder` — the section's own affordance, so the create names WHICH mailbox. */
+  const newFolderRow = (mailboxId: string) => (
+    <TapRow
+      onPress={() => {
+        setProblem(null);
+        setOpen({ kind: "name", mailboxId, parent: null, renaming: null, value: "" });
+      }}
+      accessibilityRole="button"
+      accessibilityLabel={Copy.folderNew}
+      style={{ marginHorizontal: 8, paddingHorizontal: 12, paddingVertical: 12, minHeight: 46, flexDirection: "row", alignItems: "center", gap: 10 }}
+    >
+      <Icon name="plus" size={13} color={t.c.ink2} />
+      <Txt variant="navLabel" tone="ink2">{Copy.folderNew}</Txt>
+    </TapRow>
+  );
 
   return (
     <>
       <Rule inset={20} />
       <Section>{Copy.folders}</Section>
       {/* No folders discovered anywhere: the invite line, not a blank group — discovery is
-          the server's; there is nothing to press. */}
+          the server's. With the verbs and an unambiguous mailbox, the first create stands
+          beside the sentence (the answer to it, not a replacement — the webapp's own rule). */}
       {mailboxes.length === 0 ? (
-        <Txt variant="note" tone="ink3" style={{ paddingHorizontal: 20, paddingVertical: 10 }}>
-          {Copy.folderEmpty}
-        </Txt>
+        <>
+          <Txt variant="note" tone="ink3" style={{ paddingHorizontal: 20, paddingVertical: 10 }}>
+            {Copy.folderEmpty}
+          </Txt>
+          {verbs && soleMailboxId ? newFolderRow(soleMailboxId) : null}
+        </>
       ) : null}
       {mailboxes.map((mb) => {
         const hasKids = (path: string): boolean =>
@@ -250,9 +486,148 @@ export function FoldersGroup({
               />
             ) : null}
             {list}
+            {verbs ? newFolderRow(mb.id) : null}
           </View>
         );
       })}
+
+      {/* ── the verb sheet: Rename / New subfolder / Delete… — one folder's commands ──────── */}
+      {open !== null && open.kind === "menu" ? (
+        <Sheet open onClose={close} label={Copy.folderMenuAria(folderLeafOf(open.folder.name))}>
+          <Txt variant="sectionLabel" tone="ink3" style={{ paddingHorizontal: 14, paddingBottom: 6 }}>
+            {folderLeafOf(open.folder.name)}
+          </Txt>
+          <SheetRow
+            icon="pen"
+            label={Copy.folderRename}
+            onPress={() =>
+              setOpen({
+                kind: "name",
+                mailboxId: open.folder.mailboxId,
+                parent: folderParentOf(open.folder.name),
+                renaming: open.folder,
+                value: folderLeafOf(open.folder.name),
+              })
+            }
+          />
+          <SheetRow
+            icon="plus"
+            label={Copy.folderNewSub}
+            onPress={() =>
+              setOpen({
+                kind: "name",
+                mailboxId: open.folder.mailboxId,
+                parent: open.folder.name,
+                renaming: null,
+                value: "",
+              })
+            }
+          />
+          <SheetRow
+            icon="trash"
+            label={Copy.folderDelete}
+            onPress={() => {
+              // The ask comes BEFORE the act, with the server's own numbers — the mirror is
+              // windowed and a local count would understate what the delete moves.
+              const f = open.folder;
+              setOpen({ kind: "confirm", folder: f, counts: null, loading: true });
+              void verbs?.summary(f.id).then((counts) => {
+                setOpen((held) =>
+                  held !== null && held.kind === "confirm" && held.folder.id === f.id
+                    ? { kind: "confirm", folder: f, counts, loading: false }
+                    : held,
+                );
+              });
+            }}
+          />
+          <CancelRow onPress={close} />
+        </Sheet>
+      ) : null}
+
+      {/* ── the delete confirm — the stated numbers, then the one deliberate press ────────── */}
+      {open !== null && open.kind === "confirm" ? (
+        <Sheet open onClose={close} label={Copy.folderDelete}>
+          <Txt variant="sectionLabel" tone="ink3" style={{ paddingHorizontal: 14, paddingBottom: 6 }}>
+            {folderLeafOf(open.folder.name)}
+          </Txt>
+          <Txt variant="note" tone="ink2" style={{ paddingHorizontal: 14, paddingBottom: 10 }}>
+            {open.loading
+              ? Copy.folderDeleteCounting
+              : open.counts !== null
+                ? Copy.folderDeleteConfirm(open.counts.messages, open.counts.folders)
+                : Copy.folderDeleteConfirmUncounted}
+          </Txt>
+          {/* The go row appears when the count settled either way — never mid-count, the
+              webapp's own disabled window, expressed as absence. */}
+          {!open.loading ? (
+            <SheetRow
+              icon="trash"
+              label={Copy.folderDeleteGo}
+              onPress={() => {
+                close();
+                verbs?.remove(open.folder.id);
+              }}
+            />
+          ) : null}
+          <SheetRow icon="x" label={Copy.folderDeleteCancel} onPress={close} />
+        </Sheet>
+      ) : null}
+
+      {/* ── the name sheet — create (root or sub) and rename share one input ──────────────── */}
+      {open !== null && open.kind === "name" ? (
+        <Sheet
+          open
+          onClose={close}
+          avoidKeyboard
+          label={open.renaming ? Copy.folderRename : open.parent ? Copy.folderNewSub : Copy.folderNew}
+        >
+          <Txt variant="sectionLabel" tone="ink3" style={{ paddingHorizontal: 14, paddingBottom: 6 }}>
+            {open.renaming
+              ? Copy.folderRename
+              : open.parent
+                ? `${Copy.folderNewSub} — ${open.parent}/`
+                : Copy.folderNew}
+          </Txt>
+          <TextInput
+            value={open.value}
+            onChangeText={(text) => {
+              setProblem(null);
+              setOpen({ ...open, value: text });
+            }}
+            placeholder={open.renaming ? Copy.folderRenamePlaceholder : Copy.folderNamePlaceholder}
+            placeholderTextColor={t.c.ink3}
+            accessibilityLabel={open.renaming ? Copy.folderRenamePlaceholder : Copy.folderNamePlaceholder}
+            autoFocus
+            autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="done"
+            onSubmitEditing={() => commitName(open)}
+            style={[
+              t.type.body,
+              {
+                color: t.c.ink,
+                backgroundColor: t.c.tint2,
+                borderRadius: t.radius.pill,
+                paddingHorizontal: 14,
+                paddingVertical: 9,
+                marginHorizontal: 14,
+                marginBottom: 8,
+              },
+            ]}
+          />
+          {problem !== null ? (
+            <Txt variant="caption" tone="ink3" style={{ paddingHorizontal: 14, paddingBottom: 8 }}>
+              {problem}
+            </Txt>
+          ) : null}
+          <SheetRow
+            icon="check"
+            label={open.renaming ? Copy.folderRename : open.parent ? Copy.folderNewSub : Copy.folderNew}
+            onPress={() => commitName(open)}
+          />
+          <CancelRow onPress={close} />
+        </Sheet>
+      ) : null}
     </>
   );
 }

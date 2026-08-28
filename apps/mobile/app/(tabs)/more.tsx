@@ -53,12 +53,23 @@ export default function MoreScreen() {
           {/* THE FOLDERS GROUP — rendered ONLY while the account's "Use folders" flag is on
               (the server's consent answer), so the flag-off screen is the pre-feature screen
               (FOLDERS-SPEC.md §10). The rail's own placement: below the piles, above the
-              utility rows — the webapp puts it under Tags, which this screen does not have. */}
+              utility rows — the webapp puts it under Tags, which this screen does not have.
+              The stage-2 verbs (spec §18) ride the world's own actions — the engine's
+              folder_create/rename/delete family, plus the summary read for the delete
+              confirm's server-truth counts. */}
           {w.folders.enabled ? (
             <FoldersGroup
               folders={w.folders.list}
               unread={w.folders.unread}
               onOpen={(id) => router.push(`/folder/${encodeURIComponent(id)}`)}
+              verbs={{
+                create: w.actions.folderCreate,
+                rename: w.actions.folderRename,
+                remove: w.actions.folderDelete,
+                dismiss: w.actions.folderDismiss,
+                summary: w.folders.summary,
+              }}
+              soleMailboxId={w.folders.soleCreateMailboxId}
             />
           ) : null}
 
