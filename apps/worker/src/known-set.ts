@@ -189,6 +189,11 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   // `removeFolderRow` — mailbox_folders + one change row: the folder's INSTANCES were already
   // dropped by `tombstoneFolderMessages` (dirty, above the projection) before any row removal.
   "removeFolderRow",
+  // the thread-join heal's serialization lock (erasure vs. backfill): one
+  // pg_advisory_xact_lock, no row written anywhere — a lock cannot move a projection. It
+  // landed UNCLASSIFIED and the guard suite sat red in HEAD for a day, the third time the
+  // dirty-by-default rule did its job late; classified at the 0.12.0 release gate.
+  "lockAccountThreadStructure",
   // the pass-through
   "transaction",
 ]);
