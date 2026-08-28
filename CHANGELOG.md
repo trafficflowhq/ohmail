@@ -16,6 +16,89 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.12.0] — 2026-08-28
+
+Folders you can manage from the app, a Junk window you can search and teach,
+per-mailbox signatures, and new mail that shows up in seconds instead of
+minutes. The version names a feature wave, so the minor moves.
+
+### Manage your mail server's folders
+
+With **Use folders** on, the folder list is no longer read-only: **+ New
+folder** creates one on your mail server, and each folder's **…** menu offers
+Rename, New subfolder and Delete. Every verb is a real IMAP operation your
+server performs — the app records the command, shows the folder wearing its
+pending state ("Being renamed to … on your mail server…"), and settles when
+the server has actually done it, usually within seconds. A failed command says
+why and can be dismissed. Delete asks first, states what it moves, and sweeps
+the folder's messages to your server's own Trash — never an expunge — before
+removing the folder itself. In the hosted web client the confirmation counts
+the messages it is about to move; the desktop app asks with the same sentence,
+uncounted.
+
+Folder delivery got its three missing pieces in the same wave:
+
+- The desktop app's folder lists load their contents now. They used to answer
+  "older mail could not be loaded" for every folder, because the ask was
+  served from the local mirror, which does not hold that mail; it now travels
+  to the account, which does.
+- A message beyond what the local window kept opens when you click it —
+  including from a folder list — instead of offering a Retry that could never
+  succeed. A message that is genuinely gone from the server says so, without
+  the dead Retry.
+- Settings changes land live. Turning folders on or off (or per mailbox) in
+  one client reaches every other open client through the sync feed — the
+  desktop app no longer needs a restart to notice.
+
+### The Junk window reaches the desktop, and learns three things
+
+0.11.1 gave the hosted web client a live window into the mailbox's own Junk
+folder and said the desktop app keeps its verdict-based Spam pile "for now".
+Now is over: the desktop app's Cloud door carries the same Junk segment, served
+by the account itself. And the window learned:
+
+- **Search.** Typing filters the loaded window instantly; when that finds
+  nothing, the app asks your mail server itself (one bounded search per
+  mailbox, newest first) and appends the hits — so a message your server filed
+  weeks ago is findable without scrolling the whole pile.
+- **Not junk, always allow.** Beside "Not junk" — which rescues one message —
+  a second action also disables the spam rules standing against that sender
+  and mints an allow, so their next message lands in your inbox instead of
+  re-filing. Sender-scoped on purpose: a domain-wide spam rule is left
+  standing.
+- **A one-time sweep.** Accounts with messages that earlier spam rules filed
+  into ohmail's own quarantine folder get a counted, two-press offer to move
+  them to the mailbox's native Junk folder, where the window (and every other
+  mail client) can see them. The number offered is the number moved; the offer
+  can be dismissed and does not return for the same pile.
+
+Messages a rule filed to Junk also keep their text now: moving one back out
+restores the withheld body instead of leaving a husk.
+
+### Writing mail: signatures, Cc/Bcc, and the subject
+
+- **Per-mailbox signatures** (Settings → Signatures): a sign-off stored per
+  mailbox, offered automatically under every message you write from it,
+  editable or removable per message. Switching the From swaps the signature;
+  a signature you edited stays yours. What you see is what ships — including
+  indentation, which survives mail's own whitespace rules.
+- **"Change recipients" opens Cc and Bcc at once** — no second click.
+- **A reply's subject is editable in place.** It renders as calm text; click
+  it and the full subject — `Re:` included — is yours to change. Threading is
+  anchored in mail headers, so an edited subject never splits the
+  conversation.
+
+### New mail shows up in seconds
+
+Inbound latency on hosted accounts was measured in minutes (median around
+three) and is now measured in seconds (single digits on live probes). The
+watch on the inbox had been going quiet after the first cycle; it now stays
+armed, wakes on real arrivals only — not on the organizer's own bookkeeping —
+and catches up anything that arrived while it was switching folders. A
+**sync-now** control in the rail and top bar asks the account to pull
+immediately and settles when the account has actually scanned, for the moments
+you know something was just sent to you.
+
 ### Designed mail renders as its sender designed it
 
 The reading pane sets ordinary letters in the app's own type, and that class was
@@ -49,6 +132,43 @@ Each pass now fetches the first screenful's message text ahead of that walk,
 and a catch-up after time offline starts with the newest missing messages
 instead of arbitrary ones. The walk itself is unchanged: same pages, same
 resume, same finish line.
+
+### One conversation instead of two
+
+A reply that re-enters your mailbox as a forward — say, an answer sent to an
+old address of yours and passed along — opens a fresh header chain, and header
+chains are how mail is threaded, so the one conversation rendered as two. The
+organizer now joins such a chain back onto its conversation when the evidence
+is unambiguous: the same subject under a clear continuation prefix (Re:, AW:,
+Fwd: and their stackings), a shared correspondent on both chains, close in
+time. Mail that merely shares a subject is never merged, and a correspondent
+who appears across hundreds of unrelated threads does not count as evidence. A
+one-time pass healed the splits already sitting in hosted accounts.
+
+### The keyboard walks the whole window
+
+Arrow keys move between the three zones — ← toward the folder rail, → toward
+the open message — and ↓/↑ walk whatever list you are in, including folder,
+tag and settings views that previously had no cursor at all. Entering a zone
+is a real focus move, so screen readers announce it and the focus ring shows
+it. Glancing down a list with the arrows marks nothing read; dwelling on a
+message does, exactly as opening it would. The `?` sheet prints the new keys.
+
+### Fixes
+
+- A sent reply's attachments are visible inside its own conversation — the
+  thread view used to show them only on the message's standalone page.
+- A message returning from Parked, Answer Later or a scheduled resurface keeps
+  its real read state instead of flipping back to bold, and reading it in
+  place marks it read without cancelling the return.
+- While the desktop app boots it draws the real window's shape — rail, list,
+  reading pane — instead of a few placeholder text lines.
+- The desktop app tells the account what platform it runs on when it signs in
+  to the Cloud door, so the account's devices list can name your computer
+  instead of guessing.
+- The Reads and Receipts stream cards and the Screener's previews follow the
+  same image setting as the reading pane; they used to withhold pictures the
+  reading pane showed.
 
 ## [0.11.1] — 2026-08-25
 
@@ -2247,7 +2367,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.11.1...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.12.0
 [0.11.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.11.1
 [0.11.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.11.0
 [0.10.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.10.0
