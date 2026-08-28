@@ -18,6 +18,32 @@ export const ENGINE_VERSION = "0.1.0";
  */
 export { CALENDAR_FALLBACK_FILENAME, isCalendarMime } from "@trafficflow/core/ics";
 
+/**
+ * The folder-name validator, re-exported from core's browser-safe leaf (the `/ics` rule above):
+ * the honest sentence BEFORE the wire is the SERVER's own rules, and every client that offers
+ * the stage-2 folder verbs needs them — the webapp reaches core directly, the mobile app
+ * reaches core only through this package.
+ */
+export {
+  FOLDER_PATH_MAX,
+  RESERVED_FOLDER_LEAF,
+  folderNameError,
+  type FolderNameError,
+} from "@trafficflow/core/folder-name";
+
+/**
+ * The outgoing message's signature block — state model + serialization, shared by every
+ * compose surface on every client (the webapp shell re-exports it; the mobile sheet imports
+ * it through its live seam). See `signature.ts` for the whole contract.
+ */
+export {
+  SIG_FOLLOWING,
+  effectiveSignature,
+  signatureHtml,
+  withSignature,
+  type SignatureState,
+} from "./signature.js";
+
 // Wire vocabulary + errors.
 export {
   CursorExpiredError,
