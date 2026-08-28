@@ -26,7 +26,12 @@ import type { ConnectedSession } from "./pairing.js";
  * server that ACCEPTS the connection and never answers is the same failure wearing a longer
  * face — without a deadline the confirm would sit on "Counting what moves…" forever with the
  * Delete row withheld, so the read runs under {@link SUMMARY_TIMEOUT_MS} and a timeout IS the
- * uncounted answer (codex round 1).
+ * uncounted answer (codex round 1). The deadline RACES THE WHOLE BEARER PROMISE, not merely
+ * the request's abort signal: `BearerManagerRN.fetch` answers a 401 by awaiting its token
+ * rotation, whose refresh request does not carry this signal — a stalled `/auth/refresh`
+ * would otherwise hold the confirm past every promise the deadline made (codex round 2).
+ * The abort still fires at the same instant, so the paths that DO honor the signal release
+ * their sockets rather than lingering to the transport's own timeout.
  */
 
 /** How long the count may take before the uncounted sentence stands in for it. */
@@ -39,8 +44,17 @@ export async function readFolderSummary(
   timeoutMs: number = SUMMARY_TIMEOUT_MS,
 ): Promise<{ folders: number; messages: number } | null> {
   const abort = new AbortController();
-  const deadline = setTimeout(() => abort.abort(), timeoutMs);
-  try {
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<null>((resolve) => {
+    deadline = setTimeout(() => {
+      abort.abort();
+      resolve(null);
+    }, timeoutMs);
+  });
+  // `catch` INSIDE the racer: when the deadline wins, this promise is still in flight, and
+  // its eventual rejection (the abort, a torn socket) must be an answered `null`, never an
+  // unhandled rejection after the caller has moved on.
+  const answered = (async (): Promise<{ folders: number; messages: number } | null> => {
     const res = await session.bearer.fetch(
       `${session.profile.origin}/folders/${encodeURIComponent(folderId)}/summary`,
       { method: "GET", signal: abort.signal },
@@ -49,8 +63,9 @@ export async function readFolderSummary(
     const body = (await res.json()) as { folders?: unknown; messages?: unknown };
     if (typeof body.folders !== "number" || typeof body.messages !== "number") return null;
     return { folders: body.folders, messages: body.messages };
-  } catch {
-    return null;
+  })().catch(() => null);
+  try {
+    return await Promise.race([answered, expired]);
   } finally {
     clearTimeout(deadline);
   }
