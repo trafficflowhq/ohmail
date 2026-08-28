@@ -196,10 +196,33 @@ describe("tauri.conf.json", () => {
     expect(d["base-uri"]).toEqual(["'none'"]);
     expect(d["form-action"]).toEqual(["'none'"]);
     expect(d["frame-ancestors"]).toEqual(["'none'"]);
-    // img-src allows data: for the inline SVG/avatar art; nothing remote.
-    expect(d["img-src"]).toEqual(["'self'", "data:"]);
+    // img-src allows data: for the inline SVG/avatar art and blob: for the attachment
+    // preview; nothing remote. The blob: entry is the named consumer, not a loosening:
+    // `AttachmentPreview` renders a ready image as `<img src={objectUrl}>`, where the URL is
+    // minted (engine.ts) from the engine's own retained, type-downgraded Blob — and without
+    // blob: here the webview refused the render, so a PNG preview on the desktop was the
+    // overlay's header over an empty stage (owner-reported). The widening admits pixels the
+    // app already holds and nothing else: a blob: URL is this document's own memory (no
+    // request leaves — connect-src stays 'none'), an <img> executes nothing (SVG script does
+    // not run in one, and the engine types an SVG blob as octet-stream regardless), and the
+    // browser client has shipped the same three sources from day one
+    // (security-headers.ts: "img-src 'self' data: blob:"), as does the host door
+    // (host-static.ts HOST_CLIENT_CSP). The desktop window was the one surface that lagged.
+    expect(d["img-src"]).toEqual(["'self'", "data:", "blob:"]);
     expect(conf.app.security.csp).not.toMatch(/https?:/);
     expect(conf.app.security.csp).not.toMatch(/\*/);
+  });
+
+  it("admits blob: for images and for NOTHING else — the preview's widening stays minimal", () => {
+    // The regression this pins is directional: the fix for the blank image preview must never
+    // creep into a directive where blob: means a document, a script or a worker — those are
+    // the execution shapes `AttachmentPreview`'s header forbids, and `frame-src 'none'` /
+    // `object-src 'none'` / `worker-src 'none'` above are load-bearing for it.
+    const d = directives(conf.app.security.csp);
+    for (const [directive, sources] of Object.entries(d)) {
+      if (directive === "img-src") continue;
+      expect(sources, `${directive} admits blob:`).not.toContain("blob:");
+    }
   });
 
   it("keeps the escape hatches shut", () => {

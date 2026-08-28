@@ -7,8 +7,16 @@
          webview serves (src-tauri/tauri.conf.json → app.security.csp), and this
          is the same policy minus `frame-ancestors`, which a <meta> element is
          specified to ignore — declaring it here would only print an error in
-         every console. The header carries it. -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'" />
+         every console. The header carries it.
+
+         `blob:` in img-src and NOWHERE ELSE: the attachment preview draws an image
+         from the engine's own retained Blob through an object URL, and a policy
+         without it refused the render — the overlay showed name/type/size over an
+         empty stage. An <img> is inert (no SVG script runs in one, and the engine
+         types an SVG blob as octet-stream anyway) and a blob: URL is this
+         document's own memory — no request leaves, connect-src stays 'none'. The
+         browser and host clients already carry the same three sources. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'" />
     <!-- The window icon comes from the bundle; this is for the webview's own
          /favicon.ico probe, which would otherwise 404 into the console. Same
          file the installers use, emitted into the bundle by Vite. -->
