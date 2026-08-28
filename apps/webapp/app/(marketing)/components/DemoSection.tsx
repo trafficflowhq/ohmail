@@ -582,6 +582,15 @@ export function DemoSection() {
       typeof (el as Element | null)?.matches === "function" &&
       ((el as Element).matches("input, textarea, select, [contenteditable]") ||
         (el as HTMLElement).isContentEditable === true);
+    /* A consumer that calls stopPropagation (the recipient autocomplete closing its list)
+       changes nothing this file can probe — same focus, same text, no dialog. But stopping
+       propagation IS observable from here: the capture listener below is the first to see
+       every Escape, and this bubble listener is the last — an Escape that never arrives
+       back at the document was stopped by whoever consumed it. */
+    let bubbledEscape: KeyboardEvent | null = null;
+    doc.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") bubbledEscape = e;
+    });
     /* CAPTURE phase, deliberately: the snapshot below must be taken before ANY of the
        app's handlers run — a field's own keydown handler fires before a document-level
        bubble listener ever would, and a snapshot taken after it sees the post-consumption
@@ -603,7 +612,11 @@ export function DemoSection() {
         window.setTimeout(() => {
           if (!fullRef.current) return;
           const untouched =
-            doc.activeElement === focusThen && fieldValue(field) === value && !surfaceOpen();
+            bubbledEscape === e && // stopped propagation = consumed, wherever, however
+            !e.defaultPrevented &&
+            doc.activeElement === focusThen &&
+            fieldValue(field) === value &&
+            !surfaceOpen();
           if (untouched) closeFull();
         }, 0);
       },
