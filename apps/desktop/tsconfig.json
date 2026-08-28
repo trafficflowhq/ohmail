@@ -45,13 +45,20 @@
       "@ohmail/fixtures": ["../../packages/fixtures/src/index.ts"],
       "@ohmail/client-engine": ["../../packages/client-engine/src/index.ts"],
       "@ohmail/ui": ["../../packages/ui/src/index.ts"],
-      /* The calendar reader — the one `@trafficflow/*` specifier the desktop program compiles,
-         read by the client engine and by the attachment strip and event card. Same fallback
-         argument as the dompurify/tiptap block above: in this tree the workspace resolves it
-         through `packages/core`'s exports map and this entry is inert, and in the published
-         mirror it is the only thing that can resolve it, because there `ics.ts` is a lone file
-         with no package.json beside it. */
-      "@trafficflow/core/ics": ["../../packages/core/src/ics.ts"]
+      /* The calendar reader — one of the two `@trafficflow/*` specifiers the desktop program
+         compiles, read by the client engine and by the attachment strip and event card. Same
+         fallback argument as the dompurify/tiptap block above: in this tree the workspace
+         resolves it through `packages/core`'s exports map and this entry is inert, and in the
+         published mirror it is the only thing that can resolve it, because there `ics.ts` is a
+         lone file with no package.json beside it. */
+      "@trafficflow/core/ics": ["../../packages/core/src/ics.ts"],
+      /* The folder-name rules — the second admitted leaf, imported by the shared rail so a
+         folder is refused with the server's own sentence BEFORE the wire. Same story as `/ics`
+         in both trees: inert here, the only resolver in the mirror. Its slice added the subpath
+         to core's exports and missed this map, which failed the mirror's `tsc --noEmit` on all
+         three platforms while the monorepo's own gates stayed green — the workspace resolves
+         through exports, the mirror only through this list. */
+      "@trafficflow/core/folder-name": ["../../packages/core/src/folder-name.ts"]
     }
   },
   "include": ["src", "vite.config.ts"]
