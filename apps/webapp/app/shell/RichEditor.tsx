@@ -648,19 +648,29 @@ function lineEdge($pos: ResolvedPos, pos: number, dir: -1 | 1): number {
  * Always answers `true`: a selection this cannot resolve (no textblock to stand in) is left
  * for the chained toggle's own semantics, never a refused button press.
  */
-function splitTargetLines(state: EditorState, tr: Transaction, splitInner: boolean): boolean {
+function splitTargetLines(
+  state: EditorState,
+  tr: Transaction,
+  splitInner: boolean,
+  quotationAsLines = false,
+): boolean {
   const sel = state.selection;
   // A NODE selection — a whole list or block picked as a node — is not a run of lines, and
   // narrowing it to the text inside (what `between` does) would change which node the chained
   // toggle acts on: unquoting a selected `<ul>` must lift THE LIST, not the first line in it
   // (review-caught). Left exactly as the user made it; the stock toggles know node selections.
   //
-  // EXCEPT a selected BLOCKQUOTE, which for the commands that reach here IS its run of lines:
-  // the list buttons on a node-selected quotation mean "list the quoted lines" (bailing made
-  // the toggle wrap only the first line and drop the quote — review-caught), and the quote
-  // button never brings one here at all, because {@link applyQuote} answers the wrapper's own
-  // node selection structurally before isolation is asked.
-  if (sel instanceof NodeSelection && sel.node.type.name !== "blockquote") return true;
+  // The one exception is OPT-IN, because each button means something different by a selected
+  // QUOTATION (all three review-caught, one round each): the LIST buttons mean "list the
+  // quoted lines" — they pass `quotationAsLines` and the normalisation narrows to the
+  // contents; the QUOTE button never brings one here, answering the wrapper's own node
+  // selection structurally before isolation is asked; and the CODE button keeps the bail, so
+  // the whole quotation becomes one block rather than the exemption descending into a nested
+  // list's items and leaving its shell behind.
+  if (
+    sel instanceof NodeSelection &&
+    !(quotationAsLines && sel.node.type.name === "blockquote")
+  ) return true;
   // A select-all is an AllSelection whose ends resolve to the DOCUMENT; `between` snaps both
   // ends into the outermost textblocks, which is what makes ⌘A + list one item per line.
   const textSel = sel instanceof TextSelection ? sel : TextSelection.between(sel.$from, sel.$to);
@@ -747,7 +757,7 @@ function applyList(editor: Editor, list: "bulletList" | "orderedList"): void {
     return;
   }
   toggle(
-    editor.chain().focus().command(({ state, tr }) => splitTargetLines(state, tr, true)),
+    editor.chain().focus().command(({ state, tr }) => splitTargetLines(state, tr, true, true)),
   ).run();
 }
 
