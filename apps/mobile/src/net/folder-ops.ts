@@ -22,16 +22,28 @@ import type { ConnectedSession } from "./pairing.js";
  * ── `null` MEANS "COULD NOT COUNT", AND THE CONFIRM STILL ASKS ─────────────────────────────
  *
  * A failed count must never block the ceremony OR pretend a number it does not have (the
- * webapp's own degrade): the caller renders the UNCOUNTED sentence and the ask stands.
+ * webapp's own degrade): the caller renders the UNCOUNTED sentence and the ask stands. A
+ * server that ACCEPTS the connection and never answers is the same failure wearing a longer
+ * face — without a deadline the confirm would sit on "Counting what moves…" forever with the
+ * Delete row withheld, so the read runs under {@link SUMMARY_TIMEOUT_MS} and a timeout IS the
+ * uncounted answer (codex round 1).
  */
+
+/** How long the count may take before the uncounted sentence stands in for it. */
+export const SUMMARY_TIMEOUT_MS = 10_000;
+
 export async function readFolderSummary(
   session: ConnectedSession,
   folderId: string,
+  /** Test seam only — the shipped callers never pass it, so the one number above is the number. */
+  timeoutMs: number = SUMMARY_TIMEOUT_MS,
 ): Promise<{ folders: number; messages: number } | null> {
+  const abort = new AbortController();
+  const deadline = setTimeout(() => abort.abort(), timeoutMs);
   try {
     const res = await session.bearer.fetch(
       `${session.profile.origin}/folders/${encodeURIComponent(folderId)}/summary`,
-      { method: "GET" },
+      { method: "GET", signal: abort.signal },
     );
     if (res.status !== 200) return null;
     const body = (await res.json()) as { folders?: unknown; messages?: unknown };
@@ -39,5 +51,7 @@ export async function readFolderSummary(
     return { folders: body.folders, messages: body.messages };
   } catch {
     return null;
+  } finally {
+    clearTimeout(deadline);
   }
 }

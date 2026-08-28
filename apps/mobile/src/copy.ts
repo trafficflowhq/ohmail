@@ -155,12 +155,15 @@ export const Copy = {
    * schedule is the provider's, not ours (the webapp retired its twin, `en.json`'s "nothing
    * is deleted unseen", with the segment itself). What is still true, said plainly: suspects
    * wait here, ohmail deletes nothing ON ITS OWN (the §16.3 claims-sweep scoping), and a
-   * confirmed verdict moves the mail to the mail server's Junk. This phone has no window into
-   * that folder — the webapp's Junk segment is a live server read this build does not make —
+   * confirmed verdict moves the mail to the mail server's Junk — QUALIFIED, because a mailbox
+   * with no resolvable native Junk folder keeps the verdict here instead
+   * (`junk-filing.ts#physicalDestination`'s stated fallback), and an unconditional sentence
+   * would claim a move that did not happen (codex round 1). This phone has no window into the
+   * Junk folder — the webapp's Junk segment is a live server read this build does not make —
    * so the sentence names where the mail went rather than promising a view of it.
    */
   spamEmptyHint:
-    "Suspected spam waits here for your eyes — ohmail never deletes it on its own. Mail you confirm as spam moves to your mail server's own Junk folder.",
+    "Suspected spam waits here for your eyes — ohmail never deletes it on its own. Mail you confirm as spam moves to your mail server's own Junk folder, or stays held here when your mailbox has none.",
 
   /* ---------------------------------------------------------------- triage */
 

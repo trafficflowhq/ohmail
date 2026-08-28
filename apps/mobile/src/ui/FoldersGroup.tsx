@@ -45,7 +45,7 @@
  * mail names exactly one mailbox, the caller passes {@link soleMailboxId} and the invite line
  * gains the create affordance; two ambiguous mailboxes wait for a mailbox read.
  */
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { TextInput, View } from "react-native";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
@@ -86,7 +86,18 @@ export interface FolderVerbs {
 type Open =
   | null
   | { kind: "menu"; folder: FolderEntity }
-  | { kind: "confirm"; folder: FolderEntity; counts: { folders: number; messages: number } | null; loading: boolean }
+  | {
+      kind: "confirm";
+      folder: FolderEntity;
+      counts: { folders: number; messages: number } | null;
+      loading: boolean;
+      /**
+       * WHICH ask these counts answer — a cancelled confirm's slow read must not settle a
+       * LATER confirm for the same folder with its stale numbers (codex round 1): each open
+       * mints a generation, and a settle applies only to its own.
+       */
+      seq: number;
+    }
   | { kind: "name"; mailboxId: string; parent: string | null; renaming: FolderEntity | null; value: string };
 
 export function FoldersGroup({
@@ -118,6 +129,8 @@ export function FoldersGroup({
   /** The verb chrome: which sheet is up, and the name sheet's honest problem sentence. */
   const [open, setOpen] = useState<Open>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  /** The delete confirm's generation mint — see the confirm variant's `seq`. */
+  const confirmSeq = useRef(0);
   const close = () => {
     setOpen(null);
     setProblem(null);
@@ -155,9 +168,11 @@ export function FoldersGroup({
         reserved: Copy.folderNameReserved,
       }[err];
     }
-    // A FAILED create's row does not hold the name — dismissing it frees the spelling, and
-    // the server judges the race (the webapp's own exception).
-    if (own.some((x) => x.name === path && !(x.op?.kind === "create" && x.op.error !== undefined))) {
+    // A FAILED create's row STILL holds the name: the server retains the command row until
+    // the user dismisses it, and `assertNoOpOverlap` answers 409 for any overlapping path —
+    // offering the spelling here would promise a create the server deterministically refuses
+    // (codex round 1). Dismissing the refusal is what frees the name.
+    if (own.some((x) => x.name === path)) {
       return Copy.folderNameTaken;
     }
     return null;
@@ -530,11 +545,14 @@ export function FoldersGroup({
               // The ask comes BEFORE the act, with the server's own numbers — the mirror is
               // windowed and a local count would understate what the delete moves.
               const f = open.folder;
-              setOpen({ kind: "confirm", folder: f, counts: null, loading: true });
+              const seq = ++confirmSeq.current;
+              setOpen({ kind: "confirm", folder: f, counts: null, loading: true, seq });
               void verbs?.summary(f.id).then((counts) => {
+                // Guarded on the GENERATION, not just the folder — a cancelled confirm's slow
+                // read settling into a reopened one would enable Delete under stale counts.
                 setOpen((held) =>
-                  held !== null && held.kind === "confirm" && held.folder.id === f.id
-                    ? { kind: "confirm", folder: f, counts, loading: false }
+                  held !== null && held.kind === "confirm" && held.seq === seq
+                    ? { kind: "confirm", folder: f, counts, loading: false, seq }
                     : held,
                 );
               });

@@ -233,7 +233,11 @@ export function FoldersRailGroup({
       } as const)[err];
       return t(key);
     }
-    if (mb.folders.some((x) => x.name === path && !(x.op?.kind === "create" && x.op.error !== undefined))) {
+    // A FAILED create's row STILL holds the name: the server retains the command row until
+    // the user dismisses it, and `assertNoOpOverlap` answers 409 for any overlapping path —
+    // the exception this line used to carry offered a spelling the server deterministically
+    // refuses. Dismissing the refusal is what frees the name.
+    if (mb.folders.some((x) => x.name === path)) {
       return t("folderNameTaken");
     }
     return null;

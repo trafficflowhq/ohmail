@@ -593,13 +593,17 @@ function ComposeSheet({
                   <Icon name="x" size={13} color={t.c.ink3} />
                 </Tap>
               </View>
+              {/* BOUNDED: a stored signature may run thousands of characters, and an
+                  unbounded content-measured input would grow the panel past the viewport and
+                  bury Send under the keyboard (codex round 1). Capped, it scrolls inside the
+                  block — the webapp's own 8-row ceiling, in points. */}
               <TextInput
                 value={sigText}
                 onChangeText={(text) => setSig({ kind: "edited", text })}
                 editable={phase === "idle"}
                 multiline
                 accessibilityLabel={Copy.sigAria}
-                style={[t.type.body, { color: t.c.ink2, paddingVertical: 0 }]}
+                style={[t.type.body, { color: t.c.ink2, paddingVertical: 0, maxHeight: 144 }]}
               />
             </View>
           ) : null}
