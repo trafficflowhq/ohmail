@@ -137,11 +137,13 @@ mailbox itself, so that is where everything durable lives:
 So switching between hosting types is reconnecting a mailbox. Connect the same
 mailbox from a desktop install, from a server you run, or from
 [ohmail Cloud](https://ohmail.app), and ohmail finds the settings stored in it
-and asks before using them. What a deployment keeps to itself is only the
-working copy — the local mirror, cached bodies, device pairings, billing —
-reconstructible from the mailbox or irrelevant to it. The honest edge, stated:
-triage piles, Resurface timers and learned patterns have no IMAP representation
-yet, so they stay with the deployment they were made on.
+and asks before using them. What a deployment keeps to itself is the working
+copy — the local mirror, cached bodies, device pairings, billing —
+reconstructible from the mailbox or irrelevant to it, plus the honest edge:
+decisions with no IMAP representation yet. Triage piles, Resurface timers,
+learned patterns, which tag is on which message, notes, snippets and the app's
+own preference switches all stay with the deployment they were made on — the
+mail, its folders and the profile above are what travel.
 
 ## Your settings live in your mailbox, and move with it
 

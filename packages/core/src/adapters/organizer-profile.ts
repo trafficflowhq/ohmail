@@ -52,7 +52,7 @@ import { META_FOLDER } from "./organizer-lease.js";
  *         "destination": "<canonical folder NAME, e.g. ohmail/Reads>",
  *         "priority": 0,
  *         "enabled": true,
- *         "provenance": "manual" | "migrated" | "promoted",
+ *         "provenance": "manual" | "migrated" | "promoted" | "seeded-from-sent",
  *         "subjectContains": "<optional narrowing term>",
  *         "bodyContains": "<optional narrowing term>"
  *       }
