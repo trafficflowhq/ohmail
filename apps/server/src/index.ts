@@ -122,10 +122,17 @@ async function main(): Promise<void> {
    */
   let sendClock: ReturnType<typeof setTimeout> | null = null;
   let sendClockStopped = false;
+  /**
+   * The pass IN FLIGHT, or null — held so shutdown can AWAIT it before the pool closes. A
+   * cleared timer only prevents the next tick; a send already mid-SMTP still needs the
+   * database to finalize its reservation, and a pool closed under it records a delivered
+   * message as `pending` until the recovery arm resolves it a poll-eternity later.
+   */
+  let sendPassInFlight: Promise<void> | null = null;
   const armSendClock = (delayMs: number): void => {
     if (sendClockStopped) return;
     sendClock = setTimeout(() => {
-      void (async () => {
+      sendPassInFlight = (async () => {
         try {
           const passDeps = buildDeps(new Request(cfg.origin), rt);
           const r = await runScheduledSendPass(owned.db, {
@@ -149,6 +156,7 @@ async function main(): Promise<void> {
           // stand and the next minute asks again — one bad pass never kills the cadence.
           logger.error("scheduled_send_pass_failed", { err });
         } finally {
+          sendPassInFlight = null;
           armSendClock(SCHEDULED_SEND_EVERY_MS);
         }
       })();
@@ -168,6 +176,9 @@ async function main(): Promise<void> {
     logger.info("shutdown_begin", { signal });
     server.close(() => {
       void (async () => {
+        // A send mid-flight finishes BEFORE the database goes: the finalize is what records
+        // a delivered message as delivered, and the pool must outlive it.
+        if (sendPassInFlight) await sendPassInFlight.catch(() => { /* its own catch logged */ });
         await hub.end();
         await owned.close();
         logger.info("shutdown_complete", {});

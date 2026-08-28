@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, lte, notInArray, sql } from "drizzle-orm";
 import { drafts, recordChange, type Tx } from "@trafficflow/db";
 import { createLogger, type Logger, type OpenSendAdapter, type StorageCap } from "@trafficflow/core/mail";
 import type { Db, ServiceContext } from "./context.js";
@@ -243,16 +243,23 @@ export async function runScheduledSendPass(
 }
 
 /**
- * How many due candidates one claim EXAMINES to fill its batch of {@link SCHEDULED_SEND_BATCH}
- * sends — four batches' worth. It exists for the eligibility gate: a suspended account's due
- * rows are the OLDEST rows by construction (they sit unsent while the suspension lasts), so a
- * scan that stopped at `batch` could fill itself entirely with rows it then refuses to flip
- * and starve every other account behind them. Four is deliberately small — the scan is a
- * per-minute indexed read, suspension is rare, and an account with more than nine due
- * appointments parked behind a suspension delays other accounts by at most one cycle per
- * batch it fills.
+ * How many due candidates one claim PAGE examines — four batches' worth per page. It exists for
+ * the eligibility gate: a suspended account's due rows are the OLDEST rows by construction
+ * (they sit unsent while the suspension lasts), so a scan that stopped at `batch` could fill
+ * itself entirely with rows it then refuses to flip and starve every other account behind them.
  */
 export const SCHEDULED_SEND_SCAN_FACTOR = 4;
+
+/**
+ * How many PAGES one claim may walk hunting eligible rows. Pages after the first EXCLUDE every
+ * account already found ineligible (the query's own predicate, not a client-side skip), so a
+ * parked account costs at most the one page that discovers it — this bound therefore limits how
+ * many DISTINCT ineligible accounts one claim can step past per cycle, not how many parked ROWS.
+ * Ten pages keeps the claim transaction small and indexed while letting a cycle clear nine
+ * newly-suspended accounts before deferring the rest to the next minute; unbounded would let a
+ * pathological backlog grow the transaction the serverless ceiling is already tight around.
+ */
+export const SCHEDULED_SEND_SCAN_PAGES = 10;
 
 /**
  * Claim what this invocation will attempt: DUE appointments first, then RECOVERY — rows whose
@@ -272,17 +279,8 @@ async function claimDue(
   accountEligible?: (accountId: string, db: Db) => Promise<boolean>,
 ): Promise<ClaimedRow[]> {
   return (db as unknown as Tx).transaction(async (tx) => {
-    const scan = batch * SCHEDULED_SEND_SCAN_FACTOR;
-    const candidates = await tx.select({
-      id: drafts.id, accountId: drafts.accountId, sendKey: drafts.sendKey, sendAt: drafts.sendAt,
-    }).from(drafts)
-      .where(and(eq(drafts.status, "scheduled"), lte(drafts.sendAt, now), isNotNull(drafts.sendKey)))
-      .orderBy(drafts.sendAt)
-      .limit(scan)
-      .for("update", { skipLocked: true });
-
-    // One eligibility read per distinct account in the scan, memoised for both arms — and run
-    // ON THIS TRANSACTION's handle, never a captured outer one (the deadlock rule on
+    // One eligibility read per distinct account this claim touches, memoised for both arms —
+    // and run ON THIS TRANSACTION's handle, never a captured outer one (the deadlock rule on
     // `ScheduledSendPassDeps.accountEligible`).
     const eligibility = new Map<string, boolean>();
     const eligible = async (accountId: string): Promise<boolean> => {
@@ -293,33 +291,69 @@ async function claimDue(
       eligibility.set(accountId, answer);
       return answer;
     };
+    const ineligibleAccounts = (): string[] =>
+      [...eligibility.entries()].filter(([, ok]) => !ok).map(([id]) => id);
 
-    const due: typeof candidates = [];
-    for (const row of candidates) {
-      if (due.length >= batch) break;
-      if (await eligible(row.accountId)) due.push(row);
-    }
+    /**
+     * A PAGED, ELIGIBILITY-FILTERED SCAN — keyset on `(send_at, id)`, and every page after the
+     * first excludes the accounts already found ineligible IN THE QUERY, so a suspended
+     * account's parked backlog costs the page that discovers it and nothing per row. Without
+     * the pagination, an account owning the oldest `scan`-many due rows re-filled the fixed
+     * window every cycle and everything behind it was NEVER claimed — the same starvation the
+     * scan factor was added against, standing one shelf higher.
+     */
+    interface Candidate { id: string; accountId: string; sendKey: string | null; sendAt: Date | null; status?: string }
+    const pagedScan = async (base: () => ReturnType<typeof and>, want: number): Promise<Candidate[]> => {
+      const taken: Candidate[] = [];
+      let after: { sendAt: Date; id: string } | null = null;
+      for (let page = 0; page < SCHEDULED_SEND_SCAN_PAGES && taken.length < want; page++) {
+        const skip = ineligibleAccounts();
+        const rows: Candidate[] = await tx.select({
+          id: drafts.id, accountId: drafts.accountId, sendKey: drafts.sendKey,
+          sendAt: drafts.sendAt, status: drafts.status,
+        }).from(drafts)
+          .where(and(
+            base(),
+            // The keyset bound's params are serialized EXPLICITLY (ISO text + casts): a raw
+            // `Date` in a sql`` fragment bypasses drizzle's column mapping, and postgres-js
+            // refuses it — PGlite tolerated it, which is exactly the class of green the
+            // pg-suite rule exists to distrust.
+            ...(after
+              ? [sql`(${drafts.sendAt}, ${drafts.id}) > (${after.sendAt.toISOString()}::timestamptz, ${after.id}::uuid)`]
+              : []),
+            ...(skip.length > 0 ? [notInArray(drafts.accountId, skip)] : []),
+          ))
+          .orderBy(drafts.sendAt, drafts.id)
+          .limit(batch * SCHEDULED_SEND_SCAN_FACTOR)
+          .for("update", { skipLocked: true });
+        if (rows.length === 0) break;
+        for (const row of rows) {
+          if (taken.length >= want) break;
+          if (await eligible(row.accountId)) taken.push(row);
+        }
+        const last = rows[rows.length - 1]!;
+        after = { sendAt: last.sendAt as Date, id: last.id };
+      }
+      return taken;
+    };
+
+    const due = await pagedScan(
+      () => and(eq(drafts.status, "scheduled"), lte(drafts.sendAt, now), isNotNull(drafts.sendKey)),
+      batch,
+    );
 
     const staleBefore = new Date(now.getTime() - SEND_STALE_AFTER_MS);
-    const recoveryCandidates = due.length >= batch ? [] : await tx.select({
-      id: drafts.id, accountId: drafts.accountId, sendKey: drafts.sendKey, sendAt: drafts.sendAt,
-      status: drafts.status,
-    }).from(drafts)
-      .where(and(
+    const recovery = due.length >= batch ? [] : await pagedScan(
+      () => and(
         isNotNull(drafts.sendKey),
         lte(drafts.sendAt, staleBefore),
         // 'draft' = the claim committed and the sender died; 'sending' = the reservation was
         // made and the finalizer never ran. Both answer to the SAME stored key, which is what
         // makes the retry a replay. 'scheduled' rows are the due arm's; terminal rows have no key.
         inArray(drafts.status, ["draft", "sending"]),
-      ))
-      .orderBy(drafts.sendAt)
-      .limit(batch - due.length)
-      .for("update", { skipLocked: true });
-    const recovery: typeof recoveryCandidates = [];
-    for (const row of recoveryCandidates) {
-      if (await eligible(row.accountId)) recovery.push(row);
-    }
+      ),
+      batch - due.length,
+    );
 
     if (due.length > 0) {
       await tx.update(drafts)
