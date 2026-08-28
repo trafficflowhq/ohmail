@@ -665,7 +665,26 @@ export function useConsentState(
   }, []);
 
   useEffect(() => {
-    if (!active || !reachable) return;
+    if (!active || !reachable) {
+      /**
+       * NO WIRE ⇒ RESTING VALUES — enforced, not merely documented. `local-consent.ts` states
+       * the rule for a failed READ ("a failed read leaves every flag at its resting value");
+       * this is the same rule for a wire that is GONE. The desktop's door chooser is an overlay
+       * OVER the mounted shell, so a cloud→local switch can land here with the hosted account's
+       * answers still in state — and a folders rail, a signatures pane or a spending switch
+       * rendered from a departed account's row over a standalone engine would be controls whose
+       * every verb refuses (review-caught: the folder verbs would 404 against the local table).
+       * A read still in flight from the old wire is already dead — the previous era's cleanup
+       * ran the moment `reachable` moved (mutation-checked: an epoch bump added here was
+       * unwatchable). setState with the RESTING constant is a React bailout when the state
+       * never left it, which is the standalone door's every render.
+       */
+      if (active && !reachable) {
+        bootCache.current = null;
+        setState(RESTING);
+      }
+      return;
+    }
     /**
      * THE DEVICE'S LAST ANSWER, FIRST — synchronously, before the fetch below is even issued,
      * so the live answer can only ever land on top of the cache and never under it.
