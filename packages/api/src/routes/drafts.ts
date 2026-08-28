@@ -7,7 +7,7 @@ import { jsonResponse } from "../responses.js";
 import { makeSendAdapter } from "../send-adapter.js";
 import { makeOpenAdapter } from "../attachments-adapter.js";
 import type { Route } from "../router.js";
-import { drafts, sends, readBody } from "./shared.js";
+import { drafts, schedules, sends, readBody } from "./shared.js";
 
 /**
  * THE SEND REQUEST'S BODY — everything the delivery needs beyond the stored draft, and nothing
@@ -191,6 +191,36 @@ export const draftsRoutes: Route[] = [
     handler: async (req, deps, params) => {
       const { seq } = await drafts(deps).remove(serviceContext(deps, req), params.id!);
       return new Response(null, { status: 204, headers: { "X-Sync-Seq": String(seq) } });
+    },
+  },
+  {
+    // SEND LATER (mail 0077): put an appointment on a draft. A DRAFT-STATE TRANSITION and
+    // nothing else — no reservation is minted, no network is opened, and the worker's
+    // scheduled-send pass is what runs the gated send when the time comes. Deliberately NOT
+    // idempotent-marked and carrying no Idempotency-Key requirement: setting `send_at` twice to
+    // one value is one appointment, so the natural retry converges by itself. `cost: "work"`
+    // like the other draft mutations, because that is what it is.
+    method: "POST",
+    pattern: "/drafts/:id/schedule",
+    cost: "work",
+    handler: async (req, deps, params) => {
+      const body = await readBody<{ sendAt?: unknown }>(req);
+      const { draft, seq } = await schedules(deps).schedule(
+        serviceContext(deps, req), params.id!, body.sendAt,
+      );
+      return jsonResponse(draft, { status: 200, seq });
+    },
+  },
+  {
+    // SEND LATER: take the appointment off. Race-safe against the worker's claim — the service
+    // answers 409 "already being sent" when the claim won, never a false "cancelled"; a repeat
+    // cancel of an already-plain draft is idempotent success (the asked-for state).
+    method: "DELETE",
+    pattern: "/drafts/:id/schedule",
+    cost: "work",
+    handler: async (req, deps, params) => {
+      const { draft, seq } = await schedules(deps).cancel(serviceContext(deps, req), params.id!);
+      return jsonResponse(draft, { status: 200, seq });
     },
   },
   {

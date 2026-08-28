@@ -6,6 +6,7 @@ import {
   type PrivacyService, type UnsubscribeService,
   type ContactsService, type SnippetsService, type NotifyRulesService, type AwayResponderService,
   type AttachmentsService, type KbService, type TagsService, type FolderOpsService, type DraftsService, type DraftingService,
+  type ScheduleService,
   type ProfileImportService, type SendService, type WorkflowsService,
 } from "@trafficflow/services/mail";
 import type { DraftPort } from "@trafficflow/core/mail";
@@ -177,6 +178,12 @@ export function folderOps(deps: ApiDeps): FolderOpsService {
 export function drafts(deps: ApiDeps): DraftsService {
   const svc = deps.services?.drafts;
   if (!svc) throw new ServiceError("internal", 500, "drafts service not configured");
+  return svc;
+}
+
+export function schedules(deps: ApiDeps): ScheduleService {
+  const svc = deps.services?.schedules;
+  if (!svc) throw new ServiceError("internal", 500, "schedule service not configured");
   return svc;
 }
 

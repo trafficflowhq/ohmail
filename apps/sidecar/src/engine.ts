@@ -16,7 +16,7 @@ import { DEFAULT_OHBOX_POLICY, providerAuthservIds, resolveOhboxPolicy } from "@
 import { accountSettings, mailboxCredentials, mailboxes, type MailboxDisabledReason, type Tx } from "@trafficflow/db";
 import {
   attachmentsService, awayResponderService, contactsService, draftingService, draftsService,
-  kbService, tagsService,
+  kbService, runScheduledSendPass, scheduleService, tagsService,
   makeApprovalService, makeAuthConfig, makeMailboxService, makePrivacyService,
   makeScreenerService, messageService, notifyRulesService, resolveSession,
   rulesService, searchService, sendService, snippetsService, syncService, threadService,
@@ -637,6 +637,10 @@ function localServices(
     kb: kbService,
     tags: tagsService,
     drafts: draftsService,
+    // Send later's two verbs (mail 0077). This process runs its own scheduled-send pass in the
+    // local sync loop (the standalone install has no Cloud worker), so an appointment made on
+    // this door is kept by this door.
+    schedules: scheduleService,
     workflows: workflowsService,
   };
 }
@@ -1751,11 +1755,56 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       }
     };
 
+    /**
+     * KEEP THE SEND-LATER APPOINTMENTS THIS INSTALL MADE (mail 0077) — the standalone door's
+     * copy of the clock the hosted deployment runs on the API host every minute.
+     *
+     * The same ONE implementation (`runScheduledSendPass` in `@trafficflow/services`), for the
+     * reason every pass above is the worker's: the claim, the recovery arm and the outcome
+     * table have to agree with what the schedule verbs promised, or a cancel that answered
+     * "already being sent" and a claim that was not one would be two hosts disagreeing about
+     * one row. Only the transport differs — `openLocalSend`, the exact adapter a manual send
+     * from this door dials — and the storage cap is this tier's typed UNMETERED, the same
+     * declaration `localServices` makes for the send route's own projection.
+     *
+     * On the DRAIN cadence rather than a timer, which is the honest reading of "sends at 9:00"
+     * on a door that only exists while the app is open: an appointment that comes due while
+     * the app is closed sends on the next launch's first drain, and the compose surface's
+     * picker says the time in the user's own clock either way. A failure is CONTAINED like
+     * every pass here — the pass re-arms transient faults itself, and mail keeps arriving.
+     */
+    const sendScheduled = async (): Promise<void> => {
+      try {
+        const r = await runScheduledSendPass(db as never, {
+          openSendAdapter: openLocalSend,
+          resolveStorageCap: async () => UNMETERED_STORAGE_CAP,
+          now,
+        });
+        if (r.claimed > 0) {
+          log("scheduled_send_pass", {
+            claimed: r.claimed, sent: r.sent, unverified: r.unverified,
+            failed: r.failed, deferred: r.deferred,
+          });
+        }
+      } catch (err) {
+        log("scheduled_send_pass_failed", {
+          err,
+          reason: "no due scheduled send was attempted this drain; the appointments stand and " +
+            "the next drain claims them again, and mail continues to arrive either way",
+        });
+      }
+    };
+
     /** The drain itself, ALREADY GATED. Never called from outside this closure. */
     const drain = async (maxCycles: number): Promise<number> => {
       // BEFORE the cycles, not after: a resurface is a local database fact and does not depend on
       // the mailbox being reachable, so it must survive a cycle that throws on a dead connection.
       await resurfaceDue();
+      // Due appointments next, still ahead of the cycles: a send somebody scheduled has a clock
+      // on it, and it must not wait out a hundred-cycle backlog drain — nor be skipped because
+      // an inbound cycle threw on a dead connection (its own SMTP dial fails independently and
+      // the pass re-arms the row).
+      await sendScheduled();
       let cycles = 0;
       /** Did a cycle report an empty backlog, or did the loop simply run out of cycles? */
       let drained = false;

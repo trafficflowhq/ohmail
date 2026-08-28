@@ -734,7 +734,7 @@ export interface KbEntryDTO {
   updatedAt: ISODateTime;
 }
 
-export type DraftStatus = "draft" | "sending" | "sent" | "unverified";
+export type DraftStatus = "draft" | "scheduled" | "sending" | "sent" | "unverified";
 
 export interface DraftDTO {
   id: string;
@@ -764,6 +764,19 @@ export interface DraftDTO {
   bcc: EmailAddress[];
   rationale: string | null;
   status: DraftStatus;
+  /**
+   * WHEN this draft is scheduled to be sent (mail 0077) — non-null exactly while `status` is
+   * `scheduled` (it also survives, invisibly to clients, through the worker's claim window as
+   * the crash-recovery predicate). A client renders it in the reader's own local time; the
+   * value is the instant the user picked, with timezone.
+   */
+  sendAt: ISODateTime | null;
+  /**
+   * The failure sentence from a scheduled send that could not be kept — the mailbox was
+   * disconnected by send time, and so on. Server words, rendered as a quotation (the same
+   * treatment `SendState.reason` gives a live refusal); cleared by the next edit or schedule.
+   */
+  sendError: string | null;
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
 }

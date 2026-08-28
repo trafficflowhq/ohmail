@@ -219,6 +219,13 @@ export {
   type DraftFromMessageDeps,
 } from "./drafting-service.js";
 export {
+  ScheduleService, scheduleService, SCHEDULE_MAX_AHEAD_MS,
+} from "./schedule-service.js";
+export {
+  runScheduledSendPass, SCHEDULED_SEND_BATCH, SCHEDULED_SEND_EXPIRY_MS,
+  type ScheduledSendPassDeps, type ScheduledSendPassResult,
+} from "./schedule-send-pass.js";
+export {
   SendService, sendService, SEND_STALE_AFTER_MS,
   SEND_ATTACHMENT_MAX_TOTAL_BYTES, SEND_MAX_ATTACHMENT_PARTS, dedupeStagedIds,
   SEND_MIME_ENVELOPE_BYTES, SEND_STAGED_OBJECT_MAX_BYTES, attachmentBudgetFor,

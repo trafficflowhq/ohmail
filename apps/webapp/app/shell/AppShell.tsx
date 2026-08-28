@@ -30,6 +30,7 @@ import {
   receiptsByDay,
   waterlineIdOf,
   draftsList,
+  scheduledSendsList,
   rulesList,
   senderKey,
   sendingMailboxId,
@@ -2695,9 +2696,11 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
       setCompose(EMPTY_COMPOSE);
       /* THE RECOVERED MESSAGE IS DELIVERED, so the stranded row it was recovered from is a
          phantom copy of a sent mail and goes — see `recoverySeed`. Only on a CONFIRMED send:
-         this callback fires on nothing else. */
+         this callback fires on nothing else. NOT on a SEND-LATER confirm: an appointment is a
+         promise, not a delivery, and the stranded row is still the only record of the
+         unconfirmed first attempt until the scheduled send actually goes out. */
       const seeded = recoverySeed.current;
-      if (seeded && seeded !== m.draftId) {
+      if (seeded && seeded !== m.draftId && !m.sendAt) {
         recoverySeed.current = null;
         void engine.mutate({ kind: "draft_discard", draftId: seeded });
         writeReplyMeta(`draft:${seeded}`, {}); // the phantom row's block state dies with it
@@ -2734,7 +2737,11 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
        * unselected, exactly as arriving anywhere else in the product leaves it.
        */
       setOhboxSel(null);
-      go("ohbox");
+      /* A SEND-LATER confirm lands where the appointment now lives — the Drafts view's
+         Scheduled group — because the Ohbox has nothing to show for it (no Sent copy is
+         materialised for mail that has not left) and arriving at a list that visibly holds
+         the promise is what makes "Scheduled for Fri 18:00" a fact rather than a toast. */
+      go(m.sendAt ? "drafts" : "ohbox");
       return;
     }
     /**
@@ -3138,6 +3145,44 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
     },
     [draftRepliesHere, autosave, go, reader, version, compose.sig],
   );
+  /**
+   * ── THE SCHEDULED SENDS (mail 0077), and their two verbs ────────────────────────────────
+   *
+   * The list is every `scheduled` draft, soonest first (`scheduledSendsList`). CANCEL flips
+   * the row back to an ordinary draft; the interesting outcome is the refusal — the server's
+   * claim got there first and the mail is leaving — which is reported in its own sentence
+   * rather than pretending the cancel landed (the overlay rolls back with the rejection, so
+   * the row on screen never falsely reads "cancelled"). EDIT is cancel-then-open, in that
+   * order and gated on the cancel confirming, because a `scheduled` row is frozen on the
+   * server (`DraftsService.update` refuses it) and adopting one for autosave would point
+   * every PUT at a 409.
+   */
+  const scheduled = useMemo(() => scheduledSendsList(reader), [reader, version]);
+  const cancelSchedule = useCallback(
+    (draftId: string) => {
+      void engine.mutate({ kind: "draft_schedule_cancel", draftId }).then((res) => {
+        toast(res.status === "rolled_back"
+          ? t("drafts.scheduleCancelTooLate")
+          : t("drafts.scheduleCancelled"));
+      });
+    },
+    [engine, toast, t],
+  );
+  const editScheduled = useCallback(
+    (d: EngineDraft) => {
+      void engine.mutate({ kind: "draft_schedule_cancel", draftId: d.id }).then((res) => {
+        if (res.status === "rolled_back") {
+          toast(t("drafts.scheduleCancelTooLate"));
+          return;
+        }
+        // The row is a plain draft now (optimistically at once, authoritatively on the drain);
+        // hand `openDraft` the same reading so it ADOPTS rather than treating the row as a
+        // stranded send.
+        openDraft({ ...d, status: "draft", sendAt: null });
+      });
+    },
+    [engine, openDraft, toast, t],
+  );
   const discardDraft = useCallback(
     (draftId: string) => {
       void engine.mutate({ kind: "draft_discard", draftId });
@@ -3178,7 +3223,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
    * so the adapter writes a fresh draft and a fresh reservation: exactly what the inline reply
    * has always done. When this send confirms, `onSendSettled` discards the stranded copy.
    */
-  const sendCompose = useCallback(() => {
+  const sendCompose = useCallback((sendAt?: string) => {
     /**
      * THE SIGNATURE, DERIVED EXACTLY AS THE BLOCK RENDERS IT — the form's own state, the
      * server-confirmed map, and the SAME `composeFrom.mailboxId` the block was handed — sealed
@@ -3187,20 +3232,27 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
      * confirmed) leaves the mutation byte-identical to one built before signatures existed.
      * Deliberately NOT serialized into `plan.mutation` itself: `canSend` judges the TYPED body,
      * and a signature must never light Send up over an empty message.
+     *
+     * SEND LATER (mail 0077) is the SAME press with `sendAt` on the mutation — the one send
+     * machine keeps its lock and its rules, the adapter turns the field into an appointment
+     * instead of a delivery, and the recovery branch below applies identically (a recovered
+     * unverified message may be scheduled as legitimately as it may be resent).
      */
     const sigText = effectiveSignature(
       compose.sig ?? SIG_FOLLOWING,
       consent.signaturesKnown ? consent.signatures : {},
       composeFrom.mailboxId,
     );
+    const withWhen = (m: MailSendMutation): MailSendMutation =>
+      sendAt ? { ...m, sendAt } : m;
     if (mailSend.stateOf(COMPOSE_SEND_KEY).phase === "unverified" && autosave.draftId) {
       recoverySeed.current = autosave.draftId;
       autosave.release();
       const { draftId: _stranded, ...fresh } = plan.mutation;
-      mailSend.send(withSignature(fresh, sigText));
+      mailSend.send(withWhen(withSignature(fresh, sigText)));
       return;
     }
-    mailSend.send(withSignature(plan.mutation, sigText));
+    mailSend.send(withWhen(withSignature(plan.mutation, sigText)));
   }, [mailSend, plan, autosave, compose.sig, composeFrom.mailboxId, consent.signatures, consent.signaturesKnown]);
 
   /**
@@ -5883,6 +5935,7 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
                 plan={plan}
                 send={mailSend.stateOf(COMPOSE_SEND_KEY)}
                 onSend={sendCompose}
+                onSendLater={sendCompose}
                 onCancel={cancelCompose}
               />
             ) : null}
@@ -5890,9 +5943,12 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
             {effectiveView === "drafts" ? (
               <DraftsView
                 drafts={drafts}
+                scheduled={scheduled}
                 now={now}
                 onOpen={openDraft}
                 onDiscard={discardDraft}
+                onCancelSchedule={cancelSchedule}
+                onEditScheduled={editScheduled}
                 repliesHere={draftRepliesHere}
               />
             ) : null}

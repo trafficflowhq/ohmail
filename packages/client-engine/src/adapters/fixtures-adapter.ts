@@ -450,7 +450,12 @@ export class FixturesAdapter implements EngineAdapter {
        * row here, so the copy stands until its ten-minute TTL, which is the honest demo of a
        * mailbox whose Sent folder is never read back.
        */
-      ...(m.kind === "mail_send" ? { providerMessageId: `<${this.uuid()}@demo.ohmail.app>` } : {}),
+      // …and NOT for a Send-later press (`sendAt`, mail 0077): nothing left even in fiction, so
+      // minting a provider id would make the demo materialise a Sent copy for mail whose whole
+      // point is that it has not gone. The `scheduled` draft effect above is the demo's truth.
+      ...(m.kind === "mail_send" && !m.sendAt
+        ? { providerMessageId: `<${this.uuid()}@demo.ohmail.app>` }
+        : {}),
     };
     this.replays.set(opts.idempotencyKey, outcome);
     return outcome;

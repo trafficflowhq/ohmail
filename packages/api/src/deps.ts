@@ -12,6 +12,7 @@ import type {
   UnsubscribeService,
   ContactsService, SnippetsService, NotifyRulesService, AwayResponderService,
   AttachmentsService, KbService, TagsService, FolderOpsService, DraftsService, DraftingService, SendService,
+  ScheduleService,
   WorkflowsService, ProfileImportService,
 } from "@trafficflow/services/mail";
 /* `OAuthTokenProvider` from the MAIL entry, never the root barrel: this file is compiled by every
@@ -225,6 +226,11 @@ export interface ApiServices {
    */
   folderOps?: FolderOpsService;
   drafts: DraftsService;     // manual compose drafts (emits `draft` change_log in-tx)
+  // SEND LATER's two verbs (mail 0077): `POST`/`DELETE /drafts/:id/schedule` — a draft-state
+  // transition, no network, no reservation. The WORKER's scheduled-send pass is the sender.
+  // OPTIONAL like `folderOps` and for the same shape of reason: a host wired before this
+  // service existed answers 500 `schedule service not configured` rather than crashing at boot.
+  schedules?: ScheduleService;
   // AI draft-from-history. `drafting` assembles the sensitivity-safe context + stores
   // the draft; `drafter` is the INJECTED DraftPort (a mock in tests, a model-backed
   // adapter in a deployment that has one). A model needs an API key, which is

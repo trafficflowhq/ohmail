@@ -721,7 +721,18 @@ export interface EngineDraft {
   /** Blind-carbon recipients. Delivered on the envelope only; never a header on the sent mail. */
   bcc: EmailAddress[];
   rationale: string | null;
-  status: "draft" | "sending" | "sent" | "unverified";
+  status: "draft" | "scheduled" | "sending" | "sent" | "unverified";
+  /**
+   * WHEN a `scheduled` draft will be sent (Send later, mail 0077) — the instant the user
+   * picked, rendered in the reader's own local time. Optional because an older server sends no
+   * key at all, and a mirror row predating the field reads as "no appointment".
+   */
+  sendAt?: ISODateTime | null;
+  /**
+   * The failure sentence from a scheduled send that could not be kept — server words, rendered
+   * as a quotation (`SendState.reason`'s treatment). Cleared by the next edit or schedule.
+   */
+  sendError?: string | null;
   /** Client-local: the user took the AI draft into the editor. */
   accepted?: boolean;
   createdAt: ISODateTime;
@@ -1391,8 +1402,29 @@ export type EngineMutation =
        * message. They are NOT part of the autosaved draft — a draft holds no attachment bytes.
        */
       attachments?: ComposeAttachment[];
+      /**
+       * SEND LATER (mail 0077): the instant this message should leave, ISO 8601 with timezone.
+       * Present ⇒ the adapter puts an APPOINTMENT on the draft (`POST /drafts/:id/schedule`)
+       * instead of sending it — nothing dials SMTP now, the server's scheduled-send pass runs
+       * the ordinary gated send when the time comes, and the draft rides `/sync` as
+       * `status: "scheduled"` so every device can see and cancel it.
+       *
+       * Exclusive of {@link attachments} and {@link forwardOf}: a draft row stores no bytes
+       * and no forward reference (both ride the send REQUEST, deliberately — §13.2/§14), so an
+       * appointment could not carry either and the adapter refuses the combination rather than
+       * scheduling a message that would leave incomplete.
+       */
+      sendAt?: string;
     }
   | { kind: "draft_accept"; draftId: string }
+  /**
+   * TAKE A SEND-LATER APPOINTMENT OFF A DRAFT — `DELETE /drafts/:id/schedule`. The row returns
+   * to an ordinary draft on every device; the server answers 409 "already being sent" when the
+   * scheduled-send pass claimed it first, which the surface reports rather than pretending the
+   * cancel landed (the overlay rolls back, so the row keeps saying "scheduled" or converges to
+   * "sent" on the next drain — never a false "cancelled").
+   */
+  | { kind: "draft_schedule_cancel"; draftId: string }
   /**
    * ── AUTOSAVE: THE COMPOSE FORM BECOMES A ROW, AND STAYS THE SAME ROW ────────────────────
    *

@@ -1338,6 +1338,26 @@ export function draftsList(reader: EntityReader, now: Date = new Date()): Engine
     });
 }
 
+/**
+ * THE SCHEDULED SENDS (Send later, mail 0077) — every draft wearing an appointment, soonest
+ * first. Its own list rather than a branch of {@link draftsList}, because the two surfaces make
+ * different promises: Drafts is "what you have not sent", ordered by recency of touch;
+ * Scheduled is "what WILL send, and when", and the only ordering that answers that question is
+ * the appointment's own. A row with no `sendAt` (an older server mid-claim, a mirror row from
+ * before the field) still lists — hiding a scheduled send because its time is unknown would be
+ * the surface suppressing exactly the row the user most needs to see — and sorts last.
+ */
+export function scheduledSendsList(reader: EntityReader): EngineDraft[] {
+  return reader.list<EngineDraft>("draft")
+    .filter((d) => d.status === "scheduled")
+    .sort((a, b) => {
+      const ta = a.sendAt ? Date.parse(a.sendAt) : Number.MAX_SAFE_INTEGER;
+      const tb = b.sendAt ? Date.parse(b.sendAt) : Number.MAX_SAFE_INTEGER;
+      if (ta !== tb) return ta - tb;
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
+}
+
 // ── Counts ─────────────────────────────────────────────────────────────────
 
 export interface EngineCounts {

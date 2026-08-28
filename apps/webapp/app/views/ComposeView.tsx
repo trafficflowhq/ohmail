@@ -63,6 +63,10 @@ import {
   type RecipientMove,
 } from "../shell/RecipientField";
 import { ComposeAttach, composeAttachCap } from "../components/ComposeAttach";
+import {
+  instantOfLocalInput, localInputValue, nextWeekNine, scheduleLabel, todayEvening, tomorrowNine,
+} from "../shell/format";
+import { activeFormatZone } from "../shell/locale";
 import type { ComposeFields, ComposePlan } from "../shell/compose";
 import { worthSaving } from "../shell/compose-autosave";
 import { formatRecipientChips, type ResolvedFrom } from "../shell/compose-from";
@@ -76,6 +80,15 @@ import { SIG_FOLLOWING } from "../shell/signature";
  */
 const MATCH_HINT_ID = "compose-from-match";
 
+/**
+ * The custom picker's floor above "now", and the evening preset's usefulness bar. Three
+ * minutes: far enough that the appointment cannot be in the past by the time the press, the
+ * request and the server's own clock check have all happened (the server refuses `<= now`
+ * against ITS clock, which is the one the due scan runs on), and near enough that "in five
+ * minutes" — the shortest schedule anyone plausibly wants — is still expressible.
+ */
+const SEND_LATER_MIN_LEAD_MS = 3 * 60 * 1000;
+
 export function ComposeView({
   engine,
   draft,
@@ -87,6 +100,7 @@ export function ComposeView({
   plan,
   send,
   onSend,
+  onSendLater,
   onCancel,
 }: {
   engine: OhmailEngine;
@@ -124,6 +138,13 @@ export function ComposeView({
   plan: ComposePlan;
   send: SendState;
   onSend: () => void;
+  /**
+   * SEND LATER (mail 0077): the same dispatch as {@link onSend} with the picked instant on the
+   * mutation — the shell seals the signature and hands `sendAt` to the one send machine, so the
+   * lock, the recipient rule and the empty-body guard apply identically. The VIEW owns only the
+   * picker: which presets to offer, and the refusal of a past time before anything is dispatched.
+   */
+  onSendLater: (sendAtIso: string) => void;
   /**
    * THROW THIS MESSAGE AWAY AND LEAVE — the form, the local buffer and the account row that
    * autosave wrote, in one press.
@@ -295,6 +316,60 @@ export function ComposeView({
     rootRef.current?.querySelector<HTMLButtonElement>(".compose-cancel")?.focus();
   }, []);
 
+  /**
+   * ── SEND LATER (mail 0077) — the picker, inline in the foot ─────────────────────────────
+   *
+   * The compose-confirm's idiom on purpose: a panel above the send row, never a modal (the
+   * form was moved OUT of a dialog the keyboard could not leave), `role="dialog"` with focus
+   * moving in and Escape closing it first (the cascade rule below). `openedAt` freezes "now"
+   * at the moment the panel opens, so the three presets and the custom floor are computed once
+   * per opening rather than drifting under the reader mid-decision.
+   *
+   * A DRAFT ROW STORES NO BYTES AND NO FORWARD REFERENCE (§13.2/§14), so a message carrying
+   * either cannot be scheduled — the affordance says so in its title instead of failing after
+   * the pick; the http adapter refuses the same combination where it cannot be bypassed.
+   *
+   * A PAST TIME REFUSES BEFORE THE WIRE: the custom input's floor is a few minutes ahead, the
+   * confirm stays disabled below it, and the sentence under the field says why — the server's
+   * own refusal (against ITS clock, the one the due scan runs on) remains the authority.
+   */
+  const [sendLaterOpen, setSendLaterOpen] = useState(false);
+  const [openedAt, setOpenedAt] = useState<Date>(() => new Date());
+  const [customAt, setCustomAt] = useState("");
+  const sendLaterRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (sendLaterOpen) sendLaterRef.current?.focus();
+  }, [sendLaterOpen]);
+  const sendLaterBlocked = (fields.attachments?.length ?? 0) > 0 || fields.forwardOf
+    ? t("sendLaterUnavailable")
+    : null;
+  const toggleSendLater = useCallback(() => {
+    setSendLaterOpen((open) => {
+      if (!open) {
+        const now = new Date();
+        setOpenedAt(now);
+        // Seed the custom field at the floor so the confirm is live the moment the input shows.
+        setCustomAt(localInputValue(new Date(now.getTime() + SEND_LATER_MIN_LEAD_MS).toISOString()));
+      }
+      return !open;
+    });
+  }, []);
+  const closeSendLater = useCallback(() => {
+    setSendLaterOpen(false);
+    rootRef.current?.querySelector<HTMLButtonElement>(".send-later-toggle")?.focus();
+  }, []);
+  const pickSendLater = useCallback((iso: string) => {
+    setSendLaterOpen(false);
+    onSendLater(iso);
+  }, [onSendLater]);
+  // The evening preset is offered only while it is meaningfully ahead — past ~17:45 "this evening at
+  // 18:00" is a promise measured in seconds, and the honest menu simply omits it.
+  const eveningIso = todayEvening(openedAt);
+  const eveningUsable = Date.parse(eveningIso) - openedAt.getTime() > SEND_LATER_MIN_LEAD_MS;
+  const customIso = instantOfLocalInput(customAt);
+  const customUsable = customIso !== null
+    && Date.parse(customIso) - openedAt.getTime() >= SEND_LATER_MIN_LEAD_MS;
+
   useKeyBindings([
     /* ONE Escape binding, branching — never two competing ones. It is the escape cascade's own
        rule read at view scope: close the innermost thing that is open, which is the confirm
@@ -303,9 +378,14 @@ export function ComposeView({
     {
       chord: "Escape",
       group: "app",
-      label: confirmCancel ? t("keyCloseConfirm") : t("keyLeave"),
+      label: confirmCancel || sendLaterOpen ? t("keyCloseConfirm") : t("keyLeave"),
       inInput: true,
-      run: () => { if (confirmCancel) keepWriting(); else go("ohbox"); },
+      // The cascade rule, one branch wider: the send-later picker is an innermost thing too.
+      run: () => {
+        if (sendLaterOpen) closeSendLater();
+        else if (confirmCancel) keepWriting();
+        else go("ohbox");
+      },
     },
     {
       chord: "mod+Enter",
@@ -726,6 +806,55 @@ export function ComposeView({
                 </div>
               </div>
             ) : null}
+            {sendLaterOpen ? (
+              /* The compose-confirm's inline-panel idiom — see the block by the state above. */
+              <div
+                ref={sendLaterRef}
+                className="send-later"
+                role="dialog"
+                aria-label={t("sendLaterTitle")}
+                tabIndex={-1}
+              >
+                <p className="set-note-inline">{t("sendLaterWhat")}</p>
+                <div className="gate-actions">
+                  {eveningUsable ? (
+                    <Button variant="ghost" onClick={() => pickSendLater(eveningIso)}>
+                      {t("sendLaterTonight", { when: scheduleLabel(eveningIso, openedAt) })}
+                    </Button>
+                  ) : null}
+                  <Button variant="ghost" onClick={() => pickSendLater(tomorrowNine(openedAt))}>
+                    {t("sendLaterTomorrow", { when: scheduleLabel(tomorrowNine(openedAt), openedAt) })}
+                  </Button>
+                  <Button variant="ghost" onClick={() => pickSendLater(nextWeekNine(openedAt))}>
+                    {t("sendLaterMonday", { when: scheduleLabel(nextWeekNine(openedAt), openedAt) })}
+                  </Button>
+                </div>
+                <div className="send-later-custom">
+                  <label htmlFor="compose-send-at">{t("sendLaterPick")}</label>
+                  <input
+                    id="compose-send-at"
+                    type="datetime-local"
+                    value={customAt}
+                    min={localInputValue(new Date(openedAt.getTime() + SEND_LATER_MIN_LEAD_MS).toISOString())}
+                    onChange={(e) => setCustomAt(e.currentTarget.value)}
+                  />
+                  <Button
+                    variant="primary"
+                    disabled={!customUsable}
+                    onClick={() => { if (customIso) pickSendLater(customIso); }}
+                  >
+                    {t("sendLaterConfirm")}
+                  </Button>
+                  <Button variant="ghost" onClick={closeSendLater}>{t("sendLaterClose")}</Button>
+                </div>
+                {/* A PAST PICK IS REFUSED HERE, in words, before anything goes on the wire —
+                    and the zone is stated plainly, because "18:00" is only half a fact. */}
+                {customAt && !customUsable ? (
+                  <p className="send-note" role="status">{t("sendLaterPast")}</p>
+                ) : null}
+                <p className="send-note">{t("sendLaterZone", { zone: activeFormatZone() })}</p>
+              </div>
+            ) : null}
             <div className="send-row">
               <Button
                 variant="primary"
@@ -734,6 +863,21 @@ export function ComposeView({
                 onClick={() => onSend()}
               >
                 {send.phase === "sending" ? t("sending") : t("send")}
+              </Button>
+              {/* SEND LATER — beside Send because it is the same act on a different clock. The
+                  SAME lock (`locked`) gates it: a message that may not be sent now may not be
+                  scheduled either, and the one predicate must own both buttons. Disabled with
+                  its reason in the title when the message carries what a draft row cannot hold
+                  (files, a forward) — see the state block above. */}
+              <Button
+                variant="ghost"
+                className="send-later-toggle"
+                disabled={locked || sendLaterBlocked !== null}
+                aria-expanded={sendLaterOpen}
+                title={sendLaterBlocked ?? undefined}
+                onClick={toggleSendLater}
+              >
+                {t("sendLater")}
               </Button>
               {/* BESIDE SEND, because the two are the ways this message can end and a reader
                   deciding between them should not have to look in two places. Disabled in

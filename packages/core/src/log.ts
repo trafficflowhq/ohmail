@@ -46,7 +46,7 @@
  *   · The field vocabulary is small and closed: 79 names across every call site in
  *     `packages/**` and `apps/**` when that extraction was made (86 logger calls, 82 with a
  *     literal fields object, ZERO with a computed one). Enumerable means allowlistable — and it
- *     has stayed enumerable: {@link ALLOWED_FIELDS} holds 127 names today, grown one reviewed
+ *     has stayed enumerable: {@link ALLOWED_FIELDS} holds 132 names today, grown one reviewed
  *     diff at a time, which is the shape this design predicted rather than a drift away from it.
  *
  * The honest cost of an allowlist is that a field an operator needs at 3am can go missing. It
@@ -344,6 +344,21 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // and cannot carry content. It is on the census because a `shutdown` line that cannot say
   // whether requests were still in flight cannot say whether the shutdown dropped work.
   "inFlight",
+  // ── SEND LATER's pass (mail 0077), added WITH the call sites ──
+  //
+  // `draftId` is the `drafts.id` ROW UUID the scheduled-send pass names when it acts on one
+  // appointment — the same non-secret shape and the same justification as `messageId` and
+  // `threadId` above: it correlates a line to a database row and carries no mail content. What
+  // that pass deliberately does NOT log: the draft's subject, its recipients, its body — all
+  // deny-listed content the id points into. `claimed`/`sent`/`unverified`/`deferred` are the
+  // pass summary's `++` counters (`failed` is already here from the SIZE probe's census),
+  // named rather than folded into `count` on this file's own rule: an operator reading the
+  // summary asks which appointments DELIVERED, which ended ambiguous, and which are merely
+  // waiting out a blip — three different 3am questions. `sent` also repairs a standing drop:
+  // the worker's `away_responder_pass` line has handed it over since that pass shipped and the
+  // census refused it every time, leaving a line about outbound mail unable to say how much
+  // mail went out.
+  "draftId", "claimed", "sent", "unverified", "deferred",
   // `mirrorDraining` is the OTHER half of the same `shutdown` line, and it is here because
   // `inFlight` alone was misleading rather than merely incomplete: the Cloud mirror's pull is not a
   // stdio request, so `inFlight` reads 0 in exactly the case where the mirror is what the quit is

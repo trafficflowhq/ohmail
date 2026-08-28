@@ -750,9 +750,16 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
       // CLIENT uuid; the server's row arrives under its own id on the next drain, and this
       // overlay is dropped the moment the mutation resolves, so the two never coexist.
       //
+      // A SEND-LATER press (`m.sendAt`, mail 0077) paints `scheduled` with the picked time
+      // instead: nothing is being delivered now, and the Scheduled surface must show the
+      // appointment the instant the press lands — the same one-source rule as the wire, since
+      // the adapter reads the same field to pick `POST /drafts/:id/schedule` over `/send`.
+      //
       // NOTE for the demo world: `FixturesAdapter` replays this same effect AUTHORITATIVELY,
-      // so a demo send leaves a draft parked at `sending` forever. Harmless while nothing
-      // renders drafts; revisit if an Outbox ever does.
+      // so a demo send leaves a draft parked at `sending` forever — and a demo Send-later
+      // leaves a `scheduled` row the Scheduled group renders, which is the honest demo of the
+      // feature (nothing in the demo ever sends). Harmless; revisit if an Outbox ever renders
+      // `sending` rows.
       const draft: EngineDraft = {
         id: ctx.uuid(),
         mailboxId,
@@ -770,7 +777,9 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
         cc: m.cc ?? [],
         bcc: m.bcc ?? [],
         rationale: null,
-        status: "sending",
+        ...(m.sendAt
+          ? { status: "scheduled" as const, sendAt: m.sendAt }
+          : { status: "sending" as const }),
         createdAt: iso,
         updatedAt: iso,
       };
@@ -843,6 +852,23 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
       const draft = reader.get<EngineDraft>("draft", m.draftId);
       if (!draft) return [];
       return [{ type: "draft", id: draft.id, entity: null }];
+    }
+
+    /**
+     * CANCEL A SEND-LATER APPOINTMENT (mail 0077) — the row becomes an ordinary draft again,
+     * instantly on screen and authoritatively on the next drain. An unknown id yields [] ⇒ the
+     * engine rejects locally, the right answer for a row a concurrent drain already settled;
+     * a row the server's claim beat to the punch is rejected BY THE SERVER (409 "already being
+     * sent"), which rolls this overlay back — the row never falsely reads "cancelled".
+     */
+    case "draft_schedule_cancel": {
+      const draft = reader.get<EngineDraft>("draft", m.draftId);
+      if (!draft) return [];
+      return [{
+        type: "draft",
+        id: draft.id,
+        entity: { ...draft, status: "draft", sendAt: null, updatedAt: iso } satisfies EngineDraft,
+      }];
     }
 
     case "draft_accept": {

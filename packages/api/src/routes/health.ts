@@ -554,6 +554,18 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // lives in the sweep-command pass this same change introduces). Deploy order: migration → API
   // → worker.
   ["mailboxes", "junk_sweep_requested_at"],
+  // mail 0077_send_later — the draft's appointment (`send_at` + `send_key` + `send_error`, with
+  // `status = 'scheduled'`; NULL = no appointment / no failure, every existing row). It earns a
+  // marker for the whole-row-select reason `mailboxes.error_code` established, one table over:
+  // `materializeDraft` selects whole `drafts` rows — the `/drafts` CRUD, the schedule verbs AND
+  // every `draft` change on the `/sync` drain re-materialize through it — so an API deployed
+  // ahead of the migration 42703s the entire drafts surface, not just scheduling. `send_at` is
+  // probed as the column the worker's due scan filters on. The worker half is the safe kind — a
+  // worker ahead of the migration never reaches the columns (its read lives in the scheduled-send
+  // pass this same change introduces). No CHECK marker (0030's rule: a timestamp closes no set,
+  // and the status vocabulary is the service's). No INDEX marker: the due-scan index's absence is
+  // a slow scan over near-zero rows, not a wrong answer. Deploy order: migration → API → worker.
+  ["drafts", "send_at"],
   // mail 0074_folder_ops — the user-commanded folder verbs' command table (create / rename /
   // delete; FOLDERS-SPEC.md stage 2). A whole NEW table, probed by its primary key: the API's
   // /folders verbs INSERT into it and the /sync folder materializers LEFT JOIN it for the
@@ -1495,12 +1507,16 @@ export const MAIL_EXPECTED_MARKERS =
  * `0076_junk_sweep_request` is probed as `mailboxes.junk_sweep_requested_at` — the one-time
  * Quarantine→Junk sweep's command stamp, one nullable column read by the whole-row
  * `MailboxService.list` select and by name in the sweep preview (`GET /screener/junk/sweep`).
- * It is the newest entry, so it is the tag below.
+ *
+ * `0077_send_later` is probed as `drafts.send_at` — Send later's appointment, three nullable
+ * columns read by the whole-row `materializeDraft` select (the drafts CRUD, the schedule verbs
+ * and every `draft` `/sync` change) and by name in the worker's due scan. It is the newest
+ * entry, so it is the tag below.
  */
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0076_junk_sweep_request";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0077_send_later";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */

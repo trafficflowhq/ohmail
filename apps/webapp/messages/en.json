@@ -961,7 +961,20 @@
     },
     "signature": "Signature",
     "signatureRemove": "Remove signature for this message",
-    "signatureAria": "Signature — part of this message; edit or remove it here"
+    "signatureAria": "Signature — part of this message; edit or remove it here",
+    "sendLater": "Send later",
+    "sendLaterTitle": "Send later",
+    "sendLaterWhat": "When should this message be sent?",
+    "sendLaterTonight": "This evening ({when})",
+    "sendLaterTomorrow": "Tomorrow morning ({when})",
+    "sendLaterMonday": "Monday morning ({when})",
+    "sendLaterPick": "Pick a date and time",
+    "sendLaterConfirm": "Schedule send",
+    "sendLaterClose": "Back",
+    "sendLaterPast": "That time has passed. Pick a future time.",
+    "sendLaterZone": "Times are in your time zone ({zone}).",
+    "sendLaterUnavailable": "Send later isn't available for messages with attachments or forwards yet.",
+    "toastScheduled": "Scheduled for {when}."
   },
   "draftReply": {
     "verb": "Draft reply",
@@ -2325,7 +2338,15 @@
     "discardConfirm": "Discard draft",
     "discardCancel": "Keep it",
     "emptyTitle": "Nothing half-written",
-    "emptyHint": "Start a message and it's saved here after a moment — on this device and every other one."
+    "emptyHint": "Start a message and it's saved here after a moment — on this device and every other one.",
+    "scheduledTitle": "Scheduled",
+    "scheduledWhen": "Sends {when}",
+    "scheduledEditTitle": "Open this message to edit it — that cancels the scheduled send",
+    "scheduledCancel": "Cancel send",
+    "scheduledCancelTitle": "Cancel the scheduled send; the message stays here as a draft",
+    "scheduleFailedNote": "This message wasn't sent at its scheduled time: {reason}",
+    "scheduleCancelled": "Scheduled send cancelled. The message is in Drafts.",
+    "scheduleCancelTooLate": "Too late to cancel — this message is already being sent."
   },
   "mailBody": {
     "blockedOne": "1 remote image blocked.",

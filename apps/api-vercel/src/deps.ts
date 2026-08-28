@@ -26,6 +26,7 @@ import {
   syncService, makePushService, rulesService, messageService, threadService, triageService,
   searchService, contactsService, snippetsService, notifyRulesService, awayResponderService,
   attachmentsService, kbService, tagsService, folderOpsService, draftsService, draftingService, sendService,
+  scheduleService,
   SEND_ATTACHMENT_MAX_TOTAL_BYTES,
   makeAttachmentStagingPort,
   workflowsService, proposalsService,
@@ -213,6 +214,8 @@ function buildServices(cfg: HostConfig): ApiServices {
     tags: tagsService,
     folderOps: folderOpsService,
     drafts: draftsService,
+    // Send later's two verbs (mail 0077) — the worker's scheduled-send pass is the sender.
+    schedules: scheduleService,
     drafting: draftingService,
     // The AI SPEND GATE, wired BEFORE any live model is. That order is the whole
     // point: a host that can call a model but cannot meter it is the state the billing boundary

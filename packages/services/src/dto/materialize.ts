@@ -104,6 +104,10 @@ export function draftRowToDTO(d: typeof drafts.$inferSelect): DraftDTO {
     bcc: (d.bcc as EmailAddress[]) ?? [],
     rationale: d.rationale ?? null,
     status: d.status as DraftStatus,
+    // The appointment (mail 0077). `send_key` deliberately stays OFF the DTO: it is the send's
+    // Idempotency-Key, and handing it to clients would let one replay a reservation it never made.
+    sendAt: d.sendAt ? d.sendAt.toISOString() : null,
+    sendError: d.sendError ?? null,
     createdAt: d.createdAt.toISOString(),
     updatedAt: d.updatedAt.toISOString(),
   };

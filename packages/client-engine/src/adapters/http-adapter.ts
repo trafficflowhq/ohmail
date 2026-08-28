@@ -1424,6 +1424,31 @@ export class HttpAdapter implements EngineAdapter {
         };
       }
 
+      /**
+       * CANCEL A SEND-LATER APPOINTMENT — `DELETE /drafts/:id/schedule` (mail 0077).
+       *
+       * The interesting answer is the 409: the scheduled-send pass claimed the row first and
+       * the mail is leaving. That is surfaced as a non-retryable rejection — the overlay rolls
+       * back, so the row never falsely reads "cancelled", and the caller's toast says what
+       * actually happened. A repeat cancel is the server's idempotent 200 (the asked-for
+       * state), and the echo goes to the drain like the draft verbs above it.
+       */
+      case "draft_schedule_cancel": {
+        const res = await this.request("DELETE", `/drafts/${encodeURIComponent(m.draftId)}/schedule`, {
+          idempotencyKey: opts.idempotencyKey,
+        });
+        if (!res.ok) throw await this.rejectionOf(res);
+        const seq = this.noteSeq(res);
+        const dto = (await res.json()) as { id?: string; updatedAt?: string };
+        return {
+          changes: seq === null || !dto.id ? [] : [{
+            type: "draft", op: "update", id: dto.id, seq, updatedAt: dto.updatedAt ?? "",
+            entity: dto as unknown as Record<string, unknown>,
+          }],
+          seq,
+        };
+      }
+
       // Draft-accept is a pure client-side editor action — it moves an AI draft into the
       // editor and touches no server state. No wire mapping, by design.
       case "draft_accept":
@@ -1601,6 +1626,53 @@ export class HttpAdapter implements EngineAdapter {
       }
       draftId = draft.id;
       this.draftForKey.set(idempotencyKey, draftId);
+    }
+
+    // ── SEND LATER (mail 0077): the press becomes an APPOINTMENT, not a delivery ─────────────
+    //
+    // The row half above is IDENTICAL on purpose — the same PUT-with-guards or create, so the
+    // scheduled message is exactly the message on screen, Bcc and From confirmations included.
+    // What differs is the second request: `POST /drafts/:id/schedule` writes `send_at` +
+    // `status: 'scheduled'` and dials nothing; the server's scheduled-send pass runs the
+    // ordinary gated send when the time comes.
+    if (m.sendAt) {
+      // A draft row stores no attachment bytes and no forward reference (both ride the SEND
+      // request, deliberately — §13.2/§14), so an appointment cannot carry either. The compose
+      // surface disables the affordance for both cases; this is the same rule where it cannot
+      // be bypassed, refused before any request rather than after the row is marked.
+      if ((m.attachments?.length ?? 0) > 0 || m.forwardOf) {
+        this.draftForKey.delete(idempotencyKey);
+        throw new MutationRejectedError(
+          "Send later isn't available for messages with attachments or forwards yet.",
+          { code: "schedule_unsupported_content", retryable: false },
+        );
+      }
+
+      const res = await this.request("POST", `/drafts/${encodeURIComponent(draftId)}/schedule`, {
+        body: { sendAt: m.sendAt },
+        idempotencyKey,
+      });
+      const seq = this.noteSeq(res);
+      if (res.status === 404) {
+        // VERSION SKEW: a server that predates scheduling answers its ordinary 404 here. The
+        // draft row stands (it is in Drafts, nothing lost); what must not happen is a silent
+        // fallback to sending NOW — the user picked a time, and mail leaving early is the one
+        // surprise this feature exists to rule out.
+        this.draftForKey.delete(idempotencyKey);
+        throw new MutationRejectedError(
+          "This message was not scheduled: the server does not support Send later yet. Reload to update.",
+          { status: 404, code: "schedule_unsupported", retryable: false },
+        );
+      }
+      if (!res.ok) {
+        this.draftForKey.delete(idempotencyKey);
+        throw await this.rejectionOf(res);
+      }
+      this.draftForKey.delete(idempotencyKey);
+      // No providerMessageId — nothing left the building, so the engine materialises no Sent
+      // overlay (its gate reads exactly that field). The `scheduled` draft entity arrives on
+      // the background drain; the optimistic effect painted it already.
+      return { changes: [], seq, entityId: draftId };
     }
 
     // ATTACHMENTS AND `forwardOf` RIDE THE SEND, not the draft. Attachment bytes are base64 on this

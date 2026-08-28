@@ -1243,7 +1243,11 @@ export class SendService {
     const seq = await asTx(ctx).transaction(async (tx) => {
       await tx.update(outboundSends).set({ status: "sent", providerMessageId, sentAt: now })
         .where(eq(outboundSends.id, sendId));
-      await tx.update(drafts).set({ status: "sent", updatedAt: now })
+      // `sendAt`/`sendKey` cleared IN THE SAME transaction that records the terminal outcome
+      // (mail 0077): they are the scheduled-send recovery predicate, and an appointment that
+      // outlived its delivery would be re-claimed by the sweep and replayed forever. A manual
+      // send carries NULLs here anyway, so this is byte-identical for it.
+      await tx.update(drafts).set({ status: "sent", sendAt: null, sendKey: null, updatedAt: now })
         .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId)));
       // See the note above: the doorbell is skipped rather than waited on, because waiting here
       // strands a message that has already been sent. `SKIP LOCKED` needs the row to be selected,
@@ -1264,7 +1268,8 @@ export class SendService {
     const now = ctx.now();
     const seq = await asTx(ctx).transaction(async (tx) => {
       await tx.update(outboundSends).set({ status: "unverified" }).where(eq(outboundSends.id, sendId));
-      await tx.update(drafts).set({ status: "unverified", updatedAt: now })
+      // The appointment bookkeeping ends with the terminal outcome — `finalizeSent`'s rule.
+      await tx.update(drafts).set({ status: "unverified", sendAt: null, sendKey: null, updatedAt: now })
         .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId)));
       return recordChange(tx, {
         accountId: ctx.accountId, entityType: "draft", entityId: draftId, op: "update", meta: null,

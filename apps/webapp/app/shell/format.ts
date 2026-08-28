@@ -314,6 +314,65 @@ export function nextWeekNine(base: Date): string {
   return nineOn(zone, f.year, f.month, f.day + daysUntil(base, zone, 1));
 }
 
+/* ═══ THE SEND-LATER HORIZONS (mail 0077) ══════════════════════════════════════════════════
+ *
+ * The resurface presets above are reused where the meaning coincides — "tomorrow morning" and
+ * "Monday morning" ARE `tomorrowNine`/`nextWeekNine`, the product's one 09:00-where-the-reader-is
+ * convention — and this block adds only what sending needs that resurfacing never did: an
+ * EVENING preset (nobody resurfaces mail at dinner; plenty of people send it then), and a label
+ * that can name a day further out than a week, because an appointment may be months away while
+ * a resurface label never had to say more than "Fri 09:00".
+ */
+
+/** Today at 18:00 where the reader is — the "this evening" send preset. May be in the past
+ *  late in the day; the caller offers it only while it is meaningfully ahead of now. */
+export function todayEvening(base: Date): string {
+  const zone = activeFormatZone();
+  const f = zonedFields(base, zone);
+  return zonedInstant({ year: f.year, month: f.month, day: f.day, hour: 18 }, zone).toISOString();
+}
+
+/**
+ * "Fri 18:00" inside the coming week, "12 Sep, 18:00" beyond it — the appointment, read where
+ * the reader is. The week band matches `resurfaceLabel`'s so the two future-time vocabularies
+ * agree; past a week a bare weekday is ambiguous (which Friday?), and an appointment is exactly
+ * the value that ambiguity would mislead about.
+ */
+export function scheduleLabel(when: string, now: Date): string {
+  if (!/^\d{4}-\d{2}-\d{2}T/.test(when)) return when;
+  const d = new Date(when);
+  const clock = clockOf(when);
+  if (d.getTime() - now.getTime() < 6 * 24 * 60 * 60 * 1000) {
+    return `${weekdayShort(d)} ${clock}`;
+  }
+  const day = new Intl.DateTimeFormat(activeFormatLocale(), {
+    timeZone: activeFormatZone(), day: "numeric", month: "short",
+  }).format(d);
+  return `${day}, ${clock}`;
+}
+
+/**
+ * An instant as an `<input type="datetime-local">` value — the wall clock it shows WHERE THE
+ * READER IS, "YYYY-MM-DDTHH:mm". The input's own value is zoneless by spec; pairing this with
+ * {@link instantOfLocalInput} pins both directions of the conversion to `activeFormatZone()`,
+ * so the picker, the presets and every label read one clock.
+ */
+export function localInputValue(iso: string): string {
+  const f = readerFields(new Date(iso));
+  return `${f.year}-${pad(f.month)}-${pad(f.day)}T${pad(f.hour)}:${pad(f.minute)}`;
+}
+
+/** The other direction: a picked "YYYY-MM-DDTHH:mm" wall clock, read in the reader's zone, as
+ *  the UTC instant it names — or `null` for anything that is not that shape. */
+export function instantOfLocalInput(value: string): string | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(value);
+  if (!m) return null;
+  return zonedInstant({
+    year: Number(m[1]), month: Number(m[2]), day: Number(m[3]),
+    hour: Number(m[4]), minute: Number(m[5]),
+  }, activeFormatZone()).toISOString();
+}
+
 /** A picked calendar day ("YYYY-MM-DD" from an `<input type="date">`) at 09:00 where the reader is. */
 export function dayNine(day: string): string {
   const zone = activeFormatZone();

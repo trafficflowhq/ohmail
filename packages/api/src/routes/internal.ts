@@ -1,5 +1,6 @@
 import {
-  billingReconciliationRuns, runAlertPass, listOpenAlerts, newDeliveryStreak, sinkHealthOf,
+  billingReconciliationRuns, isSuspended, runAlertPass, listOpenAlerts, newDeliveryStreak,
+  sinkHealthOf,
   type AlertSink,
 } from "@trafficflow/db/cloud";
 import { sql } from "drizzle-orm";
@@ -8,7 +9,9 @@ import type { Tx } from "@trafficflow/db";
 import {
   reapStaleWebSessions, reconcileBillingMirror, recordReconcileFailure, type AdminDb,
 } from "@trafficflow/services";
+import { runScheduledSendPass } from "@trafficflow/services";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
+import { makeSendAdapter } from "../send-adapter.js";
 import type { AlertsConfig } from "../deps-cloud.js";
 import type { AlertArmHealth, AlertSinkSummary, ApiDeps } from "../deps.js";
 import type {} from "../deps-cloud.js";
@@ -164,6 +167,20 @@ export const SMTP_SIZE_CRON_PATH = "/internal/mailboxes/smtp-size";
  * without paging.
  */
 export const BILLING_RECONCILE_CRON_PATH = "/internal/billing/reconcile/run";
+
+/**
+ * The PATH the SCHEDULED-SEND pass is scheduled at (Send later, mail 0077) — exported for the
+ * reason its four siblings are: the worker's `api-cron.ts` names it as a literal string and a
+ * census asserts the two agree, because a schedule whose path this router does not serve is a
+ * feature whose whole promise ("it sends at 9:00") silently never runs. Poked EVERY MINUTE —
+ * the appointment's stated precision is "±about a minute", so the clock has to be at least
+ * that fine. The PASS runs here, on the API host, and that placement is measured twice over:
+ * the sync host's platform blocks outbound SMTP submission at the port level
+ * (`apps/worker/src/smtp-size.ts`), and the worker's runtime dependency set may not include
+ * `@trafficflow/services` (its package.json records the Node-23 boot crash that promoting it
+ * caused) — while this host runs `SendService` on every manual send already.
+ */
+export const SCHEDULED_SEND_CRON_PATH = "/internal/sends/scheduled/run";
 
 /** class + code, never message text — the same scrubbing rule as `billing_events.error`. */
 function scrubError(err: unknown): string {
@@ -715,6 +732,72 @@ export const internalRoutes: Route[] = [
    *    writes billing tables and the ledger, grants `ohmail_admin` does not hold and must not
    *    gain.
    */
+  {
+    /**
+     * `GET /internal/sends/scheduled/run` — SEND LATER's sender pass (mail 0077).
+     *
+     * Claims due `drafts.send_at` appointments and runs the ordinary gated send on each with
+     * the row's own stored Idempotency-Key — `runScheduledSendPass` holds the whole policy
+     * (the claim, the recovery arm, the outcome table, and why the pass runs on THIS host and
+     * not the sync worker). The session reaper's shape verbatim, each borrowed property
+     * load-bearing for the reasons stated there: GET, either shared secret in constant time,
+     * 404 on a deployment that armed no internal surface — which does mean scheduled sends DO
+     * NOT FIRE there, and that is the honest state of a host nobody armed a clock on.
+     *
+     * It runs on `deps.db`, the runtime connection, for the reaper's reason: this reads and
+     * writes `drafts`/`outbound_sends` and dials the user's own mail servers through their
+     * decrypted credentials — user-table machinery the content-blind staff handle does not
+     * hold and must not gain.
+     *
+     * Overlapping pokes are SAFE here in a way the reconciler's are not: the claim is
+     * `FOR UPDATE SKIP LOCKED` and every send is idempotency-keyed, so two invocations split
+     * the due set rather than double-sending — the property the whole pass is built on.
+     */
+    method: "GET",
+    pattern: SCHEDULED_SEND_CRON_PATH,
+    cost: "unauthenticated",
+    options: { public: true, anonymous: true, raw: true },
+    handler: async (req, deps) => {
+      const log = (deps.logger ?? silentLogger).child({ route: SCHEDULED_SEND_CRON_PATH });
+      const cfg = deps.alerts;
+      if (!cfg || cfg.secret.trim().length === 0) {
+        return json(404, { error: { code: "not_found" } });
+      }
+      const cron = cfg.cronSecret?.trim();
+      const authorized = presentsSecret(req, cfg.secret)
+        || (cron !== undefined && cron.length > 0 && presentsSecret(req, cron));
+      if (!authorized) {
+        log.warn("scheduled_send_unauthorized", {});
+        return json(401, { error: { code: "unauthorized" } });
+      }
+      try {
+        const result = await runScheduledSendPass(deps.db, {
+          openSendAdapter: deps.services?.sendAdapter
+            ?? ((mailboxId: string) => makeSendAdapter(deps, mailboxId)),
+          ...(deps.services?.storageCapOf ? { resolveStorageCap: deps.services.storageCapOf } : {}),
+          // THE SUSPENSION GATE, injected here because the fact is the cloud half's
+          // (`account_suspensions`) and the pass ships in the desktop engine bundle, which may
+          // not name a cloud table. A suspended account's automation must not keep firing —
+          // the worker's roster makes the same ruling — so its due appointments stay
+          // `'scheduled'`, undialled, until the suspension lifts. The read runs on the HANDED
+          // handle (the claim transaction's own), never `deps.db`: on this host's pooled
+          // connection the captured form queued behind the transaction holding it and every
+          // poke timed out — the deadlock rule on `ScheduledSendPassDeps.accountEligible`.
+          accountEligible: async (accountId, handle) =>
+            !(await isSuspended(handle as unknown as Tx, accountId)),
+          log,
+          now: deps.now,
+        });
+        if (result.claimed > 0) log.info("scheduled_send_pass", { ...result });
+        return json(200, { now: deps.now().toISOString(), ...result });
+      } catch (err) {
+        // `raw` means no error envelope above this handler; it must never throw. Per-row
+        // faults are already absorbed inside the pass — this catches only the claim itself.
+        log.error("scheduled_send_pass_failed", { err });
+        return json(503, { error: { code: "scheduled_send_pass_failed" } });
+      }
+    },
+  },
   {
     method: "GET",
     pattern: "/internal/billing/reconcile",

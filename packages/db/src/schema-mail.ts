@@ -184,6 +184,32 @@ export const mailboxes = pgTable("mailboxes", {
   // swept pile has no candidates, and a pile that grows again (a flag-off verdict) is offered
   // again honestly.
   junkSweepRequestedAt: timestamp("junk_sweep_requested_at", { withTimezone: true }),
+  // ── Mail 0078 — THE FORWARDING-DETECTION NOTICE's two columns ──
+  //
+  // Born from a real incident: a mailbox synced perfectly for weeks while a provider-level
+  // forward (no "keep a copy") diverted every inbound mail before IMAP storage — the product
+  // was healthy and said nothing, and two days of debugging pointed at ohmail when the answer
+  // was upstream. These columns are how the product notices that shape and says it.
+  //
+  // `inboundQuietSince` is EVIDENCE, and the worker's inbound-quiet pass
+  // (`apps/worker/src/inbound-quiet.ts`) is its single owner: when a connected,
+  // healthily-syncing, fully-imported mailbox's GENUINE inbound (From ≠ the mailbox's own
+  // address; ohmail's own moves create no message rows and so never count) has been zero for
+  // the pass's generous window while evidence says mail should be arriving — a sibling mailbox
+  // receiving normally, or the newest genuine inbound being months old — the pass stamps the
+  // newest genuine inbound `date` the mailbox holds (`created_at` when it never held one).
+  // NULL is "no quiet episode". COALESCED for the episode's life (`failed_at`'s discipline) and
+  // cleared only when genuine inbound RESUMES — several arrivals inside the window, so one
+  // stray mail can neither end an episode nor re-arm the notice against a standing dismissal.
+  //
+  // `inboundQuietDismissedAt` is the USER's per-mailbox dismissal
+  // (`POST /mailboxes/:id/inbound-quiet/dismiss`). The server never reads it and the worker
+  // NEVER clears it; the client shows the notice only while `dismissedAt < since`. That pair of
+  // instants is the renotify discipline in two columns: an undisturbed episode never re-notifies
+  // (sameness holds), and a NEW episode's `since` — a newer inbound date, which can only exist
+  // because mail actually flowed after the dismissal — re-notifies (a state change).
+  inboundQuietSince: timestamp("inbound_quiet_since", { withTimezone: true }),
+  inboundQuietDismissedAt: timestamp("inbound_quiet_dismissed_at", { withTimezone: true }),
   // ── Mail 0029 — WHY A `connected` MAILBOX IS NOT BEING SYNCED ──
   //
   // The other half of that outage. The adoption bug (a `FETCH 1:*` against an empty
@@ -1293,6 +1319,20 @@ export const accounts = pgTable("accounts", {
    * and every message is still filed by the deterministic rules.
    */
   aiEnabled: boolean("ai_enabled").notNull().default(true),
+  /**
+   * THE ERASURE FENCE (migration 0079). NULL for every live account; the instant of the account's
+   * Art. 17 erasure otherwise — stamped FIRST inside `deleteAccount`'s transaction, with
+   * `coalesce` so a retried erasure keeps the first stamp.
+   *
+   * This row SURVIVES erasure by design (the pseudonymous billing subject), so nothing structural
+   * refuses a late writer: without this column, a consent-settings PATCH in flight across the
+   * erasure could recreate `account_settings` / doorbell rows a millisecond after the catalog
+   * sweep counted zero. Every settings writer opens its transaction by reading this row
+   * `FOR SHARE` and refusing on a stamp (`erasure-fence.ts`); the stamp-first order means
+   * whichever side wins the row lock, zero rows survive. The migration file carries the full
+   * two-sided argument.
+   */
+  erasedAt: timestamp("erased_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -1727,17 +1767,34 @@ export const drafts = pgTable("drafts", {
   // request that reads this row to build the envelope. ──
   bcc: jsonb("bcc").notNull().default(sql`'[]'::jsonb`),   // EmailAddress[]
   rationale: text("rationale"),                          // AI drafter's reasoning (3b); null for manual compose
-  status: text("status").notNull().default("draft"),     // draft|sending|sent|unverified
+  status: text("status").notNull().default("draft"),     // draft|scheduled|sending|sent|unverified
   // ── Migration 0015: the per-step crash-resume dedup key — see
   // `kb_entries.workflow_dedup_key`. A workflow `draft_reply` step stamps
   // `${runId}:${stepIndex}`; UNIQUE + ON CONFLICT DO NOTHING means a re-drain never
   // stores a second draft. NULL for manual/AI-route drafts. ──
   workflowDedupKey: text("workflow_dedup_key"),
+  // ── Mail 0077 — SEND LATER: the draft carries WHEN it should leave. `send_at` + `status =
+  // 'scheduled'` are written together by `ScheduleService.schedule`; the worker's scheduled-send
+  // pass claims due rows and runs the ordinary gated send. `send_key` is the send's
+  // Idempotency-Key, minted AT SCHEDULE TIME so a crashed claim retries with the same key and
+  // replays instead of re-delivering; both survive the claim (crash-recovery predicate) and are
+  // cleared on a terminal outcome or a cancel. `send_error` is the failure sentence from an
+  // appointment that could not be kept, shown in the Drafts row, cleared by the next edit or
+  // schedule. The appointment lives HERE and never on `outbound_sends`, whose `pending` rows mean
+  // "an invocation is live right now" — the stuck-send alarm keeps that reading because no
+  // reservation exists until the appointment is due. The migration file carries the full design. ──
+  sendAt: timestamp("send_at", { withTimezone: true }),
+  sendKey: text("send_key"),
+  sendError: text("send_error"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
   ixAccount: index("drafts_account_updated_idx").on(t.accountId, t.updatedAt),
   uqWfDedup: unique("drafts_workflow_dedup_key_unique").on(t.workflowDedupKey),   // per-step idempotency
+  // Mail 0077 — the worker's due scan (`status = 'scheduled' AND send_at <= now()`), partial so
+  // it holds only live appointments and ordinary draft churn never touches it.
+  ixScheduledDue: index("drafts_scheduled_due_idx").on(t.sendAt)
+    .where(sql`${t.status} = 'scheduled'`),
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -1,0 +1,82 @@
+-- SEND LATER — the draft carries WHEN it should leave, and the worker sends it then.
+--
+--   drafts.send_at     timestamptz NULL
+--   drafts.send_key    text        NULL
+--   drafts.send_error  text        NULL
+--   drafts_scheduled_due_idx — PARTIAL (send_at) WHERE status = 'scheduled'
+--
+-- ══ THE DESIGN, AND WHY IT LIVES ON `drafts` AND NOT ON `outbound_sends` ═════════════════════
+--
+-- A scheduled send is a DRAFT WITH AN APPOINTMENT, not a reservation. `outbound_sends` rows are
+-- minted by `SendService.reserve` immediately before SMTP is dialled, and everything about that
+-- table's contract assumes the dial is imminent: `pending` means "an invocation is live right
+-- now", the stuck-send alarm reads `pending` older than ten minutes as a send that died
+-- mid-flight, and the recovery path probes the Sent folder for rows that age. A future-dated row
+-- would falsify all three readings at once. Keeping the appointment on the draft leaves the
+-- reservation machinery byte-identical: NO `outbound_sends` row exists until the appointment
+-- comes due, so the alarm cannot fire on a deliberately future send — by construction, not by a
+-- widened predicate (`send-later-schedule.pg.test.ts` pins the absence).
+--
+-- The draft is also the one entity every client already mirrors (`/sync` `draft` changes), so the
+-- Scheduled surface costs no new sync entity, no new DTO family and no new REST list — web,
+-- desktop and mobile all learn the appointment through the drain they already run.
+--
+-- ══ THE COLUMNS ══════════════════════════════════════════════════════════════════════════════
+--
+--   send_at     WHEN the user asked this message to leave. Written by `POST /drafts/:id/schedule`
+--               together with `status = 'scheduled'` (a new `drafts.status` word beside
+--               draft/sending/sent/unverified). It DELIBERATELY SURVIVES the worker's claim —
+--               the claim flips `status` back to 'draft' and calls the ordinary gated send,
+--               and a crash anywhere in that window leaves `send_at` + `send_key` behind as the
+--               recovery predicate. Cleared only on a terminal outcome or a user cancel.
+--
+--   send_key    the Idempotency-Key for the send this appointment will become, minted AT
+--               SCHEDULE TIME and persisted BEFORE any attempt. This is the crash-safety hinge:
+--               a worker that dies between claiming the row and finalizing retries with THE SAME
+--               key, so `SendService`'s reservation gate replays the prior outcome instead of
+--               reserving a second delivery. A key minted at claim time would die with the
+--               claimer. Re-scheduling mints a fresh key — a new appointment is a new intent.
+--
+--   send_error  the failure sentence from an appointment that could not be kept (the mailbox was
+--               disconnected by send time, the recipients were gone). Written by the worker when
+--               it returns the row to 'draft', shown by the Drafts list in the row, cleared by
+--               the next edit or schedule. Server words, rendered as a quotation — exactly how
+--               `SendState.reason` treats a live send's refusal.
+--
+-- NULL means "no appointment / no failure" for all three, which is every existing row: additive,
+-- nullable, no defaults, NO backfill — nobody scheduled anything before this existed.
+--
+-- ══ THE INDEX ════════════════════════════════════════════════════════════════════════════════
+--
+-- The worker's due scan runs every cycle: `WHERE status = 'scheduled' AND send_at <= now()`.
+-- Unlike the doorbell columns (mail 0049/0076), this is a SCAN, not a by-primary-key read of the
+-- one mailbox whose cycle is running — without an index it is a full pass over every account's
+-- drafts, every cycle, forever. PARTIAL on `status = 'scheduled'` so the index holds only live
+-- appointments (approximately zero rows at any moment) and ordinary draft churn never touches it.
+--
+-- ══ NO CHECK ═════════════════════════════════════════════════════════════════════════════════
+--
+-- `drafts.status` has never been CHECK-constrained (its vocabulary is the service's), and a
+-- cross-column CHECK ("send_at requires status") would be falsified on purpose by the claim
+-- window described above, where 'draft'/'sending' rows legitimately carry `send_at`.
+--
+-- ══ COMPATIBILITY AND DEPLOY ORDER ═══════════════════════════════════════════════════════════
+--
+-- Migration → API → worker. `materializeDraft` selects whole `drafts` rows through the drizzle
+-- schema, so an API deployed ahead of this answers 42703 on every draft read; the health marker
+-- ["drafts","send_at"] turns that into a 503 schema_incomplete naming this file. A WORKER ahead
+-- of the migration never reads the columns (the read lives in the scheduled-send pass this same
+-- change introduces). A CLIENT older than the API never schedules and never sees `status =
+-- 'scheduled'` — its drafts list simply does not show the row (`draftsList` filters on the
+-- statuses it knows), which is the honest degradation for a device that cannot cancel one.
+--
+-- ROLLBACK is DROP COLUMN × 3 (the partial index falls with `send_at`): pending appointments are
+-- forgotten — nothing sends, nothing double-sends, the drafts stand as ordinary drafts wearing a
+-- 'scheduled' status no reader constrains. The API has to go back first, or draft reads 42703.
+ALTER TABLE "drafts" ADD COLUMN IF NOT EXISTS "send_at" timestamp with time zone;
+--> statement-breakpoint
+ALTER TABLE "drafts" ADD COLUMN IF NOT EXISTS "send_key" text;
+--> statement-breakpoint
+ALTER TABLE "drafts" ADD COLUMN IF NOT EXISTS "send_error" text;
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "drafts_scheduled_due_idx" ON "drafts" ("send_at") WHERE "status" = 'scheduled';

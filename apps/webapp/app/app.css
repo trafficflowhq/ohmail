@@ -5235,6 +5235,52 @@ textarea.c-input:read-only {
 .draft-confirm .set-note-inline,
 .compose-confirm .set-note-inline { padding: 0 0 9px; margin: 0; }
 
+/* ── SEND LATER (mail 0077) ───────────────────────────────────────────────────────────────
+   The picker is `.compose-confirm`'s panel one block over — same chrome, same placement above
+   `.send-row` — because it is the same kind of thing: an inline question about the whole
+   message, never a modal. The custom row sits under the presets; the date input takes the
+   product's field chrome so it does not read as a foreign control. */
+.send-later {
+  min-width: 0;
+  margin-top: 14px;
+  padding: 10px 12px 12px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+}
+.send-later .set-note-inline { padding: 0 0 9px; margin: 0; }
+.send-later-custom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.send-later-custom label {
+  font-size: 11.5px;
+  color: var(--ink2);
+}
+.send-later-custom input[type="datetime-local"] {
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--hair);
+  border-radius: 9px;
+  padding: 5px 9px;
+}
+.send-later .send-note { display: block; margin-top: 8px; }
+
+/* The Scheduled group's heading in Drafts — the list's own quiet register, not a second
+   view title. */
+.drafts-group-head {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink2);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  padding: 12px 14px 6px;
+}
+
 /* ================= drag-to-file (a list row, dragged onto the rail) =================
    The gesture's chrome only — the semantics are the existing verbs (`shell/drag-file.ts`).
    The ghost is the row in hand: sender, subject, and a count when several travel. Quiet by

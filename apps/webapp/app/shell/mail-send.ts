@@ -61,6 +61,7 @@ import { useTranslations } from "next-intl";
 import type { EngineMessage, MutationResult, OhmailEngine } from "@ohmail/client-engine";
 import type { ToastFn } from "@ohmail/ui";
 import { clearComposeDraft, type MailSend } from "./compose";
+import { scheduleLabel } from "./format";
 import { EMPTY_RICH, parseRichValue, serializeRichValue, type RichValue } from "./rich-text";
 import type { SignatureState } from "./signature";
 
@@ -431,9 +432,16 @@ export function useMailSend(
       // reason the cleanup above is. A forward is not a reply, and a toast that said "Reply
       // sent." over a forward was measured live; the key shim keeps the sentence honest until
       // the locale files carry it (`t.has` hands over the moment they do).
+      //
+      // A SEND-LATER confirm (`m.sendAt`) is the one mutation-shape branch, and it is honest
+      // rather than convenient: nothing was sent, an appointment was made, and "Sent." over a
+      // message that is still on the account would be exactly the false claim the four-phase
+      // machine exists to prevent. The sentence carries the time, read where the reader is.
       toast(
         key === COMPOSE_SEND_KEY
-          ? t("compose.toastSent")
+          ? (m.sendAt
+            ? t("compose.toastScheduled", { when: scheduleLabel(m.sendAt, new Date()) })
+            : t("compose.toastSent"))
           : key.startsWith("fwd:")
             ? (t.has("reply.toastForwarded") ? t("reply.toastForwarded") : "Forwarded.")
             : t("reply.toastSent"),

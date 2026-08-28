@@ -51,7 +51,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import type { EngineDraft } from "@ohmail/client-engine";
 import { Button, InfoNote, ListPane, ListRows } from "@ohmail/ui";
-import { displayTime } from "../shell/format";
+import { displayTime, scheduleLabel } from "../shell/format";
 import { useZoneNav } from "../shell/zone-nav";
 
 /** "you, and two others" — the recipients, as a line, or the empty-string for none. */
@@ -62,9 +62,12 @@ function recipientLine(d: EngineDraft): string {
 
 export function DraftsView({
   drafts,
+  scheduled,
   now,
   onOpen,
   onDiscard,
+  onCancelSchedule,
+  onEditScheduled,
   /**
    * Can this device open the message this draft answers? Asked of the SHELL because only it can
    * read the mirror — and the answer changes what the row says, not just what the press does: a
@@ -75,9 +78,20 @@ export function DraftsView({
   repliesHere,
 }: {
   drafts: readonly EngineDraft[];
+  /**
+   * SEND LATER's appointments (mail 0077), soonest first — rendered as their own group ABOVE
+   * the drafts, because a message that WILL act on its own is more urgent to see than one that
+   * never will. A scheduled row offers exactly two verbs, and Discard is deliberately not one
+   * of them: Edit is cancel-then-open (the server freezes a scheduled row, so editing means
+   * taking the appointment off first), and Cancel returns it to the drafts below. Both go
+   * through the cancel verb, which is the one race-safe way off the schedule.
+   */
+  scheduled: readonly EngineDraft[];
   now: Date;
   onOpen: (draft: EngineDraft) => void;
   onDiscard: (draftId: string) => void;
+  onCancelSchedule: (draftId: string) => void;
+  onEditScheduled: (draft: EngineDraft) => void;
   repliesHere: (draft: EngineDraft) => boolean;
 }) {
   const t = useTranslations("drafts");
@@ -124,6 +138,57 @@ export function DraftsView({
         >
           {t("explainerMore")}
         </InfoNote>
+        {/* ── SCHEDULED — the appointments, above the drafts they will stop being ─────────────
+            Each row says WHEN it sends, in the reader's own clock (`scheduleLabel`), because
+            the time is the entire content of this group. Open-to-edit and Cancel both route
+            through the shell's cancel verb — see the prop's note. */}
+        {scheduled.length ? (
+          <>
+            <div className="drafts-group-head" role="heading" aria-level={2}>
+              {t("scheduledTitle")}
+            </div>
+            <ListRows>
+              {scheduled.map((d) => {
+                const to = recipientLine(d);
+                return (
+                  <div key={d.id} className="draft-row draft-row-scheduled" data-id={d.id}>
+                    <div className="draft-row-main">
+                      <button
+                        type="button"
+                        className="draft-open"
+                        onClick={() => onEditScheduled(d)}
+                        title={t("scheduledEditTitle")}
+                      >
+                        <span className="draft-line">
+                          <b className="draft-subject">{d.subject.trim() || t("noSubject")}</b>
+                          {/* The appointment, not `updatedAt`: when it SENDS is this row's stamp. */}
+                          <span className="draft-when">
+                            {d.sendAt ? t("scheduledWhen", { when: scheduleLabel(d.sendAt, now) }) : ""}
+                          </span>
+                        </span>
+                        <span className="draft-line">
+                          <span className="draft-to">{to || t("noRecipient")}</span>
+                        </span>
+                        <span className="draft-preview">{preview(d.body)}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="draft-discard"
+                        onClick={() => onCancelSchedule(d.id)}
+                        title={t("scheduledCancelTitle")}
+                      >
+                        {t("scheduledCancel")}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </ListRows>
+            <div className="drafts-group-head" role="heading" aria-level={2}>
+              {t("title")}
+            </div>
+          </>
+        ) : null}
         <ListRows>
           {drafts.length ? (
             drafts.map((d) => {
@@ -160,6 +225,16 @@ export function DraftsView({
                       {d.status !== "draft" ? (
                         <span className="draft-state" role="status">
                           {d.status === "unverified" ? t("unverifiedNote") : t("interruptedNote")}
+                        </span>
+                      ) : null}
+                      {/* A SCHEDULED SEND THAT COULD NOT BE KEPT (mail 0077). The server's own
+                          sentence rides in `sendError` and is QUOTED, `SendState.reason`'s
+                          treatment of a live refusal — the row is an ordinary draft again, so
+                          opening it to fix and resend works as on any draft, and the sentence
+                          clears on the next edit or schedule. */}
+                      {d.status === "draft" && d.sendError ? (
+                        <span className="draft-state" role="status">
+                          {t("scheduleFailedNote", { reason: d.sendError })}
                         </span>
                       ) : null}
                     </button>

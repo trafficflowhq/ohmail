@@ -961,7 +961,20 @@
     },
     "signature": "Signatur",
     "signatureRemove": "Signatur für diese Nachricht entfernen",
-    "signatureAria": "Signatur — Teil dieser Nachricht; hier bearbeiten oder entfernen"
+    "signatureAria": "Signatur — Teil dieser Nachricht; hier bearbeiten oder entfernen",
+    "sendLater": "Später senden",
+    "sendLaterTitle": "Später senden",
+    "sendLaterWhat": "Wann soll diese Nachricht gesendet werden?",
+    "sendLaterTonight": "Heute Abend ({when})",
+    "sendLaterTomorrow": "Morgen früh ({when})",
+    "sendLaterMonday": "Montagmorgen ({when})",
+    "sendLaterPick": "Datum und Uhrzeit wählen",
+    "sendLaterConfirm": "Senden planen",
+    "sendLaterClose": "Zurück",
+    "sendLaterPast": "Diese Zeit ist vorbei. Wähle eine Zeit in der Zukunft.",
+    "sendLaterZone": "Zeiten in deiner Zeitzone ({zone}).",
+    "sendLaterUnavailable": "Später senden ist für Nachrichten mit Anhängen oder Weiterleitungen noch nicht verfügbar.",
+    "toastScheduled": "Geplant für {when}."
   },
   "draftReply": {
     "verb": "Antwort entwerfen",
@@ -2325,7 +2338,15 @@
     "discardConfirm": "Entwurf verwerfen",
     "discardCancel": "Behalten",
     "emptyTitle": "Nichts halb Geschriebenes",
-    "emptyHint": "Fang eine Nachricht an — nach einem Moment liegt sie hier, auf diesem Gerät und auf allen anderen."
+    "emptyHint": "Fang eine Nachricht an — nach einem Moment liegt sie hier, auf diesem Gerät und auf allen anderen.",
+    "scheduledTitle": "Geplant",
+    "scheduledWhen": "Wird gesendet: {when}",
+    "scheduledEditTitle": "Nachricht zum Bearbeiten öffnen — das bricht den geplanten Versand ab",
+    "scheduledCancel": "Versand abbrechen",
+    "scheduledCancelTitle": "Geplanten Versand abbrechen; die Nachricht bleibt hier als Entwurf",
+    "scheduleFailedNote": "Diese Nachricht wurde zur geplanten Zeit nicht gesendet: {reason}",
+    "scheduleCancelled": "Geplanter Versand abgebrochen. Die Nachricht liegt in den Entwürfen.",
+    "scheduleCancelTooLate": "Zu spät zum Abbrechen — diese Nachricht wird gerade gesendet."
   },
   "mailBody": {
     "blockedOne": "1 externes Bild blockiert.",

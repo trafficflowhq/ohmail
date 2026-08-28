@@ -65,15 +65,23 @@ import { silentLogger, type Logger } from "@trafficflow/core";
  */
 export interface ApiCronTarget {
   /** Closed name, stable across renames of the path — the key an operator greps for. */
-  target: "billing_reconcile" | "sessions_reap" | "smtp_size";
+  target: "billing_reconcile" | "sessions_reap" | "smtp_size" | "scheduled_send";
   /** The API route, poked as `GET {baseUrl}{route}` with the bearer secret. */
   route: string;
-  /** The cadence. Jitter (up to {@link API_CRON_JITTER_MS}) is ADDED per wait, never subtracted. */
+  /** The cadence. Jitter (up to {@link jitterMs}) is ADDED per wait, never subtracted. */
   everyMs: number;
-  /** Delay after leadership before the first poke — staggered so the three never land together. */
+  /** Delay after leadership before the first poke — staggered so the targets never land together. */
   firstDelayMs: number;
   /** Per-request abort bound. Generous: the route's own platform bound is the real ceiling. */
   timeoutMs: number;
+  /**
+   * Per-target jitter ceiling; absent ⇒ {@link API_CRON_JITTER_MS}. It exists for the one
+   * target whose cadence is FINER than the default jitter: a minute clock wearing five minutes
+   * of jitter is a schedule made mostly of jitter, and the scheduled-send pass's stated
+   * precision ("±about a minute") would be a sentence the arithmetic contradicts. Hygiene the
+   * default exists for still applies, scaled to the cadence.
+   */
+  jitterMs?: number;
 }
 
 /**
@@ -109,6 +117,29 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
     // and is the least urgent of the three.
     firstDelayMs: 7 * 60 * 1000,
     timeoutMs: 120 * 1000,
+  },
+  {
+    // SEND LATER's sender clock (mail 0077): claim due `drafts.send_at` appointments, run the
+    // ordinary gated send on each. EVERY MINUTE — the appointment's stated precision is
+    // "±about a minute", so the clock has to be at least that fine; the route itself bounds
+    // the work (a claim of `SCHEDULED_SEND_BATCH`, `FOR UPDATE SKIP LOCKED`), so an idle
+    // minute costs one indexed scan of a near-empty partial index. It runs on the API host
+    // for the smtp_size target's own measured reason — this platform blocks outbound SMTP
+    // submission — plus one of its own: the services package may not enter this app's
+    // runtime dependency set (see package.json), and the pass IS the send service.
+    target: "scheduled_send",
+    route: "/internal/sends/scheduled/run",
+    everyMs: 60 * 1000,
+    // Early — an appointment due during a deploy should not wait out a long stagger — but
+    // still past the takeover window, and overlap with an outgoing leader's in-flight poke is
+    // SAFE here anyway: the claim is SKIP LOCKED and every send is idempotency-keyed, so two
+    // pokes split the due set rather than double-sending.
+    firstDelayMs: 45 * 1000,
+    // The route claims only what one serverless invocation can deliver inside its own
+    // 60-second ceiling; this bound is the caller's mirror of that ceiling, not a hope.
+    timeoutMs: 60 * 1000,
+    // A tenth of the cadence — see {@link ApiCronTarget.jitterMs}.
+    jitterMs: 6 * 1000,
   },
 ];
 
@@ -264,7 +295,7 @@ export function startApiCron(deps: ApiCronDeps): ApiCronHandle {
         consecutiveFailures: state.consecutiveFailures,
       });
     }
-    arm(t, t.everyMs, API_CRON_JITTER_MS);
+    arm(t, t.everyMs, t.jitterMs ?? API_CRON_JITTER_MS);
   }
 
   for (const t of targets) arm(t, t.firstDelayMs, 30 * 1000);
