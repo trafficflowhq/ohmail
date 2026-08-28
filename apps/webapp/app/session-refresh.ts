@@ -57,24 +57,24 @@ let inFlight: Promise<boolean> | null = null;
 const REFRESH_LOCK = "ohmail:session-refresh";
 
 async function withCrossTabLock(fn: () => Promise<boolean>): Promise<boolean> {
-  const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
-  if (locks?.request) {
-    try {
+  try {
+    // BOTH the property lookup and the request live inside this try: a `navigator.locks`
+    // accessor that THROWS (hardened embedders) and a `request()` that REJECTS asynchronously
+    // (document no longer fully active, opaque origin) are the same case — no lock manager —
+    // and either escaping would hand `resumeSession` a rejected promise: its never-rejects
+    // contract breaks, and because `fn`'s own `finally` never ran, `inFlight` would cache the
+    // rejection for the tab's whole life, every later refresh failing instantly with no
+    // fetch. `fn` itself never rejects (its body is one try/catch/finally answering
+    // booleans), and this origin never uses `steal`, so anything caught here means the
+    // callback was never granted: the lock-less run below is the single run it was owed,
+    // never a double refresh.
+    const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
+    if (locks?.request) {
       // `request` resolves with the callback's settled value once the grant releases.
       return (await locks.request(REFRESH_LOCK, { mode: "exclusive" }, fn)) as boolean;
-    } catch {
-      // A REJECTED request — not just a throwing accessor — lands here too, and it must fall
-      // through to the lock-less run below. The first version returned the raw promise and
-      // caught only synchronous throws, so a lock manager refusing asynchronously (document
-      // no longer fully active, opaque origin) handed `resumeSession` a rejected promise:
-      // its never-rejects contract broke, and because `fn`'s own `finally` had never run,
-      // `inFlight` cached that rejection for the tab's whole life — every later refresh
-      // failing instantly with no fetch. `fn` itself never rejects (its body is one
-      // try/catch/finally answering booleans), and this origin never uses `steal`, so a
-      // rejection can only mean the callback was never granted: running it directly is the
-      // single retry it was owed, not a double refresh.
-      return fn();
     }
+  } catch {
+    /* fall through to the lock-less run */
   }
   return fn();
 }
