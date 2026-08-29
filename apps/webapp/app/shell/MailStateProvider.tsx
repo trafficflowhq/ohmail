@@ -214,13 +214,15 @@ export function MailStateProvider({
         sync,
         failureStreak: SYNC_FAILURE_STREAK,
         freshness,
+        // The rendered engine's own verdict — the settled wrapper's evidence, never the probe's.
+        engineFreshness,
         mailboxes: facts,
         mirrored,
         growth,
         now: beat,
         demo,
       }),
-    [sync, freshness, facts, mirrored, growth, beat, demo],
+    [sync, freshness, engineFreshness, facts, mirrored, growth, beat, demo],
   );
 
   // The clock, armed only while something on screen depends on elapsed time.

@@ -55,6 +55,7 @@ import {
   liveReceipts,
   liveScreener,
   liveTags,
+  freshnessKey,
   mirrorSettled,
   presentedOf,
   staleAsOf,
@@ -590,13 +591,18 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * foreground drain the connection layer already runs — re-derives, whichever lands first.
    */
   const [freshBeat, setFreshBeat] = useState(0);
-  const lastFreshLabel = useRef<string | null>(null);
+  // The sentinel is the RAW verdict (`freshnessKey`: state + instant), never the formatted
+  // label — weekday+time repeats weekly, and a label-compared sentinel sleeps through a real
+  // transition whose stamp happens to format identically. Forgotten per engine: a new engine's
+  // verdict is unknown to this clock, so its first tick re-derives once and re-seeds.
+  const lastFreshKey = useRef<string | null>(null);
   useEffect(() => {
     if (engine === null) return;
+    lastFreshKey.current = null;
     const id = setInterval(() => {
-      const label = staleAsOf(engine, zone);
-      if (label !== lastFreshLabel.current) {
-        lastFreshLabel.current = label;
+      const key = freshnessKey(engine);
+      if (key !== lastFreshKey.current) {
+        lastFreshKey.current = key;
         setFreshBeat((n) => n + 1);
       }
     }, 60_000);

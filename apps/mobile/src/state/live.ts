@@ -1744,6 +1744,20 @@ export function staleAsOf(
   return f.state === "stale" && f.asOf !== null ? whenLabel(f.asOf, zone) : null;
 }
 
+/**
+ * The verdict as a comparable key — the freshness CLOCK's sentinel (`world.tsx`), and it is the
+ * RAW pair on purpose: the formatted label carries only weekday+time, so two different stamps a
+ * week apart can render identically and a sentinel comparing labels would sleep through a real
+ * current→stale transition (review round 2's finding). State and instant together are unique
+ * per verdict.
+ */
+export function freshnessKey(
+  engine: { freshness(): { state: "unknown" | "stale" | "current"; asOf: string | null } },
+): string {
+  const f = engine.freshness();
+  return `${f.state}|${f.asOf ?? ""}`;
+}
+
 /* Re-exported so the world layer and the suite spell the vocabulary identically. `FolderEntity`
  * rides through here because `live.ts` is the one state module on the engine's import
  * allow-list (`test/privacy.test.ts`) — the world layer and the screens take the type from

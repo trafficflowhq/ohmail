@@ -1045,6 +1045,16 @@ export interface MailStateInputs {
    */
   freshness: { state: "unknown" | "stale" | "current"; asOf: string | null };
   /**
+   * THE RENDERED ENGINE'S OWN VERDICT — `useFreshness()`, never the probe. Identical to
+   * {@link MailStateInputs.freshness} wherever no probe overrides (web, the demo); different on
+   * the desktop, where the label reads the SIDECAR's stamp and this reads the window engine's.
+   * It exists for exactly one reader: the `settled` wrapper. Settled is a statement about the
+   * mirror ON SCREEN — the window engine's own in-memory store, which can be mid-first-snapshot
+   * and empty while the sidecar's mirror is complete — so upstream freshness must not settle a
+   * pane the rendered store has not populated. Review round 2's finding.
+   */
+  engineFreshness: { state: "unknown" | "stale" | "current"; asOf: string | null };
+  /**
    * `GET /mailboxes`, narrowed — or `null` for "we cannot see mailboxes".
    *
    * **`null` and `[]` ARE DIFFERENT FACTS and the distinction is load-bearing.** `null` is the
@@ -1091,7 +1101,10 @@ export function deriveMailState(input: MailStateInputs): MailState {
     // exactly the population the skeleton exists for and keeps it.
     settled:
       !input.sync.bootstrapping || state.key === "stopped" || state.key === "failing"
-      || input.freshness.state !== "unknown",
+      // The RENDERED engine's stamp, deliberately not the label's (probe-overridden) verdict:
+      // on the desktop the sidecar can be current while the window's own mirror is still
+      // mid-first-snapshot and empty — upstream freshness settles nothing here.
+      || input.engineFreshness.state !== "unknown",
   };
 }
 
