@@ -1075,7 +1075,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     // This call now also fires when the APP BACKGROUNDS (the feed tabs' AppState listener),
     // and a reader who returns seconds later starts a NEW visit; consuming after the await
     // below let that next visit's sweeps land in the pool this commit was about to anchor
-    // from (codex round 1). Rollback reachability is unharmed: each in-flight sweep holds
+    // from. Rollback reachability is unharmed: each in-flight sweep holds
     // THIS Set through its own closure (`sweepFeed`'s `seen`), so a failed flip still pulls
     // its ids out of the pool we are holding, whether or not the map still names it.
     const seen = swept.get(view);
