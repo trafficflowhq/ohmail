@@ -758,12 +758,57 @@ function base64ToBytes(b64: string): Uint8Array | null {
 export const STALE_RESUME_MS = 5 * 60_000;
 
 /**
+ * THE STALE DRAIN ASKS FOR DENSE PAGES (INSTANT-ARCH §6.3 / §8 stage 3 — the backlog diet's
+ * client half). A backlog's dominant cost is PAGE COUNT, not page size: each `/sync` page is a
+ * serverless invocation with ~10 fixed sequential database round trips — measured p50 1,084 ms
+ * per 500-row page on the live path (2026-08-29), of which ~0.4 s no row could ever pay for —
+ * so a 1,500-row backlog at the default page size was four invocations (~5.1 s measured) where
+ * one dense page carries it whole. 2,000 is the server's own MAX_LIMIT (`sync-service.ts`), the
+ * most a page may say; asking for more would be clamped there anyway.
+ *
+ * Used ONLY when {@link OhmailEngine.isStaleResume} says this drain is a backlog catch-up (the
+ * same condition that fires the freshen), so the steady-state poll keeps the deployed shape and
+ * an explicit {@link EngineOptions.syncLimit} (the test seam) always wins. Payload stays modest:
+ * the server serves a stale span COALESCED (latest change per entity), and a measured 500-row
+ * page is ~0.25–0.5 MB, so the dense page is ~1–2 MB against the platform's 4.5 MB response cap.
+ */
+export const BACKLOG_PAGE_LIMIT = 2000;
+
+/**
  * The meta key under which a completed drain stamps its own clock — the mirror's record of "when
  * was this device last caught up", read by nothing but the staleness comparison above. Engine
  * clock on both sides (`opts.now`), never `serverTime`: cross-machine skew cannot touch a
  * comparison whose two operands come from the same clock.
  */
 export const LAST_DRAIN_AT_META = "lastDrainAt";
+
+/**
+ * THE FRESHNESS CONTRACT'S THREE STATES (INSTANT-ARCH §6.6) — what a surface may say about the
+ * age of the mirror it is rendering. Exactly three, and they must never be conflated:
+ *
+ *  · `unknown` — no drain has EVER completed over this mirror. A zero-row list is not "empty",
+ *    it is unanswered; the surface owes a skeleton, never content and never an empty state.
+ *  · `stale`   — a drain HAS completed, but longer ago than {@link STALE_RESUME_MS}. The mirror
+ *    is renderable truth and MUST be rendered (frame one is local, always) — but it is truth
+ *    as of {@link MirrorFreshness.asOf}, and the surface says so quietly ("as of 14:32 ·
+ *    catching up") until a drain settles. Staleness labeled is honest; staleness silent is
+ *    the bug this type exists to make unrepresentable.
+ *  · `current` — the last completed drain is recent. Plain content, no label.
+ */
+export type FreshnessState = "unknown" | "stale" | "current";
+
+/** See {@link OhmailEngine.freshness}. */
+export interface MirrorFreshness {
+  state: FreshnessState;
+  /**
+   * {@link LAST_DRAIN_AT_META} verbatim — the engine-clock instant of the last COMPLETED drain,
+   * or `null` exactly when `state` is `"unknown"`. Surfaces format it; they never parse meta
+   * themselves. A stamp that does not parse reports `"unknown"` rather than a label with no
+   * time in it: the stamp is this engine's own write, so an unparseable one is corruption, and
+   * the very next settled drain re-stamps it.
+   */
+  asOf: string | null;
+}
 
 export interface EngineOptions {
   adapter: EngineAdapter;
@@ -1013,6 +1058,16 @@ export class OhmailEngine {
    * still-owed verb is persisted and replays in order next boot).
    */
   private replayHold: Promise<void> | null = null;
+  /**
+   * THE SHORT-LIVED TWIN of {@link replayHold}: the replay attempt CURRENTLY being awaited by
+   * the drive. Armed for the whole of each attempt — not only after its deadline — because a
+   * fresh same-target verb dispatched while a restored replay is mid-air can commit first and
+   * be overwritten when the slower replay lands (user-always-wins, violated in the window the
+   * deadline had not yet noticed). Fresh dispatches and flushes WAIT on it (it is bounded by
+   * the attempt's own deadline); only when an attempt times out does the long-lived
+   * {@link replayHold} take over and waiting turn into queueing.
+   */
+  private replayActive: Promise<void> | null = null;
   /** {@link EngineOptions.outboxAutoReplay}, resolved once. */
   private readonly autoReplayOn: boolean;
   /** Session-monotonic outbox tiebreak; seeded past every restored entry's `n`. */
@@ -1314,6 +1369,24 @@ export class OhmailEngine {
   }
 
   /**
+   * Does this client have a doorbell to ring at all?
+   *
+   * `attachmentsAvailable()`'s idiom for {@link OhmailEngine.requestPull}: resolved from the
+   * adapter's own optional capability, so the predicate cannot disagree with what the method
+   * will do. `false` for the demo (`?demo=1` is fixtures and zero network) and for any adapter
+   * wrapper that did not forward the capability — which is exactly what a "Pull new mail"
+   * control must gate its own rendering on: an affordance whose press could only ever degrade
+   * to the ordinary drain must not render as if it reached the mail server. The webapp's
+   * `apiConfigured()` was the previous gate and it was wrong twice over — true while the
+   * wrapped adapter had lost the doorbell (a dead button on the hosted client), and false on
+   * the desktop, whose bridge adapter has a doorbell but no Cloud base (a missing button on
+   * both desktop doors).
+   */
+  pullAvailable(): boolean {
+    return typeof this.adapter.requestPull === "function";
+  }
+
+  /**
    * One full drain: pull pages from the cursor of record until hasMore:false,
    * applying each page idempotently. A 410 discards local state and re-enters
    * as a bootstrap (once — a second 410 within one drain is surfaced).
@@ -1394,6 +1467,16 @@ export class OhmailEngine {
     for (let i = 0; i < batch.length; i++) {
       const p = batch[i]!;
       const attempt = this.dispatch(p, { deferReconcile: true });
+      // The WHOLE attempt is guarded, not just its post-deadline tail — see {@link replayActive}.
+      // The waiter promise is a DEFERRED, settled by the attempt OR by the deadline, whichever
+      // comes first: a waiter must never inherit the attempt's own unboundedness — a hung
+      // request would otherwise suspend every fresh mutate and flush for ever, precisely the
+      // stranding the deadline exists to end. Released only after the hold decision below, so
+      // a woken waiter always finds the world it should queue against.
+      let releaseActive!: () => void;
+      const active = new Promise<void>((resolve) => { releaseActive = resolve; });
+      this.replayActive = active;
+      void attempt.then(() => releaseActive(), () => releaseActive());
       let timer: ReturnType<typeof setTimeout> | undefined;
       let timedOut = false;
       await Promise.race([
@@ -1403,6 +1486,7 @@ export class OhmailEngine {
         }),
       ]);
       if (timer !== undefined) clearTimeout(timer);
+      if (this.replayActive === active) this.replayActive = null;
       if (timedOut) {
         // ORDER IS THE CONTRACT, so a timeout stops the BATCH, not just the wait: the hung
         // request may yet commit, and dispatching the entries behind it would let a newer
@@ -1419,13 +1503,19 @@ export class OhmailEngine {
           if (this.replayHold === hold) this.replayHold = null;
           // The barrier's own settle is the wake-up: verbs expressed while it stood are
           // sitting in the queue (mutate() gates on the hold), and nothing else is guaranteed
-          // to drive soon on a quiet tab. One nudge; its failure is the next poll's problem.
-          void this.syncOnce().catch(() => { /* the scheduler's cadence retries */ });
+          // to drive soon on a quiet tab. `syncFresh`, not `syncOnce`: the settle can land
+          // while the drive that armed this hold is STILL draining, and joining it would join
+          // a replay pass that already ran — the queued verbs need the drive AFTER it.
+          void this.syncFresh().catch(() => { /* the scheduler's cadence retries */ });
         });
         this.replayHold = hold;
         this.queue.unshift(...batch.slice(i + 1));
+        // NOW wake the waiters — after the hold stands, so each re-check lands in the queue
+        // branch instead of dispatching into the very race the barrier exists to prevent.
+        releaseActive();
         return;
       }
+      releaseActive();
     }
   }
 
@@ -1529,6 +1619,14 @@ export class OhmailEngine {
     // A STALE resume converges its newest page FIRST — see the method for the whole argument.
     // Before the loop, once per drain: the 410 branch re-enters the loop with a wiped mirror,
     // where the bootstrap snapshot below already owns "newest first".
+    //
+    // The staleness verdict is read ONCE, before the freshen (a completed freshen changes no
+    // stamp, but reading per page would let the loop's own completion flip the answer mid-
+    // drain), and it selects the page size for the WHOLE drain: a stale resume is a backlog
+    // catch-up and asks for {@link BACKLOG_PAGE_LIMIT} rows per page — see the constant for the
+    // measured arithmetic. An explicit {@link EngineOptions.syncLimit} always wins (the test
+    // seam), and a fresh resume keeps the server's default page, the deployed shape.
+    const staleResume = this.isStaleResume();
     await this.freshenStaleResume();
     for (;;) {
       // COLD MIRROR + A SNAPSHOT ROUTE ⇒ TAKE THE SNAPSHOT INSTEAD OF REPLAYING THE LOG.
@@ -1586,9 +1684,15 @@ export class OhmailEngine {
           rulesFirstDone = true;
           await this.drainRulesFirst();
         }
+        // The dense-page ask covers the RESUMED-incomplete-bootstrap replay too — that is a
+        // backlog by definition (an earlier session's since=0 fallback died mid-log), and it is
+        // read fresh per iteration because the 410 branch can turn a stale resume INTO one.
+        const backlogLimit = this.syncLimit !== undefined
+          ? this.syncLimit
+          : (staleResume || resumedIncomplete) ? BACKLOG_PAGE_LIMIT : undefined;
         resp = await this.adapter.sync({
           since: this.store.getCursor(),
-          ...(this.syncLimit !== undefined ? { limit: this.syncLimit } : {}),
+          ...(backlogLimit !== undefined ? { limit: backlogLimit } : {}),
           ...(this.types ? { types: this.types } : {}),
         });
       } catch (err) {
@@ -1642,6 +1746,13 @@ export class OhmailEngine {
       // mid-backlog leaves the old stamp standing, so the next drain still reads as a stale
       // resume and freshens again (idempotent: the seq guard absorbs the repeat).
       await this.store.setMeta(LAST_DRAIN_AT_META, this.now().toISOString());
+      // ANNOUNCE THE SETTLE. The stamp is what {@link OhmailEngine.freshness} reads, and the
+      // last data notify above fired BEFORE the stamp landed — so without this, a surface
+      // rendering "as of 14:32 · catching up" off a freshness subscription keeps the label up
+      // until something ELSE happens to notify (the next drain, seconds to minutes away). The
+      // label must clear at the settle, not at the next coincidence; `freshness-label.test.ts`
+      // watches this line red.
+      this.notify();
       // THE OVERLAY SWEEP, only on this successful exit: every overlay whose POST returned
       // before this drain began now has its echo IN the mirror, so retiring it changes what is
       // rendered from "the overlay's claim" to "the server's identical statement".
@@ -1855,11 +1966,28 @@ export class OhmailEngine {
    * the mailboxes that reported the symptom. Within a session the stamp always exists after the
    * first completed drain, so this arm fires at most once per pre-upgrade mirror.
    */
+  /**
+   * IS THIS DRAIN A STALE RESUME — a warm cursor whose last completed drain is older than
+   * {@link STALE_RESUME_MS} (or was never stamped, the pre-upgrade-mirror arm the freshen
+   * documents)? ONE predicate, two consumers with one condition by construction:
+   * {@link OhmailEngine.freshenStaleResume} decides whether to fetch the newest page first,
+   * and {@link OhmailEngine.drain} decides whether to ask for {@link BACKLOG_PAGE_LIMIT} pages
+   * — a freshen without the dense drain leaves the convergence tail, a dense drain without the
+   * freshen labels nothing, so the two firing on different verdicts would be a defect.
+   */
+  private isStaleResume(): boolean {
+    if (this.store.getCursor() === "0") return false; // a cold mirror is the bootstrap's, not ours
+    const stamp = this.store.getMeta<string>(LAST_DRAIN_AT_META);
+    if (stamp === undefined) return true;
+    const t = Date.parse(stamp);
+    // An unparseable stamp reads as stale, exactly as the freshen always read it: the stamp is
+    // this engine's own write, so corruption is answered by freshening and re-stamping.
+    return Number.isNaN(t) || this.now().getTime() - t > this.staleResumeMs;
+  }
+
   private async freshenStaleResume(): Promise<void> {
     if (!this.snapshotFn || this.snapshotUnavailable) return;
-    if (this.store.getCursor() === "0") return; // a cold mirror is the bootstrap's, not ours
-    const stamp = this.store.getMeta<string>(LAST_DRAIN_AT_META);
-    if (stamp !== undefined && this.now().getTime() - Date.parse(stamp) <= this.staleResumeMs) return;
+    if (!this.isStaleResume()) return;
     let page: SyncSnapshotPage;
     try {
       page = await this.snapshotFn({});
@@ -2206,6 +2334,45 @@ export class OhmailEngine {
   private notify(): void {
     for (const l of this.listeners) l();
   }
+
+  /**
+   * WHAT A SURFACE MAY SAY ABOUT THIS MIRROR'S AGE — the one derivation of the Freshness
+   * Contract's three states (see {@link FreshnessState}), computed from the drain's own
+   * completion stamp on the engine's own clock. Every surface reads THIS; none re-derives it
+   * from meta, which is how three surfaces stay one contract.
+   *
+   * The comparison is the same one {@link OhmailEngine.freshenStaleResume} makes — same stamp,
+   * same threshold, same clock — so "the label is showing" and "the resume freshens
+   * newest-first" are a single fact observed twice, never two opinions that can drift.
+   *
+   * CACHED BY VALUE for `useSyncExternalStore`: `getSnapshot` must return a stable identity
+   * while nothing changed, or React loops on a fresh object per render. The value changes when
+   * a drain settles (which {@link OhmailEngine.drain} announces with a notify after stamping)
+   * or when the clock crosses the threshold between two notifies — re-read at the next render
+   * either way.
+   */
+  freshness(): MirrorFreshness {
+    const stamp = this.store.getMeta<string>(LAST_DRAIN_AT_META);
+    let next: MirrorFreshness;
+    if (stamp === undefined) {
+      next = { state: "unknown", asOf: null };
+    } else {
+      const t = Date.parse(stamp);
+      next = Number.isNaN(t)
+        ? { state: "unknown", asOf: null }
+        : {
+            state: this.now().getTime() - t > this.staleResumeMs ? "stale" : "current",
+            asOf: stamp,
+          };
+    }
+    if (next.state !== this.freshnessCache.state || next.asOf !== this.freshnessCache.asOf) {
+      this.freshnessCache = next;
+    }
+    return this.freshnessCache;
+  }
+
+  /** The last {@link MirrorFreshness} handed out — identity-stable while its value stands. */
+  private freshnessCache: MirrorFreshness = { state: "unknown", asOf: null };
 
   // ── message bodies ───────────────────────────────────────────────────────
 
@@ -2987,13 +3154,18 @@ export class OhmailEngine {
     // deletes/rewrites inside are fire-and-forget: if a kill outruns them, the stale entry
     // replays BEFORE the newer one — restore sorts by (at, n) — so the newer verb still lands
     // last and the server converges on the user's latest word.
-    this.supersedeQueued(enriched);
+    //
+    // …and only AFTER the no-op check below: a verb with no effects is about to be REJECTED,
+    // and a rejected verb supersedes nothing. Re-pressing a queued move (the optimistic
+    // destination makes the repeat a no-op) must not retire the queued original — that entry
+    // may be the only copy of an intent whose first attempt never reached the server.
     if (effects.length === 0) {
       const error = new MutationRejectedError(`mutation target not found (${m.kind})`, {
         status: 404, code: "not_found",
       });
       return { id, key, status: "rolled_back", seq: null, error };
     }
+    this.supersedeQueued(enriched);
     this.overlays.set(id, effects);
     this.overlayRev++;
     this.notify();
@@ -3014,17 +3186,32 @@ export class OhmailEngine {
     await this.putOutbox(pending);
 
     /**
-     * THE ORDER BARRIER GATES FRESH DISPATCHES TOO. A timed-out replay's request is still in
-     * the air and is no longer in the queue, so supersession above could not see it — a fresh
-     * verb dispatched now could commit BEFORE that hung older write and be overwritten when it
-     * finally lands. So the verb PAINTS immediately (the overlay is already up), persists
-     * durably (just above), and waits its turn in the queue: the hold's own settle nudges a
-     * drive, and the ordered replay then delivers everything oldest-first. `queued` is the
-     * truthful status — expressed, safe, not yet on the wire.
+     * THE ORDER BARRIER GATES FRESH DISPATCHES TOO — in two tiers, matching the two holds.
+     *
+     * A replay attempt CURRENTLY in the air ({@link replayActive}) is waited out: it is
+     * bounded by its own deadline, the verb has already painted and persisted, and dispatching
+     * concurrently could let this fresh write commit first and be overwritten when the slower
+     * replay lands. The loop re-checks because a batch replays attempts back to back.
+     *
+     * A TIMED-OUT attempt ({@link replayHold}) may stand for minutes, so the verb waits in the
+     * QUEUE instead (status `queued` — expressed, safe, not yet on the wire); the hold's own
+     * settle chains the drive that delivers it. The one exception is the caller-settled create
+     * (`draft_save`, draftId null): its caller adopts `entityId` from THIS result and has no
+     * retry path of its own, so it awaits the hold however long — a late-adopted draft id is
+     * correct, an orphaned `queued` create is a twin factory.
      */
+    while (this.replayActive) {
+      await this.replayActive;
+    }
     if (this.replayHold) {
-      this.queue.push(pending);
-      return { id, key, status: "queued", seq: null };
+      const awaitsHold = enriched.kind === "draft_save" && enriched.draftId === null;
+      if (!awaitsHold) {
+        this.queue.push(pending);
+        return { id, key, status: "queued", seq: null };
+      }
+      while (this.replayHold) {
+        await this.replayHold;
+      }
     }
 
     return this.dispatch(pending);
@@ -3099,9 +3286,12 @@ export class OhmailEngine {
       // read verb at all, id overlap or not, because a newer same-view leave-commit with an
       // EMPTY id list (the ordinary waterline commit) still supersedes the older line.
       if (readIds && (qm.kind === "mark_seen" || qm.kind === "feed_mark_seen")) {
-        const newerExplicit = m.kind === "mark_seen" && m.via !== "glance";
+        // A glance can only ever READ — `unread: true` is a deliberate act whatever label a
+        // caller stuck on it, so the value participates in the classification, not the label
+        // alone: a mislabelled mark-unread must still outrank a queued stale read.
+        const newerExplicit = m.kind === "mark_seen" && (m.via !== "glance" || m.unread === true);
         const olderInvoluntary = qm.kind === "feed_mark_seen"
-          || (qm.kind === "mark_seen" && qm.via === "glance");
+          || (qm.kind === "mark_seen" && qm.via === "glance" && qm.unread === false);
         const pairAllowed = newerExplicit || olderInvoluntary;
         const qids = qm.messageIds ?? [];
         // A newer same-view glance also replaces the older glance's waterline: the newer
@@ -3588,6 +3778,11 @@ export class OhmailEngine {
    * the hold clears. The entries stay queued and persisted; the hold's settle nudges a drive.
    */
   async flushPending(): Promise<MutationResult[]> {
+    // An in-flight replay attempt is waited out (bounded by its deadline) — dispatching beside
+    // it is the same stale-wins race the fresh-mutate gate closes.
+    while (this.replayActive) {
+      await this.replayActive;
+    }
     if (this.replayHold) {
       return this.queue.map((p) => ({ id: p.id, key: p.key, status: "queued" as const, seq: null }));
     }
