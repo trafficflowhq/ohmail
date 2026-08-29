@@ -477,6 +477,35 @@ export function createSyncGate(): SyncGate {
         ...(adapter.searchServer ? { searchServer: adapter.searchServer.bind(adapter) } : {}),
 
         /*
+         * ── THE WORKER DOORBELL — FORWARDED, NOT GATED, AND SPREAD ────────────────────────
+         *
+         * `POST /sync/pull`: the "Pull new mail" press asking the worker to scan IMAP now.
+         *
+         * NOT GATED, on `fetchBody`'s own argument sharpened: it fires on a deliberate press,
+         * in a tab the user is looking at, and it is bounded twice over — once by the act, and
+         * once by the route's own 5 s per-mailbox rate limit. The gate is about a DISCARDED
+         * engine paging through a bootstrap on behalf of nobody; a person pressing "Pull new
+         * mail" is the opposite of that.
+         *
+         * SPREAD, NOT ALWAYS-DEFINED: `OhmailEngine.pullAvailable()` is how the control decides
+         * to render at all, and it reads the adapter's own optional capability. Defining this
+         * unconditionally would make a `FixturesAdapter` behind a gate claim a doorbell it has
+         * no worker for.
+         *
+         * FORWARDED AT ALL — and this line is a REPAIR, not a precaution: the pull affordance
+         * shipped (2026-08-26) without it, and `OhmailEngine.requestPull` reads an absent
+         * capability as "this world has no worker to hurry" and returns null WITHOUT touching
+         * the wire. So on the live path — the only path this wrapper exists on — the button
+         * rendered, the click ran, no request left the browser, no state changed and nothing
+         * errored: a dead control indistinguishable from a broken one, with every suite green
+         * because every suite builds engines from bare adapters. The exact failure shape this
+         * literal's own header predicts, measured live on ohmail.app before this line existed.
+         * `test/pull-wired.test.ts` builds the real live engine through `createEngine` so that
+         * deleting this line goes red.
+         */
+        ...(adapter.requestPull ? { requestPull: adapter.requestPull.bind(adapter) } : {}),
+
+        /*
          * ── THE COLD-START READ — FORWARDED, AND THIS ONE **IS** THE GATED PAGE ────────────
          *
          * `GET /sync/snapshot` is not a sibling of `fetchBody` and `searchServer`; it is

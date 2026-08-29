@@ -274,6 +274,15 @@ function accountGuarded(
     fetchBody: (id) => adapter.fetchBody(id),
     fetchBodies: (ids: string[]) => adapter.fetchBodies(ids),
     searchServer: (query, opts) => adapter.searchServer(query, opts),
+    // The worker doorbell (`POST /sync/pull`) — forwarded, not gated, on `mutate`'s rule: it
+    // moves no mirror and no cursor, and the connection layer already rings it only inside the
+    // clearance continuation (`boot-surface.test.ts` pins guard → ring → drain). This forward
+    // is a REPAIR: pull-to-refresh and Sync-now shipped ringing `engine.requestPull()` while
+    // this literal — the whole surface the engine sees — omitted the capability, so the engine
+    // read "no doorbell", returned null without touching the wire, and every refresh gesture
+    // quietly degraded to the mirror drain it had before the doorbell existed. Same defect,
+    // same day, same shape as the webapp's sync gate; found live on the webapp's rail control.
+    requestPull: () => adapter.requestPull(),
     unsubscribe: (id) => adapter.unsubscribe(id),
     listMessages: adapter.listMessages.bind(adapter),
     listAttachments: (id) => adapter.listAttachments(id),

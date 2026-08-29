@@ -2181,7 +2181,9 @@
     "filingWhere": "{address} · your decisions are already applied here; the server is catching up.",
     "pull": "Pull new mail",
     "pulling": "Checking your mail server…",
-    "pullAria": "Pull new mail — check the mail server now"
+    "pullAria": "Pull new mail — check the mail server now",
+    "pullQuiet": "Checked — nothing new.",
+    "pullSlow": "Still checking. New mail arrives on its own."
   },
   "screening": {
     "action": "Screening",

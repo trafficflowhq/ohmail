@@ -1369,6 +1369,24 @@ export class OhmailEngine {
   }
 
   /**
+   * Does this client have a doorbell to ring at all?
+   *
+   * `attachmentsAvailable()`'s idiom for {@link OhmailEngine.requestPull}: resolved from the
+   * adapter's own optional capability, so the predicate cannot disagree with what the method
+   * will do. `false` for the demo (`?demo=1` is fixtures and zero network) and for any adapter
+   * wrapper that did not forward the capability — which is exactly what a "Pull new mail"
+   * control must gate its own rendering on: an affordance whose press could only ever degrade
+   * to the ordinary drain must not render as if it reached the mail server. The webapp's
+   * `apiConfigured()` was the previous gate and it was wrong twice over — true while the
+   * wrapped adapter had lost the doorbell (a dead button on the hosted client), and false on
+   * the desktop, whose bridge adapter has a doorbell but no Cloud base (a missing button on
+   * both desktop doors).
+   */
+  pullAvailable(): boolean {
+    return typeof this.adapter.requestPull === "function";
+  }
+
+  /**
    * One full drain: pull pages from the cursor of record until hasMore:false,
    * applying each page idempotently. A 410 discards local state and re-enters
    * as a bootstrap (once — a second 410 within one drain is surfaced).

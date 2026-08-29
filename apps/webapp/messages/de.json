@@ -2181,7 +2181,9 @@
     "filingWhere": "{address} · deine Entscheidungen gelten hier schon; der Server holt gerade auf.",
     "pull": "Neue Mails abrufen",
     "pulling": "Mailserver wird geprüft…",
-    "pullAria": "Neue Mails abrufen — den Mailserver jetzt prüfen"
+    "pullAria": "Neue Mails abrufen — den Mailserver jetzt prüfen",
+    "pullQuiet": "Geprüft — nichts Neues.",
+    "pullSlow": "Wird noch geprüft. Neue Mails kommen von selbst an."
   },
   "screening": {
     "action": "Screening",

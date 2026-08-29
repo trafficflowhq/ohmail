@@ -986,6 +986,7 @@ export function AppShell({
       <KeymapProvider>
         <MailStateHost probe={mailboxFacts} freshnessProbe={mirrorFreshness}>
           <ShellInner
+            mailboxFacts={mailboxFacts}
             sendSurfaceMaxTotalBytes={sendSurfaceMaxTotalBytes}
             accountSection={accountSection}
             mailboxSection={mailboxSection}
@@ -1051,7 +1052,9 @@ function MailStateHost({ probe, freshnessProbe, children }: { probe?: MailboxPro
   );
 }
 
-function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, billingSection, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, screeningSection, screenerSuggest, awayTransport, profileImportTransport, consentTransport, olderBodyWire, junkWire, suggestWire, aiCredits, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
+function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, billingSection, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, screeningSection, screenerSuggest, awayTransport, profileImportTransport, consentTransport, olderBodyWire, junkWire, suggestWire, aiCredits, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
+  /** The pull settle watch's read — the same probe `MailStateHost` above provides the strip. */
+  mailboxFacts?: MailboxProbe;
   /** The host's surface declaration for the attach ceiling — see `AppShell`'s prop of this name. */
   sendSurfaceMaxTotalBytes?: number | null;
   accountSection?: ReactNode;
@@ -1120,8 +1123,11 @@ function ShellInner({ sendSurfaceMaxTotalBytes, accountSection, mailboxSection, 
   const palette = useCommandPalette({ bindKey: false });
   // ONE pull flight per tab, shared by the rail and topbar copies of the button — two hooks
   // would each carry their own `pulling`, and a resize mid-pull would reveal an idle-looking
-  // copy that accepts a second POST while the hidden one still polls. See `PullNewMail.tsx`.
-  const pullBinding = usePullNewMail();
+  // copy that accepts a second POST while the hidden one still polls. The settle watch rides
+  // `mailboxFacts` — the SAME injected probe the sync strip reads — so the button works on
+  // every door that has one: the Cloud client, the desktop window, the served host-client.
+  // See `PullNewMail.tsx`.
+  const pullBinding = usePullNewMail(mailboxFacts);
   const now = useMemo(() => (demo ? DEMO_NOW : new Date()), [demo]);
 
   /* ── consent: what is PRESENTED, as opposed to where it sits ────────────────────────────
