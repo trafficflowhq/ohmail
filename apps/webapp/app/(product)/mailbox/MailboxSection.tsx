@@ -1430,7 +1430,7 @@ export function MailboxSection() {
                   a lie. Two keys because "the last mail came {when}" is false for a mailbox
                   that never received any — the pass stamps `createdAt` there, and the DTO's own
                   `createdAt` tells the two apart by identity. */}
-              {showInboundQuiet(m) ? (
+              {showInboundQuiet(m, now) ? (
                 <>
                   <span className="mbx-sub">
                     {m.createdAt && m.inboundQuietSince === m.createdAt

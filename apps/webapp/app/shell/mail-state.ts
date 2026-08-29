@@ -346,16 +346,26 @@ export interface MailboxFacts {
  *
  * Timestamp comparison via `Date.parse`, not string order: both are ISO-8601 from one server,
  * but a lexicographic compare would silently invert on any future format drift.
+ *
+ * `now` is a PARAMETER, not `Date.now()` read inside, for the same reason the worker's pass
+ * takes a clock: the health claim includes FRESHNESS — a `connected` row whose last completed
+ * cycle is a day old is a mailbox whose syncing story belongs to the outage surfaces, not to
+ * copy that opens with "syncing works" (review finding, round 1: non-nullness alone kept the
+ * claim on screen through an arbitrarily long outage). The threshold mirrors the worker's own
+ * trip gate, declared here because the worker's module is not importable from the shell.
  */
+export const INBOUND_QUIET_SHOW_FRESH_MS = 24 * 60 * 60 * 1000;
+
 export function showInboundQuiet(m: {
   status: string;
   lastSyncAt: string | null;
   syncBlockedSince?: string | null;
   inboundQuietSince?: string | null;
   inboundQuietDismissedAt?: string | null;
-}): boolean {
+}, now: number): boolean {
   if (!m.inboundQuietSince) return false;
   if (m.status !== "connected" || m.lastSyncAt === null || m.syncBlockedSince) return false;
+  if (now - Date.parse(m.lastSyncAt) > INBOUND_QUIET_SHOW_FRESH_MS) return false;
   if (!m.inboundQuietDismissedAt) return true;
   return Date.parse(m.inboundQuietDismissedAt) < Date.parse(m.inboundQuietSince);
 }

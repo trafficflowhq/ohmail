@@ -33,10 +33,13 @@ import { mailboxes, messages, type Tx } from "@trafficflow/db";
  *    reading that their mailbox "receives almost nothing", which is false.
  *  · junk is deliberately NOT excluded either: the notice's sentence is "this mailbox has
  *    received almost nothing", and a mailbox whose Junk folder fills daily has not.
- *  · `date IS NOT NULL` — `date` is the header date, the honest arrival clock across an initial
- *    import (a mailbox connected yesterday still shows WHEN its mail really arrived, which is
- *    what lets the absolute arm fire within days of connecting a long-diverted mailbox).
- *    A row without one asserts no arrival time and is left out of the evidence.
+ *  · TWO CLOCKS, split by what each can honestly answer (review finding, round 1). "Is mail
+ *    arriving NOW" is judged on `created_at` — ingestion, the one clock a sender cannot choose
+ *    — and rows with no header date count too: a future-dated header must not pass for recency
+ *    for ever, and a delayed or date-less message is proof of arrival exactly when it matters.
+ *    "What does the history claim" (the absolute arm, and the episode's stamp) is judged on the
+ *    header `date`, bounded above by `now` — the honest clock ACROSS an initial import, where
+ *    every row's `created_at` is the import instant and says nothing about the history's shape.
  *
  * ── THE PREDICATE (all thresholds are exported constants; the tests replay the incident) ───
  *
@@ -53,23 +56,25 @@ import { mailboxes, messages, type Tx } from "@trafficflow/db";
  *
  *   and ONE of the two arms:
  *
- *   A (comparative)  zero genuine inbound within {@link INBOUND_QUIET_WINDOW_MS} while a
- *          SIBLING connected mailbox on the same account received at least
+ *   both arms first require zero genuine INGESTION within {@link INBOUND_QUIET_WINDOW_MS}
+ *          — mail that is demonstrably arriving holds every trip back — then:
+ *   A (comparative)  a SIBLING connected mailbox on the same account ingested at least
  *          {@link INBOUND_QUIET_SIBLING_MIN} in the same window. The sibling is the evidence
  *          that mail in general is flowing to this account — a fortnight of account-wide
  *          silence (a vacation, a quiet spell) trips nothing.
- *   B (absolute)     zero genuine inbound within {@link INBOUND_QUIET_ABSOLUTE_MS}, and either
- *          the mailbox HAS older genuine inbound (so its newest is months old — the
- *          connect-a-diverted-mailbox shape) or it is itself older than the absolute window
- *          (months connected, nothing ever). Needs no sibling, so a single-mailbox account is
- *          covered.
+ *   B (absolute)     zero genuine inbound DATED within {@link INBOUND_QUIET_ABSOLUTE_MS}
+ *          (and not future-dated), and either the mailbox HAS older genuine inbound (so its
+ *          newest is months old — the connect-a-diverted-mailbox shape) or it is itself older
+ *          than the absolute window (months connected, nothing ever). Needs no sibling, so a
+ *          single-mailbox account is covered.
  *
  * The stamp is the newest genuine inbound `date` the mailbox holds — `created_at` when it never
  * held one — so the client can say "almost nothing since {date}" from the row itself, and
  * COALESCED: a later pass never advances a live episode's stamp.
  *
  * CLEAR — end the episode (`inbound_quiet_since` → NULL) — only when genuine inbound RESUMES:
- * at least {@link INBOUND_QUIET_RECOVERY_MIN} arrivals within {@link INBOUND_QUIET_WINDOW_MS}.
+ * at least {@link INBOUND_QUIET_RECOVERY_MIN} INGESTED arrivals within
+ * {@link INBOUND_QUIET_WINDOW_MS}, whatever their headers claim.
  * The hysteresis (trip at zero, clear at three) is what makes a dismissal durable on a mailbox
  * that is quiet by nature: ONE stray mail a month must not end the episode — an ended episode
  * re-trips later with a fresh `since`, and a fresh `since` newer than the dismissal re-shows
@@ -124,11 +129,24 @@ export interface InboundQuietResult {
 }
 
 interface Counts {
-  /** Genuine inbound with `date` inside {@link INBOUND_QUIET_WINDOW_MS}. */
-  recent: number;
-  /** Genuine inbound with `date` inside {@link INBOUND_QUIET_ABSOLUTE_MS} (superset of recent). */
-  absolute: number;
-  /** Newest genuine inbound `date` inside the absolute window, when any. */
+  /**
+   * Genuine inbound INGESTED inside {@link INBOUND_QUIET_WINDOW_MS} — `created_at`, never the
+   * header date, and rows with no header date count too. This is the ARRIVAL evidence (arm A's
+   * zero-test, the recovery clear), and ingestion is the one clock a sender cannot choose: a
+   * future-dated header would otherwise read as "recent" for ever with no upper bound, and a
+   * delayed, imported or date-less message would be invisible exactly when it proves the
+   * mailbox is receiving again (review finding, round 1).
+   */
+  recentIngested: number;
+  /**
+   * Genuine inbound whose HEADER DATE lies inside {@link INBOUND_QUIET_ABSOLUTE_MS} and not in
+   * the future. The header date is the honest clock ACROSS an initial import — everything
+   * imported yesterday was ingested yesterday, so `created_at` says nothing about a history's
+   * shape — which is what lets a freshly connected, long-diverted mailbox trip within days.
+   * Bounded above by `now` so a future-dated message cannot hold the absolute arm shut.
+   */
+  absoluteDated: number;
+  /** Newest genuine inbound header `date` inside that bounded window, when any. */
   newestBounded: Date | null;
 }
 
@@ -153,30 +171,34 @@ export async function inboundQuietPass(
   // ONE bounded aggregate for the whole account. The join is what lets one statement apply each
   // mailbox's OWN address to the self-sent exclusion; the `date > absoluteStart` bound is the
   // cost ceiling — a settled account never pays an unbounded scan here.
+  // TWO CLOCKS in one statement, and the split is a review finding, not a taste: `created_at`
+  // (ingestion — ours, unforgeable) answers "is mail arriving NOW", `date` (the header — the
+  // sender's) answers "what does the history claim", bounded above by `now` so a future-dated
+  // header cannot pass for recency. The row bound is the LOOSER of the two windows on each
+  // clock, so both filters see every row they may count.
   const counted = await db.select({
     mailboxId: messages.mailboxId,
-    recent: sql<number>`count(*) filter (where ${messages.date} > ${windowStart.toISOString()}::timestamptz)::int`,
-    absolute: sql<number>`count(*)::int`,
-    newestBounded: sql<Date | null>`max(${messages.date})`,
+    recentIngested: sql<number>`count(*) filter (where ${messages.createdAt} > ${windowStart.toISOString()}::timestamptz)::int`,
+    absoluteDated: sql<number>`count(*) filter (where ${messages.date} > ${absoluteStart.toISOString()}::timestamptz and ${messages.date} <= ${now.toISOString()}::timestamptz)::int`,
+    newestBounded: sql<Date | null>`max(${messages.date}) filter (where ${messages.date} > ${absoluteStart.toISOString()}::timestamptz and ${messages.date} <= ${now.toISOString()}::timestamptz)`,
   }).from(messages)
     .innerJoin(mailboxes, eq(mailboxes.id, messages.mailboxId))
     .where(and(
       eq(messages.accountId, accountId),
-      isNotNull(messages.date),
-      sql`${messages.date} > ${absoluteStart.toISOString()}::timestamptz`,
+      sql`(${messages.createdAt} > ${windowStart.toISOString()}::timestamptz or (${messages.date} is not null and ${messages.date} > ${absoluteStart.toISOString()}::timestamptz))`,
       sql`lower(${messages.fromAddress}) <> lower(${mailboxes.address})`,
     ))
     .groupBy(messages.mailboxId);
   const byMailbox = new Map<string, Counts>();
   for (const c of counted) {
     byMailbox.set(c.mailboxId, {
-      recent: c.recent,
-      absolute: c.absolute,
+      recentIngested: c.recentIngested,
+      absoluteDated: c.absoluteDated,
       newestBounded: c.newestBounded === null ? null : asDate(c.newestBounded),
     });
   }
   const countsOf = (id: string): Counts =>
-    byMailbox.get(id) ?? { recent: 0, absolute: 0, newestBounded: null };
+    byMailbox.get(id) ?? { recentIngested: 0, absoluteDated: 0, newestBounded: null };
 
   // The comparative arm's sibling evidence: the busiest OTHER connected mailbox on the account.
   // Computed per mailbox (excluding itself) so two diverted mailboxes cannot vouch for each other.
@@ -184,7 +206,7 @@ export async function inboundQuietPass(
     let max = 0;
     for (const r of rows) {
       if (r.id === selfId || r.status !== "connected") continue;
-      const n = countsOf(r.id).recent;
+      const n = countsOf(r.id).recentIngested;
       if (n > max) max = n;
     }
     return max;
@@ -199,7 +221,7 @@ export async function inboundQuietPass(
       // IN AN EPISODE. The only exit is genuine inbound resuming — see the header for why an
       // unhealthy state holds rather than clears. The guard predicate re-asserts the episode so
       // a concurrent clear (another door, an operator) is never overwritten with a second clear.
-      if (counts.recent >= INBOUND_QUIET_RECOVERY_MIN) {
+      if (counts.recentIngested >= INBOUND_QUIET_RECOVERY_MIN) {
         await db.update(mailboxes)
           .set({ inboundQuietSince: null })
           .where(and(
@@ -221,13 +243,16 @@ export async function inboundQuietPass(
     if (now.getTime() - m.lastSyncAt.getTime() > INBOUND_QUIET_SYNC_FRESH_MS) continue;
     if (now.getTime() - m.createdAt.getTime() < INBOUND_QUIET_MIN_AGE_MS) continue;
 
-    const armA = counts.recent === 0 && siblingMax(m.id) >= INBOUND_QUIET_SIBLING_MIN;
+    // BOTH arms require zero genuine INGESTION inside the window — mail that is demonstrably
+    // arriving (whatever its headers claim, or with none at all) must hold every trip back.
+    if (counts.recentIngested !== 0) continue;
+    const armA = siblingMax(m.id) >= INBOUND_QUIET_SIBLING_MIN;
     // Arm B's second read needs the unbounded probe only when the bounded window is empty; the
     // probe doubles as the episode's stamp. Run before deciding, because "has older inbound"
     // IS the arm's second clause.
     let newestEver: Date | null = counts.newestBounded;
-    if (!armA && counts.absolute !== 0) continue; // neither arm can hold; skip the probe
-    if (counts.absolute === 0) {
+    if (!armA && counts.absoluteDated !== 0) continue; // neither arm can hold; skip the probe
+    if (counts.absoluteDated === 0) {
       const [probe] = await db.select({
         newest: sql<Date | null>`max(${messages.date})`,
       }).from(messages)
@@ -236,12 +261,15 @@ export async function inboundQuietPass(
           eq(messages.accountId, accountId),
           eq(messages.mailboxId, m.id),
           isNotNull(messages.date),
+          // The same upper bound as the windowed aggregate: a future-dated header is not
+          // history, and stamping one would put the episode's "since" ahead of the clock.
+          sql`${messages.date} <= ${now.toISOString()}::timestamptz`,
           sql`lower(${messages.fromAddress}) <> lower(${mailboxes.address})`,
         ));
       newestEver = probe?.newest == null ? null : asDate(probe.newest);
     }
     const mailboxIsOld = now.getTime() - m.createdAt.getTime() >= INBOUND_QUIET_ABSOLUTE_MS;
-    const armB = counts.absolute === 0 && (newestEver !== null || mailboxIsOld);
+    const armB = counts.absoluteDated === 0 && (newestEver !== null || mailboxIsOld);
     if (!armA && !armB) continue;
 
     // THE STAMP: the newest genuine inbound this mailbox holds — `created_at` when it never

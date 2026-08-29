@@ -370,7 +370,7 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
               stamp and a notice folded into it would vanish with the next tick. Two keys —
               "the last mail came {when}" is false for a mailbox that never received any, and
               the pass stamps `createdAt` there, told apart by identity. */}
-          {showInboundQuiet(m) ? (
+          {showInboundQuiet(m, Date.now()) ? (
             <SettingsRow
               label=""
               description={m.inboundQuietSince === m.createdAt
