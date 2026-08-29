@@ -59,9 +59,12 @@ import { mailboxes, messages, type Tx } from "@trafficflow/db";
  *   both arms first require zero genuine INGESTION within {@link INBOUND_QUIET_WINDOW_MS}
  *          — mail that is demonstrably arriving holds every trip back — then:
  *   A (comparative)  a SIBLING connected mailbox on the same account ingested at least
- *          {@link INBOUND_QUIET_SIBLING_MIN} in the same window. The sibling is the evidence
- *          that mail in general is flowing to this account — a fortnight of account-wide
- *          silence (a vacation, a quiet spell) trips nothing.
+ *          {@link INBOUND_QUIET_SIBLING_MIN} in the same window, counting only rows ingested
+ *          AFTER that sibling's own initial import completed — history a fresh connect just
+ *          wrote is not live flow. The sibling is the evidence that mail in general is
+ *          flowing to this account — a fortnight of account-wide silence (a vacation, a quiet
+ *          spell) trips nothing, and connecting a new mailbox beside a quiet one trips
+ *          nothing either.
  *   B (absolute)     zero genuine inbound DATED within {@link INBOUND_QUIET_ABSOLUTE_MS}
  *          (and not future-dated), and either the mailbox HAS older genuine inbound (so its
  *          newest is months old — the connect-a-diverted-mailbox shape) or it is itself older
@@ -139,6 +142,15 @@ interface Counts {
    */
   recentIngested: number;
   /**
+   * The subset of {@link recentIngested} ingested AFTER the mailbox's own initial import
+   * completed — the only ingestion that proves LIVE arrival. A freshly connected mailbox's
+   * import writes months of history with today's `created_at`, and five such rows must not let
+   * that mailbox vouch that mail is flowing to this account (review finding, round 2: an
+   * established quiet mailbox would be tripped by nothing more than a sibling being connected).
+   * NULL/incomplete import ⇒ zero — a mailbox mid-import can vouch for nothing.
+   */
+  recentPostImport: number;
+  /**
    * Genuine inbound whose HEADER DATE lies inside {@link INBOUND_QUIET_ABSOLUTE_MS} and not in
    * the future. The header date is the honest clock ACROSS an initial import — everything
    * imported yesterday was ingested yesterday, so `created_at` says nothing about a history's
@@ -179,6 +191,7 @@ export async function inboundQuietPass(
   const counted = await db.select({
     mailboxId: messages.mailboxId,
     recentIngested: sql<number>`count(*) filter (where ${messages.createdAt} > ${windowStart.toISOString()}::timestamptz)::int`,
+    recentPostImport: sql<number>`count(*) filter (where ${messages.createdAt} > ${windowStart.toISOString()}::timestamptz and ${mailboxes.initialImportCompletedAt} is not null and ${messages.createdAt} > ${mailboxes.initialImportCompletedAt})::int`,
     absoluteDated: sql<number>`count(*) filter (where ${messages.date} > ${absoluteStart.toISOString()}::timestamptz and ${messages.date} <= ${now.toISOString()}::timestamptz)::int`,
     newestBounded: sql<Date | null>`max(${messages.date}) filter (where ${messages.date} > ${absoluteStart.toISOString()}::timestamptz and ${messages.date} <= ${now.toISOString()}::timestamptz)`,
   }).from(messages)
@@ -193,20 +206,23 @@ export async function inboundQuietPass(
   for (const c of counted) {
     byMailbox.set(c.mailboxId, {
       recentIngested: c.recentIngested,
+      recentPostImport: c.recentPostImport,
       absoluteDated: c.absoluteDated,
       newestBounded: c.newestBounded === null ? null : asDate(c.newestBounded),
     });
   }
   const countsOf = (id: string): Counts =>
-    byMailbox.get(id) ?? { recentIngested: 0, absoluteDated: 0, newestBounded: null };
+    byMailbox.get(id) ?? { recentIngested: 0, recentPostImport: 0, absoluteDated: 0, newestBounded: null };
 
   // The comparative arm's sibling evidence: the busiest OTHER connected mailbox on the account.
-  // Computed per mailbox (excluding itself) so two diverted mailboxes cannot vouch for each other.
+  // Computed per mailbox (excluding itself) so two diverted mailboxes cannot vouch for each
+  // other — and read from POST-IMPORT ingestion only, so a sibling connected yesterday cannot
+  // vouch with the historical rows its own initial import just wrote (round 2's finding).
   const siblingMax = (selfId: string): number => {
     let max = 0;
     for (const r of rows) {
       if (r.id === selfId || r.status !== "connected") continue;
-      const n = countsOf(r.id).recentIngested;
+      const n = countsOf(r.id).recentPostImport;
       if (n > max) max = n;
     }
     return max;
