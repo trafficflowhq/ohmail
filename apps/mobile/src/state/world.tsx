@@ -591,14 +591,15 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * foreground drain the connection layer already runs — re-derives, whichever lands first.
    */
   const [freshBeat, setFreshBeat] = useState(0);
-  // The sentinel is the RAW verdict (`freshnessKey`: state + instant), never the formatted
-  // label — weekday+time repeats weekly, and a label-compared sentinel sleeps through a real
-  // transition whose stamp happens to format identically. Forgotten per engine: a new engine's
-  // verdict is unknown to this clock, so its first tick re-derives once and re-seeds.
+  // The sentinel is the RAW verdict (`freshnessKey` — see its header for the two review rounds
+  // that shaped it), SEEDED from the live verdict when the clock arms: the world this effect
+  // follows was just derived from the same engine, so the first tick has nothing to announce —
+  // an unseeded ref bumped a full world rebuild on the first tick after every drain, for no
+  // visible change. A new engine re-arms the effect and re-seeds from ITS verdict the same way.
   const lastFreshKey = useRef<string | null>(null);
   useEffect(() => {
     if (engine === null) return;
-    lastFreshKey.current = null;
+    lastFreshKey.current = freshnessKey(engine);
     const id = setInterval(() => {
       const key = freshnessKey(engine);
       if (key !== lastFreshKey.current) {
