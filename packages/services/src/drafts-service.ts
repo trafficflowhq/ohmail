@@ -10,8 +10,8 @@ import { DRAFT_HTML_CAP_BYTES, htmlByteLength, prepareOutboundBody } from "./out
 /**
  * For `create`: claim the idempotency row INSIDE the transaction that writes the draft.
  *
- * The caller supplies the response because the route's response is not the draft DTO — the
- * `POST /messages/:id/draft` route answers `202 { draftId }` — and the id only exists inside the
+ * The caller supplies the response because the route's response is not the draft DTO â the
+ * `POST /messages/:id/draft` route answers `202 { draftId }` â and the id only exists inside the
  * transaction. `response` is therefore a function of the row that was just written, evaluated
  * in-tx, exactly like `MessageService.move` stores its own materialized DTO in-tx.
  */
@@ -23,7 +23,7 @@ export interface DraftCreateIdempotency {
    * `draft` is the row MATERIALIZED IN-TX, for the route whose response is the DTO itself
    * (`POST /drafts` answers 201 + the draft): a replay hands back the stored JSON verbatim,
    * so storing anything narrower than the original answer would make the replayed create a
-   * different response — the adapter reads `id` off it and a missing field is a client-side
+   * different response â the adapter reads `id` off it and a missing field is a client-side
    * failure for a create that succeeded. The AI route keeps ignoring it (`202 {draftId}`).
    */
   response: (r: { draftId: string; seq: number; draft: DraftDTO }) => unknown;
@@ -39,7 +39,7 @@ export interface CreateDraftBody {
   /**
    * The text/plain body.
    *
-   * Legal on its own — that is a plain draft, and the whole product worked that way until
+   * Legal on its own â that is a plain draft, and the whole product worked that way until
    * rich compose. Illegal ALONGSIDE a non-null {@link html}: see {@link DraftsService.richBody}
    * for why the server derives it instead of accepting it.
    */
@@ -52,9 +52,9 @@ export interface CreateDraftBody {
   to?: EmailAddress[];
   cc?: EmailAddress[];
   /**
-   * Blind-carbon recipients. Stored on the draft and delivered on the SMTP ENVELOPE ONLY — never
+   * Blind-carbon recipients. Stored on the draft and delivered on the SMTP ENVELOPE ONLY â never
    * written into the message headers of the delivered mail or the Sent-folder copy (see
-   * `SendService.reserve` → `OutboundMessage.bcc`, and `imap.ts#send`). Omit or `[]` for none.
+   * `SendService.reserve` â `OutboundMessage.bcc`, and `imap.ts#send`). Omit or `[]` for none.
    */
   bcc?: EmailAddress[];
   /** The AI drafter's reasoning (3b). Null/omitted for manual compose. */
@@ -62,15 +62,15 @@ export interface CreateDraftBody {
 }
 
 /**
- * PUT/PATCH — any subset of the composable fields, `mailboxId` included.
+ * PUT/PATCH â any subset of the composable fields, `mailboxId` included.
  *
  * `mailboxId` was fixed after create, and that froze the sending IDENTITY at the first
- * autosave: the row is born at the first keystroke, so a From picked afterwards — the
- * explicit selector, or the domain-match switch that fires only once recipients exist —
+ * autosave: the row is born at the first keystroke, so a From picked afterwards â the
+ * explicit selector, or the domain-match switch that fires only once recipients exist â
  * changed the screen and nothing else, and the mail left under whatever the picker held
  * when typing began. The pick has to reach the row, so the patch may move it: validated
  * exactly like create (owned, not disabled), and refused with a 409 the moment the row
- * has left `draft` — a send in flight, or already out, keeps the identity it was
+ * has left `draft` â a send in flight, or already out, keeps the identity it was
  * reserved under (see {@link DraftsService.update}).
  */
 export type PatchDraftBody = Partial<CreateDraftBody>;
@@ -82,14 +82,14 @@ export interface DraftMutation {
 }
 
 /**
- * DraftsService — MANUAL compose CRUD for `/drafts`. A draft is STORED and never
+ * DraftsService â MANUAL compose CRUD for `/drafts`. A draft is STORED and never
  * auto-sent (the AI drafter and the gated send are separate paths). Every
  * client-visible mutation runs ONE `db.transaction` that writes the `drafts` row
  * AND appends a `draft` change through the `change_log` seam SyncService reads
- * (in-tx) — so draft create/edit/delete surface in `/sync`. `materializeDraft`
+ * (in-tx) â so draft create/edit/delete surface in `/sync`. `materializeDraft`
  * means a `draft` change re-materializes to the live DTO rather than
  * tombstoning. Every query is scoped to `ctx.accountId`; a cross-account id
- * → 404. `create` validates the `mailboxId` belongs to the account.
+ * â 404. `create` validates the `mailboxId` belongs to the account.
  */
 export class DraftsService {
   async get(ctx: ServiceContext, id: string): Promise<DraftDTO> {
@@ -114,7 +114,7 @@ export class DraftsService {
     const rationale = body.rationale ?? null;
     const now = ctx.now();
 
-    const { id, seq } = await asTx(ctx).transaction(async (tx) => {
+    const { id, seq, stored } = await asTx(ctx).transaction(async (tx) => {
       // Same order and same ownership rule as `update`: the reply-target thread is read
       // (key-share) BEFORE the draft row exists, and another account's thread id is a 404.
       if (body.threadId) {
@@ -137,11 +137,16 @@ export class DraftsService {
       });
       // The stored response commits atomically with the draft, closing the
       // commit-then-crash window in which a retry would store a SECOND draft.
+      let inTx: DraftDTO | null = null;
       if (opts.idempotency) {
-        // In-tx on purpose: the row only exists inside this transaction, and the stored
-        // response must be the answer the FIRST request gave — see the interface's `draft`.
-        const draft = await materializeDraft(tx as unknown as typeof ctx.db, ctx.accountId, row!.id);
-        if (!draft) throw new ServiceError("internal", 500, "draft vanished inside its own transaction");
+        // In-tx on purpose, TWICE over: the row only exists inside this transaction, and the
+        // stored response must be the answer the FIRST request gives â so the first 201 also
+        // RETURNS this snapshot rather than re-reading after commit, where a concurrent
+        // mutation (a thread merge repointing the row) could make the live answer differ
+        // from every later replay of the same key.
+        inTx = await materializeDraft(tx as unknown as typeof ctx.db, ctx.accountId, row!.id);
+        if (!inTx) throw new ServiceError("internal", 500, "draft vanished inside its own transaction");
+        const draft = inTx;
         const claimed = await claimIdempotencyKey(tx, {
           accountId: ctx.accountId,
           key: opts.idempotency.key,
@@ -155,18 +160,20 @@ export class DraftsService {
         // transaction back (the draft included) and `withIdempotency` replays the winner.
         if (!claimed) throw new IdempotencyRaceLost(ctx.accountId, opts.idempotency.key);
       }
-      return { id: row!.id, seq: s };
+      return { id: row!.id, seq: s, stored: inTx };
     });
 
+    // The idempotent path answers with the SNAPSHOT IT STORED â first response ≡ every replay.
+    if (stored) return { draft: stored, seq: Number(seq) };
     return this.finish(ctx, id, seq);
   }
 
-  /** PUT/PATCH /drafts/:id — full/partial edit of the composable fields. */
+  /** PUT/PATCH /drafts/:id â full/partial edit of the composable fields. */
   async update(ctx: ServiceContext, id: string, patch: PatchDraftBody): Promise<DraftMutation> {
-    // An edit answers a scheduled-send failure — the sentence must not outlive the words it was
+    // An edit answers a scheduled-send failure â the sentence must not outlive the words it was
     // about, so any edit clears it. A `scheduled` row itself refuses edits below.
     const set: Record<string, unknown> = { updatedAt: ctx.now(), sendError: null };
-    // THE SENDING MAILBOX MOVES WITH THE PICK — validated exactly as create validates it
+    // THE SENDING MAILBOX MOVES WITH THE PICK â validated exactly as create validates it
     // (owned, not disabled), and only while the row is still a draft: the status predicate
     // is on the UPDATE itself (below), so a row that a concurrent send has already flipped
     // to `sending` cannot have its identity rewritten between a read and a write here.
@@ -182,8 +189,8 @@ export class DraftsService {
       if (patch.body !== undefined) {
         set.body = this.validString(patch.body, "body");
         // A PLAIN edit of a RICH draft is refused rather than resolved. Writing `body` alone
-        // would leave the row holding two bodies that disagree — the html the sender still sees
-        // in their editor, and the text every plaintext recipient would get — and silently
+        // would leave the row holding two bodies that disagree â the html the sender still sees
+        // in their editor, and the text every plaintext recipient would get â and silently
         // dropping the html to make them agree would delete formatting the user can see, in a
         // request that never mentioned it. Demoting a draft to plain text is legal and is spelt
         // out: send `html: null` in the SAME request.
@@ -200,7 +207,7 @@ export class DraftsService {
       // A reply target moves FIRST, before the draft row is written: the FK check on the new
       // `thread_id` takes a key-share on the thread row, and every writer of a thread takes
       // thread rows before draft rows (the merge paths hold a thread FOR UPDATE while
-      // repointing drafts) — the reversed order is a deadlock both sides pay as a 500. The
+      // repointing drafts) â the reversed order is a deadlock both sides pay as a 500. The
       // read is also the OWNERSHIP check the column never had: account isolation is absolute,
       // so another account's thread id is a 404, not a stored reference.
       if (patch.threadId) {
@@ -210,7 +217,7 @@ export class DraftsService {
         if (t.length === 0) throw new ServiceError("not_found", 404, "thread not found");
       }
       // Scope the UPDATE to the account: a cross-account id matches 0 rows. A mailbox move
-      // additionally requires `status = 'draft'` IN THE PREDICATE — not in a prior read —
+      // additionally requires `status = 'draft'` IN THE PREDICATE â not in a prior read â
       // because the send path flips the row to `sending` in its own transaction, and a check
       // that ran before this UPDATE took the row lock would let the move land on a row whose
       // send is already reserved under the old identity.
@@ -222,8 +229,8 @@ export class DraftsService {
       // 'draft' with the key standing, and a status-only freeze would let a stale client PUT
       // win the row lock ahead of the reservation and change the content that sends. The key
       // covers every phase of an appointment's life ('scheduled', the claim window, and
-      // 'sending' up to the finalizer that clears it) and nothing else — an ordinary draft
-      // never carries one. The edit flow is cancel → edit → schedule again, which re-mints
+      // 'sending' up to the finalizer that clears it) and nothing else â an ordinary draft
+      // never carries one. The edit flow is cancel â edit â schedule again, which re-mints
       // the key, so "an edited message sends only its final content" is structural rather
       // than a race. In the PREDICATE, not a prior read, for the same reason the mailbox
       // move's status check is.
@@ -239,7 +246,7 @@ export class DraftsService {
         // Zero rows is three different refusals, and they need different answers: a row that
         // does not exist (or is another account's) is the standing 404; a row wearing an
         // appointment is refused the EDIT with the way forward named; a row past `draft` is
-        // refused the mailbox MOVE — so the caller learns the identity is fixed rather than
+        // refused the mailbox MOVE â so the caller learns the identity is fixed rather than
         // that the draft vanished.
         const [row] = await tx.select({ status: drafts.status, sendKey: drafts.sendKey }).from(drafts)
           .where(and(eq(drafts.id, id), eq(drafts.accountId, ctx.accountId))).limit(1);
@@ -269,7 +276,7 @@ export class DraftsService {
     const seq = await asTx(ctx).transaction(async (tx) => {
       // A row WEARING AN APPOINTMENT refuses the delete with the way forward named, exactly as
       // `update` refuses the edit: cancel first. The predicate is `send_key IS NULL` for
-      // `update`'s reason — the claim window ('draft', key standing) is precisely when a
+      // `update`'s reason â the claim window ('draft', key standing) is precisely when a
       // DELETE that wins the row lock lands ahead of the reservation and destroys the record
       // of a send that is happening anyway. Cancel is the verb that is race-safe by
       // construction.
@@ -306,10 +313,10 @@ export class DraftsService {
   }
 
   /**
-   * The mailbox must exist, belong to the caller's account — AND still be
+   * The mailbox must exist, belong to the caller's account â AND still be
    * connected.
    *
-   * ── WHY STATUS BELONGS HERE AND NOT ONLY AT SEND ──────────────────────────────────────────
+   * ââ WHY STATUS BELONGS HERE AND NOT ONLY AT SEND ââââââââââââââââââââââââââââââââââââââââââ
    *
    * This used to check ownership alone, which let a draft be composed against a mailbox that
    * can never send it. The send path is where that becomes destructive (see `SendService.
@@ -317,13 +324,13 @@ export class DraftsService {
    * difference between "you cannot pick this sender" and "we accepted your message and then
    * could not send it". The user finds out while they still have the text in front of them.
    *
-   * `'error'` is DELIBERATELY ALLOWED. It is the sync worker's word about IMAP — written by
-   * `markMailboxFailed`, cleared by the worker itself on recovery — and SMTP is a separate
+   * `'error'` is DELIBERATELY ALLOWED. It is the sync worker's word about IMAP â written by
+   * `markMailboxFailed`, cleared by the worker itself on recovery â and SMTP is a separate
    * transport: a mailbox that cannot be read may still be able to send, and an `error` a user
    * cannot clear would strand their outbox on a transient fault they did not cause. The same
    * reasoning excludes `sync_blocked_reason`, which `markMailboxSyncBlocked` writes WITHOUT
    * touching `status` precisely because it is a note about our infrastructure, not the mailbox.
-   * Only `'disabled'` — the state a human or a billing/lease decision put the row in — refuses.
+   * Only `'disabled'` â the state a human or a billing/lease decision put the row in â refuses.
    */
   private async validMailbox(ctx: ServiceContext, v: unknown): Promise<string> {
     if (typeof v !== "string" || v.length === 0) {
@@ -345,15 +352,15 @@ export class DraftsService {
    * The rich body, sanitized, with its text/plain alternative derived from what survived.
    *
    * Returns `null` when the request carries no html at all, which is the plain-text path and is
-   * left byte-exact — the compose surface that has always sent a string still sends one, and
+   * left byte-exact â the compose surface that has always sent a string still sends one, and
    * nothing about it changes.
    *
-   * ── WHY THE SERVER DERIVES `body` INSTEAD OF ACCEPTING IT ────────────────────────────────
+   * ââ WHY THE SERVER DERIVES `body` INSTEAD OF ACCEPTING IT ââââââââââââââââââââââââââââââââ
    *
    * A `multipart/alternative` is a promise that its two parts say the same thing. If both parts
    * arrive from the client, that promise is a convention two codebases have to keep, and the
    * first client that gets it wrong ships a message whose plaintext readers see something its
-   * html readers do not — including the case that matters, where the html says one thing and
+   * html readers do not â including the case that matters, where the html says one thing and
    * the text says another to the same person on two devices. Deriving one from the other makes
    * the promise structural: there is no request that can express a disagreement.
    *
@@ -361,7 +368,7 @@ export class DraftsService {
    * Ignoring it would make a client that believes it is setting the plain part indistinguishable
    * from one that is not, and the symptom would appear only in somebody's inbox.
    *
-   * ── THE ORDER IS SANITIZE, THEN MEASURE, THEN DERIVE ─────────────────────────────────────
+   * ââ THE ORDER IS SANITIZE, THEN MEASURE, THEN DERIVE âââââââââââââââââââââââââââââââââââââ
    *
    * The cap is applied to what will be STORED, not to what arrived: a request whose markup is
    * mostly attributes the allowlist strips is not over the limit, and refusing it on its raw
@@ -383,7 +390,7 @@ export class DraftsService {
     const size = htmlByteLength(prepared.html);
     if (size > DRAFT_HTML_CAP_BYTES) {
       // Refused HERE so the constraint never has to. `drafts_html_cap` is the tripwire behind
-      // this line — see `0037_draft_html.sql` — and a 413 with a number in it is a sentence a
+      // this line â see `0037_draft_html.sql` â and a 413 with a number in it is a sentence a
       // person can act on, where a constraint violation is a 500 they cannot.
       throw new ServiceError(
         "draft_too_large", 413,

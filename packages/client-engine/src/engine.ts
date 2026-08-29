@@ -124,6 +124,42 @@ interface PersistedOutboxEntry {
   mutation: EngineMutation;
 }
 
+/**
+ * The SAME-KIND, SAME-TARGET identity a newer verb replaces a queued older verb under — see
+ * {@link OhmailEngine.supersedeQueued} for the rule and its boundaries. `null` means this kind
+ * never participates: creates (nothing to replace), `mail_send` (the reservation machinery owns
+ * it), the read-flag verbs (they subtract ids instead — a list is not a scalar), and anything
+ * whose replay is already convergent without help.
+ */
+function supersedeKey(m: EngineMutation): string | null {
+  switch (m.kind) {
+    case "triage_set":
+    case "move":
+    case "message_delete":
+    case "tag_assign": // the enriched `labels` is the complete list — the message is the target
+      return `${m.kind}:${m.messageId}`;
+    case "screener_decide":
+      return `screener_decide:${m.senderId}`;
+    case "rule_update":
+      return `rule_update:${m.ruleId}`;
+    case "tag_rename":
+    case "tag_recolor":
+      return `${m.kind}:${m.tagId}`;
+    case "folder_rename":
+    case "folder_delete":
+    case "folder_op_dismiss":
+      return `${m.kind}:${m.folderId}`;
+    case "draft_save":
+      // Only the autosave of an EXISTING row — the newer body is the whole intent. A create
+      // (draftId null) supersedes nothing and is never superseded.
+      return m.draftId === null ? null : `draft_save:${m.draftId}`;
+    case "draft_schedule_cancel":
+      return `draft_schedule_cancel:${m.draftId}`;
+    default:
+      return null;
+  }
+}
+
 /** The shape gate for {@link PersistedOutboxEntry} — see `v` above for why unknown ⇒ keep, not drop. */
 function isPersistedOutboxEntry(e: unknown): e is PersistedOutboxEntry {
   if (typeof e !== "object" || e === null) return false;
@@ -770,6 +806,19 @@ export interface EngineOptions {
    * shipped paths never pass it, so the one number below is the one every client uses.
    */
   outboxReplayDeadlineMs?: number;
+  /**
+   * WHO REPLAYS THE OUTBOX. `true` (the default, and the webapp's shape): the engine's own
+   * drives replay restored and unowned entries before each drain — the webapp dispatches most
+   * verbs fire-and-forget and flushes only around sends, so the drive is the only retry those
+   * verbs will ever get. `false` (the mobile shape): the drive replays NOTHING and every entry
+   * — restored included — waits for the host's own `flushPending` cadence, because that host
+   * routes EVERY returned result (the mobile ledger toasts a background confirmation as the
+   * send it was and a hard refusal as the save that failed, keyed off `pendingMutations()`
+   * before the flush). Handing the drive those entries would settle them silently. Restore
+   * itself is unaffected either way: overlays re-apply with the store's load, and the entries
+   * sit visibly in `pendingMutations()` until their owner flushes.
+   */
+  outboxAutoReplay?: boolean;
 }
 
 /**
@@ -950,6 +999,17 @@ export class OhmailEngine {
   private outboxRestored = false;
   /** See {@link OUTBOX_REPLAY_DEADLINE_MS}; overridable only through the test seam. */
   private readonly replayDeadlineMs: number;
+  /**
+   * THE ORDER BARRIER a timed-out replay leaves behind: the still-in-flight dispatch, held
+   * until it settles. While it stands, NO further outbox dispatch may start — not the next
+   * drive's replay and not a `flushPending` — because the hung request may yet commit, and a
+   * verb dispatched behind it could land an older value after a newer one on the server. The
+   * barrier clears itself on settle; a process death clears it the honest way (every
+   * still-owed verb is persisted and replays in order next boot).
+   */
+  private replayHold: Promise<void> | null = null;
+  /** {@link EngineOptions.outboxAutoReplay}, resolved once. */
+  private readonly autoReplayOn: boolean;
   /** Session-monotonic outbox tiebreak; seeded past every restored entry's `n`. */
   private outboxSeq = 0;
   private readonly listeners = new Set<() => void>();
@@ -1116,6 +1176,7 @@ export class OhmailEngine {
     this.syncLimit = opts.syncLimit;
     this.staleResumeMs = opts.staleResumeMs ?? STALE_RESUME_MS;
     this.replayDeadlineMs = opts.outboxReplayDeadlineMs ?? OUTBOX_REPLAY_DEADLINE_MS;
+    this.autoReplayOn = opts.outboxAutoReplay !== false;
     this.now = opts.now ?? (() => new Date());
     this.bootedAt = this.now().getTime();
     this.uuid = opts.uuid ?? (() => crypto.randomUUID());
@@ -1297,6 +1358,13 @@ export class OhmailEngine {
   }
 
   private async replayOutbox(): Promise<void> {
+    // The host owns the whole replay (`outboxAutoReplay: false` — the mobile shape): the drive
+    // touches nothing, and `flushPending` routes every result to its ledger.
+    if (!this.autoReplayOn) return;
+    // A timed-out dispatch from an earlier drive is still in the air — see {@link replayHold}:
+    // nothing may be dispatched behind it until it settles, so this drive skips its replay and
+    // goes straight to the drain. The queue keeps everything, in order, for the drive after.
+    if (this.replayHold) return;
     if (this.queue.length === 0) return;
     // Every RESTORED entry (its owner died with its session), plus every same-session entry
     // whose result nobody routes — see {@link OhmailEngine.ownerSettled} for the two families
@@ -1320,10 +1388,11 @@ export class OhmailEngine {
     // dropped.
     for (let i = 0; i < batch.length; i++) {
       const p = batch[i]!;
+      const attempt = this.dispatch(p, { deferReconcile: true });
       let timer: ReturnType<typeof setTimeout> | undefined;
       let timedOut = false;
       await Promise.race([
-        this.dispatch(p, { deferReconcile: true }),
+        attempt,
         new Promise<void>((resolve) => {
           timer = setTimeout(() => { timedOut = true; resolve(); }, this.replayDeadlineMs);
         }),
@@ -1334,8 +1403,17 @@ export class OhmailEngine {
         // request may yet commit, and dispatching the entries behind it would let a newer
         // write land before an older one — mark-read then mark-unread arriving reversed is
         // the exact class the serial replay exists to prevent. The rest go back on the queue
-        // (stamps intact — the next replay re-sorts) and this drive proceeds to its drain;
-        // one deadline bounds the whole batch, not deadline × N.
+        // (stamps intact — the next replay re-sorts), and the in-flight dispatch becomes the
+        // ORDER BARRIER: no later drive's replay and no `flushPending` may start another
+        // outbox dispatch until it settles (see {@link replayHold}). This drive still
+        // proceeds to its drain — reads are never hostage to a hung write.
+        const hold: Promise<void> = attempt.then(
+          () => undefined,
+          () => undefined,
+        ).finally(() => {
+          if (this.replayHold === hold) this.replayHold = null;
+        });
+        this.replayHold = hold;
         this.queue.unshift(...batch.slice(i + 1));
         return;
       }
@@ -2886,6 +2964,15 @@ export class OhmailEngine {
     const id = this.uuid();
     const key = this.uuid();
 
+    // AFTER enrich, BEFORE anything else — and SYNCHRONOUS, which is load-bearing twice over:
+    // enrich must read the superseded verbs' overlays (tag_assign's frozen label union is
+    // computed over them), and the first frame after this call must already show the newer
+    // verb's overlay (re-resurface-first-frame pins that mutate() publishes before its first
+    // await). The store-side deletes/rewrites inside are fire-and-forget: if a kill outruns
+    // them, the stale entry replays BEFORE the newer one — restore sorts by (at, n) — so the
+    // newer verb still lands last and the server converges on the user's latest word.
+    this.supersedeQueued(enriched);
+
     const effects = mutationEffects(this.read(), enriched, { now: this.now, uuid: this.uuid });
     if (effects.length === 0) {
       const error = new MutationRejectedError(`mutation target not found (${m.kind})`, {
@@ -2930,6 +3017,90 @@ export class OhmailEngine {
     try {
       await this.store.prune([{ type: OUTBOX_TYPE, id }]);
     } catch { /* an undeleted entry replays idempotently — the safe direction */ }
+  }
+
+  /**
+   * A NEWER VERB RETIRES THE QUEUED OLDER VERB IT SUPERSEDES — the user-always-wins rule
+   * applied to the outbox itself. Without this, a queued `mark_seen(read)` replayed after the
+   * user's newer `mark_seen(unread)` committed would put the SERVER back at the older value:
+   * the replay is ordered against other queued verbs, but a live verb that already landed is
+   * not in the queue for order to protect. The user superseded the old intent by expressing
+   * the new one, so retiring it here IS honoring their latest word — for the drive's replay
+   * and for `flushPending` alike.
+   *
+   * What "supersedes" is allowed to mean, deliberately narrow:
+   *  · SAME KIND, SAME SCALAR TARGET ({@link supersedeKey}) — absolute-valued verbs where the
+   *    newer value is the whole intent (triage, move, decide, rename, recolor, destination,
+   *    a draft body autosave). `tag_assign` keys on the MESSAGE alone because its enriched
+   *    `labels` is the complete list computed over the older overlay — the newer verb already
+   *    carries the union.
+   *  · READ-FLAG ID SUBTRACTION — a newer `mark_seen` removes its ids from queued `mark_seen`
+   *    AND queued `feed_mark_seen` lists (an explicit read/unread outranks both); a newer
+   *    `feed_mark_seen` subtracts only from queued `feed_mark_seen` (a glance must never
+   *    cancel a queued deliberate unread), and its same-view waterline replaces the older
+   *    entry's. Rewriting a narrowed body under the SAME Idempotency-Key is safe on exactly
+   *    these routes: `PATCH /messages` stores no idempotency row (naturally idempotent, the
+   *    route says so), so no stored-hash 409 can meet the new body.
+   *  · NOTHING ELSE. Cross-kind conflicts (a move racing a delete) converge through the
+   *    server's own write-ownership; `mail_send` is never touched (the reservation machinery
+   *    owns it); creates supersede nothing.
+   */
+  private supersedeQueued(m: EngineMutation): void {
+    if (this.queue.length === 0) return;
+    const key = supersedeKey(m);
+    const readIds = m.kind === "mark_seen" || m.kind === "feed_mark_seen"
+      ? new Set(m.messageIds ?? [])
+      : null;
+    let changed = false;
+    for (let i = this.queue.length - 1; i >= 0; i--) {
+      const q = this.queue[i]!;
+      const qm = q.mutation;
+      // Whole-entry replacement: same kind, same scalar target.
+      if (key !== null && supersedeKey(qm) === key) {
+        this.queue.splice(i, 1);
+        this.overlays.delete(q.id);
+        void this.dropOutbox(q.id);
+        changed = true;
+        continue;
+      }
+      // Read-flag subtraction. The allowed pairs, and only these: an explicit `mark_seen`
+      // outranks BOTH queued read verbs; a glance (`feed_mark_seen`) outranks only another
+      // glance — it must never cancel a queued deliberate unread.
+      if (readIds && readIds.size > 0 && (qm.kind === "mark_seen" || qm.kind === "feed_mark_seen")) {
+        const pairAllowed = m.kind === "mark_seen" || qm.kind === "feed_mark_seen";
+        const qids = qm.messageIds ?? [];
+        // A newer same-view glance also replaces the older glance's waterline: the newer
+        // departure IS the later line.
+        const lineSuperseded = m.kind === "feed_mark_seen" && qm.kind === "feed_mark_seen"
+          && (m.view ?? "reads") === (qm.view ?? "reads") && m.upToId !== undefined;
+        const overlaps = qids.some((mid) => readIds.has(mid));
+        if (!pairAllowed || (!overlaps && !lineSuperseded)) continue;
+        const remaining = qids.filter((mid) => !readIds.has(mid));
+        const keepsLine = qm.kind === "feed_mark_seen" && qm.upToId !== undefined && !lineSuperseded;
+        if (remaining.length === 0 && !keepsLine) {
+          this.queue.splice(i, 1);
+          this.overlays.delete(q.id);
+          void this.dropOutbox(q.id);
+        } else {
+          const narrowed = { ...qm, messageIds: remaining } as EngineMutation;
+          if (lineSuperseded && narrowed.kind === "feed_mark_seen") delete narrowed.upToId;
+          q.mutation = narrowed;
+          try {
+            const effects = mutationEffects(this.read(), q.mutation, {
+              now: () => new Date(q.at), uuid: this.uuid,
+            });
+            if (effects.length > 0) this.overlays.set(q.id, effects);
+            else this.overlays.delete(q.id);
+          } catch { this.overlays.delete(q.id); }
+          void this.putOutbox(q);
+        }
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.overlayRev++;
+      this.notify();
+    }
   }
 
   /**
@@ -3371,9 +3542,18 @@ export class OhmailEngine {
     return [...this.queue];
   }
 
-  /** Retry every queued mutation (reconnect path), preserving keys and order. */
+  /**
+   * Retry every queued mutation (reconnect path), preserving keys and order.
+   *
+   * Refuses to run while {@link replayHold} stands — a timed-out replay's request is still in
+   * the air, and dispatching behind it could land an older value after a newer one. An empty
+   * answer here means "nothing flushed NOW"; the entries stay queued and persisted, and the
+   * caller's next cadence (or the next boot) delivers them in order.
+   */
   async flushPending(): Promise<MutationResult[]> {
-    const batch = this.queue.splice(0, this.queue.length);
+    if (this.replayHold) return [];
+    const batch = this.queue.splice(0, this.queue.length)
+      .sort((a, b) => (a.at - b.at) || (a.n - b.n));
     const results: MutationResult[] = [];
     for (const p of batch) results.push(await this.dispatch(p));
     return results;

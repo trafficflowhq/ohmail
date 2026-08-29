@@ -400,6 +400,15 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
     uuid: deps.uuid,
     // No wake signal attached: this build polls /sync. `attachWakeSignal` stays the seam a
     // push wake would feed later.
+    //
+    // THE HOST OWNS THE OUTBOX REPLAY. This app routes EVERY flush result: `flushQueued`
+    // (state/live.ts) reads `pendingMutations()` for each key's kind before flushing, and the
+    // world layer toasts the terminal outcomes — a background send confirming announces itself
+    // as the send it was, a hard refusal says the save failed. The engine's own drive replay
+    // would settle those entries silently, so it is turned off and the post-sync flush cadence
+    // (which already runs after every successful drain) is the replay — restored entries
+    // included, whose kinds the same ledger reads the same way.
+    outboxAutoReplay: false,
   });
   /**
    * RE-ARM THE DURABLE OUTBOX NOW, not at the first drive. The store loaded ABOVE the engine
