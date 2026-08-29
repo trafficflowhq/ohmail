@@ -299,48 +299,91 @@ export class SyncService {
     // Zero added queries decide the mode.
     //
     // The coalesced page: scan the next {@link COALESCE_SCAN_WINDOW} span rows in seq order,
-    // keep the LATEST change per (entity_type, entity_id), emit those ascending by that latest
-    // seq, cut at `limit`. Every emitted row then flows through the SAME prefetch/materialize/
-    // bucket pipeline the plain page uses — the diet changes which log rows are read, never
-    // what is said about them.
+    // keep the LATEST change per (entity_type, entity_id), emit those in FIRST-APPEARANCE
+    // order (each entity's lowest in-window seq), cut at `limit`. Every emitted row then flows
+    // through the SAME prefetch/materialize/bucket pipeline the plain page uses — the diet
+    // changes which log rows are read, never what is said about them.
     //
-    // ── WHY THE PER-PAGE CURSOR STAYS HONEST (the delta contract obligation) ───────────────────────
+    // ── WHY FIRST-APPEARANCE ORDER, NOT LATEST-SEQ ORDER (review round 1) ───────────────
     //
-    // The cursor promises "nothing at or below me will be re-sent". Emitting in ascending
-    // LATEST-seq order makes that promise safe at every page cut: an entity whose latest change
-    // is ≤ the cut seq was emitted on this page or an earlier one (at its CURRENT state, which
-    // supersedes everything the skipped intermediate rows said — deletions included, since a
-    // dead entity's latest change materializes null → tombstone); an entity with any change
-    // ABOVE the cut still has that change above the committed cursor, so a crash between pages
-    // re-delivers it from the new cursor. No third case exists. The cursor therefore never
-    // claims an unapplied horizon, exactly as the plain path's "max seq actually returned"
-    // never does.
+    // The desktop's relational mirror FK-guards its applies: a `message_state` whose message
+    // is absent is SKIPPED, on the standing assumption that the parent's change carries a
+    // lower seq and lands first — true of the plain path by construction (a child row can only
+    // be written after its parent exists, so the parent's create commits at a lower seq).
+    // Latest-seq ordering broke exactly that: a message created in-window, its state written
+    // next, then the message updated hundreds of changes later would emit STATE-then-MESSAGE,
+    // and a page cut between them commits the cursor past the state's only change — skipped by
+    // the FK guard, never re-delivered, missing for ever. First-appearance order restores the
+    // plain path's property across page cuts: a parent created in-window has
+    // `min(parent) ≤ its create < child's create ≤ min(child)`, so the parent is always
+    // emitted first (at its CURRENT content); a parent created below the window is below the
+    // resuming cursor and therefore already mirrored, exactly the plain path's own posture.
     //
-    // Entities whose changes straddle the scan window are emitted once per window they appear
-    // in — a duplicate upsert of current state, absorbed by the client's older-or-equal seq
-    // guard, the same property that makes re-reading any page free.
+    // ── WHY THE PER-PAGE CURSOR STAYS HONEST (the delta contract obligation) ────────────────
+    //
+    // The cursor promises "nothing at or below me will be re-sent". The entity page is fetched
+    // with ONE LOOKAHEAD entity beyond the cut, and a CUT page's cursor is that unemitted
+    // entity's first-seq MINUS ONE: every entity with any change at or below the cursor has a
+    // min at or below it and was therefore emitted (at CURRENT state, which supersedes
+    // everything the skipped intermediate rows said — deletions included, since a dead
+    // entity's latest change materializes null → tombstone); every unemitted in-window entity
+    // has its min — hence ALL its changes — above the cursor, and everything beyond the window
+    // is above every window seq, so a crash between pages re-delivers all of it from the new
+    // cursor. An emitted entity whose newest changes sit above the cut is simply re-emitted by
+    // a later window — a duplicate upsert of current state, absorbed by the client's
+    // older-or-equal seq guard, the same property that makes re-reading any page free
+    // (entities straddling the scan window ride the same rule). The lookahead is what keeps a
+    // cut page's cursor MOVING: anchoring it to the last EMITTED entity's first-seq instead
+    // would crawl one seq per page whenever an emitted entity's churn tail spans the window.
+    // A page with NO lookahead entity consumed its whole window, so the cursor advances to the
+    // window's own max seq and the drain converges without re-scanning superseded rows.
     const span = horizonSeq !== null ? horizonSeq - sinceSeq : 0n;
     const coalesced = span > BigInt(STALE_COALESCE_SPAN);
 
     let rows: (typeof changeLog.$inferSelect)[];
+    /** Coalesced mode only: the lookahead entity's first-seq − 1, `null` ⇒ window consumed. */
+    let coalescedCutCursor: bigint | null = null;
     if (coalesced) {
-      const spanRows = db
-        .select()
-        .from(changeLog)
-        .where(and(...filters))
-        .orderBy(asc(changeLog.seq))
-        .limit(COALESCE_SCAN_WINDOW)
-        .as("span");
-      const latest = db
-        .selectDistinctOn([spanRows.entityType, spanRows.entityId])
+      const spanRows = db.$with("span").as(
+        db.select()
+          .from(changeLog)
+          .where(and(...filters))
+          .orderBy(asc(changeLog.seq))
+          .limit(COALESCE_SCAN_WINDOW),
+      );
+      const pageEntities = db.$with("page_entities").as(
+        db.select({
+          entityType: spanRows.entityType,
+          entityId: spanRows.entityId,
+          firstSeq: sql<string>`min(${spanRows.seq})`.as("first_seq"),
+          lastSeq: sql<string>`max(${spanRows.seq})`.as("last_seq"),
+        })
+          .from(spanRows)
+          .groupBy(spanRows.entityType, spanRows.entityId)
+          .orderBy(sql`min(${spanRows.seq})`)
+          .limit(limit + 1), // the lookahead — see the cursor argument above
+      );
+      const joined = await db.with(spanRows, pageEntities)
+        .select({
+          accountId: spanRows.accountId,
+          seq: spanRows.seq,
+          entityType: spanRows.entityType,
+          entityId: spanRows.entityId,
+          op: spanRows.op,
+          meta: spanRows.meta,
+          createdAt: spanRows.createdAt,
+          firstSeq: pageEntities.firstSeq,
+        })
         .from(spanRows)
-        .orderBy(spanRows.entityType, spanRows.entityId, desc(spanRows.seq))
-        .as("latest");
-      rows = await db
-        .select()
-        .from(latest)
-        .orderBy(asc(latest.seq))
-        .limit(limit);
+        .innerJoin(pageEntities, and(
+          eq(spanRows.entityType, pageEntities.entityType),
+          eq(spanRows.entityId, pageEntities.entityId),
+          eq(spanRows.seq, sql`${pageEntities.lastSeq}`),
+        ))
+        .orderBy(sql`${pageEntities.firstSeq}`);
+      const lookahead = joined.length > limit ? joined[limit] : undefined;
+      coalescedCutCursor = lookahead === undefined ? null : BigInt(lookahead.firstSeq) - 1n;
+      rows = joined.slice(0, limit).map(({ firstSeq: _first, ...row }) => row);
     } else {
       rows = await db
         .select()
@@ -482,22 +525,38 @@ export class SyncService {
       }
     }
 
-    // cursor = max seq actually returned; unchanged when the page is empty.
-    const cursorSeq = rows.length > 0 ? rows[rows.length - 1]!.seq : sinceSeq;
-
-    // ── hasMore, per mode ────────────────────────────────────────────────────────────────────
+    // ── cursor and hasMore, per mode ─────────────────────────────────────────────────────────
     //
-    // Plain page: a full page means "maybe more", exactly as ever. Coalesced page: fullness no
-    // longer says anything (a window can dedup to fewer than `limit` rows while thousands of
-    // span rows remain beyond it), so the honest signal is the cursor against the horizon this
-    // very request read for its 410 checks: below it ⇒ more span remains, at it ⇒ this drain is
-    // done. A change committed after that bounds read is picked up by the next poll, the same
-    // window every short plain page has always had. The `rows.length > 0` guard keeps a
-    // types-filtered window that matched nothing from answering an unchanged cursor with
-    // `hasMore: true`, which a drain loop would spin on for ever.
-    const hasMore = coalesced
-      ? rows.length > 0 && (rows.length === limit || (horizonSeq !== null && cursorSeq < horizonSeq))
-      : rows.length === limit;
+    // Plain page: cursor = max seq actually returned (unchanged when the page is empty), and a
+    // full page means "maybe more", exactly as ever.
+    //
+    // Coalesced page, CUT (a lookahead entity exists beyond `limit`): cursor = that unemitted
+    // entity's first-seq − 1 (the honesty argument at the mode comment above), and there is
+    // trivially more. Coalesced page, WINDOW CONSUMED (no lookahead): every entity the window
+    // scanned was emitted, so the cursor advances to the window's own max seq — the max of the
+    // emitted rows' latest-seqs, which for a consumed window IS the max scanned seq — and the
+    // honest "more?" signal is that cursor against the horizon this very request read for its
+    // 410 checks (fullness says nothing here: a window can dedup to fewer than `limit` rows
+    // while thousands of span rows remain beyond it). A change committed after that bounds
+    // read is picked up by the next poll, the same window every short plain page has always
+    // had. The `rows.length > 0` guard keeps a types-filtered window that matched nothing from
+    // answering an unchanged cursor with `hasMore: true`, which a drain loop would spin on for
+    // ever.
+    let cursorSeq: bigint;
+    let hasMore: boolean;
+    if (!coalesced) {
+      cursorSeq = rows.length > 0 ? rows[rows.length - 1]!.seq : sinceSeq;
+      hasMore = rows.length === limit;
+    } else if (rows.length === 0) {
+      cursorSeq = sinceSeq;
+      hasMore = false;
+    } else if (coalescedCutCursor !== null) {
+      cursorSeq = coalescedCutCursor;
+      hasMore = true;
+    } else {
+      cursorSeq = rows.reduce((m, r) => (r.seq > m ? r.seq : m), 0n);
+      hasMore = horizonSeq !== null && cursorSeq < horizonSeq;
+    }
 
     return {
       changes: { creates, updates, moves, deletes },
