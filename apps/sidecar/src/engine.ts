@@ -633,9 +633,9 @@ function localServices(
     // there is no allowance to meter and an absent gate means unmetered rather than ungated.
     //
     // NO `unsubscribe` HERE, DELIBERATELY — the automatic screen-out pass stays OFF on this door
-    // until its consent surface exists, and a review ruled it in exactly those terms. The engine
-    // CAN post (the port is on the bag below, for the user-initiated verb); what is missing is
-    // everything around an AUTOMATIC third-party request: the shared client's pre-click
+    // until its consent surface exists. The engine CAN post (the port is on the bag below, for
+    // the user-initiated verb); what is missing is everything around an AUTOMATIC third-party
+    // request: the shared client's pre-click
     // disclosure is mode-gated off on this door (`AppShell.autoUnsubscribeDiscloses` requires a
     // consent transport this door does not hand in), and the "switch in Settings turns it off"
     // promise has no local read/write path (`block_auto_unsubscribe_at` has no route here — the
@@ -910,10 +910,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     /**
      * ONE-CLICK UNSUBSCRIBE — the same service, the same gates, as the hosted API.
      *
-     * Constructed ONCE (it only stores its deps) and handed to every per-request bag: the
-     * screener's automatic pass on a screen-out, and the manual `POST /messages/:id/unsubscribe`
-     * both go through it, sharing the `unsubscribe_records` at-most-once claim. Its three deps,
-     * each a deliberate reading of "this is a desktop":
+     * Constructed ONCE (it only stores its deps) and handed to every per-request bag for the
+     * MANUAL verb alone: `POST /messages/:id/unsubscribe`, the user's own explicit act. The
+     * screener's AUTOMATIC pass deliberately does not receive it — see the `screener:` entry in
+     * `localServices` for why the arm stays off until its consent surface exists. Its three
+     * deps, each a deliberate reading of "this is a desktop":
      *
      *  · `post` — {@link nodeOneClickPost}, the pinned redirect-refusing client, or the config's
      *    test seam. This is the second of the process's two non-mailbox egresses (the other is
