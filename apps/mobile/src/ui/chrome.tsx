@@ -27,7 +27,11 @@ export function TopBar({ trailing }: { trailing?: React.ReactNode }) {
   // drain settles. In the shared chrome rather than any screen, the SyncBar lesson: a view can
   // only speak about itself, and the next tab added must get the sentence for free. The world
   // layer derives it (`boot.staleAsOf`, sentence-ready time or null); this renders words.
-  const stale = useWorld().boot.staleAsOf;
+  // "Catching up" only while it is TRUE: a failed round with nothing scheduled drops the
+  // activity claim and states the age alone (`staleAsOfIdle`) — the web ladder makes the same
+  // call by ranking its failure arms above the stale arm.
+  const boot = useWorld().boot;
+  const stale = boot.staleAsOf;
   return (
     <View>
       <View
@@ -51,7 +55,7 @@ export function TopBar({ trailing }: { trailing?: React.ReactNode }) {
           accessibilityRole="text"
           style={{ paddingHorizontal: 16, paddingBottom: 4 }}
         >
-          {Copy.staleAsOf(stale)}
+          {boot.syncFailure !== null ? Copy.staleAsOfIdle(stale) : Copy.staleAsOf(stale)}
         </Txt>
       ) : null}
     </View>

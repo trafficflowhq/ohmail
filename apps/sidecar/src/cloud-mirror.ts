@@ -2211,13 +2211,16 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         } catch (err) {
           cfg.log?.("cloud_freshen_bodies_deferred", {
             reason: "the freshened screenful's body ask failed; the body walk still owes every body",
-            err: String(err),
+            // The THROWN value, not a string: the hardened logger reduces it to class+code, and
+            // `String(err)` collapses every failure to `errorClass: "String"` with no code.
+            err,
           });
         }
       }
     } catch (err) {
       cfg.log?.("cloud_freshen_deferred", {
-        err: String(err),
+        // Raw, for the class+code reduction — see the bodies deferral above.
+        err,
         reason: "the stale-resume freshen did not complete; the replay from the committed cursor " +
           "still converges, only later at the top",
       });
@@ -2330,7 +2333,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         } catch (err) {
           cfg.log?.("cloud_window_bodies_deferred", {
             reason: "the window's first-screenful body ask failed; the body walk still owes every body",
-            err: String(err),
+            err,
           });
         }
         // The between-pages stop check, REPEATED after this await: `stop()` can set the flag

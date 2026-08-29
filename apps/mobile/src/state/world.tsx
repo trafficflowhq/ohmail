@@ -579,6 +579,30 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   /* One identity for the app's life — see the header for what per-version identity cost. */
   const actions = useMemo(() => stableActions(() => backendRef.current), []);
 
+  /**
+   * THE FRESHNESS CLOCK — current→stale is a transition TIME makes, with no drain, no store
+   * write and no connection flip to re-derive the world: a phone left open past the staleness
+   * threshold would render stale mail unlabeled for ever off a memo whose deps never move. One
+   * coarse minute-tick asks the engine's verdict and bumps the memo ONLY when the label's text
+   * actually changed — a quiet phone re-renders zero extra times, and the label appears at
+   * most a minute after the threshold (the clearing direction stays instant: the settle bumps
+   * `version`). RN pauses timers in the background; on return, the next tick — or the
+   * foreground drain the connection layer already runs — re-derives, whichever lands first.
+   */
+  const [freshBeat, setFreshBeat] = useState(0);
+  const lastFreshLabel = useRef<string | null>(null);
+  useEffect(() => {
+    if (engine === null) return;
+    const id = setInterval(() => {
+      const label = staleAsOf(engine, zone);
+      if (label !== lastFreshLabel.current) {
+        lastFreshLabel.current = label;
+        setFreshBeat((n) => n + 1);
+      }
+    }, 60_000);
+    return () => clearInterval(id);
+  }, [engine, zone]);
+
   const world = useMemo<World>(() => {
     if (engine === null || session === null) return emptyWorld(actions);
     const v: WorldView = { now: new Date(), zone, foldersEnabled: foldersOn };
@@ -598,8 +622,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         settled: mirrorSettled(session.store),
         syncFailure: conn.syncError,
         // Re-read per derivation, like `settled`: a drain's settle bumps `version` (the stamp
-        // write) and flips `conn.syncing`, both in this memo's deps, so the label clears in the
-        // same pass the mirror becomes current — never a render later.
+        // write) and flips `conn.syncing`, both in this memo's deps, so the label CLEARS in the
+        // same pass the mirror becomes current. The APPEARING direction is time's alone — a
+        // phone sitting open crosses the threshold with no store write anywhere — so
+        // `freshBeat` below ticks the memo when the verdict changes by clock.
         staleAsOf: staleAsOf(engine, zone),
       },
       worldKey: session.ownerKey,
@@ -665,7 +691,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // the BOOT facts: the settled stamp lands as a drain completes (syncing falls), and the
     // failure sentence is part of what an unsettled screen renders.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engine, session, scopes, zone, actions, version, outcomeSeq, outcomeOf,
+  }, [engine, session, scopes, zone, actions, version, outcomeSeq, outcomeOf, freshBeat,
     foldersOn, foldersPending, setFoldersEnabled, signatures, conn.syncing, conn.syncError]);
 
   return (

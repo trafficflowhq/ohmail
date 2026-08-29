@@ -1082,8 +1082,16 @@ export function deriveMailState(input: MailStateInputs): MailState {
   const state = climb(input);
   return {
     ...state,
+    // A COMPLETED DRAIN IS SETTLED EVIDENCE, whatever this tab's own loop is doing — the mobile
+    // boot rule (`mirrorSettled`), promoted (INSTANT-ARCH §6.6). `bootstrapping` means "this
+    // TAB's first drain has not finished", which on a warm STALE resume is true for the whole
+    // catch-up — and without this clause every zero-row pane wore a skeleton over a mirror the
+    // freshness stamp proves renderable (a completed drain once emptied it; the strip is
+    // meanwhile labeling the age). `unknown` — no stamp, or a probe that has not answered — is
+    // exactly the population the skeleton exists for and keeps it.
     settled:
-      !input.sync.bootstrapping || state.key === "stopped" || state.key === "failing",
+      !input.sync.bootstrapping || state.key === "stopped" || state.key === "failing"
+      || input.freshness.state !== "unknown",
   };
 }
 

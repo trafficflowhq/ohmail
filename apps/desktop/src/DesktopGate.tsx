@@ -519,9 +519,13 @@ export function DesktopGate() {
         /* HOW OLD IS THE MAIL ON SCREEN — the sidecar's own verdict (`GET /mirror/freshness`),
            because the window engine drains the LOCAL feed and cannot know the desktop is days
            behind the hosted account. Feeds the shared strip's "As of <time> · catching up" arm;
-           withheld with no engine for `mailboxFacts`'s reason. The local door's engine has no
-           such route yet — the probe rejects on its 404 and the strip stays silent there. */
-        {...(engine ? { mirrorFreshness: readMirrorFreshness } : {})}
+           withheld with no engine for `mailboxFacts`'s reason. CLOUD DOOR ONLY, structurally:
+           the local door's engine has no such route (its organizer syncs in-process), and
+           passing the probe there anyway would leave the provider holding a previous Cloud
+           door's last verdict — a label about an account this window no longer shows. The
+           provider also resets its held answer when the engine or probe changes; this gate is
+           the first line, that reset the second. */
+        {...(engine && status?.mode === "cloud" ? { mirrorFreshness: readMirrorFreshness } : {})}
         /* WHAT A SEND FROM THIS WINDOW RIDES. On the STANDALONE door the compose form, the
            send handler and the SMTP dial are one process — the mail engine's own service bag
            makes the same declaration, `sendSurfaceMaxTotalBytes: null` — so the attach

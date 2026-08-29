@@ -48,7 +48,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useDemoMode, useFreshness, useSyncStatus } from "./engine";
+import { useDemoMode, useEngine, useFreshness, useSyncStatus } from "./engine";
 import { SYNC_FAILURE_STREAK } from "./sync-scheduler";
 import {
   deriveMailState,
@@ -272,6 +272,20 @@ export function MailStateProvider({
     const id = setInterval(() => void readFreshness(), cadence);
     return () => clearInterval(id);
   }, [freshnessProbe, readFreshness, probedFreshness?.state]);
+
+  /**
+   * A DIFFERENT ENGINE IS A DIFFERENT MAILBOX (the `EngineProvider` adoption rule), so the held
+   * probe answer is withdrawn with it — kept-last is the right failure mode WITHIN one mirror's
+   * life and the wrong one across a door switch: a stale Cloud verdict surviving onto another
+   * engine would label content it was never about, and the label may only ever be a statement
+   * about the mirror on screen. Back to `unknown` (no label, panes keep their own evidence)
+   * until the new door's probe answers. Keyed on the probe too, so a probe that disappears
+   * (Cloud → local door, where none is passed) drops the old answer rather than freezing it.
+   */
+  const probeEngine = useEngine();
+  useEffect(() => {
+    setProbedFreshness(null);
+  }, [probeEngine, freshnessProbe]);
 
   useEffect(() => {
     if (!probe) {

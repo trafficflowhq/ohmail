@@ -66,8 +66,12 @@ export const Copy = {
 
   /* The Freshness Contract's label (INSTANT-ARCH §6.6): content over a stale mirror says how
      old it is, quietly, until a drain settles. `time` arrives sentence-ready from the world
-     layer ("Fri 09:00", the reader's zone). */
+     layer ("Fri 09:00", the reader's zone). Two forms because "catching up" is an ACTIVITY
+     claim: with the last round failed and nothing scheduled (the runner stops; a pull or the
+     next foreground drain retries), the age is stated alone — the failure sentence is the
+     skeleton's and the Servers screen's, not this line's to repeat. */
   staleAsOf: (time: string) => `As of ${time} · catching up`,
+  staleAsOfIdle: (time: string) => `As of ${time}`,
 
   pairingBusy: "Pairing…",
   pairedOk: "Paired. Syncing your mail.",
