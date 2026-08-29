@@ -136,8 +136,13 @@ function supersedeKey(m: EngineMutation): string | null {
     case "triage_set":
     case "move":
     case "message_delete":
-    case "tag_assign": // the enriched `labels` is the complete list — the message is the target
       return `${m.kind}:${m.messageId}`;
+    case "tag_assign":
+      // PER TAG, not per message: the enriched `labels` union is optimistic-only — the WIRE is
+      // `{ tagId, assigned }`, so two queued assignments of different tags on one message are
+      // independent server-side deltas and replacing one with the other would un-tag the first
+      // on reconciliation. Only a newer verb about the SAME tag replaces the older.
+      return `tag_assign:${m.messageId}:${m.tagId}`;
     case "screener_decide":
       return `screener_decide:${m.senderId}`;
     case "rule_update":
@@ -1412,6 +1417,10 @@ export class OhmailEngine {
           () => undefined,
         ).finally(() => {
           if (this.replayHold === hold) this.replayHold = null;
+          // The barrier's own settle is the wake-up: verbs expressed while it stood are
+          // sitting in the queue (mutate() gates on the hold), and nothing else is guaranteed
+          // to drive soon on a quiet tab. One nudge; its failure is the next poll's problem.
+          void this.syncOnce().catch(() => { /* the scheduler's cadence retries */ });
         });
         this.replayHold = hold;
         this.queue.unshift(...batch.slice(i + 1));
@@ -2964,16 +2973,21 @@ export class OhmailEngine {
     const id = this.uuid();
     const key = this.uuid();
 
-    // AFTER enrich, BEFORE anything else — and SYNCHRONOUS, which is load-bearing twice over:
-    // enrich must read the superseded verbs' overlays (tag_assign's frozen label union is
-    // computed over them), and the first frame after this call must already show the newer
-    // verb's overlay (re-resurface-first-frame pins that mutate() publishes before its first
-    // await). The store-side deletes/rewrites inside are fire-and-forget: if a kill outruns
-    // them, the stale entry replays BEFORE the newer one — restore sorts by (at, n) — so the
-    // newer verb still lands last and the server converges on the user's latest word.
-    this.supersedeQueued(enriched);
-
+    // THE EFFECTS ARE COMPUTED BEFORE SUPERSESSION, deliberately: they must be read over the
+    // superseded verbs' overlays. A reversal is the case that breaks the other order — a
+    // queued move to Reads, then the user moves it back to INBOX: with the Reads overlay
+    // already dropped the mirror says "it is in INBOX", the reversal computes zero effects,
+    // and mutate() would reject a verb the server absolutely needs (the queued move may have
+    // COMMITTED with its response lost, and only the reversal on the wire can undo it).
     const effects = mutationEffects(this.read(), enriched, { now: this.now, uuid: this.uuid });
+
+    // THEN supersession, still SYNCHRONOUS — the first frame after mutate() must already show
+    // the newer verb's overlay (re-resurface-first-frame pins that mutate() publishes before
+    // its first await), and enrich above read the old overlays it needed. The store-side
+    // deletes/rewrites inside are fire-and-forget: if a kill outruns them, the stale entry
+    // replays BEFORE the newer one — restore sorts by (at, n) — so the newer verb still lands
+    // last and the server converges on the user's latest word.
+    this.supersedeQueued(enriched);
     if (effects.length === 0) {
       const error = new MutationRejectedError(`mutation target not found (${m.kind})`, {
         status: 404, code: "not_found",
@@ -2998,6 +3012,20 @@ export class OhmailEngine {
       id, key, mutation: enriched, at: this.now().getTime(), n: this.outboxSeq++,
     };
     await this.putOutbox(pending);
+
+    /**
+     * THE ORDER BARRIER GATES FRESH DISPATCHES TOO. A timed-out replay's request is still in
+     * the air and is no longer in the queue, so supersession above could not see it — a fresh
+     * verb dispatched now could commit BEFORE that hung older write and be overwritten when it
+     * finally lands. So the verb PAINTS immediately (the overlay is already up), persists
+     * durably (just above), and waits its turn in the queue: the hold's own settle nudges a
+     * drive, and the ordered replay then delivers everything oldest-first. `queued` is the
+     * truthful status — expressed, safe, not yet on the wire.
+     */
+    if (this.replayHold) {
+      this.queue.push(pending);
+      return { id, key, status: "queued", seq: null };
+    }
 
     return this.dispatch(pending);
   }
@@ -3063,11 +3091,18 @@ export class OhmailEngine {
         changed = true;
         continue;
       }
-      // Read-flag subtraction. The allowed pairs, and only these: an explicit `mark_seen`
-      // outranks BOTH queued read verbs; a glance (`feed_mark_seen`) outranks only another
-      // glance — it must never cancel a queued deliberate unread.
-      if (readIds && readIds.size > 0 && (qm.kind === "mark_seen" || qm.kind === "feed_mark_seen")) {
-        const pairAllowed = m.kind === "mark_seen" || qm.kind === "feed_mark_seen";
+      // Read-flag subtraction. The allowed pairs, and only these: an EXPLICIT `mark_seen`
+      // (no glance label — the read pill, ⇧I, bulk; `via` is the verb's own involuntary
+      // marker, so a dwell commit's `mark_seen` counts as a glance here too) outranks BOTH
+      // queued read verbs; a glance of either kind outranks only queued involuntary reads —
+      // it must never cancel a queued deliberate unread. Entered whenever the newer verb is a
+      // read verb at all, id overlap or not, because a newer same-view leave-commit with an
+      // EMPTY id list (the ordinary waterline commit) still supersedes the older line.
+      if (readIds && (qm.kind === "mark_seen" || qm.kind === "feed_mark_seen")) {
+        const newerExplicit = m.kind === "mark_seen" && m.via !== "glance";
+        const olderInvoluntary = qm.kind === "feed_mark_seen"
+          || (qm.kind === "mark_seen" && qm.via === "glance");
+        const pairAllowed = newerExplicit || olderInvoluntary;
         const qids = qm.messageIds ?? [];
         // A newer same-view glance also replaces the older glance's waterline: the newer
         // departure IS the later line.
@@ -3545,13 +3580,17 @@ export class OhmailEngine {
   /**
    * Retry every queued mutation (reconnect path), preserving keys and order.
    *
-   * Refuses to run while {@link replayHold} stands — a timed-out replay's request is still in
-   * the air, and dispatching behind it could land an older value after a newer one. An empty
-   * answer here means "nothing flushed NOW"; the entries stay queued and persisted, and the
-   * caller's next cadence (or the next boot) delivers them in order.
+   * Refuses to DISPATCH while {@link replayHold} stands — a timed-out replay's request is
+   * still in the air, and dispatching behind it could land an older value after a newer one —
+   * but it still ANSWERS, one `queued` result per entry: `useMailSend.flush` re-arms its
+   * backoff timer only when a result says its key is still queued, so an empty array here
+   * would read as "nothing left" and stop the very retry loop that will deliver the send once
+   * the hold clears. The entries stay queued and persisted; the hold's settle nudges a drive.
    */
   async flushPending(): Promise<MutationResult[]> {
-    if (this.replayHold) return [];
+    if (this.replayHold) {
+      return this.queue.map((p) => ({ id: p.id, key: p.key, status: "queued" as const, seq: null }));
+    }
     const batch = this.queue.splice(0, this.queue.length)
       .sort((a, b) => (a.at - b.at) || (a.n - b.n));
     const results: MutationResult[] = [];
