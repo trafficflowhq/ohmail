@@ -53,8 +53,11 @@ import { ServiceError } from "./errors.js";
  *
  * Every writer of `account_settings`, at the top of the transaction that writes it: the consent
  * knobs and `confirmSeed` (consent-seed.ts), the screening reset (consent-reset.ts), the
- * screening preference and the tidy request (screening-preference.ts), and the Screener decide's
- * baseline stamp (screener-service.ts). Writers of mail-sync state are deliberately NOT fenced —
+ * screening preference and the tidy request (screening-preference.ts), the Screener decide's
+ * baseline stamp (screener-service.ts) — and the operational baseline backfill
+ * (`scripts/backfill-screening-baseline.mjs`), which carries the same interlock in raw SQL
+ * because it writes the same row from outside this package (a review found it recreating the
+ * row post-erasure before it did). Writers of mail-sync state are deliberately NOT fenced —
  * their rows key off mailboxes and messages, which erasure deletes, so a late one fails on the
  * missing parent instead of surviving; fencing the ingest path would put one extra row lock on
  * every sync write for a race the foreign keys already lose loudly.
