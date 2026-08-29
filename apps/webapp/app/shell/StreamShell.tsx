@@ -252,6 +252,34 @@ export const StreamShell = forwardRef<
   }, []);
 
   /**
+   * THE TAB GOING AWAY IS A LEAVE TOO — `pagehide`, the OhboxView #4 twin, because the
+   * unmount commit above structurally cannot run on a tab close: React never unmounts a page
+   * the browser is killing. Without this the stream's waterline — the whole "new since last
+   * visit" statement — evaporated on exactly the departure a phone reader takes most often.
+   * The same range and the same authority go up through the same handler; downstream,
+   * `commitFeedSeen` skips a commit that says nothing new and `feed_mark_seen` is idempotent,
+   * so the unmount commit that MAY still follow (a bfcache freeze that resumes, then a real
+   * navigation) double-charges nothing. The dispatched verb is persisted by the engine's
+   * durable outbox before the wire, which is what makes a flush during a dying tab's last
+   * milliseconds deliverable on the next boot even when its fetch never leaves the machine.
+   * Registered once, reads only refs — the exact discipline the unmount commit documents.
+   */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onPageHide = (): void => {
+      const fn = onLeaveRef.current;
+      if (!fn) return;
+      fn({
+        drove: observerRef.current.userHasDriven(),
+        newestSeenId: rangeRef.current.newestSeenId,
+        bottomVisibleId: rangeRef.current.bottomVisibleId,
+      });
+    };
+    window.addEventListener("pagehide", onPageHide);
+    return () => window.removeEventListener("pagehide", onPageHide);
+  }, []);
+
+  /**
    * HYDRATE ON VIEWPORT INTENT — one IntersectionObserver, bottom-only lookahead.
    *
    * `rootMargin: "0px 0px 50% 0px"` extends the root half a viewport DOWNWARD only, so a card

@@ -401,5 +401,14 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
     // No wake signal attached: this build polls /sync. `attachWakeSignal` stays the seam a
     // push wake would feed later.
   });
+  /**
+   * RE-ARM THE DURABLE OUTBOX NOW, not at the first drive. The store loaded ABOVE the engine
+   * (this file's construction order), so `engine.hydrate()` never runs here and the automatic
+   * restore it carries never fires — and the first frame this boot paints must already show a
+   * killed session's un-sent verbs (a read marked on the train, the app swiped away). The call
+   * is synchronous over the loaded store and idempotent; the verbs themselves replay at the
+   * head of the first drive, before its sync pages.
+   */
+  engine.restoreOutbox();
   return { kind: "ready", engine, store, ownerKey, verifyIdentity };
 }

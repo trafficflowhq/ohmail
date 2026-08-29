@@ -16,7 +16,7 @@
  * Every issue the world answers renders. There is no "and 9 more".
  */
 import { useCallback, useRef, useState } from "react";
-import { View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
+import { AppState, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import { useFocusEffect } from "expo-router";
 import { Copy } from "../../src/copy";
 import { usePullToSync } from "../../src/state/pull";
@@ -60,9 +60,22 @@ export default function ReadsScreen() {
     [actions],
   );
 
-  // Leaving the stream (tab switch, back) is the waterline commit.
+  // Leaving the stream (tab switch, back) is the waterline commit — and so is the APP going
+  // to the background while this stream is focused: on a phone that is how a visit usually
+  // ends, and a process killed from the switcher gets no unmount. The verb itself rides the
+  // engine's durable outbox, so even a kill right after the flush delivers it on the next
+  // boot. Backgrounding then RETURNING starts a fresh visit pool — a second commit at the
+  // real leave carries only what accrued after, and a commit that says nothing new is skipped.
   useFocusEffect(
-    useCallback(() => () => actions.leaveFeed("reads"), [actions]),
+    useCallback(() => {
+      const sub = AppState.addEventListener("change", (s) => {
+        if (s === "background") void actions.leaveFeed("reads");
+      });
+      return () => {
+        sub.remove();
+        void actions.leaveFeed("reads");
+      };
+    }, [actions]),
   );
 
   return (

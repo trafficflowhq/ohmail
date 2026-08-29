@@ -72,6 +72,60 @@ interface PendingMutation {
   id: string;
   key: string;
   mutation: EngineMutation;
+  /**
+   * The durable entry's order stamp — minted ONCE, at `mutate()`, and carried through every
+   * re-persist so a retry can never re-order the queue: replay order is user order, which is
+   * what lets a `draft_save` always precede the `mail_send` that names its row.
+   */
+  at: number;
+  n: number;
+}
+
+/**
+ * THE DURABLE OUTBOX'S RECORD TYPE — a client-local record (`putLocal`, seq 0), one per
+ * user verb, written the moment the verb is expressed and removed on its terminal outcome
+ * (server confirmation or explicit refusal). `/sync` has no vocabulary for it, so no delta
+ * can ever contradict or delete one; the windowed prune only ever evicts `message` rows, so
+ * a policy pass cannot either. The mirror's persistence engine is what makes it durable —
+ * IndexedDB on the webapp, sqlite on mobile, whatever `MirrorStore` a future surface binds
+ * (INSTANT-ARCH §6.2 stage 1: the intent is durable the moment it is expressed).
+ */
+export const OUTBOX_TYPE = "outbox_entry";
+
+/**
+ * One persisted verb. `v` names the shape so a future build can migrate rather than guess;
+ * an entry whose shape this build does not recognise is left in place and not replayed —
+ * the verb waits for a build that understands it rather than being dropped or mis-sent.
+ *
+ * `key` is the Idempotency-Key of the ORIGINAL attempt, so a replay after a restart is the
+ * same request the server may already have seen: `idempotency_keys` (24 h, claimed in-tx)
+ * replays the stored response for the keyed routes, `outbound_sends` is UNIQUE on
+ * `(accountId, idempotencyKey)` for a send, and the state verbs are absolute-valued PATCHes
+ * that converge on re-application. `(at, n)` restore the queue's order: record iteration
+ * order after a load is storage-key order, not insertion order, and a `draft_save` must
+ * replay before the `mail_send` that names its row.
+ */
+interface PersistedOutboxEntry {
+  v: 1;
+  id: string;
+  key: string;
+  /** Session-monotonic tiebreak within one `at` millisecond. */
+  n: number;
+  /** Epoch ms at enqueue, from the engine's injected clock. */
+  at: number;
+  mutation: EngineMutation;
+}
+
+/** The shape gate for {@link PersistedOutboxEntry} — see `v` above for why unknown ⇒ keep, not drop. */
+function isPersistedOutboxEntry(e: unknown): e is PersistedOutboxEntry {
+  if (typeof e !== "object" || e === null) return false;
+  const r = e as Record<string, unknown>;
+  return r.v === 1
+    && typeof r.id === "string" && r.id.length > 0
+    && typeof r.key === "string" && r.key.length > 0
+    && typeof r.n === "number" && typeof r.at === "number"
+    && typeof r.mutation === "object" && r.mutation !== null
+    && typeof (r.mutation as Record<string, unknown>).kind === "string";
 }
 
 /**
@@ -846,6 +900,25 @@ export class OhmailEngine {
    */
   private readonly optimisticSent = new Map<string, { header: string; expiresAtMs: number }>();
   private readonly queue: PendingMutation[] = [];
+  /**
+   * OVERLAYS WHOSE ECHO HAS NOT BEEN APPLIED YET, overlay id → the {@link drainEpoch} captured
+   * when the mutation's POST returned. An entry lands here when the post-confirm reconcile
+   * drain FAILED (or was deliberately deferred by the boot replay), and its overlay then
+   * STANDS — the user's intent stays on screen — until a drain whose page loop began at a
+   * LATER epoch completes successfully. Seq order makes that sufficient: a drain issued after
+   * the POST returned reads a log that already holds the mutation's rows (see
+   * {@link OhmailEngine.syncFresh}), so its success means the echo is in the mirror and the
+   * overlay is redundant. This is INSTANT-ARCH §6.2(c): the overlay's lifetime is bound to
+   * the verb, not to any single drain attempt — the retry itself is the scheduler's ordinary
+   * (bounded, backed-off) cadence, so no new retry loop exists here.
+   */
+  private readonly awaitingEcho = new Map<string, number>();
+  /** Count of drains whose page loop has BEGUN — the happens-before token {@link awaitingEcho} compares. */
+  private drainEpoch = 0;
+  /** {@link OhmailEngine.restoreOutbox}'s latch. */
+  private outboxRestored = false;
+  /** Session-monotonic outbox tiebreak; seeded past every restored entry's `n`. */
+  private outboxSeq = 0;
   private readonly listeners = new Set<() => void>();
   private readonly readerView: OverlayReader;
   private searchCache: { version: number; index: SearchIndex } | null = null;
@@ -1063,6 +1136,10 @@ export class OhmailEngine {
       // the mirror this load just read must not survive. See {@link purgeProtectedBodies}.
       .then(() => this.purgeProtectedBodies())
       .then(() => {
+        // The durable outbox re-arms with the same load that revives the mirror, so the first
+        // publish below already carries every un-sent verb's optimistic effect — the boot
+        // render is continuous with the killed session. See {@link OhmailEngine.restoreOutbox}.
+        this.restoreOutbox();
         this.notify();
       })
       .finally(() => {
@@ -1144,13 +1221,111 @@ export class OhmailEngine {
   async syncOnce(): Promise<void> {
     // Serialize concurrent callers onto one drain.
     if (this.syncing) return this.syncing;
-    this.syncing = this.drain().finally(() => {
+    this.syncing = this.drive().finally(() => {
       this.syncing = null;
     });
     return this.syncing;
   }
 
+  /**
+   * ONE DRIVE = the outbox first, then the drain — the boot-drain ordering INSTANT-ARCH
+   * §8 stage 1 requires ("the outbox drains before/with the first sync"), generalised to
+   * EVERY drive because it is correct on every one: a queued verb replayed before the pages
+   * are read means the drain that follows carries its echo (the POSTs returned before the
+   * page loop began), so a restart converges in a single round of requests and a verb queued
+   * by a network blip retries at the scheduler's ordinary cadence with no dedicated loop.
+   *
+   * The replay happens INSIDE the single-flight (`this.syncing` is this promise), which is
+   * why {@link OhmailEngine.dispatch} runs in `deferReconcile` mode here — its usual
+   * per-mutation `syncFresh()` would wait on this very promise.
+   */
+  private async drive(): Promise<void> {
+    this.restoreOutbox();
+    await this.replayOutbox();
+    await this.drain();
+  }
+
+  /** Replay every queued verb, oldest first, under its original Idempotency-Key. */
+  private async replayOutbox(): Promise<void> {
+    if (this.queue.length === 0) return;
+    const batch = this.queue.splice(0, this.queue.length);
+    // Serial and awaited: order is user order, and the drain below must not begin until every
+    // replayed POST has returned (that happens-before is what lets it carry their echoes). A
+    // retryable failure re-queues onto the (now empty) queue for the NEXT drive — `dispatch`
+    // never throws, so one dead verb cannot stall the drain behind it.
+    for (const p of batch) await this.dispatch(p, { deferReconcile: true });
+  }
+
+  /**
+   * RE-ARM THE DURABLE OUTBOX FROM THE MIRROR STORE — the restart half of the contract.
+   *
+   * Reads every persisted {@link PersistedOutboxEntry}, restores the queue in `(at, n)` order,
+   * and re-applies each verb's optimistic overlay so the BOOT RENDER already carries the
+   * user's un-sent intents — never a flash of the pre-verb state (INSTANT-ARCH §8 stage 1's
+   * proof obligation). Synchronous on purpose: everything it reads is in memory once the
+   * store has loaded, so the platforms can run it before their first paint.
+   *
+   * Idempotent via a latch, and called from three places so every construction order is
+   * covered: {@link OhmailEngine.hydrate} (after `store.load()` — the webapp scheduler's
+   * path), {@link OhmailEngine.drive} (an engine driven without ever hydrating), and directly
+   * by a host that loaded the store BEFORE constructing the engine (the mobile boot). A drive
+   * on a store that has not loaded yet latches over an empty record set — the entries are not
+   * lost (they are on disk and replay next boot), but the honest contract is: load the store,
+   * then construct/hydrate, then drive.
+   *
+   * An entry whose shape this build does not recognise ({@link isPersistedOutboxEntry}) is
+   * left in place and not replayed — a verb written by a newer build waits for a build that
+   * understands it. An entry whose overlay cannot be recomputed (its target pruned from a
+   * windowed mirror) still REPLAYS — the server-side target usually exists; only the local
+   * paint is skipped.
+   */
+  restoreOutbox(): void {
+    if (this.outboxRestored) return;
+    this.outboxRestored = true;
+    const rows = this.store.entries<unknown>(OUTBOX_TYPE)
+      .map((e) => e.entity)
+      .filter(isPersistedOutboxEntry)
+      .sort((a, b) => (a.at - b.at) || (a.n - b.n));
+    if (rows.length === 0) return;
+    let restored = false;
+    for (const e of rows) {
+      this.outboxSeq = Math.max(this.outboxSeq, e.n + 1);
+      /**
+       * AN ENTRY THIS SESSION IS ALREADY HANDLING IS NOT A RESTART'S ENTRY. The latch does not
+       * guarantee this method runs before the first mutation: an engine driven without ever
+       * hydrating reaches here through its first drive, and that drive can be the very
+       * `syncFresh` a confirmed mutation just issued — at which point that mutation's entry is
+       * still on disk (its terminal cleanup runs after the drive starts) and re-queueing it
+       * would dispatch the SAME verb twice in one session. Every live mutation holds either
+       * its overlay (in flight, or awaiting its echo) or a queue slot (retryable), so those
+       * two are the skip. An entry skipped here that then fails its cleanup simply replays
+       * next session, idempotently — the safe direction.
+       */
+      if (this.overlays.has(e.id) || this.queue.some((q) => q.id === e.id)) continue;
+      try {
+        const effects = mutationEffects(this.read(), e.mutation, { now: this.now, uuid: this.uuid });
+        if (effects.length > 0) this.overlays.set(e.id, effects);
+      } catch { /* a malformed or out-of-vocabulary mutation paints nothing; the wire decides */ }
+      this.queue.push({ id: e.id, key: e.key, mutation: e.mutation, at: e.at, n: e.n });
+      restored = true;
+    }
+    if (!restored) return;
+    // Restored entries must replay in their (at, n) order even when a same-session verb was
+    // queued before this ran — a retryable failure milliseconds after boot is older than
+    // nothing. The sort is total because every stamp came from the same monotonic pair.
+    this.queue.sort((a, b) => (a.at - b.at) || (a.n - b.n));
+    this.overlayRev++;
+    this.notify();
+  }
+
   private async drain(): Promise<void> {
+    /**
+     * This drain's epoch — the other half of {@link awaitingEcho}'s happens-before. Stamped
+     * BEFORE the first page is requested, so "registered epoch < this epoch" means the POST
+     * returned before this drain read the log, and this drain's success therefore proves the
+     * echo is applied. See {@link OhmailEngine.sweepAwaitingEcho} at the successful exit.
+     */
+    const epoch = ++this.drainEpoch;
     let rebootstrapped = false;
     // The rules-first pass runs AT MOST ONCE per drain (re-owed by the 410 reset below): the
     // completion stamp only lands when the whole drain settles, so without this latch every page
@@ -1230,6 +1405,13 @@ export class OhmailEngine {
           await this.store.resetForBootstrap(); // cursor → "0"
           // The wipe took the rules with it — the re-bootstrap owes the rules-first pass again.
           rulesFirstDone = false;
+          // …and it took the durable outbox's persisted entries with it, while the queue (an
+          // engine field) still holds the un-sent verbs. Re-persist them: a 410 is a statement
+          // about the CURSOR, never about the user's intents, and without this line a kill
+          // between the reset and the verbs' confirmation would lose them — the exact loss the
+          // outbox exists to retire. (A verb in flight during the reset re-persists itself in
+          // `dispatch`'s retryable branch, which is the other half of this belt.)
+          for (const p of this.queue) await this.putOutbox(p);
           this.notify();
           // Back to the top: with a snapshot route the cursor of "0" selects the snapshot and the
           // delta drain then resumes from `asOfSeq`; without one it selects `since=0`, which is
@@ -1258,7 +1440,32 @@ export class OhmailEngine {
       // mid-backlog leaves the old stamp standing, so the next drain still reads as a stale
       // resume and freshens again (idempotent: the seq guard absorbs the repeat).
       await this.store.setMeta(LAST_DRAIN_AT_META, this.now().toISOString());
+      // THE OVERLAY SWEEP, only on this successful exit: every overlay whose POST returned
+      // before this drain began now has its echo IN the mirror, so retiring it changes what is
+      // rendered from "the overlay's claim" to "the server's identical statement".
+      this.sweepAwaitingEcho(epoch);
       return;
+    }
+  }
+
+  /**
+   * Retire every {@link awaitingEcho} overlay registered before the drain of `epoch` began.
+   * A failed drain never reaches this (its `throw` propagates out of {@link drain}), which is
+   * the whole point: the overlay survives any number of failed attempts and retires only on
+   * proof. Entries registered DURING the drain (`registered === epoch`) stay — that drain read
+   * the log before their POST committed and proves nothing about them.
+   */
+  private sweepAwaitingEcho(epoch: number): void {
+    if (this.awaitingEcho.size === 0) return;
+    let swept = false;
+    for (const [overlayId, registered] of this.awaitingEcho) {
+      if (registered >= epoch) continue;
+      this.awaitingEcho.delete(overlayId);
+      swept = this.overlays.delete(overlayId) || swept;
+    }
+    if (swept) {
+      this.overlayRev++;
+      this.notify();
     }
   }
 
@@ -2571,12 +2778,62 @@ export class OhmailEngine {
     this.overlayRev++;
     this.notify();
 
-    return this.dispatch({ id, key, mutation: enriched });
+    /**
+     * THE VERB IS DURABLE BEFORE IT IS SENT — the durable outbox's write, ahead of the wire
+     * POST on purpose (INSTANT-ARCH §6.2(b), stage 1). The order is the guarantee: a process
+     * killed between this line and the server's answer — a tab closed mid-`pagehide` flush, an
+     * app swiped away with a verb in flight — restarts with the entry still in the mirror
+     * store, replays it under the SAME Idempotency-Key, and the verb lands exactly once. The
+     * write is one small `putLocal`; on the in-memory store it is free, and its failure (a
+     * full quota, a private window) is swallowed because a verb that cannot be persisted must
+     * still be SENT — that is exactly today's behaviour, not a new risk.
+     */
+    const pending: PendingMutation = {
+      id, key, mutation: enriched, at: this.now().getTime(), n: this.outboxSeq++,
+    };
+    await this.putOutbox(pending);
+
+    return this.dispatch(pending);
   }
 
-  private async dispatch(p: PendingMutation): Promise<MutationResult> {
+  /** Persist one outbox entry (best-effort — see the call in {@link OhmailEngine.mutate}). */
+  private async putOutbox(p: PendingMutation): Promise<void> {
+    const entry: PersistedOutboxEntry = {
+      v: 1, id: p.id, key: p.key, n: p.n, at: p.at, mutation: p.mutation,
+    };
+    try {
+      await this.store.putLocal(OUTBOX_TYPE, p.id, entry);
+    } catch { /* storage refused — the verb still goes on the wire, exactly as before */ }
+  }
+
+  /** Hard-delete one outbox entry on its terminal outcome (best-effort, same reasoning). */
+  private async dropOutbox(id: string): Promise<void> {
+    try {
+      await this.store.prune([{ type: OUTBOX_TYPE, id }]);
+    } catch { /* an undeleted entry replays idempotently — the safe direction */ }
+  }
+
+  /**
+   * `deferReconcile` is the boot replay's mode ({@link OhmailEngine.replayOutbox}): the caller
+   * is INSIDE the single-flight drive, so the per-mutation `syncFresh()` would deadlock on the
+   * drive's own promise — and is redundant anyway, because the drain that follows the replay in
+   * the same drive begins after every replayed POST returned and therefore carries every echo.
+   * In this mode a confirmed no-echo mutation registers in {@link awaitingEcho} instead of
+   * draining, and that following drain's success is what retires its overlay.
+   */
+  private async dispatch(p: PendingMutation, opts: { deferReconcile?: boolean } = {}): Promise<MutationResult> {
     try {
       const outcome = await this.adapter.mutate(p.mutation, { idempotencyKey: p.key });
+      /**
+       * The happens-before token for {@link awaitingEcho}: any drain whose page loop begins
+       * AFTER this line reads a change log that already holds this mutation's rows (the seq
+       * argument in {@link OhmailEngine.syncFresh}). Captured HERE — not where a failure is
+       * later handled — because `drainEpoch` may have advanced in between, and an epoch read
+       * late would let a drain that began BEFORE the POST returned retire the overlay.
+       */
+      const epochAtConfirm = this.drainEpoch;
+      /** Whether the overlay must OUTLIVE this dispatch — set by the two no-echo-yet arms below. */
+      let echoPending = false;
       /**
        * THE SENT COPY IS MATERIALISED ON THE SERVER'S WORD AND ON NOTHING ELSE'S — which means
        * HERE, the line after that word arrives, and not below the reconciliation branch.
@@ -2634,7 +2891,9 @@ export class OhmailEngine {
          * delivered mail — reporting anything else is the double-delivery this path exists to
          * make impossible.
          */
-        void this.syncFresh().catch(() => { /* see above — the write landed */ });
+        // In the boot replay's deferred mode the drive's own drain follows immediately and
+        // carries the flip, so no background drain is issued — one drain, not two.
+        if (!opts.deferReconcile) void this.syncFresh().catch(() => { /* see above — the write landed */ });
       } else {
         /**
          * NO ECHO BODY — pull the authoritative delta from a drain that STARTED after this POST
@@ -2667,14 +2926,30 @@ export class OhmailEngine {
          * from `adapter.mutate` itself — the server refusing is the only thing that means the
          * mutation failed, and it still rolls back or queues in the `catch` below.
          *
-         * The residual: on a failed drain the mirror has not caught up, so the row reverts on
-         * screen until the next poll. That is the symptom this method exists to prevent, in the
-         * one case where the network genuinely broke rather than in the ordinary case of a poll
-         * being in flight.
+         * ── AND THE RESIDUAL IS CLOSED: THE OVERLAY OUTLIVES THE FAILED DRAIN ───────────────
+         *
+         * This branch used to drop the overlay whether the drain succeeded or not, so on a
+         * failed drain the row REVERTED on screen until the next poll — the write was safe
+         * server-side, the user saw it undone and re-did it (INSTANT-ARCH §4.2 seam 2, the
+         * reported "mark them read multiple times"). Now a failed drain registers the overlay
+         * in {@link awaitingEcho} instead: the intent stays on screen, `confirmed` stays the
+         * reported status, and the overlay retires when the next drain that BEGAN after this
+         * POST returned completes — the scheduler's ordinary retry cadence, so the retry is
+         * bounded by machinery that already exists rather than a new loop here.
          */
-        try {
-          await this.syncFresh();
-        } catch { /* see above — the write landed; the mirror catches up on the next poll */ }
+        if (opts.deferReconcile) {
+          this.awaitingEcho.set(p.id, epochAtConfirm);
+          echoPending = true;
+        } else {
+          try {
+            await this.syncFresh();
+          } catch {
+            // The write landed; the mirror catches up on the next successful drain, and the
+            // overlay stands until that drain proves the echo applied.
+            this.awaitingEcho.set(p.id, epochAtConfirm);
+            echoPending = true;
+          }
+        }
       }
       /**
        * `view_meta` EFFECTS OUTLIVE THE OVERLAY — written into the mirror before the overlay
@@ -2694,7 +2969,14 @@ export class OhmailEngine {
           if (e.type === "view_meta") await this.store.putLocal("view_meta", e.id, e.entity);
         }
       }
-      this.overlays.delete(p.id);
+      // The overlay is retired HERE only when its echo is provably in the mirror (the echo
+      // body was applied, or the awaited drain succeeded). `echoPending` overlays stand and
+      // are retired by {@link OhmailEngine.drain}'s sweep — see {@link awaitingEcho}.
+      if (!echoPending) this.overlays.delete(p.id);
+      // Server CONFIRMED ⇒ the durable entry has served its purpose. Removed here — not on the
+      // echo's application — because a replay of a confirmed verb is idempotent anyway, and an
+      // entry that outlived confirmation would replay on every boot until some drain settled.
+      await this.dropOutbox(p.id);
       // The Sent copy was materialised the instant the server confirmed, above — a rejection
       // reaches the `catch` below and never gets here, which is the "DROP on send rejection"
       // half, unchanged by moving the call up.
@@ -2719,9 +3001,19 @@ export class OhmailEngine {
         // Keep the overlay (the user's intent stands) + queue for a retry with
         // the SAME Idempotency-Key — the server dedupes a half-landed attempt.
         this.queue.push(p);
+        // Re-assert the durable entry. Normally redundant with `mutate()`'s write, but it is
+        // the belt for the one window where it is not: a 410 reset wiped the store while this
+        // request was in flight, and without this line the queued verb would be memory-only
+        // again — the exact state the durable outbox exists to retire.
+        await this.putOutbox(p);
         return { id: p.id, key: p.key, status: "queued", seq: null, error: rejection };
       }
+      // EXPLICIT REFUSAL: the local effect rolls back VISIBLY, once — the overlay drops, the
+      // row reverts, and the rejection (with the server's own sentence) rides the result for
+      // the surface to say. The durable entry goes with it: a refused verb must not replay.
       this.overlays.delete(p.id);
+      this.awaitingEcho.delete(p.id);
+      await this.dropOutbox(p.id);
       this.overlayRev++;
       this.notify();
       return { id: p.id, key: p.key, status: "rolled_back", seq: null, error: rejection };

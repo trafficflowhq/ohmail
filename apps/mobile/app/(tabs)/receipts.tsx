@@ -17,7 +17,7 @@
  * rows whose absolute foot has really cleared the line.
  */
 import { useCallback, useEffect, useRef } from "react";
-import { View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
+import { AppState, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import { router, useFocusEffect } from "expo-router";
 import { Copy } from "../../src/copy";
 import { usePullToSync } from "../../src/state/pull";
@@ -70,9 +70,20 @@ export default function ReceiptsScreen() {
     [actions, ledger],
   );
 
-  // The leave commit for this stream's own waterline.
+  // The leave commit for this stream's own waterline — including the APP backgrounding while
+  // this stream is focused, for the reasons written out on the Reads twin: a phone visit
+  // usually ends at the home button, a switcher kill gets no unmount, and the flushed verb
+  // rides the durable outbox so even that kill delivers on the next boot.
   useFocusEffect(
-    useCallback(() => () => actions.leaveFeed("receipts"), [actions]),
+    useCallback(() => {
+      const sub = AppState.addEventListener("change", (s) => {
+        if (s === "background") void actions.leaveFeed("receipts");
+      });
+      return () => {
+        sub.remove();
+        void actions.leaveFeed("receipts");
+      };
+    }, [actions]),
   );
 
   return (
