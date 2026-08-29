@@ -1744,25 +1744,6 @@ export function staleAsOf(
   return f.state === "stale" && f.asOf !== null ? whenLabel(f.asOf, zone) : null;
 }
 
-/**
- * The verdict as a comparable key — the freshness CLOCK's sentinel (`world.tsx`). Two review
- * rounds shaped it:
- *
- *  · RAW, never the formatted label (round 2): the label carries only weekday+time, so two
- *    stamps a week apart render identically and a label-compared sentinel sleeps through a
- *    real current→stale transition. The STATE is in the key, so that transition always moves it.
- *  · The instant rides the key ONLY while stale (round 3): every settled drain rewrites the
- *    completion stamp, so a current verdict's `asOf` churns on a healthy phone — keying on it
- *    made the clock rebuild the world once after every drain for no visible change. While
- *    current or unknown the key is the state alone; while stale the stamp is the label's own
- *    text and belongs in it.
- */
-export function freshnessKey(
-  engine: { freshness(): { state: "unknown" | "stale" | "current"; asOf: string | null } },
-): string {
-  const f = engine.freshness();
-  return f.state === "stale" ? `stale|${f.asOf ?? ""}` : f.state;
-}
 
 /* Re-exported so the world layer and the suite spell the vocabulary identically. `FolderEntity`
  * rides through here because `live.ts` is the one state module on the engine's import

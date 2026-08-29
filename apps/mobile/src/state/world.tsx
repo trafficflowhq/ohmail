@@ -55,7 +55,6 @@ import {
   liveReceipts,
   liveScreener,
   liveTags,
-  freshnessKey,
   mirrorSettled,
   presentedOf,
   staleAsOf,
@@ -583,32 +582,12 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   /**
    * THE FRESHNESS CLOCK — current→stale is a transition TIME makes, with no drain, no store
    * write and no connection flip to re-derive the world: a phone left open past the staleness
-   * threshold would render stale mail unlabeled for ever off a memo whose deps never move. One
-   * coarse minute-tick asks the engine's verdict and bumps the memo ONLY when the label's text
-   * actually changed — a quiet phone re-renders zero extra times, and the label appears at
-   * most a minute after the threshold (the clearing direction stays instant: the settle bumps
-   * `version`). RN pauses timers in the background; on return, the next tick — or the
-   * foreground drain the connection layer already runs — re-derives, whichever lands first.
+   * threshold would render stale mail unlabeled for ever off a memo whose deps never move.
+   * The beat below is bumped by the post-memo watcher whenever the engine's live verdict
+   * differs from what the world actually RENDERED — see it for the three review rounds that
+   * shaped the comparison.
    */
   const [freshBeat, setFreshBeat] = useState(0);
-  // The sentinel is the RAW verdict (`freshnessKey` — see its header for the two review rounds
-  // that shaped it), SEEDED from the live verdict when the clock arms: the world this effect
-  // follows was just derived from the same engine, so the first tick has nothing to announce —
-  // an unseeded ref bumped a full world rebuild on the first tick after every drain, for no
-  // visible change. A new engine re-arms the effect and re-seeds from ITS verdict the same way.
-  const lastFreshKey = useRef<string | null>(null);
-  useEffect(() => {
-    if (engine === null) return;
-    lastFreshKey.current = freshnessKey(engine);
-    const id = setInterval(() => {
-      const key = freshnessKey(engine);
-      if (key !== lastFreshKey.current) {
-        lastFreshKey.current = key;
-        setFreshBeat((n) => n + 1);
-      }
-    }, 60_000);
-    return () => clearInterval(id);
-  }, [engine, zone]);
 
   const world = useMemo<World>(() => {
     if (engine === null || session === null) return emptyWorld(actions);
@@ -700,6 +679,39 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, session, scopes, zone, actions, version, outcomeSeq, outcomeOf, freshBeat,
     foldersOn, foldersPending, setFoldersEnabled, signatures, conn.syncing, conn.syncError]);
+
+  /**
+   * THE FRESHNESS WATCHER — the clock's other half, AFTER the memo because its sentinel IS the
+   * memo's own output. It compares what the engine would say now against what the world
+   * rendered (`boot.staleAsOf`), at arm time and then each minute, and bumps `freshBeat` only
+   * on a difference. Three review rounds shaped this exact form:
+   *
+   *  · round 2 — no formatted-label ambiguity is possible: both sides of the comparison come
+   *    from the same derivation, so "a different stamp that happens to format identically"
+   *    cannot make a real transition invisible (a stamp change requires a drain, which
+   *    re-derives through `version` anyway);
+   *  · round 3 — a healthy drain's stamp churn re-arms and re-renders NOTHING: while current,
+   *    the rendered label is null across every drain, the dep does not move, and the check
+   *    compares null with null;
+   *  · round 4 — a transition can never be swallowed UNRENDERED: a ref seeded from the live
+   *    verdict could adopt a current→stale flip that happened between render and effect and
+   *    then never announce it; comparing against the RENDERED value makes that impossible by
+   *    construction — the check at arm time closes the same race.
+   *
+   * RN pauses timers in the background; on return, the next tick or the foreground drain
+   * re-derives, whichever lands first. A bump re-derives the memo, the dep follows, the
+   * re-armed check finds both sides equal, and the loop terminates in one step.
+   */
+  const renderedStale = world.boot.staleAsOf;
+  useEffect(() => {
+    if (engine === null) return;
+    const check = (): void => {
+      if (staleAsOf(engine, zone) !== renderedStale) setFreshBeat((n) => n + 1);
+    };
+    check();
+    const id = setInterval(check, 60_000);
+    return () => clearInterval(id);
+  }, [engine, zone, renderedStale]);
 
   return (
     <WorldContext.Provider value={world}>
