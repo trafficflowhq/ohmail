@@ -21,10 +21,13 @@
  *
  * Deliberately, and it is the exception rather than the rule. The shared client reads its words
  * from the message catalogue because two products render it; these screens exist only inside this
- * app, in one language, and the vocabulary — "On this Mac", "ohmail Cloud" — belongs to the
- * desktop rather than to the catalogue's `settings` namespace. The provider table it renders is
- * the shared one, so the sentences that matter most (what an app password is, and which
- * providers actually work) are still written down exactly once.
+ * app, in one language, and the vocabulary — "On this Mac" / "On this PC" / "On this computer",
+ * "ohmail Cloud" — belongs to the desktop rather than to the catalogue's `settings` namespace.
+ * The machine's own word comes from `platform.ts` (a fact about the build, one per platform this
+ * ships to), never hardcoded: the Linux AppImage said "On this Mac" for a release before that
+ * rule existed. The provider table it renders is the shared one, so the sentences that matter
+ * most (what an app password is, and which providers actually work) are still written down
+ * exactly once.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -44,10 +47,11 @@ import {
   type LocalDoorFields,
 } from "./doors.js";
 import { offLinkCode, onLinkCode, openWeb } from "./native.js";
+import { MACHINE_WORD } from "./platform.js";
 
 /** What the app says when the platform would not spawn a browser. Same sentence Settings uses. */
 const NO_BROWSER =
-  "This Mac would not open a browser. The page is at ohmail.app/link-desktop.";
+  `This ${MACHINE_WORD} would not open a browser. The page is at ohmail.app/link-desktop.`;
 
 /** Which of the three cards is on screen. `doors` is where a fresh install starts. */
 type Step = "doors" | "local" | "cloud";
@@ -245,7 +249,7 @@ function Doors({ onPick, onCancel }: { onPick: (step: Step) => void; onCancel?: 
       <div className="pvp">
         <div className="pvp-grid" role="group" aria-label="Where your mail lives">
           <button type="button" className="pvp-tile" onClick={() => onPick("local")}>
-            <span className="pvp-name">On this Mac</span>
+            <span className="pvp-name">On this {MACHINE_WORD}</span>
             <span className="pvp-host">your own IMAP mailbox</span>
           </button>
           <button type="button" className="pvp-tile pvp-other" onClick={() => onPick("cloud")}>
@@ -255,7 +259,7 @@ function Doors({ onPick, onCancel }: { onPick: (step: Step) => void; onCancel?: 
         </div>
       </div>
       <p className="join-hint">
-        On this Mac, your mail is organized by this computer and nothing is sent to us. With
+        On this {MACHINE_WORD}, your mail is organized right here and nothing is sent to us. With
         ohmail Cloud, a server does the organizing and this app keeps a copy of the result.
       </p>
       {onCancel ? (
@@ -303,8 +307,8 @@ function LocalDoor({
     >
       <h1>Your own mailbox</h1>
       <p>
-        This computer connects to your mail server directly. Your password is stored on this Mac,
-        encrypted under a key held in the keychain, and is never sent to us.
+        This computer connects to your mail server directly. Your password is stored on this{" "}
+        {MACHINE_WORD}, encrypted under a key held in the keychain, and is never sent to us.
       </p>
 
       {problem ? <p className="join-error">{problem}</p> : null}
@@ -520,9 +524,9 @@ function CloudDoor({
       <h1>Sign in to ohmail Cloud</h1>
       <p>
         {signInOnly
-          ? "The copy of your mail on this Mac is where you left it. Signing in happens in the " +
-            "mail engine on this machine — the password and the code go straight there and are " +
-            "not kept anywhere else."
+          ? `The copy of your mail on this ${MACHINE_WORD} is where you left it. Signing in ` +
+            "happens in the mail engine on this machine — the password and the code go straight " +
+            "there and are not kept anywhere else."
           : "Your account is organized on our servers and this app keeps a copy. Signing in " +
             "happens in the mail engine on this machine — the password and the code go straight " +
             "there and are not kept anywhere else."}

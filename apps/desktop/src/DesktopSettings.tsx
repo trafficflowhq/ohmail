@@ -28,6 +28,7 @@ import { Button, SettingsNote, SettingsRow, SettingsSection, SettingsSubhead } f
 import { engineLogout, type EngineStatus } from "./bridge-fetch.js";
 import { DesktopAiSettings } from "./DesktopAiSettings.js";
 import type { LocalAiStatus } from "./local-ai.js";
+import { MACHINE_WORD } from "./platform.js";
 
 /**
  * The label the Settings nav shows for this pane. Supplied with the node; see `SettingsView`.
@@ -39,7 +40,7 @@ import type { LocalAiStatus } from "./local-ai.js";
 export const DESKTOP_PANE_LABEL = "Desktop";
 
 const DOOR_NAME: Record<string, string> = {
-  local: "On this Mac",
+  local: `On this ${MACHINE_WORD}`,
   cloud: "ohmail Cloud",
 };
 
@@ -59,14 +60,14 @@ function credentialLine(status: EngineStatus): { value: string; description: str
         value: "Signed in",
         description: cloud
           ? "This install holds a session for your hosted account."
-          : "Your mailbox password is stored on this Mac and works.",
+          : `Your mailbox password is stored on this ${MACHINE_WORD} and works.`,
       };
     case "absent":
       return {
         value: "Signed out",
         description: cloud
           ? "There is no session for this account on this machine. Sign in again below."
-          : "No mailbox password is stored on this Mac, so nothing is being synced yet.",
+          : `No mailbox password is stored on this ${MACHINE_WORD}, so nothing is being synced yet.`,
       };
     case "unreadable":
       return {
@@ -190,9 +191,9 @@ export function DesktopSettings({
       <SettingsRow
         label="Switch mailbox"
         description={
-          "Open a different mail server, or move between this Mac and your hosted account. The " +
-          "copy of your mail from this one is frozen where it is rather than deleted, so coming " +
-          "back does not cost a full re-sync."
+          `Open a different mail server, or move between this ${MACHINE_WORD} and your hosted ` +
+          "account. The copy of your mail from this one is frozen where it is rather than " +
+          "deleted, so coming back does not cost a full re-sync."
         }
         control={<Button onClick={onSwitchDoor} disabled={busy}>Switch…</Button>}
       />
@@ -201,9 +202,9 @@ export function DesktopSettings({
         <SettingsRow
           label="Sign out of this mailbox?"
           description={
-            "The copy of your mail already on this Mac stays where it is. What is cleared is the " +
-            "login — the stored password, or the session for your hosted account — and which " +
-            "door this install came in by. Nothing is removed from your mail server."
+            `The copy of your mail already on this ${MACHINE_WORD} stays where it is. What is ` +
+            "cleared is the login — the stored password, or the session for your hosted account " +
+            "— and which door this install came in by. Nothing is removed from your mail server."
           }
           control={
             <span className="set-tag-acts">
@@ -217,7 +218,7 @@ export function DesktopSettings({
       ) : (
         <SettingsRow
           label="Sign out"
-          description="Clears the login and forgets which mailbox this is. Your mail stays on this Mac and on your server."
+          description={`Clears the login and forgets which mailbox this is. Your mail stays on this ${MACHINE_WORD} and on your server.`}
           control={<Button onClick={() => setMode("confirm")} disabled={busy}>Sign out</Button>}
         />
       )}

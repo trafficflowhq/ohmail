@@ -451,6 +451,13 @@ export default defineConfig({
     __OHMAIL_VERSION__: JSON.stringify(
       (JSON.parse(fs.readFileSync(r("./package.json"), "utf8")) as { version: string }).version,
     ),
+    /* The platform this bundle ships to — which is the platform it is BUILT on: the release
+       workflow runs `tauri build` per platform (macos-15 / windows-latest / ubuntu-latest), one
+       artifact each, and `ui:dev` runs on the machine in front of you. `src/platform.ts` maps it
+       to the word the setup and settings copy uses ("this Mac" / "this PC" / "this computer");
+       the webview's user agent is deliberately not consulted — WebKitGTK may present a Mac UA
+       for site compatibility, which would keep the Linux build saying "Mac". */
+    __OHMAIL_PLATFORM__: JSON.stringify(process.platform),
   },
 
   resolve: {

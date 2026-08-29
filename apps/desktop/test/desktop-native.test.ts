@@ -20,6 +20,7 @@ import {
   viewOfMenuPayload,
 } from "../src/native.js";
 import { DesktopSettings } from "../src/DesktopSettings.js";
+import { MACHINE_WORD } from "../src/platform.js";
 import type { EngineStatus } from "../src/bridge-fetch.js";
 
 /**
@@ -221,7 +222,13 @@ describe("Settings → this install", () => {
     await mount(SERVING);
     const text = hostEl.textContent ?? "";
     expect(text).toContain("mila@example.com");
-    expect(text).toContain("On this Mac");
+    /* The door's name carries THIS build's own word for the machine — "Mac"/"PC"/"computer",
+       from `platform.ts`. Here the define is absent, so the word is the unbranded one; what the
+       assertion pins is that the pane renders the platform word and not a hardcoded "Mac",
+       which is exactly what the released 0.12.0 Linux AppImage got wrong. The mapping itself
+       (darwin → Mac, win32 → PC, linux → computer) is `desktop-platform.test.ts`'s. */
+    expect(text).toContain(`On this ${MACHINE_WORD}`);
+    expect(text).not.toContain("On this Mac");
     expect(text).toContain("Signed in");
   });
 
@@ -268,7 +275,7 @@ describe("Settings → this install", () => {
       .toEqual(["GET /local/ai"]);
     expect(hostEl.textContent).toContain("Sign out of this mailbox?");
     // …and it says what stays, which is the thing somebody is actually asking.
-    expect(hostEl.textContent).toMatch(/copy of your mail already on this Mac stays/);
+    expect(hostEl.textContent).toContain(`copy of your mail already on this ${MACHINE_WORD} stays`);
     expect(hostEl.textContent).toMatch(/Nothing is removed from your mail server/);
 
     await click("Sign out");

@@ -13,3 +13,12 @@
  */
 declare const __OHMAIL_VERSION__: string;
 
+/**
+ * The platform this bundle was BUILT ON — `process.platform` folded to a literal at build time,
+ * which is also the platform it ships to: the release workflow runs `tauri build` on a macOS,
+ * Windows and Linux runner respectively, one artifact each. `src/platform.ts` is the only
+ * consumer and owns the mapping to a user-facing word; everything else imports the word.
+ * Absent (typeof-guarded) where no bundler ran — the test runner importing source.
+ */
+declare const __OHMAIL_PLATFORM__: string;
+
