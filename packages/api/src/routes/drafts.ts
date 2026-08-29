@@ -156,12 +156,31 @@ function decodeSendAttachments(
  */
 export const draftsRoutes: Route[] = [
   {
+    // `idempotent: true` because a CREATE is the one draft mutation whose replay mints a
+    // SECOND row: the compose surface autosaves through here once per draft and the engine's
+    // durable outbox replays a lost-response attempt under the same Idempotency-Key — after a
+    // restart, hours later. The service claims the key INSIDE the transaction that writes the
+    // row (`DraftsService.create`), storing the 201 body it answered with, so the replay gets
+    // the same draft back instead of an orphan twin. Update/discard need none of this: a PUT
+    // sets the same values twice and a DELETE of the deleted answers 404, both convergent.
     method: "POST",
     pattern: "/drafts",
     cost: "work",
+    options: { idempotent: true },
     handler: async (req, deps) => {
       const body = await readBody<CreateDraftBody>(req);
-      const { draft, seq } = await drafts(deps).create(serviceContext(deps, req), body);
+      const { draft, seq } = await drafts(deps).create(serviceContext(deps, req), body, {
+        idempotency: deps.idempotency
+          ? {
+              key: deps.idempotency.key,
+              requestHash: deps.idempotency.requestHash,
+              responseStatus: 201,
+              // The stored body IS the answer below: the in-tx materialized DTO, so a replay
+              // is byte-for-byte the first response (same row, same timestamps).
+              response: (r) => r.draft,
+            }
+          : undefined,
+      });
       return jsonResponse(draft, { status: 201, seq });
     },
   },

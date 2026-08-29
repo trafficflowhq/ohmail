@@ -19,7 +19,14 @@ export interface DraftCreateIdempotency {
   key: string;
   requestHash: string;
   responseStatus: number;
-  response: (r: { draftId: string; seq: number }) => unknown;
+  /**
+   * `draft` is the row MATERIALIZED IN-TX, for the route whose response is the DTO itself
+   * (`POST /drafts` answers 201 + the draft): a replay hands back the stored JSON verbatim,
+   * so storing anything narrower than the original answer would make the replayed create a
+   * different response — the adapter reads `id` off it and a missing field is a client-side
+   * failure for a create that succeeded. The AI route keeps ignoring it (`202 {draftId}`).
+   */
+  response: (r: { draftId: string; seq: number; draft: DraftDTO }) => unknown;
 }
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
@@ -131,12 +138,16 @@ export class DraftsService {
       // The stored response commits atomically with the draft, closing the
       // commit-then-crash window in which a retry would store a SECOND draft.
       if (opts.idempotency) {
+        // In-tx on purpose: the row only exists inside this transaction, and the stored
+        // response must be the answer the FIRST request gave — see the interface's `draft`.
+        const draft = await materializeDraft(tx as unknown as typeof ctx.db, ctx.accountId, row!.id);
+        if (!draft) throw new ServiceError("internal", 500, "draft vanished inside its own transaction");
         const claimed = await claimIdempotencyKey(tx, {
           accountId: ctx.accountId,
           key: opts.idempotency.key,
           requestHash: opts.idempotency.requestHash,
           responseStatus: opts.idempotency.responseStatus,
-          responseJson: opts.idempotency.response({ draftId: row!.id, seq: Number(s) }),
+          responseJson: opts.idempotency.response({ draftId: row!.id, seq: Number(s), draft }),
           seq: Number(s),
           now,
         });
