@@ -80,16 +80,11 @@ interface PendingMutation {
   at: number;
   n: number;
   /**
-   * TRUE only for an entry restored from a PREVIOUS session — and it is the whole ownership
-   * story of the automatic replay. A same-session queued verb has a live owner: `useMailSend`
-   * holds its send lock until `flushPending()` hands the result back through `absorb`, the
-   * mobile ledger settles keys the same way, and a compose adopts a create's `entityId` from
-   * the result. An automatic drive that consumed those entries would discard the results those
-   * owners are waiting on — a delivered send whose composer never unlocks. So
-   * the drive replays RESTORED entries only, whose owners died with their session and whose
-   * results have no one left to notify; same-session entries keep their pre-outbox contract
-   * (queued, visible, delivered by their owner's `flushPending` — or by the next boot, which
-   * makes them restored).
+   * TRUE only for an entry restored from a PREVIOUS session. It decides who may replay the
+   * verb: a restored entry's owner died with its session, so the drive replays it freely and
+   * consumes the result — there is no one left to notify. A SAME-SESSION entry is replayed by
+   * the drive only when no living surface routes its result; the two families a surface does
+   * wait on stay with `flushPending()` — see {@link OhmailEngine.ownerSettled}.
    */
   restored?: boolean;
 }
@@ -1285,12 +1280,30 @@ export class OhmailEngine {
   }
 
   /** Replay every queued verb, oldest first, under its original Idempotency-Key. */
+  /**
+   * A verb whose RESULT a living surface is waiting on — the two families the drive must not
+   * consume while their session is alive. `useMailSend` holds its send lock until
+   * `flushPending()` hands the result through `absorb`, and the mobile ledger's send toasts
+   * (confirmed / check-Sent / failed) settle the same way; a compose adopts a create's
+   * `entityId` from the result, and a create confirmed behind its back would leave the
+   * composer minting a SECOND row under a fresh key on the next autosave. Everything else is
+   * fire-and-forget on every surface (the rollback it could ever announce is already visible
+   * as the overlay coming off), so the drive retrying it is what keeps user-always-wins
+   * CONVERGENT — a `mark_seen` queued by a blip has no owner to flush it, and stranding it
+   * until reload was itself a review finding.
+   */
+  private static ownerSettled(m: EngineMutation): boolean {
+    return m.kind === "mail_send" || (m.kind === "draft_save" && m.draftId === null);
+  }
+
   private async replayOutbox(): Promise<void> {
     if (this.queue.length === 0) return;
-    // RESTORED ENTRIES ONLY — see {@link PendingMutation.restored}: a same-session queued verb
-    // belongs to its owner's `flushPending()`, whose result routing (send locks, the mobile
-    // ledger, `entityId` adoption) an automatic consume here would silently starve.
-    const batch = this.queue.filter((p) => p.restored === true);
+    // Every RESTORED entry (its owner died with its session), plus every same-session entry
+    // whose result nobody routes — see {@link OhmailEngine.ownerSettled} for the two families
+    // that stay with `flushPending()`.
+    const batch = this.queue
+      .filter((p) => p.restored === true || !OhmailEngine.ownerSettled(p.mutation))
+      .sort((a, b) => (a.at - b.at) || (a.n - b.n));
     if (batch.length === 0) return;
     const held = new Set(batch);
     for (let i = this.queue.length - 1; i >= 0; i--) {
@@ -1299,19 +1312,33 @@ export class OhmailEngine {
     // Serial and awaited: order is user order, and the drain below must not begin until every
     // replayed POST has returned (that happens-before is what lets it carry their echoes). A
     // retryable failure re-queues onto the queue for the NEXT drive — `dispatch` never throws,
-    // so one dead verb cannot stall the drain behind it. Each attempt is DEADLINE-BOUNDED
-    // — the adapter's mutate has no timeout of its own, and one half-open
-    // request awaited here would otherwise hold the single-flight forever — no bootstrap, no
-    // sync, for the whole session. On a timeout the drive simply stops waiting and drains; the
-    // in-flight dispatch still OWNS its entry (it settles it, re-queues it, or leaves it
-    // persisted for the next boot), so the verb is never double-run and never dropped.
-    for (const p of batch) {
+    // so one dead verb cannot stall the drain behind it. Each attempt is DEADLINE-BOUNDED —
+    // the adapter's mutate has no timeout of its own, and one half-open request awaited here
+    // would otherwise hold the single-flight forever: no bootstrap, no sync, for the whole
+    // session. The in-flight dispatch still OWNS its timed-out entry (it settles it, re-queues
+    // it, or leaves it persisted for the next boot), so the verb is never double-run and never
+    // dropped.
+    for (let i = 0; i < batch.length; i++) {
+      const p = batch[i]!;
       let timer: ReturnType<typeof setTimeout> | undefined;
+      let timedOut = false;
       await Promise.race([
         this.dispatch(p, { deferReconcile: true }),
-        new Promise<void>((resolve) => { timer = setTimeout(resolve, this.replayDeadlineMs); }),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(() => { timedOut = true; resolve(); }, this.replayDeadlineMs);
+        }),
       ]);
       if (timer !== undefined) clearTimeout(timer);
+      if (timedOut) {
+        // ORDER IS THE CONTRACT, so a timeout stops the BATCH, not just the wait: the hung
+        // request may yet commit, and dispatching the entries behind it would let a newer
+        // write land before an older one — mark-read then mark-unread arriving reversed is
+        // the exact class the serial replay exists to prevent. The rest go back on the queue
+        // (stamps intact — the next replay re-sorts) and this drive proceeds to its drain;
+        // one deadline bounds the whole batch, not deadline × N.
+        this.queue.unshift(...batch.slice(i + 1));
+        return;
+      }
     }
   }
 
