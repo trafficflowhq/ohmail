@@ -1449,7 +1449,7 @@
     "laterTerm": "Später",
     "laterBody": "Schick eine Nachricht auf morgen, auf nächste Woche oder auf ein Datum, das du wählst.",
     "unsubTerm": "Abmelden",
-    "unsubBody": "Screene einen Absender aus oder markiere ihn als Spam, und ohmail schickt auch die Ein-Klick-Abmeldung für dich — wo die Liste eine anbietet. Standardmäßig an; ein Schalter in den Einstellungen stellt es ab.",
+    "unsubBody": "Screene einen Absender aus oder markiere ihn als Spam, und ohmail schickt auch die Ein-Klick-Abmeldung für dich — wo die Liste eine anbietet. Standardmäßig an; ein Schalter in den Einstellungen stellt es ab. In der eigenständigen Desktop-App noch nicht.",
     "writeTerm": "Schreiben",
     "writeBody": "Antworten und weiterleiten mit Kopie und Blindkopie, aus dem Postfach, das du dafür wählst.",
     "tagsTerm": "Tags",

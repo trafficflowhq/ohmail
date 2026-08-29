@@ -1449,7 +1449,7 @@
     "laterTerm": "Later",
     "laterBody": "Send a message back to tomorrow, to next week, or to a date you pick.",
     "unsubTerm": "Unsubscribe",
-    "unsubBody": "Screen a sender out or mark them spam, and ohmail also sends the one-click unsubscribe for you — where the list offers one. On by default; a switch in Settings turns it off.",
+    "unsubBody": "Screen a sender out or mark them spam, and ohmail also sends the one-click unsubscribe for you — where the list offers one. On by default; a switch in Settings turns it off. Not yet in the standalone desktop app.",
     "writeTerm": "Writing",
     "writeBody": "Reply and forward with Cc and Bcc, from whichever of your mailboxes you choose.",
     "tagsTerm": "Tags",

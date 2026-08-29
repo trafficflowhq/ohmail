@@ -632,11 +632,20 @@ function localServices(
     // could not call a model even through a cast. `credits` stays absent — this tier is free, so
     // there is no allowance to meter and an absent gate means unmetered rather than ungated.
     //
-    // `unsubscribe` makes a screen-out on THIS door arm auto-unsubscribe exactly as it does on
-    // Cloud — the port was absent here for a release, which made the landing page's claim false
-    // on the standalone app and is why `landing-mailbox-truth.test.ts` reads this call site.
-    // FIRST in the literal: that guard's regex scans up to the first `)` of this expression.
-    screener: makeScreenerService({ unsubscribe, ...(classifier ? { classifier } : {}) }),
+    // NO `unsubscribe` HERE, DELIBERATELY — the automatic screen-out pass stays OFF on this door
+    // until its consent surface exists, and a review ruled it in exactly those terms. The engine
+    // CAN post (the port is on the bag below, for the user-initiated verb); what is missing is
+    // everything around an AUTOMATIC third-party request: the shared client's pre-click
+    // disclosure is mode-gated off on this door (`AppShell.autoUnsubscribeDiscloses` requires a
+    // consent transport this door does not hand in), and the "switch in Settings turns it off"
+    // promise has no local read/write path (`block_auto_unsubscribe_at` has no route here — the
+    // `/local/auto-suggest` pattern is the prior art for adding one). Arming the pass without
+    // those would send requests to third parties on a gesture whose UI never said it would, with
+    // no way to stop it. `landing-mailbox-truth.test.ts` reads this call site: while the pass is
+    // unwired the landing copy MUST carry the standalone qualifier, and the day the disclosure
+    // and the switch land, wiring `unsubscribe` into this literal flips that guard and takes the
+    // qualifier out.
+    screener: makeScreenerService(classifier ? { classifier } : {}),
     // `drafting` is ALWAYS present and `drafter` only when there is a model, which is the pairing
     // the route expects rather than an oversight. The two are different things: `drafting`
     // assembles the sensitivity-safe context and stores the result, `drafter` is the model. The
@@ -650,10 +659,14 @@ function localServices(
     triage: triageService,
     search: searchService,
     privacy: makePrivacyService({ remote: REFUSING_REMOTE_FETCH, resolver: REFUSING_RESOLVER }),
-    // The SAME instance the screener's automatic pass uses, on the bag so the manual button —
-    // `POST /messages/:id/unsubscribe`, which `localRoutes` has mounted (answering 503
-    // `unsubscribe_unconfigured`) since the table landed — performs the request too. One
-    // instance, one record table, one at-most-once claim for both entries.
+    // The MANUAL verb only: `POST /messages/:id/unsubscribe`, which `localRoutes` has mounted
+    // (answering 503 `unsubscribe_unconfigured`) since the record table landed, now performs the
+    // request on this door. A manual unsubscribe is the user's own explicit act on mail in front
+    // of them — the same consent as clicking the list's link themselves, minus the trackers —
+    // which is why it is armed while the AUTOMATIC pass above is deliberately not. On this door
+    // the POST leaves the user's own machine (there are no ohmail servers in a standalone
+    // install's loop, by the door's own design); the hosted door keeps the server-side posture
+    // `unsubscribe-service.ts` documents.
     unsubscribe,
     contacts: contactsService,
     snippets: snippetsService,
