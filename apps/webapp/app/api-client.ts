@@ -344,6 +344,25 @@ export interface MailboxDTO {
    */
   initialImportCompletedAt?: string | null;
   /**
+   * THE FORWARDING-DETECTION NOTICE's evidence pair (mail 0078). `inboundQuietSince` non-null
+   * is a standing quiet episode: the worker judged this connected, healthily-syncing mailbox to
+   * have received essentially no genuine inbound for a generous window while evidence says mail
+   * should be arriving — the shape a provider-level forward without "keep a copy" leaves, which
+   * once cost two days of debugging pointed at ohmail when the answer was upstream. The value
+   * is the newest genuine inbound date the mailbox holds ("almost nothing since {this}").
+   * `inboundQuietDismissedAt` is this mailbox's dismissal
+   * (`POST /mailboxes/:id/inbound-quiet/dismiss`).
+   *
+   * THE CLIENT OWNS THE COMPARISON — `showInboundQuiet` in the Mailboxes pane: show iff `since`
+   * is set, the health claims hold on screen (`connected`, no `syncBlockedSince`, a
+   * `lastSyncAt`), and `dismissedAt` is null or predates `since`. An undisturbed episode never
+   * re-shows after dismissal; a NEW episode's `since` is newer inbound, which only exists
+   * because mail flowed after the dismissal, and re-shows. Optional so a bundle talking to an
+   * older API reads `undefined`, renders nothing, and loses only the notice.
+   */
+  inboundQuietSince?: string | null;
+  inboundQuietDismissedAt?: string | null;
+  /**
    * THE BIGGEST MESSAGE THIS MAILBOX'S SUBMISSION SERVER SAID IT WILL ACCEPT, in bytes (mail
    * 0055) — the server's own `SIZE` announcement, read out of the EHLO the connect-time SMTP
    * probe already ran, or `null` when it announced none.
@@ -785,6 +804,14 @@ export const mailboxes = {
    * the time this returns. The UI must say "queued", never "synced".
    */
   resync: (id: string) => api<{ status: string }>(`/mailboxes/${id}/resync`, { method: "POST", body: {} }),
+  /**
+   * Dismiss the forwarding-detection notice for this mailbox (mail 0078). Stamps
+   * `inboundQuietDismissedAt` and answers the fresh DTO so the pane settles at once; the notice
+   * returns only when a NEW quiet episode postdates the stamp. Idempotent — a repeat press
+   * re-stamps the same dismissal.
+   */
+  dismissInboundQuiet: (id: string) =>
+    api<MailboxDTO>(`/mailboxes/${id}/inbound-quiet/dismiss`, { method: "POST", body: {} }),
   /**
    * `POST /mailboxes` is `stepUp`-gated — it writes envelope-encrypted credentials. During
    * onboarding the passkey/TOTP enrollment that just happened IS the fresh second factor, so

@@ -76,6 +76,7 @@ import { makeClassifierCircuit, ClassifierFaultError, type ClassifierCircuit } f
 import { workflowDrainPass, workflowTimeScanPass, unconfiguredDrafter } from "./workflow-cron.js";
 import { bubbleUpPass } from "./bubble-up-cron.js";
 import { threadJoinHealPass, type ThreadJoinHealCursor } from "./thread-join-heal.js";
+import { inboundQuietPass } from "./inbound-quiet.js";
 import { ruleRetroPass } from "./rule-retro.js";
 import { ohboxTidyPass } from "./ohbox-tidy.js";
 import { screenerAutoApplyPass } from "./screener-auto.js";
@@ -137,6 +138,18 @@ export const BUBBLE_UP_EVERY_MS = 60_000;
  * bought against no user-visible latency.
  */
 export const THREAD_JOIN_HEAL_EVERY_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * How often the leader runs the INBOUND-QUIET pass (the forwarding-detection heuristic,
+ * mail 0078), and NOT CONFIGURABLE — a `const` for the reason {@link BUBBLE_UP_EVERY_MS} is:
+ * an unset `?? something` would silently pick a period nobody chose.
+ *
+ * Six hours, {@link THREAD_JOIN_HEAL_EVERY_MS}'s cadence and for the same shape of reason: the
+ * pass judges windows measured in WEEKS (`INBOUND_QUIET_WINDOW_MS` is fourteen days), so the
+ * verdict cannot change between two cycles in any way a user could perceive, and every cycle
+ * would be a fleet-wide grouped aggregate bought against no user-visible latency.
+ */
+export const INBOUND_QUIET_EVERY_MS = 6 * 60 * 60 * 1000;
 
 /**
  * ENFORCED SYNC — how often the worker scans for mailboxes the API has stamped `sync_requested_at`.
@@ -687,6 +700,13 @@ export async function startWorkerWithLock(
      * The first-cycle cost is one small GROUP BY per served account.
      */
     let lastThreadJoinHealAt = 0;
+    /**
+     * Time-gate for the inbound-quiet pass. Starts "due" like `lastThreadJoinHealAt` and for
+     * its exact reason: a deployment cadence shorter than {@link INBOUND_QUIET_EVERY_MS} would
+     * otherwise mean the forwarding-detection heuristic NEVER runs. The first-cycle cost is one
+     * bounded grouped aggregate per served account.
+     */
+    let lastInboundQuietAt = 0;
     /**
      * Where each account's LAST gated heal run stopped, kept only while it stopped on its
      * BUDGET. An account holding more duplicate-name groups than one run's cap would otherwise
@@ -3897,6 +3917,37 @@ export async function startWorkerWithLock(
               reason: "no group of this account committed partially — each is one transaction — " +
                 "and the candidate predicate is the rows' own state, so the next gated run " +
                 "re-reads reality and resumes",
+            });
+          }
+        }
+      }
+
+      // ── THE INBOUND-QUIET PASS: notice the mailbox a provider-side forward emptied ──────
+      //
+      // The forwarding-detection heuristic (mail 0078, `inbound-quiet.ts` carries the predicate
+      // and the incident). TIME-GATED like the heal above and for its reason: the pass judges
+      // fortnight-wide windows, so nothing a user can perceive changes between two cycles, and
+      // per-cycle it would be a fleet-wide grouped aggregate bought against no latency. Scoped
+      // per account under this shard's lock (bubble-up's argument), its OWN try/catch and loop
+      // so one account's failure must not skip the rest — and never a cycle abort: the notice
+      // is observability, and mail continues to be filed either way.
+      if (Date.now() - lastInboundQuietAt >= INBOUND_QUIET_EVERY_MS) {
+        lastInboundQuietAt = Date.now();
+        for (const accountId of passAccounts) {
+          if (stopped) return;
+          try {
+            const r = await asDatabaseFault("cycle.inboundQuietPass",
+              () => inboundQuietPass(db as unknown as Tx, new Date(), { accountId }));
+            if (r.tripped > 0 || r.cleared > 0) {
+              log.info("inbound_quiet_pass", { accountId, tripped: r.tripped, cleared: r.cleared });
+            }
+          } catch (err) {
+            noteIfSharedDatabaseFault(err);
+            log.error("inbound_quiet_failed", {
+              accountId, err,
+              reason: "the quiet-mailbox judgment was skipped this pass; episodes already " +
+                "stamped stand, nothing is cleared or tripped, and the next gated run " +
+                "re-reads reality — syncing is untouched",
             });
           }
         }

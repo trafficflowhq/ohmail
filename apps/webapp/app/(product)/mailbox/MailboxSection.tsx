@@ -80,7 +80,7 @@ import {
 import { providerById, providerLabel, type ProviderPreset } from "../../shell/providers";
 import { ProviderPicker } from "../../shell/ProviderPicker";
 import { AGO_COPY, agoStamp } from "../../shell/format";
-import { isSyncBlockReason, standDownToken } from "../../shell/mail-state";
+import { isSyncBlockReason, showInboundQuiet, standDownToken } from "../../shell/mail-state";
 import { useMailState } from "../../shell/MailStateProvider";
 import { displayAddress } from "../../shell/idn";
 
@@ -226,6 +226,10 @@ const emptyTyped = (): Typed => ({
 export function statusKey(m: Pick<MailboxDTO, "status" | "lastSyncAt">): string {
   return m.status === "connected" && m.lastSyncAt === null ? "status_connecting" : `status_${m.status}`;
 }
+
+// The forwarding-detection notice's show rule is `showInboundQuiet` in `shell/mail-state.ts` —
+// the SHARED shell, because the desktop's Mailboxes pane renders the same notice and
+// `(product)` is denied from the Desktop mirror. This pane imports it beside `isSyncBlockReason`.
 
 /**
  * ONE ADDRESS, ONE ROW.
@@ -538,6 +542,8 @@ export function MailboxSection() {
   const [now, setNow] = useState(() => Date.now());
   /** Mailboxes whose resync this pane has queued, so the row can say so until it lands. */
   const [queued, setQueued] = useState<Set<string>>(new Set());
+  /** Mailboxes whose quiet-notice dismissal is in flight, so the button debounces (mail 0078). */
+  const [dismissingQuiet, setDismissingQuiet] = useState<Set<string>>(new Set());
   /**
    * THE TAKEOVER CHECK, for at most one mailbox at a time.
    *
@@ -841,6 +847,36 @@ export function MailboxSection() {
         if (!alive.current) return;
         setError(messageOf(err));
         setQueued((q) => { const n = new Set(q); n.delete(id); return n; });
+      }
+    })();
+  };
+
+  /**
+   * DISMISS the forwarding-detection notice for one mailbox (mail 0078) — "this mailbox is
+   * quiet and I know it". The server answers the fresh DTO; folding it into `items` settles the
+   * row at once instead of waiting a poll tick, and the notice never returns for THIS episode
+   * (`showInboundQuiet` compares the two instants). The in-flight set only debounces the button
+   * — a failure leaves the notice standing with the pane's error line saying why, and the next
+   * press asks again.
+   */
+  const dismissQuiet = (id: string): void => {
+    setError(null);
+    setDismissingQuiet((q) => new Set(q).add(id));
+    void (async () => {
+      try {
+        const dto = await mailboxApi.dismissInboundQuiet(id);
+        if (!alive.current) return;
+        setItems((list) => (list === null ? list : list.map((it) => (it.id === dto.id
+          // KEEP the fields this response legitimately lacks: the dismissal answer never carries
+          // `messageCount` (only `?counts=1` does), and replacing the row wholesale would blank
+          // the number until the next mount — absent and 0 are different answers on this wire.
+          ? { ...it, ...dto, messageCount: it.messageCount }
+          : it))));
+      } catch (err) {
+        if (!alive.current) return;
+        setError(messageOf(err));
+      } finally {
+        if (alive.current) setDismissingQuiet((q) => { const n = new Set(q); n.delete(id); return n; });
       }
     })();
   };
@@ -1380,6 +1416,34 @@ export function MailboxSection() {
                       </Button>
                     </>
                   )}
+                </>
+              ) : null}
+              {/* ── THE FORWARDING-DETECTION NOTICE (mail 0078) ──────────────────────────────
+                  A quiet, dismissible fact about a HEALTHY row: the worker judged this mailbox
+                  to have received essentially nothing for a generous window while syncing fine —
+                  the shape a provider-level forward without "keep a copy" leaves, which once
+                  cost two days of debugging pointed at ohmail when the answer was upstream.
+                  `showInboundQuiet` (exported above, bitten by the suite) carries the whole
+                  gate: health on screen, and the dismissal-vs-episode comparison that makes a
+                  dismissal durable until genuine inbound actually flows again. `mbx-sub`, not
+                  `mbx-bad`: nothing is broken, and alarm styling would make the first sentence
+                  a lie. Two keys because "the last mail came {when}" is false for a mailbox
+                  that never received any — the pass stamps `createdAt` there, and the DTO's own
+                  `createdAt` tells the two apart by identity. */}
+              {showInboundQuiet(m) ? (
+                <>
+                  <span className="mbx-sub">
+                    {m.createdAt && m.inboundQuietSince === m.createdAt
+                      ? t("inboundQuietNever")
+                      : t("inboundQuiet", { when: agoStamp(m.inboundQuietSince!, now).rel })}
+                  </span>
+                  <Button
+                    className="mbx-btn"
+                    onClick={() => { dismissQuiet(m.id); }}
+                    disabled={dismissingQuiet.has(m.id)}
+                  >
+                    {t("inboundQuietDismiss")}
+                  </Button>
                 </>
               ) : null}
             </div>

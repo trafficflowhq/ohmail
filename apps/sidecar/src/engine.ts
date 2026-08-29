@@ -77,6 +77,7 @@ import { OrganizerProfileSync } from "@trafficflow/worker/profile";
 import { bubbleUpPass } from "@trafficflow/worker/bubble-up";
 import { screenerAutoSuggestPass } from "@trafficflow/worker/screener-auto-suggest";
 import { threadJoinHealPass, type ThreadJoinHealCursor } from "@trafficflow/worker/thread-join-heal";
+import { inboundQuietPass } from "@trafficflow/worker/inbound-quiet";
 // The HISTORICAL-NAME REPAIR, from the same package and for the fourth instance of the same
 // argument. The values it writes have to be the ones ingest would have written from the same
 // headers; a second parse here would leave two populations of rows decided by different rules, and
@@ -681,6 +682,18 @@ export const LOCAL_NAME_BACKFILL_PAGES = 2;
  * pay for nothing. A `const`, not an env var, for the reason every gate here is.
  */
 export const LOCAL_JOIN_HEAL_EVERY_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * How often a launch runs the INBOUND-QUIET pass (`@trafficflow/worker/inbound-quiet` — the
+ * forwarding-detection heuristic, mail 0078) at the tail of a drain. Six hours, the hosted
+ * worker's own gate, for its reason: the pass judges fortnight-wide windows, so nothing a user
+ * can perceive changes between two drains, and its grouped aggregate is not worth paying
+ * per poll. A standalone install has the same blind spot the incident was found in — a
+ * provider-level forward diverts mail before IMAP storage while every cycle here reports
+ * healthy — and no worker anywhere else will ever judge this store. A `const`, not an env
+ * var, for the reason every gate here is.
+ */
+export const LOCAL_INBOUND_QUIET_EVERY_MS = 6 * 60 * 60 * 1000;
 
 /**
  * A DRAIN'S WALL-CLOCK SHAPE, from the per-cycle durations it measured.
@@ -1651,6 +1664,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * pays its GROUP BY. Zero so a launch's first drain takes one look (splits accumulated
      * while the app was closed), exactly the worker's gate seeding. */
     let lastJoinHealAt = 0;
+    /** When the inbound-quiet pass last ran in THIS launch — same seeding and cadence
+     * (`LOCAL_INBOUND_QUIET_EVERY_MS`) as the heal above: zero so a launch's first drain takes
+     * one look at what went quiet while the app was closed. */
+    let lastInboundQuietAt = 0;
     /** Where the last gated heal walk stopped, kept only while it stopped on its BUDGET — a
      * refused group never leaves the candidate predicate, so restarting from the top every six
      * hours would rescan the same refusals for ever and never reach the groups past the cap.
@@ -1914,6 +1931,31 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             err,
             reason: "no group committed partially — each is one transaction; split threads " +
               "stay split and the next gated drain re-reads reality",
+          });
+        }
+      }
+      /* NOTICE THE MAILBOX A PROVIDER-SIDE FORWARD EMPTIED — the same pass the hosted worker
+         runs (`@trafficflow/worker/inbound-quiet`), for the reason every pass above is the
+         worker's: this store is the authority for this install, no worker anywhere else will
+         judge it, and a second implementation of the predicate would tell the same mailbox's
+         owner two different stories across the doors. Time-gated in-launch (six hours, the
+         hosted gate) because the windows it judges are fortnights. After the heal, before the
+         stamp — it writes no change rows (the mailbox panel polls `GET /mailboxes`), so the
+         checkpoint ordering is indifferent, and the tail keeps all the maintenance in one
+         place. A failure is CONTAINED like every pass above: episodes already stamped stand,
+         mail keeps arriving, the next gated drain asks again. */
+      if (Date.now() - lastInboundQuietAt >= LOCAL_INBOUND_QUIET_EVERY_MS) {
+        lastInboundQuietAt = Date.now();
+        try {
+          const r = await inboundQuietPass(db as unknown as Tx, now(), { accountId: world.accountId });
+          if (r.tripped > 0 || r.cleared > 0) {
+            log("inbound_quiet_pass", { tripped: r.tripped, cleared: r.cleared });
+          }
+        } catch (err) {
+          log("inbound_quiet_pass_failed", {
+            err,
+            reason: "the quiet-mailbox judgment was skipped this drain; stamped episodes " +
+              "stand, nothing trips or clears, and the next gated drain re-reads reality",
           });
         }
       }

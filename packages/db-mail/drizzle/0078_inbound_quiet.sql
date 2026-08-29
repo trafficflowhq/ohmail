@@ -1,0 +1,56 @@
+-- THE FORWARDING-DETECTION NOTICE — the shape a provider-level forward leaves behind, recorded
+-- so a client can say it (owner incident, 2026-08: a mailbox synced perfectly for weeks while a
+-- provider-side forward without "keep a copy" diverted every inbound mail before IMAP storage;
+-- two days of debugging pointed at ohmail when the answer was upstream).
+--
+--   mailboxes.inbound_quiet_since         timestamptz NULL
+--   mailboxes.inbound_quiet_dismissed_at  timestamptz NULL
+--
+-- `inbound_quiet_since` is EVIDENCE, written by the worker's inbound-quiet pass
+-- (`apps/worker/src/inbound-quiet.ts`, the single owner of the predicate): when a CONNECTED,
+-- healthily-syncing mailbox's genuine inbound (messages whose From is not the mailbox's own
+-- address — ohmail's own moves create no message rows, so they never count) has been zero for
+-- the pass's generous window while evidence says mail should be arriving, the pass stamps the
+-- newest genuine inbound `date` the mailbox holds (its `created_at` when it never held one).
+-- NULL means no quiet episode. The stamp is COALESCED for the life of the episode — the same
+-- discipline as `failed_at` and `sync_blocked_since` — and cleared only when genuine inbound
+-- actually resumes (several arrivals inside the window, so one stray mail cannot end an episode
+-- and re-arm the notice against a standing dismissal).
+--
+-- `inbound_quiet_dismissed_at` is the USER's per-mailbox dismissal, written by
+-- `POST /mailboxes/:id/inbound-quiet/dismiss` and read by nothing on the server: the client
+-- shows the notice only while `dismissed_at` predates the episode's `since`, which is the alert
+-- renotify discipline in two columns — sameness holds (an undisturbed episode never re-notifies),
+-- a genuine state change re-notifies (a new episode's `since` is a newer inbound date, which can
+-- only exist because mail actually flowed after the dismissal). The worker NEVER clears it.
+--
+-- ══ WHY COLUMNS ON `mailboxes`, NOT AN ALERT ROW ════════════════════════════════════════════
+--
+-- The consumer is the mailbox's own settings row on every client, reached through the polled
+-- `GET /mailboxes` DTO the panel already reads — no new channel. `alert_state` pages operators;
+-- this tells the account's own user a quiet, dismissible fact about one mailbox, so it lives
+-- where the mailbox's other user-facing state lives.
+--
+-- ══ ADDITIVE, IDEMPOTENT, NO CHECK, NO INDEX ════════════════════════════════════════════════
+--
+-- ADD COLUMN IF NOT EXISTS, nullable, no default, no backfill (0054's refusal: no mailbox has an
+-- episode or a dismissal until the pass or a press says so). No CHECK — timestamps close no set.
+-- No index: the pass reads the account's own mailboxes by `account_id` and writes by primary
+-- key; nothing scans these columns.
+--
+-- ══ COMPATIBILITY AND DEPLOY ORDER ══════════════════════════════════════════════════════════
+--
+-- Migration → API → worker. `MailboxService.list` selects whole `mailboxes` rows through the
+-- drizzle schema, so an API deployed ahead of this answers 42703 on the mailbox panel and the
+-- connect flow; the health markers ["mailboxes","inbound_quiet_since"] and
+-- ["mailboxes","inbound_quiet_dismissed_at"] turn that into a 503 schema_incomplete naming this
+-- file. A WORKER ahead of the migration fails its pass loudly and logs, syncing untouched. A
+-- CLIENT older than the API ignores both fields and renders nothing, which is exactly what NULL
+-- means anyway.
+--
+-- ROLLBACK is DROP COLUMN both: every episode and dismissal is forgotten; the pass re-derives
+-- episodes from the messages that are still there, and a dismissal is one press to repeat.
+-- The API has to go back first, or the mailbox surface 42703s.
+
+ALTER TABLE "mailboxes" ADD COLUMN IF NOT EXISTS "inbound_quiet_since" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "mailboxes" ADD COLUMN IF NOT EXISTS "inbound_quiet_dismissed_at" timestamp with time zone;

@@ -313,6 +313,14 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // about. Structurally an integer accumulated by `++`, so it carries no content, same as the eight.
   "candidates", "fetched", "cleared", "clearedFromStored", "stillSensitive", "unreadable",
   "mismatched", "capped", "marked",
+  // `tripped` is the inbound-quiet pass's half of a pair whose other half (`cleared`) is already
+  // above: how many mailboxes ENTERED a quiet episode this pass (`apps/worker/src/inbound-quiet.ts`,
+  // mail 0078) versus how many episodes ended because genuine inbound resumed. A `+= 1` counter
+  // over the account's own mailbox rows, never derived from an address, a subject or a sender —
+  // the pass's log lines carry ids and these two counters and nothing else. Named rather than
+  // folded into `count` on this file's own rule: entering and leaving an episode are the two
+  // different questions an operator asks, and one `count` meaning either is not checkable.
+  "tripped",
   // ── The Cloud mirror's one-time tag repair, added WITH its call site ──
   //
   // `tags` is how many tag ROWS the repair restored and `messages` how many mirrored messages

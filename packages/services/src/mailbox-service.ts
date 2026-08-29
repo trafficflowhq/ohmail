@@ -1364,6 +1364,34 @@ export class MailboxService {
   }
 
   /**
+   * DISMISS THE FORWARDING-DETECTION NOTICE for one mailbox (mail 0078) — the user saying
+   * "this mailbox is quiet and I know it".
+   *
+   * One timestamp, stamped over whatever stood (a repeat press refreshes it, which only makes
+   * the dismissal MORE durable — the client's comparison is `dismissedAt < since`). The worker
+   * never clears it, so it holds for the life of the episode and beyond; the notice returns
+   * only when a NEW episode's `since` postdates it, which requires genuine inbound to have
+   * actually flowed in between — the renotify discipline's "state changes re-notify, sameness
+   * holds", carried by two instants instead of a state machine.
+   *
+   * DELIBERATELY LEGAL WITH NO EPISODE STANDING: the press is idempotent and racing the pass is
+   * an everyday event (a 6-hour cadence against a human's tab). Refusing a dismissal because
+   * the episode cleared a second ago would 409 a person agreeing with us. A dismissal stamped
+   * with no episode suppresses only an episode whose evidence PREDATES the press — one whose
+   * newest inbound postdates it still shows, which is what the presser meant.
+   *
+   * No change_log row, matching every other mailbox-lifecycle write: the panel and the strip
+   * poll `GET /mailboxes`, and the answer this returns lets the pressing client settle at once.
+   */
+  async dismissInboundQuiet(ctx: ServiceContext, id: string): Promise<MailboxDTO> {
+    await this.ownedRow(ctx, id); // 404 if not owned
+    await asTx(ctx).update(mailboxes)
+      .set({ inboundQuietDismissedAt: ctx.now() })
+      .where(and(eq(mailboxes.id, id), eq(mailboxes.accountId, ctx.accountId)));
+    return this.toDTO(ctx, await this.ownedRow(ctx, id));
+  }
+
+  /**
    * RING THE WORKER'S DOORBELL for every connected mailbox of the caller's account — the
    * "Pull new mail" affordance's server half (mail 0049's `sync_requested_at`, the column the
    * Not-junk rescue and `finalizeSent` already stamp).
@@ -1891,6 +1919,13 @@ export class MailboxService {
       // the floor `mail-state.ts` holds under "still importing". Gating it on a status would hide
       // the partial-import case it exists to disclose.
       initialImportCompletedAt: m.initialImportCompletedAt ? m.initialImportCompletedAt.toISOString() : null,
+      // THE FORWARDING-DETECTION pair (mail 0078). UNCONDITIONAL, the sync-block pair's rule:
+      // every state these describe happens while `status` IS `connected` — a status gate would
+      // be the incident's invisibility, restored one column over. The dismissal projects even
+      // while no episode stands, deliberately: the CLIENT owns the `dismissedAt < since`
+      // comparison, and withholding one operand would make that comparison unwritable.
+      inboundQuietSince: m.inboundQuietSince ? m.inboundQuietSince.toISOString() : null,
+      inboundQuietDismissedAt: m.inboundQuietDismissedAt ? m.inboundQuietDismissedAt.toISOString() : null,
       // UNCONDITIONAL, for the reason the sync-block pair above is: every state this number
       // describes happens while the row says `connected`. `?? 0` because `count(*)` cannot
       // return no row here, but a driver that answered `undefined` must degrade to "nothing

@@ -74,11 +74,12 @@
  * to a browser, because there is no hosted account to administer.
  */
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button, SettingsNote, SettingsRow, SettingsSection } from "@ohmail/ui";
 
-import type { MailboxFacts } from "../../webapp/app/shell/mail-state";
+import { showInboundQuiet, type MailboxFacts } from "../../webapp/app/shell/mail-state";
+import { agoStamp } from "../../webapp/app/shell/format";
 import { useMailState } from "../../webapp/app/shell/MailStateProvider";
 import { bridgeFetch } from "./bridge-fetch.js";
 import { openWeb } from "./native.js";
@@ -103,6 +104,14 @@ interface MailboxWire {
    * an absent number. Never confused with a count of the mirror: see `MailboxFacts`.
    */
   hostedMessageCount?: number;
+  /**
+   * The forwarding-detection notice's evidence pair (mail 0078): a standing quiet episode's
+   * newest genuine inbound date, and this mailbox's dismissal. Absent on an engine that
+   * predates the columns; forwarded by the `in`-spread below on the same rule as its
+   * neighbours, because absent must render nothing rather than a false "no episode".
+   */
+  inboundQuietSince?: string | null;
+  inboundQuietDismissedAt?: string | null;
   createdAt?: string;
 }
 
@@ -159,6 +168,11 @@ export async function readMailboxFactsVia(
     // strip's comparison upside down. Absent must arrive absent. This seam has dropped a field
     // exactly once before — `smtpMaxSizeBytes`, on the line above — and it did so silently.
     ...("hostedMessageCount" in m ? { hostedMessageCount: m.hostedMessageCount } : {}),
+    // THE FORWARDING-DETECTION PAIR (mail 0078), forwarded by the same `in` spread and for the
+    // same reason as every optional field above: absent is an engine that predates the columns
+    // and must arrive absent, so the pane renders nothing rather than asserting "no episode".
+    ...("inboundQuietSince" in m ? { inboundQuietSince: m.inboundQuietSince } : {}),
+    ...("inboundQuietDismissedAt" in m ? { inboundQuietDismissedAt: m.inboundQuietDismissedAt } : {}),
     createdAt: m.createdAt ?? new Date().toISOString(),
   }));
 }
@@ -224,6 +238,8 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
   const [problem, setProblem] = useState<string | null>(null);
   /** Mailboxes whose resync this pane has queued, so the row can say so until it lands. */
   const [queued, setQueued] = useState<ReadonlySet<string>>(() => new Set());
+  /** Mailboxes whose quiet-notice dismissal is in flight, so the button debounces (mail 0078). */
+  const [dismissing, setDismissing] = useState<ReadonlySet<string>>(() => new Set());
   const cloud = door === "cloud";
   const heading = cloud ? t("modeCloud") : t("desktopModeLocal");
 
@@ -253,6 +269,34 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
       } catch (err) {
         setProblem(err instanceof Error ? err.message : String(err));
         setQueued((q) => {
+          const next = new Set(q);
+          next.delete(id);
+          return next;
+        });
+      }
+    })();
+  };
+
+  /**
+   * DISMISS the forwarding-detection notice for one mailbox (mail 0078) — the same route the
+   * browser's pane calls, over the pipe, served on BOTH doors like the resync above. `refresh`
+   * re-reads the facts so the notice leaves the pane on the answer rather than on the poller's
+   * slower clock; a failure leaves it standing with the pane's one problem line saying why.
+   */
+  const dismissQuiet = (id: string): void => {
+    setProblem(null);
+    setDismissing((q) => new Set(q).add(id));
+    void (async () => {
+      try {
+        const res = await bridgeFetch(`/mailboxes/${encodeURIComponent(id)}/inbound-quiet/dismiss`, {
+          method: "POST",
+        });
+        if (!res.ok) throw new Error(await reasonOf(res));
+        refresh();
+      } catch (err) {
+        setProblem(err instanceof Error ? err.message : String(err));
+      } finally {
+        setDismissing((q) => {
           const next = new Set(q);
           next.delete(id);
           return next;
@@ -300,25 +344,50 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
       {problem ? <p className="join-error">{problem}</p> : null}
 
       {facts.map((m) => (
-        <SettingsRow
-          key={m.id}
-          label={m.address}
-          description={t("desktopLastChecked", { when: when(m.lastSyncAt) })}
-          value={stateOf(m)}
-          control={
-            /* Not offered on a DISCONNECTED mailbox: nothing is opening it, so a pass over it is
-               not a thing that can be asked for. The browser pane withholds it on the same test. */
-            m.status === "disabled" ? undefined : (
-              <Button
-                className="mbx-btn"
-                onClick={() => resync(m.id)}
-                disabled={queued.has(m.id)}
-              >
-                {queued.has(m.id) ? t("syncQueued") : t("syncNow")}
-              </Button>
-            )
-          }
-        />
+        <Fragment key={m.id}>
+          <SettingsRow
+            label={m.address}
+            description={t("desktopLastChecked", { when: when(m.lastSyncAt) })}
+            value={stateOf(m)}
+            control={
+              /* Not offered on a DISCONNECTED mailbox: nothing is opening it, so a pass over it is
+                 not a thing that can be asked for. The browser pane withholds it on the same test. */
+              m.status === "disabled" ? undefined : (
+                <Button
+                  className="mbx-btn"
+                  onClick={() => resync(m.id)}
+                  disabled={queued.has(m.id)}
+                >
+                  {queued.has(m.id) ? t("syncQueued") : t("syncNow")}
+                </Button>
+              )
+            }
+          />
+          {/* ── THE FORWARDING-DETECTION NOTICE (mail 0078), the browser pane's twin ─────────
+              `showInboundQuiet` (shared shell, one rule for both surfaces) gates it: a standing
+              quiet episode on a HEALTHY row, not dismissed since this episode's evidence. Its
+              own row rather than a longer description, because the description line is the sync
+              stamp and a notice folded into it would vanish with the next tick. Two keys —
+              "the last mail came {when}" is false for a mailbox that never received any, and
+              the pass stamps `createdAt` there, told apart by identity. */}
+          {showInboundQuiet(m) ? (
+            <SettingsRow
+              label=""
+              description={m.inboundQuietSince === m.createdAt
+                ? t("inboundQuietNever")
+                : t("inboundQuiet", { when: agoStamp(m.inboundQuietSince!, Date.now()).rel })}
+              control={
+                <Button
+                  className="mbx-btn"
+                  onClick={() => dismissQuiet(m.id)}
+                  disabled={dismissing.has(m.id)}
+                >
+                  {t("inboundQuietDismiss")}
+                </Button>
+              }
+            />
+          ) : null}
+        </Fragment>
       ))}
 
       {/* THE HAND-OFF, ON THE HOSTED DOOR ONLY. See this file's header for why there is no edit

@@ -503,6 +503,35 @@ export interface MailboxDTO {
    */
   initialImportCompletedAt: ISODateTime | null;
   /**
+   * THE FORWARDING-DETECTION NOTICE's evidence pair (mail 0078) — a quiet, dismissible fact
+   * about a HEALTHY mailbox, born from a real incident: a provider-level forward (no "keep a
+   * copy") diverted every inbound mail before IMAP storage while the mailbox synced perfectly,
+   * and nothing anywhere said so.
+   *
+   * `inboundQuietSince` non-null means the worker's inbound-quiet pass
+   * (`apps/worker/src/inbound-quiet.ts`, the predicate's single owner) recognised a quiet
+   * episode: a connected, healthily-syncing, fully-imported mailbox whose genuine inbound
+   * (From ≠ its own address) has been zero for the pass's generous window while evidence says
+   * mail should be arriving. The value is the newest genuine inbound date the mailbox holds
+   * (its creation when it never held one) — "almost nothing since {this}" is the client's
+   * sentence. NULL is no episode, which is every healthy mailbox.
+   *
+   * `inboundQuietDismissedAt` is the user's per-mailbox dismissal
+   * (`POST /mailboxes/:id/inbound-quiet/dismiss`). THE CLIENT owns the comparison: show the
+   * notice iff `since` is set, the mailbox's health claims hold on screen (`connected`, no
+   * `syncBlockedSince`, a `lastSyncAt`), and `dismissedAt` is null or predates `since`. That
+   * inequality is the renotify discipline: an undisturbed episode never re-shows (sameness
+   * holds), and a NEW episode's `since` — newer inbound, which only exists because mail flowed
+   * after the dismissal — re-shows (a state change).
+   *
+   * PROJECTED UNCONDITIONALLY, the sync-block pair's rule: every state this pair describes
+   * happens while `status` IS `connected`, so a status gate would make it permanently NULL on
+   * the wire — the exact invisibility the incident was. A client older than these fields reads
+   * `undefined`, renders nothing, and loses only the notice.
+   */
+  inboundQuietSince: ISODateTime | null;
+  inboundQuietDismissedAt: ISODateTime | null;
+  /**
    * HOW MANY OF OUR OWN FILINGS THIS MAILBOX HAS NOT YET APPLIED.
    *
    * ── THE SILENCE THIS ENDS ────────────────────────────────────────────────────────────

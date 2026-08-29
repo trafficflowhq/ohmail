@@ -295,8 +295,69 @@ export interface MailboxFacts {
    * arms below are simply unreachable, which is the intended shape rather than a gap.
    */
   hostedMessageCount?: number;
+  /**
+   * THE FORWARDING-DETECTION NOTICE's evidence pair (mail 0078). `inboundQuietSince` non-null is
+   * a standing quiet episode: the worker judged this connected, healthily-syncing mailbox to
+   * have received essentially no genuine inbound for a generous window while evidence says mail
+   * should be arriving — the newest genuine inbound date the mailbox holds ("almost nothing
+   * since {this}"). `inboundQuietDismissedAt` is the mailbox's dismissal.
+   *
+   * `deriveMailState` must never read them, and does not: the whole feature is a QUIET note on
+   * the Mailboxes pane about a healthy mailbox, and a strip state would be the alarm the copy
+   * exists to not be. The pane's show rule (health on screen, and `dismissedAt < since`) lives
+   * with the pane that renders it.
+   *
+   * OPTIONAL, and absent means "this engine or API predates the columns" —
+   * {@link MailboxFacts.initialImportCompletedAt}'s rule: forwarded untouched, no `?? null`,
+   * because an absent pair must render nothing rather than a false "no episode" claim a later
+   * consumer might learn to distinguish.
+   */
+  inboundQuietSince?: string | null;
+  inboundQuietDismissedAt?: string | null;
   /** When this mailbox was connected. The one per-mailbox clock that is not shared. */
   createdAt: string;
+}
+
+/**
+ * WHETHER THE FORWARDING-DETECTION NOTICE SHOWS on a mailbox row (mail 0078). Exported pure so
+ * the suite can bite each clause, and IN THE SHARED SHELL because two panes render the same
+ * notice — the Cloud client's `(product)/mailbox/MailboxSection` and the desktop's
+ * `DesktopMailboxes` — and `(product)` is denied from the Desktop mirror. One rule, or the two
+ * surfaces tell one mailbox's owner two different stories.
+ *
+ * Structural `Pick`-shaped parameter so both callers' row types fit (`MailboxDTO` declares the
+ * pair optional, {@link MailboxFacts} too — an absent pair is an older server and renders
+ * nothing, which is what NULL means anyway).
+ *
+ * Three claims, each one a sentence in the notice, each one a gate:
+ *
+ *  · `inboundQuietSince` set — the worker recognised a quiet episode; the server's pass
+ *    (`apps/worker/src/inbound-quiet.ts`) is the predicate's single owner and this function
+ *    re-derives none of it.
+ *  · the mailbox is HEALTHY ON SCREEN — `connected`, no `syncBlockedSince`, a `lastSyncAt`.
+ *    The copy opens with "syncing works"; on an errored, blocked or never-synced row that claim
+ *    is false, the error/block copy owns the row, and a second explanation would contradict it.
+ *    The episode itself survives an outage server-side (the pass never clears on unhealthy), so
+ *    this gate HIDES rather than resets — health back, notice back, dismissal intact.
+ *  · not dismissed, or dismissed BEFORE this episode's evidence: `dismissedAt < since` re-shows
+ *    only when newer inbound exists than the press knew about — which requires mail to have
+ *    actually flowed after the dismissal (the pass clears an episode only on real flow, and a
+ *    new episode stamps the newer date). Sameness holds; a state change re-notifies.
+ *
+ * Timestamp comparison via `Date.parse`, not string order: both are ISO-8601 from one server,
+ * but a lexicographic compare would silently invert on any future format drift.
+ */
+export function showInboundQuiet(m: {
+  status: string;
+  lastSyncAt: string | null;
+  syncBlockedSince?: string | null;
+  inboundQuietSince?: string | null;
+  inboundQuietDismissedAt?: string | null;
+}): boolean {
+  if (!m.inboundQuietSince) return false;
+  if (m.status !== "connected" || m.lastSyncAt === null || m.syncBlockedSince) return false;
+  if (!m.inboundQuietDismissedAt) return true;
+  return Date.parse(m.inboundQuietDismissedAt) < Date.parse(m.inboundQuietSince);
 }
 
 /**

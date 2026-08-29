@@ -107,6 +107,19 @@ export const mailboxRoutes: Route[] = [
     },
   },
   {
+    method: "POST",
+    pattern: "/mailboxes/:id/inbound-quiet/dismiss",
+    // `work` — one timestamp on the caller's own mailbox row (mail 0078): no socket, no spend,
+    // no step-up (dismissing a notice about your own mailbox is not a credential act, and a
+    // second factor here would teach people the notice is dangerous — it is the opposite).
+    // Naturally idempotent: a repeat press re-stamps the same dismissal.
+    cost: "work",
+    handler: async (req, deps, params) => {
+      const dto = await mailbox(deps).dismissInboundQuiet(serviceContext(deps, req), params.id!);
+      return jsonResponse(dto);
+    },
+  },
+  {
     method: "GET",
     pattern: "/mailboxes/:id/organizer",
     // `connection`, NOT `read`. `read` is defined as reading rows already stored for the caller's

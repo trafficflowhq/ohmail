@@ -554,6 +554,17 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // lives in the sweep-command pass this same change introduces). Deploy order: migration → API
   // → worker.
   ["mailboxes", "junk_sweep_requested_at"],
+  // mail 0078_inbound_quiet — the forwarding-detection notice's two columns
+  // (`inbound_quiet_since`: the worker's inbound-quiet pass stamps a quiet episode's evidence;
+  // `inbound_quiet_dismissed_at`: the user's per-mailbox dismissal, stamped by
+  // `POST /mailboxes/:id/inbound-quiet/dismiss`; NULL/NULL = no episode, no dismissal — every
+  // existing row). Two additive nullable columns on `mailboxes`, and they earn markers for the
+  // whole-row-select reason `mailboxes.error_code` established: `MailboxService.list` selects
+  // whole rows, so an API deployed ahead of the migration 42703s the mailbox panel and the
+  // connect flow. The worker half is the safe kind — a worker ahead of the migration fails its
+  // pass loudly and syncs on. Deploy order: migration → API → worker.
+  ["mailboxes", "inbound_quiet_since"],
+  ["mailboxes", "inbound_quiet_dismissed_at"],
   // mail 0077_send_later — the draft's appointment (`send_at` + `send_key` + `send_error`, with
   // `status = 'scheduled'`; NULL = no appointment / no failure, every existing row). It earns a
   // marker for the whole-row-select reason `mailboxes.error_code` established, one table over:
@@ -1510,13 +1521,17 @@ export const MAIL_EXPECTED_MARKERS =
  *
  * `0077_send_later` is probed as `drafts.send_at` — Send later's appointment, three nullable
  * columns read by the whole-row `materializeDraft` select (the drafts CRUD, the schedule verbs
- * and every `draft` `/sync` change) and by name in the worker's due scan. It is the newest
- * entry, so it is the tag below.
+ * and every `draft` `/sync` change) and by name in the worker's due scan.
+ *
+ * `0078_inbound_quiet` is probed as BOTH its columns — `mailboxes.inbound_quiet_since` and
+ * `mailboxes.inbound_quiet_dismissed_at`, the forwarding-detection notice's evidence pair —
+ * each read by the whole-row `MailboxService.list` select; the dismissal route writes the
+ * second by name. It is the newest entry, so it is the tag below.
  */
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0077_send_later";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0078_inbound_quiet";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */
