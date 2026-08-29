@@ -1020,7 +1020,7 @@ async function applyUpsert(
   now: Date,
   gen: BootstrapGen | null,
   known: ReadonlySet<string>,
-): Promise<boolean> {
+): Promise<boolean | "partial"> {
   switch (ch.type) {
     case "settings": {
       /**
@@ -1253,7 +1253,14 @@ async function applyUpsert(
           .values({ id: d.threadId, accountId: world.accountId, updatedAt: now })
           .onConflictDoNothing({ target: threads.id });
       }
-      // `in_reply_to_message_id` has an FK; keep it only when the parent is mirrored.
+      // `in_reply_to_message_id` has an FK; keep it only when the parent is mirrored. A draft
+      // whose parent is absent still lands (user writing is never dropped) but lands DEGRADED —
+      // reported as `"partial"` below so the stale-resume freshen's supersession ledger never
+      // treats it as the entity's full state: the replay's own copy of the same draft, applying
+      // AFTER its parent message lands (message precedes draft in APPLY_ORDER), is what
+      // restores the reply relationship, and a ledger that superseded it would leave the draft
+      // detached until its next edit (review round 1 of the diet's client half).
+      const wantsReplyParent = Boolean(d.inReplyToMessageId);
       const inReplyTo = d.inReplyToMessageId && (await messagePresent(tx, d.inReplyToMessageId))
         ? d.inReplyToMessageId
         : null;
@@ -1278,7 +1285,7 @@ async function applyUpsert(
         .onConflictDoUpdate({ target: drafts.id, set: body });
       gen?.draft.add(d.id);
       if (d.threadId) gen?.thread.add(d.threadId);   // the thread stub this draft pinned
-      return true;
+      return wantsReplyParent && inReplyTo === null ? "partial" : true;
     }
     case "approval": {
       const a = ch.entity as ApprovalDTO | undefined;
@@ -1516,7 +1523,8 @@ async function applyPage(
     for (const type of APPLY_ORDER) {
       for (const ch of nonDeletes) {
         if (ch.type !== type) continue;
-        if (await applyUpsert(tx, world, ch, now, gen, known)) {
+        const outcome = await applyUpsert(tx, world, ch, now, gen, known);
+        if (outcome) {
           // Every entity keeps its hosted id verbatim — EXCEPT the settings row, whose id IS an
           // account id, and the one identity the two worlds do not share is the account's own:
           // the local `materializeSettings` answers only for the LOCAL account and reads a
@@ -1524,7 +1532,10 @@ async function applyPage(
           // drains as a DELETE. Re-keyed here so the doorbell that arrived rings instead of
           // tombstoning the very record it announces.
           await record(type, type === "settings" ? world.accountId : ch.id, ch.op, ch.move);
-          appliedKeys?.add(`${ch.type}:${ch.id}`);
+          // A PARTIAL apply (a reply draft landed with its parent still unmirrored) is real
+          // enough to record and count, but it is NOT the entity's full state — the ledger
+          // must leave the replay's own copy free to heal it once the parent lands.
+          if (outcome !== "partial") appliedKeys?.add(`${ch.type}:${ch.id}`);
           applied++;
         }
       }
