@@ -216,12 +216,12 @@ describe("the hosted auth gate", () => {
     expect(shell.healthAsks(), "the mount rode a real answer").toBeGreaterThanOrEqual(1);
   });
 
-  it("the mounted mail app carries the Pull-new-mail control — on BOTH doors (owner report 2026-08-29, bug 2)", async () => {
+  it("the mounted mail app carries the Pull-new-mail control — on BOTH doors", async () => {
     /* THE REGRESSION: the control gated itself on `apiConfigured()` from `app/api-client`,
        which every desktop artifact folds to `false` at build time (`vite.config.ts` defines
        `NEXT_PUBLIC_API_BASE` as `undefined`; the packaged tree aliases the whole module to a
-       refusing stub) — so the wave that claimed webapp/desktop coverage shipped a control no
-       desktop door could ever render, although the bridge adapter behind both doors serves
+       refusing stub) — so the control shipped unable to render on either desktop door,
+       although the bridge adapter behind both doors serves
        `POST /sync/pull` (the hosted door forwards it to the Cloud; the standalone door stamps
        its own engine, whose ≤15 s poll answers it). The gate is now the ENGINE's own
        `pullAvailable()`, which reads the adapter that will take the press. Mutation-watched:

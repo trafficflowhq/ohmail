@@ -558,8 +558,8 @@ export const DESKTOP_CTA_DISMISSED = "ohmail.desktopCtaDismissed";
  * component owned the flag it answered its dismissal by rendering `null`, but `AppShell` had
  * already judged the rail's `footer` slot non-empty for its sake — so `RailNav` kept a
  * `.rail-mail` box (`padding: 14px 8px 0`) around nothing, a dead band under the Command row
- * on every dismissed install (owner report 2026-08-29, measured live at 14px + the rail's own
- * 18px). The component that decides whether the slot exists must be the one that knows whether
+ * on every dismissed install (measured live at 14px, on top of the rail's own 18px bottom
+ * padding). The component that decides whether the slot exists must be the one that knows whether
  * anything will be in it.
  */
 export function DesktopCta({ href, label, dismissLabel, onDismiss }: {
