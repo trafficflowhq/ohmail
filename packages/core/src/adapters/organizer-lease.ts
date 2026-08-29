@@ -609,8 +609,27 @@ export function decideLease(input: DecideLeaseInput): LeaseVerdict {
     return !clonedUs;
   };
 
-  // 1 / 2 — a live peer we cannot rank. Checked first, and no authorization overrides them.
-  const unrankable = election.live.find((c) => !isOurs(c) && (c.protocol > ourProtocol || c.kind === "unknown"));
+  // Folder-relative liveness for a RAW record, exactly as `runElection` computes it for the
+  // coalesced candidates: clamped against implausible future skew, measured from the newest
+  // heartbeat present. Needed below because coalesce keeps ONE record per install — and both
+  // rule 1/2 and an authorized displacement have to see the records coalesce dropped.
+  const newestHeartbeat = election.candidates
+    .reduce<number>((m, c) => Math.max(m, c.heartbeat.getTime()), -Infinity);
+  const rawIsLive = (c: OrganizerClaim): boolean => {
+    const clamped = Math.min(c.heartbeat.getTime(), now.getTime() + MAX_FUTURE_SKEW_MS);
+    return newestHeartbeat - clamped < staleAfterMs;
+  };
+  /** Unambiguously this process's current claim, by VALUE — the raw list's `isOurs`. */
+  const rawOurs = (c: OrganizerClaim): boolean =>
+    c.installId === self.installId && (self.lastNonce === null || c.nonce === self.lastNonce);
+
+  // 1 / 2 — a live peer we cannot rank. Checked first, no authorization overrides them, and
+  // checked over the RAW list: coalesce keeps the newest record per install, so an unrankable
+  // OLDER record hidden behind a rankable newer sibling would otherwise never trip this arm —
+  // and every downstream consumer of this verdict (the takeover's displacement above all)
+  // would treat a live claim in a format we cannot read as beatable residue.
+  const unrankable = input.claims.find((c): c is OrganizerClaim =>
+    !isMalformed(c) && !rawOurs(c) && (c.protocol > ourProtocol || c.kind === "unknown") && rawIsLive(c));
   if (unrankable) return { verdict: "stand_down", reason: "organized_elsewhere:unknown", by: unrankable };
 
   const { winner } = election;
@@ -650,8 +669,31 @@ export function decideLease(input: DecideLeaseInput): LeaseVerdict {
 
   // 6 — a human asked for this mailbox. Take it, and record the handover in the folder.
   if (takeover === "authorized") {
-    const displaced = [...election.candidates, ...election.malformed]
-      .filter((c) => (isMalformed(c) ? true : !isOurs(c)))
+    // EVERY ref the read held for the beaten organizers — the RAW claim list, deliberately not
+    // the election's candidates: coalesce keeps one claim per install, but the folder
+    // legitimately holds duplicates (append-then-expunge's own crash residue), and a
+    // displacement built from the coalesced set misses the residue copy — which then wins the
+    // gate's verify on incumbency, and the authorized takeover loses to a message the incumbent
+    // itself was going to clean up. Malformed claims displace too.
+    //
+    // "Ours" is decided here by VALUE — install id plus nonce — never through `isOurs`, whose
+    // clone defence keys on the election's own object identity (`election.live.includes`), which
+    // a raw record that coalesce dropped or clampHeartbeat copied can never satisfy. Kept out of
+    // the displacement is exactly the claim that is unambiguously this process's current one
+    // (and, on a fresh start with no armed nonce, anything bearing our id — own-role resumption
+    // must not displace its own history). A same-id claim with a DIFFERENT nonce while ours is
+    // armed is a restored clone's, and it is displaced like any other beaten organizer.
+    //
+    // AND RULES 1/2 HOLD OVER THE RAW LIST TOO — rule 1's own raw scan above already refused a
+    // takeover while a LIVE unrankable record stands, so this arm is unreachable for one today;
+    // the exclusion stays as the belt to that braces, because an authorized expunge of a record
+    // we cannot read must be impossible by construction, not by the ordering of two checks. A
+    // STALE unrankable record is residue and displaces normally.
+    const displaced = input.claims
+      .filter((c) => (isMalformed(c)
+        ? true
+        : !(c.installId === self.installId && (self.lastNonce === null || c.nonce === self.lastNonce))
+          && !((c.protocol > ourProtocol || c.kind === "unknown") && rawIsLive(c))))
       .map((c) => c.ref)
       .filter((r): r is unknown => r !== undefined);
     return { verdict: "organize", renew: true, displace: displaced };
@@ -749,13 +791,42 @@ export function peekLease(input: PeekLeaseInput): LeasePeek {
   const staleAfterMs = input.staleAfterMs ?? DEFAULT_STALE_AFTER_MS;
   const { valid, malformed } = coalesce(input.claims);
 
+  /**
+   * ── THE PREVIEW SEES WHAT THE GATE SEES, RAW DUPLICATES INCLUDED ──────────────────────────
+   *
+   * `decideLease`'s rule 1/2 scans the RAW list: a fresh record in a format this build cannot
+   * rank — a higher protocol, an unrecognised kind — refuses even an authorized takeover, and
+   * coalescing keeps only the newest record per install, so such a record can hide behind a
+   * rankable sibling. A preview built from the coalesced list alone would then show an ordinary
+   * holder and offer a takeover the gate is going to refuse for ever — a button that no-ops, on
+   * exactly the surface that exists to tell a person the truth about who holds their mailbox.
+   * So an install with a fresh unrankable record among its raw duplicates is REPORTED as
+   * `unknown` and fresh, which is the same sentence the gate's `organized_elsewhere:unknown`
+   * verdict would write.
+   */
+  // Liveness for the unrankable scan is FOLDER-RELATIVE and clamped, exactly as the gate
+  // computes it — the preview's per-holder `fresh` keeps its reader-clock idiom, but this set
+  // must agree with `decideLease`'s refusal or the two answer differently about the same folder
+  // (a record the gate reads as live-unknown reported here as an ordinary stopped holder, with
+  // a takeover on offer that every authorized gate then refuses).
+  const rawValid = input.claims.filter((c): c is OrganizerClaim => !isMalformed(c));
+  const ceiling = input.now.getTime() + MAX_FUTURE_SKEW_MS;
+  const clampedHb = (c: OrganizerClaim): number => Math.min(c.heartbeat.getTime(), ceiling);
+  const newestHeartbeat = rawValid.reduce<number>((m, c) => Math.max(m, clampedHb(c)), -Infinity);
+  const unrankableInstalls = new Set(
+    rawValid
+      .filter((c) => (c.protocol > CLAIM_PROTOCOL || c.kind === "unknown")
+        && newestHeartbeat - clampedHb(c) < staleAfterMs)
+      .map((c) => c.installId),
+  );
+
   const holders: LeaseHolder[] = valid
     .map((c) => ({
-      kind: c.kind,
+      kind: unrankableInstalls.has(c.installId) ? ("unknown" as const) : c.kind,
       displayName: c.displayName,
       heartbeat: c.heartbeat,
       claimedAt: c.claimedAt,
-      fresh: isFresh(c.heartbeat, input.now, staleAfterMs),
+      fresh: isFresh(c.heartbeat, input.now, staleAfterMs) || unrankableInstalls.has(c.installId),
     }))
     .sort((a, b) => b.heartbeat.getTime() - a.heartbeat.getTime());
 
@@ -1052,7 +1123,16 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
       if (uids.length === 0) return;
       const lock = await client.getMailboxLock(path());
       try {
-        await client.messageDelete(uids, { uid: true });
+        // imapflow's `messageDelete` RESOLVES `false` when the server refuses the STORE/EXPUNGE
+        // — it does not reject. Swallowing that made a refused removal indistinguishable from a
+        // done one, and the gate's takeover path is now load-bearing on the difference: a
+        // handover whose displacement silently did not land returns `organize`, spends the
+        // caller's one-shot authorization, and leaves the beaten claim standing to win the next
+        // election. A refusal is a failure here, exactly as a rejection is.
+        const done = await client.messageDelete(uids, { uid: true });
+        if (done === false) {
+          throw new Error(`the server refused to expunge ${uids.length} claim message(s) from ${META_FOLDER}`);
+        }
       } finally {
         lock.release();
       }
@@ -1223,12 +1303,23 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
    * wide, and it was the missing ceiling under every split-brain reproduced above.
    *
    * So the claim we just wrote is read back WITH ITS NEIGHBOURS, and the election is re-run over
-   * what is actually in the folder. Two things make this the right shape rather than a retry loop:
+   * what is actually in the folder. Three things make this the right shape rather than a retry loop:
    *
    *  · `takeover` is deliberately NOT passed. The authorization was spent on the first decision;
    *    re-offering it here would let one click win an unbounded number of contests.
    *  · `lastNonce` is set to the nonce we just wrote, so our own new claim is recognised as ours
    *    and the clone defence is armed against anything else bearing our id.
+   *  · The claims the authorized decision DISPLACED are excluded — by ref, so only the exact
+   *    messages that were ranked and beaten are out of the verify's election. They are not
+   *    rivals: they are the handover's outgoing side, slated for expunge the moment this verify
+   *    passes. Re-counting them re-elects the incumbent on incumbency whenever the two sides are
+   *    of equal kind — a self-hosted server taking a mailbox over from the hosted service, or
+   *    handing it back — so the authorized takeover would lose ITS OWN confirm, release, and
+   *    re-disable the mailbox: the one-click verb that appears to do nothing, at exactly the
+   *    moment somebody chose to leave. By REF and never by install
+   *    id: an incumbent that RENEWED between our read and this verify wrote a message the
+   *    decision never ranked, and that message is proof of an actively live peer — it stays in
+   *    the election and wins, so the press retries rather than steamrolling a live renewal.
    *
    * If we lost, we release and report the stand-down — the mailbox has changed hands between our
    * read and our write, which is exactly the case this exists to catch. A verify that cannot be
@@ -1249,9 +1340,72 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
     );
   }
 
+  // ── THE CLAIM WE JUST WROTE MUST BE IN WHAT WE READ BACK ──────────────────────────────────
+  //
+  // If it is not, something with delete rights acted on the folder between the append and this
+  // read — a restored clone releasing every claim under our id, a takeover racing ours — and we
+  // do not hold custody. Without this guard the displaced-ref exclusion below could hand the
+  // election an EMPTY set, whose verdict is `organize`: the gate would then expunge the
+  // incumbent and proceed WITH NO STANDING CLAIM AT ALL, which is unleased organizing — the
+  // exact thing every line of this module exists to prevent. Reported as a lost race, not a
+  // mailbox fault: the folder was readable, we simply did not win it.
+  const ownSurvived = verifyClaims.some(
+    (c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId && c.nonce === nonce,
+  );
+  if (!ownSurvived) {
+    log("lease_lost_race", { verdict: "own_claim_missing" });
+    // The verdict is still derived from WHAT THE FOLDER HOLDS — with the caller's OWN identity,
+    // not one armed with the vanished nonce: on an ordinary renew the folder still holds our
+    // PRIOR claim (its nonce IS `self.lastNonce`), and arming the clone defence with the nonce
+    // that vanished would classify that prior claim as a live clone of ourselves — a stand-down
+    // naming us, written durably, while our own claim keeps every peer out. Sticky
+    // self-stand-down, the worst of both worlds.
+    //
+    //  · A live FOREIGN winner among the survivors is a genuine lost race: return the
+    //    stand-down naming them, so the row the caller writes says who actually holds it.
+    //  · Anything else — the survivors elect ourselves (the lost write was just a renewal),
+    //    or the folder is empty or stale — is a WRITE THAT WAS LOST, not a loss and not a win:
+    //    retryable, like every other IO fault, and the next gate re-enters with our prior
+    //    claim (or an empty folder) exactly as the election expects.
+    const survivors = decideLease({
+      self,
+      claims: verifyClaims,
+      now,
+      ...(input.staleAfterMs !== undefined ? { staleAfterMs: input.staleAfterMs } : {}),
+    });
+    if (survivors.verdict === "stand_down") {
+      // A stand-down RELEASES, here as on the ordinary path: our prior claims are still in the
+      // folder (only the new append vanished), and left behind they obstruct the winner for the
+      // whole staleness window. Best effort, as every release is.
+      const ownRemaining = verifyClaims
+        .filter((c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId)
+        .map((c) => c.ref)
+        .filter((r): r is unknown => r !== undefined);
+      if (ownRemaining.length > 0) {
+        try {
+          await io.removeClaims(ownRemaining);
+        } catch (err) {
+          log("lease_release_failed", {
+            op: "remove_claims" satisfies LeaseOp,
+            err: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+      return { verdict: survivors, nonce: null };
+    }
+    throw new LeaseUnavailableError(
+      `the claim this gate just appended to ${META_FOLDER} is no longer there and no live rival ` +
+      `stands — the write was lost, and the gate will retry`,
+      { op: "renew_claim" },
+    );
+  }
+
+  // The header's third rule: the displaced are not rivals. `ref` is compared by value identity
+  // (a uid, or a fake harness's int); a claim with no ref cannot have been displaced.
+  const displacedRefs = new Set(verdict.displace);
   const confirmed = decideLease({
     self: { ...self, lastNonce: nonce },
-    claims: verifyClaims,
+    claims: verifyClaims.filter((c) => c.ref === undefined || !displacedRefs.has(c.ref)),
     now,
     ...(input.staleAfterMs !== undefined ? { staleAfterMs: input.staleAfterMs } : {}),
   });
@@ -1279,25 +1433,166 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
   // half-applied — leaving the beaten claim behind is what made a takeover reverse itself on the
   // next cycle, and leaving our own older copies behind is the append-then-expunge residue readers
   // coalesce away.
+  // A best-effort release of a set of refs — the failure mode of every release: logged, never
+  // thrown, because a cleanup must not convert the state it is cleaning into a fault.
+  const releaseRefs = async (refs: readonly unknown[]): Promise<void> => {
+    if (refs.length === 0) return;
+    try {
+      await io.removeClaims(refs);
+    } catch (releaseErr) {
+      log("lease_release_failed", {
+        op: "remove_claims" satisfies LeaseOp,
+        err: releaseErr instanceof Error ? releaseErr.message : String(releaseErr),
+      });
+    }
+  };
+
   const toRemove = [...ourRefs, ...verdict.displace];
   if (toRemove.length > 0) {
+    let removalErr: unknown = null;
     try {
       await io.removeClaims(toRemove);
     } catch (err) {
-      // Harmless: the folder now holds our new claim plus one or more older ones, and readers
-      // coalesce by newest heartbeat. The next renew tries again.
+      if (verdict.displace.length === 0) {
+        // An ORDINARY renew's failed cleanup is harmless: the folder holds our new claim plus
+        // our own older copies, and readers coalesce by newest heartbeat. The next renew tries
+        // again.
+        //
+        // The bare string under `err` is deliberate, for the reason spelled out at
+        // `lease_release_failed` above: `log.ts` special-cases `err` into `describeError`, a
+        // string has no `name`/`code`, so this emits `errorClass: "String"` and nothing else.
+        // Passing the error object instead would hand a redactor an IMAP driver error that can
+        // carry the failing command and the credential.
+        log("lease_cleanup_failed", {
+          op: "remove_claims" satisfies LeaseOp,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      } else {
+        // A TAKEOVER's removal is judged by the re-read below, not by what the driver reported:
+        // a removal can fail after PARTIALLY landing (the STORE applied, the EXPUNGE refused),
+        // so "it threw" proves neither that the incumbent stands nor that it fell. Held, not
+        // thrown, until the folder has been looked at.
+        removalErr = err;
+      }
+    }
+
+    // ── THE HANDOVER IS VERIFIED BY CUSTODY, NOT ASSUMED FROM THE DRIVER ─────────────────────
+    //
+    // Takeovers only (a non-empty displace list): the folder is re-read and BOTH halves of the
+    // handover must hold — every displaced ref actually absent, and our own appended claim
+    // actually present. Neither follows from the removal's outcome. imapflow's `messageDelete`
+    // is STORE-then-EXPUNGE and returns the EXPUNGE's verdict, so a refused STORE under a no-op
+    // EXPUNGE resolves `true` with the message still there; the reverse partial (STORE applied,
+    // EXPUNGE refused) rejects with the message already doomed; and a shared EXPUNGE on a
+    // non-UIDPLUS server can take flagged messages this gate never named — including, through a
+    // racing clone's release, the claim this gate just wrote. An ordinary renew's cleanup keeps
+    // trusting the resolve: its leftovers are our own duplicates, which readers coalesce and
+    // the next renew retries — not worth a FETCH per cycle per mailbox.
+    //
+    // The re-read has its OWN failure path, deliberately: a FETCH that rejects after a removal
+    // that may well have landed is a read fault, not a failed expunge — rolling our claim back
+    // on it could leave the folder with NO claim at all after a fully successful displacement,
+    // handing the mailbox back to whoever returns first. So a read failure here throws
+    // `list_claims`, rolls nothing back, and the next gate's election sorts the folder out from
+    // whatever actually survived.
+    if (verdict.displace.length > 0) {
+      let after: RawClaimMessage[];
+      try {
+        after = await io.listClaims();
+      } catch (err) {
+        throw new LeaseUnavailableError(
+          `the organizer lease in ${META_FOLDER} could not be re-read after the handover was ` +
+          `recorded, so the takeover cannot be confirmed this cycle`,
+          { op: "list_claims", cause: err },
+        );
+      }
+      const afterClaims = after
+        .map((m) => parseClaim(m.raw, m.ref))
+        .filter((c): c is ClaimRecord => c !== null);
+      const ownStanding = afterClaims
+        .filter((c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId && c.nonce === nonce);
+      const stillRefs = new Set(after.map((m) => m.ref));
+      const survivor = verdict.displace.find((r) => stillRefs.has(r));
+
+      if (ownStanding.length === 0) {
+        // Our claim did not survive the cleanup — a racing release under our id, or the shared
+        // EXPUNGE taking more than the named refs. A live foreign winner is reported as the
+        // loss it is, anything else is a lost write to retry — the same two arms as the
+        // verify's own vanished-claim guard, and the same release: any OLDER claim of ours the
+        // partial cleanup left behind goes too, or the stopped install's residue obstructs the
+        // winner for the whole staleness window.
+        log("lease_lost_race", { verdict: "own_claim_missing" });
+        const survivors = decideLease({
+          self,
+          claims: afterClaims,
+          now,
+          ...(input.staleAfterMs !== undefined ? { staleAfterMs: input.staleAfterMs } : {}),
+        });
+        if (survivors.verdict === "stand_down") {
+          await releaseRefs(afterClaims
+            .filter((c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId)
+            .map((c) => c.ref)
+            .filter((r): r is unknown => r !== undefined));
+          return { verdict: survivors, nonce: null };
+        }
+        throw new LeaseUnavailableError(
+          `the claim this gate appended to ${META_FOLDER} did not survive the handover's ` +
+          `cleanup and no live rival stands — the write was lost, and the gate will retry`,
+          { op: "remove_claims", ...(removalErr !== null ? { cause: removalErr } : {}) },
+        );
+      }
+
+      if (survivor !== undefined) {
+        // The beaten claim still stands while ours does too. Confirming would spend the
+        // caller's one-shot authorization on a win the next election reverses on incumbency —
+        // the one-click verb that appears to do nothing, again. Our own appended claim is
+        // rolled back, best effort, so the retry re-enters the folder as it found it: left
+        // standing, our fresh claim wins the NEXT gate outright wherever the beaten claim is
+        // weaker — continuation, with an empty displace list — and the displacement this cycle
+        // still owes is never attempted again while the authorization is spent on the
+        // continuation.
+        await releaseRefs(ownStanding.map((c) => c.ref).filter((r): r is unknown => r !== undefined));
+        throw new LeaseUnavailableError(
+          `the organizer handover in ${META_FOLDER} could not be recorded (a displaced claim ` +
+          `survived the expunge), so the takeover did not complete`,
+          { op: "remove_claims", ...(removalErr !== null ? { cause: removalErr } : {}) },
+        );
+      }
+
+      // ── AND THE ELECTION IS RE-RUN OVER WHAT ACTUALLY STANDS ─────────────────────────────
       //
-      // The bare string under `err` is deliberate, for the reason spelled out at
-      // `lease_release_failed` above: `log.ts` special-cases `err` into `describeError`, a string
-      // has no `name`/`code`, so this emits `errorClass: "String"` and nothing else. Passing the
-      // error object instead would hand a redactor an IMAP driver error that can carry the
-      // failing command and the credential.
-      log("lease_cleanup_failed", {
-        op: "remove_claims" satisfies LeaseOp,
-        err: err instanceof Error ? err.message : String(err),
+      // The displaced refs being gone is necessary, not sufficient: an incumbent that RENEWED
+      // between the verify read and the cleanup wrote a NEW message the displace list never
+      // named — its old uid is gone (we expunged it), its renewal is live, and confirming over
+      // uid absence alone would spend the authorization on a win the very next election
+      // reverses on incumbency. The renewal is proof of an actively live peer, so it wins here
+      // exactly as it wins in the verify: our claim is released and the loss is reported as
+      // held-by-them, and the press retries rather than steamrolling a live renewal.
+      const finalElection = decideLease({
+        self: { ...self, lastNonce: nonce },
+        claims: afterClaims,
+        now,
+        ...(input.staleAfterMs !== undefined ? { staleAfterMs: input.staleAfterMs } : {}),
       });
+      if (finalElection.verdict !== "organize") {
+        await releaseRefs(afterClaims
+          .filter((c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId)
+          .map((c) => c.ref)
+          .filter((r): r is unknown => r !== undefined));
+        log("lease_lost_race", { verdict: finalElection.verdict });
+        return { verdict: finalElection, nonce: null };
+      }
+
+      // Custody holds: the displaced are gone and our claim stands — the handover landed,
+      // whatever the driver reported on the way. A held removal error is downgraded to the
+      // renew-cleanup log line: it described a write whose effect the re-read has now seen.
+      if (removalErr !== null) {
+        log("lease_cleanup_failed", {
+          op: "remove_claims" satisfies LeaseOp,
+          err: removalErr instanceof Error ? removalErr.message : String(removalErr),
+        });
+      }
     }
   }
-
   return { verdict, nonce };
 }
