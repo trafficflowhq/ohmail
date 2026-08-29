@@ -190,6 +190,30 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     };
 
     /**
+     * ── THE ERASURE FENCE'S STAMP — the FIRST statement, before even the settings delete ────
+     *
+     * `accounts` survives erasure (the pseudonymous billing subject), so nothing structural
+     * refuses a LATE settings writer: a consent PATCH in flight across this transaction could
+     * recreate `account_settings` and doorbell rows a millisecond after the catalog sweep
+     * counted zero (ERASE-WRITE-RACE). The stamp is durable evidence AND the interlock: it
+     * takes the account row's exclusive lock at the top of this transaction, and every settings
+     * writer opens ITS transaction by reading the same row `FOR SHARE` and refusing on a stamp
+     * (`erasure-fence.ts` — the two-sided argument lives there). Whichever side wins the row,
+     * zero rows survive: a writer that got its share lock first holds this whole transaction at
+     * this line until it commits, and the deletes below then take its rows with everything else.
+     *
+     * `coalesce` is the idempotency: a retried erasure keeps the FIRST stamp — the instant the
+     * data actually went — rather than quietly re-dating the erasure to the retry.
+     *
+     * The instant travels as ISO text, not a Date: a Date inside a raw `sql` fragment reaches
+     * postgres-js as an untyped parameter it refuses (`ERR_INVALID_ARG_TYPE`), while PGlite
+     * accepts it — exactly the driver split the pg suite exists to catch, and it did.
+     */
+    await tx.update(accounts)
+      .set({ erasedAt: sql`coalesce(${accounts.erasedAt}, ${ctx.now().toISOString()}::timestamptz)` })
+      .where(eq(accounts.id, accountId));
+
+    /**
      * THE GLOBAL LOCK ORDER — `account_settings` FIRST, the change-log sequence row second
      * (`recordSettingsChange`, consent-seed.ts, states the rule and its two reproduced 40P01s).
      * This transaction used to delete `change_log` and `account_sync_state` in section 6 and
@@ -202,6 +226,10 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
      * queues on this delete while holding nothing, so no cycle can form from either side. The
      * row's own reasoning (why consent is erased at all) stays with its old neighbours in
      * section 6.
+     *
+     * (Since the erasure fence above, "first" means first AFTER the accounts stamp — the fence
+     * put `accounts` at the head of the same chain for writers and erasure alike, so the
+     * relative order this comment argues for is unchanged: settings before the sequence row.)
      */
     await drop("account_settings", tx.delete(accountSettings).where(eq(accountSettings.accountId, accountId)));
 

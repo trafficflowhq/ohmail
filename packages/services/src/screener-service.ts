@@ -29,6 +29,7 @@ import {
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
+import { fenceErasedAccount } from "./erasure-fence.js";
 import { getScreeningPreference } from "./screening-preference.js";
 import { LearningService } from "./learning-service.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
@@ -813,6 +814,11 @@ export class ScreenerReadService {
     // ── DB tx: mark known (yes) + promoted rule + folder-state re-route + change_log + learning (step 2) ──
     const result = await asTx(ctx).transaction(async (tx) => {
       rerouted.length = 0;
+      // ── ERASURE FENCE, FIRST — this transaction writes `account_settings` (the baseline
+      // stamp below), so it is a settings writer and a late one could recreate erased state.
+      // First statement so the lock chain stays accounts → contacts/settings → sequence row;
+      // `erasure-fence.ts` carries the argument.
+      await fenceErasedAccount(tx, ctx.accountId);
       if (decision === "yes") {
         await tx.insert(contacts).values({ accountId: ctx.accountId, address })
           .onConflictDoNothing({ target: [contacts.accountId, contacts.address] });

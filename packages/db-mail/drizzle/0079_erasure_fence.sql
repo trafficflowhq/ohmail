@@ -1,0 +1,44 @@
+-- THE ERASURE FENCE — the durable marker that stops a late settings write recreating erased
+-- state. Found during review of the settings/erasure lock-order work and fixed separately,
+-- because it is true in BOTH lock orders: a lock order cannot refuse a transaction that starts
+-- after every lock is released.
+--
+--   accounts.erased_at  timestamptz NULL
+--
+-- ══ THE RACE THIS CLOSES ═════════════════════════════════════════════════════════════════════
+--
+-- `accounts` SURVIVES Art. 17 erasure by design (the pseudonymous billing subject the ledger
+-- points at), so nothing structural refuses a late writer: a consent-settings PATCH whose
+-- transaction started while its session was still alive can commit its `account_settings`
+-- upsert — and, with the settings doorbell, `change_log` / `account_sync_state` rows — AFTER
+-- `deleteAccount` commits. The erasure deletes users and sessions, so no NEW request can follow;
+-- the in-flight one was not fenced. The recreated rows are preference scalars and a doorbell row
+-- (no mail, no credentials), but the catalog sweep's promise is ZERO surviving rows, and a row
+-- recreated a millisecond after the sweep is a row the sweep cannot see.
+--
+-- ══ HOW THE FENCE WORKS — the two-sided interlock ═══════════════════════════════════════════
+--
+-- The erasure transaction stamps this column FIRST (`coalesce(erased_at, now)` — the first
+-- stamp survives a retried erasure), taking the account row's exclusive lock before anything
+-- else it does. Every settings writer opens its transaction by reading the row `FOR SHARE`
+-- (`packages/services/src/erasure-fence.ts`) and refuses on a non-NULL stamp. Whichever side
+-- gets the row lock first, the outcome is the same zero:
+--
+--   · writer first → the erasure's stamp WAITS on the writer's share lock; the writer's rows
+--     commit BEFORE the erasure's deletes run, and the deletes take them;
+--   · erasure first → the writer's FOR SHARE waits out the whole erasure, then reads the
+--     committed stamp and refuses (`account_erased`, 410) instead of writing.
+--
+-- The lock ORDER this adds is a strict prefix of the settled global order — accounts →
+-- account_settings → (mailboxes) → the change-log sequence row — and no transaction in the
+-- repository takes the accounts row AFTER any of those (verified: the only other accounts
+-- writers are creation, which holds nothing else, and `setAiEnabled`, which locks accounts
+-- first). So no new cycle is possible from either side.
+--
+-- ══ ADDITIVE, IDEMPOTENT, NO CHECK, NO INDEX, NO BACKFILL ═══════════════════════════════════
+--
+-- ADD COLUMN IF NOT EXISTS, nullable, no default: NULL means "never erased", which is every
+-- existing row — erasures that predate the column deleted their settings rows with no writer
+-- left alive to fence, so back-stamping them would invent an instant nobody recorded. No CHECK
+-- (a timestamp closes no set). No index: the fence reads the row by primary key.
+ALTER TABLE "accounts" ADD COLUMN IF NOT EXISTS "erased_at" timestamptz;

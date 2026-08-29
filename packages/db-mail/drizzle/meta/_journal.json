@@ -554,6 +554,13 @@
       "when": 1791327920534,
       "tag": "0078_inbound_quiet",
       "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1791400000000,
+      "tag": "0079_erasure_fence",
+      "breakpoints": true
     }
   ]
 }

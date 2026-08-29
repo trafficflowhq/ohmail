@@ -565,6 +565,16 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // pass loudly and syncs on. Deploy order: migration → API → worker.
   ["mailboxes", "inbound_quiet_since"],
   ["mailboxes", "inbound_quiet_dismissed_at"],
+  // mail 0079_erasure_fence — the durable marker a late settings write is fenced on
+  // (`accounts.erased_at`, NULL = never erased, every existing row). One additive nullable
+  // column, and it earns a marker because EVERY settings writer now opens its transaction by
+  // reading it FOR SHARE (`erasure-fence.ts`): an API deployed ahead of the migration answers
+  // Postgres 42703 on `PATCH /consent/settings`, on the Screener decide, and on the screening
+  // preference — the whole consent-write surface at once. The 503 in front of that names the
+  // missing migration instead. No worker half: the worker writes no settings rows. Deploy
+  // order: migration → API. No CHECK (a timestamp closes no set), no index (read by primary
+  // key).
+  ["accounts", "erased_at"],
   // mail 0077_send_later — the draft's appointment (`send_at` + `send_key` + `send_error`, with
   // `status = 'scheduled'`; NULL = no appointment / no failure, every existing row). It earns a
   // marker for the whole-row-select reason `mailboxes.error_code` established, one table over:
@@ -1526,12 +1536,17 @@ export const MAIL_EXPECTED_MARKERS =
  * `0078_inbound_quiet` is probed as BOTH its columns — `mailboxes.inbound_quiet_since` and
  * `mailboxes.inbound_quiet_dismissed_at`, the forwarding-detection notice's evidence pair —
  * each read by the whole-row `MailboxService.list` select; the dismissal route writes the
- * second by name. It is the newest entry, so it is the tag below.
+ * second by name.
+ *
+ * `0079_erasure_fence` is probed as `accounts.erased_at` — the durable erasure marker every
+ * settings writer reads FOR SHARE at the top of its transaction (`erasure-fence.ts`), so an API
+ * ahead of it 42703s the whole consent-write surface. It is the newest entry, so it is the tag
+ * below.
  */
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0078_inbound_quiet";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0079_erasure_fence";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */

@@ -7,6 +7,7 @@ import { listMailboxUserFolders, listUserFolders } from "./folders.js";
 import type { ServiceContext } from "./context.js";
 import { DEFAULT_DORMANCY_DAYS } from "./consent-cutline.js";
 import { ServiceError } from "./errors.js";
+import { fenceErasedAccount } from "./erasure-fence.js";
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
@@ -492,6 +493,12 @@ export async function confirmSeed(
   const skippedOffered = review.candidates.filter((c) => c.alreadyDecided && asked.has(c.address)).length;
 
   return asTx(ctx).transaction(async (tx) => {
+    // ── ERASURE FENCE, FIRST — before any settings lock. `deleteAccount` stamps
+    // `accounts.erased_at` at the top of its transaction; reading it FOR SHARE here is what
+    // stops this write recreating erased rows, and taking it FIRST is what keeps the lock
+    // order a single chain (accounts → settings → sequence row). `erasure-fence.ts` carries
+    // the two-sided argument.
+    await fenceErasedAccount(tx, ctx.accountId);
     // ── THE LOCK. FIRST STATEMENT, AND THE ONLY THING STANDING BETWEEN A DOUBLE-CLICK AND
     //    TWO RULES PER PERSON. See the note above.
     //
@@ -728,6 +735,12 @@ export async function setAutoSuggest(
   // The upsert is unchanged and still column-scoped; the transaction exists for the settings
   // change row beside it — see {@link recordSettingsChange}. Both land or neither does.
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
+    // ── ERASURE FENCE, FIRST — before any settings lock. `deleteAccount` stamps
+    // `accounts.erased_at` at the top of its transaction; reading it FOR SHARE here is what
+    // stops this write recreating erased rows, and taking it FIRST is what keeps the lock
+    // order a single chain (accounts → settings → sequence row). `erasure-fence.ts` carries
+    // the two-sided argument.
+    await fenceErasedAccount(tx, ctx.accountId);
     await tx.insert(accountSettings)
       .values({ accountId: ctx.accountId, autoSuggestAt: at, updatedAt: ctx.now() })
       .onConflictDoUpdate({
@@ -770,6 +783,12 @@ export async function setFoldersEnabled(
 ): Promise<{ foldersEnabledAt: string | null }> {
   const at = enabled ? ctx.now() : null;
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
+    // ── ERASURE FENCE, FIRST — before any settings lock. `deleteAccount` stamps
+    // `accounts.erased_at` at the top of its transaction; reading it FOR SHARE here is what
+    // stops this write recreating erased rows, and taking it FIRST is what keeps the lock
+    // order a single chain (accounts → settings → sequence row). `erasure-fence.ts` carries
+    // the two-sided argument.
+    await fenceErasedAccount(tx, ctx.accountId);
     await tx.insert(accountSettings)
       .values({ accountId: ctx.accountId, foldersEnabledAt: at, updatedAt: ctx.now() })
       .onConflictDoUpdate({
@@ -827,6 +846,12 @@ export async function setMailboxFoldersEnabled(
 ): Promise<{ mailboxId: string; foldersDisabledAt: string | null }> {
   const at = enabled ? null : ctx.now();
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
+    // ── ERASURE FENCE, FIRST — before any settings lock. `deleteAccount` stamps
+    // `accounts.erased_at` at the top of its transaction; reading it FOR SHARE here is what
+    // stops this write recreating erased rows, and taking it FIRST is what keeps the lock
+    // order a single chain (accounts → settings → sequence row). `erasure-fence.ts` carries
+    // the two-sided argument.
+    await fenceErasedAccount(tx, ctx.accountId);
     const [mb] = await tx.select({ id: mailboxes.id })
       .from(mailboxes)
       .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId)))
@@ -927,6 +952,12 @@ export async function setMailboxSignature(
   }
   const stored = signature !== null && signature.trim().length > 0 ? signature : null;
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
+    // ── ERASURE FENCE, FIRST — before any settings lock. `deleteAccount` stamps
+    // `accounts.erased_at` at the top of its transaction; reading it FOR SHARE here is what
+    // stops this write recreating erased rows, and taking it FIRST is what keeps the lock
+    // order a single chain (accounts → settings → sequence row). `erasure-fence.ts` carries
+    // the two-sided argument.
+    await fenceErasedAccount(tx, ctx.accountId);
     const [mb] = await tx.select({ id: mailboxes.id })
       .from(mailboxes)
       .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId)))
@@ -1027,6 +1058,12 @@ export async function setDormancyDays(
   // Column-scoped upsert unchanged; the transaction adds the settings change row — see
   // {@link recordSettingsChange}.
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
+    // ── ERASURE FENCE, FIRST — before any settings lock. `deleteAccount` stamps
+    // `accounts.erased_at` at the top of its transaction; reading it FOR SHARE here is what
+    // stops this write recreating erased rows, and taking it FIRST is what keeps the lock
+    // order a single chain (accounts → settings → sequence row). `erasure-fence.ts` carries
+    // the two-sided argument.
+    await fenceErasedAccount(tx, ctx.accountId);
     await tx.insert(accountSettings)
       .values({ accountId: ctx.accountId, dormancyDays: stored, updatedAt: ctx.now() })
       .onConflictDoUpdate({
@@ -1078,6 +1115,12 @@ export async function setBlockRemoteImages(
   // measured on: an image posture changed in a browser must reach an open desktop pane without
   // a restart.
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
+    // ── ERASURE FENCE, FIRST — before any settings lock. `deleteAccount` stamps
+    // `accounts.erased_at` at the top of its transaction; reading it FOR SHARE here is what
+    // stops this write recreating erased rows, and taking it FIRST is what keeps the lock
+    // order a single chain (accounts → settings → sequence row). `erasure-fence.ts` carries
+    // the two-sided argument.
+    await fenceErasedAccount(tx, ctx.accountId);
     await tx.insert(accountSettings)
       .values({ accountId: ctx.accountId, blockRemoteImagesAt: at, updatedAt: ctx.now() })
       .onConflictDoUpdate({
@@ -1124,6 +1167,12 @@ export async function setBlockTrackingPixels(
   // Column-scoped upsert unchanged; the transaction adds the settings change row — see
   // {@link recordSettingsChange}.
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
+    // ── ERASURE FENCE, FIRST — before any settings lock. `deleteAccount` stamps
+    // `accounts.erased_at` at the top of its transaction; reading it FOR SHARE here is what
+    // stops this write recreating erased rows, and taking it FIRST is what keeps the lock
+    // order a single chain (accounts → settings → sequence row). `erasure-fence.ts` carries
+    // the two-sided argument.
+    await fenceErasedAccount(tx, ctx.accountId);
     await tx.insert(accountSettings)
       .values({ accountId: ctx.accountId, loadTrackingPixelsAt: at, updatedAt: ctx.now() })
       .onConflictDoUpdate({
@@ -1181,6 +1230,12 @@ export async function setBlockAutoUnsubscribe(
   // Column-scoped upsert unchanged; the transaction adds the settings change row — see
   // {@link recordSettingsChange}.
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
+    // ── ERASURE FENCE, FIRST — before any settings lock. `deleteAccount` stamps
+    // `accounts.erased_at` at the top of its transaction; reading it FOR SHARE here is what
+    // stops this write recreating erased rows, and taking it FIRST is what keeps the lock
+    // order a single chain (accounts → settings → sequence row). `erasure-fence.ts` carries
+    // the two-sided argument.
+    await fenceErasedAccount(tx, ctx.accountId);
     await tx.insert(accountSettings)
       .values({ accountId: ctx.accountId, blockAutoUnsubscribeAt: at, updatedAt: ctx.now() })
       .onConflictDoUpdate({
@@ -1255,6 +1310,12 @@ export async function setLocale(
   // Column-scoped upsert unchanged; the transaction adds the settings change row — see
   // {@link recordSettingsChange}.
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
+    // ── ERASURE FENCE, FIRST — before any settings lock. `deleteAccount` stamps
+    // `accounts.erased_at` at the top of its transaction; reading it FOR SHARE here is what
+    // stops this write recreating erased rows, and taking it FIRST is what keeps the lock
+    // order a single chain (accounts → settings → sequence row). `erasure-fence.ts` carries
+    // the two-sided argument.
+    await fenceErasedAccount(tx, ctx.accountId);
     await tx.insert(accountSettings)
       .values({ accountId: ctx.accountId, locale: stored, updatedAt: ctx.now() })
       .onConflictDoUpdate({

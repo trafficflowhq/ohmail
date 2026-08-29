@@ -1,8 +1,11 @@
 import { eq } from "drizzle-orm";
-import { accountSettings } from "@trafficflow/db";
+import { accountSettings, type Tx } from "@trafficflow/db";
 import { resolveOhboxPolicy, type OhboxPolicy } from "@trafficflow/core/mail";
 import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
+import { fenceErasedAccount } from "./erasure-fence.js";
+
+const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
 // Re-exported so the API surface has one import for the read helpers AND the resolver, and so the
 // engine's resolution (`@trafficflow/core`) stays the single source of truth — see the note on
@@ -182,8 +185,14 @@ export async function setScreeningPreference(
     set.screenerAutoApplyAt = on ? ctx.now() : null;
   }
 
-  await ctx.db.insert(accountSettings).values(values)
-    .onConflictDoUpdate({ target: accountSettings.accountId, set });
+  // A transaction where a bare upsert once stood, and the fence is the reason: the FOR SHARE
+  // interlock in `erasure-fence.ts` only holds until COMMIT, so fencing an autocommit statement
+  // from a separate statement would guard nothing. Fence first, then the same upsert.
+  await asTx(ctx).transaction(async (tx) => {
+    await fenceErasedAccount(tx, ctx.accountId);
+    await tx.insert(accountSettings).values(values)
+      .onConflictDoUpdate({ target: accountSettings.accountId, set });
+  });
 
   return getScreeningPreference(ctx);
 }
@@ -204,10 +213,15 @@ export async function setScreeningPreference(
  * only these two columns plus `updated_at`.
  */
 export async function requestOhboxTidy(ctx: ServiceContext): Promise<void> {
-  await ctx.db.insert(accountSettings)
-    .values({ accountId: ctx.accountId, ohboxTidyRequestedAt: ctx.now(), ohboxTidyCursor: null })
-    .onConflictDoUpdate({
-      target: accountSettings.accountId,
-      set: { ohboxTidyRequestedAt: ctx.now(), ohboxTidyCursor: null, updatedAt: ctx.now() },
-    });
+  // Fenced in a transaction for `setScreeningPreference`'s reason: the FOR SHARE interlock
+  // lives and dies with the transaction, so the fence and the upsert must share one.
+  await asTx(ctx).transaction(async (tx) => {
+    await fenceErasedAccount(tx, ctx.accountId);
+    await tx.insert(accountSettings)
+      .values({ accountId: ctx.accountId, ohboxTidyRequestedAt: ctx.now(), ohboxTidyCursor: null })
+      .onConflictDoUpdate({
+        target: accountSettings.accountId,
+        set: { ohboxTidyRequestedAt: ctx.now(), ohboxTidyCursor: null, updatedAt: ctx.now() },
+      });
+  });
 }

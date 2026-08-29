@@ -1319,6 +1319,20 @@ export const accounts = pgTable("accounts", {
    * and every message is still filed by the deterministic rules.
    */
   aiEnabled: boolean("ai_enabled").notNull().default(true),
+  /**
+   * THE ERASURE FENCE (migration 0079). NULL for every live account; the instant of the account's
+   * Art. 17 erasure otherwise — stamped FIRST inside `deleteAccount`'s transaction, with
+   * `coalesce` so a retried erasure keeps the first stamp.
+   *
+   * This row SURVIVES erasure by design (the pseudonymous billing subject), so nothing structural
+   * refuses a late writer: without this column, a consent-settings PATCH in flight across the
+   * erasure could recreate `account_settings` / doorbell rows a millisecond after the catalog
+   * sweep counted zero. Every settings writer opens its transaction by reading this row
+   * `FOR SHARE` and refusing on a stamp (`erasure-fence.ts`); the stamp-first order means
+   * whichever side wins the row lock, zero rows survive. The migration file carries the full
+   * two-sided argument.
+   */
+  erasedAt: timestamp("erased_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 

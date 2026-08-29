@@ -4,6 +4,7 @@ import {
   routingDecisions, rules, type Tx,
 } from "@trafficflow/db";
 import type { ServiceContext } from "./context.js";
+import { fenceErasedAccount } from "./erasure-fence.js";
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
@@ -116,6 +117,9 @@ export async function resetScreeningState(ctx: ServiceContext): Promise<ResetRes
   const unmoved = await unmovedReport(ctx);
 
   return asTx(ctx).transaction(async (tx) => {
+    // ── ERASURE FENCE, FIRST — before the settings lock below. The chain is accounts →
+    // settings → sequence row; `erasure-fence.ts` states why it must be the first lock.
+    await fenceErasedAccount(tx, ctx.accountId);
     /**
      * THE GLOBAL LOCK ORDER — `account_settings` FIRST, the sequence row second (the rule and
      * its reproduction live at `recordSettingsChange`, consent-seed.ts). This transaction was
