@@ -51,6 +51,8 @@ const inputs = (mailboxes: MailStateInputs["mailboxes"], mirrored: number): Mail
   mailboxes,
   mirrored,
   growth: seedGrowth(mirrored),
+  // The resting freshness: current, stamped moments ago. The stale arm's own tests perturb it.
+  freshness: { state: "current" as const, asOf: new Date(NOW - 30_000).toISOString() },
   now: NOW,
   demo: false,
 });

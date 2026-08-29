@@ -57,6 +57,7 @@ import {
   liveTags,
   mirrorSettled,
   presentedOf,
+  staleAsOf,
   readerZone,
   soleMessageMailbox,
   stableActions,
@@ -83,7 +84,17 @@ export interface World {
    * On the empty world `settled` is false: the render between a teardown and the redirect
    * shows the honest unknown, never a fictitious emptiness.
    */
-  boot: { settled: boolean; syncFailure: string | null };
+  boot: {
+    settled: boolean;
+    syncFailure: string | null;
+    /**
+     * The stale label's sentence-ready time ("Fri 09:00", the reader's zone), or null when the
+     * mirror is current or has never settled — `live.ts#staleAsOf`, the Freshness Contract's
+     * middle state. Non-null means the chrome owes "As of <time> · catching up" until a drain
+     * settles; the derivation clears it in the same world re-derive that applies the drain.
+     */
+    staleAsOf: string | null;
+  };
   /**
    * WHICH SESSION this is — the live session's mirror owner key, or `"none"`. The one
    * legitimate effect dependency for "do this again when the world changes": the actions
@@ -231,7 +242,7 @@ const NO_ACTIONS: WorldActions = {
 function emptyWorld(actions: WorldActions): World {
   return {
     live: false,
-    boot: { settled: false, syncFailure: null },
+    boot: { settled: false, syncFailure: null, staleAsOf: null },
     worldKey: "none",
     account: { name: "", email: "" },
     ohbox: { resurfaced: [], fresh: [], seen: [], unread: 0, total: 0, meta: "" },
@@ -583,7 +594,14 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       // Read per derivation, not latched: the first drain's completion stamps the mirror and
       // flips `conn.syncing`, which is in this memo's deps — so `settled` turns true in the
       // same render pass that could otherwise flash an empty state over a just-synced mailbox.
-      boot: { settled: mirrorSettled(session.store), syncFailure: conn.syncError },
+      boot: {
+        settled: mirrorSettled(session.store),
+        syncFailure: conn.syncError,
+        // Re-read per derivation, like `settled`: a drain's settle bumps `version` (the stamp
+        // write) and flips `conn.syncing`, both in this memo's deps, so the label clears in the
+        // same pass the mirror becomes current — never a render later.
+        staleAsOf: staleAsOf(engine, zone),
+      },
       worldKey: session.ownerKey,
       account: { name: session.profile.origin, email: session.profile.accountId },
       ohbox: { ...ohbox, meta: `${ohbox.unread} unread of ${ohbox.total}` },

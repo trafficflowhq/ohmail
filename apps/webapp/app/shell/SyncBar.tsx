@@ -76,6 +76,10 @@ import { useMailState } from "./MailStateProvider";
 // person reads — so the address is decoded for display (`idn.ts`). `MailState` itself keeps the
 // stored form, which is what the settings link and the probe compare against.
 import { displayAddress } from "./idn";
+// The stale label's time — "Mon 18:40" in the app's own locale, through the one stamp
+// formatter the waterline already uses rather than a second spelling of the same idea.
+import { waterlineStamp } from "./format";
+import { activeFormatLocale } from "./locale";
 
 /**
  * The mailbox address a strip arm names, readably — and `null` straight through, because two of
@@ -242,6 +246,22 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): 
       // Polite, and deliberately not re-announced: the text is constant for as long as the
       // outage lasts, so the region updates once when it appears and once when it goes.
       return { tone: "", role: "status", warn: true, busy: false, title: t("failing"), detail: null, link: null };
+
+    case "stale":
+      // THE FRESHNESS CONTRACT'S LABEL (INSTANT-ARCH §6.6): the mail on screen is real and this
+      // says how old — "As of Mon 18:40 · catching up". Busy tone and no warning triangle,
+      // because nothing is wrong: the mirror painted instantly (frame one is local) and a drain
+      // is converging behind content that is already readable. It clears itself — the arm stops
+      // matching the moment a drain settles and re-stamps. The time is stable for the whole
+      // episode (the stamp only moves when the state exits), so the live region announces the
+      // sentence once. `state.asOf` is non-null by the ladder's own guard; the stamp is
+      // machine-written, so `waterlineStamp`'s empty-string fallback is unreachable rather than
+      // load-bearing.
+      return {
+        tone: "busy", role: "status", warn: false, busy: true,
+        title: t("staleAsOf", { time: waterlineStamp(state.asOf ?? "", activeFormatLocale()) }),
+        detail: null, link: null,
+      };
 
     case "catchingUp":
       // The confirm window for a coded refusal. Our API refused this session ONCE and we are

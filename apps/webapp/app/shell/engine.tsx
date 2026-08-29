@@ -21,7 +21,7 @@ import {
   type ReactNode,
 } from "react";
 import { useTranslations } from "next-intl";
-import { OhmailEngine, type EntityReader } from "@ohmail/client-engine";
+import { OhmailEngine, type EntityReader, type MirrorFreshness } from "@ohmail/client-engine";
 import { isDemoRequested } from "../demo-mode";
 import { cloudWakeStream, createEngine, EngineUnarmedError, syncsWhileHidden } from "./engine-config";
 import { useLoadingGrace } from "./loading-grace";
@@ -710,6 +710,27 @@ const NEVER_CHANGES = (): (() => void) => () => {};
 export function useDemoMode(): boolean {
   const { demo, serverDemo } = useBinding();
   return useSyncExternalStore(NEVER_CHANGES, () => demo, () => serverDemo);
+}
+
+/**
+ * The server snapshot for {@link useFreshness}: hydration renders "unknown" — which paints
+ * nothing — and the client's own answer takes over in the very next render, the same bargain
+ * {@link useDemoMode} strikes. One module-level identity, because `useSyncExternalStore`
+ * requires a stable snapshot while nothing changed.
+ */
+const FRESHNESS_UNKNOWN: MirrorFreshness = { state: "unknown", asOf: null };
+
+/**
+ * THE FRESHNESS CONTRACT'S VERDICT for this engine's mirror (INSTANT-ARCH §6.6) — what the
+ * sync line's "as of <time> · catching up" arm keys on. The engine is the one derivation
+ * (`OhmailEngine.freshness()`, value-cached for exactly this hook); the drain announces its
+ * settle with a notify after stamping, so the label clears here the moment the mirror is
+ * current rather than at the next coincidental re-render.
+ */
+export function useFreshness(): MirrorFreshness {
+  const engine = useEngine();
+  const subscribe = useCallback((cb: () => void) => engine.subscribe(cb), [engine]);
+  return useSyncExternalStore(subscribe, () => engine.freshness(), () => FRESHNESS_UNKNOWN);
 }
 
 /**

@@ -765,6 +765,34 @@ export const STALE_RESUME_MS = 5 * 60_000;
  */
 export const LAST_DRAIN_AT_META = "lastDrainAt";
 
+/**
+ * THE FRESHNESS CONTRACT'S THREE STATES (INSTANT-ARCH §6.6) — what a surface may say about the
+ * age of the mirror it is rendering. Exactly three, and they must never be conflated:
+ *
+ *  · `unknown` — no drain has EVER completed over this mirror. A zero-row list is not "empty",
+ *    it is unanswered; the surface owes a skeleton, never content and never an empty state.
+ *  · `stale`   — a drain HAS completed, but longer ago than {@link STALE_RESUME_MS}. The mirror
+ *    is renderable truth and MUST be rendered (frame one is local, always) — but it is truth
+ *    as of {@link MirrorFreshness.asOf}, and the surface says so quietly ("as of 14:32 ·
+ *    catching up") until a drain settles. Staleness labeled is honest; staleness silent is
+ *    the bug this type exists to make unrepresentable.
+ *  · `current` — the last completed drain is recent. Plain content, no label.
+ */
+export type FreshnessState = "unknown" | "stale" | "current";
+
+/** See {@link OhmailEngine.freshness}. */
+export interface MirrorFreshness {
+  state: FreshnessState;
+  /**
+   * {@link LAST_DRAIN_AT_META} verbatim — the engine-clock instant of the last COMPLETED drain,
+   * or `null` exactly when `state` is `"unknown"`. Surfaces format it; they never parse meta
+   * themselves. A stamp that does not parse reports `"unknown"` rather than a label with no
+   * time in it: the stamp is this engine's own write, so an unparseable one is corruption, and
+   * the very next settled drain re-stamps it.
+   */
+  asOf: string | null;
+}
+
 export interface EngineOptions {
   adapter: EngineAdapter;
   /**
@@ -1669,6 +1697,13 @@ export class OhmailEngine {
       // mid-backlog leaves the old stamp standing, so the next drain still reads as a stale
       // resume and freshens again (idempotent: the seq guard absorbs the repeat).
       await this.store.setMeta(LAST_DRAIN_AT_META, this.now().toISOString());
+      // ANNOUNCE THE SETTLE. The stamp is what {@link OhmailEngine.freshness} reads, and the
+      // last data notify above fired BEFORE the stamp landed — so without this, a surface
+      // rendering "as of 14:32 · catching up" off a freshness subscription keeps the label up
+      // until something ELSE happens to notify (the next drain, seconds to minutes away). The
+      // label must clear at the settle, not at the next coincidence; `freshness-label.test.ts`
+      // watches this line red.
+      this.notify();
       // THE OVERLAY SWEEP, only on this successful exit: every overlay whose POST returned
       // before this drain began now has its echo IN the mirror, so retiring it changes what is
       // rendered from "the overlay's claim" to "the server's identical statement".
@@ -2233,6 +2268,45 @@ export class OhmailEngine {
   private notify(): void {
     for (const l of this.listeners) l();
   }
+
+  /**
+   * WHAT A SURFACE MAY SAY ABOUT THIS MIRROR'S AGE — the one derivation of the Freshness
+   * Contract's three states (see {@link FreshnessState}), computed from the drain's own
+   * completion stamp on the engine's own clock. Every surface reads THIS; none re-derives it
+   * from meta, which is how three surfaces stay one contract.
+   *
+   * The comparison is the same one {@link OhmailEngine.freshenStaleResume} makes — same stamp,
+   * same threshold, same clock — so "the label is showing" and "the resume freshens
+   * newest-first" are a single fact observed twice, never two opinions that can drift.
+   *
+   * CACHED BY VALUE for `useSyncExternalStore`: `getSnapshot` must return a stable identity
+   * while nothing changed, or React loops on a fresh object per render. The value changes when
+   * a drain settles (which {@link OhmailEngine.drain} announces with a notify after stamping)
+   * or when the clock crosses the threshold between two notifies — re-read at the next render
+   * either way.
+   */
+  freshness(): MirrorFreshness {
+    const stamp = this.store.getMeta<string>(LAST_DRAIN_AT_META);
+    let next: MirrorFreshness;
+    if (stamp === undefined) {
+      next = { state: "unknown", asOf: null };
+    } else {
+      const t = Date.parse(stamp);
+      next = Number.isNaN(t)
+        ? { state: "unknown", asOf: null }
+        : {
+            state: this.now().getTime() - t > this.staleResumeMs ? "stale" : "current",
+            asOf: stamp,
+          };
+    }
+    if (next.state !== this.freshnessCache.state || next.asOf !== this.freshnessCache.asOf) {
+      this.freshnessCache = next;
+    }
+    return this.freshnessCache;
+  }
+
+  /** The last {@link MirrorFreshness} handed out — identity-stable while its value stands. */
+  private freshnessCache: MirrorFreshness = { state: "unknown", asOf: null };
 
   // ── message bodies ───────────────────────────────────────────────────────
 

@@ -64,6 +64,11 @@ export const Copy = {
   scanManual: "Enter it by hand instead",
   scanAgain: "Scan again",
 
+  /* The Freshness Contract's label (INSTANT-ARCH §6.6): content over a stale mirror says how
+     old it is, quietly, until a drain settles. `time` arrives sentence-ready from the world
+     layer ("Fri 09:00", the reader's zone). */
+  staleAsOf: (time: string) => `As of ${time} · catching up`,
+
   pairingBusy: "Pairing…",
   pairedOk: "Paired. Syncing your mail.",
 

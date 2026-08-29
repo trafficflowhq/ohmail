@@ -802,6 +802,16 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         }
       }
 
+      // THE FRESHNESS PROBE — the Freshness Contract's verdict for THIS mirror (INSTANT-ARCH
+      // §6.6), served to the window so its "as of <time> · catching up" label is driven by the
+      // stamp that actually ages: the WINDOW engine drains this process's local feed and is
+      // always "current" relative to it, so its own stamp can never say the desktop is behind
+      // the hosted account — this one can. `draining` rides along so a surface can tell "stale,
+      // converging" from "stale, waiting for the next poll"; the label itself keys on `state`.
+      if (req.method === "GET" && path === "/mirror/freshness") {
+        return json({ ...liveMirror.freshness(), draining: liveMirror.draining() });
+      }
+
       // THE LOCAL READ SURFACE — GET /messages/:id(+/body), /messages/bodies, /threads/:id,
       // /search, /mailboxes, /tags, /rules, served from the mirror through read services alone.
       // The census over this file's expanded graph proves none of these handlers can reach the

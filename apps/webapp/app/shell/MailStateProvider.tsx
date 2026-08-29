@@ -48,7 +48,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useDemoMode, useSyncStatus } from "./engine";
+import { useDemoMode, useFreshness, useSyncStatus } from "./engine";
 import { SYNC_FAILURE_STREAK } from "./sync-scheduler";
 import {
   deriveMailState,
@@ -56,6 +56,7 @@ import {
   seedGrowth,
   type MailboxFacts,
   type MailState,
+  type MailStateInputs,
   type MirrorGrowth,
 } from "./mail-state";
 
@@ -66,6 +67,24 @@ import {
  * account with no mailboxes — see the file header.
  */
 export type MailboxProbe = () => Promise<MailboxFacts[]>;
+
+/** The ladder's freshness input — the Freshness Contract's verdict. See `MailStateInputs`. */
+export type FreshnessFacts = MailStateInputs["freshness"];
+
+/**
+ * THE DESKTOP'S FRESHNESS SOURCE — `GET /mirror/freshness` over the bridge, narrowed.
+ *
+ * Supplied by the desktop client only, and it OVERRIDES the engine's own answer when present,
+ * for the one reason the route exists: the desktop's window engine drains the SIDECAR's local
+ * feed and is always "current" relative to it, so its own stamp can never say the desktop is
+ * behind the hosted account. The sidecar's stamp can, and this is how it reaches the strip.
+ *
+ * MUST REJECT on failure (the `MailboxProbe` contract, for the freshness direction): the
+ * provider keeps the LAST answer it saw, because a stale claim may only be withdrawn by
+ * evidence of currency — a dead bridge mapped to "current" would silently unlabel a mirror
+ * that is days old, which is the exact lie the label exists to end.
+ */
+export type FreshnessProbe = () => Promise<FreshnessFacts>;
 
 /**
  * How often the strip's own clock beats, while a state's copy depends on elapsed time.
@@ -121,19 +140,34 @@ const MailStateContext = createContext<MailStateBinding | null>(null);
 
 export function MailStateProvider({
   probe,
+  freshnessProbe,
   mirrored,
   children,
 }: {
   probe?: MailboxProbe;
+  /** See {@link FreshnessProbe} — the desktop's sidecar-truth override; absent everywhere else. */
+  freshnessProbe?: FreshnessProbe;
   /** Messages in the MIRROR — every folder. THE progress signal, once it moves. */
   mirrored: number;
   children: ReactNode;
 }) {
   const sync = useSyncStatus();
   const demo = useDemoMode();
+  const engineFreshness = useFreshness();
   const [facts, setFacts] = useState<MailboxFacts[] | null>(null);
+  const [probedFreshness, setProbedFreshness] = useState<FreshnessFacts | null>(null);
   const [beat, setBeat] = useState(() => Date.now());
   const [growth, setGrowth] = useState<MirrorGrowth>(() => seedGrowth(mirrored));
+
+  /**
+   * WHICH FRESHNESS THE LADDER JUDGES. With a probe (the desktop): the probe's LAST answer, and
+   * `unknown` until it first answers — never the engine's own, whose stamp tracks the local
+   * sidecar feed and would unlabel a desktop that is days behind the hosted account. Without
+   * one (web, mobile-shaped hosts, the demo): the engine's own verdict, live via subscription.
+   */
+  const freshness: FreshnessFacts = freshnessProbe
+    ? (probedFreshness ?? { state: "unknown", asOf: null })
+    : engineFreshness;
 
   /**
    * FOLD EVERY OBSERVATION OF THE MIRROR'S SIZE IN.
@@ -179,13 +213,14 @@ export function MailStateProvider({
       deriveMailState({
         sync,
         failureStreak: SYNC_FAILURE_STREAK,
+        freshness,
         mailboxes: facts,
         mirrored,
         growth,
         now: beat,
         demo,
       }),
-    [sync, facts, mirrored, growth, beat, demo],
+    [sync, freshness, facts, mirrored, growth, beat, demo],
   );
 
   // The clock, armed only while something on screen depends on elapsed time.
@@ -210,6 +245,33 @@ export function MailStateProvider({
       // `SessionScreen`'s business, not this strip's.
     }
   }, [probe]);
+
+  const readFreshness = useCallback(async (): Promise<void> => {
+    if (!freshnessProbe) return;
+    try {
+      const got = await freshnessProbe();
+      if (alive.current) setProbedFreshness(got);
+    } catch {
+      // KEEP THE LAST ANSWER. A stale claim may only be withdrawn by evidence of currency; a
+      // dead bridge mapped to anything else would either unlabel a days-old mirror (mapped
+      // current) or label a current one (mapped stale). The last thing the sidecar said is the
+      // best thing known.
+    }
+  }, [freshnessProbe]);
+
+  /**
+   * The freshness poll, desktop only. Two cadences, one reason: while the last answer was
+   * `stale` the label is ON SCREEN and must clear promptly when the sidecar's pull settles, so
+   * the re-ask rides the same five-second beat the strip's own clock does; at rest it drops to
+   * the facts poll's cadence. Both are one call down a local pipe — no network, no server cost.
+   */
+  useEffect(() => {
+    if (!freshnessProbe) return;
+    void readFreshness();
+    const cadence = probedFreshness?.state === "stale" ? MAIL_CLOCK_MS : FACTS_POLL_MS;
+    const id = setInterval(() => void readFreshness(), cadence);
+    return () => clearInterval(id);
+  }, [freshnessProbe, readFreshness, probedFreshness?.state]);
 
   useEffect(() => {
     if (!probe) {

@@ -781,6 +781,7 @@ export function importFloorSpeaks(
 export type MailStateKey =
   | "stopped"
   | "failing"
+  | "stale"
   | "catchingUp"
   | "blocked"
   | "mailboxError"
@@ -842,6 +843,13 @@ export interface MailState {
   reason: SyncBlockReason | StandDownReason | null;
   /** `mailboxError` only — the `errorCode` key whose sentence lives in `mailboxes.err_*`. */
   errorCode: string | null;
+  /**
+   * `stale` only — the instant the mirror on screen was last known current, verbatim from the
+   * freshness input (the engine's own completion stamp, or the desktop mirror's). It is the
+   * time the label renders — "As of 14:32 · catching up" — and the arm never fires without it:
+   * a staleness claim with no time in it is not a sentence anyone can check.
+   */
+  asOf: string | null;
   /** The mailbox the state is ABOUT, when it is about exactly one. */
   address: string | null;
   /**
@@ -953,6 +961,7 @@ const QUIET: MailState = {
   total: null,
   reason: null,
   errorCode: null,
+  asOf: null,
   address: null,
   minutes: null,
   slow: false,
@@ -1020,6 +1029,22 @@ export interface MailStateInputs {
   /** `SYNC_FAILURE_STREAK`, passed in so the surfaces cannot drift from the scheduler. */
   failureStreak: number;
   /**
+   * THE FRESHNESS CONTRACT'S VERDICT (INSTANT-ARCH §6.6) — structural, re-declared rather than
+   * imported as `MirrorFreshness` for the reason {@link MailboxFacts} is: this module ships in
+   * the Desktop bundle. On the web it is `useFreshness()` — the engine's own derivation from
+   * its completion stamp; on the desktop it is the SIDECAR mirror's verdict over
+   * `GET /mirror/freshness`, because the window engine drains the sidecar's local feed and is
+   * always "current" relative to it — its own stamp cannot say the desktop is behind the
+   * hosted account.
+   *
+   *  · `unknown` — never drained; the panes' skeleton owns it, the strip says nothing.
+   *  · `stale`   — the content on screen is truth as of `asOf`; the strip labels it quietly
+   *    until a drain settles. NEVER silent: staleness labeled is honest, staleness silent is
+   *    the bug (a mirror days old rendering as if current).
+   *  · `current` — the resting state; nothing renders.
+   */
+  freshness: { state: "unknown" | "stale" | "current"; asOf: string | null };
+  /**
    * `GET /mailboxes`, narrowed — or `null` for "we cannot see mailboxes".
    *
    * **`null` and `[]` ARE DIFFERENT FACTS and the distinction is load-bearing.** `null` is the
@@ -1069,7 +1094,7 @@ export function deriveMailState(input: MailStateInputs): MailState {
  * Each step says why it outranks the next.
  */
 function climb(input: MailStateInputs): MailState {
-  const { sync, failureStreak, mailboxes, mirrored, growth, now, demo } = input;
+  const { sync, failureStreak, freshness, mailboxes, mirrored, growth, now, demo } = input;
 
   // A fixtures engine drains once from local data and is permanently settled. There is no
   // sync here to have a state, and the demo promises that nothing leaves the tab — so it gets
@@ -1101,6 +1126,31 @@ function climb(input: MailStateInputs): MailState {
   // `terminal` and the `stopped` arm above renders. This mirrors the discipline of that non-latching
   // fix at the weaker banner.
   if (sync.failures >= failureStreak) return { ...QUIET, key: "failing" };
+
+  // ── STALE — the content on screen is real and OLD, and the strip says which (stage 2) ───
+  //
+  // The Freshness Contract's labeled middle state: the mirror renders instantly (frame one is
+  // local, always), a drain is converging behind it, and until that drain SETTLES the honest
+  // sentence is "As of <time> · catching up" — the time being the last completed drain's own
+  // stamp. It clears itself: a settled drain re-stamps, the freshness input flips to
+  // `current`, and this arm stops matching. Nothing here is a claim about progress — the
+  // importing arm below still owns the moving count — this is a claim about AGE.
+  //
+  // BELOW `stopped` and `failing`, deliberately: those mean the loop is frozen or dead, so
+  // "catching up" would be a false statement about what the app is doing — the failure arms
+  // already explain why the mirror cannot move. ABOVE everything else, including the
+  // `mailboxes === null` probe gate: staleness is an ENGINE fact, known before any probe
+  // answers — and the first seconds of a days-stale resume, when the probe has not landed,
+  // are exactly when the label is owed. It also outranks `blocked`/`importing` for the label's
+  // one job: while the view is not current, nothing may present it as current — the stronger
+  // per-mailbox sentences return the moment the mirror is.
+  //
+  // NEVER without a time: `asOf` is the sentence's checkable half, and the freshness input
+  // carries it for every `stale` by construction (the engine reports `unknown`, not `stale`,
+  // when the stamp is missing or unreadable). The guard is belt for a probe-fed desktop value.
+  if (freshness.state === "stale" && freshness.asOf !== null) {
+    return { ...QUIET, key: "stale", clock: true, count: mirrored, asOf: freshness.asOf };
+  }
 
   // ── The calm FLOOR for an UNCONFIRMED coded refusal ─────────────────────────────────────
   //

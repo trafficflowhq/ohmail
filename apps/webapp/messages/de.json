@@ -2156,6 +2156,7 @@
     "stopped": "Synchronisierung gestoppt — diese Sitzung ist nicht mehr berechtigt.",
     "stoppedLocal": "Synchronisierung gestoppt. Beende ohmail und öffne es neu, um wieder zu verbinden.",
     "catchingUp": "Wird nachgeholt …",
+    "staleAsOf": "Stand {time} · wird nachgeholt",
     "signIn": "Anmelden",
     "settings": "Einstellungen → Postfächer",
     "importing": "Deine Post wird synchronisiert.",

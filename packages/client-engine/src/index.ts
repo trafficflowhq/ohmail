@@ -256,6 +256,10 @@ export {
   // for the same reason the two above are — the guards must read the shipped values, not copies.
   STALE_RESUME_MS,
   LAST_DRAIN_AT_META,
+  // The Freshness Contract's three states and the engine's one derivation of them — surfaces
+  // render `engine.freshness()`, never a re-derivation from meta (INSTANT-ARCH §6.6).
+  type FreshnessState,
+  type MirrorFreshness,
   // The durable outbox's client-local record type. Exported so the kill-restart guards (and
   // any storage tooling) read the shipped name rather than a hand-copied string.
   OUTBOX_TYPE,

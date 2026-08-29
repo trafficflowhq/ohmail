@@ -134,7 +134,7 @@ import { TagPicker, placePicker, type TagPickerState } from "./TagPicker";
 import { KeymapProvider, useKeyBindings, type KeyBinding } from "./keymap";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { SyncBar } from "./SyncBar";
-import { MailStateProvider, useMailState, type MailboxProbe } from "./MailStateProvider";
+import { MailStateProvider, useMailState, type FreshnessProbe, type MailboxProbe } from "./MailStateProvider";
 import { ViewBoundary } from "./ViewBoundary";
 import {
   formatRecipientChips,
@@ -606,6 +606,7 @@ export function AppShell({
   engine,
   resolveOwner,
   mailboxFacts,
+  mirrorFreshness,
   sendSurfaceMaxTotalBytes,
   accountSection,
   mailboxSection,
@@ -651,6 +652,16 @@ export function AppShell({
    * because an empty array is a claim about the account.
    */
   mailboxFacts?: MailboxProbe;
+  /**
+   * "How old is the mail this window renders?", answered by the HOST's own mirror — the
+   * desktop's seam and nobody else's, `mailboxFacts`'s shape for `mailboxFacts`'s reason. The
+   * desktop's window engine drains the sidecar's LOCAL feed and is always current relative to
+   * it, so the engine's own freshness cannot say the desktop is behind the hosted account —
+   * the sidecar's `GET /mirror/freshness` can, and this probe is how it reaches the sync
+   * strip's "as of <time> · catching up" arm. Absent everywhere else: the web reads the
+   * engine's own verdict. See `MailStateProvider`'s `FreshnessProbe` for the failure contract.
+   */
+  mirrorFreshness?: FreshnessProbe;
   /**
    * THE HOST'S OWN CEILING ON ATTACHMENT BYTES IN ONE SEND — what the pipeline a send from this
    * window rides can carry, declared by the host because only the host knows its transport.
@@ -973,7 +984,7 @@ export function AppShell({
           every view mounted under it can declare bindings into the same table, which is
           also the table the `?` sheet is generated from. */}
       <KeymapProvider>
-        <MailStateHost probe={mailboxFacts}>
+        <MailStateHost probe={mailboxFacts} freshnessProbe={mirrorFreshness}>
           <ShellInner
             sendSurfaceMaxTotalBytes={sendSurfaceMaxTotalBytes}
             accountSection={accountSection}
@@ -1021,7 +1032,7 @@ export function AppShell({
  * Nothing else changed position: `MessageChromeProvider` is still inside `ShellInner`, and the
  * three existing consumers read a context rather than a position, so none of them notices.
  */
-function MailStateHost({ probe, children }: { probe?: MailboxProbe; children: ReactNode }) {
+function MailStateHost({ probe, freshnessProbe, children }: { probe?: MailboxProbe; freshnessProbe?: FreshnessProbe; children: ReactNode }) {
   const engine = useEngine();
   const version = useEngineVersion();
   /**
@@ -1034,7 +1045,7 @@ function MailStateHost({ probe, children }: { probe?: MailboxProbe; children: Re
    */
   const mirrored = useMemo(() => engine.read().list("message").length, [engine, version]);
   return (
-    <MailStateProvider probe={probe} mirrored={mirrored}>
+    <MailStateProvider probe={probe} freshnessProbe={freshnessProbe} mirrored={mirrored}>
       {children}
     </MailStateProvider>
   );

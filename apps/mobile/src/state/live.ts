@@ -1719,6 +1719,31 @@ export function mirrorSettled(store: { getMeta<T>(key: string): T | undefined })
   return store.getMeta<string>(LAST_DRAIN_AT_META) !== undefined;
 }
 
+/**
+ * THE STALE LABEL'S TIME, or `null` when no label is owed — the Freshness Contract's middle
+ * state (INSTANT-ARCH §6.6), on this surface.
+ *
+ * `mirrorSettled` above separates unknown from settled (the skeleton rule); this separates
+ * settled-and-CURRENT from settled-and-STALE: a mirror whose last completed drain is older
+ * than the engine's own threshold renders instantly — the local rows are renderable truth —
+ * and the chrome says how old, quietly ("As of Fri 09:00 · catching up"), until a drain
+ * settles and the engine's verdict flips back to current. The engine is the ONE derivation
+ * (`engine.freshness()`, the same stamp and threshold `freshenStaleResume` reads), so this
+ * surface can never disagree with the webapp's strip about what stale means.
+ *
+ * Formatted HERE, through {@link whenLabel} — the world layer hands the chrome a
+ * sentence-ready time in the reader's own zone, never a raw instant to re-derive. Typed
+ * against the one method it reads, `mirrorSettled`'s own rule, so the suite drives it with
+ * no engine.
+ */
+export function staleAsOf(
+  engine: { freshness(): { state: "unknown" | "stale" | "current"; asOf: string | null } },
+  zone: string,
+): string | null {
+  const f = engine.freshness();
+  return f.state === "stale" && f.asOf !== null ? whenLabel(f.asOf, zone) : null;
+}
+
 /* Re-exported so the world layer and the suite spell the vocabulary identically. `FolderEntity`
  * rides through here because `live.ts` is the one state module on the engine's import
  * allow-list (`test/privacy.test.ts`) — the world layer and the screens take the type from

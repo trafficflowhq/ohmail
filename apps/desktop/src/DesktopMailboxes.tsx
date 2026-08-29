@@ -178,6 +178,33 @@ export async function readMailboxFactsVia(
 }
 
 /**
+ * THE DESKTOP'S FRESHNESS SOURCE — `GET /mirror/freshness` over the bridge, for the shared
+ * shell's "As of <time> · catching up" arm (INSTANT-ARCH §6.6). The window's own engine drains
+ * the sidecar's LOCAL feed and is always current relative to it; this asks the sidecar how old
+ * ITS mirror is against the hosted account, which is the only honest answer on this surface.
+ *
+ * The narrowing is the ladder's own three-state check, and anything that is not one of the
+ * three — a route this engine predates (404), a signed-out door (409), a body that is not a
+ * verdict — REJECTS, per the `FreshnessProbe` contract: the provider keeps the last answer it
+ * saw, and an unanswerable question must not be dressed as "current" (which would silently
+ * unlabel a days-old mirror) or "stale" (which would label a current one). The LOCAL door has
+ * no such route yet and lands here as a 404: its organizer syncs in-process and the label
+ * stays silent — parked, stated in the stage-2 close-out.
+ */
+export async function readMirrorFreshness(): Promise<{
+  state: "unknown" | "stale" | "current";
+  asOf: string | null;
+}> {
+  const res = await bridgeFetch("/mirror/freshness");
+  if (!res.ok) throw new Error(`the mail engine answered ${res.status} for the mirror freshness`);
+  const wire = (await res.json()) as { state?: unknown; asOf?: unknown };
+  if (wire.state !== "unknown" && wire.state !== "stale" && wire.state !== "current") {
+    throw new Error("the mail engine answered something that is not a freshness verdict");
+  }
+  return { state: wire.state, asOf: typeof wire.asOf === "string" ? wire.asOf : null };
+}
+
+/**
  * A refusal, as the sentence whoever made the decision wrote.
  *
  * The engine has a real one for every case on this path — this install is offline so writes are

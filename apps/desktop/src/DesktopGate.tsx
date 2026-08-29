@@ -53,7 +53,7 @@ import { BootStatus } from "./BootStatus.js";
 import { bridgeAvailable, bridgeFetch } from "./bridge-fetch.js";
 import { DoorChooser } from "./DoorChooser.js";
 import { DesktopAbout } from "./DesktopAbout.js";
-import { DesktopMailboxes, readMailboxFacts } from "./DesktopMailboxes.js";
+import { DesktopMailboxes, readMailboxFacts, readMirrorFreshness } from "./DesktopMailboxes.js";
 import { DesktopScreening } from "./DesktopScreening.js";
 import { GateNotice } from "./GateNotice.js";
 import { DESKTOP_PANE_LABEL, DesktopSettings } from "./DesktopSettings.js";
@@ -516,6 +516,12 @@ export function DesktopGate() {
            same facts feed the From selector, which is why the addresses on offer here are the
            addresses a send can actually leave from. */
         {...(engine ? { mailboxFacts: readMailboxFacts } : {})}
+        /* HOW OLD IS THE MAIL ON SCREEN — the sidecar's own verdict (`GET /mirror/freshness`),
+           because the window engine drains the LOCAL feed and cannot know the desktop is days
+           behind the hosted account. Feeds the shared strip's "As of <time> · catching up" arm;
+           withheld with no engine for `mailboxFacts`'s reason. The local door's engine has no
+           such route yet — the probe rejects on its 404 and the strip stays silent there. */
+        {...(engine ? { mirrorFreshness: readMirrorFreshness } : {})}
         /* WHAT A SEND FROM THIS WINDOW RIDES. On the STANDALONE door the compose form, the
            send handler and the SMTP dial are one process — the mail engine's own service bag
            makes the same declaration, `sendSurfaceMaxTotalBytes: null` — so the attach

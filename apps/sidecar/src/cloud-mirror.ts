@@ -369,7 +369,46 @@ interface CursorState {
    * empty body rows for bodies the hosted store was withholding.
    */
   capMarkerRepair: boolean;
+  /**
+   * THE MIRROR'S OWN "WHEN WAS I LAST CAUGHT UP" — the instant the last pull drained `/sync` to
+   * the horizon, this process's clock, written at pull completion and nowhere earlier (a pull
+   * that fails or is cut leaves the old stamp standing, so the next pull still reads as stale
+   * and freshens again — idempotent, the upsert apply absorbs the repeat).
+   *
+   * The sidecar's copy of the engine's `LAST_DRAIN_AT_META` (INSTANT-ARCH §6.6, one freshness
+   * contract on every surface), and it is read by exactly two things:
+   *
+   *  · {@link createCloudMirror}'s stale-resume freshen — a warm mirror resuming past
+   *    {@link CLOUD_STALE_RESUME_MS} fetches snapshot page 1 before its oldest-first replay;
+   *  · {@link CloudMirror.freshness} — what the desktop window's "as of <time> · catching up"
+   *    label renders, over `GET /mirror/freshness`.
+   *
+   * `null` is every cursor file written before this existed — exactly the mirrors that replay a
+   * week of backlog oldest-first today — and every mirror that has never completed a pull. Both
+   * read as "not known to be current", which is the honest default in the cheap direction: one
+   * extra snapshot page on the next pull.
+   */
+  lastDrainAt: string | null;
 }
+
+/**
+ * WHEN A RESUMING MIRROR STOPS BEING "CURRENT" AND STARTS BEING "STALE" — the age of
+ * {@link CursorState.lastDrainAt} beyond which the next pull fetches the newest page before
+ * replaying its backlog, and beyond which {@link CloudMirror.freshness} reports `stale`.
+ *
+ * FIVE MINUTES — the same number as the engine's `STALE_RESUME_MS`, restated rather than
+ * imported because this process deliberately links no client-engine code (the sidecar is the
+ * server side of the desktop's pipe; the engine ships in the window). The sizing argument is
+ * the engine constant's, transposed: below it, a running sidecar completes a pull at least
+ * every {@link DEFAULT_CLOUD_POLL_MS} (20 s), so a healthy install's stamp is never more than
+ * seconds old and the freshen costs a live process exactly nothing; above it, the process was
+ * not running (the laptop was closed), the backlog is unknowable, and the price of guessing
+ * wrong is asymmetric — a false positive is one extra `GET /sync/snapshot` page (~0.5 s
+ * measured), a false negative is the newest week of mail landing at the END of an oldest-first
+ * replay measured in tens of seconds (INSTANT-ARCH §3.1: the desktop is the surface where
+ * "10–15 s to a current view" is architecturally expected without this).
+ */
+export const CLOUD_STALE_RESUME_MS = 5 * 60_000;
 
 export interface CloudMirrorConfig {
   db: LocalDb;
@@ -461,6 +500,23 @@ export interface CloudMirror {
    * lifetime of an unrefreshed one is short.
    */
   hostedCounts(): ReadonlyMap<string, number>;
+  /**
+   * THE FRESHNESS CONTRACT'S VERDICT FOR THIS MIRROR (INSTANT-ARCH §6.6) — the same three
+   * states the client engine's `freshness()` derives, from this mirror's own completion stamp
+   * ({@link CursorState.lastDrainAt}) against {@link CLOUD_STALE_RESUME_MS}:
+   *
+   *  · `unknown` — no pull has ever completed (a first bootstrap; a pre-freshen cursor file).
+   *  · `stale`   — the last completed pull is older than the threshold. The local store is
+   *    renderable truth as of `asOf`, and the window's label says so until a pull settles.
+   *  · `current` — the last completed pull is recent; a running install re-stamps at least
+   *    every poll interval, so this is the steady state.
+   *
+   * Served to the window over `GET /mirror/freshness` (`cloud-engine.ts`) — the desktop's
+   * WINDOW engine drains this process's local feed and is always "current" relative to it, so
+   * the honest "as of" on the desktop is THIS process's stamp against the hosted account,
+   * never the window's own.
+   */
+  freshness(): { state: "unknown" | "stale" | "current"; asOf: string | null };
 }
 
 export const DEFAULT_CLOUD_POLL_MS = 20_000;
@@ -514,6 +570,8 @@ interface CursorFile {
   tagBackfill?: unknown;
   folderBackfill?: unknown;
   capMarkerRepair?: unknown;
+  /** ISO instant of the last completed pull; absent on every file from before the freshen. */
+  lastDrainAt?: unknown;
 }
 
 function readCursor(path: string): CursorState {
@@ -533,6 +591,9 @@ function readCursor(path: string): CursorState {
       // `=== true`, never `?? true`: an absent key must read FALSE. The inverse would silently
       // exempt every install that HAS the defect and leave only fresh ones correct.
       capMarkerRepair: j.capMarkerRepair === true,
+      // Absent (every pre-freshen file) reads NULL — "not known to be current" — so an upgraded
+      // stale install freshens on its first resume, which is the population the port is for.
+      lastDrainAt: typeof j.lastDrainAt === "string" && j.lastDrainAt !== "" ? j.lastDrainAt : null,
     };
   } catch {
     // No file at all is a FRESH install, not an upgraded one: there are no rows to re-key, and the
@@ -543,6 +604,8 @@ function readCursor(path: string): CursorState {
       bootstrapping: false, window: { phase: "pending" }, tagBackfill: false, folderBackfill: false,
       // A fresh install has no pre-marker rows and its walk writes markers from the start.
       capMarkerRepair: true,
+      // And it has never completed a pull: the bootstrap's own window owns "newest first" here.
+      lastDrainAt: null,
     };
   }
 }
@@ -557,6 +620,7 @@ function writeCursor(path: string, state: CursorState): void {
     tagBackfill: state.tagBackfill,
     folderBackfill: state.folderBackfill,
     capMarkerRepair: state.capMarkerRepair,
+    ...(state.lastDrainAt !== null ? { lastDrainAt: state.lastDrainAt } : {}),
   };
   writeFileSync(path, JSON.stringify(onDisk));
 }
@@ -2060,6 +2124,107 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   };
 
   /**
+   * A STALE RESUME FETCHES THE NEWEST PAGE BEFORE IT REPLAYS ITS BACKLOG — the engine's
+   * `freshenStaleResume`, ported (INSTANT-ARCH §3.3 / §8 stage 2). The gap it closes is this
+   * file's own: the newest-first window exists only for the cursor-"0" bootstrap, so a WARM
+   * mirror reopened days later replayed its whole backlog oldest-first and the mail the person
+   * opened the laptop for landed LAST — the one surface where "10–15 s to a current view" was
+   * architecturally expected (§3.1).
+   *
+   * So: when {@link CursorState.lastDrainAt} says no pull has completed within
+   * {@link CLOUD_STALE_RESUME_MS}, fetch `GET /sync/snapshot` page 1 — the account's live small
+   * state plus the newest page of messages — and land it through the SAME {@link landPage} a
+   * window page takes, before the replay's first `/sync` ask. One page, one round trip; the
+   * newest screenful's bodies ride the window's own bounded ask behind it.
+   *
+   * ── WHY THIS IS SOUND OVER A WARM MIRROR — the same three facts the bootstrap window rests on ─
+   *
+   *  · every apply here is an idempotent upsert of CURRENT state, and the replay's own pages
+   *    re-materialize the live entity per row (`getChanges` projects, never replays history), so
+   *    the backlog behind this page can never walk a freshened row backwards;
+   *  · a row deleted on Cloud while this install was closed is simply ABSENT from the snapshot —
+   *    nothing shields the stale local copy, and the replay's tombstone removes it;
+   *  · `cursor.sync` IS NEVER TOUCHED (and `cursor.window` belongs to bootstraps): the replay
+   *    from the old cursor stays the one mechanism of record, so every tombstone in the backlog
+   *    is still delivered. Committing anything here would be the unsound version.
+   *
+   * ── NEVER DURING A BOOTSTRAP, AND THE REASON IS THE SWEEP ────────────────────────────────────
+   *
+   * The caller gates this on `sweep === null`. A bootstrap's pages are MARKED into the live
+   * generation and swept against it; this pass lands pages with `gen: null`, so a row only the
+   * freshen delivered would be unmarked and the trailing sweep would DELETE it as a phantom.
+   * The bootstrap already owns "newest first" through {@link drainWindowFirst}; this pass owns
+   * exactly the warm-resume case, where no generation and no sweep exist.
+   *
+   * ── FAILURE IS SWALLOWED ─────────────────────────────────────────────────────────────────────
+   *
+   * Freshness is an optimization; the replay is the contract. Any refusal, malformed body, or
+   * transport failure costs the head start and nothing else — logged, never counted against
+   * {@link WINDOW_REFUSALS_MAX} (that count is the bootstrap window's), never fatal to the pull.
+   */
+  const freshenStaleResume = async (): Promise<void> => {
+    if (aborted) return;
+    const stamp = cursor.lastDrainAt;
+    if (stamp !== null) {
+      const t = Date.parse(stamp);
+      if (!Number.isNaN(t) && now().getTime() - t <= CLOUD_STALE_RESUME_MS) return;
+    }
+    try {
+      const q = new URLSearchParams({ limit: String(pageLimit) });
+      const res = await cfg.auth.authedFetch(`/sync/snapshot?${q.toString()}`);
+      let snap: SnapshotResponse | null = null;
+      if (res.ok) {
+        try {
+          snap = (await res.json()) as SnapshotResponse;
+        } catch {
+          snap = null;
+        }
+      }
+      if (snap === null || !Array.isArray(snap.changes)) {
+        cfg.log?.("cloud_freshen_deferred", {
+          status: res.status,
+          reason: "the hosted snapshot did not answer the stale-resume freshen; the replay from " +
+            "the committed cursor still converges, only later at the top",
+        });
+        return;
+      }
+      const page: SyncResponse = {
+        changes: { creates: snap.changes, updates: [], moves: [], deletes: [] },
+        cursor: cursor.sync,
+        hasMore: false,
+        serverTime: now().toISOString(),
+      };
+      const landed = await landPage(page, null);
+      reachable = true;
+      cfg.log?.("cloud_freshen_applied", {
+        count: landed,
+        reason: "this mirror resumed stale, so the newest page landed before the backlog replay " +
+          "— the view is current after one round trip instead of after the whole replay",
+      });
+      // The freshened screenful's text, before the replay — the window's own rule, for the
+      // window's reason: the body pass only runs after the drain returns, and a stale resume's
+      // replay can hold that back for tens of seconds. Bounded, best-effort, and only when the
+      // page actually landed rows — a freshen that changed nothing owes no ask.
+      if (landed > 0) {
+        try {
+          await fetchMissingBodies(NEWEST_BODIES_FIRST);
+        } catch (err) {
+          cfg.log?.("cloud_freshen_bodies_deferred", {
+            reason: "the freshened screenful's body ask failed; the body walk still owes every body",
+            err: String(err),
+          });
+        }
+      }
+    } catch (err) {
+      cfg.log?.("cloud_freshen_deferred", {
+        err: String(err),
+        reason: "the stale-resume freshen did not complete; the replay from the committed cursor " +
+          "still converges, only later at the top",
+      });
+    }
+  };
+
+  /**
    * Drain `GET /sync` to the horizon. Returns what it applied and, when the drain was a `since=0`
    * bootstrap, the generation it marked so the caller can sweep phantoms afterwards.
    *
@@ -2129,6 +2294,11 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     // A replay resumed past its window owes nothing here: `drainWindowFirst` reads the persisted
     // `complete` and returns without an ask, so the file is the one place that decision lives.
     let windowOwed = sweep !== null;
+    // A WARM resume converges its newest page FIRST when the mirror is stale — before the loop,
+    // once per drain, and only outside a bootstrap (whose window owns "newest first" and whose
+    // sweep would eat unmarked rows — see the method). `stale-resume` in `cloud-mirror.test.ts`
+    // watches the gate and the ordering red.
+    if (sweep === null) await freshenStaleResume();
     for (;;) {
       // BETWEEN PAGES, so a quit costs at most the page already in flight. `sweep: null` is the
       // load-bearing half: a bootstrap generation that stopped early has marked only part of the
@@ -2843,6 +3013,13 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       for (const row of await activeMirroredMailboxes()) {
         await stampSynced(cfg.db, row.id, now(), cursor.bodies.phase === "complete");
       }
+      // THE PULL'S LAST WORD — this mirror drained the hosted feed to its horizon at this
+      // moment, on this process's own clock. Written at COMPLETION and nowhere earlier, exactly
+      // as the engine writes LAST_DRAIN_AT_META: a pull that failed or was cut above leaves the
+      // old stamp standing, so the next pull still reads as a stale resume and freshens again.
+      // What `freshness()` reports and what the freshen compares are this one write.
+      cursor.lastDrainAt = now().toISOString();
+      writeCursor(cfg.cursorPath, cursor);
       // A completed pull is the definition of reachable: the local database keeps serving what it
       // holds either way, but the proxy needs to know it can forward a write again.
       reachable = true;
@@ -2952,6 +3129,19 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     // and the map is REPLACED rather than mutated on each counted refresh, so a reader can never
     // observe a half-built one.
     hostedCounts: () => hostedCounts,
+    freshness: () => {
+      const stamp = cursor.lastDrainAt;
+      if (stamp === null) return { state: "unknown" as const, asOf: null };
+      const t = Date.parse(stamp);
+      // An unparseable stamp is this process's own corrupted write: report unknown rather than
+      // a label with no time in it; the next completed pull re-stamps it. The engine's
+      // `freshness()` makes the same call for the same reason.
+      if (Number.isNaN(t)) return { state: "unknown" as const, asOf: null };
+      return {
+        state: now().getTime() - t > CLOUD_STALE_RESUME_MS ? ("stale" as const) : ("current" as const),
+        asOf: stamp,
+      };
+    },
     async start() {
       // A first pull that fails is a bad network or an expired token, not a launch failure: the
       // mirror serves what it holds and the poll retries (on backoff). Scheduling regardless is what

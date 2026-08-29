@@ -2156,6 +2156,7 @@
     "stopped": "Sync stopped — this session is no longer authorized.",
     "stoppedLocal": "Sync stopped. Quit and reopen ohmail to reconnect.",
     "catchingUp": "Catching up…",
+    "staleAsOf": "As of {time} · catching up",
     "signIn": "Sign in",
     "settings": "Settings → Mailboxes",
     "importing": "Syncing your mail.",

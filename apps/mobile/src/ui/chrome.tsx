@@ -12,7 +12,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
-import { useWorldToast } from "../state/world";
+import { useWorld, useWorldToast } from "../state/world";
 import { Icon } from "./Icon";
 import { Wordmark } from "./Icon";
 import { Tap, Txt } from "./base";
@@ -22,20 +22,38 @@ import { Tap, Txt } from "./base";
 export function TopBar({ trailing }: { trailing?: React.ReactNode }) {
   const t = useTheme();
   const insets = useSafeAreaInsets();
+  // THE FRESHNESS LABEL (INSTANT-ARCH §6.6): while the mirror on screen is stale, every tab
+  // says so under the wordmark — "As of Fri 09:00 · catching up" — and says nothing once a
+  // drain settles. In the shared chrome rather than any screen, the SyncBar lesson: a view can
+  // only speak about itself, and the next tab added must get the sentence for free. The world
+  // layer derives it (`boot.staleAsOf`, sentence-ready time or null); this renders words.
+  const stale = useWorld().boot.staleAsOf;
   return (
-    <View
-      style={{
-        paddingTop: insets.top + 6,
-        paddingBottom: 6,
-        paddingHorizontal: 16,
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 12,
-      }}
-    >
-      <Wordmark color={t.c.ink} dot={t.c.accent} size={17} />
-      <View style={{ flex: 1 }} />
-      {trailing}
+    <View>
+      <View
+        style={{
+          paddingTop: insets.top + 6,
+          paddingBottom: 6,
+          paddingHorizontal: 16,
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 12,
+        }}
+      >
+        <Wordmark color={t.c.ink} dot={t.c.accent} size={17} />
+        <View style={{ flex: 1 }} />
+        {trailing}
+      </View>
+      {stale !== null ? (
+        <Txt
+          variant="meta"
+          tone="ink3"
+          accessibilityRole="text"
+          style={{ paddingHorizontal: 16, paddingBottom: 4 }}
+        >
+          {Copy.staleAsOf(stale)}
+        </Txt>
+      ) : null}
     </View>
   );
 }
