@@ -52,8 +52,8 @@
  *
  * A pull that lands new mail needs no sentence — the rows appear and the counts tick, and a
  * toast restating that would be noise. The two outcomes the mail CANNOT show are the quiet scan
- * and the capped watch, so those are the two that speak (owner report 2026-08-29: a control that
- * works must also look like it works):
+ * and the capped watch, so those are the two that speak — a control that works must also LOOK
+ * like it works:
  *
  *  · scan demonstrably done, nothing new on this mirror → "Checked — nothing new." (pullQuiet)
  *  · cap hit with nothing arrived → "Still checking. New mail arrives on its own." (pullSlow) —
@@ -62,8 +62,11 @@
  *    new" over a ring that never happened would be a lie.
  *
  * "Nothing new" is judged against the MIRROR — the set of message ids before the press versus
- * after the settling drain — because that is what the person is looking at; a new id in ANY
- * pile (the Screener included) counts as arrival and silences the toast.
+ * after a FRESH, SUCCESSFUL post-scan drain (see the judgment block for why "fresh" and
+ * "successful" are both load-bearing, and `DRAIN_JUDGE_CAP_MS` for why the wait is bounded) —
+ * because the mirror is what the person is looking at; a new id in ANY pile (the Screener
+ * included) counts as arrival and silences the toast. A judgment the gesture could not earn in
+ * time says nothing at all.
  *
  * ── ONE FLIGHT, TWO PLACEMENTS ──────────────────────────────────────────────────────────────
  *
@@ -71,8 +74,7 @@
  * rail is a closed drawer) — `app.css` shows one at a time, `SyncBar`'s arrangement exactly. The
  * HOOK is called once, in the shell, and both placements receive the same binding: two
  * independent hooks would each carry their own `pulling`, so resizing mid-pull would reveal an
- * idle-looking copy that accepts a second POST while the hidden copy still polls (review
- * 2026-08-26, round 1).
+ * idle-looking copy that accepts a second POST while the hidden copy still polls.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
@@ -82,8 +84,39 @@ import type { MailboxProbe } from "./MailStateProvider";
 
 const SETTLE_POLL_MS = 2_000;
 const SETTLE_CAP_MS = 30_000;
+/**
+ * How long the gesture will wait on any ONE post-scan drain before releasing the UI unjudged.
+ *
+ * `HttpAdapter.sync()` carries no deadline of its own (a drain is the engine's business and may
+ * legitimately run long), so an AWAITED drain here would put an unbounded wait inside a gesture
+ * whose cap promises 30 s — a half-open `/sync` would hold `pulling` and the single-flight latch
+ * for the tab's lifetime, and every later click would be silently refused. The race below
+ * bounds the WAIT, never the drain: a drain that outlives the cap
+ * keeps running in the engine and lands its pages whenever it lands them; the gesture just stops
+ * claiming to watch, exactly as the settle cap already does — and makes no quiet claim it could
+ * not verify.
+ */
+const DRAIN_JUDGE_CAP_MS = 10_000;
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Wait on one drain, bounded. `"ok"` is a drain that COMPLETED SUCCESSFULLY within the cap;
+ * `"failed"` completed by rejecting; `"timeout"` is still running — the caller releases the UI
+ * and claims nothing.
+ */
+async function boundedDrain(engine: { syncOnce(): Promise<void> }): Promise<"ok" | "failed" | "timeout"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cap = new Promise<"timeout">((r) => { timer = setTimeout(() => r("timeout"), DRAIN_JUDGE_CAP_MS); });
+  try {
+    return await Promise.race([
+      engine.syncOnce().then(() => "ok" as const, () => "failed" as const),
+      cap,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export interface PullBinding {
   available: boolean;
@@ -136,12 +169,26 @@ export function usePullNewMail(probe?: MailboxProbe): PullBinding {
             }
           }
         }
+        /**
+         * THE JUDGMENT DRAIN — bounded, FRESH, and success-gated.
+         *
+         * Two awaits, not one, because `syncOnce()` is single-flight: the first flushes
+         * whatever drain is already running — possibly the press-time drain above, whose pages
+         * may have been read BEFORE the worker committed the scan's arrivals — and only a drain
+         * that STARTED after the scan was observed can prove the mirror quiet. The second await
+         * is that drain: it begins strictly after the first resolved, which is strictly after
+         * the settle observation. Each wait is bounded (`DRAIN_JUDGE_CAP_MS`), and the quiet
+         * sentence is spoken only when the fresh drain COMPLETED SUCCESSFULLY — a failed or
+         * still-running drain proves nothing about the mailbox, so it says nothing.
+         */
+        let judged = false;
         if (rang) {
-          // The scan (or the cap) has spoken; one more drain for anything the SSE wake has not
-          // already delivered — AWAITED, because the outcome below is judged after it.
-          await engine.syncOnce().catch(() => undefined);
+          const flushed = await boundedDrain(engine);
+          if (flushed !== "timeout") {
+            judged = (await boundedDrain(engine)) === "ok";
+          }
         }
-        if (watched && alive.current) {
+        if (watched && judged && alive.current) {
           const arrived = engine.read().entries("message").some((e) => !before.has(e.id));
           // New mail is its own feedback; only the outcomes the mail cannot show get a sentence.
           if (!arrived) toast(settled ? t("pullQuiet") : t("pullSlow"));
