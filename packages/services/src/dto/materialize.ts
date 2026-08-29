@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { foldersEnabled, userFolderById, type UserFolderRow } from "../folders.js";
 import type { EmailAddress } from "@trafficflow/core/mail";
 import {
@@ -238,16 +238,43 @@ export function messageRowToDTO(
  * input. `message_tags` additionally carries its own `account_id` and it is ALSO filtered on,
  * belt and braces: that column is denormalized, so a bug that ever let it disagree with the
  * message's owner must fail closed rather than leak one account's tag names to another.
+ *
+ * ── A SOFT-DELETED ROW MATERIALIZES AS ABSENT, BY DEFAULT ──────────────────────────────────
+ *
+ * `deleted_at IS NULL` is the living-view rule (schema-mail.ts states it beside the column),
+ * and this batch is the LIVING-VIEW reader: it feeds `/sync`'s delta prefetch, whose tombstone
+ * seam turns "absent from the prefetch" into an `op: "delete"` — and whose own comments, plus
+ * the coalesced stale read's entire equivalence argument ("a dead entity's latest change
+ * materializes null → tombstone"), always CLAIMED this held. It did not: any writer emitting a
+ * `message` update change after a delete — `bubbleUpPass` firing a schedule the delete
+ * deliberately leaves standing (`spendResurface` is scoped to `resurfaced` alone) — had that
+ * update re-materialize the full DTO, and the mail the user threw away reappeared on every
+ * mirror. On a coalesced stale resume it was worse: the update SUPERSEDED the delete tombstone,
+ * so the deletion was never delivered at all. Found by the verb-parity harness
+ * (`packages/client-engine/test/verb-parity/`, the message_delete × bubbleUpPass scenario).
+ *
+ * `deleted: "include"` is the receipt reader: a route that has just stamped `deleted_at` still
+ * owes its caller the DTO (`MessageService.delete` 500s without it), and an idempotent replay
+ * re-serves that stored receipt. Nothing that feeds a mirror may pass it.
  */
+export interface MaterializeMessagesOpts {
+  /** Default `"omit"` — the living-view rule. See the header before passing `"include"`. */
+  deleted?: "omit" | "include";
+}
+
 export async function materializeMessages(
-  db: Db, accountId: string, ids: readonly string[],
+  db: Db, accountId: string, ids: readonly string[], opts: MaterializeMessagesOpts = {},
 ): Promise<Map<string, MessageDTO>> {
   const out = new Map<string, MessageDTO>();
   if (ids.length === 0) return out;
 
   const unique = [...new Set(ids)];
   const rows = await db.select().from(messages)
-    .where(and(inArray(messages.id, unique), eq(messages.accountId, accountId)));
+    .where(and(
+      inArray(messages.id, unique),
+      eq(messages.accountId, accountId),
+      ...(opts.deleted === "include" ? [] : [isNull(messages.deletedAt)]),
+    ));
   if (rows.length === 0) return out;
 
   const owned = rows.map((r) => r.id);
@@ -292,13 +319,99 @@ export async function materializeMessagesInOrder(
 }
 
 export async function materializeMessage(db: Db, accountId: string, id: string): Promise<MessageDTO | null> {
-  return (await materializeMessages(db, accountId, [id])).get(id) ?? null;
+  // `include`: the singular is the RECEIPT reader — every caller is a route echoing the row it
+  // just wrote, and one of them (`MessageService.delete`) has just stamped `deleted_at` on it.
+  // The living-view rule is the batch's default; see the header above.
+  return (await materializeMessages(db, accountId, [id], { deleted: "include" })).get(id) ?? null;
 }
 
 export async function materializeMessageState(db: Db, accountId: string, id: string): Promise<MessageStateDTO | null> {
   const [st] = await db.select().from(messageStates)
     .where(and(eq(messageStates.id, id), eq(messageStates.accountId, accountId))).limit(1);
   return st ? messageStateRowToDTO(st) : null;
+}
+
+/**
+ * ── THE BATCHED SMALL-STATE READERS — one query per TYPE, not one per ROW ──────────────────
+ *
+ * `SyncService.getChanges` used to route every non-message/thread/folder change through the
+ * per-id readers above, one sequential round trip each. That is invisible on a steady-state
+ * page (a handful of rows) and dominant on a BACKLOG page: measured on the live serverless
+ * path (2026-08-29, a live account, a 1,500-row stale resume), a 500-row page carrying 38
+ * `message_state`/`draft` changes spent ~680 ms of its 1,084 ms p50 in that loop — ~18 ms of
+ * round trip per row, the exact shape `materializeMessages` and `materializeThreads` were
+ * written to end for their types. These are the same fix for the remaining volume types: one
+ * `inArray` read per type present on the page, projected by the SAME `xRowToDTO` the per-id
+ * reader uses, so the two paths cannot drift.
+ *
+ * Account scoping is on every predicate exactly as the per-id readers have it; an id the
+ * account does not own is simply absent from the map, which the caller reads as the per-id
+ * reader's `null` — a delete tombstone.
+ */
+export async function materializeMessageStates(
+  db: Db, accountId: string, ids: readonly string[],
+): Promise<Map<string, MessageStateDTO>> {
+  const out = new Map<string, MessageStateDTO>();
+  if (ids.length === 0) return out;
+  const rows = await db.select().from(messageStates)
+    .where(and(inArray(messageStates.id, [...new Set(ids)]), eq(messageStates.accountId, accountId)));
+  for (const r of rows) out.set(r.id, messageStateRowToDTO(r));
+  return out;
+}
+
+export async function materializeRoutingDecisions(
+  db: Db, accountId: string, ids: readonly string[],
+): Promise<Map<string, RoutingDecisionDTO>> {
+  const out = new Map<string, RoutingDecisionDTO>();
+  if (ids.length === 0) return out;
+  const rows = await db.select().from(routingDecisions)
+    .where(and(inArray(routingDecisions.id, [...new Set(ids)]), eq(routingDecisions.accountId, accountId)));
+  for (const r of rows) out.set(r.id, routingDecisionRowToDTO(r));
+  return out;
+}
+
+export async function materializeApprovals(
+  db: Db, accountId: string, ids: readonly string[],
+): Promise<Map<string, ApprovalDTO>> {
+  const out = new Map<string, ApprovalDTO>();
+  if (ids.length === 0) return out;
+  const rows = await db.select().from(approvals)
+    .where(and(inArray(approvals.id, [...new Set(ids)]), eq(approvals.accountId, accountId)));
+  for (const r of rows) out.set(r.id, approvalRowToDTO(r));
+  return out;
+}
+
+export async function materializeRules(
+  db: Db, accountId: string, ids: readonly string[],
+): Promise<Map<string, RuleDTO>> {
+  const out = new Map<string, RuleDTO>();
+  if (ids.length === 0) return out;
+  const rows = await db.select().from(rules)
+    .where(and(inArray(rules.id, [...new Set(ids)]), eq(rules.accountId, accountId)));
+  for (const r of rows) out.set(r.id, ruleRowToDTO(r));
+  return out;
+}
+
+export async function materializeDrafts(
+  db: Db, accountId: string, ids: readonly string[],
+): Promise<Map<string, DraftDTO>> {
+  const out = new Map<string, DraftDTO>();
+  if (ids.length === 0) return out;
+  const rows = await db.select().from(drafts)
+    .where(and(inArray(drafts.id, [...new Set(ids)]), eq(drafts.accountId, accountId)));
+  for (const r of rows) out.set(r.id, draftRowToDTO(r));
+  return out;
+}
+
+export async function materializeTags(
+  db: Db, accountId: string, ids: readonly string[],
+): Promise<Map<string, TagDTO>> {
+  const out = new Map<string, TagDTO>();
+  if (ids.length === 0) return out;
+  const rows = await db.select().from(tags)
+    .where(and(inArray(tags.id, [...new Set(ids)]), eq(tags.accountId, accountId)));
+  for (const r of rows) out.set(r.id, tagRowToDTO(r));
+  return out;
 }
 
 /**

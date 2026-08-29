@@ -47,7 +47,7 @@ export const SERVICES_VERSION = "0.0.0";
 export { ServiceError, IdempotencyRaceLost } from "./errors.js";
 export type { ServiceContext, Db } from "./context.js";
 export {
-  SyncService, syncService, SNAPSHOT_WINDOW,
+  SyncService, syncService, SNAPSHOT_WINDOW, STALE_COALESCE_SPAN, COALESCE_SCAN_WINDOW,
   type GetChangesOptions, type GetSnapshotOptions,
 } from "./sync-service.js";
 export * from "./dto/types.js";

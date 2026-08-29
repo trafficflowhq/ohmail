@@ -6,9 +6,12 @@ import {
 import type { Db, ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import {
-  approvalRowToDTO, draftRowToDTO, folderRowToDTO, materialize, materializeMessages,
-  materializeMessagesInOrder, materializeSettings,
-  materializeThreads, messageStateRowToDTO, routingDecisionRowToDTO, ruleRowToDTO, tagRowToDTO,
+  approvalRowToDTO, draftRowToDTO, folderRowToDTO, materialize, materializeApprovals,
+  materializeDrafts, materializeMessages,
+  materializeMessagesInOrder, materializeMessageStates, materializeRoutingDecisions,
+  materializeRules, materializeSettings,
+  materializeTags, materializeThreads, messageStateRowToDTO, routingDecisionRowToDTO,
+  ruleRowToDTO, tagRowToDTO,
 } from "./dto/materialize.js";
 import { foldersEnabled, listUserFolders, userFoldersByIds, type UserFolderRow } from "./folders.js";
 import type {
@@ -17,6 +20,43 @@ import type {
 
 const DEFAULT_LIMIT = 500;
 const MAX_LIMIT = 2000;
+
+/**
+ * ── THE BACKLOG DIET'S ENGAGEMENT THRESHOLD (INSTANT-ARCH §6.3 / §8 stage 3) ─────────────────
+ *
+ * A resuming cursor whose span behind the horizon (`max(seq) − since`, exact — the per-account
+ * seq is gap-free) exceeds this many changes is served COALESCED pages: the latest change per
+ * entity within a bounded scan window, materialized at CURRENT state exactly as every delta row
+ * already is. A span at or below it takes the plain page path, byte-identical to the deployed
+ * shape.
+ *
+ * WHY 500 — one DEFAULT page. Below one page's worth of rows, coalescing cannot save a round
+ * trip (the whole span fits the page either way) and the dedup gain is a few duplicate upserts
+ * the client's seq guard absorbs for free; keeping the steady-state poll on the long-proven
+ * path bounds this optimization's blast radius to exactly the backlog case it was measured
+ * for. Above one page, every deduped row is wire and apply saved, and every dropped PAGE is a
+ * whole serverless invocation saved — measured p50 1,084 ms per page on the live path
+ * (2026-08-29, a live account), of which ~0.4 s is fixed per-request cost that no per-row work
+ * can reduce.
+ *
+ * WHY COALESCING IS EQUIVALENCE-PRESERVING, in one sentence: `getChanges` re-materializes the
+ * CURRENT entity for every row it returns (it never replays history), so N changes to one
+ * entity are N copies of the SAME final upsert and delivering only the newest one converges the
+ * mirror to the identical state — deletions included, because the latest change of a dead
+ * entity materializes null and tombstones exactly as the plain path does.
+ */
+export const STALE_COALESCE_SPAN = 500;
+
+/**
+ * How many change rows one coalesced page may SCAN (the dedup window), as distinct from how
+ * many it may RETURN (`limit`). Bounds the per-page sort so a since-forever cursor cannot make
+ * a single request sort an unbounded log; sized to cover the heaviest measured 7-day account
+ * (9,831 rows, production probe 2026-08-29) in ONE window, where the same probe measured the
+ * 10k scan+dedup at 74 ms of database time. Each request advances the cursor by up to this
+ * many rows while emitting only the distinct tail, so even a 100k-row backlog converges in
+ * ≤ 10 coalesced requests.
+ */
+export const COALESCE_SCAN_WINDOW = 10_000;
 
 /**
  * The bootstrap window, SERVED in every snapshot response so no client hardcodes it.
@@ -69,9 +109,15 @@ interface SnapshotCursor {
 
 /**
  * The delta `/sync` reader. Reads `change_log` ascending by seq,
- * re-materializes the CURRENT DTO per row, emits ONE change per row (no
- * compaction), tombstones rows whose live entity is gone, and never advances the
- * cursor past a change it dropped.
+ * re-materializes the CURRENT DTO per row, tombstones rows whose live entity is
+ * gone, and never advances the cursor past a change it dropped.
+ *
+ * A steady-state cursor (span ≤ {@link STALE_COALESCE_SPAN}) is served one change per log row,
+ * no compaction — the deployed shape, byte for byte. A STALE cursor is served COALESCED pages
+ * (the latest change per entity within a bounded window — see the constants above and the mode
+ * comment in {@link SyncService.getChanges}), which is sound precisely BECAUSE this reader
+ * projects current state rather than history: the skipped rows are superseded copies of the
+ * same upsert.
  */
 export class SyncService {
   /** Opaque base64 of the per-account high-water seq. */
@@ -222,6 +268,7 @@ export class SyncService {
     // `sinceSeq === 0n` is the bootstrap and skips all of it, which is what keeps a brand-new
     // account's first poll a plain empty 200 rather than a 410: an empty log has no ceiling to
     // be above, and the cursor an empty account is handed decodes back to 0.
+    let horizonSeq: bigint | null = null;
     if (sinceSeq > 0n) {
       const { min: minSeq, max: maxSeq } = await seqBounds(db, accountId);
       if (minSeq != null && minSeq > sinceSeq + 1n) {
@@ -236,6 +283,7 @@ export class SyncService {
           "sync cursor is ahead of this account's change log; re-bootstrap with since=0",
         );
       }
+      horizonSeq = maxSeq;
     }
 
     const filters = [eq(changeLog.accountId, accountId), gt(changeLog.seq, sinceSeq)];
@@ -243,12 +291,107 @@ export class SyncService {
       filters.push(inArray(changeLog.entityType, opts.types));
     }
 
-    const rows = await db
-      .select()
-      .from(changeLog)
-      .where(and(...filters))
-      .orderBy(asc(changeLog.seq))
-      .limit(limit);
+    // ── THE BACKLOG DIET (INSTANT-ARCH §6.3): a stale cursor is served COALESCED pages ──────
+    //
+    // The span is exact, not estimated — the per-account seq is gap-free by construction
+    // (`allocateSeqRange` holds the counter row lock to commit), so `max − since` IS the number
+    // of change rows behind this cursor, read from the bounds the 410 checks already fetched.
+    // Zero added queries decide the mode.
+    //
+    // The coalesced page: scan the next {@link COALESCE_SCAN_WINDOW} span rows in seq order,
+    // keep the LATEST change per (entity_type, entity_id), emit those in FIRST-APPEARANCE
+    // order (each entity's lowest in-window seq), cut at `limit`. Every emitted row then flows
+    // through the SAME prefetch/materialize/bucket pipeline the plain page uses — the diet
+    // changes which log rows are read, never what is said about them.
+    //
+    // ── WHY FIRST-APPEARANCE ORDER, NOT LATEST-SEQ ORDER (review round 1) ───────────────
+    //
+    // The desktop's relational mirror FK-guards its applies: a `message_state` whose message
+    // is absent is SKIPPED, on the standing assumption that the parent's change carries a
+    // lower seq and lands first — true of the plain path by construction (a child row can only
+    // be written after its parent exists, so the parent's create commits at a lower seq).
+    // Latest-seq ordering broke exactly that: a message created in-window, its state written
+    // next, then the message updated hundreds of changes later would emit STATE-then-MESSAGE,
+    // and a page cut between them commits the cursor past the state's only change — skipped by
+    // the FK guard, never re-delivered, missing for ever. First-appearance order restores the
+    // plain path's property across page cuts: a parent created in-window has
+    // `min(parent) ≤ its create < child's create ≤ min(child)`, so the parent is always
+    // emitted first (at its CURRENT content); a parent created below the window is below the
+    // resuming cursor and therefore already mirrored, exactly the plain path's own posture.
+    //
+    // ── WHY THE PER-PAGE CURSOR STAYS HONEST (the delta contract obligation) ────────────────
+    //
+    // The cursor promises "nothing at or below me will be re-sent". The entity page is fetched
+    // with ONE LOOKAHEAD entity beyond the cut, and a CUT page's cursor is that unemitted
+    // entity's first-seq MINUS ONE: every entity with any change at or below the cursor has a
+    // min at or below it and was therefore emitted (at CURRENT state, which supersedes
+    // everything the skipped intermediate rows said — deletions included, since a dead
+    // entity's latest change materializes null → tombstone); every unemitted in-window entity
+    // has its min — hence ALL its changes — above the cursor, and everything beyond the window
+    // is above every window seq, so a crash between pages re-delivers all of it from the new
+    // cursor. An emitted entity whose newest changes sit above the cut is simply re-emitted by
+    // a later window — a duplicate upsert of current state, absorbed by the client's
+    // older-or-equal seq guard, the same property that makes re-reading any page free
+    // (entities straddling the scan window ride the same rule). The lookahead is what keeps a
+    // cut page's cursor MOVING: anchoring it to the last EMITTED entity's first-seq instead
+    // would crawl one seq per page whenever an emitted entity's churn tail spans the window.
+    // A page with NO lookahead entity consumed its whole window, so the cursor advances to the
+    // window's own max seq and the drain converges without re-scanning superseded rows.
+    const span = horizonSeq !== null ? horizonSeq - sinceSeq : 0n;
+    const coalesced = span > BigInt(STALE_COALESCE_SPAN);
+
+    let rows: (typeof changeLog.$inferSelect)[];
+    /** Coalesced mode only: the lookahead entity's first-seq − 1, `null` ⇒ window consumed. */
+    let coalescedCutCursor: bigint | null = null;
+    if (coalesced) {
+      const spanRows = db.$with("span").as(
+        db.select()
+          .from(changeLog)
+          .where(and(...filters))
+          .orderBy(asc(changeLog.seq))
+          .limit(COALESCE_SCAN_WINDOW),
+      );
+      const pageEntities = db.$with("page_entities").as(
+        db.select({
+          entityType: spanRows.entityType,
+          entityId: spanRows.entityId,
+          firstSeq: sql<string>`min(${spanRows.seq})`.as("first_seq"),
+          lastSeq: sql<string>`max(${spanRows.seq})`.as("last_seq"),
+        })
+          .from(spanRows)
+          .groupBy(spanRows.entityType, spanRows.entityId)
+          .orderBy(sql`min(${spanRows.seq})`)
+          .limit(limit + 1), // the lookahead — see the cursor argument above
+      );
+      const joined = await db.with(spanRows, pageEntities)
+        .select({
+          accountId: spanRows.accountId,
+          seq: spanRows.seq,
+          entityType: spanRows.entityType,
+          entityId: spanRows.entityId,
+          op: spanRows.op,
+          meta: spanRows.meta,
+          createdAt: spanRows.createdAt,
+          firstSeq: pageEntities.firstSeq,
+        })
+        .from(spanRows)
+        .innerJoin(pageEntities, and(
+          eq(spanRows.entityType, pageEntities.entityType),
+          eq(spanRows.entityId, pageEntities.entityId),
+          eq(spanRows.seq, sql`${pageEntities.lastSeq}`),
+        ))
+        .orderBy(sql`${pageEntities.firstSeq}`);
+      const lookahead = joined.length > limit ? joined[limit] : undefined;
+      coalescedCutCursor = lookahead === undefined ? null : BigInt(lookahead.firstSeq) - 1n;
+      rows = joined.slice(0, limit).map(({ firstSeq: _first, ...row }) => row);
+    } else {
+      rows = await db
+        .select()
+        .from(changeLog)
+        .where(and(...filters))
+        .orderBy(asc(changeLog.seq))
+        .limit(limit);
+    }
 
     const creates: SyncChange[] = [];
     const updates: SyncChange[] = [];
@@ -302,6 +445,38 @@ export class SyncService {
       ? await userFoldersByIds(db, accountId, folderIds)
       : new Map<string, UserFolderRow>();
 
+    /**
+     * THE REMAINING SMALL-STATE TYPES JOIN THE PREFETCH — measured, like the three above.
+     * A backlog page is not only mail: triage done on another device is `message_state` rows,
+     * composing is `draft` rows, screening is `rule` rows — and each one cost a sequential
+     * round trip in the loop below. On the live serverless path (~18 ms per round trip,
+     * production probe 2026-08-29) a 500-row page carrying 38 such rows spent ~680 ms of its
+     * 1,084 ms p50 in that loop; a page carrying hundreds — precisely the stale-resume pages
+     * the diet exists for — was the measured p90 at 1,939 ms. One `inArray` per type PRESENT
+     * on the page, absent types cost nothing, and the projection functions are shared with the
+     * per-id readers so the two paths cannot drift. `settings` is memoized rather than
+     * batched: its entity is one row per account and every change row names the same id, so
+     * one read serves however many doorbell rows the page carries.
+     */
+    const idsOf = (t: EntityType): string[] =>
+      rows.filter((r) => r.entityType === t && r.op !== "delete").map((r) => r.entityId);
+    const prefetchedStates = await materializeMessageStates(db, accountId, idsOf("message_state"));
+    const prefetchedDecisions = await materializeRoutingDecisions(db, accountId, idsOf("routing_decision"));
+    const prefetchedApprovals = await materializeApprovals(db, accountId, idsOf("approval"));
+    const prefetchedRules = await materializeRules(db, accountId, idsOf("rule"));
+    const prefetchedDrafts = await materializeDrafts(db, accountId, idsOf("draft"));
+    const prefetchedTags = await materializeTags(db, accountId, idsOf("tag"));
+    const settingsMemo = new Map<string, unknown | null>();
+
+    const prefetched2 = new Map<EntityType, Map<string, unknown>>([
+      ["message_state", prefetchedStates],
+      ["routing_decision", prefetchedDecisions],
+      ["approval", prefetchedApprovals],
+      ["rule", prefetchedRules],
+      ["draft", prefetchedDrafts],
+      ["tag", prefetchedTags],
+    ]);
+
     for (const row of rows) {
       const type = row.entityType as EntityType;
       const id = row.entityId;
@@ -316,13 +491,21 @@ export class SyncService {
       // Re-materialize the live entity. If it is gone, emit a delete tombstone
       // instead — regardless of the original op. A message or thread absent from its
       // prefetch is absent for the same reason the per-row call returned null.
+      const batched = prefetched2.get(type);
       const entity = type === "message"
         ? (prefetched.get(id) ?? null)
         : type === "thread"
           ? (prefetchedThreads.get(id) ?? null)
           : type === "folder"
             ? (() => { const f = prefetchedFolders.get(id); return f ? folderRowToDTO(f) : null; })()
-            : await materialize(db, accountId, type, id);
+            : batched
+              ? (batched.get(id) ?? null)
+              : type === "settings"
+                ? await (async () => {
+                  if (!settingsMemo.has(id)) settingsMemo.set(id, await materializeSettings(db, accountId, id));
+                  return settingsMemo.get(id) ?? null;
+                })()
+                : await materialize(db, accountId, type, id);
       if (entity === null) {
         deletes.push({ type, op: "delete", id, seq, updatedAt: row.createdAt.toISOString() });
         continue;
@@ -342,13 +525,43 @@ export class SyncService {
       }
     }
 
-    // cursor = max seq actually returned; unchanged when the page is empty.
-    const cursorSeq = rows.length > 0 ? rows[rows.length - 1]!.seq : sinceSeq;
+    // ── cursor and hasMore, per mode ─────────────────────────────────────────────────────────
+    //
+    // Plain page: cursor = max seq actually returned (unchanged when the page is empty), and a
+    // full page means "maybe more", exactly as ever.
+    //
+    // Coalesced page, CUT (a lookahead entity exists beyond `limit`): cursor = that unemitted
+    // entity's first-seq − 1 (the honesty argument at the mode comment above), and there is
+    // trivially more. Coalesced page, WINDOW CONSUMED (no lookahead): every entity the window
+    // scanned was emitted, so the cursor advances to the window's own max seq — the max of the
+    // emitted rows' latest-seqs, which for a consumed window IS the max scanned seq — and the
+    // honest "more?" signal is that cursor against the horizon this very request read for its
+    // 410 checks (fullness says nothing here: a window can dedup to fewer than `limit` rows
+    // while thousands of span rows remain beyond it). A change committed after that bounds
+    // read is picked up by the next poll, the same window every short plain page has always
+    // had. The `rows.length > 0` guard keeps a types-filtered window that matched nothing from
+    // answering an unchanged cursor with `hasMore: true`, which a drain loop would spin on for
+    // ever.
+    let cursorSeq: bigint;
+    let hasMore: boolean;
+    if (!coalesced) {
+      cursorSeq = rows.length > 0 ? rows[rows.length - 1]!.seq : sinceSeq;
+      hasMore = rows.length === limit;
+    } else if (rows.length === 0) {
+      cursorSeq = sinceSeq;
+      hasMore = false;
+    } else if (coalescedCutCursor !== null) {
+      cursorSeq = coalescedCutCursor;
+      hasMore = true;
+    } else {
+      cursorSeq = rows.reduce((m, r) => (r.seq > m ? r.seq : m), 0n);
+      hasMore = horizonSeq !== null && cursorSeq < horizonSeq;
+    }
 
     return {
       changes: { creates, updates, moves, deletes },
       cursor: this.encodeCursor(cursorSeq),
-      hasMore: rows.length === limit,
+      hasMore,
       serverTime: ctx.now().toISOString(),
     };
   }

@@ -11,7 +11,7 @@ export type { ServiceContext, Db } from "./context.js";
  * truth about itself. */
 export type { CloudDb } from "./context-cloud.js";
 export {
-  SyncService, syncService, SNAPSHOT_WINDOW,
+  SyncService, syncService, SNAPSHOT_WINDOW, STALE_COALESCE_SPAN, COALESCE_SCAN_WINDOW,
   type GetChangesOptions, type GetSnapshotOptions,
 } from "./sync-service.js";
 export * from "./dto/types.js";
