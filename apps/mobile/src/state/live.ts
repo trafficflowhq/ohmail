@@ -722,6 +722,15 @@ function holdingRules(reader: EntityReader, address: string, folder: Folder): Ru
 const MARK_SEEN_MAX = 200;
 
 /**
+ * How long the LEAVE COMMIT waits for in-flight sweeps before anchoring on the pool as it
+ * stands. The leave now also fires on APP BACKGROUND, where the runtime may suspend at any
+ * moment — an unbounded await there is a waterline that never dispatches, which loses the
+ * whole visit; a bounded one dispatches into the engine's durable outbox while the process
+ * is still allowed to run. See `leaveFeed` for the narrow rollback exposure this accepts.
+ */
+const LEAVE_SETTLE_DEADLINE_MS = 1_500;
+
+/**
  * One watched dispatch: `rolled_back` or a rejection is a refusal; `queued` is NOT — the
  * mutation is on the retry queue with its Idempotency-Key and the intent stands (the one
  * status where the optimistic view staying applied is truthful).
@@ -1062,15 +1071,32 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   };
 
   const leaveFeed = async (view: FeedView): Promise<boolean> => {
-    // FIRST let the in-flight sweeps settle — their rollbacks edit the pool this commit is
-    // about to anchor from, and consuming it earlier re-creates the failed-anchor defect one
-    // race over. The pool stays IN the map while we wait, so a
-    // rollback's `seen.delete` still reaches it.
-    const pending = inflight.get(view);
-    if (pending && pending.size > 0) await Promise.allSettled([...pending]);
+    // CONSUME THE POOL FIRST, SYNCHRONOUSLY — the visit ends the moment leave is declared.
+    // This call now also fires when the APP BACKGROUNDS (the feed tabs' AppState listener),
+    // and a reader who returns seconds later starts a NEW visit; consuming after the await
+    // below let that next visit's sweeps land in the pool this commit was about to anchor
+    // from (codex round 1). Rollback reachability is unharmed: each in-flight sweep holds
+    // THIS Set through its own closure (`sweepFeed`'s `seen`), so a failed flip still pulls
+    // its ids out of the pool we are holding, whether or not the map still names it.
     const seen = swept.get(view);
-    // The visit is over either way: CONSUME the pool so the next visit starts its own.
     swept.delete(view);
+    // THEN let the in-flight sweeps settle — their rollbacks edit the pool this commit is
+    // about to anchor from, and anchoring earlier re-creates the failed-anchor defect one race
+    // over. BOUNDED, because on the background path the runtime may be about to suspend: a
+    // hung request awaited here forever is a waterline that never commits at all, and the
+    // verb's own durability (the engine's outbox) only begins once it is dispatched. Past the
+    // bound the commit anchors on the pool as it stands — the narrow rollback-after-anchor
+    // exposure this trades for is the pre-await behaviour, taken only when the network has
+    // already gone quiet for a second and a half.
+    const pending = inflight.get(view);
+    if (pending && pending.size > 0) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        Promise.allSettled([...pending]),
+        new Promise<void>((resolve) => { timer = setTimeout(resolve, LEAVE_SETTLE_DEADLINE_MS); }),
+      ]);
+      if (timer !== undefined) clearTimeout(timer);
+    }
     if (!seen || seen.size === 0) return true; // nothing was on screen; the line holds still
     const reader = engine.read();
     // The anchor: the NEWEST swept row — "the newest message that was on screen when the

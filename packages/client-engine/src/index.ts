@@ -259,6 +259,10 @@ export {
   // The durable outbox's client-local record type. Exported so the kill-restart guards (and
   // any storage tooling) read the shipped name rather than a hand-copied string.
   OUTBOX_TYPE,
+  // The boot replay's per-attempt deadline and the unkeyed-create replay horizon — exported so
+  // the guards read the shipped numbers, not copies.
+  OUTBOX_REPLAY_DEADLINE_MS,
+  OUTBOX_UNKEYED_CREATE_TTL_MS,
   // The eager recent-window hydration bounds. Exported so the guards read the shipped numbers.
   EAGER_BODIES_MAX,
   EAGER_BODIES_SLICE,
