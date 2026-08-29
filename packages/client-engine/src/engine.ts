@@ -80,11 +80,16 @@ interface PendingMutation {
   at: number;
   n: number;
   /**
-   * TRUE only for an entry restored from a PREVIOUS session. It decides who may replay the
-   * verb: a restored entry's owner died with its session, so the drive replays it freely and
-   * consumes the result — there is no one left to notify. A SAME-SESSION entry is replayed by
-   * the drive only when no living surface routes its result; the two families a surface does
-   * wait on stay with `flushPending()` — see {@link OhmailEngine.ownerSettled}.
+   * TRUE only for an entry restored from a PREVIOUS session — and it is the whole ownership
+   * story of the automatic replay. A same-session queued verb has a live owner: `useMailSend`
+   * holds its send lock until `flushPending()` hands the result back through `absorb`, the
+   * mobile ledger settles keys the same way, and a compose adopts a create's `entityId` from
+   * the result. An automatic drive that consumed those entries would discard the results those
+   * owners are waiting on — a delivered send whose composer never unlocks. So
+   * the drive replays RESTORED entries only, whose owners died with their session and whose
+   * results have no one left to notify; same-session entries keep their pre-outbox contract
+   * (queued, visible, delivered by their owner's `flushPending` — or by the next boot, which
+   * makes them restored).
    */
   restored?: boolean;
 }
@@ -122,47 +127,6 @@ interface PersistedOutboxEntry {
   /** Epoch ms at enqueue, from the engine's injected clock. */
   at: number;
   mutation: EngineMutation;
-}
-
-/**
- * The SAME-KIND, SAME-TARGET identity a newer verb replaces a queued older verb under — see
- * {@link OhmailEngine.supersedeQueued} for the rule and its boundaries. `null` means this kind
- * never participates: creates (nothing to replace), `mail_send` (the reservation machinery owns
- * it), the read-flag verbs (they subtract ids instead — a list is not a scalar), and anything
- * whose replay is already convergent without help.
- */
-function supersedeKey(m: EngineMutation): string | null {
-  switch (m.kind) {
-    case "triage_set":
-    case "move":
-    case "message_delete":
-      return `${m.kind}:${m.messageId}`;
-    case "tag_assign":
-      // PER TAG, not per message: the enriched `labels` union is optimistic-only — the WIRE is
-      // `{ tagId, assigned }`, so two queued assignments of different tags on one message are
-      // independent server-side deltas and replacing one with the other would un-tag the first
-      // on reconciliation. Only a newer verb about the SAME tag replaces the older.
-      return `tag_assign:${m.messageId}:${m.tagId}`;
-    case "screener_decide":
-      return `screener_decide:${m.senderId}`;
-    case "rule_update":
-      return `rule_update:${m.ruleId}`;
-    case "tag_rename":
-    case "tag_recolor":
-      return `${m.kind}:${m.tagId}`;
-    case "folder_rename":
-    case "folder_delete":
-    case "folder_op_dismiss":
-      return `${m.kind}:${m.folderId}`;
-    case "draft_save":
-      // Only the autosave of an EXISTING row — the newer body is the whole intent. A create
-      // (draftId null) supersedes nothing and is never superseded.
-      return m.draftId === null ? null : `draft_save:${m.draftId}`;
-    case "draft_schedule_cancel":
-      return `draft_schedule_cancel:${m.draftId}`;
-    default:
-      return null;
-  }
 }
 
 /** The shape gate for {@link PersistedOutboxEntry} — see `v` above for why unknown ⇒ keep, not drop. */
@@ -758,57 +722,12 @@ function base64ToBytes(b64: string): Uint8Array | null {
 export const STALE_RESUME_MS = 5 * 60_000;
 
 /**
- * THE STALE DRAIN ASKS FOR DENSE PAGES (INSTANT-ARCH §6.3 / §8 stage 3 — the backlog diet's
- * client half). A backlog's dominant cost is PAGE COUNT, not page size: each `/sync` page is a
- * serverless invocation with ~10 fixed sequential database round trips — measured p50 1,084 ms
- * per 500-row page on the live path (2026-08-29), of which ~0.4 s no row could ever pay for —
- * so a 1,500-row backlog at the default page size was four invocations (~5.1 s measured) where
- * one dense page carries it whole. 2,000 is the server's own MAX_LIMIT (`sync-service.ts`), the
- * most a page may say; asking for more would be clamped there anyway.
- *
- * Used ONLY when {@link OhmailEngine.isStaleResume} says this drain is a backlog catch-up (the
- * same condition that fires the freshen), so the steady-state poll keeps the deployed shape and
- * an explicit {@link EngineOptions.syncLimit} (the test seam) always wins. Payload stays modest:
- * the server serves a stale span COALESCED (latest change per entity), and a measured 500-row
- * page is ~0.25–0.5 MB, so the dense page is ~1–2 MB against the platform's 4.5 MB response cap.
- */
-export const BACKLOG_PAGE_LIMIT = 2000;
-
-/**
  * The meta key under which a completed drain stamps its own clock — the mirror's record of "when
  * was this device last caught up", read by nothing but the staleness comparison above. Engine
  * clock on both sides (`opts.now`), never `serverTime`: cross-machine skew cannot touch a
  * comparison whose two operands come from the same clock.
  */
 export const LAST_DRAIN_AT_META = "lastDrainAt";
-
-/**
- * THE FRESHNESS CONTRACT'S THREE STATES (INSTANT-ARCH §6.6) — what a surface may say about the
- * age of the mirror it is rendering. Exactly three, and they must never be conflated:
- *
- *  · `unknown` — no drain has EVER completed over this mirror. A zero-row list is not "empty",
- *    it is unanswered; the surface owes a skeleton, never content and never an empty state.
- *  · `stale`   — a drain HAS completed, but longer ago than {@link STALE_RESUME_MS}. The mirror
- *    is renderable truth and MUST be rendered (frame one is local, always) — but it is truth
- *    as of {@link MirrorFreshness.asOf}, and the surface says so quietly ("as of 14:32 ·
- *    catching up") until a drain settles. Staleness labeled is honest; staleness silent is
- *    the bug this type exists to make unrepresentable.
- *  · `current` — the last completed drain is recent. Plain content, no label.
- */
-export type FreshnessState = "unknown" | "stale" | "current";
-
-/** See {@link OhmailEngine.freshness}. */
-export interface MirrorFreshness {
-  state: FreshnessState;
-  /**
-   * {@link LAST_DRAIN_AT_META} verbatim — the engine-clock instant of the last COMPLETED drain,
-   * or `null` exactly when `state` is `"unknown"`. Surfaces format it; they never parse meta
-   * themselves. A stamp that does not parse reports `"unknown"` rather than a label with no
-   * time in it: the stamp is this engine's own write, so an unparseable one is corruption, and
-   * the very next settled drain re-stamps it.
-   */
-  asOf: string | null;
-}
 
 export interface EngineOptions {
   adapter: EngineAdapter;
@@ -856,19 +775,6 @@ export interface EngineOptions {
    * shipped paths never pass it, so the one number below is the one every client uses.
    */
   outboxReplayDeadlineMs?: number;
-  /**
-   * WHO REPLAYS THE OUTBOX. `true` (the default, and the webapp's shape): the engine's own
-   * drives replay restored and unowned entries before each drain — the webapp dispatches most
-   * verbs fire-and-forget and flushes only around sends, so the drive is the only retry those
-   * verbs will ever get. `false` (the mobile shape): the drive replays NOTHING and every entry
-   * — restored included — waits for the host's own `flushPending` cadence, because that host
-   * routes EVERY returned result (the mobile ledger toasts a background confirmation as the
-   * send it was and a hard refusal as the save that failed, keyed off `pendingMutations()`
-   * before the flush). Handing the drive those entries would settle them silently. Restore
-   * itself is unaffected either way: overlays re-apply with the store's load, and the entries
-   * sit visibly in `pendingMutations()` until their owner flushes.
-   */
-  outboxAutoReplay?: boolean;
 }
 
 /**
@@ -1049,27 +955,6 @@ export class OhmailEngine {
   private outboxRestored = false;
   /** See {@link OUTBOX_REPLAY_DEADLINE_MS}; overridable only through the test seam. */
   private readonly replayDeadlineMs: number;
-  /**
-   * THE ORDER BARRIER a timed-out replay leaves behind: the still-in-flight dispatch, held
-   * until it settles. While it stands, NO further outbox dispatch may start — not the next
-   * drive's replay and not a `flushPending` — because the hung request may yet commit, and a
-   * verb dispatched behind it could land an older value after a newer one on the server. The
-   * barrier clears itself on settle; a process death clears it the honest way (every
-   * still-owed verb is persisted and replays in order next boot).
-   */
-  private replayHold: Promise<void> | null = null;
-  /**
-   * THE SHORT-LIVED TWIN of {@link replayHold}: the replay attempt CURRENTLY being awaited by
-   * the drive. Armed for the whole of each attempt — not only after its deadline — because a
-   * fresh same-target verb dispatched while a restored replay is mid-air can commit first and
-   * be overwritten when the slower replay lands (user-always-wins, violated in the window the
-   * deadline had not yet noticed). Fresh dispatches and flushes WAIT on it (it is bounded by
-   * the attempt's own deadline); only when an attempt times out does the long-lived
-   * {@link replayHold} take over and waiting turn into queueing.
-   */
-  private replayActive: Promise<void> | null = null;
-  /** {@link EngineOptions.outboxAutoReplay}, resolved once. */
-  private readonly autoReplayOn: boolean;
   /** Session-monotonic outbox tiebreak; seeded past every restored entry's `n`. */
   private outboxSeq = 0;
   private readonly listeners = new Set<() => void>();
@@ -1236,7 +1121,6 @@ export class OhmailEngine {
     this.syncLimit = opts.syncLimit;
     this.staleResumeMs = opts.staleResumeMs ?? STALE_RESUME_MS;
     this.replayDeadlineMs = opts.outboxReplayDeadlineMs ?? OUTBOX_REPLAY_DEADLINE_MS;
-    this.autoReplayOn = opts.outboxAutoReplay !== false;
     this.now = opts.now ?? (() => new Date());
     this.bootedAt = this.now().getTime();
     this.uuid = opts.uuid ?? (() => crypto.randomUUID());
@@ -1369,24 +1253,6 @@ export class OhmailEngine {
   }
 
   /**
-   * Does this client have a doorbell to ring at all?
-   *
-   * `attachmentsAvailable()`'s idiom for {@link OhmailEngine.requestPull}: resolved from the
-   * adapter's own optional capability, so the predicate cannot disagree with what the method
-   * will do. `false` for the demo (`?demo=1` is fixtures and zero network) and for any adapter
-   * wrapper that did not forward the capability — which is exactly what a "Pull new mail"
-   * control must gate its own rendering on: an affordance whose press could only ever degrade
-   * to the ordinary drain must not render as if it reached the mail server. The webapp's
-   * `apiConfigured()` was the previous gate and it was wrong twice over — true while the
-   * wrapped adapter had lost the doorbell (a dead button on the hosted client), and false on
-   * the desktop, whose bridge adapter has a doorbell but no Cloud base (a missing button on
-   * both desktop doors).
-   */
-  pullAvailable(): boolean {
-    return typeof this.adapter.requestPull === "function";
-  }
-
-  /**
    * One full drain: pull pages from the cursor of record until hasMore:false,
    * applying each page idempotently. A 410 discards local state and re-enters
    * as a bootstrap (once — a second 410 within one drain is surfaced).
@@ -1419,37 +1285,12 @@ export class OhmailEngine {
   }
 
   /** Replay every queued verb, oldest first, under its original Idempotency-Key. */
-  /**
-   * A verb whose RESULT a living surface is waiting on — the two families the drive must not
-   * consume while their session is alive. `useMailSend` holds its send lock until
-   * `flushPending()` hands the result through `absorb`, and the mobile ledger's send toasts
-   * (confirmed / check-Sent / failed) settle the same way; a compose adopts a create's
-   * `entityId` from the result, and a create confirmed behind its back would leave the
-   * composer minting a SECOND row under a fresh key on the next autosave. Everything else is
-   * fire-and-forget on every surface (the rollback it could ever announce is already visible
-   * as the overlay coming off), so the drive retrying it is what keeps user-always-wins
-   * CONVERGENT — a `mark_seen` queued by a blip has no owner to flush it, and stranding it
-   * until reload was itself a review finding.
-   */
-  private static ownerSettled(m: EngineMutation): boolean {
-    return m.kind === "mail_send" || (m.kind === "draft_save" && m.draftId === null);
-  }
-
   private async replayOutbox(): Promise<void> {
-    // The host owns the whole replay (`outboxAutoReplay: false` — the mobile shape): the drive
-    // touches nothing, and `flushPending` routes every result to its ledger.
-    if (!this.autoReplayOn) return;
-    // A timed-out dispatch from an earlier drive is still in the air — see {@link replayHold}:
-    // nothing may be dispatched behind it until it settles, so this drive skips its replay and
-    // goes straight to the drain. The queue keeps everything, in order, for the drive after.
-    if (this.replayHold) return;
     if (this.queue.length === 0) return;
-    // Every RESTORED entry (its owner died with its session), plus every same-session entry
-    // whose result nobody routes — see {@link OhmailEngine.ownerSettled} for the two families
-    // that stay with `flushPending()`.
-    const batch = this.queue
-      .filter((p) => p.restored === true || !OhmailEngine.ownerSettled(p.mutation))
-      .sort((a, b) => (a.at - b.at) || (a.n - b.n));
+    // RESTORED ENTRIES ONLY — see {@link PendingMutation.restored}: a same-session queued verb
+    // belongs to its owner's `flushPending()`, whose result routing (send locks, the mobile
+    // ledger, `entityId` adoption) an automatic consume here would silently starve.
+    const batch = this.queue.filter((p) => p.restored === true);
     if (batch.length === 0) return;
     const held = new Set(batch);
     for (let i = this.queue.length - 1; i >= 0; i--) {
@@ -1458,64 +1299,19 @@ export class OhmailEngine {
     // Serial and awaited: order is user order, and the drain below must not begin until every
     // replayed POST has returned (that happens-before is what lets it carry their echoes). A
     // retryable failure re-queues onto the queue for the NEXT drive — `dispatch` never throws,
-    // so one dead verb cannot stall the drain behind it. Each attempt is DEADLINE-BOUNDED —
-    // the adapter's mutate has no timeout of its own, and one half-open request awaited here
-    // would otherwise hold the single-flight forever: no bootstrap, no sync, for the whole
-    // session. The in-flight dispatch still OWNS its timed-out entry (it settles it, re-queues
-    // it, or leaves it persisted for the next boot), so the verb is never double-run and never
-    // dropped.
-    for (let i = 0; i < batch.length; i++) {
-      const p = batch[i]!;
-      const attempt = this.dispatch(p, { deferReconcile: true });
-      // The WHOLE attempt is guarded, not just its post-deadline tail — see {@link replayActive}.
-      // The waiter promise is a DEFERRED, settled by the attempt OR by the deadline, whichever
-      // comes first: a waiter must never inherit the attempt's own unboundedness — a hung
-      // request would otherwise suspend every fresh mutate and flush for ever, precisely the
-      // stranding the deadline exists to end. Released only after the hold decision below, so
-      // a woken waiter always finds the world it should queue against.
-      let releaseActive!: () => void;
-      const active = new Promise<void>((resolve) => { releaseActive = resolve; });
-      this.replayActive = active;
-      void attempt.then(() => releaseActive(), () => releaseActive());
+    // so one dead verb cannot stall the drain behind it. Each attempt is DEADLINE-BOUNDED
+    // — the adapter's mutate has no timeout of its own, and one half-open
+    // request awaited here would otherwise hold the single-flight forever — no bootstrap, no
+    // sync, for the whole session. On a timeout the drive simply stops waiting and drains; the
+    // in-flight dispatch still OWNS its entry (it settles it, re-queues it, or leaves it
+    // persisted for the next boot), so the verb is never double-run and never dropped.
+    for (const p of batch) {
       let timer: ReturnType<typeof setTimeout> | undefined;
-      let timedOut = false;
       await Promise.race([
-        attempt,
-        new Promise<void>((resolve) => {
-          timer = setTimeout(() => { timedOut = true; resolve(); }, this.replayDeadlineMs);
-        }),
+        this.dispatch(p, { deferReconcile: true }),
+        new Promise<void>((resolve) => { timer = setTimeout(resolve, this.replayDeadlineMs); }),
       ]);
       if (timer !== undefined) clearTimeout(timer);
-      if (this.replayActive === active) this.replayActive = null;
-      if (timedOut) {
-        // ORDER IS THE CONTRACT, so a timeout stops the BATCH, not just the wait: the hung
-        // request may yet commit, and dispatching the entries behind it would let a newer
-        // write land before an older one — mark-read then mark-unread arriving reversed is
-        // the exact class the serial replay exists to prevent. The rest go back on the queue
-        // (stamps intact — the next replay re-sorts), and the in-flight dispatch becomes the
-        // ORDER BARRIER: no later drive's replay and no `flushPending` may start another
-        // outbox dispatch until it settles (see {@link replayHold}). This drive still
-        // proceeds to its drain — reads are never hostage to a hung write.
-        const hold: Promise<void> = attempt.then(
-          () => undefined,
-          () => undefined,
-        ).finally(() => {
-          if (this.replayHold === hold) this.replayHold = null;
-          // The barrier's own settle is the wake-up: verbs expressed while it stood are
-          // sitting in the queue (mutate() gates on the hold), and nothing else is guaranteed
-          // to drive soon on a quiet tab. `syncFresh`, not `syncOnce`: the settle can land
-          // while the drive that armed this hold is STILL draining, and joining it would join
-          // a replay pass that already ran — the queued verbs need the drive AFTER it.
-          void this.syncFresh().catch(() => { /* the scheduler's cadence retries */ });
-        });
-        this.replayHold = hold;
-        this.queue.unshift(...batch.slice(i + 1));
-        // NOW wake the waiters — after the hold stands, so each re-check lands in the queue
-        // branch instead of dispatching into the very race the barrier exists to prevent.
-        releaseActive();
-        return;
-      }
-      releaseActive();
     }
   }
 
@@ -1619,14 +1415,6 @@ export class OhmailEngine {
     // A STALE resume converges its newest page FIRST — see the method for the whole argument.
     // Before the loop, once per drain: the 410 branch re-enters the loop with a wiped mirror,
     // where the bootstrap snapshot below already owns "newest first".
-    //
-    // The staleness verdict is read ONCE, before the freshen (a completed freshen changes no
-    // stamp, but reading per page would let the loop's own completion flip the answer mid-
-    // drain), and it selects the page size for the WHOLE drain: a stale resume is a backlog
-    // catch-up and asks for {@link BACKLOG_PAGE_LIMIT} rows per page — see the constant for the
-    // measured arithmetic. An explicit {@link EngineOptions.syncLimit} always wins (the test
-    // seam), and a fresh resume keeps the server's default page, the deployed shape.
-    const staleResume = this.isStaleResume();
     await this.freshenStaleResume();
     for (;;) {
       // COLD MIRROR + A SNAPSHOT ROUTE ⇒ TAKE THE SNAPSHOT INSTEAD OF REPLAYING THE LOG.
@@ -1684,15 +1472,9 @@ export class OhmailEngine {
           rulesFirstDone = true;
           await this.drainRulesFirst();
         }
-        // The dense-page ask covers the RESUMED-incomplete-bootstrap replay too — that is a
-        // backlog by definition (an earlier session's since=0 fallback died mid-log), and it is
-        // read fresh per iteration because the 410 branch can turn a stale resume INTO one.
-        const backlogLimit = this.syncLimit !== undefined
-          ? this.syncLimit
-          : (staleResume || resumedIncomplete) ? BACKLOG_PAGE_LIMIT : undefined;
         resp = await this.adapter.sync({
           since: this.store.getCursor(),
-          ...(backlogLimit !== undefined ? { limit: backlogLimit } : {}),
+          ...(this.syncLimit !== undefined ? { limit: this.syncLimit } : {}),
           ...(this.types ? { types: this.types } : {}),
         });
       } catch (err) {
@@ -1746,13 +1528,6 @@ export class OhmailEngine {
       // mid-backlog leaves the old stamp standing, so the next drain still reads as a stale
       // resume and freshens again (idempotent: the seq guard absorbs the repeat).
       await this.store.setMeta(LAST_DRAIN_AT_META, this.now().toISOString());
-      // ANNOUNCE THE SETTLE. The stamp is what {@link OhmailEngine.freshness} reads, and the
-      // last data notify above fired BEFORE the stamp landed — so without this, a surface
-      // rendering "as of 14:32 · catching up" off a freshness subscription keeps the label up
-      // until something ELSE happens to notify (the next drain, seconds to minutes away). The
-      // label must clear at the settle, not at the next coincidence; `freshness-label.test.ts`
-      // watches this line red.
-      this.notify();
       // THE OVERLAY SWEEP, only on this successful exit: every overlay whose POST returned
       // before this drain began now has its echo IN the mirror, so retiring it changes what is
       // rendered from "the overlay's claim" to "the server's identical statement".
@@ -1966,28 +1741,11 @@ export class OhmailEngine {
    * the mailboxes that reported the symptom. Within a session the stamp always exists after the
    * first completed drain, so this arm fires at most once per pre-upgrade mirror.
    */
-  /**
-   * IS THIS DRAIN A STALE RESUME — a warm cursor whose last completed drain is older than
-   * {@link STALE_RESUME_MS} (or was never stamped, the pre-upgrade-mirror arm the freshen
-   * documents)? ONE predicate, two consumers with one condition by construction:
-   * {@link OhmailEngine.freshenStaleResume} decides whether to fetch the newest page first,
-   * and {@link OhmailEngine.drain} decides whether to ask for {@link BACKLOG_PAGE_LIMIT} pages
-   * — a freshen without the dense drain leaves the convergence tail, a dense drain without the
-   * freshen labels nothing, so the two firing on different verdicts would be a defect.
-   */
-  private isStaleResume(): boolean {
-    if (this.store.getCursor() === "0") return false; // a cold mirror is the bootstrap's, not ours
-    const stamp = this.store.getMeta<string>(LAST_DRAIN_AT_META);
-    if (stamp === undefined) return true;
-    const t = Date.parse(stamp);
-    // An unparseable stamp reads as stale, exactly as the freshen always read it: the stamp is
-    // this engine's own write, so corruption is answered by freshening and re-stamping.
-    return Number.isNaN(t) || this.now().getTime() - t > this.staleResumeMs;
-  }
-
   private async freshenStaleResume(): Promise<void> {
     if (!this.snapshotFn || this.snapshotUnavailable) return;
-    if (!this.isStaleResume()) return;
+    if (this.store.getCursor() === "0") return; // a cold mirror is the bootstrap's, not ours
+    const stamp = this.store.getMeta<string>(LAST_DRAIN_AT_META);
+    if (stamp !== undefined && this.now().getTime() - Date.parse(stamp) <= this.staleResumeMs) return;
     let page: SyncSnapshotPage;
     try {
       page = await this.snapshotFn({});
@@ -2334,45 +2092,6 @@ export class OhmailEngine {
   private notify(): void {
     for (const l of this.listeners) l();
   }
-
-  /**
-   * WHAT A SURFACE MAY SAY ABOUT THIS MIRROR'S AGE — the one derivation of the Freshness
-   * Contract's three states (see {@link FreshnessState}), computed from the drain's own
-   * completion stamp on the engine's own clock. Every surface reads THIS; none re-derives it
-   * from meta, which is how three surfaces stay one contract.
-   *
-   * The comparison is the same one {@link OhmailEngine.freshenStaleResume} makes — same stamp,
-   * same threshold, same clock — so "the label is showing" and "the resume freshens
-   * newest-first" are a single fact observed twice, never two opinions that can drift.
-   *
-   * CACHED BY VALUE for `useSyncExternalStore`: `getSnapshot` must return a stable identity
-   * while nothing changed, or React loops on a fresh object per render. The value changes when
-   * a drain settles (which {@link OhmailEngine.drain} announces with a notify after stamping)
-   * or when the clock crosses the threshold between two notifies — re-read at the next render
-   * either way.
-   */
-  freshness(): MirrorFreshness {
-    const stamp = this.store.getMeta<string>(LAST_DRAIN_AT_META);
-    let next: MirrorFreshness;
-    if (stamp === undefined) {
-      next = { state: "unknown", asOf: null };
-    } else {
-      const t = Date.parse(stamp);
-      next = Number.isNaN(t)
-        ? { state: "unknown", asOf: null }
-        : {
-            state: this.now().getTime() - t > this.staleResumeMs ? "stale" : "current",
-            asOf: stamp,
-          };
-    }
-    if (next.state !== this.freshnessCache.state || next.asOf !== this.freshnessCache.asOf) {
-      this.freshnessCache = next;
-    }
-    return this.freshnessCache;
-  }
-
-  /** The last {@link MirrorFreshness} handed out — identity-stable while its value stands. */
-  private freshnessCache: MirrorFreshness = { state: "unknown", asOf: null };
 
   // ── message bodies ───────────────────────────────────────────────────────
 
@@ -3140,32 +2859,13 @@ export class OhmailEngine {
     const id = this.uuid();
     const key = this.uuid();
 
-    // THE EFFECTS ARE COMPUTED BEFORE SUPERSESSION, deliberately: they must be read over the
-    // superseded verbs' overlays. A reversal is the case that breaks the other order — a
-    // queued move to Reads, then the user moves it back to INBOX: with the Reads overlay
-    // already dropped the mirror says "it is in INBOX", the reversal computes zero effects,
-    // and mutate() would reject a verb the server absolutely needs (the queued move may have
-    // COMMITTED with its response lost, and only the reversal on the wire can undo it).
     const effects = mutationEffects(this.read(), enriched, { now: this.now, uuid: this.uuid });
-
-    // THEN supersession, still SYNCHRONOUS — the first frame after mutate() must already show
-    // the newer verb's overlay (re-resurface-first-frame pins that mutate() publishes before
-    // its first await), and enrich above read the old overlays it needed. The store-side
-    // deletes/rewrites inside are fire-and-forget: if a kill outruns them, the stale entry
-    // replays BEFORE the newer one — restore sorts by (at, n) — so the newer verb still lands
-    // last and the server converges on the user's latest word.
-    //
-    // …and only AFTER the no-op check below: a verb with no effects is about to be REJECTED,
-    // and a rejected verb supersedes nothing. Re-pressing a queued move (the optimistic
-    // destination makes the repeat a no-op) must not retire the queued original — that entry
-    // may be the only copy of an intent whose first attempt never reached the server.
     if (effects.length === 0) {
       const error = new MutationRejectedError(`mutation target not found (${m.kind})`, {
         status: 404, code: "not_found",
       });
       return { id, key, status: "rolled_back", seq: null, error };
     }
-    this.supersedeQueued(enriched);
     this.overlays.set(id, effects);
     this.overlayRev++;
     this.notify();
@@ -3185,35 +2885,6 @@ export class OhmailEngine {
     };
     await this.putOutbox(pending);
 
-    /**
-     * THE ORDER BARRIER GATES FRESH DISPATCHES TOO — in two tiers, matching the two holds.
-     *
-     * A replay attempt CURRENTLY in the air ({@link replayActive}) is waited out: it is
-     * bounded by its own deadline, the verb has already painted and persisted, and dispatching
-     * concurrently could let this fresh write commit first and be overwritten when the slower
-     * replay lands. The loop re-checks because a batch replays attempts back to back.
-     *
-     * A TIMED-OUT attempt ({@link replayHold}) may stand for minutes, so the verb waits in the
-     * QUEUE instead (status `queued` — expressed, safe, not yet on the wire); the hold's own
-     * settle chains the drive that delivers it. The one exception is the caller-settled create
-     * (`draft_save`, draftId null): its caller adopts `entityId` from THIS result and has no
-     * retry path of its own, so it awaits the hold however long — a late-adopted draft id is
-     * correct, an orphaned `queued` create is a twin factory.
-     */
-    while (this.replayActive) {
-      await this.replayActive;
-    }
-    if (this.replayHold) {
-      const awaitsHold = enriched.kind === "draft_save" && enriched.draftId === null;
-      if (!awaitsHold) {
-        this.queue.push(pending);
-        return { id, key, status: "queued", seq: null };
-      }
-      while (this.replayHold) {
-        await this.replayHold;
-      }
-    }
-
     return this.dispatch(pending);
   }
 
@@ -3232,100 +2903,6 @@ export class OhmailEngine {
     try {
       await this.store.prune([{ type: OUTBOX_TYPE, id }]);
     } catch { /* an undeleted entry replays idempotently — the safe direction */ }
-  }
-
-  /**
-   * A NEWER VERB RETIRES THE QUEUED OLDER VERB IT SUPERSEDES — the user-always-wins rule
-   * applied to the outbox itself. Without this, a queued `mark_seen(read)` replayed after the
-   * user's newer `mark_seen(unread)` committed would put the SERVER back at the older value:
-   * the replay is ordered against other queued verbs, but a live verb that already landed is
-   * not in the queue for order to protect. The user superseded the old intent by expressing
-   * the new one, so retiring it here IS honoring their latest word — for the drive's replay
-   * and for `flushPending` alike.
-   *
-   * What "supersedes" is allowed to mean, deliberately narrow:
-   *  · SAME KIND, SAME SCALAR TARGET ({@link supersedeKey}) — absolute-valued verbs where the
-   *    newer value is the whole intent (triage, move, decide, rename, recolor, destination,
-   *    a draft body autosave). `tag_assign` keys on the MESSAGE alone because its enriched
-   *    `labels` is the complete list computed over the older overlay — the newer verb already
-   *    carries the union.
-   *  · READ-FLAG ID SUBTRACTION — a newer `mark_seen` removes its ids from queued `mark_seen`
-   *    AND queued `feed_mark_seen` lists (an explicit read/unread outranks both); a newer
-   *    `feed_mark_seen` subtracts only from queued `feed_mark_seen` (a glance must never
-   *    cancel a queued deliberate unread), and its same-view waterline replaces the older
-   *    entry's. Rewriting a narrowed body under the SAME Idempotency-Key is safe on exactly
-   *    these routes: `PATCH /messages` stores no idempotency row (naturally idempotent, the
-   *    route says so), so no stored-hash 409 can meet the new body.
-   *  · NOTHING ELSE. Cross-kind conflicts (a move racing a delete) converge through the
-   *    server's own write-ownership; `mail_send` is never touched (the reservation machinery
-   *    owns it); creates supersede nothing.
-   */
-  private supersedeQueued(m: EngineMutation): void {
-    if (this.queue.length === 0) return;
-    const key = supersedeKey(m);
-    const readIds = m.kind === "mark_seen" || m.kind === "feed_mark_seen"
-      ? new Set(m.messageIds ?? [])
-      : null;
-    let changed = false;
-    for (let i = this.queue.length - 1; i >= 0; i--) {
-      const q = this.queue[i]!;
-      const qm = q.mutation;
-      // Whole-entry replacement: same kind, same scalar target.
-      if (key !== null && supersedeKey(qm) === key) {
-        this.queue.splice(i, 1);
-        this.overlays.delete(q.id);
-        void this.dropOutbox(q.id);
-        changed = true;
-        continue;
-      }
-      // Read-flag subtraction. The allowed pairs, and only these: an EXPLICIT `mark_seen`
-      // (no glance label — the read pill, ⇧I, bulk; `via` is the verb's own involuntary
-      // marker, so a dwell commit's `mark_seen` counts as a glance here too) outranks BOTH
-      // queued read verbs; a glance of either kind outranks only queued involuntary reads —
-      // it must never cancel a queued deliberate unread. Entered whenever the newer verb is a
-      // read verb at all, id overlap or not, because a newer same-view leave-commit with an
-      // EMPTY id list (the ordinary waterline commit) still supersedes the older line.
-      if (readIds && (qm.kind === "mark_seen" || qm.kind === "feed_mark_seen")) {
-        // A glance can only ever READ — `unread: true` is a deliberate act whatever label a
-        // caller stuck on it, so the value participates in the classification, not the label
-        // alone: a mislabelled mark-unread must still outrank a queued stale read.
-        const newerExplicit = m.kind === "mark_seen" && (m.via !== "glance" || m.unread === true);
-        const olderInvoluntary = qm.kind === "feed_mark_seen"
-          || (qm.kind === "mark_seen" && qm.via === "glance" && qm.unread === false);
-        const pairAllowed = newerExplicit || olderInvoluntary;
-        const qids = qm.messageIds ?? [];
-        // A newer same-view glance also replaces the older glance's waterline: the newer
-        // departure IS the later line.
-        const lineSuperseded = m.kind === "feed_mark_seen" && qm.kind === "feed_mark_seen"
-          && (m.view ?? "reads") === (qm.view ?? "reads") && m.upToId !== undefined;
-        const overlaps = qids.some((mid) => readIds.has(mid));
-        if (!pairAllowed || (!overlaps && !lineSuperseded)) continue;
-        const remaining = qids.filter((mid) => !readIds.has(mid));
-        const keepsLine = qm.kind === "feed_mark_seen" && qm.upToId !== undefined && !lineSuperseded;
-        if (remaining.length === 0 && !keepsLine) {
-          this.queue.splice(i, 1);
-          this.overlays.delete(q.id);
-          void this.dropOutbox(q.id);
-        } else {
-          const narrowed = { ...qm, messageIds: remaining } as EngineMutation;
-          if (lineSuperseded && narrowed.kind === "feed_mark_seen") delete narrowed.upToId;
-          q.mutation = narrowed;
-          try {
-            const effects = mutationEffects(this.read(), q.mutation, {
-              now: () => new Date(q.at), uuid: this.uuid,
-            });
-            if (effects.length > 0) this.overlays.set(q.id, effects);
-            else this.overlays.delete(q.id);
-          } catch { this.overlays.delete(q.id); }
-          void this.putOutbox(q);
-        }
-        changed = true;
-      }
-    }
-    if (changed) {
-      this.overlayRev++;
-      this.notify();
-    }
   }
 
   /**
@@ -3767,27 +3344,9 @@ export class OhmailEngine {
     return [...this.queue];
   }
 
-  /**
-   * Retry every queued mutation (reconnect path), preserving keys and order.
-   *
-   * Refuses to DISPATCH while {@link replayHold} stands — a timed-out replay's request is
-   * still in the air, and dispatching behind it could land an older value after a newer one —
-   * but it still ANSWERS, one `queued` result per entry: `useMailSend.flush` re-arms its
-   * backoff timer only when a result says its key is still queued, so an empty array here
-   * would read as "nothing left" and stop the very retry loop that will deliver the send once
-   * the hold clears. The entries stay queued and persisted; the hold's settle nudges a drive.
-   */
+  /** Retry every queued mutation (reconnect path), preserving keys and order. */
   async flushPending(): Promise<MutationResult[]> {
-    // An in-flight replay attempt is waited out (bounded by its deadline) — dispatching beside
-    // it is the same stale-wins race the fresh-mutate gate closes.
-    while (this.replayActive) {
-      await this.replayActive;
-    }
-    if (this.replayHold) {
-      return this.queue.map((p) => ({ id: p.id, key: p.key, status: "queued" as const, seq: null }));
-    }
-    const batch = this.queue.splice(0, this.queue.length)
-      .sort((a, b) => (a.at - b.at) || (a.n - b.n));
+    const batch = this.queue.splice(0, this.queue.length);
     const results: MutationResult[] = [];
     for (const p of batch) results.push(await this.dispatch(p));
     return results;
