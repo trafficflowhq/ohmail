@@ -540,25 +540,34 @@ export function showDesktopCta(opts: { demo: boolean; desktop: boolean }): boole
   return !opts.demo && !opts.desktop;
 }
 
-/** localStorage key for a one-time dismissal of the desktop prompt. */
-const DESKTOP_CTA_DISMISSED = "ohmail.desktopCtaDismissed";
+/**
+ * localStorage key for a one-time dismissal of the desktop prompt.
+ *
+ * The stored value is `"1"` — `usePersistedFlag`'s own true — and the key predates the flag
+ * moving up to `AppShell`, so installs that dismissed under the old in-component read keep
+ * their dismissal.
+ */
+export const DESKTOP_CTA_DISMISSED = "ohmail.desktopCtaDismissed";
 
 /**
  * A subtle, dismissible line at the foot of the rail: "Get ohmail for desktop", linking to the
- * download section of the site (a new tab, so the reader's mailbox stays open). The dismissal is
- * persisted — a promo dismissed should stay dismissed — and read AFTER mount rather than during
- * render, so a server pass and its hydration agree before the effect quietly hides it.
+ * download section of the site (a new tab, so the reader's mailbox stays open).
+ *
+ * CONTROLLED — the dismissal state lives in `AppShell` (`usePersistedFlag`, the rail's own
+ * idiom), not in here, and that placement is a fix rather than a preference: when this
+ * component owned the flag it answered its dismissal by rendering `null`, but `AppShell` had
+ * already judged the rail's `footer` slot non-empty for its sake — so `RailNav` kept a
+ * `.rail-mail` box (`padding: 14px 8px 0`) around nothing, a dead band under the Command row
+ * on every dismissed install (owner report 2026-08-29, measured live at 14px + the rail's own
+ * 18px). The component that decides whether the slot exists must be the one that knows whether
+ * anything will be in it.
  */
-export function DesktopCta({ href, label, dismissLabel }: { href: string; label: string; dismissLabel: string }) {
-  const [dismissed, setDismissed] = useState(false);
-  useEffect(() => {
-    try {
-      if (localStorage.getItem(DESKTOP_CTA_DISMISSED) === "1") setDismissed(true);
-    } catch {
-      // A blocked or absent localStorage just means the line stays offerable — never a throw.
-    }
-  }, []);
-  if (dismissed) return null;
+export function DesktopCta({ href, label, dismissLabel, onDismiss }: {
+  href: string;
+  label: string;
+  dismissLabel: string;
+  onDismiss: () => void;
+}) {
   return (
     <div className="rail-desktop-cta">
       <a className="rail-desktop-cta-link" href={href} target="_blank" rel="noopener noreferrer">
@@ -568,14 +577,7 @@ export function DesktopCta({ href, label, dismissLabel }: { href: string; label:
         type="button"
         className="rail-desktop-cta-x"
         aria-label={dismissLabel}
-        onClick={() => {
-          setDismissed(true);
-          try {
-            localStorage.setItem(DESKTOP_CTA_DISMISSED, "1");
-          } catch {
-            // Dismissal that cannot persist still hides the line for this session.
-          }
-        }}
+        onClick={onDismiss}
       >
         <span aria-hidden="true">×</span>
       </button>
@@ -1128,6 +1130,15 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
   // every door that has one: the Cloud client, the desktop window, the served host-client.
   // See `PullNewMail.tsx`.
   const pullBinding = usePullNewMail(mailboxFacts);
+  /* THE DESKTOP PROMPT'S DISMISSAL, HELD WHERE THE FOOTER SLOT IS DECIDED. `DesktopCta` used to
+     read this flag itself and answer it with `null` — leaving the rail's `.rail-mail` box
+     standing around nothing, a 14px dead band under the Command row on every dismissed install
+     (see `DesktopCta`'s header). Post-mount read (`usePersistedFlag`), so a server pass and its
+     hydration agree; the one-frame appearance of the prompt on a dismissed install is the same
+     flash the in-component read always had — now the box leaves with it. */
+  const [desktopCtaDismissed, dismissDesktopCta] = usePersistedFlag(DESKTOP_CTA_DISMISSED, false);
+  const desktopCtaShown =
+    showDesktopCta({ demo, desktop: desktopSection != null }) && !desktopCtaDismissed;
   const now = useMemo(() => (demo ? DEMO_NOW : new Date()), [demo]);
 
   /* ── consent: what is PRESENTED, as opposed to where it sits ────────────────────────────
@@ -5513,18 +5524,24 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
               </>
             }
             /* The account line at the foot of the rail — and, in the signed-in BROWSER only, the
-               quiet "Get ohmail for desktop" prompt (never in the desktop app, never the demo:
-               see `showDesktopCta`). The two do not coexist — `account` is a demo-only fixture
-               (`/sync` emits no `view_meta`), and the prompt shows only when `!demo`. */
+               quiet "Get ohmail for desktop" prompt (never in the desktop app, never the demo,
+               never once dismissed: see `desktopCtaShown` above). The two do not coexist —
+               `account` is a demo-only fixture (`/sync` emits no `view_meta`), and the prompt
+               shows only when `!demo`. `undefined` when NOTHING will render, and that is the
+               contract this expression carries: `RailNav` keeps a padded `.rail-mail` box for
+               any truthy footer, so a footer whose every child renders null is a dead band
+               under the Command row — the exact defect the dismissal used to cause from inside
+               `DesktopCta`. */
             footer={
-              account?.email || showDesktopCta({ demo, desktop: desktopSection != null }) ? (
+              account?.email || desktopCtaShown ? (
                 <>
                   {account?.email ? <span className="rail-mail-addr">{account.email}</span> : null}
-                  {showDesktopCta({ demo, desktop: desktopSection != null }) ? (
+                  {desktopCtaShown ? (
                     <DesktopCta
                       href="/#download"
                       label={t("rail.getDesktop")}
                       dismissLabel={t("rail.getDesktopDismiss")}
+                      onDismiss={() => dismissDesktopCta(true)}
                     />
                   ) : null}
                 </>
