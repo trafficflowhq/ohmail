@@ -585,8 +585,19 @@ export function DesktopCta({ href, label, dismissLabel, onDismiss }: {
   );
 }
 
-function ShellRail({ groups, ...rest }: RailNavProps) {
+function ShellRail({ groups, footer, offerDesktopCta, ...rest }: RailNavProps & {
+  /**
+   * Is the "Get ohmail for desktop" prompt on offer at all (the pure platform branch —
+   * `showDesktopCta`)? The DISMISSAL is this component's own state, held HERE for `tagsOpen`'s
+   * exact reason: `usePersistedFlag`'s post-mount read is a state write, and on the shell it
+   * re-rendered the active hundreds-of-rows view once per mount on EVERY install that had
+   * dismissed the prompt — plus once more on the × itself. Down here it re-renders the rail.
+   */
+  offerDesktopCta?: boolean;
+}) {
+  const t = useTranslations();
   const [tagsOpen, setTagsOpen] = usePersistedFlag(UI_KEYS.tagsOpen, true);
+  const [ctaDismissed, dismissCta] = usePersistedFlag(DESKTOP_CTA_DISMISSED, false);
   const withTagState = useMemo<RailGroup[]>(
     () =>
       groups.map((g) =>
@@ -594,7 +605,26 @@ function ShellRail({ groups, ...rest }: RailNavProps) {
       ),
     [groups, tagsOpen, setTagsOpen],
   );
-  return <RailNav groups={withTagState} {...rest} />;
+  /* The footer slot is DECIDED where the last of its contents is known: `RailNav` keeps a
+     padded `.rail-mail` box around any truthy footer, so this must be `undefined` — not an
+     empty fragment — when neither the account line nor a live prompt will render. The old
+     arrangement had `DesktopCta` answer its dismissal with `null` from inside the slot, and
+     the box stood empty under the Command row (measured live at 14px). */
+  const cta = offerDesktopCta && !ctaDismissed ? (
+    <DesktopCta
+      href="/#download"
+      label={t("rail.getDesktop")}
+      dismissLabel={t("rail.getDesktopDismiss")}
+      onDismiss={() => dismissCta(true)}
+    />
+  ) : null;
+  const fullFooter = footer || cta ? (
+    <>
+      {footer}
+      {cta}
+    </>
+  ) : undefined;
+  return <RailNav groups={withTagState} {...rest} footer={fullFooter} />;
 }
 
 /**
@@ -1130,15 +1160,6 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
   // every door that has one: the Cloud client, the desktop window, the served host-client.
   // See `PullNewMail.tsx`.
   const pullBinding = usePullNewMail(mailboxFacts);
-  /* THE DESKTOP PROMPT'S DISMISSAL, HELD WHERE THE FOOTER SLOT IS DECIDED. `DesktopCta` used to
-     read this flag itself and answer it with `null` — leaving the rail's `.rail-mail` box
-     standing around nothing, a 14px dead band under the Command row on every dismissed install
-     (see `DesktopCta`'s header). Post-mount read (`usePersistedFlag`), so a server pass and its
-     hydration agree; the one-frame appearance of the prompt on a dismissed install is the same
-     flash the in-component read always had — now the box leaves with it. */
-  const [desktopCtaDismissed, dismissDesktopCta] = usePersistedFlag(DESKTOP_CTA_DISMISSED, false);
-  const desktopCtaShown =
-    showDesktopCta({ demo, desktop: desktopSection != null }) && !desktopCtaDismissed;
   const now = useMemo(() => (demo ? DEMO_NOW : new Date()), [demo]);
 
   /* ── consent: what is PRESENTED, as opposed to where it sits ────────────────────────────
@@ -5523,30 +5544,21 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
                 <SyncBar variant="rail" />
               </>
             }
-            /* The account line at the foot of the rail — and, in the signed-in BROWSER only, the
-               quiet "Get ohmail for desktop" prompt (never in the desktop app, never the demo,
-               never once dismissed: see `desktopCtaShown` above). The two do not coexist —
-               `account` is a demo-only fixture (`/sync` emits no `view_meta`), and the prompt
-               shows only when `!demo`. `undefined` when NOTHING will render, and that is the
-               contract this expression carries: `RailNav` keeps a padded `.rail-mail` box for
-               any truthy footer, so a footer whose every child renders null is a dead band
-               under the Command row — the exact defect the dismissal used to cause from inside
-               `DesktopCta`. */
+            /* The account line at the foot of the rail. The "Get ohmail for desktop" prompt
+               shares that slot in the signed-in BROWSER only, and it travels as the PURE
+               platform branch (`offerDesktopCta` — never the desktop app, never the demo);
+               its DISMISSAL is `ShellRail`'s own persisted state, held down there so the
+               post-mount storage read re-renders the rail and not this whole component (see
+               `ShellRail`). The two contents do not coexist — `account` is a demo-only fixture
+               (`/sync` emits no `view_meta`), and the prompt shows only when `!demo`.
+               `ShellRail` hands `RailNav` an `undefined` footer when NOTHING will render:
+               `RailNav` keeps a padded `.rail-mail` box for any truthy footer, so a footer
+               whose every child renders null is a dead band under the Command row — the exact
+               defect the dismissal used to cause from inside `DesktopCta`. */
             footer={
-              account?.email || desktopCtaShown ? (
-                <>
-                  {account?.email ? <span className="rail-mail-addr">{account.email}</span> : null}
-                  {desktopCtaShown ? (
-                    <DesktopCta
-                      href="/#download"
-                      label={t("rail.getDesktop")}
-                      dismissLabel={t("rail.getDesktopDismiss")}
-                      onDismiss={() => dismissDesktopCta(true)}
-                    />
-                  ) : null}
-                </>
-              ) : undefined
+              account?.email ? <span className="rail-mail-addr">{account.email}</span> : undefined
             }
+            offerDesktopCta={showDesktopCta({ demo, desktop: desktopSection != null })}
             ariaLabel={t("rail.ariaMain")}
           />
 
