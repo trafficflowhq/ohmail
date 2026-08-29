@@ -169,6 +169,14 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL_SESSION: postgres://ohmail:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/ohmail
+      # WHO THIS ORGANIZER IS, in every mailbox's `ohmail/_meta` claim. REQUIRED, and unique
+      # per install: without a value the worker's default identity is the one the HOSTED
+      # service runs under, and two organizers sharing a name read each other's claims as
+      # their own — dual organizing, the exact failure the claim exists to prevent, reached
+      # the first time a mailbox that ohmail Cloud (or a second install) ever organized is
+      # connected here. Generated once at install (`.env.example` shows the command) and
+      # never changed: this install's claims are recognised as its own by this value.
+      TF_ORGANIZER_INSTALL_ID: ${TF_ORGANIZER_INSTALL_ID:?set TF_ORGANIZER_INSTALL_ID in .env — this install's unique organizer identity, e.g. ohmail-selfhost:<openssl rand -hex 6>}
       # The SAME key ring as the api — the /health responses of the two carry a ring
       # fingerprint precisely so an operator can prove they agree.
       TF_KEK_V1: ${TF_KEK_V1:?set TF_KEK_V1 in .env}

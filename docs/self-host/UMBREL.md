@@ -157,8 +157,12 @@ matter, in order:
 
 1. **The generated secrets** — one small file at
    `~/umbrel/app-data/ohmail/data/env/secrets.env`. It holds the key that
-   encrypts your mailbox credentials; copy it into a password manager the day
-   you install. Lose it and every mailbox has to be re-entered. If you ever
+   encrypts your mailbox credentials, and this install's organizer identity
+   (`TF_ORGANIZER_INSTALL_ID` — its name in every connected mailbox's
+   `ohmail/_meta` claim; restore it with the file, or the rebuilt install
+   reads its own previous claims as a stranger's and each mailbox waits for
+   another "Organize here"); copy it into a password manager the day
+   you install. Lose the key and every mailbox has to be re-entered. If you ever
    rotate the key — [BACKUP.md](./BACKUP.md#rotating-the-key) has the
    mechanics, and they add a second key version to this same file while
    keeping the first — copy the file again afterwards. A key version that

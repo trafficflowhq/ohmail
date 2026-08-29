@@ -50,9 +50,9 @@ cd ohmail/deploy/selfhost
 cp .env.example .env
 ```
 
-Open `.env` in an editor. Four values are required; the file documents every
+Open `.env` in an editor. Five values are required; the file documents every
 one beside where you type it, and everything not marked required has a
-working default. The four:
+working default. The five:
 
 - **`OHMAIL_ORIGIN`** — the address from step 2, scheme and host only:
   `https://mail.example.com`. This value derives the cookie host and the
@@ -65,6 +65,13 @@ working default. The four:
   mailbox has to be re-entered. See [BACKUP.md](./BACKUP.md).
 - **`MINIO_ROOT_PASSWORD`** — the attachment-staging store's credential.
   `openssl rand -hex 24`. It never leaves the box, but pick a real value.
+- **`TF_ORGANIZER_INSTALL_ID`** — this install's organizer identity, the name
+  its claim carries inside each connected mailbox (`ohmail/_meta`). That claim
+  is how every ohmail — this server, the hosted service, a desktop install —
+  agrees on who organizes a mailbox, so the name must be unique to this
+  install. Generate it once, `echo "ohmail-selfhost:$(openssl rand -hex 6)"`,
+  and never change it: a changed name makes the server read its own previous
+  claims as a stranger's, and every mailbox waits for another "Organize here".
 
 Two optional blocks worth deciding now:
 
@@ -239,6 +246,20 @@ docker compose pull && docker compose up -d
 ```
 
 The server applies any schema changes at boot, before it starts listening.
+
+**One-time, updating an install created before the organizer identity was
+required:** newer compose files refuse to start without
+`TF_ORGANIZER_INSTALL_ID` in `.env` (the refusal names the variable). Mint
+it once and keep it forever:
+
+```sh
+echo "TF_ORGANIZER_INSTALL_ID=ohmail-selfhost:$(openssl rand -hex 6)" >> .env
+```
+
+It is this install's name in every connected mailbox's `ohmail/_meta`
+claim. Older stacks ran under a shared default name; after this update each
+already-connected mailbox may ask for one "Organize here" confirmation, and
+then stays organized under the install's own name.
 
 ## External database or storage
 

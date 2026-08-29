@@ -64,9 +64,11 @@ Plainly, so you can decide with open eyes:
 
 Every path lands on the same stack, so every guide shares the same facts:
 
-- **Four required values**, set once in `.env`: your origin, a database
-  password, the encryption key for mailbox credentials at rest, and the
-  staging-store password. Everything else has a working default. The
+- **Five required values**, set once in `.env`: your origin, a database
+  password, the encryption key for mailbox credentials at rest, the
+  staging-store password, and this install's organizer identity — its
+  name in every connected mailbox's `ohmail/_meta` claim, generated once
+  and never changed. Everything else has a working default. The
   authoritative list, with a sentence beside each value, is
   [`deploy/selfhost/.env.example`](../../deploy/selfhost/.env.example).
 - **First boot migrates the database, then prints a one-time setup token**

@@ -35,8 +35,12 @@ StartOS package translates them, it does not re-decide them.
 - **Configuration** — StartOS has what umbrelOS lacks: a real config UI. The spec
   maps the `.env` contract in `deploy/selfhost/.env.example` one to one: the
   origin is the one required user-facing value; the database password, the
-  credential-encryption key (`TF_KEK_V1`, 64 hex chars), and the staging-store
-  password are generated; SMTP, the Microsoft OAuth block (all four values,
+  credential-encryption key (`TF_KEK_V1`, 64 hex chars), the staging-store
+  password and the install's organizer identity (`TF_ORGANIZER_INSTALL_ID` —
+  generated once, unique per install, never regenerated: it is this install's
+  name in every connected mailbox's `ohmail/_meta` claim, and the umbrel
+  hook's generated-once secrets are the pattern) are generated; SMTP, the
+  Microsoft OAuth block (all four values,
   including the redirect URI), the AI key, the private-network probe
   allowance (`TF_PROBE_ALLOW_PRIVATE=1`) and the private-network push-endpoint
   allowance (`TF_PUSH_ALLOW_PRIVATE=1`, for a UnifiedPush distributor on the

@@ -419,7 +419,7 @@ unmetered on a self-host install.
 ```bash
 git clone https://github.com/trafficflowhq/ohmail.git
 cd ohmail/deploy/selfhost
-cp .env.example .env      # four required values; the file explains each
+cp .env.example .env      # five required values; the file explains each
 docker compose up -d
 docker compose logs api   # the first-run setup token is printed here, once
 ```

@@ -93,7 +93,20 @@ if [[ ! -f "${SECRETS}" ]]; then
 POSTGRES_PASSWORD=$(rand_hex 24)
 TF_KEK_V1=$(rand_hex 32)
 MINIO_ROOT_PASSWORD=$(rand_hex 24)
+TF_ORGANIZER_INSTALL_ID=ohmail-selfhost:$(rand_hex 6)
 EOF
+fi
+
+# ── upgrade backfill: installs whose secrets.env predates the organizer identity ────
+# TF_ORGANIZER_INSTALL_ID is this install's name in every connected mailbox's
+# `ohmail/_meta` claim. Generated-once like the secrets above (a changed value makes the
+# organizer read its own previous claims as a stranger's), and REQUIRED to be unique per
+# install: the worker's built-in default is the identity the hosted service runs under,
+# and two organizers sharing one name read each other's claims as their own — dual
+# organizing, the failure the claim exists to prevent. Appended rather than regenerated
+# so an existing install keeps every value it already has.
+if ! grep -q '^TF_ORGANIZER_INSTALL_ID=' "${SECRETS}"; then
+  echo "TF_ORGANIZER_INSTALL_ID=ohmail-selfhost:$(rand_hex 6)" >> "${SECRETS}"
 fi
 
 # shellcheck disable=SC1090
@@ -138,6 +151,7 @@ EOF
 # attachment objects, and a mismatched block would grow the bucket without bound.
 cat > "${ENV_DIR}/organizer.env" <<EOF
 DATABASE_URL_SESSION=postgres://ohmail:${POSTGRES_PASSWORD}@${DB_HOST}:5432/ohmail
+TF_ORGANIZER_INSTALL_ID=${TF_ORGANIZER_INSTALL_ID}
 $(ring_lines)
 $(storage_lines)
 EOF

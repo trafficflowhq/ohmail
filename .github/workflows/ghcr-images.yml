@@ -176,7 +176,7 @@ jobs:
           fi
 
   # The boot gate: what the README tells a stranger must work from the PUBLIC tree with the
-  # images this run just staged — clone, copy the env template, fill the four required
+  # images this run just staged — clone, copy the env template, fill the five required
   # values, `docker compose up -d`, and the stack answers. Runs BEFORE promotion, so a
   # release that cannot boot never moves a public tag. Pulls authenticate: whether a stranger
   # can pull is gate-visibility's question, not this one's.
@@ -217,6 +217,7 @@ jobs:
             echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)"
             echo "TF_KEK_V1=$(openssl rand -hex 32)"
             echo "MINIO_ROOT_PASSWORD=$(openssl rand -hex 16)"
+            echo "TF_ORGANIZER_INSTALL_ID=ohmail-selfhost:smoke-$(openssl rand -hex 6)"
             echo "OHMAIL_IMAGE_TAG=$STAGE_TAG"
           } >> .env
           docker compose config -q
