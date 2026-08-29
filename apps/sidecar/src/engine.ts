@@ -18,10 +18,12 @@ import {
   attachmentsService, awayResponderService, contactsService, draftingService, draftsService,
   kbService, runScheduledSendPass, scheduleService, tagsService,
   makeApprovalService, makeAuthConfig, makeMailboxService, makePrivacyService,
-  makeScreenerService, messageService, notifyRulesService, resolveSession,
+  makeScreenerService, makeUnsubscribeService, messageService, nodeHostResolver,
+  nodeOneClickPost, notifyRulesService, resolveSession,
   rulesService, searchService, sendService, snippetsService, syncService, threadService,
-  triageService, workflowsService, ServiceError,
-  type AuthConfig, type HostResolver, type MailboxAllowancePolicy, type PushService, type RemoteFetch,
+  triageService, workflowsService, ServiceError, type UnsubscribeService,
+  type AuthConfig, type HostResolver, type MailboxAllowancePolicy, type OneClickPost,
+  type PushService, type RemoteFetch,
 } from "@trafficflow/services/mail";
 /* The session LIFECYCLE — the machinery half of the hosted auth service (establish, refresh
  * rotation with reuse detection, family revocation, devices, the paired-device mint), from the
@@ -167,6 +169,18 @@ export interface SidecarConfig {
   keks?: Record<number, Buffer>;
   /** Injected for tests; production dials a real server. */
   adapterFactory?: (cfg: ImapConfig) => MailboxAdapter;
+  /**
+   * TEST SEAM for the one-click unsubscribe POST — with `fetchImpl` below, one of the exactly
+   * TWO ways this process reaches a network that is not the mailbox, and both exist so a test
+   * can count what left the machine rather than read the code and believe it. Production passes
+   * nothing and gets `nodeOneClickPost`: the pinned, redirect-refusing, body-discarding client
+   * the hosted API sends the same request with. The URL it posts to has already passed the same
+   * SSRF gate (`assertPublicHttpUrl` over real DNS) — a desktop machine sits INSIDE somebody's
+   * home network, so a List-Unsubscribe header naming a LAN address is refused here for the same
+   * reason it is refused in Cloud, and unlike the probe's `ALLOW_ANY_PROBE_HOST` this URL is the
+   * SENDER'S choice, never the user's own server.
+   */
+  oneClickPost?: OneClickPost;
   /**
    * TEST SEAM for the ONE thing in this process that reaches a network other than the mailbox:
    * the model endpoint its owner configured. Production passes nothing and the platform's own
@@ -556,6 +570,7 @@ function localServices(
   authConfig: AuthConfig,
   keyProvider: KeyProvider,
   openSendAdapter: OpenSendAdapter,
+  unsubscribe: UnsubscribeService,
   ai?: LocalAi,
 ): ApiServices {
   const classifier = ai?.classifier();
@@ -616,7 +631,12 @@ function localServices(
     // The classifier reaches the SUGGEST half only; the read half is constructed without one and
     // could not call a model even through a cast. `credits` stays absent — this tier is free, so
     // there is no allowance to meter and an absent gate means unmetered rather than ungated.
-    screener: makeScreenerService(classifier ? { classifier } : {}),
+    //
+    // `unsubscribe` makes a screen-out on THIS door arm auto-unsubscribe exactly as it does on
+    // Cloud — the port was absent here for a release, which made the landing page's claim false
+    // on the standalone app and is why `landing-mailbox-truth.test.ts` reads this call site.
+    // FIRST in the literal: that guard's regex scans up to the first `)` of this expression.
+    screener: makeScreenerService({ unsubscribe, ...(classifier ? { classifier } : {}) }),
     // `drafting` is ALWAYS present and `drafter` only when there is a model, which is the pairing
     // the route expects rather than an oversight. The two are different things: `drafting`
     // assembles the sensitivity-safe context and stores the result, `drafter` is the model. The
@@ -630,6 +650,11 @@ function localServices(
     triage: triageService,
     search: searchService,
     privacy: makePrivacyService({ remote: REFUSING_REMOTE_FETCH, resolver: REFUSING_RESOLVER }),
+    // The SAME instance the screener's automatic pass uses, on the bag so the manual button —
+    // `POST /messages/:id/unsubscribe`, which `localRoutes` has mounted (answering 503
+    // `unsubscribe_unconfigured`) since the table landed — performs the request too. One
+    // instance, one record table, one at-most-once claim for both entries.
+    unsubscribe,
     contacts: contactsService,
     snippets: snippetsService,
     notify: notifyRulesService,
@@ -870,6 +895,34 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     if (hostStatic) await hostStatic.ready();
 
     /**
+     * ONE-CLICK UNSUBSCRIBE — the same service, the same gates, as the hosted API.
+     *
+     * Constructed ONCE (it only stores its deps) and handed to every per-request bag: the
+     * screener's automatic pass on a screen-out, and the manual `POST /messages/:id/unsubscribe`
+     * both go through it, sharing the `unsubscribe_records` at-most-once claim. Its three deps,
+     * each a deliberate reading of "this is a desktop":
+     *
+     *  · `post` — {@link nodeOneClickPost}, the pinned redirect-refusing client, or the config's
+     *    test seam. This is the second of the process's two non-mailbox egresses (the other is
+     *    the user's own model endpoint, `fetchImpl`).
+     *  · `resolver` — the REAL `node:dns`, NOT `REFUSING_RESOLVER`: the SSRF gate here protects
+     *    the user's own home network from a sender's `List-Unsubscribe` header naming a private
+     *    address, and a refusing resolver would refuse every legitimate unsubscribe with it.
+     *    The privacy proxy above keeps its refusal — remote CONTENT stays off until the
+     *    allow-list lands — but this URL is only ever POSTed to after a screen-out the user
+     *    performed, which is the consent the courtesy rides on.
+     *  · `trustedAuthservIdsFor` — `providerAuthservIds(config.imap.host)`, the same host string
+     *    this process dials, exactly as the sync loop resolves it (`syncDeps` below), so the two
+     *    paths cannot disagree about which provider serves the mailbox. Not the drizzle bridge:
+     *    this seam HOLDS the config, and the bridge exists for consumers that do not.
+     */
+    const unsubscribe = makeUnsubscribeService({
+      post: config.oneClickPost ?? nodeOneClickPost,
+      resolver: nodeHostResolver,
+      trustedAuthservIdsFor: async () => providerAuthservIds(config.imap.host),
+    });
+
+    /**
      * A FRESH `ApiDeps` PER REQUEST. `ApiDeps` is mutable by design — `withRequestId` writes
      * `requestId`, `withSession` writes `session`, `withIdempotency` writes `idempotency` — so a
      * shared object would leak one request's identity into the next. It is the same shape the
@@ -885,7 +938,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       // Rebuilt per request so the AI slots reflect what this install can do NOW — see
       // `localServices`. `openLocalSend` (below) is the send transport, resolving the sealed
       // credential fresh per send.
-      services: localServices(authConfig, keyProvider, openLocalSend, ai),
+      services: localServices(authConfig, keyProvider, openLocalSend, unsubscribe, ai),
       // BEARER ONLY. There is no browser here, so there is no ambient cookie to abuse — and with
       // `via` structurally unable to be "cookie", `withCsrf` becomes a no-op by construction
       // rather than by a check. Same posture as `api.ohmail.app`.
@@ -990,7 +1043,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       ...depsFor(),
       authConfig: hostAuthConfig,
       services: {
-        ...localServices(hostAuthConfig, keyProvider, openLocalSend, ai),
+        ...localServices(hostAuthConfig, keyProvider, openLocalSend, unsubscribe, ai),
         sendSurfaceMaxTotalBytes: HOST_SEND_MAX_TOTAL_BYTES,
       },
       hello: {
