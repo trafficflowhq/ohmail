@@ -758,6 +758,23 @@ function base64ToBytes(b64: string): Uint8Array | null {
 export const STALE_RESUME_MS = 5 * 60_000;
 
 /**
+ * THE STALE DRAIN ASKS FOR DENSE PAGES (INSTANT-ARCH §6.3 / §8 stage 3 — the backlog diet's
+ * client half). A backlog's dominant cost is PAGE COUNT, not page size: each `/sync` page is a
+ * serverless invocation with ~10 fixed sequential database round trips — measured p50 1,084 ms
+ * per 500-row page on the live path (2026-08-29), of which ~0.4 s no row could ever pay for —
+ * so a 1,500-row backlog at the default page size was four invocations (~5.1 s measured) where
+ * one dense page carries it whole. 2,000 is the server's own MAX_LIMIT (`sync-service.ts`), the
+ * most a page may say; asking for more would be clamped there anyway.
+ *
+ * Used ONLY when {@link OhmailEngine.isStaleResume} says this drain is a backlog catch-up (the
+ * same condition that fires the freshen), so the steady-state poll keeps the deployed shape and
+ * an explicit {@link EngineOptions.syncLimit} (the test seam) always wins. Payload stays modest:
+ * the server serves a stale span COALESCED (latest change per entity), and a measured 500-row
+ * page is ~0.25–0.5 MB, so the dense page is ~1–2 MB against the platform's 4.5 MB response cap.
+ */
+export const BACKLOG_PAGE_LIMIT = 2000;
+
+/**
  * The meta key under which a completed drain stamps its own clock — the mirror's record of "when
  * was this device last caught up", read by nothing but the staleness comparison above. Engine
  * clock on both sides (`opts.now`), never `serverTime`: cross-machine skew cannot touch a
@@ -1584,6 +1601,14 @@ export class OhmailEngine {
     // A STALE resume converges its newest page FIRST — see the method for the whole argument.
     // Before the loop, once per drain: the 410 branch re-enters the loop with a wiped mirror,
     // where the bootstrap snapshot below already owns "newest first".
+    //
+    // The staleness verdict is read ONCE, before the freshen (a completed freshen changes no
+    // stamp, but reading per page would let the loop's own completion flip the answer mid-
+    // drain), and it selects the page size for the WHOLE drain: a stale resume is a backlog
+    // catch-up and asks for {@link BACKLOG_PAGE_LIMIT} rows per page — see the constant for the
+    // measured arithmetic. An explicit {@link EngineOptions.syncLimit} always wins (the test
+    // seam), and a fresh resume keeps the server's default page, the deployed shape.
+    const staleResume = this.isStaleResume();
     await this.freshenStaleResume();
     for (;;) {
       // COLD MIRROR + A SNAPSHOT ROUTE ⇒ TAKE THE SNAPSHOT INSTEAD OF REPLAYING THE LOG.
@@ -1641,9 +1666,15 @@ export class OhmailEngine {
           rulesFirstDone = true;
           await this.drainRulesFirst();
         }
+        // The dense-page ask covers the RESUMED-incomplete-bootstrap replay too — that is a
+        // backlog by definition (an earlier session's since=0 fallback died mid-log), and it is
+        // read fresh per iteration because the 410 branch can turn a stale resume INTO one.
+        const backlogLimit = this.syncLimit !== undefined
+          ? this.syncLimit
+          : (staleResume || resumedIncomplete) ? BACKLOG_PAGE_LIMIT : undefined;
         resp = await this.adapter.sync({
           since: this.store.getCursor(),
-          ...(this.syncLimit !== undefined ? { limit: this.syncLimit } : {}),
+          ...(backlogLimit !== undefined ? { limit: backlogLimit } : {}),
           ...(this.types ? { types: this.types } : {}),
         });
       } catch (err) {
@@ -1917,11 +1948,28 @@ export class OhmailEngine {
    * the mailboxes that reported the symptom. Within a session the stamp always exists after the
    * first completed drain, so this arm fires at most once per pre-upgrade mirror.
    */
+  /**
+   * IS THIS DRAIN A STALE RESUME — a warm cursor whose last completed drain is older than
+   * {@link STALE_RESUME_MS} (or was never stamped, the pre-upgrade-mirror arm the freshen
+   * documents)? ONE predicate, two consumers with one condition by construction:
+   * {@link OhmailEngine.freshenStaleResume} decides whether to fetch the newest page first,
+   * and {@link OhmailEngine.drain} decides whether to ask for {@link BACKLOG_PAGE_LIMIT} pages
+   * — a freshen without the dense drain leaves the convergence tail, a dense drain without the
+   * freshen labels nothing, so the two firing on different verdicts would be a defect.
+   */
+  private isStaleResume(): boolean {
+    if (this.store.getCursor() === "0") return false; // a cold mirror is the bootstrap's, not ours
+    const stamp = this.store.getMeta<string>(LAST_DRAIN_AT_META);
+    if (stamp === undefined) return true;
+    const t = Date.parse(stamp);
+    // An unparseable stamp reads as stale, exactly as the freshen always read it: the stamp is
+    // this engine's own write, so corruption is answered by freshening and re-stamping.
+    return Number.isNaN(t) || this.now().getTime() - t > this.staleResumeMs;
+  }
+
   private async freshenStaleResume(): Promise<void> {
     if (!this.snapshotFn || this.snapshotUnavailable) return;
-    if (this.store.getCursor() === "0") return; // a cold mirror is the bootstrap's, not ours
-    const stamp = this.store.getMeta<string>(LAST_DRAIN_AT_META);
-    if (stamp !== undefined && this.now().getTime() - Date.parse(stamp) <= this.staleResumeMs) return;
+    if (!this.isStaleResume()) return;
     let page: SyncSnapshotPage;
     try {
       page = await this.snapshotFn({});

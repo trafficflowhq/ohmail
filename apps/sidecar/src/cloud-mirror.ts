@@ -184,6 +184,21 @@ const APPLY_ORDER: readonly EntityType[] = [
 ];
 
 const DEFAULT_PAGE_LIMIT = 500;
+
+/**
+ * THE STALE REPLAY'S PAGE SIZE (INSTANT-ARCH §6.3 / §8 stage 3 — the backlog diet's desktop
+ * half). A warm-stale resume's replay cost is PAGE COUNT: each `/sync` page is a hosted
+ * serverless invocation with ~10 fixed sequential round trips (measured p50 1,084 ms per
+ * 500-row page, 2026-08-29), so the replay behind a freshen asks for the server's MAX_LIMIT
+ * and carries the stage-2 scenario's whole 1,500-row backlog in one page instead of four. The
+ * server serves a stale span COALESCED (latest change per entity — `sync-service.ts`,
+ * `STALE_COALESCE_SPAN`), so the dense page's payload is bounded by the account's distinct
+ * churn, ~1–2 MB worst measured. Applies only to a warm-stale replay (`sweep === null` and the
+ * freshen's own staleness verdict): bootstraps keep their deployed page size — their replay is
+ * mark-and-sweep machinery this slice deliberately does not touch.
+ */
+const STALE_REPLAY_PAGE_LIMIT = 2000;
+
 const DEFAULT_BODIES_LIMIT = 100;
 
 /**
@@ -1469,6 +1484,14 @@ async function applyPage(
   now: Date,
   gen: BootstrapGen | null,
   known: ReadonlySet<string>,
+  /**
+   * When present, every change that ACTUALLY applied adds its wire identity (`type:id`) here —
+   * the stale-resume freshen's ledger of what it landed, which the replay behind it uses to
+   * skip the superseded copies (see `drainSync`). Applied-only on purpose: a row applyUpsert
+   * FK-skipped was NOT landed, so the replay must stay free to deliver it once its referent
+   * arrives.
+   */
+  appliedKeys?: Set<string>,
 ): Promise<number> {
   const changes: SyncChange[] = [
     ...resp.changes.creates, ...resp.changes.updates, ...resp.changes.moves, ...resp.changes.deletes,
@@ -1501,6 +1524,7 @@ async function applyPage(
           // drains as a DELETE. Re-keyed here so the doorbell that arrived rings instead of
           // tombstoning the very record it announces.
           await record(type, type === "settings" ? world.accountId : ch.id, ch.op, ch.move);
+          appliedKeys?.add(`${ch.type}:${ch.id}`);
           applied++;
         }
       }
@@ -1511,6 +1535,7 @@ async function applyPage(
         const detached: DetachedSurvivor[] = [];
         if (await applyDelete(tx, ch, detached)) {
           await record(type, ch.id, "delete");
+          appliedKeys?.add(`${ch.type}:${ch.id}`);
           // The survivors the delete DETACHED (a draft losing its reply target, a message losing
           // its thread) changed too, and the feed did not name them — see applyDelete's header.
           // Batched (not a per-row loop holding the seq counter), and CHUNKED (not one statement
@@ -1987,7 +2012,9 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
    * whichever phase delivered the page. Returns what it applied; the CALLER owns the cursor write
    * that follows, which is why the marks are flushed here and no cursor is.
    */
-  const landPage = async (body: SyncResponse, gen: BootstrapGen | null): Promise<number> => {
+  const landPage = async (
+    body: SyncResponse, gen: BootstrapGen | null, appliedKeys?: Set<string>,
+  ): Promise<number> => {
     /* A MAILBOX ADDED SINCE THE REFRESH AT THE TOP OF THIS PULL. The page is scanned BEFORE it is
        applied, so the extra request happens outside the page transaction rather than inside one —
        a network call under an open transaction is how a slow hop becomes a held lock. Once per
@@ -2014,7 +2041,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       sawDeletes = true;
       hostedCounts = new Map();
     }
-    const applied = await applyPage(cfg.db, cfg.world, body, now(), gen, knownMailboxes);
+    const applied = await applyPage(cfg.db, cfg.world, body, now(), gen, knownMailboxes, appliedKeys);
     // AFTER the commit: the generation's marks land BEFORE either cursor moves past the page they
     // describe — the ordering {@link BootstrapGen.flush} rests on.
     gen?.flush();
@@ -2161,13 +2188,24 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
    * Freshness is an optimization; the replay is the contract. Any refusal, malformed body, or
    * transport failure costs the head start and nothing else — logged, never counted against
    * {@link WINDOW_REFUSALS_MAX} (that count is the bootstrap window's), never fatal to the pull.
+   *
+   * ── WHAT IT RETURNS: THE LEDGER OF WHAT IT LANDED (stage 3, the backlog diet) ────────────────
+   *
+   * On a landed freshen: the wire identities it ACTUALLY applied plus the snapshot's `asOfSeq`.
+   * The replay behind it skips any change for one of those identities at `seq ≤ asOfSeq` — the
+   * engine's older-or-equal seq guard, expressed for a mirror that has none: the freshen's copy
+   * IS the entity's state at `asOfSeq`, so every change at or below that point is a superseded
+   * copy of the same upsert, and re-applying it here is pure PGlite work (measured: the serial
+   * apply is the desktop replay's dominant cost). Applied-only, so an FK-skipped row stays
+   * deliverable; `null` on a deferred/failed/not-stale freshen, and the replay then applies
+   * everything exactly as before.
    */
-  const freshenStaleResume = async (): Promise<void> => {
-    if (aborted) return;
+  const freshenStaleResume = async (): Promise<{ keys: Set<string>; asOfSeq: number } | null> => {
+    if (aborted) return null;
     const stamp = cursor.lastDrainAt;
     if (stamp !== null) {
       const t = Date.parse(stamp);
-      if (!Number.isNaN(t) && now().getTime() - t <= CLOUD_STALE_RESUME_MS) return;
+      if (!Number.isNaN(t) && now().getTime() - t <= CLOUD_STALE_RESUME_MS) return null;
     }
     try {
       const q = new URLSearchParams({ limit: String(pageLimit) });
@@ -2186,7 +2224,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
           reason: "the hosted snapshot did not answer the stale-resume freshen; the replay from " +
             "the committed cursor still converges, only later at the top",
         });
-        return;
+        return null;
       }
       const page: SyncResponse = {
         changes: { creates: snap.changes, updates: [], moves: [], deletes: [] },
@@ -2194,7 +2232,8 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         hasMore: false,
         serverTime: now().toISOString(),
       };
-      const landed = await landPage(page, null);
+      const appliedKeys = new Set<string>();
+      const landed = await landPage(page, null, appliedKeys);
       reachable = true;
       cfg.log?.("cloud_freshen_applied", {
         count: landed,
@@ -2217,6 +2256,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
           });
         }
       }
+      return { keys: appliedKeys, asOfSeq: snap.asOfSeq };
     } catch (err) {
       cfg.log?.("cloud_freshen_deferred", {
         // Raw, for the class+code reduction — see the bodies deferral above.
@@ -2224,6 +2264,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         reason: "the stale-resume freshen did not complete; the replay from the committed cursor " +
           "still converges, only later at the top",
       });
+      return null;
     }
   };
 
@@ -2301,7 +2342,13 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     // once per drain, and only outside a bootstrap (whose window owns "newest first" and whose
     // sweep would eat unmarked rows — see the method). `stale-resume` in `cloud-mirror.test.ts`
     // watches the gate and the ordering red.
-    if (sweep === null) await freshenStaleResume();
+    //
+    // The freshen's return value is the backlog diet's second half (stage 3): the ledger of
+    // what it landed, at what point. The replay below then (a) asks for DENSE pages — the
+    // server coalesces a stale span, so page count is the cost that matters — and (b) skips
+    // every change the ledger supersedes, because re-upserting a row the freshen just wrote is
+    // the measured majority of the desktop replay's serial PGlite work.
+    const freshened = sweep === null ? await freshenStaleResume() : null;
     for (;;) {
       // BETWEEN PAGES, so a quit costs at most the page already in flight. `sweep: null` is the
       // load-bearing half: a bootstrap generation that stopped early has marked only part of the
@@ -2344,7 +2391,13 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       }
       const q = new URLSearchParams({
         since: cursor.sync || "0",
-        limit: String(pageLimit),
+        // A warm-STALE replay is a backlog catch-up and asks for the dense page — see
+        // {@link STALE_REPLAY_PAGE_LIMIT}. Keyed on the freshen's own verdict so the ask and
+        // the freshen can never fire on different staleness readings; a freshen that failed or
+        // found the mirror current leaves the deployed page size untouched. `sweep === null`
+        // too: a mid-drain 410 turns this drain INTO a bootstrap, and bootstraps keep their
+        // deployed shape (this slice does not touch mark-and-sweep behaviour).
+        limit: String(freshened !== null && sweep === null ? STALE_REPLAY_PAGE_LIMIT : pageLimit),
         types: CLOUD_SYNC_TYPES.join(","),
       });
       const res = await cfg.auth.authedFetch(`/sync?${q.toString()}`);
@@ -2380,7 +2433,35 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         continue;
       }
       if (!res.ok) throw new Error(`the hosted /sync answered HTTP ${res.status}`);
-      const body = (await res.json()) as SyncResponse;
+      let body = (await res.json()) as SyncResponse;
+      // ── THE FRESHEN-SUPERSESSION SKIP (stage 3) ──────────────────────────────────────────
+      //
+      // A change at `seq ≤ asOfSeq` for an identity the freshen LANDED is a superseded copy of
+      // the row already in the mirror — the freshen's copy is the entity's state AT `asOfSeq`,
+      // which reflects every change at or below it, tombstones included. Dropping it here is
+      // the engine's older-or-equal seq guard, expressed for a relational mirror that keeps no
+      // per-row seq. Anything newer than `asOfSeq` — and anything the freshen could not land —
+      // applies exactly as before, and the CURSOR still advances over what was skipped (the
+      // skip never touches `body.cursor`), which is sound for the same reason the guard is.
+      //
+      // `sweep === null` IS LOAD-BEARING, not belt-and-braces: a mid-drain 410 arms a fresh
+      // generation on this very drain while `freshened` still holds the pre-410 ledger, and a
+      // bootstrap page filtered by it would leave the skipped identities UNMARKED — the
+      // trailing sweep would then delete them as phantoms. A generation must mark everything
+      // the feed serves, so the skip exists only outside bootstraps.
+      if (freshened !== null && sweep === null) {
+        const superseded = (ch: SyncChange): boolean =>
+          ch.seq <= freshened.asOfSeq && freshened.keys.has(`${ch.type}:${ch.id}`);
+        body = {
+          ...body,
+          changes: {
+            creates: body.changes.creates.filter((c) => !superseded(c)),
+            updates: body.changes.updates.filter((c) => !superseded(c)),
+            moves: body.changes.moves.filter((c) => !superseded(c)),
+            deletes: body.changes.deletes.filter((c) => !superseded(c)),
+          },
+        };
+      }
       // The pre-scan, the apply and the marks flush are {@link landPage}'s — the window's pages
       // go through the identical sequence, which is what keeps the two phases one mirror.
       applied += await landPage(body, sweep);
