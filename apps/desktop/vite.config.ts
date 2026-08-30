@@ -538,8 +538,8 @@ export default defineConfig({
       { find: "@ohmail/client-engine", replacement: r("../../packages/client-engine/src/index.ts") },
       { find: "@ohmail/ui", replacement: r("../../packages/ui/src/index.ts") },
 
-      /* The calendar reader — with `folder-name` below, one of the TWO `@trafficflow/*`
-         specifiers that reach this bundle.
+      /* The calendar reader — with `folder-name` and `drain-policy` below, one of the THREE
+         `@trafficflow/*` specifiers that reach this bundle.
          It is imported by `packages/client-engine/src/engine.ts` and by the attachment strip
          and event card under `apps/webapp/app/components/`, all three of which are published.
          In THIS tree the specifier resolves without help, through the workspace link and
@@ -555,6 +555,14 @@ export default defineConfig({
          `FoldersRailGroup.tsx` is published shell. A browser-safe leaf (`types.ts` re-export,
          zero imports), resolved here for exactly `ics`'s reason. */
       { find: "@trafficflow/core/folder-name", replacement: r("../../packages/core/src/folder-name.ts") },
+      /* The mirrors' shared drain policy (INSTANT-ARCH §6.7) — the staleness threshold, the
+         dense-page limit and the three freshness states, held in ONE module so the client engine
+         and the desktop sidecar's mirror cannot drift. `packages/client-engine/src/engine.ts`
+         imports it, and that file is in this bundle, so the specifier has to resolve HERE for the
+         same reason `ics` does: in the published tree there is no workspace link and no
+         package.json beside the file, and Rollup would die at `vite build` on every platform.
+         A browser-safe leaf like the two above — zero imports, no store, no clock, no DOM. */
+      { find: "@trafficflow/core/drain-policy", replacement: r("../../packages/core/src/drain-policy.ts") },
     ],
   },
 

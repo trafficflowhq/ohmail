@@ -10,6 +10,16 @@ import {
   unsubscribeRecords,
 } from "@trafficflow/db/mail";
 import { BODIES_IDS_MAX } from "@trafficflow/services/mail";
+// THE SHARED DRAIN POLICY — the ONE definition of "is this mirror behind", of the three
+// freshness states, and of the dense-page limit, held with `packages/client-engine`
+// (INSTANT-ARCH §6.7, stage 7's first adopted responsibility). Dependency-free core source —
+// no store, no clock, no network, no DOM — on its own subpath for the reason `./ics` has one:
+// this process must NOT link `@ohmail/client-engine` itself, and it does not. See
+// `packages/core/package.json`'s `//drain-policy` note; `test/one-pipeline.test.ts` holds this
+// import to that subpath, and the Cloud census resolves it like every other workspace edge.
+import {
+  drainPageLimit, mirrorFreshness, mirrorStale, type MirrorFreshness,
+} from "@trafficflow/core/drain-policy";
 import type {
   ApprovalDTO, ChangeOp, DraftDTO, EntityType, MailboxDTO, MessageBodyBatchItem, MessageDTO,
   MessageStateDTO, Page, RoutingDecisionDTO, RuleDTO, SnapshotResponse, SyncChange, SyncResponse,
@@ -153,7 +163,7 @@ import type { Diagnostic } from "./log.js";
  * type out asks the server not to send it. Tag ASSIGNMENTS are not a type of their own — they ride
  * `message`, as `MessageDTO.labels`, which is why {@link applyUpsert} writes both from one change.
  */
-export const CLOUD_SYNC_TYPES: readonly EntityType[] = [
+export const CLOUD_SYNC_TYPES = [
   "message", "thread", "routing_decision", "approval",
   "draft", "rule", "message_state", "folder", "tag",
   /**
@@ -167,7 +177,36 @@ export const CLOUD_SYNC_TYPES: readonly EntityType[] = [
    * nothing, because its next `GET /consent` answers from the account itself.
    */
   "settings",
-];
+] as const satisfies readonly EntityType[];
+
+/**
+ * AND EVERY `EntityType` IS IN THAT LIST — a COMPILE-TIME assertion, in `src`, where it is
+ * actually compiled.
+ *
+ * `CLOUD_SYNC_TYPES` is sent as `?types=`, so it is a REQUEST as well as a description: a type
+ * left out asks the hosted feed not to send it, and the mirror then converges — correctly, by its
+ * own rules — on a mailbox that is missing a whole kind of state. That is not a hypothetical. The
+ * list shipped without `"tag"`, and the consequence was that a hosted account's tags never reached
+ * any desktop install; it needed a one-time repair pass (`repairStaleTags`) to heal the mirrors
+ * that had already committed a cursor past those rows. Nothing was red while it was wrong, because
+ * an under-asking client is indistinguishable from an account with no tags.
+ *
+ * So the union is the source and this is the check: add a member to `EntityType` without listing
+ * it here and `Exclude<…>` stops being `never`, the alias becomes the tuple below, and the
+ * assignment of `true` fails to compile with the missing member named in the error. `satisfies`
+ * above does the other direction — a listed type that is not an `EntityType` is a typo, and it
+ * fails there.
+ *
+ * The `as const` is load-bearing: with the old `readonly EntityType[]` annotation this file used
+ * to carry, `(typeof CLOUD_SYNC_TYPES)[number]` widens straight back to `EntityType` and the
+ * assertion below is vacuously true whatever the array contains.
+ */
+type CloudSyncTypeMissing = Exclude<EntityType, (typeof CLOUD_SYNC_TYPES)[number]>;
+type CloudSyncTypesAreComplete = [CloudSyncTypeMissing] extends [never] ? true
+  : { "EntityType missing from CLOUD_SYNC_TYPES — the desktop would never be sent it": CloudSyncTypeMissing };
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const cloudSyncTypesAreComplete: CloudSyncTypesAreComplete = true;
+void cloudSyncTypesAreComplete;
 
 /**
  * FK-safe application order for a page's non-deletes. A message references its thread, a triage
@@ -184,20 +223,6 @@ const APPLY_ORDER: readonly EntityType[] = [
 ];
 
 const DEFAULT_PAGE_LIMIT = 500;
-
-/**
- * THE STALE REPLAY'S PAGE SIZE (INSTANT-ARCH §6.3 / §8 stage 3 — the backlog diet's desktop
- * half). A warm-stale resume's replay cost is PAGE COUNT: each `/sync` page is a hosted
- * serverless invocation with ~10 fixed sequential round trips (measured p50 1,084 ms per
- * 500-row page, 2026-08-29), so the replay behind a freshen asks for the server's MAX_LIMIT
- * and carries the stage-2 scenario's whole 1,500-row backlog in one page instead of four. The
- * server serves a stale span COALESCED (latest change per entity — `sync-service.ts`,
- * `STALE_COALESCE_SPAN`), so the dense page's payload is bounded by the account's distinct
- * churn, ~1–2 MB worst measured. Applies only to a warm-stale replay (`sweep === null` and the
- * freshen's own staleness verdict): bootstraps keep their deployed page size — their replay is
- * mark-and-sweep machinery this slice deliberately does not touch.
- */
-const STALE_REPLAY_PAGE_LIMIT = 2000;
 
 const DEFAULT_BODIES_LIMIT = 100;
 
@@ -393,8 +418,9 @@ interface CursorState {
    * The sidecar's copy of the engine's `LAST_DRAIN_AT_META` (INSTANT-ARCH §6.6, one freshness
    * contract on every surface), and it is read by exactly two things:
    *
-   *  · {@link createCloudMirror}'s stale-resume freshen — a warm mirror resuming past
-   *    {@link CLOUD_STALE_RESUME_MS} fetches snapshot page 1 before its oldest-first replay;
+   *  · {@link createCloudMirror}'s stale-resume freshen — a warm mirror resuming past the
+   *    shared `STALE_RESUME_MS` (`@trafficflow/core/drain-policy`, which owns the threshold for
+   *    every surface) fetches snapshot page 1 before its oldest-first replay;
    *  · {@link CloudMirror.freshness} — what the desktop window's "as of <time> · catching up"
    *    label renders, over `GET /mirror/freshness`.
    *
@@ -405,25 +431,6 @@ interface CursorState {
    */
   lastDrainAt: string | null;
 }
-
-/**
- * WHEN A RESUMING MIRROR STOPS BEING "CURRENT" AND STARTS BEING "STALE" — the age of
- * {@link CursorState.lastDrainAt} beyond which the next pull fetches the newest page before
- * replaying its backlog, and beyond which {@link CloudMirror.freshness} reports `stale`.
- *
- * FIVE MINUTES — the same number as the engine's `STALE_RESUME_MS`, restated rather than
- * imported because this process deliberately links no client-engine code (the sidecar is the
- * server side of the desktop's pipe; the engine ships in the window). The sizing argument is
- * the engine constant's, transposed: below it, a running sidecar completes a pull at least
- * every {@link DEFAULT_CLOUD_POLL_MS} (20 s), so a healthy install's stamp is never more than
- * seconds old and the freshen costs a live process exactly nothing; above it, the process was
- * not running (the laptop was closed), the backlog is unknowable, and the price of guessing
- * wrong is asymmetric — a false positive is one extra `GET /sync/snapshot` page (~0.5 s
- * measured), a false negative is the newest week of mail landing at the END of an oldest-first
- * replay measured in tens of seconds (INSTANT-ARCH §3.1: the desktop is the surface where
- * "10–15 s to a current view" is architecturally expected without this).
- */
-export const CLOUD_STALE_RESUME_MS = 5 * 60_000;
 
 export interface CloudMirrorConfig {
   db: LocalDb;
@@ -518,7 +525,8 @@ export interface CloudMirror {
   /**
    * THE FRESHNESS CONTRACT'S VERDICT FOR THIS MIRROR (INSTANT-ARCH §6.6) — the same three
    * states the client engine's `freshness()` derives, from this mirror's own completion stamp
-   * ({@link CursorState.lastDrainAt}) against {@link CLOUD_STALE_RESUME_MS}:
+   * ({@link CursorState.lastDrainAt}) against the shared `STALE_RESUME_MS`
+   * (`@trafficflow/core/drain-policy`) — literally the same `mirrorFreshness` call:
    *
    *  · `unknown` — no pull has ever completed (a first bootstrap; a pre-freshen cursor file).
    *  · `stale`   — the last completed pull is older than the threshold. The local store is
@@ -531,7 +539,7 @@ export interface CloudMirror {
    * the honest "as of" on the desktop is THIS process's stamp against the hosted account,
    * never the window's own.
    */
-  freshness(): { state: "unknown" | "stale" | "current"; asOf: string | null };
+  freshness(): MirrorFreshness;
 }
 
 export const DEFAULT_CLOUD_POLL_MS = 20_000;
@@ -2169,8 +2177,9 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
    * opened the laptop for landed LAST — the one surface where "10–15 s to a current view" was
    * architecturally expected (§3.1).
    *
-   * So: when {@link CursorState.lastDrainAt} says no pull has completed within
-   * {@link CLOUD_STALE_RESUME_MS}, fetch `GET /sync/snapshot` page 1 — the account's live small
+   * So: when {@link CursorState.lastDrainAt} says no pull has completed within the shared
+   * `STALE_RESUME_MS` (`@trafficflow/core/drain-policy`), fetch `GET /sync/snapshot` page 1 —
+   * the account's live small
    * state plus the newest page of messages — and land it through the SAME {@link landPage} a
    * window page takes, before the replay's first `/sync` ask. One page, one round trip; the
    * newest screenful's bodies ride the window's own bounded ask behind it.
@@ -2213,11 +2222,11 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
    */
   const freshenStaleResume = async (): Promise<{ keys: Set<string>; asOfSeq: number } | null> => {
     if (aborted) return null;
-    const stamp = cursor.lastDrainAt;
-    if (stamp !== null) {
-      const t = Date.parse(stamp);
-      if (!Number.isNaN(t) && now().getTime() - t <= CLOUD_STALE_RESUME_MS) return null;
-    }
+    // THE SHARED STALENESS VERDICT — `mirrorStale`, the same call the engine's `isStaleResume`
+    // makes over its own stamp, absent-and-unparseable-are-stale arms included. The BOOTSTRAP
+    // gate is this driver's own (the caller passes `sweep === null`); "am I bootstrapping" is a
+    // fact about this mirror's generation file, not about the policy.
+    if (!mirrorStale(cursor.lastDrainAt, now())) return null;
     try {
       const q = new URLSearchParams({ limit: String(pageLimit) });
       const res = await cfg.auth.authedFetch(`/sync/snapshot?${q.toString()}`);
@@ -2402,13 +2411,14 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       }
       const q = new URLSearchParams({
         since: cursor.sync || "0",
-        // A warm-STALE replay is a backlog catch-up and asks for the dense page — see
-        // {@link STALE_REPLAY_PAGE_LIMIT}. Keyed on the freshen's own verdict so the ask and
+        // A warm-STALE replay is a backlog catch-up and asks for the dense page — the shared
+        // `BACKLOG_PAGE_LIMIT`, through `drainPageLimit`, which is the same decision the
+        // engine's drain makes. Keyed on the freshen's own verdict so the ask and
         // the freshen can never fire on different staleness readings; a freshen that failed or
         // found the mirror current leaves the deployed page size untouched. `sweep === null`
         // too: a mid-drain 410 turns this drain INTO a bootstrap, and bootstraps keep their
         // deployed shape (this slice does not touch mark-and-sweep behaviour).
-        limit: String(freshened !== null && sweep === null ? STALE_REPLAY_PAGE_LIMIT : pageLimit),
+        limit: String(drainPageLimit(freshened !== null && sweep === null, pageLimit)),
         types: CLOUD_SYNC_TYPES.join(","),
       });
       const res = await cfg.auth.authedFetch(`/sync?${q.toString()}`);
@@ -3224,19 +3234,11 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     // and the map is REPLACED rather than mutated on each counted refresh, so a reader can never
     // observe a half-built one.
     hostedCounts: () => hostedCounts,
-    freshness: () => {
-      const stamp = cursor.lastDrainAt;
-      if (stamp === null) return { state: "unknown" as const, asOf: null };
-      const t = Date.parse(stamp);
-      // An unparseable stamp is this process's own corrupted write: report unknown rather than
-      // a label with no time in it; the next completed pull re-stamps it. The engine's
-      // `freshness()` makes the same call for the same reason.
-      if (Number.isNaN(t)) return { state: "unknown" as const, asOf: null };
-      return {
-        state: now().getTime() - t > CLOUD_STALE_RESUME_MS ? ("stale" as const) : ("current" as const),
-        asOf: stamp,
-      };
-    },
+    // THE SHARED THREE-STATE DERIVATION — literally the function `OhmailEngine.freshness()`
+    // calls, over this mirror's own stamp and this process's own clock. One derivation, three
+    // renderers (the web ladder, the phone's wordmark line, the desktop window over
+    // `GET /mirror/freshness`), so a label can never disagree with a freshen.
+    freshness: () => mirrorFreshness(cursor.lastDrainAt, now()),
     async start() {
       // A first pull that fails is a bad network or an expired token, not a launch failure: the
       // mirror serves what it holds and the poll retries (on backoff). Scheduling regardless is what

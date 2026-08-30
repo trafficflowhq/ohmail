@@ -8,6 +8,14 @@ import { SearchIndex, type LocalSearchResult } from "./search.js";
 import { sendingMailboxId } from "./selectors.js";
 import { flattenResponse } from "./apply.js";
 import { MemoryMirrorStore, type EntityReader, type MirrorStore } from "./store.js";
+// THE SHARED DRAIN POLICY — the staleness threshold, the dense-page limit and the two
+// derivations over the drain stamp, held in one module with the desktop sidecar's mirror
+// (INSTANT-ARCH §6.7). A dependency-free core subpath, like `./ics` above; imported for local
+// use AND re-exported below, so this engine's public surface is unchanged while there is
+// exactly one definition of each.
+import {
+  drainPageLimit, mirrorFreshness, mirrorStale, STALE_RESUME_MS, type MirrorFreshness,
+} from "@trafficflow/core/drain-policy";
 import {
   CursorExpiredError,
   FOLDER_OF_VIEW,
@@ -742,73 +750,37 @@ function base64ToBytes(b64: string): Uint8Array | null {
 }
 
 /**
- * WHEN A RESUMING MIRROR STOPS BEING "CURRENT" AND STARTS BEING "STALE" — the age of the last
- * completed drain beyond which the next drain fetches the newest page before replaying its
- * backlog. See {@link OhmailEngine.freshenStaleResume} for the whole mechanism.
- *
- * Five minutes, sized from both directions. Below it: a visible tab settles a drain every eight
- * seconds, so a healthy tab's stamp is never more than seconds old and the freshness path costs
- * every open tab exactly nothing — the property `stale-resume-freshness.test.ts` pins. Above it:
- * a tab hidden for five minutes has issued zero syncs (the scheduler's visibility gate), its
- * backlog is unknowable from here, and the price of guessing wrong is asymmetric — a false
- * positive is one extra `GET /sync/snapshot` page (~0.5 s measured), a false negative is the
- * newest mail arriving at the END of an oldest-first replay that production measured in whole
- * minutes.
+ * THE DRAIN POLICY'S CONSTANTS, RE-EXPORTED — defined once in `@trafficflow/core/drain-policy`
+ * and shared with the desktop sidecar's mirror (INSTANT-ARCH §6.7, stage 7's first adopted
+ * responsibility, which retired the mirror's own copies of both). They
+ * are re-exported from here, rather than moved off the engine's public surface, because every
+ * consumer in the tree already imports them from `@ohmail/client-engine` and a policy module is
+ * not a reason to churn twenty call sites. The reasoning behind each number lives beside its
+ * definition.
  */
-export const STALE_RESUME_MS = 5 * 60_000;
-
-/**
- * THE STALE DRAIN ASKS FOR DENSE PAGES (INSTANT-ARCH §6.3 / §8 stage 3 — the backlog diet's
- * client half). A backlog's dominant cost is PAGE COUNT, not page size: each `/sync` page is a
- * serverless invocation with ~10 fixed sequential database round trips — measured p50 1,084 ms
- * per 500-row page on the live path (2026-08-29), of which ~0.4 s no row could ever pay for —
- * so a 1,500-row backlog at the default page size was four invocations (~5.1 s measured) where
- * one dense page carries it whole. 2,000 is the server's own MAX_LIMIT (`sync-service.ts`), the
- * most a page may say; asking for more would be clamped there anyway.
- *
- * Used ONLY when {@link OhmailEngine.isStaleResume} says this drain is a backlog catch-up (the
- * same condition that fires the freshen), so the steady-state poll keeps the deployed shape and
- * an explicit {@link EngineOptions.syncLimit} (the test seam) always wins. Payload stays modest:
- * the server serves a stale span COALESCED (latest change per entity), and a measured 500-row
- * page is ~0.25–0.5 MB, so the dense page is ~1–2 MB against the platform's 4.5 MB response cap.
- */
-export const BACKLOG_PAGE_LIMIT = 2000;
+export { STALE_RESUME_MS, BACKLOG_PAGE_LIMIT } from "@trafficflow/core/drain-policy";
 
 /**
  * The meta key under which a completed drain stamps its own clock — the mirror's record of "when
- * was this device last caught up", read by nothing but the staleness comparison above. Engine
- * clock on both sides (`opts.now`), never `serverTime`: cross-machine skew cannot touch a
- * comparison whose two operands come from the same clock.
+ * was this device last caught up", read by nothing but the staleness comparison in
+ * `@trafficflow/core/drain-policy`. Engine clock on both sides (`opts.now`), never `serverTime`:
+ * cross-machine skew cannot touch a comparison whose two operands come from the same clock.
+ *
+ * The sidecar's mirror keeps the SAME fact under `CursorState.lastDrainAt` in its cursor file —
+ * a different persistence, deliberately, because the two drivers own different stores; what they
+ * share is the comparison, not the place it is written.
  */
 export const LAST_DRAIN_AT_META = "lastDrainAt";
 
 /**
- * THE FRESHNESS CONTRACT'S THREE STATES (INSTANT-ARCH §6.6) — what a surface may say about the
- * age of the mirror it is rendering. Exactly three, and they must never be conflated:
+ * THE FRESHNESS CONTRACT'S THREE STATES, and the value a surface renders — re-exported from
+ * `@trafficflow/core/drain-policy`, where the derivation that produces them lives beside them.
  *
- *  · `unknown` — no drain has EVER completed over this mirror. A zero-row list is not "empty",
- *    it is unanswered; the surface owes a skeleton, never content and never an empty state.
- *  · `stale`   — a drain HAS completed, but longer ago than {@link STALE_RESUME_MS}. The mirror
- *    is renderable truth and MUST be rendered (frame one is local, always) — but it is truth
- *    as of {@link MirrorFreshness.asOf}, and the surface says so quietly ("as of 14:32 ·
- *    catching up") until a drain settles. Staleness labeled is honest; staleness silent is
- *    the bug this type exists to make unrepresentable.
- *  · `current` — the last completed drain is recent. Plain content, no label.
+ * `MirrorFreshness.asOf` is {@link LAST_DRAIN_AT_META} verbatim: the engine-clock instant of the
+ * last COMPLETED drain, or `null` exactly when `state` is `"unknown"`. Surfaces format it; they
+ * never parse meta themselves.
  */
-export type FreshnessState = "unknown" | "stale" | "current";
-
-/** See {@link OhmailEngine.freshness}. */
-export interface MirrorFreshness {
-  state: FreshnessState;
-  /**
-   * {@link LAST_DRAIN_AT_META} verbatim — the engine-clock instant of the last COMPLETED drain,
-   * or `null` exactly when `state` is `"unknown"`. Surfaces format it; they never parse meta
-   * themselves. A stamp that does not parse reports `"unknown"` rather than a label with no
-   * time in it: the stamp is this engine's own write, so an unparseable one is corruption, and
-   * the very next settled drain re-stamps it.
-   */
-  asOf: string | null;
-}
+export type { FreshnessState, MirrorFreshness } from "@trafficflow/core/drain-policy";
 
 export interface EngineOptions {
   adapter: EngineAdapter;
@@ -1689,7 +1661,7 @@ export class OhmailEngine {
         // read fresh per iteration because the 410 branch can turn a stale resume INTO one.
         const backlogLimit = this.syncLimit !== undefined
           ? this.syncLimit
-          : (staleResume || resumedIncomplete) ? BACKLOG_PAGE_LIMIT : undefined;
+          : drainPageLimit(staleResume || resumedIncomplete, undefined);
         resp = await this.adapter.sync({
           since: this.store.getCursor(),
           ...(backlogLimit !== undefined ? { limit: backlogLimit } : {}),
@@ -1977,12 +1949,10 @@ export class OhmailEngine {
    */
   private isStaleResume(): boolean {
     if (this.store.getCursor() === "0") return false; // a cold mirror is the bootstrap's, not ours
-    const stamp = this.store.getMeta<string>(LAST_DRAIN_AT_META);
-    if (stamp === undefined) return true;
-    const t = Date.parse(stamp);
-    // An unparseable stamp reads as stale, exactly as the freshen always read it: the stamp is
-    // this engine's own write, so corruption is answered by freshening and re-stamping.
-    return Number.isNaN(t) || this.now().getTime() - t > this.staleResumeMs;
+    // The COLD GATE above is this engine's own — "am I bootstrapping" is a fact about this
+    // store's cursor, not about the policy — and the stamp comparison below is the shared one
+    // the sidecar's mirror makes (`@trafficflow/core/drain-policy`), absent-is-stale arm and all.
+    return mirrorStale(this.store.getMeta<string>(LAST_DRAIN_AT_META), this.now(), this.staleResumeMs);
   }
 
   private async freshenStaleResume(): Promise<void> {
@@ -2352,19 +2322,12 @@ export class OhmailEngine {
    * either way.
    */
   freshness(): MirrorFreshness {
-    const stamp = this.store.getMeta<string>(LAST_DRAIN_AT_META);
-    let next: MirrorFreshness;
-    if (stamp === undefined) {
-      next = { state: "unknown", asOf: null };
-    } else {
-      const t = Date.parse(stamp);
-      next = Number.isNaN(t)
-        ? { state: "unknown", asOf: null }
-        : {
-            state: this.now().getTime() - t > this.staleResumeMs ? "stale" : "current",
-            asOf: stamp,
-          };
-    }
+    // The DERIVATION is `@trafficflow/core/drain-policy`'s, shared with the sidecar's
+    // `CloudMirror`; what stays here is the identity cache below, which is a React concern and
+    // not a policy one.
+    const next = mirrorFreshness(
+      this.store.getMeta<string>(LAST_DRAIN_AT_META), this.now(), this.staleResumeMs,
+    );
     if (next.state !== this.freshnessCache.state || next.asOf !== this.freshnessCache.asOf) {
       this.freshnessCache = next;
     }
