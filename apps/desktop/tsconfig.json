@@ -41,6 +41,19 @@
       "@tiptap/react": ["./node_modules/@tiptap/react"],
       "@tiptap/starter-kit": ["./node_modules/@tiptap/starter-kit"],
       "@tiptap/extension-link": ["./node_modules/@tiptap/extension-link"],
+      /* The ProseMirror surface under the editor — the line-scoped block commands in
+         RichEditor.tsx import `NodeSelection`/`TextSelection` and the position/node types
+         from these two subpaths. Same story as `/ics` and `/folder-name` below, third
+         verse: in this tree the workspace resolves them through apps/webapp's own
+         node_modules and these entries are inert, and in the published mirror they are the
+         ONLY resolver — the shared sources live at ../webapp with no node_modules beside
+         them, so the walk-up never reaches this project's copy. Their slice declared the
+         package in both manifests and missed this map, which failed the mirror's
+         `tsc --noEmit` on all three platforms while the monorepo's own gates stayed green.
+         The targets are the package's committed proxy dirs (`state/index.ts` re-exporting
+         prosemirror-state, likewise `model/`), present in the npm and pnpm layouts alike. */
+      "@tiptap/pm/state": ["./node_modules/@tiptap/pm/state"],
+      "@tiptap/pm/model": ["./node_modules/@tiptap/pm/model"],
       "@ohmail/tokens": ["../../packages/tokens/src/index.ts"],
       "@ohmail/fixtures": ["../../packages/fixtures/src/index.ts"],
       "@ohmail/client-engine": ["../../packages/client-engine/src/index.ts"],
