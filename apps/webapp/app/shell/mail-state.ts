@@ -272,11 +272,13 @@ export interface MailboxFacts {
    * device's.
    *
    * The one fact on this row that is deliberately about somewhere else, and it exists because
-   * the reader's question during a lag is a COMPARISON: how much of my mail is on this device?
-   * The numerator is {@link MailStateInputs.mirrored} (the local mirror) and this is the
-   * denominator. Reported from real use, 2026-08-21: a desktop install sat hundreds of messages
-   * behind the same account on the web with nothing on screen saying so, because every number
-   * the strip could see came from the copy that was behind.
+   * the reader's question is a COMPARISON: how much of my mail is on this device? The numerator
+   * is {@link MailStateInputs.mirrored} (the local mirror) and this is the denominator.
+   *
+   * TWO CONSUMERS, AND NEITHER OF THEM IS AN ALARM. The `importing` arm quotes the pair as
+   * progress while the mirror MOVES, and the Mailboxes pane states it at rest as a quiet fact
+   * about a windowed copy ({@link deviceHoldings}). It had a third — the `behind` strip state,
+   * a standing warning triangle — which was removed on 2026-08-30; `deviceHoldings` carries why.
    *
    * ── IT IS NOT `messageCount`, AND THE NAME IS THE WHOLE POINT ───────────────────────────
    *
@@ -291,8 +293,8 @@ export interface MailboxFacts {
    * {@link MailboxFacts.pendingMoves} states: absent means "this build cannot tell", never `0`.
    * A `?? 0` at any seam would make an unknowable denominator look like an emptied account. The
    * hosted Cloud client never sends it — asking `GET /mailboxes` for counts on a 30 s heartbeat
-   * is the full-table aggregate that route's own doc-block refuses — so on a browser tab the
-   * arms below are simply unreachable, which is the intended shape rather than a gap.
+   * is the full-table aggregate that route's own doc-block refuses — so on a browser tab every
+   * consumer of it is simply unreachable, which is the intended shape rather than a gap.
    */
   hostedMessageCount?: number;
   /**
@@ -402,6 +404,104 @@ export function hostedTotal(mailboxes: readonly MailboxFacts[]): number | null {
   return sum;
 }
 
+/**
+ * **WHAT THIS DEVICE HOLDS, AGAINST WHAT THE ACCOUNT HOLDS** — the pair, or `null` when no
+ * sentence may quote one.
+ *
+ * ── THIS IS NOT AN ALARM, AND IT USED TO BE ─────────────────────────────────────────────────
+ *
+ * There was a strip state for this pair — `behind`, a warning triangle at the foot of the rail
+ * reading "This device holds N of the account's M messages", standing for as long as the two
+ * numbers differed. It was removed after a field report that it reads as a constant warning
+ * rather than as information, and the reason it went is not taste:
+ *
+ *  · A DIFFERENCE BETWEEN THE TWO NUMBERS IS THE NORMAL SHAPE OF THIS PRODUCT. The desktop's
+ *    Cloud mirror is a window over the hosted account — `apps/sidecar/src/cloud-read.ts` says
+ *    so at the `GET /messages` hole in its read table — and the mail outside the window is
+ *    reachable on demand through the reach-past doors: the LIST door (`useOlderMail` →
+ *    `HttpAdapter.listMessages`, which that read table deliberately does NOT answer locally, so
+ *    it falls through to the hosted account) and the BODY door (`older-body.ts`, and
+ *    `cloud-engine.ts`'s body fall-through for a row the mirror never held). Nothing is missing.
+ *  · THE ARM COULD NOT TELL A HEALTHY WINDOW FROM A STALLED ONE. Its whole evidence was "the
+ *    numbers differ and the mirror has not moved for 90 s", which is equally true of a mirror
+ *    that has converged as far as this install will take it, one resting between the sidecar's
+ *    20-second pulls, and one that has genuinely stopped. An alarm that fires for all three is
+ *    an alarm about none of them. The signal that WOULD separate them — the sidecar's own "my
+ *    last hosted drain reached the horizon and I am still short" — is not on any wire the shell
+ *    can read; it is filed as a candidate rather than guessed at here.
+ *  · AND THE BANNER CONTRADICTED ITS OWN DESTINATION. It linked to Settings → Mailboxes, where
+ *    every row said "Up to date". One of the two was wrong, and it was the banner.
+ *
+ * The FACT is still worth stating, so it moved to where a question about it is asked: a quiet
+ * line in the Mailboxes pane (`DesktopMailboxes.tsx`, `mailboxes.desktopHoldsCount`), beside the
+ * sentence about whose copy this is. This function is that line's one derivation — and the same
+ * arithmetic the `importing` arm quotes — so the pane cannot re-derive it into a different
+ * answer.
+ *
+ * `null` in three cases, all of them "say nothing":
+ *
+ *  · `mailboxes === null` — the facts are not visible yet (the Desktop before its first read,
+ *    the demo, a Cloud tab whose first poll has not landed). Not "there are none".
+ *  · {@link hostedTotal} withheld the denominator — one silent mailbox withdraws the whole
+ *    claim, because a partial sum is a WRONG total rather than a small one.
+ *  · the total is not STRICTLY above `mirrored`. A denominator the numerator has reached or
+ *    passed is a stale reading (a mailbox removed on the account keeps its mail locally, so the
+ *    numerator can legitimately exceed a correct denominator), and the honest answer to a stale
+ *    reading is to stop quoting it — never to clamp the two into an even fraction, which would
+ *    read as though they had been measured together.
+ */
+export interface DeviceHoldings {
+  /** Messages in the local mirror — every folder, every mailbox. */
+  count: number;
+  /** Messages the hosted account holds. Strictly greater than {@link DeviceHoldings.count}. */
+  total: number;
+}
+
+export function deviceHoldings(
+  mailboxes: readonly MailboxFacts[] | null,
+  mirrored: number,
+): DeviceHoldings | null {
+  if (mailboxes === null) return null;
+  const total = hostedTotal(mailboxes);
+  if (total === null || total <= mirrored) return null;
+  return { count: mirrored, total };
+}
+
+/**
+ * **MAY THE HOLDINGS SENTENCE BE SAID AT ALL RIGHT NOW?** — the gate in front of
+ * {@link deviceHoldings}, and a SEPARATE question from the arithmetic.
+ *
+ * `deviceHoldings` answers "are these two numbers comparable"; this answers "is this device in a
+ * position to make a statement about its own copy, and to promise what the sentence promises".
+ * Two review findings, both real, both about a claim that is arithmetically fine and factually
+ * wrong at the moment it is made:
+ *
+ *  · **A MIRROR NOBODY HAS READ YET.** The window's engine starts with an EMPTY in-memory mirror
+ *    and fills it page by page, while the mailbox probe is an independent 30-second poll that can
+ *    answer on the first tick. A Settings pane open across a cold launch would therefore read
+ *    "This computer holds 0 of your N messages", then a few hundred, then a few thousand — while
+ *    the store on this machine already held them the whole time; only this client's own count was
+ *    still climbing. `bootstrapping` is exactly "this client's first drain
+ *    has not completed", and the scheduler hydrates from the device BEFORE it drains, so its
+ *    clearing is the moment `mirrored` stops being a number in motion and starts being a fact.
+ *  · **A FROZEN LOOP CANNOT KEEP THE PROMISE.** The sentence says the rest of the mail loads when
+ *    it is reached, and the reach-past doors are network reads over the same session. On `stopped`
+ *    (the session was refused and the loop has halted) or `failing` (a sustained run of failed
+ *    drains) that is a promise this device cannot keep, and the strip is already saying so in
+ *    stronger words. This is where the gate DIFFERS from {@link MailState.settled}, which admits
+ *    those two arms on purpose: "the list really is empty" stays true on a dead loop, and "the
+ *    rest will load" does not. The one-line form is the same set minus that admission —
+ *    `settled && not a failure arm` is `!bootstrapping && not a failure arm` — and it is written
+ *    against the ladder's VERDICT rather than against `sync` so the pane needs no second copy of
+ *    a precedence rule that lives in this file.
+ *
+ * Exported and pure so the suite can bite each clause, and used by the pane rather than re-derived
+ * there — the rule this module's header states: one derivation, not one DOM node.
+ */
+export function holdingsSpeak(state: MailState): boolean {
+  return state.settled && state.key !== "stopped" && state.key !== "failing";
+}
+
 /* ══════════════════════════════════════════════════════════════════════════════════════════
    IS THE MIRROR GROWING? — a pure reducer over two or more observations
    ══════════════════════════════════════════════════════════════════════════════════════════ */
@@ -476,22 +576,6 @@ export const IMPORT_END_IDLE_MS = 90_000;
  * EMPTY mirror is unambiguous. See {@link isImporting}.
  */
 export const IMPORT_MIN_DELTA = 25;
-
-/**
- * How far short of the account this device must be before the strip says so.
- *
- * {@link IMPORT_MIN_DELTA}'s number, on purpose and not by coincidence: that constant is the
- * measured answer to "how many messages distinguish real movement from the ordinary post", and
- * this is the same question asked about a gap instead of a rise. Below it the two numbers are
- * separated by nothing more than the seconds between the two reads — a message that arrived
- * after the denominator was fetched and before the mirror drained it — and announcing that as a
- * shortfall would put a permanent sentence on screen over a mirror that is working correctly.
- *
- * The episode this exists for was 427 short, so the threshold is nowhere near the signal it has
- * to catch; it is set where it is to keep the FALSE side quiet, which is the side that costs the
- * feature its credibility.
- */
-export const BEHIND_MIN_DEFICIT = IMPORT_MIN_DELTA;
 
 /**
  * What the sampler remembers. Two observations are the minimum evidence for "growing", so a
@@ -750,12 +834,15 @@ export function importFloorSpeaks(
  *                     server records on the row.
  *  5. `mailboxError`  the mailbox itself refused us (`status === 'error'`, `errorCode`).
  *  6. `noMailbox`     the probe answered, and there are none. Distinct from "we cannot see".
- *  7. `behind`        **THE MIRROR IS STILL, HEALTHY, AND SHORT OF THE ACCOUNT.** The one state
- *                     that reads a number from somewhere else ({@link MailboxFacts.hostedMessageCount}),
- *                     and the only one that can catch a mirror which believes it is finished
- *                     and is not: a stalled copy has no growth to report and no failure to
- *                     report, so every other arm here is silent about it by construction. That
- *                     silence is what a real install sat behind for days.
+ *
+ * ── AND THE ONE THAT WAS HERE AND IS NOT A STATE ────────────────────────────────
+ *
+ * `behind` — "this device holds N of the account's M" — was a seventh arm and a warning triangle
+ * at the foot of the rail. It is GONE, and {@link deviceHoldings} carries the whole argument: a
+ * windowed mirror in front of working reach-past doors is the product behaving correctly, the arm
+ * could not tell that apart from a stalled copy, and an alarm over a healthy state teaches people
+ * to ignore the alarms that matter. The pair it quoted is still said, quietly, in the Mailboxes
+ * pane. Do not put it back on the strip without a signal that distinguishes the wrong shape.
  *
  * ── AND THE TWO THAT ARE NOT THIS LADDER'S ──────────────────────────────────────────────
  *
@@ -788,7 +875,6 @@ export type MailStateKey =
   | "filing"
   | "noMailbox"
   | "importing"
-  | "behind"
   | "awaiting"
   | "quiet";
 
@@ -818,10 +904,12 @@ export interface MailState {
    * quoting it, not to clamp it to the numerator and render the two as equal, as though they had
    * been measured together.
    *
-   * Carried by `importing` (progress, while the mirror moves) and `behind` (a still mirror that
-   * is short). Every other state leaves it `null`, including the failure arms: once the loop is
-   * frozen the numerator cannot move, and a fraction whose top is stuck is the frozen-counter
-   * lie this module already refuses elsewhere.
+   * Carried by `importing` alone — progress, WHILE THE MIRROR MOVES — and that is now the only
+   * place on the strip where a denominator may appear at all. A still mirror that is short of the
+   * account is the ordinary shape of a windowed copy and gets no strip sentence ({@link
+   * deviceHoldings}); every other state leaves this `null`, including the failure arms, because
+   * once the loop is frozen the numerator cannot move and a fraction whose top is stuck is the
+   * frozen-counter lie this module already refuses elsewhere.
    */
   total: number | null;
   /**
@@ -1385,14 +1473,13 @@ function climb(input: MailStateInputs): MailState {
   // `now` is the SHELL's clock, beaten every `MAIL_CLOCK_MS` by `MailStateProvider` while
   // `state.clock` is true — which is what ends a latched episode. The reducer only ever runs when
   // the mirror MOVES, so an import that simply stops would otherwise never be told it had.
-  // THE DENOMINATOR, computed once for both arms that may quote it, over EVERY mailbox on the
-  // account and not just the connected ones — the numerator is the whole mirror, so the
-  // denominator has to cover the same population (see {@link hostedTotal}). `hostedTotal` is
-  // every-or-nothing and the `> mirrored` clamp is applied at each use rather than here, because
-  // the two arms below want the same arithmetic for different reasons and a pre-clamped value
-  // would hide which of them made the decision.
-  const accountTotal = hostedTotal(mailboxes);
-  const totalIfAhead = accountTotal !== null && accountTotal > mirrored ? accountTotal : null;
+  // THE DENOMINATOR — {@link deviceHoldings}, which is also what the Mailboxes pane's quiet
+  // holdings line reads. ONE derivation, deliberately: the pane and the strip must not be able to
+  // answer "how much of the account is on this device" differently, and the every-or-nothing sum
+  // plus the strict `> mirrored` clamp are the whole of that answer. `null` here means no
+  // sentence on this strip may name a total, which is the common case (a hosted browser tab never
+  // learns the hosted counts at all).
+  const totalIfAhead = deviceHoldings(mailboxes, mirrored)?.total ?? null;
 
   if (isImporting(growth, sync.bootstrapping, now)) {
     return { ...QUIET, key: "importing", clock: true, count: mirrored, total: totalIfAhead };
@@ -1494,46 +1581,6 @@ function climb(input: MailStateInputs): MailState {
   // unit test and never fires on an idle tab.
   if (mirrored > 0 && connected.some((m) => importFloorSpeaks(m, growth, sync, now))) {
     return { ...QUIET, key: "importing", clock: true, count: mirrored, total: totalIfAhead };
-  }
-
-  /* ── 7. BEHIND — the mirror is still, healthy, and short of the account ─────────────────
-   *
-   * The arm that catches the case every other one is silent about by construction. A mirror
-   * that has stopped short reports no growth (so `importing` above cannot fire), no failure (so
-   * `failing` and `stopped` cannot), no block, no mailbox error and a non-null `lastSyncAt` (so
-   * `awaiting` cannot) — the strip's whole vocabulary was about MOTION and FAULTS, and this is
-   * neither. A real install sat days behind with the interface saying nothing at all.
-   *
-   * Every condition here is a way of refusing to say it on weak evidence:
-   *
-   *  · `totalIfAhead` — a denominator, from every connected mailbox, strictly above the mirror.
-   *  · the deficit clears {@link BEHIND_MIN_DEFICIT}, so the ordinary seconds-wide skew between
-   *    two reads is not dressed as a shortfall.
-   *  · the mirror has been STILL for {@link IMPORT_END_IDLE_MS}. While it is moving the honest
-   *    sentence is `importing`, which is above this arm and says the same numbers.
-   *  · the loop has DRAINED at least once (`!bootstrapping`) and is not failing
-   *    (`failures === 0`). This is `importFloorSpeaks`'s corroboration rule, and for its reason:
-   *    a mirror frozen because the loop is broken is a broken instrument, not a reading — the
-   *    arms above already own that case and they say something more useful about it.
-   *
-   * `clock: true` because the release is elapsed-time-driven exactly as the import floor's is:
-   * the reducer runs when the mirror MOVES, and a mirror that has stopped never moves again, so
-   * without the clock this state could never be entered on an idle tab — which is the only kind
-   * of tab it is about.
-   *
-   * THE ONE BIAS, NAMED: a mailbox removed on the account keeps its mail in the local mirror, so
-   * the numerator can legitimately exceed a correct denominator. That is why the clamp is a
-   * strict `>` and why the sum skips `disabled` rows — both push toward silence, which is the
-   * right direction for a claim about somebody else's mail.
-   */
-  if (
-    totalIfAhead !== null
-    && totalIfAhead - mirrored >= BEHIND_MIN_DEFICIT
-    && now - growth.lastRiseAt >= IMPORT_END_IDLE_MS
-    && !sync.bootstrapping
-    && sync.failures === 0
-  ) {
-    return { ...QUIET, key: "behind", clock: true, count: mirrored, total: totalIfAhead };
   }
 
   // ── 3. THE SCREENER POINTER — a candidate, for the OHBOX to finish ─────────────────────

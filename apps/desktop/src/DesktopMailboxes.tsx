@@ -78,7 +78,9 @@ import { Fragment, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button, SettingsNote, SettingsRow, SettingsSection } from "@ohmail/ui";
 
-import { showInboundQuiet, type MailboxFacts } from "../../webapp/app/shell/mail-state";
+import {
+  deviceHoldings, holdingsSpeak, showInboundQuiet, type MailboxFacts,
+} from "../../webapp/app/shell/mail-state";
 import { agoStamp } from "../../webapp/app/shell/format";
 import { useMailState } from "../../webapp/app/shell/MailStateProvider";
 import { bridgeFetch } from "./bridge-fetch.js";
@@ -259,7 +261,7 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
   const t = useTranslations("mailboxes");
   /* The SAME binding the sync line reads, and `refresh` is what its own comment offers this pane:
      "Re-read the mailbox facts now. The Settings pane calls it after a connect or a resync." */
-  const { mailboxes: facts, refresh } = useMailState();
+  const { mailboxes: facts, mirrored, state: mailState, refresh } = useMailState();
   /* What can go wrong here: the engine refuses a resync (offline, most often), or the operating
      system refuses to open a browser. One line, rendered where the press happened. */
   const [problem, setProblem] = useState<string | null>(null);
@@ -437,6 +439,59 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
           }
         />
       ) : null}
+
+      {/* ── HOW MUCH OF THE ACCOUNT IS ON THIS COMPUTER — a fact, not an alarm ───────────────
+          This sentence used to be a warning triangle at the foot of the RAIL, standing in every
+          view for as long as the two numbers differed ("This device holds N of the account's M
+          messages"). It was removed on 2026-08-30; `deviceHoldings` in the shared shell
+          carries the full argument, and the short form is that a windowed copy in front of
+          working reach-past doors is this product behaving correctly, so alarming about it
+          trains people to ignore the alarms that mean something. It also contradicted its own
+          destination: the banner linked HERE, and every row here said "Up to date".
+
+          So it is stated where somebody asking "what is actually on this machine" is standing,
+          in the register of the sentence below it, with no icon of any kind. `set-note-inline`
+          and not `SettingsNote` for exactly that reason — `SettingsNote` leads with a mark, and
+          the one thing this line must not do is carry one.
+
+          THE CLAIM IS PINNED, and it has to be, because it promises a behaviour: the mail
+          outside the window loads from the account when it is reached. Both halves of that are
+          real and both are the sidecar's doing — `cloud-read.ts` deliberately does NOT answer
+          `GET /messages` (the reach-past LIST door) from the mirror, so the ask falls through to
+          the hosted account, and `cloud-engine.ts` falls a body read through the same way for a
+          row the mirror never held. If either door is ever served locally, this sentence becomes
+          false and must go with it.
+
+          `deviceHoldings` is the SHARED derivation — the same every-or-nothing sum and the same
+          strict `total > count` clamp the strip's own `importing` denominator uses — so this
+          pane cannot answer the question differently from the strip. `null` (no counts, one
+          silent mailbox, a caught-up device, a local-only install that has no other copy to
+          compare against) renders nothing at all, which is the resting case. */}
+      {(() => {
+        /* TWO GATES IN FRONT OF THE ARITHMETIC, both from review findings, both cases where the
+           pair is comparable and the SENTENCE is false at the moment it would be said:
+
+            · `cloud` — the claim promises that the rest loads FROM THE ACCOUNT, which is only a
+              thing the hosted door can do. It is not merely redundant on the standalone door
+              (whose engine reports no hosted counts, so the arithmetic would withhold anyway):
+              `MailStateProvider` does not clear the mailbox facts when the engine is swapped, and
+              `readMailboxFacts` keeps one function identity across the switch, so a Cloud install
+              re-pointed at the local door can carry the OLD account's `hostedMessageCount` for up
+              to one 30-second poll. Without this gate that stale total would appear under "Local
+              mailboxes on this computer", paired with the new door's count, promising a reach-past
+              that door has no account to reach into.
+            · `holdingsSpeak` — the mirror has actually been read, and the loop is not frozen. See
+              its own doc-block; the short version is that a cold launch would otherwise announce
+              "holds 0 of your M messages" about a machine whose store already holds them — only
+              this client's own count is still climbing — and that a stopped session cannot keep
+              the sentence's promise. */
+        const held = cloud && holdingsSpeak(mailState) ? deviceHoldings(facts, mirrored) : null;
+        return held === null ? null : (
+          <p className="set-note-inline">
+            {t("desktopHoldsCount", { count: held.count, total: held.total })}
+          </p>
+        );
+      })()}
 
       <SettingsNote>
         {/* WHERE THE MAIL ACTUALLY IS, said on the screen that lists it. The claim is the

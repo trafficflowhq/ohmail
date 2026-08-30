@@ -132,6 +132,20 @@ interface MailStateBinding {
    * From surfaces render nothing rather than guess when it is null — see `compose-from.ts`.
    */
   mailboxes: MailboxFacts[] | null;
+  /**
+   * MESSAGES IN THE MIRROR — every folder, every mailbox — published as the fact it is.
+   *
+   * NOT `state.count`, and the difference is load-bearing rather than stylistic. `MailState.count`
+   * is carried by the states that have a use for it and left at `0` by the rest (`stopped`,
+   * `failing`, `blocked`, `mailboxError`, `noMailbox`, `awaiting`, `filing`), so a surface that
+   * read the mirror's size from the derived state would report an empty device for the whole of
+   * an outage. This is the input the provider was handed, unconditioned by which sentence the
+   * ladder chose.
+   *
+   * Its one consumer is the Mailboxes pane's holdings line, through {@link deviceHoldings} —
+   * which is also the strip's own denominator, so the two cannot disagree.
+   */
+  mirrored: number;
   /** Re-read the mailbox facts now. The Settings pane calls it after a connect or a resync. */
   refresh: () => void;
 }
@@ -307,8 +321,8 @@ export function MailStateProvider({
   }, [probe, read]);
 
   const binding = useMemo<MailStateBinding>(
-    () => ({ state, mailboxes: facts, refresh: () => void read() }),
-    [state, facts, read],
+    () => ({ state, mailboxes: facts, mirrored, refresh: () => void read() }),
+    [state, facts, mirrored, read],
   );
 
   return <MailStateContext.Provider value={binding}>{children}</MailStateContext.Provider>;

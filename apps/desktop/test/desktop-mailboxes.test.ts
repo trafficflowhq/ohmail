@@ -54,11 +54,24 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 let FACTS: MailboxFacts[] | null = null;
 /** How many times the pane asked the shared poller to re-read. */
 let refreshed = 0;
+/**
+ * MESSAGES IN THE MIRROR — the numerator of the holdings line. Published by the provider as the
+ * input it was handed, never read off `state.count`, which most states leave at zero.
+ */
+let MIRRORED = 0;
+/**
+ * The ladder's verdict, as far as this pane reads it: `holdingsSpeak` asks whether the mirror has
+ * been read (`settled`) and whether the loop is alive (not `stopped`, not `failing`). The resting
+ * value is a settled, quiet install.
+ */
+let MAIL_STATE: { key: string; clock: boolean; settled: boolean } =
+  { key: "quiet", clock: false, settled: true };
 
 vi.mock("../../webapp/app/shell/MailStateProvider", () => ({
   useMailState: () => ({
-    state: { clock: false },
+    state: MAIL_STATE,
     mailboxes: FACTS,
+    mirrored: MIRRORED,
     refresh: () => { refreshed += 1; },
   }),
 }));
@@ -135,6 +148,8 @@ const openButton = (el: HTMLElement) => buttonSaying(el, "Open ohmail.app");
 
 beforeEach(() => {
   FACTS = [MAILBOX];
+  MIRRORED = 0;
+  MAIL_STATE = { key: "quiet", clock: false, settled: true };
   refreshed = 0;
   bridged = [];
   bridgeReply = () => new Response(null, { status: 202 });
@@ -300,5 +315,150 @@ describe("the desktop mailbox pane on the standalone door", () => {
     const el = await render(null);
     expect(el.textContent ?? "").not.toContain("Mailboxes are managed in ohmail on the web");
     expect(openButton(el)).toBeNull();
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════
+   THE HOLDINGS LINE — WHAT THIS COMPUTER HOLDS, AS A FACT AND NOT AS AN ALARM
+   ══════════════════════════════════════════════════════════════════════════════════════════
+
+   Reported 2026-08-30 with a screenshot: the rail carried a permanent amber warning triangle
+   reading "This device holds N of the account's M messages. / Settings → Mailboxes", in every
+   view, for as long as the two numbers differed. The report was that it reads as a constant
+   warning rather than as information, and the ruling is that partial-by-design is not a warning
+   state: the Cloud mirror is a WINDOW over the hosted account and the mail outside it is
+   reachable on demand through the reach-past doors, so nothing is missing.
+
+   The strip state is gone (`mail-state.test.ts` holds that half). What is asserted here is the
+   other half — that the FACT did not go with it, that it landed on the pane the banner used to
+   point at, and that it carries no warning mark.
+
+   ── THE MUTATIONS THESE CASES WERE WATCHED AGAINST ──────────────────────────────────────────
+
+    · delete the holdings paragraph              → the partial case goes red;
+    · drop the `held === null` guard             → the caught-up and no-counts cases go red
+                                                   (they render "5,000 of 5,000", or the word
+                                                   "undefined" where a number belongs);
+    · read `state.count` instead of `mirrored`   → the numerator case goes red;
+    · swap `set-note-inline` for `SettingsNote`  → the no-iconography case goes red;
+    · re-add the strip's amber copy anywhere     → the no-warning-words case goes red. */
+
+/** A mailbox that reports the account's own count for itself, as the Cloud door's engine does. */
+const counted = (hosted: number): MailboxFacts => ({ ...MAILBOX, hostedMessageCount: hosted });
+
+describe("the holdings line — a windowed copy stated plainly, on the pane, with no alarm", () => {
+  it("states BOTH numbers and the promise that the rest loads on demand", async () => {
+    FACTS = [counted(73_525)];
+    MIRRORED = 5_107;
+    const text = (await render("cloud")).textContent ?? "";
+    // The reported pair, formatted as the locale writes them.
+    expect(text).toContain("5,107");
+    expect(text).toContain("73,525");
+    // The load-bearing half. Without it the sentence is a bare shortfall, which is the banner
+    // again in a quieter font: the reason a partial copy is fine is that the rest is reachable.
+    expect(text).toContain("nothing is missing");
+    expect(text.toLowerCase()).toContain("load");
+  });
+
+  it("carries NO warning mark and none of the banner's words", async () => {
+    FACTS = [counted(73_525)];
+    MIRRORED = 5_107;
+    const el = await render("cloud");
+    const line = [...el.querySelectorAll("p")]
+      .find((p) => (p.textContent ?? "").includes("73,525"));
+    expect(line, "the holdings sentence is not on the pane at all").toBeTruthy();
+    // `set-note-inline` is the pane's plain informational paragraph. `SettingsNote` leads with an
+    // icon, and the one thing this line must not do is carry a mark of any kind.
+    expect(line!.className).toBe("set-note-inline");
+    expect(line!.querySelector("svg")).toBeNull();
+    expect(el.textContent ?? "").not.toContain("⚠");
+    // The strip's own sentence, verbatim, must not have followed the fact over here.
+    expect(el.textContent ?? "").not.toContain("This device holds");
+  });
+
+  it("a caught-up device says NOTHING — a line reading N of N is noise", async () => {
+    FACTS = [counted(5_000)];
+    MIRRORED = 5_000;
+    const text = (await render("cloud")).textContent ?? "";
+    expect(text).not.toContain("5,000");
+  });
+
+  it("a numerator that has passed the total is a stale reading, so it is not quoted", async () => {
+    // A mailbox removed on the account keeps its mail locally, so the numerator can legitimately
+    // exceed a correct denominator. The honest answer is silence, never an even fraction.
+    FACTS = [counted(5_000)];
+    MIRRORED = 5_400;
+    const text = (await render("cloud")).textContent ?? "";
+    expect(text).not.toContain("5,400");
+    expect(text).not.toContain("5,000");
+  });
+
+  it("no hosted counts — a local-only install — says nothing, and never reads absent as zero", async () => {
+    FACTS = [MAILBOX];
+    MIRRORED = 5_107;
+    const text = (await render("local")).textContent ?? "";
+    expect(text).not.toContain("5,107");
+    expect(text).not.toContain("nothing is missing");
+  });
+
+  it("ONE silent mailbox withdraws the whole claim — a partial sum is a WRONG total", async () => {
+    FACTS = [counted(60_000), MAILBOX];
+    MIRRORED = 5_107;
+    const text = (await render("cloud")).textContent ?? "";
+    expect(text).not.toContain("60,000");
+    expect(text).not.toContain("5,107");
+  });
+
+  it("A MIRROR NOBODY HAS READ YET SAYS NOTHING — not \"holds 0 of your M messages\"", async () => {
+    // The window's engine starts with an EMPTY in-memory mirror and fills it page by page, while
+    // the mailbox probe answers on its own clock. A pane open across a cold launch would otherwise
+    // count up from zero, in a sentence about a machine whose store is already full.
+    FACTS = [counted(73_525)];
+    MIRRORED = 0;
+    MAIL_STATE = { key: "awaiting", clock: true, settled: false };
+    const text = (await render("cloud")).textContent ?? "";
+    expect(text).not.toContain("73,525");
+    expect(text).not.toContain("nothing is missing");
+  });
+
+  it("a FROZEN loop says nothing — it cannot keep the sentence's promise", async () => {
+    // "The rest load when you reach them" is a network read over the same session. On a stopped
+    // session or a sustained run of failed drains that is a promise this device cannot keep, and
+    // the strip is already saying so in stronger words.
+    for (const key of ["stopped", "failing"]) {
+      FACTS = [counted(73_525)];
+      MIRRORED = 5_107;
+      MAIL_STATE = { key, clock: false, settled: true };
+      const text = (await render("cloud")).textContent ?? "";
+      expect(text, `${key} still promised on-demand loading`).not.toContain("5,107");
+      if (root) await act(async () => { root!.unmount(); });
+      mountPoint?.remove();
+      root = null;
+    }
+  });
+
+  it("THE LOCAL DOOR NEVER SHOWS IT, even holding a previous account's counts", async () => {
+    // The stale-facts window: `MailStateProvider` does not clear the mailbox facts when the engine
+    // is swapped and `readMailboxFacts` keeps one identity across the switch, so a Cloud install
+    // re-pointed at the local door carries the OLD account's `hostedMessageCount` for up to one
+    // 30-second poll. Under "Local mailboxes on this computer" that total would be paired with the
+    // new door's count and would promise a reach-past this door has no account to reach into.
+    FACTS = [counted(73_525)];
+    MIRRORED = 5_107;
+    const text = (await render("local")).textContent ?? "";
+    expect(text).not.toContain("73,525");
+    expect(text).not.toContain("5,107");
+    expect(text).not.toContain("nothing is missing");
+    // And the local pane is otherwise untouched.
+    expect(text).toContain("Local mailboxes on this computer");
+  });
+
+  it("the copy sentence about whose mail this is stays exactly where it was", async () => {
+    // The holdings line sits BESIDE that sentence and does not replace it: one says how much is
+    // here, the other says that what is here is a copy nobody depends on.
+    FACTS = [counted(73_525)];
+    MIRRORED = 5_107;
+    const text = (await render("cloud")).textContent ?? "";
+    expect(text).toContain("Your mail lives on your mail server.");
   });
 });

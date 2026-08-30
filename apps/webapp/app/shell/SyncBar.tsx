@@ -345,24 +345,6 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): 
         link: null,
       };
 
-    case "behind":
-      return {
-        // WARN, not busy. Nothing is in flight — that is the whole point of this state: the
-        // mirror is still, the loop is healthy, and the device is short of the account. A
-        // spinner would say work is happening; silence is what the user already had.
-        tone: "warn", role: "status", warn: true, busy: false,
-        // The two numbers, and no advice this surface cannot stand behind. The strip does not
-        // know WHY the copy stopped short — that is what the mailbox pane and its resync are
-        // for — so it states the fact and points at the place where something can be done.
-        // `state.total` is non-null on this key by construction (`mail-state.ts` cannot enter
-        // it otherwise); the `?? state.count` is a render-time floor that keeps a future
-        // refactor from printing the word "null" at somebody, and would show an even fraction
-        // rather than a wrong one.
-        title: t("behind", { count: state.count, total: state.total ?? state.count }),
-        detail: null,
-        link: settings,
-      };
-
     default:
       // `awaiting` — connected, no cycle has completed, and the mirror is empty. Often the
       // CORRECT thing to say: a first attach was measured at ~6 minutes. What was wrong before

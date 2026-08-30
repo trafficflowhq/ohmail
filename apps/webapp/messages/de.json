@@ -2012,6 +2012,7 @@
     "desktopManageOnWebWhy": "Ein Postfach zu verbinden, sein Passwort zu ändern oder es zu trennen speichert ein Postfachpasswort, und dein Konto verlangt davor einen zweiten Faktor — eine Prüfung, die diese App nicht durchführen kann. Dein Browser kann es, und dort bist du schon angemeldet.",
     "desktopOpenWeb": "ohmail.app öffnen",
     "desktopNoBrowser": "Dieser Computer wollte keinen Browser öffnen. Die Seite ist unter ohmail.app.",
+    "desktopHoldsCount": "Dieser Computer hat {count, number} von {total, number} Nachrichten deines Kontos. Der Rest bleibt in deinem Konto und wird geladen, sobald du in einer Liste dorthin gelangst oder eine Nachricht öffnest — es fehlt nichts.",
     "desktopCopyIsACopy": "Deine Post liegt auf deinem Mailserver. Was diese App auf diesem Computer behält, ist eine Kopie — du kannst sie löschen, und im Postfach selbst geht nichts verloren."
   },
   "resume": {
@@ -2161,7 +2162,6 @@
     "importing": "Deine Post wird synchronisiert.",
     "importingCount": "{count, plural, one {1 Nachricht bisher} other {# Nachrichten bisher}}",
     "importingOf": "{count, number} von {total, number} Nachrichten",
-    "behind": "Dieses Gerät hat {count, number} von {total, number} Nachrichten des Kontos.",
     "awaiting": "Verbunden. Die erste Synchronisierung ist noch nicht durch.",
     "awaitingSlow": "Verbunden. Die erste Synchronisierung ist immer noch nicht durch.",
     "awaitingWhere": "{address} · verbunden {minutes, plural, =0 {vor wenigen Augenblicken} one {vor 1 Minute} other {vor # Minuten}}",

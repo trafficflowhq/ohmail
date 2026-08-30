@@ -2012,6 +2012,7 @@
     "desktopManageOnWebWhy": "Connecting a mailbox, changing its password or disconnecting it stores a mailbox password, and your account asks for a second factor before it will — a check this app cannot make. Your browser can, and is already signed in.",
     "desktopOpenWeb": "Open ohmail.app",
     "desktopNoBrowser": "This computer would not open a browser. The page is at ohmail.app.",
+    "desktopHoldsCount": "This computer holds {count, number} of your account's {total, number} messages. The rest stay on your account and load when you reach them in a list or open one — nothing is missing.",
     "desktopCopyIsACopy": "Your mail lives on your mail server. What this app keeps on this computer is a copy — you can remove it and nothing is lost from the mailbox itself."
   },
   "resume": {
@@ -2161,7 +2162,6 @@
     "importing": "Syncing your mail.",
     "importingCount": "{count, plural, one {1 message so far} other {# messages so far}}",
     "importingOf": "{count, number} of {total, number} messages",
-    "behind": "This device holds {count, number} of the account's {total, number} messages.",
     "awaiting": "Connected. The first sync has not finished yet.",
     "awaitingSlow": "Connected. The first sync still has not finished.",
     "awaitingWhere": "{address} · connected {minutes, plural, =0 {moments ago} one {1 minute ago} other {# minutes ago}}",
