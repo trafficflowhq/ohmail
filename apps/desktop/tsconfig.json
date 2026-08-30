@@ -71,7 +71,16 @@
          to core's exports and missed this map, which failed the mirror's `tsc --noEmit` on all
          three platforms while the monorepo's own gates stayed green — the workspace resolves
          through exports, the mirror only through this list. */
-      "@trafficflow/core/folder-name": ["../../packages/core/src/folder-name.ts"]
+      "@trafficflow/core/folder-name": ["../../packages/core/src/folder-name.ts"],
+      /* The mirrors' shared drain policy — the THIRD admitted leaf, imported by the client
+         engine so that it and the desktop sidecar's mirror cannot hold two opinions about when
+         a local copy is stale, what a surface may say about its age, and how big a catch-up
+         page is. Same story as `/ics` and `/folder-name`, and this is the THIRD slice to owe
+         this line: the two comments above each record a release CI that died at `tsc --noEmit`
+         on all three platforms because the subpath was added to core's exports and not here.
+         `test/desktop-mirror-excludes-the-engine.test.ts` now holds the two maps to each other
+         so there is no fourth. */
+      "@trafficflow/core/drain-policy": ["../../packages/core/src/drain-policy.ts"]
     }
   },
   "include": ["src", "vite.config.ts"]
