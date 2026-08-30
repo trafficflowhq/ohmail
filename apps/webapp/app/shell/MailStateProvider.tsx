@@ -301,7 +301,23 @@ export function MailStateProvider({
   const probeEngine = useEngine();
   useEffect(() => {
     setProbedFreshness(null);
-  }, [probeEngine, freshnessProbe]);
+    /* AND THE MAILBOX FACTS WITH IT, on exactly the same rule — this half was missing, and a
+       review found what it cost. The probe is a MODULE FUNCTION on the desktop
+       (`readMailboxFacts`), so its identity does not change when the engine does and the effect
+       below does not even re-run; the held facts therefore survive an account or door switch for
+       up to one `FACTS_POLL_MS`. Every consumer then pairs the OLD account's rows with the NEW
+       mirror: the holdings line quotes a hosted total that belongs to somebody else's mailbox,
+       and `compose-from` offers sending addresses the new session does not have. `null` is not a
+       degradation here — it is this field's documented meaning, "we cannot see mailboxes", which
+       every consumer already renders as silence rather than as a guess. */
+    setFacts(null);
+    /* AND ASK AGAIN AT ONCE. The clear alone is correct but leaves the surfaces silent for up to
+       `FACTS_POLL_MS`, because the re-read effect below is keyed on the PROBE's identity and the
+       probe did not change — that is the same fact that made the clear necessary. So the adoption
+       fires the read itself: `null` paints first (the honest answer while the question is being
+       re-asked), and the new engine's own rows replace it a microtask later. */
+    if (probe) void read();
+  }, [probeEngine, freshnessProbe, probe, read]);
 
   useEffect(() => {
     if (!probe) {

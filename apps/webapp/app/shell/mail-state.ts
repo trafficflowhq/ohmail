@@ -484,22 +484,39 @@ export function deviceHoldings(
  *    still climbing. `bootstrapping` is exactly "this client's first drain
  *    has not completed", and the scheduler hydrates from the device BEFORE it drains, so its
  *    clearing is the moment `mirrored` stops being a number in motion and starts being a fact.
- *  · **A FROZEN LOOP CANNOT KEEP THE PROMISE.** The sentence says the rest of the mail loads when
- *    it is reached, and the reach-past doors are network reads over the same session. On `stopped`
- *    (the session was refused and the loop has halted) or `failing` (a sustained run of failed
- *    drains) that is a promise this device cannot keep, and the strip is already saying so in
- *    stronger words. This is where the gate DIFFERS from {@link MailState.settled}, which admits
- *    those two arms on purpose: "the list really is empty" stays true on a dead loop, and "the
- *    rest will load" does not. The one-line form is the same set minus that admission —
- *    `settled && not a failure arm` is `!bootstrapping && not a failure arm` — and it is written
- *    against the ladder's VERDICT rather than against `sync` so the pane needs no second copy of
- *    a precedence rule that lives in this file.
+ *  · **A LOOP THAT CANNOT KEEP THE PROMISE.** The sentence says the rest of the mail loads when
+ *    it is reached, and BOTH reach-past doors are network reads — on the desktop's Cloud door they
+ *    are forwarded by the sidecar's write-through proxy to the hosted account, which answers
+ *    `503 offline_read_only` when it cannot reach it. So {@link HOLDINGS_SILENT_KEYS} is four
+ *    keys, not two, and each is a different way of already knowing the promise is not good:
+ *
+ *      · `stopped`    — the session was refused and the loop has halted.
+ *      · `failing`    — a sustained run of failed drains.
+ *      · `stale`      — the mirror's last completed pull is older than the freshness threshold,
+ *                       which on the desktop is the SIDECAR's own stamp against the hosted
+ *                       account (`GET /mirror/freshness`). That is exactly the offline case: a
+ *                       sidecar that cannot reach Cloud keeps serving its local feed happily —
+ *                       the window's own loop looks perfect — while every reach-past would 503.
+ *                       Review finding, round 3; without this the pane promised on-demand
+ *                       loading over a door that was answering nothing.
+ *      · `catchingUp` — an unconfirmed refusal is being re-tried. Brief, and the strip is already
+ *                       saying so; a promise made inside it is a coin flip.
+ *
+ *    This is where the gate DIFFERS from {@link MailState.settled}, which admits `stopped` and
+ *    `failing` on purpose: "the list really is empty" stays true on a dead loop, and "the rest
+ *    will load" does not. It is written against the ladder's VERDICT rather than against `sync`
+ *    or the freshness input so the pane needs no second copy of a precedence rule that lives in
+ *    this file.
  *
  * Exported and pure so the suite can bite each clause, and used by the pane rather than re-derived
  * there — the rule this module's header states: one derivation, not one DOM node.
  */
+export const HOLDINGS_SILENT_KEYS: readonly MailStateKey[] = [
+  "stopped", "failing", "stale", "catchingUp",
+];
+
 export function holdingsSpeak(state: MailState): boolean {
-  return state.settled && state.key !== "stopped" && state.key !== "failing";
+  return state.settled && !HOLDINGS_SILENT_KEYS.includes(state.key);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
@@ -842,7 +859,12 @@ export function importFloorSpeaks(
  * windowed mirror in front of working reach-past doors is the product behaving correctly, the arm
  * could not tell that apart from a stalled copy, and an alarm over a healthy state teaches people
  * to ignore the alarms that matter. The pair it quoted is still said, quietly, in the Mailboxes
- * pane. Do not put it back on the strip without a signal that distinguishes the wrong shape.
+ * pane. Do not put it back on the strip without a signal that distinguishes the wrong shape — and
+ * the signal is nameable: the SIDECAR's own verdict that its last hosted drain reached the horizon
+ * (`/sync` answered `hasMore: false`) and the mirror is STILL short. That is the one reading that
+ * separates "converged, and this is the window" from "stopped short". It is not on any wire the
+ * shell can read today — `GET /mirror/freshness` carries the age of the last completed pull, not
+ * its completeness — so it is filed rather than guessed at.
  *
  * ── AND THE TWO THAT ARE NOT THIS LADDER'S ──────────────────────────────────────────────
  *
