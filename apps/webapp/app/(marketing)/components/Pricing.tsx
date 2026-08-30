@@ -7,38 +7,46 @@ import { useSignup, type SignupTier } from "./Signup";
 import { SELF_HOST_GUIDE_URL } from "./GetOhmail";
 
 /**
- * The free ways on the left, the managed tiers on the right — deliberately NOT five
- * identical cards.
+ * The price list in first-sight order: the two free ways side by side, the managed tiers
+ * full-width beneath them — one structured section, all of it meant to be seen in one
+ * viewport.
  *
- * ── SELF-HOSTING IS ON THE PRICE LIST, AS A PRICE ────────────────────────────────────
+ * ── THE ORDER IS THE OFFER ───────────────────────────────────────────────────────────
  *
- * The left column holds BOTH things a person can run for nothing: the desktop app, and the
- * same open server on a box they own. The self-host card states the fact the whole section
- * turns on — the hosted tiers to its right are that server run by us, and the money buys
- * the running — so a visitor reading the price grid cannot miss that "free" has two shapes
- * and neither is a demo. Its one link goes to the public repository's self-host guide (the
- * same URL the Get-ohmail block's server card uses, held there by `get-ohmail.test.ts`),
- * and its bullets claim exactly what `deploy/selfhost` ships: one compose file, unmetered
- * mailboxes, your own AI key or none. Never a prebuilt-image or `docker pull` claim while
- * that guard stands.
+ * 1. **ohmail Desktop — free.** And not as a teaser: the card says out loud that a
+ *    running desktop app is a complete self-hosted ohmail — the whole organizer on your
+ *    machine, the mailbox as the master, no cloud in the loop. `pricing-structure.test.ts`
+ *    holds that claim against `PREVIEW_PLATFORMS`: the sentence is licensed exactly while
+ *    every shipped build carries the real engine.
+ * 2. **Self-hosted Cloud — free.** The same open server on hardware you own, with its
+ *    three ways in stated on the card (a box you rent or own, a home-server box, or the
+ *    desktop app that is already one). The prebuilt-images claim is new and licensed:
+ *    the GHCR packages answer anonymous pulls (verified live 2026-08-30), and the claim
+ *    is pinned to the public README's own "images are prebuilt" sentence so the two
+ *    surfaces move together.
+ * 3. **ohmail Cloud — the paid tiers**, full-width below the free row, so a visitor who
+ *    never scrolls still meets the managed offering: defensive selling is the brand, but
+ *    nobody should miss that the managed service exists.
  *
- * ── BOTH CTAs POINT AT REAL THINGS ────────────────────────────────────────────────────
+ * On narrow screens the grid stacks in exactly that order — the order, not the fold,
+ * carries the intent there.
  *
- *  · **Cloud** — `TF_PUBLIC_SIGNUP=1` means a stranger can open an account and start the
- *    14-day trial, so the tier buttons go to `/join` with the tier carried along. With the
- *    flag OFF they open the waitlist exactly as before; there is no third state and no
- *    button that leads somewhere the deployment cannot honour.
- *  · **Desktop** — an in-page anchor to the download section, which owns the three
- *    per-platform links and the manifest behind them (`../downloads.ts`). This card used
- *    to carry the off-origin release URL itself, pinned to a version tag that then went
- *    four releases stale without anything noticing. One owner for the download, and it is
- *    the section whose whole subject is the download.
+ * ── WHAT DID NOT MOVE ────────────────────────────────────────────────────────────────
  *
- * The desktop copy is no longer per-platform. It was, while the macOS build was the only
- * one carrying the mail engine; the single cross-platform app makes that split obsolete,
- * and the sentences that drew it are gone rather than reworded. What must never come back
- * is the other direction — "no IMAP client", "no network at all" — because every build
- * makes a signed update check and every build is a mail client.
+ *  · Every tier figure stays the string the anti-drift gate parses
+ *    (`test/landing-pricing-matches-plan-card.test.ts` against `PLAN_LIMITS`); the trial
+ *    note keeps the granted figure `trial-credits.test.ts` compares.
+ *  · **Both CTAs point at real things** — the desktop card at the download section that
+ *    owns the per-platform links (`../downloads.ts`), never at an off-origin release URL
+ *    (which once went four releases stale); the tier buttons at `/join` when
+ *    `TF_PUBLIC_SIGNUP=1`, at the waitlist otherwise. No third state.
+ *  · The waitlist door survives (`desktopNotify`): it is the only entry point left to
+ *    the dialog once the Cloud tiers link straight to `/join`, and the capacity valve
+ *    (`signup_capacity`) sends people back here when Cloud has no room.
+ *  · The claim-accuracy rules on the desktop note: it is a real mail client against your
+ *    own IMAP server, and what must never come back is the other direction — "no IMAP
+ *    client", "no network at all" — because every build makes a signed update check and
+ *    every build is a mail client (`public-signup.test.ts`).
  */
 export function Pricing({ publicSignup = false }: { publicSignup?: boolean }) {
   const t = useTranslations("pricing");
@@ -58,7 +66,7 @@ export function Pricing({ publicSignup = false }: { publicSignup?: boolean }) {
       </Reveal>
 
       <div className="l-price-grid">
-        {/* the free column: two cards, one register — the app, then the server */}
+        {/* the free row: two cards, side by side — the app, then the server */}
         <div className="l-price-free">
         <Reveal className="l-price-desktop">
           <h3 className="l-price-name">
@@ -69,29 +77,22 @@ export function Pricing({ publicSignup = false }: { publicSignup?: boolean }) {
             <b className="num">{t("desktopPrice")}</b>
             <span>{t("desktopTerm")}</span>
           </p>
-          {/* The claim-accuracy invariant is unchanged even though the per-platform
-              scoping is gone: this note and the shipped app move together, and it
-              neither over- nor under-claims. The uppercase label that used to sit
-              between it and the bullets carried the macOS/Windows/Linux split; with
-              nothing left to scope it was a section eyebrow and nothing else. */}
+          {/* The card's one emphasized sentence: free does not mean a demo here. Stated
+              once on the page, at the exact spot where "Free" invites the suspicion. */}
+          <p className="l-price-claim">{t("desktopClaim")}</p>
           <p className="l-price-status">{t("desktopStatusNote")}</p>
           <ul className="l-price-feats">
-            <li>{t("desktopA")}</li>
             <li>{t("desktopB")}</li>
-            <li>{t("desktopC")}</li>
-            <li>{t("desktopD")}</li>
             <li>{t("desktopE")}</li>
+            {/* the host fact, with its honesty qualifier — the machine serves while it
+                is AWAKE (sleep stales the host lease), never an unqualified "always-on" */}
+            <li>{t("desktopHostFeat")}</li>
           </ul>
           {/* Down to the section that owns the per-platform links, not out to GitHub. */}
           <a className="btn primary l-btn-lg l-price-cta" href="#download">
             {t("desktopCta")}
           </a>
           <p className="l-price-ctanote">{t("desktopCtaNote")}</p>
-          {/* THE WAITLIST'S REMAINING JOB, and the reason it is not deleted: it is the only
-              entry point left to the dialog once the Cloud tiers link straight to `/join`,
-              and the capacity valve (`signup_capacity`) sends people back here when Cloud
-              has no room. The label is no longer about an engine landing — there is nothing
-              left to wait for on the desktop — but the door still has to exist. */}
           <button type="button" className="l-price-notify" onClick={() => open("desktop")}>
             {t("desktopNotify")}
           </button>
@@ -106,12 +107,14 @@ export function Pricing({ publicSignup = false }: { publicSignup?: boolean }) {
             <b className="num">{t("selfPrice")}</b>
             <span>{t("selfTerm")}</span>
           </p>
+          <p className="l-price-claim">{t("selfClaim")}</p>
+          {/* the terms first, then the three ways in — the last of which is the desktop
+              card beside this one, so the two free cards read as one fact */}
           <p className="l-price-status">{t("selfStatusNote")}</p>
           <ul className="l-price-feats">
-            <li>{t("selfA")}</li>
-            <li>{t("selfB")}</li>
-            <li>{t("selfC")}</li>
-            <li>{t("selfD")}</li>
+            <li>{t("selfWayServer")}</li>
+            <li>{t("selfWayHome")}</li>
+            <li>{t("selfWayDesktop")}</li>
           </ul>
           <a className="btn l-btn-lg l-price-cta" href={SELF_HOST_GUIDE_URL} rel="noreferrer">
             {t("selfCta")}
@@ -125,47 +128,56 @@ export function Pricing({ publicSignup = false }: { publicSignup?: boolean }) {
         </div>
 
         <Reveal className="l-price-cloud" delay={110}>
+          {/* The head is a row: name and lede left, the interval toggle right with the
+              annual fact directly under the control it qualifies — the panel spends its
+              height on the tiers, which is what has to be visible without scrolling. */}
           <header className="l-cloud-head">
-            <h3 className="l-price-name">
-              {t("cloudName")}
-              <em className="l-opt">{t("cloudOptional")}</em>
-            </h3>
-            <p>{t("cloudShared")}</p>
+            <div className="l-cloud-lead">
+              <h3 className="l-price-name">
+                {t("cloudName")}
+                <em className="l-opt">{t("cloudOptional")}</em>
+              </h3>
+              <p>{t("cloudShared")}</p>
+            </div>
+            <div className="l-cloud-controls">
+              {/* Monthly first and preselected; annual is the same plans with two months
+                  free. Buttons rather than a switch: two visible prices with a pressed
+                  state read faster than an abstract toggle, and `aria-pressed` says which
+                  one is live. */}
+              <div className="l-interval-toggle" role="group" aria-label={t("intervalLabel")}>
+                <button
+                  type="button" className="l-interval-btn" aria-pressed={interval === "month"}
+                  onClick={() => setInterval("month")}
+                >
+                  {t("intervalMonthly")}
+                </button>
+                <button
+                  type="button" className="l-interval-btn" aria-pressed={interval === "year"}
+                  onClick={() => setInterval("year")}
+                >
+                  {t("intervalAnnual")}
+                </button>
+              </div>
+              <p className="l-annual">{t("annualNote")}</p>
+            </div>
           </header>
-          {/* Monthly first and preselected; annual is the same plans with two months free.
-              Buttons rather than a switch: two visible prices with a pressed state read
-              faster than an abstract toggle, and `aria-pressed` says which one is live. */}
-          <div className="l-interval-toggle" role="group" aria-label={t("intervalLabel")}>
-            <button
-              type="button" className="l-interval-btn" aria-pressed={interval === "month"}
-              onClick={() => setInterval("month")}
-            >
-              {t("intervalMonthly")}
-            </button>
-            <button
-              type="button" className="l-interval-btn" aria-pressed={interval === "year"}
-              onClick={() => setInterval("year")}
-            >
-              {t("intervalAnnual")}
-            </button>
-          </div>
           <div className="l-tiers">
             <CloudTier id="solo" featured={false} onPick={open} publicSignup={publicSignup} interval={interval} />
             <CloudTier id="plus" featured onPick={open} publicSignup={publicSignup} interval={interval} />
             <CloudTier id="pro" featured={false} onPick={open} publicSignup={publicSignup} interval={interval} />
           </div>
-          {/* the trial, stated with its one real limit rather than as a
-              badge that hides it — a standing decision, not a styling choice */}
-          <p className="l-trial-note">{t("trialNote")}</p>
-          {/* The email counts on each tier are an ESTIMATE and must read as one, so the basis
-              travels with them rather than living in a footnote nobody scrolls to: ~25 KB of
-              stored message text per email (measured, `BYTES_PER_STORED_EMAIL_ESTIMATE`), the GB
-              figure once for anyone who wants it, and the attachment fact — attachment bytes are
-              never stored server-side, so they never count. Said ONCE under the three tiers
-              rather than three times inside them: it is the same sentence for every tier, and
-              repeating it in each card would push the price off the first screen. */}
-          <p className="l-storage-note">{t("storageNote")}</p>
-          <p className="l-annual">{t("annualNote")}</p>
+          <div className="l-cloud-notes">
+            {/* the trial, stated with its one real limit rather than as a
+                badge that hides it — a standing decision, not a styling choice */}
+            <p className="l-trial-note">{t("trialNote")}</p>
+            {/* The email counts on each tier are an ESTIMATE and must read as one, so the basis
+                travels with them rather than living in a footnote nobody scrolls to: ~25 KB of
+                stored message text per email (measured, `BYTES_PER_STORED_EMAIL_ESTIMATE`), the GB
+                figure once for anyone who wants it, and the attachment fact — attachment bytes are
+                never stored server-side, so they never count. Said ONCE under the three tiers
+                rather than three times inside them. */}
+            <p className="l-storage-note">{t("storageNote")}</p>
+          </div>
         </Reveal>
       </div>
 

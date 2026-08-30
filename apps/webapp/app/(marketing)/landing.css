@@ -2617,13 +2617,25 @@ a.btn {
 .l-pricing {
   padding: 0 clamp(20px, 5vw, 32px) clamp(90px, 12vw, 150px);
 }
+/* The pricing head runs the section's full measure so the title holds one line at
+   desktop widths — the section has to fit a 900px viewport with the managed tiers
+   showing, and the shared 760px head costs a full heading line here. */
+.l-pricing .l-sec-head {
+  max-width: 1060px;
+  gap: 14px;
+}
+.l-pricing .l-lede {
+  max-width: 100ch;
+}
+/* First-sight order as rows: the free pair, then the managed panel full-width under it.
+   The old shape (free column left, cloud panel right) put the self-host card in the
+   left column's tail, dangling under the desktop card with the paid tiers beside it;
+   this one gives every offer its own band, in the order the section argues. */
 .l-price-grid {
   max-width: 1060px;
-  margin: clamp(36px, 5vw, 56px) auto 0;
+  margin: clamp(18px, 2.4vw, 24px) auto 0;
   display: grid;
-  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
-  gap: clamp(20px, 3vw, 32px);
-  align-items: stretch;
+  gap: clamp(14px, 2vw, 16px);
 }
 .l-price-name {
   font-size: 17px;
@@ -2635,10 +2647,19 @@ a.btn {
   background: var(--panel);
   border-radius: 20px;
   box-shadow: var(--lift-2);
-  padding: clamp(24px, 3vw, 32px);
+  padding: clamp(18px, 2.4vw, 24px);
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 12px;
+}
+/* The card's one emphasized line — the free-is-not-a-demo claim. One register up from
+   the status note (it is the card's argument, not its fine print), still under the
+   figure it qualifies. */
+.l-price-claim {
+  font-size: 13.5px;
+  line-height: 1.45;
+  font-weight: 620;
+  color: var(--ink);
 }
 .l-price-fig {
   display: flex;
@@ -2647,7 +2668,7 @@ a.btn {
   flex-wrap: wrap;
 }
 .l-price-fig b {
-  font-size: 44px;
+  font-size: 34px;
   font-weight: 700;
   letter-spacing: -0.03em;
   line-height: 1;
@@ -2660,7 +2681,7 @@ a.btn {
 .l-price-feats {
   list-style: none;
   display: grid;
-  gap: 9px;
+  gap: 7px;
 }
 .l-price-feats li {
   font-size: 14px;
@@ -2725,18 +2746,35 @@ a.btn {
   background: var(--panel);
   border-radius: 20px;
   box-shadow: var(--lift-1);
-  padding: clamp(24px, 3vw, 32px);
+  padding: clamp(18px, 2.4vw, 24px);
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  gap: 14px;
 }
+/* Name and lede left, the interval control right with the annual fact under it —
+   a row, so the panel's height is spent on the tiers rather than on a stacked head. */
 .l-cloud-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px 28px;
+  flex-wrap: wrap;
+}
+.l-cloud-lead {
   display: grid;
   gap: 5px;
+  max-width: 58ch;
 }
-.l-cloud-head p {
+.l-cloud-lead p {
   font-size: 13.5px;
+  line-height: 1.5;
   color: var(--ink2);
+}
+.l-cloud-controls {
+  display: grid;
+  gap: 6px;
+  justify-items: end;
+  text-align: right;
 }
 .l-tiers {
   display: grid;
@@ -2753,8 +2791,8 @@ a.btn {
 .l-tier {
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  padding: 18px;
+  gap: 6px;
+  padding: 15px 16px;
   border-radius: 15px;
 }
 .l-tier[data-featured] {
@@ -2799,14 +2837,22 @@ a.btn {
   font-weight: 650;
   color: var(--accent-ink);
 }
+/* The two qualifying notes share one row under the tiers — the trial's terms and the
+   storage estimate's basis, side by side so neither pushes the other off the screen. */
+.l-cloud-notes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 28px;
+}
 .l-trial-note {
   font-size: 12.5px;
   line-height: 1.55;
   color: var(--ink2);
   max-width: 74ch;
 }
+/* the annual fact sits under the toggle it qualifies, in the head's right column */
 .l-annual {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--ink3);
 }
 /* The storage estimate's basis, one sentence for all three tiers — quieter than the trial note
@@ -2822,7 +2868,6 @@ a.btn {
 .l-interval-toggle {
   display: inline-flex;
   gap: 4px;
-  margin: 2px 0 12px;
   padding: 3px;
   border-radius: 10px;
   background: var(--tint);
@@ -3401,11 +3446,12 @@ a.btn {
   .l-feat-flip .l-feat-vig {
     order: 2;
   }
-  .l-price-grid {
+  .l-cloud-notes {
     grid-template-columns: 1fr;
   }
-  .l-price-desktop {
-    max-width: 480px;
+  .l-cloud-controls {
+    justify-items: start;
+    text-align: left;
   }
 }
 
@@ -3742,11 +3788,21 @@ a.btn {
   color: var(--ink);
 }
 
-/* ── pricing: the free column holds two cards (the app, the server) ── */
+/* ── pricing: the free row holds two cards side by side (the app, the server) ── */
 .l-price-free {
   display: grid;
-  gap: clamp(16px, 2vw, 22px);
-  align-content: start;
+  grid-template-columns: 1fr 1fr;
+  gap: clamp(14px, 2vw, 16px);
+  align-items: stretch;
+}
+/* The stack lives BESIDE the rule it overrides: an override in the @960 block higher
+   up loses on order at equal specificity — measured, not theorized (the free pair
+   rendered two-up at 390px). The section's order — desktop, self-hosted, managed —
+   is the story on a narrow screen, where no fold can hold all three. */
+@media (max-width: 960px) {
+  .l-price-free {
+    grid-template-columns: 1fr;
+  }
 }
 .l-price-self {
   box-shadow: var(--lift-1);
@@ -4013,10 +4069,4 @@ html[data-demo-full] {
 .l-frame-close:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-}
-
-/* the free column stacks two cards, so the row is tall; the cloud panel keeps its
-   natural height instead of stretching a hole into itself */
-.l-price-grid {
-  align-items: start;
 }
