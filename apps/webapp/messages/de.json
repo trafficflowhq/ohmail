@@ -1537,7 +1537,7 @@
     "selfStatus": "derselbe Server",
     "selfPrice": "Kostenlos",
     "selfTerm": "deine Hardware · ungezählt",
-    "selfClaim": "Der Server hinter ohmail.app, aus dem öffentlichen Repository — auf einer Maschine, die dir gehört.",
+    "selfClaim": "Der Server hinter ohmail.app, aus dem öffentlichen Repository — auf einer Maschine, die du mietest oder besitzt.",
     "selfStatusNote": "Kein Konto bei uns und keine Abrechnung; Postfächer werden nicht gezählt, KI mit deinem eigenen Schlüssel — oder ohne. Drei Wege hinein:",
     "selfWayServer": "Eine Maschine, die du mietest oder besitzt — vorgebaute Images, eine Compose-Datei: Web-App, API, Organizer, Postgres",
     "selfWayHome": "Eine Home-Server-Box — das Umbrel-Paket ist öffentlich, aber noch ein Entwurf",

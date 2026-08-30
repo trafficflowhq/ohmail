@@ -1537,7 +1537,7 @@
     "selfStatus": "the same server",
     "selfPrice": "Free",
     "selfTerm": "your hardware · unmetered",
-    "selfClaim": "The server behind ohmail.app, from the public repository — on a machine you own.",
+    "selfClaim": "The server behind ohmail.app, from the public repository — on a machine you rent or own.",
     "selfStatusNote": "No account with us and no billing machinery; mailboxes unmetered, AI with your own key — or none. Three ways in:",
     "selfWayServer": "A box you rent or own — prebuilt images, one compose file: web app, API, organizer, Postgres",
     "selfWayHome": "A home-server box — the Umbrel package is public, still a draft",
