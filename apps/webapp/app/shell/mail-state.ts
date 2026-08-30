@@ -467,41 +467,6 @@ export function deviceHoldings(
   return { count: mirrored, total };
 }
 
-/**
- * **MAY THE HOLDINGS SENTENCE BE SAID AT ALL RIGHT NOW?** — the gate in front of
- * {@link deviceHoldings}, and a SEPARATE question from the arithmetic.
- *
- * `deviceHoldings` answers "are these two numbers comparable"; this answers "is this device in a
- * position to make a statement about its own copy, and to promise what the sentence promises".
- * Two review findings, both real, both about a claim that is arithmetically fine and factually
- * wrong at the moment it is made:
- *
- *  · **A MIRROR NOBODY HAS READ YET.** The window's engine starts with an EMPTY in-memory mirror
- *    and fills it page by page, while the mailbox probe is an independent 30-second poll that can
- *    answer on the first tick. A Settings pane open across a cold launch would therefore read
- *    "This computer holds 0 of your N messages", then a few hundred, then a few thousand — while
- *    the store on this machine already held them the whole time; only this client's own count was
- *    still climbing. `bootstrapping` is exactly "this client's first drain
- *    has not completed", and the scheduler hydrates from the device BEFORE it drains, so its
- *    clearing is the moment `mirrored` stops being a number in motion and starts being a fact.
- *  · **A FROZEN LOOP CANNOT KEEP THE PROMISE.** The sentence says the rest of the mail loads when
- *    it is reached, and the reach-past doors are network reads over the same session. On `stopped`
- *    (the session was refused and the loop has halted) or `failing` (a sustained run of failed
- *    drains) that is a promise this device cannot keep, and the strip is already saying so in
- *    stronger words. This is where the gate DIFFERS from {@link MailState.settled}, which admits
- *    those two arms on purpose: "the list really is empty" stays true on a dead loop, and "the
- *    rest will load" does not. The one-line form is the same set minus that admission —
- *    `settled && not a failure arm` is `!bootstrapping && not a failure arm` — and it is written
- *    against the ladder's VERDICT rather than against `sync` so the pane needs no second copy of
- *    a precedence rule that lives in this file.
- *
- * Exported and pure so the suite can bite each clause, and used by the pane rather than re-derived
- * there — the rule this module's header states: one derivation, not one DOM node.
- */
-export function holdingsSpeak(state: MailState): boolean {
-  return state.settled && state.key !== "stopped" && state.key !== "failing";
-}
-
 /* ══════════════════════════════════════════════════════════════════════════════════════════
    IS THE MIRROR GROWING? — a pure reducer over two or more observations
    ══════════════════════════════════════════════════════════════════════════════════════════ */
