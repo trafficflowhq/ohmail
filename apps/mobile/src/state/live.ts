@@ -1490,10 +1490,24 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       .mutate({ kind: "draft_schedule_cancel", draftId })
       .then((res) => res, () => null);
     const status = r?.status ?? "rolled_back";
+    /**
+     * AND THE TOO-LATE SENTENCE IS RESERVED FOR THE SERVER'S OWN CONFLICT — deliberately
+     * narrower than the webapp twin, which says it for every non-confirmed non-queued result.
+     *
+     * "This message is already being sent" is a claim about what the server is doing right
+     * now, on the one surface whose entire content is a promise about time. Three different
+     * outcomes reach this branch and only ONE of them supports the claim: the 409 from the
+     * scheduled-send pass ({@link ScheduleService}'s `conflict`). The other two are a local
+     * `not_found` — a concurrent drain already took the row, so the appointment is gone rather
+     * than in flight — and a non-retryable transport refusal, where nothing is known about the
+     * send at all. Both get the ordinary save-failed sentence, which is true of all three.
+     */
+    const conflict = r?.error?.code === "conflict" || r?.error?.status === 409;
     toast(
       status === "confirmed" ? Copy.scheduleCancelled
         : status === "queued" ? Copy.scheduleCancelQueued
-          : Copy.scheduleCancelTooLate,
+          : conflict ? Copy.scheduleCancelTooLate
+            : Copy.liveSaveFailed,
     );
     return status === "confirmed";
   };
