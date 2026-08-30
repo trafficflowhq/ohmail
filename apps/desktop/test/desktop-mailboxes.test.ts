@@ -59,10 +59,17 @@ let refreshed = 0;
  * input it was handed, never read off `state.count`, which most states leave at zero.
  */
 let MIRRORED = 0;
+/**
+ * The ladder's verdict, as far as this pane reads it: `holdingsSpeak` asks whether the mirror has
+ * been read (`settled`) and whether the loop is alive (not `stopped`, not `failing`). The resting
+ * value is a settled, quiet install.
+ */
+let MAIL_STATE: { key: string; clock: boolean; settled: boolean } =
+  { key: "quiet", clock: false, settled: true };
 
 vi.mock("../../webapp/app/shell/MailStateProvider", () => ({
   useMailState: () => ({
-    state: { clock: false },
+    state: MAIL_STATE,
     mailboxes: FACTS,
     mirrored: MIRRORED,
     refresh: () => { refreshed += 1; },
@@ -142,6 +149,7 @@ const openButton = (el: HTMLElement) => buttonSaying(el, "Open ohmail.app");
 beforeEach(() => {
   FACTS = [MAILBOX];
   MIRRORED = 0;
+  MAIL_STATE = { key: "quiet", clock: false, settled: true };
   refreshed = 0;
   bridged = [];
   bridgeReply = () => new Response(null, { status: 202 });
@@ -399,6 +407,50 @@ describe("the holdings line — a windowed copy stated plainly, on the pane, wit
     const text = (await render("cloud")).textContent ?? "";
     expect(text).not.toContain("60,000");
     expect(text).not.toContain("5,107");
+  });
+
+  it("A MIRROR NOBODY HAS READ YET SAYS NOTHING — not \"holds 0 of 73,525\"", async () => {
+    // The window's engine starts with an EMPTY in-memory mirror and fills it page by page, while
+    // the mailbox probe answers on its own clock. A pane open across a cold launch would otherwise
+    // count up from zero, in a sentence about a machine whose store is already full.
+    FACTS = [counted(73_525)];
+    MIRRORED = 0;
+    MAIL_STATE = { key: "awaiting", clock: true, settled: false };
+    const text = (await render("cloud")).textContent ?? "";
+    expect(text).not.toContain("73,525");
+    expect(text).not.toContain("nothing is missing");
+  });
+
+  it("a FROZEN loop says nothing — it cannot keep the sentence's promise", async () => {
+    // "The rest load when you reach them" is a network read over the same session. On a stopped
+    // session or a sustained run of failed drains that is a promise this device cannot keep, and
+    // the strip is already saying so in stronger words.
+    for (const key of ["stopped", "failing"]) {
+      FACTS = [counted(73_525)];
+      MIRRORED = 5_107;
+      MAIL_STATE = { key, clock: false, settled: true };
+      const text = (await render("cloud")).textContent ?? "";
+      expect(text, `${key} still promised on-demand loading`).not.toContain("5,107");
+      if (root) await act(async () => { root!.unmount(); });
+      mountPoint?.remove();
+      root = null;
+    }
+  });
+
+  it("THE LOCAL DOOR NEVER SHOWS IT, even holding a previous account's counts", async () => {
+    // The stale-facts window: `MailStateProvider` does not clear the mailbox facts when the engine
+    // is swapped and `readMailboxFacts` keeps one identity across the switch, so a Cloud install
+    // re-pointed at the local door carries the OLD account's `hostedMessageCount` for up to one
+    // 30-second poll. Under "Local mailboxes on this computer" that total would be paired with the
+    // new door's count and would promise a reach-past this door has no account to reach into.
+    FACTS = [counted(73_525)];
+    MIRRORED = 5_107;
+    const text = (await render("local")).textContent ?? "";
+    expect(text).not.toContain("73,525");
+    expect(text).not.toContain("5,107");
+    expect(text).not.toContain("nothing is missing");
+    // And the local pane is otherwise untouched.
+    expect(text).toContain("Local mailboxes on this computer");
   });
 
   it("the copy sentence about whose mail this is stays exactly where it was", async () => {
