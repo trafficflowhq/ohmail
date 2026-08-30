@@ -112,6 +112,20 @@ export type AiSpendOutcome =
  */
 export interface AiCreditGate {
   /**
+   * Does this gate SERIALIZE callers with an exclusive claim, or only price them?
+   *
+   * It is on the port because a WRAPPER has to know. A decorator that can answer `permitted` on
+   * its own — `withSetupPool` is the one that exists — must extend the claim rather than answer
+   * around it, and reading the property off the gate it wraps is what makes that impossible to
+   * get wrong. The alternative, a second `exclusive` flag passed to the wrapper beside the gate,
+   * is a flag two call sites can disagree with; that disagreement was a real defect, in which
+   * setup-funded Screener spends skipped the claim entirely and one credit bought as many
+   * provider calls as a caller could overlap.
+   *
+   * Absent or `false` ⇒ no claim is taken and {@link AiCreditGate.release} is a no-op.
+   */
+  readonly exclusive?: boolean;
+  /**
    * May this account spend one AI action on `source`, and charge it if so.
    *
    * @param source Build it with the ledger-source vocabulary, never by hand: a database

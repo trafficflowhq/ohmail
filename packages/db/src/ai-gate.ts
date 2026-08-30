@@ -606,6 +606,9 @@ export function makeAiCreditGate(
   }
 
   return {
+    // Read by decorators — `withSetupPool` is the one in the tree — so a layer that can answer
+    // `permitted` without reaching this gate knows it owes the same claim. See the port.
+    exclusive: opts.exclusive === true,
     spend: (source, meta = {}) => spend(source, meta),
 
     async tryDebit(source, meta = {}) {

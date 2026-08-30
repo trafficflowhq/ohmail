@@ -159,6 +159,36 @@ export class AnthropicTransportError extends Error {
   }
 }
 
+/**
+ * THE WORST-CASE WALL TIME one call through this client can take, in milliseconds.
+ *
+ * It exists because a per-ATTEMPT timeout reads like a whole-call bound and is not one, and
+ * something outside this module was sized against the wrong number: the exclusive AI work claim
+ * (`AI_CLAIM_TTL_MS`) was set to 60 s on the stated ground that *"the worker's model timeout is
+ * 30 s"*. The worker passes `timeoutMs: 30_000` and no `maxRetries`, so its real ceiling is three
+ * attempts plus two backoffs — and a live holder's claim expired while it was still inside the
+ * call, letting a second caller take the claim over and buy a second provider call against the
+ * one credit the first had already paid. Anyone bounding a lease, a lock or a function duration
+ * against this client must bound it against THIS, never against `timeoutMs`.
+ *
+ * The two terms:
+ *
+ *  · `timeoutMs × (maxRetries + 1)` — every attempt can burn its full deadline;
+ *  · `maxRetries × MAX_RETRY_AFTER_MS` — a server `retry-after` is honoured up to that cap, which
+ *    dominates the exponential default (500 ms doubling, ±25 % jitter) by more than an order of
+ *    magnitude. Taking the cap rather than the default is what makes this a CEILING: a bound that
+ *    holds only when the provider is not asking us to wait is not a bound at all, and a 429 storm
+ *    is exactly when several callers are queued on the same source.
+ *
+ * Deliberately excludes DNS, connection setup and the caller's own work around the call, so a
+ * consumer sizing a lease should still leave margin above it.
+ */
+export function callCeilingMs(o: { timeoutMs?: number; maxRetries?: number } = {}): number {
+  const timeoutMs = o.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const maxRetries = Math.max(0, o.maxRetries ?? DEFAULT_MAX_RETRIES);
+  return timeoutMs * (maxRetries + 1) + maxRetries * MAX_RETRY_AFTER_MS;
+}
+
 export interface AnthropicClientOptions {
   /** The API key. NEVER logged, never put in an error message (see {@link scrub}). */
   apiKey: string;

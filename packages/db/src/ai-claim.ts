@@ -66,15 +66,43 @@ import type { Tx } from "./change-log.js";
 /**
  * How long a claim is honoured before another caller may take it over.
  *
- * It is a bound on how long a HOLDER can still plausibly be working, and both hosts are bounded
- * by something smaller: the API's Anthropic client is 10 s with one retry inside a serverless
- * invocation capped at 60 s, and the worker's model timeout is 30 s. 60 s is the larger of the
- * two ceilings, so a claim cannot outlive the invocation that took it — which is the property
- * that matters. Anything much shorter would let a slow-but-alive model call be overtaken, which
- * is the defect coming back; anything much longer buys nothing and lengthens the wedge a crash
- * costs.
+ * It is a bound on how long a HOLDER can still plausibly be working, so it MUST be at least the
+ * worst-case wall time of the model call it covers. Under-sizing it does not merely weaken the
+ * exclusivity, it inverts it: a live holder's claim expires mid-call, the next arrival takes it
+ * over, finds the holder's debit and reads it as an open duplicate — `permitted, charged: false`
+ * — and makes a second provider call against a credit that bought one. That is the defect the
+ * claim exists to prevent, reached through the claim itself.
+ *
+ * ## The arithmetic, because the previous number was wrong and read as if it were right
+ *
+ * This constant was 60 s, on the stated ground that *"the API's Anthropic client is 10 s with one
+ * retry inside a serverless invocation capped at 60 s, and the worker's model timeout is 30 s.
+ * 60 s is the larger of the two ceilings, so a claim cannot outlive the invocation that took
+ * it."* The first half held. The second confused a PER-ATTEMPT timeout with a whole-call ceiling:
+ * `apps/worker/src/config.ts` passes `timeoutMs: 30_000` and no `maxRetries`, so the client's
+ * default of two retries applies and the worker's own comment beside that line already said the
+ * true figure — *"Two retries at 30 s bounds one classify at ~90 s plus backoff"*. The worker
+ * therefore ran past its own claim on every slow call, and the comment asserting it could not was
+ * the only thing saying otherwise.
+ *
+ * `callCeilingMs` in `packages/core/src/ai/anthropic-client.ts` now computes the bound, and the
+ * two exclusive callers measure against it:
+ *
+ *  · the WORKER's classifier — 30 s × 3 attempts + 2 × 20 s honoured `retry-after` = **130 s**;
+ *  · the API's Screener classifier — 10 s × 2 + 1 × 20 s = 40 s, and a Vercel function is capped
+ *    at 60 s regardless, so the serverless door was always inside the old value.
+ *
+ * 150 s is the worker's ceiling with margin for DNS, connection setup and the transaction around
+ * the call. The worker's own test suite recomputes that ceiling from `classifyCallCeilingMs` — the
+ * live configuration, not a copy of these numbers — and fails if it ever exceeds this constant,
+ * which is the point: the figure that was wrong here was wrong in prose, and nothing checked it.
+ *
+ * The cost of the larger value is the wedge a CRASHED holder leaves on ONE source: 150 s in which
+ * that single sender's suggestion cannot be retried. That is the right side of the trade — the
+ * alternative is paying a provider for calls nobody bought — and it is bounded, per-source, and
+ * self-healing.
  */
-export const AI_CLAIM_TTL_MS = 60_000;
+export const AI_CLAIM_TTL_MS = 150_000;
 
 /**
  * Take the exclusive claim on `source` for THIS transaction's caller.

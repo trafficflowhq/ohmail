@@ -2,6 +2,7 @@ import { hostname } from "node:os";
 import {
   keyProviderFromEnvOptional, kekFingerprint, kekFingerprintFromEnv, kekEnvIdentity,
   makeAnthropicClient, assertAnthropicKey, makeHaikuClassifier, makeSonnetDrafter, makeOpusProposer,
+  callCeilingMs,
   type KeyProvider, type ClassifierPort, type DraftPort, type WorkflowPort,
   type KekEnvIdentity, type Logger,
 } from "@trafficflow/core";
@@ -1011,6 +1012,29 @@ function loadAttachmentStagingConfig(
  * `onUsage` is wired to the worker's own logger at construction in `index.ts`, so every metered
  * call's token counts and estimated cost land in the structured log.
  */
+/**
+ * The classifier's per-ATTEMPT deadline. Read here rather than inlined at the client so the claim
+ * TTL can be sized against the same number: `AI_CLAIM_TTL_MS` was once set against this value
+ * MISTAKEN for a whole-call ceiling, and a lease shorter than the call it covers hands a live
+ * holder's work to a second caller who then buys a second provider call for one credit.
+ * `classifyCallCeilingMs` turns it into the real bound, and this app's own test suite asserts the
+ * two stay ordered: raising the timeout past the claim's lifetime fails there rather than in
+ * production billing.
+ */
+export const AI_CLASSIFY_TIMEOUT_MS_DEFAULT = 30_000;
+
+/**
+ * The WORST-CASE wall time one worker classification can take, from this deployment's own
+ * configuration — every attempt at its full deadline plus every honoured `retry-after`.
+ *
+ * `maxRetries` is deliberately absent from the client construction below, so the client's default
+ * applies and `callCeilingMs` uses the same default. Passing it here explicitly would create a
+ * second place for the two to disagree, which is the shape of the defect this exists to prevent.
+ */
+export function classifyCallCeilingMs(env: NodeJS.ProcessEnv): number {
+  return callCeilingMs({ timeoutMs: optInt(env, "TF_AI_TIMEOUT_MS", AI_CLASSIFY_TIMEOUT_MS_DEFAULT) });
+}
+
 export function loadAiPorts(
   env: NodeJS.ProcessEnv,
   log?: Logger,
@@ -1039,7 +1063,7 @@ export function loadAiPorts(
     // mailbox in this process — so the per-attempt deadline here is a liveness property of the
     // whole worker, not a per-request nicety. Two retries at 30 s bounds one classify at ~90 s
     // plus backoff, and the circuit opens after two of those.
-    timeoutMs: optInt(env, "TF_AI_TIMEOUT_MS", 30_000),
+    timeoutMs: optInt(env, "TF_AI_TIMEOUT_MS", AI_CLASSIFY_TIMEOUT_MS_DEFAULT),
     log,
   });
   return {

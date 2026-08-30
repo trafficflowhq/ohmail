@@ -2,6 +2,7 @@ import { and, asc, eq, gt, gte, isNull, sql } from "drizzle-orm";
 import { setupGrants, setupGrantSpends, creditLedger } from "./schema.js";
 import { aiActionCost } from "./ledger-source.js";
 import { aiRefusalReason } from "./ai-gate.js";
+import { AI_CLAIM_TTL_MS, claimAiAttempt, releaseAiAttempt } from "./ai-claim.js";
 import { effectiveSubscriptionOf, entitlementsFor } from "./billing.js";
 import type { AiCreditGate, AiSpendOutcome } from "./ai-gate-port.js";
 import type { LedgerTx, Tx } from "./change-log.js";
@@ -154,19 +155,60 @@ export async function setupPoolOf(
  *  4. **Never throws**, like the port demands: a fault in the wrapper is a `fault` outcome for
  *     `spend` and a reported no-op for refunds.
  *
- * The one guarantee it does NOT extend is the exclusive claim: the inner gate's claim is taken
- * only when the spend reaches it. For setup draws the `(account_id, source)` PRIMARY KEY is the
- * serialization — a concurrent second caller blocks on the first's insert and resolves to a free
- * retry, which is the same money outcome the claim buys (one charge per unit of work), traded
- * against a second model call in a race the Screener paths already tolerate elsewhere.
+ *  5. **The exclusive claim is EXTENDED, not answered around** — see {@link withSetupPool}'s
+ *     claim block below. This paragraph used to say the opposite, and say it as a deliberate
+ *     trade; the trade was mispriced and the reasoning is kept here because the mistake is
+ *     instructive.
+ *
+ *     The withdrawn argument was: *"for setup draws the `(account_id, source)` PRIMARY KEY is the
+ *     serialization — a concurrent second caller blocks on the first's insert and resolves to a
+ *     free retry, which is the same money outcome the claim buys (one charge per unit of work),
+ *     traded against a second model call."* Both halves are wrong in the same way.
+ *
+ *     · The money outcome is the same; the SPEND is not. The primary key serializes the callers
+ *       one behind another and then answers every one of them `permitted`. It bounds the charge
+ *       to one and bounds the model calls to nothing at all — N concurrent requests get N calls.
+ *       "A second model call" describes the two-caller case and there is no two-caller case in
+ *       the threat model: `POST /screener/suggest` is `idempotent: true`, so distinct
+ *       `Idempotency-Key`s never collapse, and `middleware.ts` records that the control for
+ *       invocation cost is an edge rate limit this deployment does not have.
+ *     · That is not a race "the Screener paths already tolerate elsewhere" — it is verbatim the
+ *       defect `ai-claim.ts` was written to close, whose own opening states it: *"N concurrent
+ *       requests bought N model calls for one credit."* The wrapper reinstated it for exactly the
+ *       accounts most exposed to it, because the pool is drawn BEFORE the main balance and so
+ *       covers every newly connected mailbox for its first
+ *       {@link SETUP_GRANT_CREDITS_PER_MAILBOX} screenings — the backlog drain this grant exists
+ *       to fund is the heaviest Screener use the product ever sees.
+ *
+ *     The whole point of this pool is that it is BOUNDED — a fixed number of screening credits
+ *     per mailbox, expiring, and capped for the life of the account. A bound expressed as a
+ *     credit count only bounds anything if one credit buys one provider call; a credit that funds
+ *     as many calls as happen to arrive together bounds nothing at all. The wrapper therefore
+ *     takes the inner gate's claim itself whenever it intends to answer, and hands it back when
+ *     it intends to delegate.
  */
 export function withSetupPool(
   db: Tx,
   accountId: string,
   inner: AiCreditGate,
-  opts?: { now?: () => Date; onError?: (err: unknown, ctx: { accountId: string; source: string }) => void },
+  opts?: {
+    now?: () => Date;
+    onError?: (err: unknown, ctx: { accountId: string; source: string }) => void;
+    /**
+     * How long the claim this wrapper takes on `inner`'s behalf is honoured. Defaults to
+     * {@link AI_CLAIM_TTL_MS}; a caller whose model call can outlive that default MUST pass its
+     * own ceiling here, exactly as it must to {@link makeAiCreditGate}. See `ai-claim.ts`.
+     */
+    claimTtlMs?: number;
+  },
 ): AiCreditGate {
   const now = opts?.now ?? ((): Date => new Date());
+  // Whether the wrapper must serialize callers itself is a property of the gate it wraps, read
+  // OFF that gate rather than passed in beside it. A second flag at the call site is a flag two
+  // call sites can disagree with, and this wrapper's whole failure mode was answering `permitted`
+  // in front of a gate whose exclusivity it did not know about.
+  const exclusive = inner.exclusive === true;
+  const claimTtlMs = opts?.claimTtlMs ?? AI_CLAIM_TTL_MS;
   const amount = aiActionCost("debit_classify");
   const report = opts?.onError ?? ((err, ctx) => {
     console.error(`[setup-grant] draw failed for account ${ctx.accountId} (${ctx.source}):`, err);
@@ -175,6 +217,39 @@ export function withSetupPool(
   /** `null` ⇒ the wrapper has no answer; ask the inner gate. */
   async function tryDraw(source: string): Promise<AiSpendOutcome | null> {
     return db.transaction(async (tx): Promise<AiSpendOutcome | null> => {
+      // (0) — THE EXCLUSIVE CLAIM, TAKEN BEFORE ANY READ, on the wrapped gate's behalf.
+      //
+      // Claim-first for the reason `ai-gate.ts` gives at its own claim: a caller that has decided
+      // the money and then lost the claim holds a committed draw for a model call it must not
+      // make, and nothing can undo that. Claiming first means a loser has written nothing.
+      //
+      // It is taken here rather than left to the inner gate because the wrapper can ANSWER
+      // without ever reaching the inner gate — the two free-retry arms below both return
+      // `permitted` on their own — and an answer that skips the claim is an answer that skips
+      // the exclusivity. That is the whole defect this block closes.
+      //
+      // `source` is the BASE ledger source, matching the inner gate's claim key exactly, so a
+      // setup-funded caller and a balance-funded caller for one unit of work exclude each other
+      // rather than each holding "their own" claim.
+      if (exclusive) {
+        const held = await claimAiAttempt(tx, accountId, source, claimTtlMs);
+        if (!held) return { permitted: false, refusal: "inflight", source };
+      }
+
+      /**
+       * Give the claim back on the DELEGATE path, in this same transaction.
+       *
+       * Returning `null` means the inner gate decides, and the inner gate claims first too — so a
+       * claim still held here would make it refuse itself `inflight`, turning every fall-through
+       * to the paid balance into a spurious refusal. Inserting and deleting inside one
+       * transaction leaves no row, so the delegation is indistinguishable from never having
+       * claimed, and the inner gate's own claim is the serialization from there on.
+       */
+      const handBack = async (): Promise<null> => {
+        if (exclusive) await releaseAiAttempt(tx, accountId, source);
+        return null;
+      };
+
       // (1) — state refusals are the inner gate's, and they run FIRST, before the free-retry
       // read. `aiRefusalReason` probes the STATE with a positive stand-in balance, so
       // `out_of_credits` is its word for "the state itself is spendable" — exactly the accounts
@@ -184,7 +259,7 @@ export function withSetupPool(
       // account no gate would admit — the review caught exactly that bypass when the dedup
       // read came first.
       const refusal = await aiRefusalReason(tx as LedgerTx, accountId, now());
-      if (refusal !== "out_of_credits") return null;
+      if (refusal !== "out_of_credits") return handBack();
 
       // (2) — free retry of a setup-funded attempt. A REFUNDED spend row means the earlier
       // attempt was abandoned (the model faulted and gave the credit back); the retry is a new
@@ -210,7 +285,7 @@ export function withSetupPool(
           sql`(${creditLedger.source} = ${source} or ${creditLedger.source} like ${source + "~%"})`,
         ))
         .limit(1);
-      if (ledgerRows.length > 0) return null;
+      if (ledgerRows.length > 0) return handBack();
 
       // The draw: oldest-expiring grant with enough left, locked. Plain FOR UPDATE (no SKIP):
       // two concurrent draws serialize for the row's lifetime of the statement, which at
@@ -226,7 +301,7 @@ export function withSetupPool(
         .orderBy(asc(setupGrants.expiresAt), asc(setupGrants.id))
         .limit(1)
         .for("update");
-      if (grant.length === 0) return null;
+      if (grant.length === 0) return handBack();
 
       // The idempotency claim, THEN the money — a conflict here is a concurrent caller that
       // claimed this exact work between our dedup read and now; their charge pays for our run.
@@ -251,7 +326,7 @@ export function withSetupPool(
         if (conflicting[0]?.refundedAt == null) {
           return { permitted: true, charged: false, attempt: source };
         }
-        return null;
+        return handBack();
       }
 
       await tx
@@ -304,6 +379,9 @@ export function withSetupPool(
   }
 
   return {
+    // Advertised so this wrapper composes: a wrapper around THIS one reads the same property and
+    // extends the same guarantee, instead of rediscovering the hole one layer up.
+    exclusive,
     spend: (source, meta) => spend(source, meta),
     async tryDebit(source, meta) {
       return (await spend(source, meta)).permitted;
@@ -336,7 +414,10 @@ export function withSetupPool(
     ...(inner.release
       ? {
         async release(source: string) {
-          // The claim, if any, is the inner gate's; a setup draw holds none.
+          // ONE claim, ONE release. A setup draw now takes the inner gate's claim under the
+          // inner gate's own key, so the inner gate's `release` is the right — and the only —
+          // way to give it back. (This comment used to read "a setup draw holds none", which
+          // was true of the wrapper that let one credit fund unbounded provider calls.)
           await inner.release!(source);
         },
       }
