@@ -622,7 +622,12 @@ function ComposeSheet({
                 borderRadius: t.radius.card,
                 paddingHorizontal: 14,
                 paddingVertical: 10,
-                minHeight: 120,
+                /* THE PANEL MUST NOT GROW PAST THE VIEWPORT AND BURY SEND — the exact defect
+                   the signature block's own ceiling exists for, one control over. While the
+                   Send-later picker is open the writing area yields to it: the first line
+                   still stands (nothing is disowned, and the text is untouched), and the
+                   full editor comes back with a single Back. */
+                minHeight: later === null ? 120 : 44,
                 textAlignVertical: "top",
               },
             ]}
@@ -633,7 +638,7 @@ function ComposeSheet({
               sender stores nothing, or the map is not yet server-confirmed: absence is the
               resting state, never a collapsed control. × strikes it for THIS message only;
               typing edits it (the user's text stands whatever the resolution later says). */}
-          {sigText !== null ? (
+          {sigText !== null && later === null ? (
             <View
               accessibilityLabel={Copy.sigLabel}
               style={{
@@ -718,7 +723,7 @@ function ComposeSheet({
                    reason (a fortnight was an exclusion nothing on screen admitted). TODAY is
                    offered only while some hour on it is still far enough ahead to be worth
                    naming, which is the same lead rule the evening preset lives under. */
-                <ScrollView style={{ maxHeight: 232 }}>
+                <ScrollView style={{ maxHeight: 208 }}>
                   {DAY_OFFSETS.filter(
                     (offset) => offset > 0 || usableHours(openedAt, 0).length > 0,
                   ).map((offset) => (
@@ -735,7 +740,7 @@ function ComposeSheet({
                    name a moment already gone. The set is the product's own clock vocabulary
                    widened for sending: the 09:00 the horizons fix, the 18:00 the evening
                    preset fixes, and the four ordinary hours between and around them. */
-                <ScrollView style={{ maxHeight: 232 }}>
+                <ScrollView style={{ maxHeight: 208 }}>
                   {usableHours(openedAt, later.offset).map((hour) => {
                     const at = dayAtHour(openedAt, later.offset, hour);
                     return (
