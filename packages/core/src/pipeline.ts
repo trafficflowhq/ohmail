@@ -893,6 +893,7 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
       && arrivedAt !== null
       && arrivedAt.getTime() < deps.screeningCutoff.getTime();
 
+
     let desired: string = (sensitivity.sensitive && !deniedByConsent) || admitBounce
       ? "INBOX"
       : preBaselineBacklog
@@ -1430,17 +1431,27 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
   // and already calls `recordInstance` without repointing. `duplicate` is the same observation in the
   // same folder, and it was the one that repointed.
   //
-  // ── AND THE SENT FOLDER IS EXCLUDED, ON AN ENUMERATION ARGUMENT, NOT AN AUTHORSHIP ONE ────────
+  // ── THE SENT FOLDER IS NO LONGER EXCLUDED — ITS EXCLUSION ARGUMENT WAS FALSIFIED LIVE ─────────
   //
-  // Sent is the one folder read from a UID WATERMARK rather than end to end, and a delete BELOW that
-  // watermark is deliberately never reported (`imap.ts`, `enumFloorUid`) — so the promotion in
-  // `forgetInstanceAt` that closes this change's residual would never be reached there, and a
-  // recorded non-primary copy could outlive its primary with nothing to move the row onto. The same
-  // property makes the exclusion free: the watermark, not the known-set, is that folder's
-  // enumeration floor, so a second copy in Sent cannot become a permanently-unknown UID and the loop
-  // this block exists to break cannot form. Exchange Online's shape — its own re-rendered copy filed
-  // beside the byte-exact one the send path appended — therefore keeps converging on the newest
-  // observed UID exactly as it did (`sent-record.test.ts`).
+  // The exclusion (`!e.ownAuthored`, removed 2026-08-30) rested on one claim: *"a second copy in
+  // Sent cannot become a permanently-unknown UID, because the watermark is that folder's floor"*.
+  // That claim is TRUE only once a watermark has been PUBLISHED, and the watermark is published only
+  // by a non-truncated first scan — so on a Sent folder whose first scan keeps truncating, every
+  // own-authored second copy is exactly the permanently-unknown UID the claim said could not exist.
+  // Measured on a production mailbox: one message APPENDed to Sent three times (three UIDs, one
+  // 4.6 MB body), the two non-primary copies re-fetched on EVERY cycle for weeks — 9.4 MB of IMAP
+  // traffic per ~2-minute cycle on a quiet mailbox — each fetch repointing the primary and dropping
+  // the known-set memo, and the truncation their re-fetch guaranteed holding the watermark at 0,
+  // which is the very state that made them unknown. A defect that maintains its own precondition.
+  //
+  // The own-authored arm is NOT plain recording, though — it records AND repoints (see the
+  // `sameFolderSameEpochCopy` branch below for the two-halves argument). A first draft here
+  // recorded only, and review round 2 found the regression that costs: Exchange's replace shape
+  // expunges the copy the send path appended, often BELOW the watermark where the expunge is
+  // never observed, and a primary left there is a dead locator no promotion can ever repair.
+  // The old repoint-on-arrival converged the primary onto the newest observed copy — the one the
+  // provider kept — and that behaviour is preserved; the recording of the superseded locator is
+  // what breaks the re-fetch loop, because both UIDs stay in the known-set either way.
   //
   //  · a different UID in the SAME epoch is a genuine second copy on the server right now. Record it
   //    (non-primary): it becomes known, its body is never fetched again, and the message keeps the
@@ -1455,13 +1466,69 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
   // later expunged, that call PROMOTES a surviving instance, so `messages.native_locator` never
   // names a UID the server does not hold. Before this change the same repair happened by accident —
   // the survivor came back as "unknown" and repointed the primary — which is the oscillation itself.
-  const secondCopyInSameEpoch =
+  const sameFolderSameEpochCopy =
     e.kind === "duplicate"
-    && !e.ownAuthored
     && e.storedLocator.folder === e.arrivalLocator.folder
     && epochOfRef(e.storedLocator.ref) === epochOfRef(e.arrivalLocator.ref)
     && e.storedLocator.ref !== e.arrivalLocator.ref;
-  if (e.unexpungedSource || secondCopyInSameEpoch) {
+  const secondCopyInSameEpoch = sameFolderSameEpochCopy && !e.ownAuthored;
+  // ── AN OWN-AUTHORED (SENT) COPY: RECORD *AND* REPOINT — both halves are load-bearing ─────────
+  //
+  // Sent is the one folder read from a UID watermark, and a delete BELOW the watermark is never
+  // reported — so whichever copy the row names can silently die there with no promotion to move
+  // it. The two halves answer the two failure shapes that fact creates, and dropping either one
+  // re-opens a measured defect:
+  //
+  //  · RECORD the stored locator as a non-primary instance, so BOTH UIDs are in the known-set.
+  //    Without it, the not-primary copy is re-enumerated as unknown on every pass of a
+  //    still-unpublished first scan — the repoint ping-pong measured in production (one 4.6 MB
+  //    message APPENDed three times; 9.4 MB re-fetched per ~2-minute cycle, for weeks), the loop
+  //    that keeps the watermark at 0 and thereby maintains its own precondition.
+  //  · REPOINT the primary to the newest observed copy, the convergence Sent has always had.
+  //    Without it, the provider-replace shape (Exchange expunging the copy the send path
+  //    appended, BELOW the watermark, where the expunge is never observed) leaves
+  //    `messages.native_locator` naming a dead UID for ever — review round 2's finding. The
+  //    newest observed copy is the one the provider kept; converging onto it is the repair.
+  //
+  // A stale non-primary row for a below-watermark expunge is the accepted residual: it is never
+  // enumerated again (the watermark is the floor), so it costs nothing, and a UIDVALIDITY reset
+  // voids it with everything else.
+  //
+  // AND THE PRIMARY ITSELF can go stale the same way, under EITHER policy — uid order proves
+  // allocation time, not which duplicate a provider will later expunge (a review pressed this
+  // with the mirror-image shape: a provider filing its own copy BEFORE our append, then
+  // expunging the append). No locator rule can know the survivor of an unobservable delete, so
+  // the choice is made by the measured provider pattern (Exchange replaces the OLDER copy, and
+  // its replace was observed above the watermark where the promotion repairs it) — and the
+  // stale-primary state is DEGRADED, not lost: a move through a dead locator raises
+  // `MessageGoneError`, `voidGoneFiling` clears the filing, and the next `changesSince` adopts
+  // what the server actually holds. That repair is the floor both policies stand on.
+  // ── "NEWEST" IS A UID COMPARISON, NOT AN ARRIVAL ORDER ────────────────────────────────────
+  //
+  // A cold Sent scan hands creates over newest-FIRST, so with three copies the arrivals reach
+  // this branch in DESCENDING uid order — an unconditional repoint would walk the primary
+  // BACKWARD onto the oldest copy (review round 3), which is precisely the copy the
+  // provider-replace pattern expunges. Within one epoch the uid ordering is the server's own
+  // allocation order, so `arrival > stored` is exactly "the copy the server kept most recently".
+  const arrivalIsNewer = sameFolderSameEpochCopy
+    && Number(e.arrivalLocator.ref.split(":")[1]) > Number(e.storedLocator.ref.split(":")[1]);
+  if (!e.unexpungedSource && sameFolderSameEpochCopy && await repo.primaryInstanceVanished(e.messageId)) {
+    // FIRST, ahead of every recording arm and for own-authored and inbound copies alike (review
+    // rounds 4 and 6): the primary is GONE — an observed expunge removed it with nothing to
+    // promote, and `messages.native_locator` names a UID the server does not hold. ANY live copy
+    // beats a dead locator, whatever its uid and whoever authored it — this is locator repair,
+    // not placement (folder_state is untouched), so the adoption boundary is not in play.
+    // Without this arm a surviving copy would be recorded non-primary, its uid would join the
+    // known-set, and nothing would ever repair the row — every move, reply and attachment read
+    // pinned to a missing message. (`unexpungedSource` is excluded because its source instance
+    // demonstrably still exists — the primary cannot be gone.)
+    await repo.updateLocator(e.messageId, e.arrivalLocator);
+  } else if (e.unexpungedSource || secondCopyInSameEpoch) {
+    await repo.recordInstance(e.messageId, e.arrivalLocator);
+  } else if (sameFolderSameEpochCopy && arrivalIsNewer) {
+    await repo.updateLocator(e.messageId, e.arrivalLocator);
+    await repo.recordInstance(e.messageId, e.storedLocator);
+  } else if (sameFolderSameEpochCopy) {
     await repo.recordInstance(e.messageId, e.arrivalLocator);
   } else {
     await repo.updateLocator(e.messageId, e.arrivalLocator);

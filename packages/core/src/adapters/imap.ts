@@ -1870,7 +1870,17 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       }
       // `take.length === 0` is the anti-stall rule: the first message is always admitted past the
       // BATCH budget, so the drain can never wedge on one large-but-storable mail.
-      if (take.length > 0 && bytes + size > budget.bytes) { truncated = true; break; }
+      //
+      // `continue`, NOT `break` — and the difference was measured, not styled. A `break` here made
+      // ONE large message a plug for everything ordered behind it: a production Sent folder held a
+      // 26 MB message third in newest-first order, the two messages ahead of it never left the
+      // unknown set (they dedup'd to an existing row), so every cycle admitted those two, broke on
+      // the 26 MB one, and never reached the hundreds of messages behind it — a first scan that could not
+      // finish, for ever. Skipping instead keeps filling the batch with what still fits: the pass
+      // stays truncated (the skipped message is owed and the cursor is held for it), but everything
+      // smaller behind it commits THIS cycle, so the unknown set strictly shrinks and the skipped
+      // message is admitted by the anti-stall rule the moment it reaches the front of the order.
+      if (take.length > 0 && bytes + size > budget.bytes) { truncated = true; continue; }
       take.push(uid);
       bytes += size;
     }

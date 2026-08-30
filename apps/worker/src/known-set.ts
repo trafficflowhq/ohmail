@@ -231,6 +231,50 @@ export class KnownSetCache {
   /** Whether the memo currently holds a set. Read by the guards, not by the loop. */
   get warm(): boolean { return this.entries !== null; }
 
+  /** Lazily-built membership index over the warm entries — see {@link coversInstance}. */
+  private tupleIndex: Set<string> | null = null;
+
+  /**
+   * Whether the warm memo already projects the physical tuple a `recordInstance(messageId,
+   * locator)` call names — the value question behind that method's value-dependent neutrality.
+   *
+   * `recordInstance` is an upsert whose conflict arm updates ONLY `last_seen_at`, and only when
+   * the existing row belongs to the same message (`setWhere` — the anti-re-attribution guard;
+   * a different owner means it updates NOTHING). None of the projected columns — folder, uid,
+   * uidvalidity, `message_id_header`, the seen baseline — can move on the conflict arm. So when
+   * the tuple is already IN the projection the write is a timestamp touch whatever `messageId`
+   * says, and the memo may survive it; when it is not, the insert arm adds a projected row and
+   * the memo must drop. The memo IS the projection while warm (the contract in this file's
+   * header), so membership here answers the question exactly. A cold memo answers `false`, which
+   * takes the drop path — the direction an unknown must fail in.
+   *
+   * This is what stops a `duplicate` re-assertion of an already-known locator from costing a
+   * full `listKnownLocators` re-read every cycle — the `droppedBy="updateLocator"`/`recordInstance`
+   * storm measured on a production mailbox whose Sent folder held byte-twin copies.
+   */
+  coversInstance(locator: { folder: string; ref: string } | null | undefined): boolean {
+    if (this.entries === null) return false;
+    // A shape this cannot read is an UNKNOWN, and an unknown takes the drop path — never the
+    // keep path. `typeof` rather than trusting the annotation, because this is called from a
+    // Proxy over `unknown[]` arguments.
+    if (typeof locator?.ref !== "string" || typeof locator.folder !== "string") return false;
+    const sep = locator.ref.indexOf(":");
+    if (sep <= 0) return false;
+    if (this.tupleIndex === null) {
+      const idx = new Set<string>();
+      // `\u0000` as the folder/epoch separator — WRITTEN AS AN ESCAPE, never as a raw byte: a
+      // literal NUL in source makes `file` classify this module as data and the repository's
+      // grep tooling silently skip the whole file (the CLAUDE.md trap, and a review caught this
+      // very line carrying the raw byte). The value itself is right because no IMAP folder name
+      // can contain NUL, so the key cannot collide with a folder that merely contains spaces.
+      for (const e of this.entries) idx.add(`${e.folder}\u0000${e.uidValidity}:${e.uid}`);
+      this.tupleIndex = idx;
+    }
+    return this.tupleIndex.has(
+      `${locator.folder}\u0000${locator.ref.slice(0, sep)}:${locator.ref.slice(sep + 1)}`,
+    );
+  }
+
   /**
    * Drop the memo. Idempotent, and called EAGERLY — before the write that motivated it, and on
    * every leadership-relevant event.
@@ -242,6 +286,7 @@ export class KnownSetCache {
   drop(why: string): void {
     if (this.entries !== null) this.droppedBy = why;
     this.entries = null;
+    this.tupleIndex = null;
   }
 
   /**
@@ -267,6 +312,7 @@ export class KnownSetCache {
     }
     const rows = await read(mailboxId);
     this.entries = [...rows];
+    this.tupleIndex = null;
     this.lastRows = rows.length;
     this.lastBytes = estimateWireBytes(rows);
     this.cycleReads++;
@@ -320,6 +366,20 @@ export function watchKnownSet<T extends object>(repo: T, cache: KnownSetCache): 
 
       if (KNOWN_SET_NEUTRAL.has(prop)) {
         return (...args: unknown[]): unknown => (value as (...a: unknown[]) => unknown).apply(obj, args);
+      }
+
+      // `recordInstance` is neutral BY VALUE, not by name: its conflict arm is a `last_seen_at`
+      // touch that cannot move the projection, and the memo itself can tell the two arms apart —
+      // a tuple it already projects can only take the conflict arm. See
+      // {@link KnownSetCache.coversInstance} for the argument; an unparseable or unknown tuple
+      // falls through to the drop, the safe direction. Without this, every re-observation of an
+      // already-recorded copy (a `duplicate` re-assertion on a folder mid-first-scan) dropped the
+      // memo once per cycle and re-read the whole mailbox's locators — 884 KB per visit, measured.
+      if (prop === "recordInstance") {
+        return (messageId: string, locator: { folder: string; ref: string }): unknown => {
+          if (!cache.coversInstance(locator)) cache.drop(prop);
+          return (value as (m: string, l: unknown) => unknown).call(obj, messageId, locator);
+        };
       }
 
       // DIRTY, and dropped BEFORE the call — see the header on why eager is the safe order.

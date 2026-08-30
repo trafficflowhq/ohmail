@@ -2023,6 +2023,7 @@ export async function startWorkerWithLock(
         runtimes.set(mb.mailboxId, rt);
         await beat();
 
+
         // ── MAKE THE MAILBOX SCREENER-SHAPED, ONCE, BEFORE THE FIRST DRAIN ───────────────
         //
         // Here and not in `cycle()`: it is a once-per-mailbox pass (`mailboxes.kickstart_at`,
@@ -4214,9 +4215,20 @@ export async function startWorkerWithLock(
       // SAME serial queue as the roster pass — the drain cannot starve roster reconciliation,
       // and `stop()` still awaits whatever is in flight.
       //
-      // Termination: a truncated batch always commits at least one message (the adapter's
-      // anti-stall rule), so the known-set grows every pass and the backlog strictly shrinks.
-      // A mailbox that instead keeps FAILING runs into `maxSyncFailures` and is quarantined.
+      // Termination: a truncated batch always ADMITS at least one message (the adapter's
+      // anti-stall rule), and every admitted message leaves a durable trace the next cycle's
+      // known-set reflects — a new row, an instance row for a copy (`recordInstance`, upserted on
+      // every dedup arm that declines to re-ingest), or a failure-ledger row — so the unknown set
+      // strictly shrinks and the re-kick reaches a resting cycle. A mailbox that instead keeps
+      // FAILING runs into `maxSyncFailures` and is quarantined.
+      //
+      // The earlier wording here — "always commits at least one message, so the backlog strictly
+      // shrinks" — was FALSIFIED in production (2026-08-29, one hosted mailbox): an admitted create
+      // whose dedup arm REPOINTED the primary instead of recording an instance learned nothing,
+      // so the same two copies were admitted every cycle and this re-kick fired every ~2.3 minutes
+      // for the worker's whole life. The shrink guarantee is a property of the PIPELINE's dedup
+      // arms (see `pipeline.ts`, the second-copy rule) and of `fetchCapped`'s skip-not-break byte
+      // walk, not of admission alone — both are mutation-guarded where they live.
       if (backlogged.length > 0 && !stopped) {
         log.info("backfill_progress", {
           mailboxes: backlogged.length, sample: backlogged.slice(0, 3),
