@@ -43,6 +43,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -98,6 +99,16 @@ export type FreshnessProbe = () => Promise<FreshnessFacts>;
  *
  * Armed ONLY while `MailState.clock` is true. A quiet mailbox holds no timer.
  */
+/**
+ * `useLayoutEffect` in a browser; `useEffect` where there is nothing to commit — `older-mail.ts`'s
+ * idiom, chosen ONCE at module scope for its two reasons: hooks must be the same hook on every
+ * render, and a bare `useLayoutEffect` in a server render is a `console.error` (Next pre-renders
+ * client components), which the zero-console-errors rule refuses. On the server there is no
+ * commit and no microtask racing a response, so the passive fallback loses nothing there; in the
+ * browser the PHASE is the entire point — see the ownership ref below.
+ */
+const useCommitEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
+
 export const MAIL_CLOCK_MS = 5_000;
 
 /**
@@ -261,8 +272,20 @@ export function MailStateProvider({
     return () => clearInterval(id);
   }, [state.clock]);
 
+  /**
+   * IS THIS PROVIDER STILL MOUNTED? — and the SETUP half is not decoration.
+   *
+   * It used to be a cleanup alone. React's StrictMode mounts every effect, tears it down and
+   * mounts it again, so a development build ran the cleanup once on a component that was very
+   * much still there and left this `false` for the rest of the session — after which every probe
+   * answer was dropped and the strip never learned anything about the mailbox again. Restoring it
+   * on setup is what makes the pair symmetric, which is the property StrictMode exists to check.
+   */
   const alive = useRef(true);
-  useEffect(() => () => { alive.current = false; }, []);
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
 
   /**
    * **WHOSE QUESTION IS THIS?** — the one identity both held answers belong to.
@@ -322,11 +345,19 @@ export function MailStateProvider({
    * "the identity currently rendered", which is the only thing an arriving answer needs to be
    * measured against.
    *
+   * And it is a COMMIT-PHASE effect, not a passive one — the second correction the same review
+   * asked for. A passive effect is scheduled AFTER the commit, so a promise resolving in the gap
+   * between the two would find the ref still naming the identity that has just been left and be
+   * waved through, undoing the render-phase clear. `useLayoutEffect` runs inside the commit, in
+   * the same synchronous block as the render that produced it, so no microtask — which is what a
+   * settled promise is — can observe the gap. There is nothing to lay out here; the phase is the
+   * whole reason. See {@link useCommitEffect} for the server-render fallback.
+   *
    * Declared BEFORE the re-ask effect below so that within one commit it is updated first, and the
    * read that adoption fires already sees its own identity here.
    */
   const answering = useRef(now);
-  useEffect(() => { answering.current = adopted; }, [adopted]);
+  useCommitEffect(() => { answering.current = adopted; }, [adopted]);
 
   const read = useCallback(async (): Promise<void> => {
     if (!now.probe) return;
@@ -372,7 +403,12 @@ export function MailStateProvider({
    */
   useEffect(() => {
     if (!now.freshnessProbe) return;
-    void readFreshness();
+    /* NO IMMEDIATE READ HERE, and that is a fix rather than an omission. This effect re-runs
+       whenever the VERDICT changes, because the cadence depends on it — so an immediate read
+       inside it made every `null → current`, `current → stale` and `stale → current` transition
+       issue a second call on the spot, one per transition, for the life of the install. The first
+       read belongs to the identity effect below, which is where "we have a new question" is
+       expressed; this effect now owns nothing but the timer. */
     const cadence = probedFreshness?.state === "stale" ? MAIL_CLOCK_MS : FACTS_POLL_MS;
     const id = setInterval(() => void readFreshness(), cadence);
     return () => clearInterval(id);
@@ -388,10 +424,12 @@ export function MailStateProvider({
    * while the question is being re-asked — and the new identity's own rows replace it.
    */
   useEffect(() => {
-    if (!now.probe) return;
-    void read();
+    if (now.probe) void read();
+    // BOTH readers, because both hold an answer the clear has just discarded and both are silent
+    // until something asks again. The freshness poll above owns only its timer.
+    if (now.freshnessProbe) void readFreshness();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [read]);
+  }, [read, readFreshness]);
 
   useEffect(() => {
     if (!now.probe) return;
