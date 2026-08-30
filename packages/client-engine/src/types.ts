@@ -1627,6 +1627,69 @@ export type EngineMutation =
       applyRetro?: boolean;
     };
 
+/**
+ * THE MUTATION VOCABULARY AS A RUNTIME VALUE — the census pin for the verb-parity harness.
+ *
+ * {@link EngineMutation} is a type, so nothing at runtime can enumerate it — and the one thing
+ * that must is the harness that drives EVERY user verb through the real API and asserts its
+ * effect lands, survives the next sync cycle, and survives the worker passes that touch the
+ * same state (`test/verb-parity/`, INSTANT-ARCH §6.2(e)). Without a runtime list, that harness
+ * covers whatever somebody remembered to add, which is exactly the hand-maintained parity this
+ * repo's own history shows drifting one verb at a time.
+ *
+ * Pinned in BOTH directions at compile time, in a file `tsc -b` actually checks (test files
+ * here are not typechecked, so the pin cannot live beside the harness):
+ *
+ *  - array → union: `satisfies` refuses any entry that is not a real mutation kind;
+ *  - union → array: {@link MutationKindsAreComplete} goes red the moment a new kind is added
+ *    to the union without being listed here.
+ *
+ * So adding a verb without extending this list fails `pnpm typecheck`, and extending this list
+ * without classifying the verb in the harness's registry fails `pnpm verb-parity`'s census.
+ * That chain — union → list → registry → three assertions — is what makes a NEW verb red until
+ * its parity is proven, instead of green until a user reports it flipping under their eyes.
+ */
+export const MUTATION_KINDS = [
+  "move",
+  "message_delete",
+  "triage_set",
+  "screener_decide",
+  "tag_assign",
+  "tag_create",
+  "tag_rename",
+  "tag_recolor",
+  "tag_delete",
+  "folder_create",
+  "folder_rename",
+  "folder_delete",
+  "folder_op_dismiss",
+  "feed_mark_seen",
+  "mark_seen",
+  "mail_send",
+  "draft_accept",
+  "draft_schedule_cancel",
+  "draft_save",
+  "draft_discard",
+  "rule_delete",
+  "rule_update",
+  "rule_create",
+] as const satisfies readonly EngineMutation["kind"][];
+
+/** One user verb's discriminant — the unit the verb-parity census counts in. */
+export type MutationKind = (typeof MUTATION_KINDS)[number];
+
+/**
+ * The union → array half of the pin: `never` while every {@link EngineMutation} kind appears in
+ * {@link MUTATION_KINDS}; the MISSING KIND ITSELF the moment one does not, so the compile error
+ * on the line below names the verb that was added without being listed.
+ */
+type MutationKindMissingFromCensus = Exclude<EngineMutation["kind"], MutationKind>;
+type MutationKindsAreComplete = [MutationKindMissingFromCensus] extends [never] ? true
+  : { "EngineMutation kind missing from MUTATION_KINDS": MutationKindMissingFromCensus };
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const mutationKindsAreComplete: MutationKindsAreComplete = true;
+void mutationKindsAreComplete;
+
 // ── errors ─────────────────────────────────────────────────────────────────
 
 /** `410 cursor_expired` — discard local state and re-bootstrap with since=0 (§3.2). */

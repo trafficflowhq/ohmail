@@ -63,6 +63,10 @@ export {
   type EngineMessage,
   type EngineMessageExtras,
   type EngineMutation,
+  // The runtime census of the union above — what lets the verb-parity harness enumerate
+  // every user verb and refuse a new one until its parity is proven (see types.ts).
+  MUTATION_KINDS,
+  type MutationKind,
   type Folder,
   type ISODateTime,
   type OhmailView,
