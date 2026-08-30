@@ -27,7 +27,11 @@
  *  · `visit`        inside a mailbox visit, on the visit's own connection and fence;
  *  · `attach`       once, when a mailbox attaches to the runtime;
  *  · `cycle-tail`   the per-account maintenance tail after the dispatcher settles a cycle;
- *  · `interval`     its own timer in the worker process;
+ *  · `interval`     its own timer in the worker process (`setInterval`), independent of a cycle;
+ *  · `post-cycle`   queued by `cycle()` itself onto the same serialized queue — NOT a timer, so
+ *                   it can never run beside the cycle that scheduled it;
+ *  · `wake-driven`  a subscription to the change-wake hub: it fires when an account's log
+ *                   advances, debounced, with no schedule of its own;
  *  · `cron-backstop` a separate CLI process for the same pass — a manual/scheduled backstop
  *                   for a dead worker, normally lock-refused while the worker is healthy;
  *  · `cli`          an operator-run repair (idempotent, resumable, safe to kill);
@@ -40,6 +44,8 @@ export type PassTrigger =
   | "attach"
   | "cycle-tail"
   | "interval"
+  | "post-cycle"
+  | "wake-driven"
   | "cron-backstop"
   | "cli"
   | "sidecar-drain";
@@ -225,12 +231,13 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     fence: "leader lock (the worker is the single elected writer); each sweep failure is logged, never a cycle abort",
   },
 
-  /* ── OWN TIMER IN THE WORKER PROCESS ─────────────────────────────────────────────────── */
+  /* ── OFF THE CYCLE: own timer, the cycle's own queue, or the wake hub ─────────────────── */
   {
     name: "thread_backfill",
     module: `${W}/thread-backfill.ts`, entry: "runThreadBackfill",
-    triggers: ["interval"],
-    cadence: "one slice on the serialize queue after each cycle, round-robin over duty accounts",
+    triggers: ["post-cycle"],
+    cadence: "`kickThreadBackfill()` at the tail of a cycle that drained its MESSAGE backlog — one "
+      + "slice per kick on the serialize queue, round-robin over duty accounts; no timer anywhere",
     budget: "THREAD_BACKFILL_SLICE_PAGES pages / THREAD_BACKFILL_SLICE_MS deadline per slice",
     owns: "historical mail with thread_id IS NULL gets threaded; the predicate is its own resume marker",
     fence: "the cycle queue (never concurrent with a cycle); failures cost the cycle nothing",
@@ -265,7 +272,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   {
     name: "push_wake",
     module: `${W}/push-wake.ts`, entry: "startPushWake",
-    triggers: ["interval"],
+    triggers: ["wake-driven"],
     cadence: "event-driven off the change-log NOTIFY hub, debounced WAKE_DEBOUNCE_MS, floor WAKE_MIN_INTERVAL_MS",
     budget: "WAKE_BODY_BYTES content-free pushes, WAKE_TIMEOUT_MS per endpoint",
     owns: "a mobile device's push endpoint learns 'your log advanced' without content leaving the server",
