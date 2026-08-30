@@ -265,78 +265,104 @@ export function MailStateProvider({
   useEffect(() => () => { alive.current = false; }, []);
 
   /**
-   * **WHICH ENGINE AN IN-FLIGHT ANSWER BELONGS TO** — the generation token for both readers, and
-   * the ENGINE ITSELF rather than a counter, because that is exactly the identity the answer is
-   * about and a counter would be a second spelling of it.
+   * **WHOSE QUESTION IS THIS?** — the one identity both held answers belong to.
    *
-   * Review finding, round 4. Clearing the held answers on adoption is not enough on its own: a
-   * request issued against engine A resolves whenever the network says so, and `alive.current`
-   * only asks whether the component is still mounted. A slow `GET /mailboxes` for the previous
-   * account landing after the switch would `setFacts` the OLD rows straight back over the clear,
-   * and a slow `/mirror/freshness` would re-label the new mirror with the old door's staleness —
-   * both of which look exactly like a correct poll and neither of which any timeout catches.
+   * Three things decide which mailbox the provider is describing, and a change in ANY of them
+   * makes every answer in flight and every answer already held a statement about something else:
    *
-   * Written during render, which is the documented "latest value" use of a ref: every reader
-   * captures it at the moment it ASKS and compares on the way back, so an answer whose engine is
-   * no longer the one on screen is dropped rather than published.
+   *  · `probeEngine` — the engine on screen. `EngineProvider`'s adoption rule: a different engine
+   *    is a different mailbox.
+   *  · `probe` — the source of `GET /mailboxes`. `undefined` is its own case ("we cannot ask"),
+   *    which is why it is part of the identity and not merely a guard.
+   *  · `freshnessProbe` — the desktop's sidecar-truth override. It can change WITHOUT the engine:
+   *    a Cloud → local door switch drops the probe while the window's engine is replaced
+   *    separately, and a verdict about the door just left may not label the one now on screen.
+   *
+   * ONE OBJECT rather than three comparisons, because everything downstream needs to ask the same
+   * question — "is this still the thing I asked for?" — and three spellings of that question is
+   * how two of them end up disagreeing.
    */
-  const answersFor = useRef<unknown>(null);
-  answersFor.current = probeEngine;
+  const identity = { engine: probeEngine, probe, freshnessProbe };
 
   /**
-   * **THE FRAME BEFORE THE EFFECT** — the adoption clear, done during RENDER.
+   * **THE FRAME BEFORE THE EFFECT** — the clear, done during RENDER.
    *
-   * The effect below is passive: React COMMITS the render that first carried the new engine and
-   * runs the effect afterwards, so there is exactly one painted frame in which the previous
-   * account's facts sit under the new mirror. One frame is enough to render a sentence pairing
-   * this device's new count with somebody else's total, and this provider's whole contract is
-   * that it publishes one answer nobody has to qualify.
+   * An effect is passive: React COMMITS the render that first carried the new engine and runs the
+   * effect afterwards, so there is exactly one PAINTED frame in which the previous account's facts
+   * sit under the new mirror. One frame is enough to render a sentence pairing this device's new
+   * count with somebody else's total, and this provider's contract is that it publishes one answer
+   * nobody has to qualify.
    *
-   * The state-adjustment-during-render pattern, which React documents for precisely this: the
-   * render output is discarded and re-run before anything is committed, so the stale frame never
-   * exists rather than being corrected afterwards. It is confined to this component's own state,
-   * which is the pattern's condition.
-   *
-   * The effect still runs, and still does two things this cannot: it re-ASKS (a render may not
-   * start requests), and it fires on a `freshnessProbe` change as well — a Cloud → local door
-   * switch drops the probe without necessarily changing the engine.
+   * The state-adjustment-during-render pattern, which React documents for exactly this: the render
+   * output is discarded and the component re-run before anything is committed, so the stale frame
+   * never exists rather than being corrected afterwards. It terminates on the first re-run —
+   * `adopted` is then identical to the current identity and the branch is not taken again — and it
+   * is confined to this component's own state, which is the pattern's condition.
    */
-  const [adopted, setAdopted] = useState<unknown>(probeEngine);
-  if (adopted !== probeEngine) {
-    setAdopted(probeEngine);
+  const [adopted, setAdopted] = useState(identity);
+  const changed =
+    adopted.engine !== identity.engine
+    || adopted.probe !== identity.probe
+    || adopted.freshnessProbe !== identity.freshnessProbe;
+  if (changed) {
+    setAdopted(identity);
     setFacts(null);
     setProbedFreshness(null);
   }
+  /** The identity this render is actually about — the adjusted one when it has just changed. */
+  const now = changed ? identity : adopted;
+
+  /**
+   * **WHAT IS ON SCREEN**, for an answer coming back to compare itself against.
+   *
+   * Written in an EFFECT and never during render, which is the correction a review made (round 5).
+   * A ref is shared with the committed tree, so a render-phase write publishes a value from a
+   * render React may still discard or interleave: an in-flight reader for the OLD identity could
+   * capture the NEW one on its way back and be waved through. Post-commit, this ref means exactly
+   * "the identity currently rendered", which is the only thing an arriving answer needs to be
+   * measured against.
+   *
+   * Declared BEFORE the re-ask effect below so that within one commit it is updated first, and the
+   * read that adoption fires already sees its own identity here.
+   */
+  const answering = useRef(now);
+  useEffect(() => { answering.current = adopted; }, [adopted]);
 
   const read = useCallback(async (): Promise<void> => {
-    if (!probe) return;
-    const mine = answersFor.current;
+    if (!now.probe) return;
     try {
-      const got = await probe();
-      if (alive.current && answersFor.current === mine) setFacts(got);
+      const got = await now.probe();
+      /* THE OWNERSHIP TEST. `now` is this callback's OWN identity, frozen when the callback was
+         made; `answering.current` is what is on screen when the answer lands. A request issued for
+         the previous account resolves whenever the network says so — `alive.current` only asks
+         whether the component is still mounted — and publishing it would put the old account's
+         rows straight back over the clear, indistinguishable from an ordinary poll and caught by
+         no timeout. */
+      if (alive.current && answering.current === now) setFacts(got);
     } catch {
       // NOT `setFacts([])`. A refusal or a dead network is "we still cannot see", which is what
       // `facts` already says — and if we DID see mailboxes a moment ago, the last thing we knew
       // is a better answer than a fabricated empty account. A signed-out tab is the shell's own
       // `SessionScreen`'s business, not this strip's.
     }
-  }, [probe]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [now]);
 
   const readFreshness = useCallback(async (): Promise<void> => {
-    if (!freshnessProbe) return;
-    const mine = answersFor.current;
+    if (!now.freshnessProbe) return;
     try {
-      const got = await freshnessProbe();
-      // The engine guard is {@link answersFor}'s — a verdict about the door that has just been
-      // left may not be published over the one now on screen.
-      if (alive.current && answersFor.current === mine) setProbedFreshness(got);
+      const got = await now.freshnessProbe();
+      // {@link read}'s ownership test, for the same reason: a verdict about the door that has just
+      // been left may not be published over the one now on screen.
+      if (alive.current && answering.current === now) setProbedFreshness(got);
     } catch {
       // KEEP THE LAST ANSWER. A stale claim may only be withdrawn by evidence of currency; a
       // dead bridge mapped to anything else would either unlabel a days-old mirror (mapped
       // current) or label a current one (mapped stale). The last thing the sidecar said is the
       // best thing known.
     }
-  }, [freshnessProbe]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [now]);
 
   /**
    * The freshness poll, desktop only. Two cadences, one reason: while the last answer was
@@ -345,58 +371,37 @@ export function MailStateProvider({
    * the facts poll's cadence. Both are one call down a local pipe — no network, no server cost.
    */
   useEffect(() => {
-    if (!freshnessProbe) return;
+    if (!now.freshnessProbe) return;
     void readFreshness();
     const cadence = probedFreshness?.state === "stale" ? MAIL_CLOCK_MS : FACTS_POLL_MS;
     const id = setInterval(() => void readFreshness(), cadence);
     return () => clearInterval(id);
-  }, [freshnessProbe, readFreshness, probedFreshness?.state]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readFreshness, probedFreshness?.state]);
 
   /**
-   * A DIFFERENT ENGINE IS A DIFFERENT MAILBOX (the `EngineProvider` adoption rule), so the held
-   * probe answer is withdrawn with it — kept-last is the right failure mode WITHIN one mirror's
-   * life and the wrong one across a door switch: a stale Cloud verdict surviving onto another
-   * engine would label content it was never about, and the label may only ever be a statement
-   * about the mirror on screen. Back to `unknown` (no label, panes keep their own evidence)
-   * until the new door's probe answers. Keyed on the probe too, so a probe that disappears
-   * (Cloud → local door, where none is passed) drops the old answer rather than freezing it.
+   * ASK AGAIN, WHENEVER THE IDENTITY CHANGES — the one effect that used to be two.
+   *
+   * The render-phase clear above already emptied what was held; this is the half a render may not
+   * do. Without it the surfaces stay silent for a whole `FACTS_POLL_MS` after a switch, because
+   * the poll below is the only other thing that asks. `null` paints first — the honest answer
+   * while the question is being re-asked — and the new identity's own rows replace it.
    */
   useEffect(() => {
-    setProbedFreshness(null);
-    /* AND THE MAILBOX FACTS WITH IT, on exactly the same rule — this half was missing, and a
-       review found what it cost. The probe is a MODULE FUNCTION on the desktop
-       (`readMailboxFacts`), so its identity does not change when the engine does and the effect
-       below does not even re-run; the held facts therefore survive an account or door switch for
-       up to one `FACTS_POLL_MS`. Every consumer then pairs the OLD account's rows with the NEW
-       mirror: the holdings line quotes a hosted total that belongs to somebody else's mailbox,
-       and `compose-from` offers sending addresses the new session does not have. `null` is not a
-       degradation here — it is this field's documented meaning, "we cannot see mailboxes", which
-       every consumer already renders as silence rather than as a guess. */
-    setFacts(null);
-    /* AND ASK AGAIN AT ONCE. The clear alone is correct but leaves the surfaces silent for up to
-       `FACTS_POLL_MS`, because the re-read effect below is keyed on the PROBE's identity and the
-       probe did not change — that is the same fact that made the clear necessary. So the adoption
-       fires the read itself: `null` paints first (the honest answer while the question is being
-       re-asked), and the new engine's own rows replace it a microtask later. */
-    if (probe) void read();
-  }, [probeEngine, freshnessProbe, probe, read]);
-
-  useEffect(() => {
-    if (!probe) {
-      setFacts(null);
-      return;
-    }
+    if (!now.probe) return;
     void read();
-  }, [probe, read]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [read]);
 
   useEffect(() => {
-    if (!probe) return;
+    if (!now.probe) return;
     const id = setInterval(() => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       void read();
     }, FACTS_POLL_MS);
     return () => clearInterval(id);
-  }, [probe, read]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [read]);
 
   const binding = useMemo<MailStateBinding>(
     () => ({ state, mailboxes: facts, mirrored, freshness, refresh: () => void read() }),
