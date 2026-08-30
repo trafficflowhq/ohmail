@@ -16,6 +16,118 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.12.1] — 2026-08-30
+
+Everything the desktop apps accumulated since 0.12.0, in one patch: the window
+paints its own shape from the first frame, block formats in the composer take
+lines instead of the whole message, attached pictures preview again, your
+actions survive a closed window, a device opened after days away is current in
+seconds and says so while it catches up, Send later delivers on the standalone
+door, and the app stops calling every computer a Mac.
+
+### The first paint is the app's own shape
+
+On a cold start of the Cloud door, the boot screen could draw bare placeholder
+rows — no rail, no panels, no sentence — for the whole time the built-in engine
+took to come up. One of the three boot branches rendered a rows-only skeleton;
+all three now draw the same three-column silhouette with the engine's own boot
+sentence at the rail's foot, and the short no-flicker grace runs once across
+them instead of restarting at each hop.
+
+### Block formats take the line, not the message
+
+A message typed line by line is a single paragraph with line breaks, and the
+composer's list, quote and code buttons used to format all of it. They now take
+exactly the lines you meant: the caret's line when nothing is selected, the
+touched lines of a selection expanded to their boundaries — lists one item per
+line, a quote as one block with its inner breaks kept, code expanded to whole
+lines. Inline formatting survives, and one press is one undo step.
+
+### Attached pictures preview again
+
+Opening an attached image showed the file card — name, type, size, Download —
+over an empty stage. The desktop window's content-security policy did not admit
+the local `blob:` URLs previews are served from; it now does, for images alone
+and nothing else. The web client was never affected.
+
+### Send later delivers on the standalone door
+
+Scheduling a send is part of the composer on both doors. The Cloud door's
+appointments were already kept by the hosted service; with this build the
+standalone door's own engine drains due appointments too, so a scheduled draft
+delivers on time from a mailbox organized entirely on your machine — and a
+draft whose appointment passed while the app was closed goes out on the next
+healthy cycle rather than being lost.
+
+### What you do sticks, even through a restart
+
+Every action — reading, replying, screening decisions, sends — is recorded in
+the app's local mirror before it travels. A closed window, a crash or a restart
+no longer loses an action in flight: it is restored with the mirror, shown as
+already applied, and replayed under its original idempotency key so nothing is
+performed twice. Closing the window also flushes the read-state the reading
+pane was still holding, so a message you read stays read everywhere.
+
+### Days away, current in seconds
+
+Reopening the app after days used to mean watching the backlog replay
+oldest-first before the newest mail appeared. The mirror now fetches the newest
+window first — current mail lands in seconds — and the Cloud door labels the
+interim honestly: "As of <time> · catching up" until the mirror converges. The
+catch-up itself got several times faster: a stale resume is served the latest
+state of each conversation instead of every intermediate step.
+
+### Check for new mail yourself
+
+Both doors gain a pull control at the rail's foot: press it and the app asks
+the mail server for new mail now, tells you what happened in a sentence
+("Checked — nothing new." / new mail arrives in place), and caps the wait
+honestly instead of spinning. The dead band the old rail left at its foot is
+gone.
+
+### Sessions survive sleep and wake
+
+The signed-in Cloud door rides the same session fix the web client shipped:
+closing the lid mid-refresh recovers instead of signing you out, and several
+windows waking at once rotate the session once between them instead of racing
+each other out of it.
+
+### A mailbox that receives nothing says so
+
+Settings → Mailboxes now notes when a healthy, syncing mailbox has not
+received mail in a long stretch — usually a forwarding rule at the provider
+diverting mail before it reaches the mailbox — and says so quietly, with a
+dismissal that stays dismissed until mail actually flows and stops again.
+
+### The app speaks your platform
+
+Setup and settings said "On this Mac" on every platform — the 0.12.0 Linux
+build greeted its user as a Mac. The wording now comes from the build itself:
+"On this Mac", "On this PC", or "On this computer".
+
+### The standalone organizer catches up
+
+- **Unsubscribe works.** The reading pane's unsubscribe on the standalone door
+  performs the request — the same at-most-once record per list as the Cloud
+  door — instead of answering "unavailable". Automatic unsubscribe on
+  screen-out remains a Cloud-door feature; the standalone door files the
+  message and touches nothing without you.
+- **A takeover respects open questions.** Taking over a mailbox that another
+  organizer ran no longer re-screens mail it finds in place while your
+  decision about the previous organizer's settings is open: placement on the
+  server is treated as the intent it records.
+- **A Sent folder's first scan converges.** Duplicate copies of one sent
+  message no longer ping-pong the scan forever, and one oversized message no
+  longer starves everything behind it — the scan records what it saw, skips
+  what does not fit this pass, and finishes.
+
+### Fixes
+
+- Screening a sender out marks the message read in the same act, and that
+  read-mark sticks instead of flickering back on the next sync.
+- The desktop manifest declares `@tiptap/pm` directly instead of reaching
+  through another package for it.
+
 ## [0.12.0] — 2026-08-28
 
 Folders you can manage from the app, a Junk window you can search and teach,
@@ -2369,7 +2481,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.12.1...HEAD
+[0.12.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.12.1
 [0.12.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.12.0
 [0.11.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.11.1
 [0.11.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.11.0

@@ -68,7 +68,7 @@ describe("tauri.conf.json", () => {
     // preview, and reusing the number would leave the two sets of checksums
     // ambiguous about which artifact they describe. A version is how a
     // downloader names what they have.
-    expect(conf.version).toBe("0.12.0");
+    expect(conf.version).toBe("0.12.1");
     expect(conf.identifier).toBe("io.ohmail.desktop");
   });
 
