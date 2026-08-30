@@ -75,6 +75,22 @@ export default function MoreScreen() {
 
           <Rule inset={20} />
 
+          {/* SCHEDULED (Send later, mail 0077) — its own destination, in the rail's idiom.
+              Present while the account HOLDS an appointment, and also while the mirror has
+              never settled: a row hidden on zero would otherwise assert "nothing scheduled"
+              from a database that has simply not synced yet (unknown ≠ empty,
+              `state/surface.ts`). Once a drain has completed and the answer is genuinely none,
+              the row goes — the composer's own "Send later" is where the feature is
+              discovered, and a permanent "Scheduled 0" teaches nothing. The count is silent
+              while unsettled for the same reason the piles' badges are. */}
+          {!w.boot.settled || w.scheduled.length > 0 ? (
+            <Nav
+              label={Copy.scheduled}
+              count={w.boot.settled ? w.scheduled.length : undefined}
+              onPress={() => router.push("/scheduled")}
+            />
+          ) : null}
+
           {/* Search over the synced mirror is not built yet. Said in words, not a dead row. */}
           <View
             style={{

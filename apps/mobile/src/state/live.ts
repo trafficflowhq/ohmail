@@ -52,6 +52,7 @@ import {
   readsPartition,
   receiptsByDay,
   rulesList,
+  scheduledSendsList,
   screenerSegments,
   senderKey,
   threadOf,
@@ -368,6 +369,53 @@ export function liveTags(reader: EntityReader): WorldTag[] {
     .list<TagDTO>("tag")
     .map((t) => ({ id: t.id, name: t.name, hue: t.hue }))
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * ONE SCHEDULED SEND, as the phone's Scheduled screen renders it (Send later, mail 0077).
+ *
+ * The shape is deliberately narrow — this surface answers one question, "what will send, and
+ * when" — and the reason there is a row type at all rather than a raw `EngineDraft` is the
+ * module's own charter: the screens stay logic-free, so the appointment arrives already read
+ * in the reader's clock and the failure sentence already unpacked.
+ */
+export interface WorldScheduled {
+  id: string;
+  /** "Fri 18:00" / "12 Sep, 18:00" in the reader's zone, or `null` — see {@link liveScheduled}. */
+  when: string | null;
+  /** The subject, or the empty-subject stand-in the mail lists already use. */
+  subject: string;
+  /** The recipients, as one readable line ("Alice, bob@example.org"). */
+  to: string;
+  /** The first line or so of the body — enough to tell two appointments apart. */
+  preview: string;
+  /**
+   * The server's own sentence from a scheduled send that could NOT be kept, or `null`. Quoted
+   * verbatim (the webapp Drafts row's treatment) — a refusal the reader can act on is worth
+   * more than a sentence of ours that generalises it away.
+   */
+  failure: string | null;
+}
+
+/**
+ * THE SCHEDULED SENDS — the shared selector's list (`scheduledSendsList`, soonest first),
+ * mapped to rows. Read off the RAW mirror like {@link liveTags}: a draft is not presented mail
+ * and never passes through the consent cutline.
+ *
+ * `when` is `null` for a row whose `sendAt` the mirror does not carry — an older server
+ * mid-claim, or a row from before the field. The selector deliberately still LISTS such a row
+ * (hiding a scheduled send because its time is unknown suppresses exactly the row the reader
+ * most needs), and this surface says the honest "time unknown" rather than inventing one.
+ */
+export function liveScheduled(reader: EntityReader, v: WorldView): WorldScheduled[] {
+  return scheduledSendsList(reader).map((d) => ({
+    id: d.id,
+    when: d.sendAt ? scheduleLabel(d.sendAt, v.now, v.zone) : null,
+    subject: d.subject.trim() === "" ? Copy.scheduledNoSubject : d.subject,
+    to: d.to.map((a) => a.name ?? a.address).join(", "),
+    preview: d.body.replace(/\s+/g, " ").trim().slice(0, 140),
+    failure: d.sendError ?? null,
+  }));
 }
 
 /**
@@ -916,14 +964,33 @@ export interface LiveWorldActions {
    * `sig` is the signature block's OWN derived text (`effectiveSignature`, computed once by
    * the sheet for display and handed here verbatim — what is shown is what ships); `null`
    * leaves the mutation byte-identical to one built before the block existed.
+   *
+   * `sendAt` (Send later, mail 0077) puts an APPOINTMENT on the message instead of sending it:
+   * the adapter reads the same field and posts `/drafts/:id/schedule`, so nothing dials SMTP
+   * now. ONE SEND MACHINE, deliberately — the webapp shell hands `sendAt` to its single send
+   * path for the same reason: a second dispatch arm would be a second place for the
+   * signature, the empty-body refusal and the Idempotency-Key rules to drift. What differs is
+   * the CONFIRMED sentence, which must never say "sent" over a message still on the account.
    */
-  sendReply(messageId: string, body: string, all: boolean, sig?: string | null): Promise<SendResult>;
+  sendReply(
+    messageId: string,
+    body: string,
+    all: boolean,
+    sig?: string | null,
+    sendAt?: string | null,
+  ): Promise<SendResult>;
   /**
    * Forward — `mail_send` with `forwardOf`, recipients the USER typed, the user's note as
    * body. The signature seals into the NOTE; the server appends the quoted original after
    * the body it is handed, so the block sits above the quoted history (`signature.ts`).
    */
   sendForward(messageId: string, to: EmailAddress[], body: string, sig?: string | null): Promise<SendResult>;
+  /**
+   * TAKE THE APPOINTMENT OFF A SCHEDULED SEND — `draft_schedule_cancel`, the Scheduled
+   * screen's one verb. See {@link LiveWorldActions.cancelSchedule}'s implementation for why
+   * only `confirmed` may say "cancelled".
+   */
+  cancelSchedule(draftId: string): Promise<boolean>;
   /** Put a tag on / take it off — `tag_assign`. */
   tagToggle(messageId: string, tag: WorldTag, assigned: boolean): Promise<boolean>;
   /** Tag-or-create: a name that does not exist yet, minted and put on this message in one act. */
@@ -1368,7 +1435,13 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return { outcome, ...(outcome === "queued" && first ? { key: first.key } : {}) };
   };
 
-  const sendReply = async (messageId: string, body: string, all: boolean, sig: string | null = null): Promise<SendResult> => {
+  const sendReply = async (
+    messageId: string,
+    body: string,
+    all: boolean,
+    sig: string | null = null,
+    sendAt: string | null = null,
+  ): Promise<SendResult> => {
     const m = messageOf(messageId);
     const text = body.trim();
     // The empty-body refusal is judged BEFORE the signature joins: a signature must never
@@ -1383,9 +1456,46 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         inReplyTo: messageId,
         body: text,
         ...(env ? { to: env.to, cc: env.cc } : {}),
+        // Present ⇒ an appointment, absent ⇒ a delivery. Spread rather than written as
+        // `sendAt: sendAt ?? undefined` so an ordinary reply's mutation is byte-identical to
+        // the one this arm built before Send later existed.
+        ...(sendAt ? { sendAt } : {}),
       }, sig)),
-      Copy.replySent,
+      // THE CONFIRMED SENTENCE IS THE WHOLE DIFFERENCE, and it is honest rather than
+      // convenient: nothing was sent, an appointment was made, and "Reply sent." over a
+      // message still sitting on the account is exactly the false claim the four-outcome
+      // classifier exists to prevent. The time is read back in the reader's own clock, so the
+      // toast names the wall clock the preset fixed.
+      sendAt ? Copy.scheduledFor(scheduleLabel(sendAt, now(), zone)) : Copy.replySent,
     );
+  };
+
+  /**
+   * CANCEL A SCHEDULED SEND — `draft_schedule_cancel`, and THREE outcomes, not two.
+   *
+   * ONLY `confirmed` IS A CANCELLATION (the webapp `AppShell`'s `cancelOutcomeToast`, verbatim
+   * in intent). `queued` means the wire refused retryably and the intent is parked — the
+   * appointment STILL EXISTS server-side and its clock is still running, so saying "cancelled"
+   * would be the phone promising something the server has not done, on the one surface whose
+   * whole content is a promise about time. `rolled_back` is the server's own refusal: the
+   * scheduled-send pass claimed the row first (409 "already being sent") and the mail is
+   * leaving, which the overlay rollback puts back on screen as still-scheduled.
+   *
+   * The optimistic overlay follows the same truth: a queued mutation KEEPS its effect, so the
+   * row reads un-scheduled while the sentence says the cancel has not landed — user-always-
+   * wins, with the doubt carried in words.
+   */
+  const cancelSchedule = async (draftId: string): Promise<boolean> => {
+    const r = await engine
+      .mutate({ kind: "draft_schedule_cancel", draftId })
+      .then((res) => res, () => null);
+    const status = r?.status ?? "rolled_back";
+    toast(
+      status === "confirmed" ? Copy.scheduleCancelled
+        : status === "queued" ? Copy.scheduleCancelQueued
+          : Copy.scheduleCancelTooLate,
+    );
+    return status === "confirmed";
   };
 
   const sendForward = async (messageId: string, to: EmailAddress[], body: string, sig: string | null = null): Promise<SendResult> => {
@@ -1543,7 +1653,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   return {
     openMessage, hydrateMessage, hydrateHeld, sweepFeed, leaveFeed, decide, release, setPile,
     pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, move,
-    deleteMessage, sendReply, sendForward, tagToggle, tagCreate, screenSender,
+    deleteMessage, sendReply, sendForward, cancelSchedule, tagToggle, tagCreate, screenSender,
     folderCreate, folderRename, folderDelete, folderDismiss,
   };
 }
@@ -1578,9 +1688,21 @@ export interface WorldActions {
   move(messageId: string, dest: MoveTarget): void;
   /** Delete — to the provider's native Trash, never an expunge. See {@link LiveWorldActions.deleteMessage}. */
   deleteMessage(messageId: string): void;
-  /** Resolves to the send's result: `sent` closes, `failed` re-arms, `queued` locks the composer. */
-  sendReply(messageId: string, body: string, all: boolean, sig?: string | null): Promise<SendResult>;
+  /**
+   * Resolves to the send's result: `sent` closes, `failed` re-arms, `queued` locks the composer.
+   * `sendAt` makes it a Send-later appointment instead of a delivery — see
+   * {@link LiveWorldActions.sendReply}; `sent` then means "scheduled", and the toast says so.
+   */
+  sendReply(
+    messageId: string,
+    body: string,
+    all: boolean,
+    sig?: string | null,
+    sendAt?: string | null,
+  ): Promise<SendResult>;
   sendForward(messageId: string, to: EmailAddress[], body: string, sig?: string | null): Promise<SendResult>;
+  /** Cancel a scheduled send — resolves `true` only on the server's CONFIRMED cancellation. */
+  cancelSchedule(draftId: string): Promise<boolean>;
   /** What became of a queued send's key — how a locked composer settles. See `World.sendOutcome`. */
   sendOutcome(key: string): "pending" | "confirmed" | "rolled_back" | "unverified" | "unknown";
   tagToggle(messageId: string, tag: WorldTag, assigned: boolean): void;
@@ -1625,8 +1747,9 @@ export function stableActions(current: () => WorldActions): WorldActions {
     markSeen: (id, unread) => void current().markSeen(id, unread),
     move: (id, dest) => void current().move(id, dest),
     deleteMessage: (id) => void current().deleteMessage(id),
-    sendReply: (id, body, all, sig) => current().sendReply(id, body, all, sig),
+    sendReply: (id, body, all, sig, sendAt) => current().sendReply(id, body, all, sig, sendAt),
     sendForward: (id, to, body, sig) => current().sendForward(id, to, body, sig),
+    cancelSchedule: (draftId) => current().cancelSchedule(draftId),
     sendOutcome: (key) => current().sendOutcome(key),
     tagToggle: (id, tag, assigned) => void current().tagToggle(id, tag, assigned),
     tagCreate: (id, name) => void current().tagCreate(id, name),
@@ -1675,6 +1798,107 @@ export function dayNine(from: Date, daysAhead: number): Date {
   d.setDate(d.getDate() + daysAhead);
   d.setHours(9, 0, 0, 0);
   return d;
+}
+
+/*
+ * ═══ SEND LATER'S HORIZONS ════════════════════════════════════════════════════════════════
+ *
+ * The resurface presets above are reused WHERE THE MEANING COINCIDES — "tomorrow morning" and
+ * "Monday morning" ARE `tomorrowNine`/`nextWeekNine`, the product's one 09:00-where-the-reader-is
+ * convention (the webapp's `format.ts` says the same sentence over the same two functions).
+ * Sending adds exactly two things resurfacing never needed: an EVENING preset (nobody
+ * resurfaces mail at dinner; plenty of people send it then), and a label that can name a day
+ * further out than a week, because an appointment may be months away while a resurface label
+ * never had to say more than "Fri 09:00".
+ */
+
+/**
+ * Today at 18:00 where the reader is — the "this evening" send preset. MAY BE IN THE PAST late
+ * in the day; the caller offers it only while it is meaningfully ahead of now
+ * ({@link SEND_LATER_MIN_LEAD_MS}), which is the webapp `ComposeView`'s own rule.
+ */
+export function todayEvening(from: Date): Date {
+  const d = new Date(from);
+  d.setHours(18, 0, 0, 0);
+  return d;
+}
+
+/**
+ * HOW FAR AHEAD AN APPOINTMENT MUST SIT to be offered at all — the webapp's floor, shared by
+ * value rather than by import (this app cannot import the webapp shell). Three minutes: the
+ * shortest schedule anyone plausibly wants is still expressible, and "this evening at 18:00"
+ * pressed at 17:59 is a promise measured in seconds, which the honest menu simply omits.
+ *
+ * The floor is a COURTESY, not the authority: the server refuses a past `sendAt` against ITS
+ * clock (the one the due scan runs on), and this only keeps the phone from offering a pick it
+ * knows will be refused.
+ */
+export const SEND_LATER_MIN_LEAD_MS = 3 * 60 * 1000;
+
+/**
+ * THE HOURS a picked day may be scheduled at. The product already fixes two of them — 09:00 is
+ * the resurface horizons' hour, 18:00 is the evening send preset's — and this list is those two
+ * plus the four ordinary hours around them. A free-text time on a phone is a keyboard over a
+ * sheet for a value with six plausible answers; the honest list is shorter than the input.
+ */
+export const SEND_LATER_HOURS = [8, 9, 12, 15, 18, 21] as const;
+
+/**
+ * NINETY-ONE DAYS from the picker's frozen "now", today included — the resurface chooser's own
+ * quarter-ahead span (a fortnight did not cover the horizons people actually book, and was an
+ * exclusion nothing on screen admitted). Today survives the list only while {@link usableHours}
+ * leaves it an hour; the picker's days step applies that filter.
+ */
+export const DAY_OFFSETS: number[] = Array.from({ length: 91 }, (_, i) => i);
+
+/** A calendar day `offset` days from `from`, at `hour` local — the picker's one instant maker. */
+export function dayAtHour(from: Date, offset: number, hour: number): Date {
+  const d = new Date(from);
+  d.setDate(d.getDate() + offset);
+  d.setHours(hour, 0, 0, 0);
+  return d;
+}
+
+/**
+ * The hours on that day still worth offering — everything at least {@link SEND_LATER_MIN_LEAD_MS}
+ * ahead of the picker's frozen "now". This is what makes a past pick STRUCTURALLY impossible
+ * from the rows (the press re-checks against the REAL clock for the sheet that sat open across
+ * one of them), and what decides whether "today" is offered as a day at all.
+ *
+ * It lives here rather than in the sheet because a lead filter is logic, and this module's
+ * charter is that the screens hold none: the suite drives the rule without a renderer.
+ */
+export function usableHours(from: Date, offset: number): number[] {
+  return SEND_LATER_HOURS.filter(
+    (hour) => dayAtHour(from, offset, hour).getTime() - from.getTime() >= SEND_LATER_MIN_LEAD_MS,
+  );
+}
+
+/**
+ * "Fri 18:00" inside the coming week, "12 Sep, 18:00" beyond it — the appointment, read where
+ * the reader is. The webapp's `scheduleLabel`, mirrored: the week band matches {@link whenLabel}'s
+ * so the phone's two future-time vocabularies agree, and past a week a bare weekday is
+ * ambiguous (which Friday?) — an appointment is exactly the value that ambiguity misleads
+ * about. Not-ISO input echoes through, as both references do.
+ */
+export function scheduleLabel(iso: string, now: Date, zone: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}T/.test(iso)) return iso;
+  const d = new Date(iso);
+  // Inside the week the weekday IS the clearest name, and it is the one `whenLabel` already
+  // speaks — so the near band is literally the same derivation, not a second copy of it.
+  if (d.getTime() - now.getTime() < 6 * 24 * 60 * 60 * 1000) return whenLabel(iso, zone);
+  try {
+    const parts = new Intl.DateTimeFormat("en", {
+      day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: false,
+      timeZone: zone,
+    }).formatToParts(d);
+    const get = (t: string) => parts.find((x) => x.type === t)?.value ?? "";
+    // `hour12:false` may render midnight as "24" on some ICU builds — `whenLabel`'s own pad.
+    const hour = get("hour") === "24" ? "00" : get("hour");
+    return `${get("day")} ${get("month")}, ${hour}:${get("minute")}`;
+  } catch {
+    return iso;
+  }
 }
 
 /**

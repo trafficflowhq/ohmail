@@ -53,6 +53,7 @@ import {
   livePiles,
   liveReads,
   liveReceipts,
+  liveScheduled,
   liveScreener,
   liveTags,
   mirrorSettled,
@@ -66,12 +67,15 @@ import {
   type WorldActions,
   type WorldMail,
   type WorldPile,
+  type WorldScheduled,
   type WorldTag,
   type WorldView,
 } from "./live";
 import type { Scope } from "./model";
 
-export type { FolderEntity, MoveTarget, ScreenerRow, WorldActions, WorldMail, WorldPile, WorldTag } from "./live";
+export type {
+  FolderEntity, MoveTarget, ScreenerRow, WorldActions, WorldMail, WorldPile, WorldScheduled, WorldTag,
+} from "./live";
 
 export interface World {
   live: boolean;
@@ -132,6 +136,13 @@ export interface World {
   pilesMeta: string;
   /** The account's tags, for the message screen's tag sheet — the mirror's `tag` entities. */
   tags: WorldTag[];
+  /**
+   * THE SCHEDULED SENDS (Send later, mail 0077) — every draft wearing an appointment, soonest
+   * first, already read in the reader's clock (`live.ts#liveScheduled`). Ungated: an
+   * appointment is the account's own state and the phone mirrors `draft` entities on every
+   * drain, so a message scheduled from the web is visible — and cancellable — here.
+   */
+  scheduled: WorldScheduled[];
   /**
    * THE FOLDERS SURFACE (FOLDERS-SPEC.md; stage-1 read-only parity with the webapp's
    * foundation). `enabled` is the SERVER's consent answer (`GET /consent`,
@@ -229,6 +240,8 @@ const NO_ACTIONS: WorldActions = {
   // The empty world cannot send; the composer treats `failed` as the refusal it is.
   sendReply: () => Promise.resolve({ outcome: "failed" as const }),
   sendForward: () => Promise.resolve({ outcome: "failed" as const }),
+  // Nor cancel: `false` is "not confirmed", which is exactly what nothing-connected means.
+  cancelSchedule: () => Promise.resolve(false),
   sendOutcome: () => "unknown",
   tagToggle: () => undefined,
   tagCreate: () => undefined,
@@ -253,6 +266,7 @@ function emptyWorld(actions: WorldActions): World {
     piles: [],
     pilesMeta: "",
     tags: [],
+    scheduled: [],
     folders: {
       enabled: false,
       list: [],
@@ -564,8 +578,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           markSeen: (id, unread) => void acts.markSeen(id, unread),
           move: (id, dest) => void acts.move(id, dest),
           deleteMessage: (id) => void acts.deleteMessage(id),
-          sendReply: (id, body, all, sig) => acts.sendReply(id, body, all, sig),
+          sendReply: (id, body, all, sig, sendAt) => acts.sendReply(id, body, all, sig, sendAt),
           sendForward: (id, to, body, sig) => acts.sendForward(id, to, body, sig),
+          cancelSchedule: (draftId) => acts.cancelSchedule(draftId),
           sendOutcome: (key) => outcomeOf(key),
           tagToggle: (id, tag, assigned) => void acts.tagToggle(id, tag, assigned),
           tagCreate: (id, name) => void acts.tagCreate(id, name),
@@ -641,6 +656,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       pilesMeta: `${pileTotal} item${pileTotal === 1 ? "" : "s"}`,
       // The RAW mirror, like the webapp's `reader.list<TagDTO>("tag")` — tags are not projected.
       tags: liveTags(engine.read()),
+      // Also raw, and for the same reason: a draft is not presented mail and never passes
+      // through the consent cutline. `v` carries the clock the appointment is read in.
+      scheduled: liveScheduled(engine.read(), v),
       folders: (() => {
         // Gated TWICE, the webapp shell's own double gate: the flag is the authority, the
         // entities are data — a mirror still holding `folder` rows after a disable lists none.

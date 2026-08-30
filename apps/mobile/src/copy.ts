@@ -472,6 +472,64 @@ export const Copy = {
   forwardNotePlaceholder: "Add a note (optional)",
   forwarded: "Forwarded.",
   /*
+   * SEND LATER (mail 0077) — the composer's second way for a message to end, and the
+   * Scheduled screen that holds what it produced. Every sentence below is the webapp
+   * catalogue's word for word (`compose.sendLater*`/`compose.toastScheduled` and
+   * `drafts.scheduled*`/`drafts.schedule*`), pinned by `folders-parity.test.ts`; only the
+   * three strings marked PHONE-ONLY have no webapp twin, because the webapp expresses the
+   * same facts through affordances this screen does not have.
+   */
+  sendLater: "Send later",
+  sendLaterWhat: "When should this message be sent?",
+  sendLaterTonight: (when: string) => `This evening (${when})`,
+  sendLaterTomorrow: (when: string) => `Tomorrow morning (${when})`,
+  sendLaterMonday: (when: string) => `Monday morning (${when})`,
+  sendLaterPick: "Pick a date and time",
+  sendLaterClose: "Back",
+  /**
+   * A PRESET THAT WENT PAST WHILE THE CHOOSER SAT OPEN. The rows themselves cannot name a past
+   * instant — the day rows are floored at tomorrow 09:00 and the evening preset is only
+   * offered while it is meaningfully ahead — but the presets are computed WHEN THE CHOOSER
+   * OPENS, and a sheet left open through 18:00 would otherwise dispatch an appointment the
+   * server refuses. Re-checked at the press, refused here, in words, before the wire.
+   */
+  sendLaterPast: "That time has passed. Pick a future time.",
+  sendLaterZone: (zone: string) => `Times are in your time zone (${zone}).`,
+  sendLaterUnavailable: "Send later isn't available for messages with attachments or forwards yet.",
+  scheduledFor: (when: string) => `Scheduled for ${when}.`,
+  /** The Scheduled surface — the More tab's row, its screen, and the one verb on a row. */
+  scheduled: "Scheduled",
+  scheduledWhen: (when: string) => `Sends ${when}`,
+  scheduledCancel: "Cancel send",
+  scheduledNoSubject: "(no subject)",
+  scheduledNoRecipient: "No recipient yet",
+  scheduleFailedNote: (reason: string) =>
+    `This message wasn't sent at its scheduled time: ${reason}`,
+  scheduleCancelled: "Scheduled send cancelled. The message is in Drafts.",
+  scheduleCancelTooLate: "Too late to cancel — this message is already being sent.",
+  scheduleCancelQueued:
+    "No connection — the cancel hasn't reached the server yet. The message is still scheduled until it does.",
+  /**
+   * PHONE-ONLY (1/3): the empty state. The webapp's Scheduled group simply does not render
+   * when the list is empty, because Drafts stands underneath it; this screen is reachable on
+   * its own, so it owes the reader a sentence rather than a blank panel.
+   */
+  scheduledEmpty: "Nothing scheduled. Messages you send later wait here until their time.",
+  /**
+   * PHONE-ONLY (2/3): the stated degradation. The webapp offers Edit — cancel-then-open —
+   * because it has a draft editor; this app composes only replies and forwards and has no
+   * editor to open a cancelled row into, so it says where the message goes instead of
+   * offering a verb that leads nowhere.
+   */
+  scheduledEditNote:
+    "Cancelling puts the message back in Drafts, where you can edit and send it from ohmail on the web or the desktop.",
+  /**
+   * PHONE-ONLY (3/3): an appointment whose time the mirror does not carry (an older server
+   * mid-claim, a row from before the field). The row still lists — see `liveScheduled` — and
+   * says what it does not know rather than inventing a time.
+   */
+  scheduledWhenUnknown: "Sends at its scheduled time",
+  /*
    * THE SIGNATURE BLOCK (`compose.signature*` in the webapp catalogue, word for word —
    * `folders-parity.test.ts` pins them): the sending mailbox's stored signature as a
    * distinct, removable, editable block below the writing area, serialized exactly as shown.

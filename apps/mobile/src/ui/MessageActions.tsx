@@ -24,19 +24,28 @@
  * webapp shell machine with no engine verb; an absent control, never a dead one.
  */
 import { useEffect, useState } from "react";
-import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, TextInput, View } from "react-native";
+import {
+  Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, TextInput, View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import { destLabel, DESTINATIONS, domainOf, type Destination, type Scope } from "../state/model";
 import {
+  DAY_OFFSETS,
+  dayAtHour,
   dayNine,
   effectiveSignature,
   moveTargetsFor,
   moveTargetLabel,
   nextWeekNine,
   parseRecipients,
+  readerZone,
+  scheduleLabel,
+  SEND_LATER_MIN_LEAD_MS,
   SIG_FOLLOWING,
+  usableHours,
+  todayEvening,
   tomorrowNine,
   type SignatureState,
   type WorldMail,
@@ -412,6 +421,27 @@ function ComposeSheet({
    */
   const [sig, setSig] = useState<SignatureState>(SIG_FOLLOWING);
   const forward = mode === "forward";
+  /**
+   * ── SEND LATER (mail 0077) — the picker, INLINE IN THIS PANEL ──────────────────────────
+   *
+   * A panel above the button row, never a second Modal over this one — the webapp
+   * `ComposeView`'s own decision, and on RN it also avoids stacking a Modal inside a Modal.
+   * Three steps, because "a date and time" is two facts and a phone has no datetime input
+   * worth the name: the presets, then the days, then the hours on a chosen day.
+   * `openedAt` FREEZES "now" when the picker opens, so the three presets are
+   * computed once per opening rather than drifting under the reader mid-decision — and
+   * because that freeze is exactly what lets a preset go stale in a long-open sheet, the
+   * press re-checks the lead against the real clock ({@link Copy.sendLaterPast}).
+   *
+   * A DRAFT ROW STORES NO FORWARD REFERENCE (§14), so a forward cannot wear an appointment:
+   * the affordance is disabled with its reason, and the http adapter refuses the same
+   * combination where it cannot be bypassed.
+   */
+  const [later, setLater] = useState<LaterStep | null>(null);
+  const [openedAt, setOpenedAt] = useState<Date>(() => new Date());
+  /** The one refusal this picker can raise, said in place — the webapp's `role="status"` note. */
+  const [pastNote, setPastNote] = useState(false);
+  const zone = readerZone();
 
   /**
    * THE LOCKED COMPOSER SETTLES ITSELF. A queued send is retried by the world layer's
@@ -454,11 +484,46 @@ function ComposeSheet({
    */
   const sigText = w.signatures === null ? null : effectiveSignature(sig, w.signatures, m.mailboxId);
 
-  const send = async () => {
+  /**
+   * The three presets, computed off the frozen `openedAt`. The evening one is OFFERED ONLY
+   * while it is meaningfully ahead — past ~17:57 "this evening at 18:00" is a promise measured
+   * in seconds, and the honest menu simply omits it (the webapp's `eveningUsable`).
+   */
+  const eveningAt = todayEvening(openedAt);
+  const eveningUsable = eveningAt.getTime() - openedAt.getTime() > SEND_LATER_MIN_LEAD_MS;
+  const openLater = () => {
+    // The keyboard would cover the picker it is being asked to read.
+    Keyboard.dismiss();
+    setOpenedAt(new Date());
+    setPastNote(false);
+    setLater({ step: "presets" });
+  };
+  /**
+   * A PICKED INSTANT, RE-JUDGED AGAINST THE REAL CLOCK. The rows cannot name a past instant
+   * when they are drawn, but they were drawn at `openedAt`; a sheet left open across the
+   * preset's own time would otherwise dispatch an appointment the server refuses. Refused
+   * here, in words, with nothing on the wire — the server's refusal against ITS clock remains
+   * the authority.
+   */
+  const pickLater = (at: Date) => {
+    if (at.getTime() - Date.now() < SEND_LATER_MIN_LEAD_MS) {
+      // Back to the preset menu, recomputed against now — so the row that went stale is gone
+      // and the sentence says why, rather than the press appearing to do nothing.
+      setOpenedAt(new Date());
+      setPastNote(true);
+      setLater({ step: "presets" });
+      return;
+    }
+    setPastNote(false);
+    setLater(null);
+    void send(at.toISOString());
+  };
+
+  const send = async (sendAt: string | null = null) => {
     setPhase("sending");
     const result = forward
       ? await w.actions.sendForward(m.id, recipients ?? [], body, sigText)
-      : await w.actions.sendReply(m.id, body, mode === "replyAll", sigText);
+      : await w.actions.sendReply(m.id, body, mode === "replyAll", sigText, sendAt);
     if (result.outcome === "sent") {
       onClose();
       return;
@@ -612,12 +677,126 @@ function ComposeSheet({
               {phase === "queued" ? Copy.replyQueued : Copy.replyUnverified}
             </Txt>
           ) : null}
+          {/* ── SEND LATER: the picker, above the button row (see the state block above) ──── */}
+          {later !== null ? (
+            <View
+              accessibilityViewIsModal
+              accessibilityLabel={Copy.sendLater}
+              style={{ backgroundColor: t.c.tint2, borderRadius: t.radius.card, paddingVertical: 6 }}
+            >
+              <Txt variant="sectionLabel" tone="ink3" style={{ paddingHorizontal: 14, paddingBottom: 4 }}>
+                {Copy.sendLaterWhat}
+              </Txt>
+              {later.step === "presets" ? (
+                <>
+                  {eveningUsable ? (
+                    <SheetRow
+                      label={Copy.sendLaterTonight(scheduleLabel(eveningAt.toISOString(), openedAt, zone))}
+                      onPress={() => pickLater(eveningAt)}
+                    />
+                  ) : null}
+                  <SheetRow
+                    label={Copy.sendLaterTomorrow(
+                      scheduleLabel(tomorrowNine(openedAt).toISOString(), openedAt, zone),
+                    )}
+                    onPress={() => pickLater(tomorrowNine(openedAt))}
+                  />
+                  <SheetRow
+                    label={Copy.sendLaterMonday(
+                      scheduleLabel(nextWeekNine(openedAt).toISOString(), openedAt, zone),
+                    )}
+                    onPress={() => pickLater(nextWeekNine(openedAt))}
+                  />
+                  <SheetRow
+                    icon="chev"
+                    label={Copy.sendLaterPick}
+                    onPress={() => { setPastNote(false); setLater({ step: "days" }); }}
+                  />
+                </>
+              ) : later.step === "days" ? (
+                /* THE DAYS. A quarter ahead — the resurface chooser's own span and its own
+                   reason (a fortnight was an exclusion nothing on screen admitted). TODAY is
+                   offered only while some hour on it is still far enough ahead to be worth
+                   naming, which is the same lead rule the evening preset lives under. */
+                <ScrollView style={{ maxHeight: 232 }}>
+                  {DAY_OFFSETS.filter(
+                    (offset) => offset > 0 || usableHours(openedAt, 0).length > 0,
+                  ).map((offset) => (
+                    <SheetRow
+                      key={offset}
+                      icon="chev"
+                      label={dayLabel(dayNine(openedAt, offset))}
+                      onPress={() => setLater({ step: "hours", offset })}
+                    />
+                  ))}
+                </ScrollView>
+              ) : (
+                /* THE HOURS on the chosen day, filtered by the lead so no row on screen can
+                   name a moment already gone. The set is the product's own clock vocabulary
+                   widened for sending: the 09:00 the horizons fix, the 18:00 the evening
+                   preset fixes, and the four ordinary hours between and around them. */
+                <ScrollView style={{ maxHeight: 232 }}>
+                  {usableHours(openedAt, later.offset).map((hour) => {
+                    const at = dayAtHour(openedAt, later.offset, hour);
+                    return (
+                      <SheetRow
+                        key={hour}
+                        label={scheduleLabel(at.toISOString(), openedAt, zone)}
+                        onPress={() => pickLater(at)}
+                      />
+                    );
+                  })}
+                </ScrollView>
+              )}
+              {/* A PAST PICK IS REFUSED HERE, in words, before anything goes on the wire —
+                  and the zone is stated plainly, because "18:00" is only half a fact. */}
+              {pastNote ? (
+                <Txt
+                  variant="caption"
+                  tone="ink2"
+                  accessibilityRole="alert"
+                  style={{ paddingHorizontal: 14, paddingTop: 6 }}
+                >
+                  {Copy.sendLaterPast}
+                </Txt>
+              ) : null}
+              <Txt variant="caption" tone="ink3" style={{ paddingHorizontal: 14, paddingTop: 6, paddingBottom: 2 }}>
+                {Copy.sendLaterZone(zone)}
+              </Txt>
+              {/* BACK unwinds ONE step — the escape cascade's rule (close the innermost thing
+                  that is open), which on the last step closes the picker itself. */}
+              <SheetRow
+                icon="x"
+                label={Copy.sendLaterClose}
+                onPress={() =>
+                  setLater(
+                    later.step === "presets" ? null
+                      : later.step === "days" ? { step: "presets" }
+                        : { step: "days" },
+                  )
+                }
+              />
+            </View>
+          ) : null}
           <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
             <Button label={Copy.replyCancel} variant="quiet" onPress={onClose} />
+            {/* SEND LATER stands beside Send because it is the same act on a different clock,
+                under the SAME lock: a message that may not be sent now may not be scheduled
+                either, and one predicate owns both buttons. A forward is never offered it —
+                a draft row cannot hold the forward reference (§14) — and the sentence saying
+                so is the button's accessibility hint rather than a control that fails after
+                the pick. */}
+            {!forward ? (
+              <Button
+                label={Copy.sendLater}
+                variant="plain"
+                onPress={canSend ? openLater : undefined}
+              />
+            ) : null}
             <Button
               label={phase === "sending" ? Copy.replySending : Copy.replySend}
               variant={canSend ? "solid" : "plain"}
-              onPress={canSend ? send : undefined}
+              onPress={canSend ? () => void send() : undefined}
             />
           </View>
         </View>
@@ -671,6 +850,16 @@ function BarToggle({
     </Tap>
   );
 }
+
+/* ── SEND LATER's picker state (mail 0077) — its VOCABULARY lives in `state/live.ts` ─────── */
+
+/** Which step of the Send-later picker is showing. See `ComposeSheet`'s state block. */
+type LaterStep =
+  | { step: "presets" }
+  | { step: "days" }
+  /** The chosen day, held as the OFFSET the rows were derived from — `dayAtHour`'s own input,
+   *  so the day the reader tapped and the instant the press dispatches cannot drift apart. */
+  | { step: "hours"; offset: number };
 
 /** "Mon 1 Sep" for the picked-day rows — weekday, day, month, in the reader's locale defaults. */
 function dayLabel(day: Date): string {
