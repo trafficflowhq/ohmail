@@ -476,6 +476,17 @@ export default defineConfig({
       { find: "@tiptap/react", replacement: r("./node_modules/@tiptap/react") },
       { find: "@tiptap/starter-kit", replacement: r("./node_modules/@tiptap/starter-kit") },
       { find: "@tiptap/extension-link", replacement: r("./node_modules/@tiptap/extension-link") },
+      /* The ProseMirror surface under the editor — RichEditor.tsx's line-scoped block
+         commands import NodeSelection/TextSelection and the node/position types from
+         these two subpaths, from apps/webapp/app/** like the entries above. This pair
+         moves with tsconfig.json's `paths` (the header's rule): the editor slice added
+         the manifest entry and neither pin, so in a published checkout `tsc --noEmit`
+         failed on the types and, with that repaired alone, `vite build` still could not
+         resolve the runtime import — one tool reading the pins and the other not, the
+         exact drift the header warns about. The targets are the package's committed
+         proxy dirs (`state/index.ts` re-exporting prosemirror-state, likewise `model/`). */
+      { find: "@tiptap/pm/state", replacement: r("./node_modules/@tiptap/pm/state") },
+      { find: "@tiptap/pm/model", replacement: r("./node_modules/@tiptap/pm/model") },
       { find: "dompurify", replacement: r("./node_modules/dompurify") },
       /* pdf.js is kept OUT of the runtime bundle: the desktop window never previews a PDF inline
          (worker-src 'none'; an attachment opens in the platform's own viewer over
