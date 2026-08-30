@@ -1,0 +1,53 @@
+-- THE AUTHENTICATION LOOKUP HAD NO INDEX — a sequential scan of `sessions` on every
+-- authenticated request, confirmed against live production rather than inferred.
+--
+--   CREATE INDEX sessions_access_token_hash_idx ON sessions (access_token_hash)
+--
+-- ══ WHAT WAS MEASURED ════════════════════════════════════════════════════════════════════════
+--
+-- `resolveSession` (`packages/services/src/auth/resolve-session.ts`) is the first thing every
+-- authenticated request does, and its predicate is
+--
+--     access_token_hash = $1  AND  revoked_at IS NULL  AND  access_expires_at > now()
+--
+-- `sessions` carried exactly three indexes — `sessions_pkey` (id), `sessions_user_idx`
+-- (user_id) and `sessions_family_idx` (family_id) — and none of them can serve that predicate.
+-- Read straight off production `pg_indexes`, and then confirmed by asking the planner, which
+-- answered `Seq Scan on sessions` for the real query. Not a schema-file omission that a
+-- migration quietly corrected elsewhere: the index did not exist anywhere.
+--
+-- ══ WHY IT MATTERS MORE THAN THE ROW COUNT SUGGESTS ══════════════════════════════════════════
+--
+-- Production held 533 session rows when this was found, of which ONE was live. At that size a
+-- sequential scan is nearly free, which is exactly why nothing surfaced it. Two things make it
+-- worth a migration rather than a note:
+--
+--  · the table GROWS MONOTONICALLY. Sessions are revoked and expired, never physically reaped
+--    (`session-reaper.ts` marks; it does not delete), so the scan's cost is a function of every
+--    session the deployment has ever minted — 533 today against 1 that matters, and the ratio
+--    only moves one way;
+--  · the row count is REMOTELY INFLUENCEABLE. Every sign-in mints a row, so an ordinary caller
+--    with one account's credentials can add rows at request rate, and the cost of each addition
+--    lands on every OTHER user's every request. Without the index, session-table growth is a
+--    shared authentication-path slowdown; with it, growth is the index's problem and lookups
+--    stay logarithmic.
+--
+-- ══ PLAIN, NOT UNIQUE, NOT PARTIAL, AND NOT CONCURRENT ═══════════════════════════════════════
+--
+-- NOT UNIQUE: the column is nullable and a hash collision must degrade to "two candidate rows,
+-- both checked" rather than to a failed INSERT that would deny a legitimate sign-in. Uniqueness
+-- is not a property the auth path needs — `limit 1` under the equality plus the liveness
+-- predicates is what it needs.
+--
+-- NOT PARTIAL on `revoked_at IS NULL`: a partial index would be smaller, and it would also make
+-- the index unusable for any future query that wants a revoked row's identity, while saving
+-- little — the equality is already selective enough that the two liveness predicates are cheap
+-- rechecks on one heap tuple.
+--
+-- NOT `CONCURRENTLY`: the runner applies migrations inside a transaction and
+-- `CREATE INDEX CONCURRENTLY` cannot run in one. At this table's size the exclusive lock is
+-- momentary. If this table ever reaches a size where that is untrue, the correct move is an
+-- out-of-band concurrent build, not a change to the runner.
+--
+-- IF NOT EXISTS so a re-run is a no-op, like every other migration here.
+CREATE INDEX IF NOT EXISTS "sessions_access_token_hash_idx" ON "sessions" ("access_token_hash");

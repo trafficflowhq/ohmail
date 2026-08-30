@@ -1425,6 +1425,11 @@ export const sessions = pgTable("sessions", {
 }, (t) => ({
   ixUser: index("sessions_user_idx").on(t.userId),
   ixFamily: index("sessions_family_idx").on(t.familyId),
+  // mail 0080 — THE AUTHENTICATION LOOKUP. `resolveSession` matches on this column on every
+  // authenticated request and had no index to match it with: production answered `Seq Scan on
+  // sessions` for the real query, over a table that only grows (sessions are marked revoked,
+  // never physically reaped) and whose growth any signed-in caller can drive.
+  ixAccessToken: index("sessions_access_token_hash_idx").on(t.accessTokenHash),
 }));
 
 /**
