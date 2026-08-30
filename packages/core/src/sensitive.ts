@@ -1632,6 +1632,46 @@ function decodesToCredential(decode: () => string): boolean {
   return looksLikeCredentialValue(plain.trim());
 }
 
+/**
+ * Does `text` carry a credential in one of the SHORT reversible encodings — the runs
+ * {@link redactShortEncodedRuns} can remove?
+ *
+ * ── WHY THIS PREDICATE HAS TO EXIST SEPARATELY FROM THE REDACTOR ────────────────────────────
+ *
+ * The redactor was extended with {@link SHORT_B64_RUN}, {@link PCT_ESCAPE_RUN} and
+ * {@link ENTITY_RUN} to remove credential values below {@link B64_RUN}'s sixteen-character floor.
+ * The SCREEN that decides whether the redactor runs at all was not extended with them — and
+ * {@link redactForModel} returns the text UNCHANGED the moment {@link screenOutboundText} answers
+ * `safe`. So every one of those three passes was reachable only when some OTHER signal had
+ * already failed the screen: they could clean up a payload that was going to be redacted anyway,
+ * and could do nothing at all about the payload they were written for, which is a generically
+ * framed message whose only sensitive content IS the encoded run.
+ *
+ * A redaction pass that cannot run in its own motivating case is not a defence. This predicate is
+ * the same three regexes and the same {@link decodesToCredential} test, asked as a question
+ * instead of applied as a substitution, so the screen and the redactor cannot disagree about what
+ * counts — one set of patterns, two consumers.
+ *
+ * It is deliberately the LAST thing the screen asks. Decoding is the expensive arm, and every
+ * cheaper signal (vocabulary, credential shape, an auth URL) has already had its turn.
+ */
+function hasShortEncodedCredential(text: string): boolean {
+  const decoders: Array<[RegExp, (run: string) => string]> = [
+    [SHORT_B64_RUN, (run) => Buffer.from(run, "base64").toString("utf8")],
+    [PCT_ESCAPE_RUN, (run) => decodeURIComponent(run)],
+    [ENTITY_RUN, (run) => decodeEntities(run)],
+  ];
+  for (const [re, decode] of decoders) {
+    // `lastIndex` is reset because these are module-level /g regexes shared with the redactor;
+    // a leftover offset from a previous caller would silently start the scan mid-string.
+    re.lastIndex = 0;
+    for (const m of text.matchAll(re)) {
+      if (decodesToCredential(() => decode(m[0]))) return true;
+    }
+  }
+  return false;
+}
+
 function redactShortEncodedRuns(text: string): string {
   return text
     .replace(SHORT_B64_RUN, (run) =>
@@ -2211,6 +2251,14 @@ export function screenOutboundText(...parts: Array<string | null | undefined>): 
   if (category) return { safe: false, category, reason: "vocabulary" };
   const { decoded } = decodeEmbedded(raw);
   for (const d of decoded) {
+    // VOCABULARY ONLY on a decoded representation, and this asked to be `credentialShapeIn` too.
+    // It was written that way, and then removed again, because it changed no outcome on any
+    // payload that could be constructed for it: `credentialShapeIn` needs framing or a token
+    // SHAPE, and the decoded text that reaches here without either is a bare numeric run, which
+    // it does not fire on by design — an order number and a one-time code are the same six
+    // digits. Shipping it would have added a branch whose comment claimed a hole was closed while
+    // the hole stayed open, which is worse than the hole. The bare-code-without-framing case is a
+    // standing limit of the DETECTOR, recorded as such, not something this loop can reach.
     const c = categoryOf({ label: "outbound:decoded", raw: d, canonical: canonicalise(d) });
     if (c) return { safe: false, category: c, reason: "vocabulary" };
   }
@@ -2219,6 +2267,14 @@ export function screenOutboundText(...parts: Array<string | null | undefined>): 
   }
   if (hasAuthUrlToken(raw) || hasAuthUrlToken(canonical.plain)) {
     return { safe: false, category: null, reason: "auth_url_token" };
+  }
+  // LAST, because it decodes: the short reversible runs the redactor can strip but nothing above
+  // can see. `decodeEmbedded` covers base64 from sixteen characters up and quoted-printable; it
+  // matches no short base64 run, no percent-escape run and no numeric-entity run — the three
+  // forms {@link redactShortEncodedRuns} exists for. Without this arm those passes never ran in
+  // the case they were written for, because {@link redactForModel} short-circuits on `safe`.
+  if (hasShortEncodedCredential(raw) || hasShortEncodedCredential(canonical.plain)) {
+    return { safe: false, category: null, reason: "credential_shape" };
   }
   return { safe: true, category: null, reason: null };
 }
