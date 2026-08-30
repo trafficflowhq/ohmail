@@ -482,6 +482,20 @@ function installShellStub(window) {
         if (url === "/consent" && (payload?.method ?? "GET") === "GET") {
           return Promise.resolve(frame(200, "OK", consentState()));
         }
+        /* THE FRESHNESS PROBE — `GET /mirror/freshness`, the Freshness Contract's verdict for
+           the engine's own mirror, asked at mount by the shared shell so the "As of <time> ·
+           catching up" label is driven by the stamp that actually ages. The honest resting
+           answer here is `current` with a now-stamp and no drain in flight: this stub serves a
+           settled mailbox, and a `stale` answer would render the catch-up label over the very
+           world the checks below assert is on screen — the same contradiction the `/health`
+           entry refuses. GET only, exact match. This entry was added AFTER the check named it
+           red — the freshness wiring landed without the stub following, which is exactly the
+           drift the `unmodelled` list exists to say out loud. */
+        if (url === "/mirror/freshness" && (payload?.method ?? "GET") === "GET") {
+          return Promise.resolve(
+            frame(200, "OK", { state: "current", asOf: new Date().toISOString(), draining: false }),
+          );
+        }
         /* The profile-import PROBE — the "we found your ohmail settings on this mailbox" card
            asks once per mailbox at mount (`useProfileImport`), on both doors, since the desktop
            wired its transport. `state: "none"` is the honest resting answer — this stub's
