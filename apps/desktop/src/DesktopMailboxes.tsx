@@ -482,8 +482,9 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
               that door has no account to reach into.
             · `holdingsSpeak` — the mirror has actually been read, and the loop is not frozen. See
               its own doc-block; the short version is that a cold launch would otherwise announce
-              "holds 0 of 73,525" about a machine whose store is full, and a stopped session cannot
-              keep the sentence's promise. */
+              "holds 0 of your M messages" about a machine whose store already holds them — only
+              this client's own count is still climbing — and that a stopped session cannot keep
+              the sentence's promise. */
         const held = cloud && holdingsSpeak(mailState) ? deviceHoldings(facts, mirrored) : null;
         return held === null ? null : (
           <p className="set-note-inline">

@@ -409,7 +409,7 @@ describe("the holdings line — a windowed copy stated plainly, on the pane, wit
     expect(text).not.toContain("5,107");
   });
 
-  it("A MIRROR NOBODY HAS READ YET SAYS NOTHING — not \"holds 0 of 73,525\"", async () => {
+  it("A MIRROR NOBODY HAS READ YET SAYS NOTHING — not \"holds 0 of your M messages\"", async () => {
     // The window's engine starts with an EMPTY in-memory mirror and fills it page by page, while
     // the mailbox probe answers on its own clock. A pane open across a cold launch would otherwise
     // count up from zero, in a sentence about a machine whose store is already full.
