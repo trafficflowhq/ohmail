@@ -826,6 +826,20 @@ check("no collapsed-mail placeholder", collapsed == null, collapsed?.[0] ?? "");
     asked.map((i) => i.payload?.url).join(", "),
   );
 
+  /* AND FOR THE FRESHNESS PROBE, the same rule again: its stub route was added after
+     `unmodelled` named it red, and an added route is exactly the kind that quietly stops being
+     asked. The probe is the desktop's honest "as of" — the WINDOW engine drains the sidecar's
+     local feed and is always current relative to it, so a bundle that stopped asking
+     `/mirror/freshness` would fall back to its own locally-current stamp and hide a stale
+     hosted mirror behind a window with no catch-up label. `unmodelled` cannot tell that
+     regression from "everything was modelled"; a resting `current` verdict draws nothing
+     distinguishable to assert on. Named, so losing the consumer is a red with this sentence. */
+  check(
+    "the window asked the engine's own mirror how fresh it is",
+    asked.some((i) => String(i.payload?.url ?? "") === "/mirror/freshness"),
+    asked.map((i) => i.payload?.url).join(", "),
+  );
+
   /* AND FOR THE CLOUD DOOR'S GATE, which is the sharper case of the same rule. `GET /health` is the
      route the window asks BEFORE any mail: the gate keys its signed-in answer to the engine behind
      the bridge and withholds the mail app until that engine's own first `/health` lands. Its stub
