@@ -286,8 +286,24 @@ export class PrivacyService {
       )!);
     }
 
-    // Join the message (sender + account scope) and its body (blocked flag). The
-    // account filter on tracker_events already scopes; the join adds from_address.
+    // Join the message (sender + account scope) and its body (blocked flag).
+    //
+    // THE JOIN CARRIES ITS OWN ACCOUNT PREDICATE, and this comment used to say it did not need
+    // one: "the account filter on tracker_events already scopes; the join adds from_address."
+    // That is true of every row this service writes — both `trackerEvents` inserts run behind
+    // `requireOwnedMessage`, so the two account ids agree by construction today — and it is the
+    // wrong shape of argument for the invariant it is holding up. Account isolation is required
+    // to be STRUCTURAL rather than a projection someone remembers to keep narrow, and this
+    // projection reads a COUNTERPARTY ADDRESS off the joined row. A single inconsistent but
+    // schema-valid `tracker_events` row — a future writer, a backfill, a restore, a repair
+    // script — would put another account's sender address into this feed, and nothing in the
+    // query would object.
+    //
+    // The predicate is free: `tracker_events_account_message_idx` is already `(account_id,
+    // message_id)` and `messages` is reached by primary key, so this adds a comparison on a row
+    // the plan was fetching anyway. Correctness that costs nothing does not need a risk argument
+    // to justify it — it needs only that the alternative is a comment promising a property the
+    // SQL does not state.
     const rows = await ctx.db.select({
       id: trackerEvents.id,
       messageId: trackerEvents.messageId,
@@ -297,7 +313,10 @@ export class PrivacyService {
       fromAddress: messages.fromAddress,
       loaded: messageBodies.loadedRemoteContent,
     }).from(trackerEvents)
-      .innerJoin(messages, eq(messages.id, trackerEvents.messageId))
+      .innerJoin(messages, and(
+        eq(messages.id, trackerEvents.messageId),
+        eq(messages.accountId, ctx.accountId),
+      ))
       .leftJoin(messageBodies, eq(messageBodies.messageId, trackerEvents.messageId))
       .where(and(...filters))
       .orderBy(desc(trackerEvents.detectedAt), desc(trackerEvents.id))
