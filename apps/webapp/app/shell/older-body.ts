@@ -13,18 +13,16 @@
  * had never started, rendered "Couldn't load the full message — showing the preview" with a
  * Retry, and the Retry re-ran the same skip. A control whose promise could never be kept.
  *
- * ── THE SHAPE IS THE JUNK WINDOW'S, ON PURPOSE ──────────────────────────────────────────────
+ * ── THE MECHANICS ARE THE ENGINE'S, THIS FILE IS THE BIND ───────────────────────────────────
  *
- * `shell/junk-window.ts` already solved "a body for a row that must never enter the mirror":
- * fetch on open, hold the answer for THIS SESSION in the hook's own state, one fetch per row per
- * session, a human Retry replaces whatever is held, and a per-row ask generation so a hung first
- * request's late failure cannot overwrite the retry's delivered body. This module is that
- * pattern pointed at `GET /messages/:id/body` — the same stored row the mirror path reads, so
- * redaction, the withheld markers and the unsubscribe posture cannot fork between the two doors.
- * Nothing here writes to the mirror or to IndexedDB: closing the app forgets it, which is
- * exactly the lifetime the rows themselves have.
- *
- * ── THE STATES ARE `MessageBody`'S OWN, so the pane needs no second vocabulary ──────────────
+ * The session-cache pattern — single-flight decided outside any state updater, one ask per row
+ * per session, a human Retry that replaces a hung ask but never a settled answer, per-row ask
+ * generations — is `createSessionBodyDoor` (`@ohmail/client-engine`, the Content Door's
+ * on-demand arm; its header carries the review-caught findings this file used to carry). What
+ * lives HERE is only what is this door's own: the wire (the browser's Cloud client), the
+ * `reopenFailed: false` policy (this door's `open` fires on every render of the row, so a
+ * failed row re-asks only on the human press), and the rendering of the held phases into
+ * `MessageBody` — the pane's own vocabulary, so it needs no second one:
  *
  *  · not asked yet   → `snippet` (the surface asks via `open` the moment the row is shown);
  *  · in flight       → `loading`;
@@ -38,75 +36,29 @@
  *                      exists to remove;
  *  · transport/5xx   → `failed` — here the Retry is real: `open(id, { retry: true })` dispatches
  *                      a fresh request even while a hung first ask still shows `loading`.
+ *
+ * Nothing here writes to the mirror or to IndexedDB: closing the app forgets it, which is
+ * exactly the lifetime the rows themselves have.
  */
 
 import { useCallback, useRef, useState } from "react";
-import type { MessageBody, UnsubscribeHeaderState, WithheldMarker } from "@ohmail/client-engine";
+import {
+  createSessionBodyDoor, narrowOlderBody,
+  type MessageBody, type OlderBodyOutcome, type OlderBodyWire, type SessionBodyHeld,
+  type WithheldMarker,
+} from "@ohmail/client-engine";
 import { api, ApiError, apiConfigured } from "../api-client";
 
-/** What one settled ask holds. `gone` is the 404/410 terminal — see the header. */
-export type OlderBodyOutcome =
-  | {
-      kind: "ok";
-      text: string;
-      html: string | null;
-      loadedRemoteContent: boolean;
-      unsubscribe: UnsubscribeHeaderState;
-      unsubscribeUrl: string | null;
-      /** The server's own marker when policy emptied the stored body; null for an ordinary row. */
-      withheld: WithheldMarker | null;
-    }
-  | { kind: "gone" };
-
-/**
- * The one call this door makes, behind a seam so the desktop can hand in its bridge — the
- * `ConsentTransport` rule: the STATES and their meanings are decided above this seam and cannot
- * be varied by supplying a wire; only the bytes' route differs. A wire REJECTS for a retryable
- * failure (network, 5xx) and answers `{ kind: "gone" }` for the terminal 404/410.
- */
-export interface OlderBodyWire {
-  body(messageId: string): Promise<OlderBodyOutcome>;
-}
-
-/**
- * Narrow the stored-body wire to the door's outcome — the same forward-compatible reading
- * `HttpAdapter`'s `narrowBody` performs for the mirror path, restated here because that function
- * is private to the adapter and this module deliberately does not reach into it. A field the
- * server stops sending must never become `undefined` rendered into a page; a marker outside the
- * closed set reads as an ordinary body; the raw `headers` the route also serves are dropped on
- * the floor — they never enter this session state, exactly as they never enter the mirror.
- */
-export function narrowOlderBody(wire: {
-  text?: unknown;
-  html?: unknown;
-  loadedRemoteContent?: unknown;
-  unsubscribe?: unknown;
-  unsubscribeUrl?: unknown;
-  withheld?: unknown;
-}): OlderBodyOutcome {
-  return {
-    kind: "ok",
-    text: typeof wire.text === "string" ? wire.text : "",
-    html: typeof wire.html === "string" ? wire.html : null,
-    loadedRemoteContent: wire.loadedRemoteContent === true,
-    unsubscribe:
-      wire.unsubscribe === "one_click" ||
-      wire.unsubscribe === "mailto_only" ||
-      wire.unsubscribe === "not_one_click"
-        ? wire.unsubscribe
-        : "no_header",
-    unsubscribeUrl: typeof wire.unsubscribeUrl === "string" ? wire.unsubscribeUrl : null,
-    withheld:
-      wire.withheld === "storage_cap" || wire.withheld === "junk_filed" || wire.withheld === "expunged"
-        ? wire.withheld
-        : null,
-  };
-}
+// The seam types are the engine's now; re-exported so this door's consumers (`AppShell`, the
+// desktop's transports) keep importing them from the door they bind.
+export { narrowOlderBody, type OlderBodyOutcome, type OlderBodyWire };
 
 /**
  * The hosted transport — the browser asking the API this app was written against. The same
  * `GET /messages/:id/body` the engine's adapter uses for mirror rows: ownership is proven
- * server-side through `messages`, and the withheld markers ride the same field.
+ * server-side through `messages`, and the withheld markers ride the same field. Not
+ * `olderBodyVia`: the Cloud client's `api()` carries the session's own error contract
+ * (`ApiError` with the status), so the narrowing binds to that rather than to a raw Response.
  */
 export const CLOUD_OLDER_BODY: OlderBodyWire = {
   body: async (messageId) => {
@@ -123,11 +75,6 @@ export const CLOUD_OLDER_BODY: OlderBodyWire = {
   },
 };
 
-type Held =
-  | { phase: "loading"; attempt: number }
-  | { phase: "settled"; outcome: OlderBodyOutcome }
-  | { phase: "failed" };
-
 export interface OlderBodyDoor {
   /** Is there a wire behind this door at all? False ⇒ `bodyFor`/`open` are inert. */
   available: boolean;
@@ -136,7 +83,7 @@ export interface OlderBodyDoor {
   /**
    * Fetch on show. One ask per row per session; `retry: true` REPLACES whatever is held — the
    * human's press must dispatch even while a hung first ask still reads `loading` (the junk
-   * window's measured finding, inherited rather than re-learned).
+   * window's measured finding, inherited through the shared door rather than re-learned).
    */
   open(messageId: string, opts?: { retry?: boolean }): void;
 }
@@ -165,19 +112,18 @@ function resting(text: string, state: MessageBody["state"], withheld?: WithheldM
  */
 export function useOlderBody(active: boolean, transport?: OlderBodyWire): OlderBodyDoor {
   const wire = active ? transport ?? (apiConfigured() ? CLOUD_OLDER_BODY : undefined) : undefined;
-  const [held, setHeld] = useState<Map<string, Held>>(() => new Map());
+  const [held, setHeld] = useState<ReadonlyMap<string, SessionBodyHeld<OlderBodyOutcome>>>(
+    () => new Map(),
+  );
   /**
-   * THE GUARD'S OWN COPY of what each row holds — the single-flight decision reads THIS, never
-   * the state updater's argument, because a `setState` updater must stay PURE: under
-   * `<StrictMode>` (both desktop roots) React invokes updaters twice in development, and a
-   * first draft that dispatched the fetch inside the updater issued TWO requests per open —
-   * the generation guard discarded the loser's ANSWER but the wire had already been billed
-   * twice (review-caught). Written only by {@link publish}, in dispatch order, so it can never
-   * disagree with the state it shadows.
+   * The door instance is the session cache, so it must survive re-renders: `useState`'s lazy
+   * initializer runs once for the mount React keeps (StrictMode's discarded twin never receives
+   * an `open` — those come from callbacks and effects, which fire only on the kept mount).
+   * `setHeld` is identity-stable, so handing it to the door as `onChange` is safe.
    */
-  const heldRef = useRef(new Map<string, Held>());
-  /** Per-row ask generation — a superseded ask's completion must not overwrite its successor's. */
-  const gen = useRef(new Map<string, number>());
+  const [door] = useState(() =>
+    createSessionBodyDoor<OlderBodyOutcome>({ onChange: setHeld, reopenFailed: false }),
+  );
   /** The wire behind a stable identity — `consent-state.ts`'s `link`, for the same reason. */
   const link = useRef<OlderBodyWire | undefined>(wire);
   link.current = wire;
@@ -185,30 +131,8 @@ export function useOlderBody(active: boolean, transport?: OlderBodyWire): OlderB
   const open = useCallback((messageId: string, opts: { retry?: boolean } = {}) => {
     const w = link.current;
     if (w === undefined) return;
-    /** One writer for the shadow and the state, so the two cannot drift. */
-    const publish = (h: Held): void => {
-      heldRef.current = new Map(heldRef.current).set(messageId, h);
-      setHeld(heldRef.current);
-    };
-    // One fetch per session per row: `loading` and any settled answer are both answers. A
-    // human Retry overrides `loading` and `failed` — but never a SETTLED outcome, because
-    // `full` and `withheld` render no Retry and a re-ask would be a poll with nobody behind it.
-    // Decided against the ref, OUTSIDE any state updater — see {@link heldRef}.
-    const have = heldRef.current.get(messageId);
-    if (have && have.phase === "settled") return;
-    if (have && !opts.retry) return;
-    const mine = (gen.current.get(messageId) ?? 0) + 1;
-    gen.current.set(messageId, mine);
-    void w.body(messageId).then(
-      (outcome) => {
-        if (gen.current.get(messageId) === mine) publish({ phase: "settled", outcome });
-      },
-      () => {
-        if (gen.current.get(messageId) === mine) publish({ phase: "failed" });
-      },
-    );
-    publish({ phase: "loading", attempt: mine });
-  }, []);
+    door.open(messageId, () => w.body(messageId), opts);
+  }, [door]);
 
   const bodyFor = useCallback(
     (m: { id: string; snippet: string }): MessageBody => {

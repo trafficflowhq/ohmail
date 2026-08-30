@@ -123,6 +123,14 @@ export {
   type SenderActivity,
 } from "./consent-cutline.js";
 
+// The Content Door's on-demand arm — the one session-body pattern (mechanics + the stored-body
+// wire vocabulary) every surface binds instead of re-deriving; see the module header.
+export {
+  createSessionBodyDoor, narrowOlderBody, olderBodyVia,
+  type OlderBodyOutcome, type OlderBodyWire,
+  type SessionBodyDoor, type SessionBodyDoorOptions, type SessionBodyHeld,
+} from "./session-body.js";
+
 // Apply core (the convergence oracle) + stores.
 export { applyToRecords, flattenResponse, maxSeqOf, recordKey, type MirrorRecord } from "./apply.js";
 export { BaseMirrorStore, MemoryMirrorStore, type EntityReader, type MirrorStore } from "./store.js";

@@ -67,6 +67,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
+import { createSessionBodyDoor, type SessionBodyHeld } from "@ohmail/client-engine";
 import type { ToastFn } from "@ohmail/ui";
 import {
   ApiError, apiConfigured, screener as screenerApi,
@@ -110,6 +111,9 @@ const cloudWire: JunkWire = {
   isGone: (err) => err instanceof ApiError && err.status === 410,
   codeOf: (err) => (err instanceof ApiError ? err.code : null),
 };
+
+/** What one settled junk-body ask holds — the wire's own answer, subject included. */
+type JunkBodyWireAnswer = { subject: string; text: string };
 
 export type JunkBodyPhase =
   | { phase: "idle" }
@@ -253,9 +257,20 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
   const [boxes, setBoxes] = useState<JunkMailboxWire[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [olderLoading, setOlderLoading] = useState(false);
-  const [bodies, setBodies] = useState<Map<string, JunkBodyPhase>>(() => new Map());
-  /** Per-row ask generation — a superseded ask's completion must not overwrite its successor's. */
-  const bodyGen = useRef(new Map<string, number>());
+  const [bodies, setBodies] = useState<ReadonlyMap<string, SessionBodyHeld<JunkBodyWireAnswer>>>(
+    () => new Map(),
+  );
+  /**
+   * The session body cache's MECHANICS are the engine's (`createSessionBodyDoor` — the Content
+   * Door's on-demand arm; this hook proved the pattern and now binds it instead of carrying its
+   * own copy). `reopenFailed: true` is this door's policy: the automatic body-on-open fires per
+   * selection, so a row that failed once is re-asked when the reader returns to it. The lazy
+   * `useState` keeps ONE door per mounted window — the session — and `setBodies` is
+   * identity-stable, so handing it in as `onChange` is safe.
+   */
+  const [bodyDoor] = useState(() =>
+    createSessionBodyDoor<JunkBodyWireAnswer>({ onChange: setBodies, reopenFailed: true }),
+  );
   const [busy, setBusy] = useState<Set<string>>(() => new Set());
   /** Has THIS session read page one yet? Lazily, once, on segment entry. */
   const asked = useRef(false);
@@ -334,32 +349,25 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
   }, [nextCursor, olderLoading, toast, t, fetchFirst, wire]);
 
   const bodyFor = useCallback(
-    (item: JunkItemWire): JunkBodyPhase => bodies.get(junkKeyOf(item)) ?? { phase: "idle" },
+    (item: JunkItemWire): JunkBodyPhase => {
+      const held = bodies.get(junkKeyOf(item));
+      if (held === undefined) return { phase: "idle" };
+      if (held.phase === "settled") return { phase: "ready", text: held.outcome.text };
+      return held;
+    },
     [bodies],
   );
 
+  // One fetch per session per message, retry-replaces-a-hung-ask, superseded completions
+  // dropped — the shared door's contract (see its header; the findings this hook's inline copy
+  // carried are recorded there).
   const openBody = useCallback((item: JunkItemWire, opts: { retry?: boolean } = {}) => {
-    const key = junkKeyOf(item);
-    setBodies((cur) => {
-      const held = cur.get(key);
-      // One fetch per session per message — `ready` and in-flight `loading` are both answers.
-      // A human RETRY overrides both: a hung first ask still reads `loading`, and refusing
-      // the press would leave Retry dead until a reload.
-      if (!opts.retry && held && held.phase !== "failed") return cur;
-      // Each ask takes the row's NEXT generation; a completion landing after a newer ask took
-      // over is DROPPED — a hung first request's late rejection must not overwrite the
-      // retry's delivered body with "failed" (review round on the retry).
-      const gen = (bodyGen.current.get(key) ?? 0) + 1;
-      bodyGen.current.set(key, gen);
-      void wire.body(item.mailboxId, item.uid, item.uidValidity).then(
-        (b) => setBodies((m) =>
-          bodyGen.current.get(key) === gen ? new Map(m).set(key, { phase: "ready", text: b.text }) : m),
-        () => setBodies((m) =>
-          bodyGen.current.get(key) === gen ? new Map(m).set(key, { phase: "failed" }) : m),
-      );
-      return new Map(cur).set(key, { phase: "loading", attempt: gen });
-    });
-  }, [wire]);
+    bodyDoor.open(
+      junkKeyOf(item),
+      () => wire.body(item.mailboxId, item.uid, item.uidValidity),
+      opts,
+    );
+  }, [bodyDoor, wire]);
 
   /* ── THE SEARCH-APPEND ─────────────────────────────────────────────────────────────────── */
   const [query, setQueryState] = useState("");
