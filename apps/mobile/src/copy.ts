@@ -529,6 +529,14 @@ export const Copy = {
    * says what it does not know rather than inventing a time.
    */
   scheduledWhenUnknown: "Sends at its scheduled time",
+  /**
+   * PHONE-ONLY: an appointment the server could not keep. The scheduled-send pass closes such a
+   * message back to an ordinary draft with its refusal, and the webapp's Drafts list catches
+   * it; this app has no Drafts screen, so the row stays HERE and says what happened rather than
+   * disappearing — a message that vanishes from the only screen that ever mentioned it reads as
+   * one that was sent.
+   */
+  scheduledNotSent: "Not sent",
   /*
    * THE SIGNATURE BLOCK (`compose.signature*` in the webapp catalogue, word for word —
    * `folders-parity.test.ts` pins them): the sending mailbox's stored signature as a

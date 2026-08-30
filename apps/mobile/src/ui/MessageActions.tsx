@@ -506,6 +506,21 @@ function ComposeSheet({
    * the authority.
    */
   const pickLater = (at: Date) => {
+    /**
+     * ONE PRESS IS ONE DELIVERY — and this guard is the picker's half of that invariant.
+     *
+     * Send and the picker stand side by side, so a reader can open the chooser, press Send,
+     * and then tap a preset while the first request is still out. `canSend` locks the Send
+     * BUTTON on `phase`, but the picker's rows are their own dispatch site: without this the
+     * second press mints a fresh Idempotency-Key, and the reply is delivered AND a second copy
+     * scheduled. The picker is also closed on dispatch (see `send`), so this is the belt to
+     * that brace — the two together mean neither a stale open panel nor a fast thumb can
+     * produce a second key.
+     */
+    if (phase !== "idle") {
+      setLater(null);
+      return;
+    }
     if (at.getTime() - Date.now() < SEND_LATER_MIN_LEAD_MS) {
       // Back to the preset menu, recomputed against now — so the row that went stale is gone
       // and the sentence says why, rather than the press appearing to do nothing.
@@ -520,6 +535,9 @@ function ComposeSheet({
   };
 
   const send = async (sendAt: string | null = null) => {
+    // The picker closes the moment ANY send is dispatched — a panel left standing over a
+    // message that is already on its way offers rows for an act that may no longer happen.
+    setLater(null);
     setPhase("sending");
     const result = forward
       ? await w.actions.sendForward(m.id, recipients ?? [], body, sigText)

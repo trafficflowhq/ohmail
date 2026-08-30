@@ -66,6 +66,7 @@ import {
   type SignatureState,
   type BodyState,
   type EmailAddress,
+  type EngineDraft,
   type EngineMessage,
   type EngineMutation,
   type EntityReader,
@@ -395,6 +396,12 @@ export interface WorldScheduled {
    * more than a sentence of ours that generalises it away.
    */
   failure: string | null;
+  /**
+   * Is there still an appointment to take off — `true` for a standing one, `false` for a row
+   * whose send already failed and closed back to a draft. A Cancel on the second would be a
+   * control for an act with nothing to act on.
+   */
+  cancellable: boolean;
 }
 
 /**
@@ -408,13 +415,31 @@ export interface WorldScheduled {
  * most needs), and this surface says the honest "time unknown" rather than inventing one.
  */
 export function liveScheduled(reader: EntityReader, v: WorldView): WorldScheduled[] {
-  return scheduledSendsList(reader).map((d) => ({
+  /**
+   * A KEPT APPOINTMENT THAT COULD NOT BE SENT IS NO LONGER `scheduled` — and this surface is
+   * the only place on the phone that can say so.
+   *
+   * `runScheduledSendPass` closes a deterministically-refused (or day-late) appointment back to
+   * an ordinary `draft` carrying the server's sentence in `sendError`. The shared selector
+   * lists `scheduled` rows alone — correct for the webapp, where such a row simply falls into
+   * the Drafts list underneath with its refusal quoted. THIS APP HAS NO DRAFTS SCREEN: filtered
+   * the same way, a message the reader scheduled would vanish from the phone entirely, with
+   * nothing said, and "it disappeared" reads as "it was sent". So the failed rows are listed
+   * beside the standing ones, marked by `when: null` + a `failure` sentence, and they sort
+   * last (no appointment stands, so there is no time to order them by).
+   */
+  const failed = reader.list<EngineDraft>("draft")
+    .filter((d) => d.status === "draft" && (d.sendError ?? "") !== "")
+    .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
+  return [...scheduledSendsList(reader), ...failed].map((d) => ({
     id: d.id,
-    when: d.sendAt ? scheduleLabel(d.sendAt, v.now, v.zone) : null,
+    when: d.status === "scheduled" && d.sendAt ? scheduleLabel(d.sendAt, v.now, v.zone) : null,
     subject: d.subject.trim() === "" ? Copy.scheduledNoSubject : d.subject,
     to: d.to.map((a) => a.name ?? a.address).join(", "),
     preview: d.body.replace(/\s+/g, " ").trim().slice(0, 140),
     failure: d.sendError ?? null,
+    /** A standing appointment can be cancelled; a failed one has nothing left to cancel. */
+    cancellable: d.status === "scheduled",
   }));
 }
 
@@ -865,6 +890,15 @@ export interface FlushedOutcome {
   kind: EngineMutation["kind"];
   /** mail_send only: whether the intent was a forward — the confirmation sentence differs. */
   forward: boolean;
+  /**
+   * mail_send only: the APPOINTMENT the queued intent carried (Send later, mail 0077), or
+   * `null`. The sentence differs for the same reason `forward` does, and more sharply: an
+   * offline Send-later confirmed by a background flush has DELIVERED NOTHING, so announcing it
+   * as "Reply sent." would be a false claim about mail that is still sitting on the account
+   * waiting for its time. Captured BEFORE the flush like the kind, because the entry is gone
+   * from the queue by the time the result is read.
+   */
+  sendAt: string | null;
 }
 
 /**
@@ -881,19 +915,23 @@ export async function flushQueued(engine: OhmailEngine): Promise<Map<string, Flu
   const kinds = new Map(
     engine.pendingMutations().map((p) => [
       p.key,
-      { kind: p.mutation.kind, forward: p.mutation.kind === "mail_send" && !!p.mutation.forwardOf },
+      {
+        kind: p.mutation.kind,
+        forward: p.mutation.kind === "mail_send" && !!p.mutation.forwardOf,
+        sendAt: (p.mutation.kind === "mail_send" ? p.mutation.sendAt : undefined) ?? null,
+      },
     ]),
   );
   const outcomes = new Map<string, FlushedOutcome>();
   const results = await engine.flushPending().catch(() => []);
   for (const r of results) {
     if (r.status === "queued") continue;
-    const meta = kinds.get(r.key) ?? { kind: "mark_seen" as const, forward: false };
+    const meta = kinds.get(r.key) ?? { kind: "mark_seen" as const, forward: false, sendAt: null };
     const status =
       r.status === "confirmed" ? ("confirmed" as const)
         : r.error?.code === "send_unverified" ? ("unverified" as const)
           : ("rolled_back" as const);
-    outcomes.set(r.key, { status, kind: meta.kind, forward: meta.forward });
+    outcomes.set(r.key, { status, kind: meta.kind, forward: meta.forward, sendAt: meta.sendAt });
   }
   return outcomes;
 }

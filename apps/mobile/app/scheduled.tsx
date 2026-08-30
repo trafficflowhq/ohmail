@@ -100,10 +100,18 @@ function ScheduledRow({ row }: { row: WorldScheduled }) {
           {row.subject}
         </Txt>
         <View style={{ flex: 1 }} />
-        {/* The APPOINTMENT is the stamp — `Sends Fri 18:00`, or the honest "time unknown" form
-            for a row whose `sendAt` the mirror does not carry (see `liveScheduled`). */}
-        <Txt variant="caption" tone="accent" tabular numberOfLines={1}>
-          {row.when === null ? Copy.scheduledWhenUnknown : Copy.scheduledWhen(row.when)}
+        {/* The APPOINTMENT is the stamp — `Sends Fri 18:00`; a row whose `sendAt` the mirror
+            does not carry says the time is unknown; and a row whose send already FAILED has no
+            appointment left to name, so it says that instead of a time it does not have. */}
+        <Txt
+          variant="caption"
+          tone={row.cancellable ? "accent" : "ink3"}
+          tabular
+          numberOfLines={1}
+        >
+          {!row.cancellable ? Copy.scheduledNotSent
+            : row.when === null ? Copy.scheduledWhenUnknown
+              : Copy.scheduledWhen(row.when)}
         </Txt>
       </View>
       <Txt variant="caption" tone="ink3" numberOfLines={1}>
@@ -121,20 +129,25 @@ function ScheduledRow({ row }: { row: WorldScheduled }) {
           {Copy.scheduleFailedNote(row.failure)}
         </Txt>
       ) : null}
-      <View style={{ flexDirection: "row", paddingTop: 6 }}>
-        <Button
-          label={Copy.scheduledCancel}
-          variant={asking ? "plain" : "quiet"}
-          onPress={
-            asking
-              ? undefined
-              : () => {
-                setAsking(true);
-                void w.actions.cancelSchedule(row.id).finally(() => setAsking(false));
-              }
-          }
-        />
-      </View>
+      {/* Cancel belongs to a STANDING appointment. A row whose send already failed has nothing
+          left to take off — the message is an ordinary draft on the account now, and the line
+          below says where to finish it rather than offering a verb with no act behind it. */}
+      {row.cancellable ? (
+        <View style={{ flexDirection: "row", paddingTop: 6 }}>
+          <Button
+            label={Copy.scheduledCancel}
+            variant={asking ? "plain" : "quiet"}
+            onPress={
+              asking
+                ? undefined
+                : () => {
+                  setAsking(true);
+                  void w.actions.cancelSchedule(row.id).finally(() => setAsking(false));
+                }
+            }
+          />
+        </View>
+      ) : null}
     </View>
   );
 }

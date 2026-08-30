@@ -58,6 +58,7 @@ import {
   liveTags,
   mirrorSettled,
   presentedOf,
+  scheduleLabel,
   staleAsOf,
   readerZone,
   soleMessageMailbox,
@@ -527,7 +528,17 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           // announces itself (the queued toast promised it would keep trying), an
           // unverified one says check-Sent, and any other rollback says it plainly.
           if (o.kind === "mail_send") {
-            if (o.status === "confirmed") showToast(o.forward ? Copy.forwarded : Copy.replySent);
+            // A CONFIRMED SEND-LATER DELIVERED NOTHING — the ledger carries the appointment
+            // (`FlushedOutcome.sendAt`) exactly so a background flush cannot announce an
+            // appointment as a delivery. The time is read in the reader's own clock, the same
+            // sentence the foreground press would have spoken.
+            if (o.status === "confirmed") {
+              showToast(
+                o.sendAt !== null ? Copy.scheduledFor(scheduleLabel(o.sendAt, new Date(), zone))
+                  : o.forward ? Copy.forwarded
+                    : Copy.replySent,
+              );
+            }
             else if (o.status === "unverified") showToast(Copy.replyUnverified);
             else showToast(Copy.replyFailed);
           } else if (o.status === "rolled_back") {
@@ -547,7 +558,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         setOutcomeSeq((n) => n + 1);
       });
     // `conn.syncing` falling is the drain-completed signal; `outcomeSeq` re-checks after a flush.
-  }, [conn.syncing, engine, showToast, outcomeSeq]);
+    // `zone` is a mount-stable memo; it is named because the appointment sentence reads it.
+  }, [conn.syncing, engine, showToast, outcomeSeq, zone]);
   // The outgoing session's ledger must not answer for the next session's keys.
   useEffect(() => {
     outcomes.current = new Map();
