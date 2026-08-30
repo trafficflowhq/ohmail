@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { foldersEnabled, userFolderById, type UserFolderRow } from "../folders.js";
 import type { EmailAddress } from "@trafficflow/core/mail";
 import {
@@ -238,16 +238,43 @@ export function messageRowToDTO(
  * input. `message_tags` additionally carries its own `account_id` and it is ALSO filtered on,
  * belt and braces: that column is denormalized, so a bug that ever let it disagree with the
  * message's owner must fail closed rather than leak one account's tag names to another.
+ *
+ * ── A SOFT-DELETED ROW MATERIALIZES AS ABSENT, BY DEFAULT ──────────────────────────────────
+ *
+ * `deleted_at IS NULL` is the living-view rule (schema-mail.ts states it beside the column),
+ * and this batch is the LIVING-VIEW reader: it feeds `/sync`'s delta prefetch, whose tombstone
+ * seam turns "absent from the prefetch" into an `op: "delete"` — and whose own comments, plus
+ * the coalesced stale read's entire equivalence argument ("a dead entity's latest change
+ * materializes null → tombstone"), always CLAIMED this held. It did not: any writer emitting a
+ * `message` update change after a delete — `bubbleUpPass` firing a schedule the delete
+ * deliberately leaves standing (`spendResurface` is scoped to `resurfaced` alone) — had that
+ * update re-materialize the full DTO, and the mail the user threw away reappeared on every
+ * mirror. On a coalesced stale resume it was worse: the update SUPERSEDED the delete tombstone,
+ * so the deletion was never delivered at all. Found by the verb-parity harness
+ * (`packages/client-engine/test/verb-parity/`, the message_delete × bubbleUpPass scenario).
+ *
+ * `deleted: "include"` is the receipt reader: a route that has just stamped `deleted_at` still
+ * owes its caller the DTO (`MessageService.delete` 500s without it), and an idempotent replay
+ * re-serves that stored receipt. Nothing that feeds a mirror may pass it.
  */
+export interface MaterializeMessagesOpts {
+  /** Default `"omit"` — the living-view rule. See the header before passing `"include"`. */
+  deleted?: "omit" | "include";
+}
+
 export async function materializeMessages(
-  db: Db, accountId: string, ids: readonly string[],
+  db: Db, accountId: string, ids: readonly string[], opts: MaterializeMessagesOpts = {},
 ): Promise<Map<string, MessageDTO>> {
   const out = new Map<string, MessageDTO>();
   if (ids.length === 0) return out;
 
   const unique = [...new Set(ids)];
   const rows = await db.select().from(messages)
-    .where(and(inArray(messages.id, unique), eq(messages.accountId, accountId)));
+    .where(and(
+      inArray(messages.id, unique),
+      eq(messages.accountId, accountId),
+      ...(opts.deleted === "include" ? [] : [isNull(messages.deletedAt)]),
+    ));
   if (rows.length === 0) return out;
 
   const owned = rows.map((r) => r.id);
@@ -292,7 +319,10 @@ export async function materializeMessagesInOrder(
 }
 
 export async function materializeMessage(db: Db, accountId: string, id: string): Promise<MessageDTO | null> {
-  return (await materializeMessages(db, accountId, [id])).get(id) ?? null;
+  // `include`: the singular is the RECEIPT reader — every caller is a route echoing the row it
+  // just wrote, and one of them (`MessageService.delete`) has just stamped `deleted_at` on it.
+  // The living-view rule is the batch's default; see the header above.
+  return (await materializeMessages(db, accountId, [id], { deleted: "include" })).get(id) ?? null;
 }
 
 export async function materializeMessageState(db: Db, accountId: string, id: string): Promise<MessageStateDTO | null> {
