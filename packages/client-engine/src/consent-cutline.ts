@@ -423,8 +423,11 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
   for (const m of messages) {
     /* ── OUTBOUND MAIL MEETS THE SAME CUTLINE AS INBOUND MAIL ────────────────────────────
      *
-     * A folder outside the presented set is the account's own Sent mail — that is the whole
-     * of {@link isOwnSent}, and the reason it needs no address list on a client that has none.
+     * A folder outside the presented set is either one of the user's OWN folders (the lens branch
+     * immediately below) or the mailbox's Sent folder ({@link isOwnSent}, a POSITIVE test on the
+     * path — see that function for what this branch's old premise poured into the Ohbox). A row
+     * that is neither keeps its own place here and presents under its folder, never as the
+     * account's own writing.
      * Those rows ARE presented: the Ohbox's "Earlier" is a history of what the reader has
      * finished with, and half of every conversation is what they wrote.
      *
@@ -464,8 +467,13 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
        * screened, unchanged), and the user's own mail never joins. The thread rule below still
        * applies: a lens row on a thread holding consented mail leaves History with the thread.
        *
-       * With the flag OFF `userFolders` is empty and every row here falls through to the
-       * own-sent branch below, byte-for-byte the pre-feature partition. */
+       * With the flag OFF `userFolders` is empty and every row here falls through to the branch
+       * below, byte-for-byte the pre-feature partition — and that fallthrough is exactly why
+       * {@link isOwnSent} had to stop being a negative test. With the flag off NOTHING here tells
+       * `Promotions` from `Sent`, so the Ohbox's own-sent union claimed the mailbox's whole folder
+       * tree. `placeOf` is unaffected either way (a row that is neither a user folder's nor Sent
+       * still keeps its own folder below); what the Ohbox does with it is not this partition's
+       * decision to make. */
       if (inUserFolder(m)) {
         placeOf.set(m.id, m.folder);
         const key = senderKey(m.from.address);
@@ -566,8 +574,8 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
        * "wherever the consented half is". For OUTBOUND mail it cannot: the anchor's place may be
        * `ohmail/Reads` or `ohmail/Receipts`, and re-homing a sent row there would put the user's
        * own mail into a reading stream — the piles group by folder, so the row would be counted
-       * and rendered as an issue in Reads. Keeping its own folder presents it in "Earlier"
-       * ({@link isOwnSent} is exactly "not one of the organised views"), which is the one place
+       * and rendered as an issue in Reads. Keeping its own folder presents it in "Earlier" when
+       * that folder is the mailbox's Sent folder ({@link isOwnSent}), which is the one place
        * outbound mail belongs and is on the same screen as the thread it answers.
        */
       placeOf.set(m.id, KNOWN_FOLDERS.has(m.folder) ? anchorPlace : m.folder);

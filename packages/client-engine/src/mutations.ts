@@ -100,10 +100,10 @@ function stateRecordIdOf(reader: EntityReader, messageId: string): string {
  *
  * This used to say the copy "matches no pile view and reaches the surface ONLY through its
  * conversation". That was true when it was written and is NOT true now: `ohboxView`'s own-sent
- * union files every mirror row whose folder is not one of the six organised views into "Earlier",
- * and `isOwnSent` is exactly `!OHMAIL_FOLDERS.has(folder)` — which `folder: "Sent"` satisfies. So
- * the copy appears in Earlier as well as in its conversation, from the moment the send confirms
- * until the real row replaces it.
+ * union files the account's own sent mail into "Earlier", and `isOwnSent` asks whether the row's
+ * folder is the mailbox's Sent folder — which `folder: "Sent"` satisfies. So the copy appears in
+ * Earlier as well as in its conversation, from the moment the send confirms until the real row
+ * replaces it.
  *
  * That is the right behaviour and it needs no gate: a message the user just sent belongs in their
  * own sent history, `unread: false` keeps it out of "New for you", and the reconcile is by

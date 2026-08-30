@@ -13,4 +13,14 @@ export {
   RESERVED_FOLDER_LEAF,
   folderNameError,
   type FolderNameError,
+  /**
+   * "IS THIS PATH THE MAILBOX'S SENT FOLDER" — the client mirrors' half of the folder vocabulary.
+   *
+   * Here for this leaf's whole reason: `packages/client-engine` has to tell the account's OWN
+   * SENT MAIL from a message that merely lives in some folder of the mailbox, and the only other
+   * home of that question is `@trafficflow/core/adapters/imap-types`, which the browser/phone
+   * bundle cannot reach. The alternative was a second copy of the regex in the engine — the drift
+   * `RESERVED_FOLDER_LEAF` is re-exported here rather than copied to avoid.
+   */
+  isSentFolderPath,
 } from "./types.js";

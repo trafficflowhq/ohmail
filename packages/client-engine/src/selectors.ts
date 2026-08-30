@@ -1,3 +1,4 @@
+import { isSentFolderPath } from "@trafficflow/core/folder-name";
 import type { EntityReader } from "./store.js";
 import { zonedDayNumber, zonedFields } from "./zone.js";
 import {
@@ -441,23 +442,47 @@ export interface OhboxView {
   previouslySeen: EngineMessage[];
 }
 
-/** The organised ohmail views' folders — every folder the worker routes INBOX mail into. */
-const OHMAIL_FOLDERS: ReadonlySet<string> = new Set(Object.keys(VIEW_OF_FOLDER));
-
 /**
  * A MESSAGE THE ACCOUNT ITSELF WROTE.
  *
- * The worker watches the Sent folder now, so the account holder's own mail rides the mirror like
- * any other row — but it keeps its ARRIVAL folder (the pipeline never refiles Sent), and the Sent
- * folder is the only one the worker observes that is NOT one of the six organised ohmail views.
- * So "own-sent" is exactly "a mirror row whose folder is none of the organised views": no
- * account-address list is needed on the client, which does not have one on a Cloud account.
+ * The worker watches the Sent folder, so the account holder's own mail rides the mirror like any
+ * other row — but it keeps its ARRIVAL folder (the pipeline never refiles Sent). So the question
+ * is which mirrored folder is the mailbox's Sent folder, and it is asked POSITIVELY, of the path:
+ * {@link isSentFolderPath} recognises every canonical form the worker's own Sent resolver can
+ * produce, and it is the SAME value the server's folders inventory excludes from the user-folder
+ * class (`packages/services/src/folders.ts`) — one regex, one home (`@trafficflow/core/types`).
+ *
+ * ── WHY IT IS NOT `!VIEW_OF_FOLDER[m.folder]` ANY MORE ──────────────────────────────────────
+ *
+ * That is what it was, on the premise — written out here — that "the Sent folder is the only one
+ * the worker observes that is NOT one of the six organised ohmail views". The premise is false:
+ * the passive read mirrors the mailbox's WHOLE folder tree, and it does so whether or not the
+ * account has "Use folders" on (the flag gates the `folder` ENTITY, never the mail). So the
+ * negative test answered "the account wrote this" for every folder a mailbox happens to have —
+ * a provider's `Promotions`, a project folder, an archive tree — and {@link ohboxView} unions
+ * own-sent mail into "Earlier", so all of it landed in the Ohbox.
+ *
+ * The shape that produces, on any mailbox with folders in it: a QUARTER of "Earlier" can be mail
+ * the reader filed rather than mail they wrote. And because {@link readTimeOf} hands an own-sent
+ * row its own DATE as a reading time, those rows rank against real read stamps — so one pass that
+ * adopts a batch of externally observed `\Seen` flags stamps them all at the same instant and
+ * lifts a block of months-old filed mail to the TOP of the Ohbox, above everything that has
+ * arrived since. `apps/webapp/app/shell/format.ts#sentRowRecipient` labels them "Me → …" for good
+ * measure. Both halves were observed on a real mailbox before this changed.
+ *
+ * ── WHAT THIS SHARES WITH THE SERVER, INCLUDING THE RESIDUAL ────────────────────────────────
+ *
+ * A Sent folder advertising SPECIAL-USE under a name neither belt knows is not recognised here
+ * either, and that account's sent mail is absent from "Earlier" until the resolved Sent path is
+ * persisted (the hand-off `packages/services/src/folders.ts` already names). That is the same
+ * residual the folders inventory carries, in the same direction — a row missing from one list —
+ * and it is bounded by the mailbox's own naming, where the old rule was unbounded by anything.
  *
  * These rows land already `\Seen` (the pipeline forces it — nothing you wrote is new to you), so
  * they never belong in "New for you"; {@link ohboxView} files every one of them under "Earlier".
  */
 export function isOwnSent(m: Pick<EngineMessage, "folder">): boolean {
-  return !OHMAIL_FOLDERS.has(m.folder);
+  return isSentFolderPath(m.folder);
 }
 
 /**

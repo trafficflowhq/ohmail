@@ -96,6 +96,58 @@ export const RESERVED_FOLDER_LEAF =
 export const FOLDER_PATH_MAX = 200;
 
 /**
+ * SENT-SHAPED CANONICAL PATHS — the English resolver family plus the localized German one the
+ * SPECIAL-USE resolver can surface, at top level or under a prefix a Sent folder actually lives
+ * under: `INBOX/` (Dovecot trees) and Gmail's `[Gmail]/` namespace (`[Google Mail]/` on the
+ * German account, which is also where `Gesendet` comes from). NOT nested generally —
+ * `Alternativen/Sent Messages` is a folder the reader keeps and no resolver would ever pick it.
+ *
+ * The `[Gmail]/` arm is not a widening for its own sake: SPECIAL-USE is the FIRST step of the
+ * worker's resolver (`imap.ts#findSentForScan`), so `[Gmail]/Sent Mail` is a path the resolver
+ * genuinely produces, and every reader below was answering "no" about it.
+ *
+ * It lives HERE, beside {@link RESERVED_FOLDER_LEAF} and for the same reason, because it now has
+ * THREE readers in graphs that share nothing else and one of them is a browser bundle:
+ *
+ *  · the folders inventory (`packages/services/src/folders.ts`) excludes these paths from the
+ *    user-folder class — a Sent folder is not one of the user's own folders;
+ *  · the folder delete's stale-residue cleanup (`adapters/drizzle-repo.ts#tombstoneFolderMessages`)
+ *    must NEVER take a Sent-folder instance row — Sent is scanned by UID WATERMARK, not enumerated
+ *    end to end, so after a UIDVALIDITY reset an old message's renumbered copy is never re-learned
+ *    and a deleted "stale" Sent row is the last evidence that copy exists;
+ *  · the client mirrors' {@link isSentFolderPath}, through `@trafficflow/core/folder-name` — which
+ *    is the reader that moved it, because `adapters/imap-types.ts` is not reachable from the
+ *    browser/phone engine and a second copy of this regex is a drift the other two readers pay for.
+ *
+ * `adapters/imap-types.ts` re-exports the value under its own name; the import points that way
+ * because THIS module must stay import-free.
+ */
+export const SENT_SHAPED_CANONICAL =
+  /^(inbox\/|\[(gmail|google mail)\]\/)?(sent([ -](items|messages|mail))?|gesendet(e[ -](objekte|elemente|nachrichten))?)$/i;
+
+/**
+ * IS THIS CANONICAL PATH THE MAILBOX'S SENT FOLDER — {@link SENT_SHAPED_CANONICAL} as a question.
+ *
+ * A PREDICATE and not the bare regex for the client's sake: a module-level `RegExp` with no `g`
+ * flag is safe to `.test()` repeatedly, but exporting the pattern invites a caller to add one and
+ * inherit `lastIndex`, and every reader here asks the same yes/no.
+ *
+ * ── WHAT IT DELIBERATELY IS NOT ────────────────────────────────────────────────────────────
+ *
+ * It is not "the mailbox's resolved Sent folder". The worker resolves that at connect
+ * (SPECIAL-USE, then `imap.ts`'s `SENT_BY_NAME`) and persists the answer nowhere, so no reader
+ * outside that connection can ask; this recognises Sent-SHAPED paths, which is every form the
+ * resolver itself can produce for the English names plus the localized German family. The
+ * residual — a Sent folder advertising SPECIAL-USE under a name neither belt knows — is the one
+ * `packages/services/src/folders.ts` already documents and hands off (persist the resolved Sent
+ * path beside `mailboxes.junk_folder` / `trash_folder`); this shares that residual rather than
+ * inventing a second, differently-wrong answer.
+ */
+export function isSentFolderPath(path: string): boolean {
+  return SENT_SHAPED_CANONICAL.test(path);
+}
+
+/**
  * Why this canonical path may NOT be a user folder's name, or `null` when it may — the
  * `userFolderExclusion` answer shape, for its reason: every refusal is a sentence, keyed by a
  * CLOSED code so both catalogues can carry it.

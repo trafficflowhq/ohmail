@@ -148,17 +148,22 @@ export const PASSIVE_EXCLUDED_SPECIAL_USE: ReadonlySet<string> = new Set([
 export const PASSIVE_EXCLUDED_LEAF = RESERVED_FOLDER_LEAF;
 
 /**
- * Sent-shaped CANONICAL paths — top level or under the INBOX prefix: the English resolver
- * family plus the localized German one the SPECIAL-USE resolver can surface. The single source
- * for two readers with two different stakes: the folders inventory (`packages/services/
- * src/folders.ts`) excludes these from the user-folder class, and the folder delete's
- * stale-residue cleanup (`drizzle-repo.ts#tombstoneFolderMessages`) must NEVER take a
- * Sent-folder instance row — Sent is scanned by UID WATERMARK, not enumerated end to end, so
- * after a UIDVALIDITY reset an old message's renumbered copy is never re-learned and a deleted
- * "stale" Sent row is the last evidence that copy exists.
+ * Sent-shaped CANONICAL paths — top level or under the INBOX prefix. RE-EXPORTED from
+ * `../types.js`, which is now the value's home; the import points that way because `types.ts`
+ * stays import-free and this module does not.
+ *
+ * It moved because a THIRD reader appeared and it is a browser bundle: the client mirrors ask
+ * "is this the mailbox's Sent folder" to decide whether a mirror row is the account's OWN sent
+ * mail, and they cannot reach this module (it names the mail vocabulary; the engine's bundle gate
+ * refuses that graph). The two readers this comment used to name keep their stakes verbatim — the
+ * folders inventory (`packages/services/src/folders.ts`) excludes these from the user-folder
+ * class, and the folder delete's stale-residue cleanup
+ * (`drizzle-repo.ts#tombstoneFolderMessages`) must NEVER take a Sent-folder instance row, because
+ * Sent is scanned by UID WATERMARK rather than enumerated end to end, so after a UIDVALIDITY reset
+ * an old message's renumbered copy is never re-learned and a deleted "stale" Sent row is the last
+ * evidence that copy exists.
  */
-export const SENT_SHAPED_CANONICAL =
-  /^(inbox\/)?(sent([ -](items|messages|mail))?|gesendet(e[ -](objekte|elemente|nachrichten))?)$/i;
+export { SENT_SHAPED_CANONICAL } from "../types.js";
 
 /**
  * Leaf names that mean the provider's Junk folder on a server that names no SPECIAL-USE — the
