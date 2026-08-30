@@ -6,8 +6,9 @@ machine with Docker, start at step 2.
 
 A note on state before you spend an afternoon: the stack pulls prebuilt
 images from `ghcr.io/trafficflowhq`. If step 5's pull answers "not found",
-those images have not been published yet — everything else here is real, but
-you cannot finish until they are.
+that tag's images have not finished publishing — pin `OHMAIL_IMAGE_TAG` to
+the previous release, or build them from source; everything else here
+stands.
 
 ## 1. Get a box
 

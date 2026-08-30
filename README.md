@@ -166,6 +166,14 @@ keys.
 
 ## Host your own devices from your desktop
 
+First, the fact under the whole price list: **a running desktop install is
+already a self-hosted ohmail.** The complete organizer — Screener, rules,
+filing — runs on your machine against your own mailbox, the mailbox stays the
+source of truth, and no cloud is in the path. The free app is not a demo of
+the server product; it is the same product, self-hosted. What this section
+adds is the next step: on a computer that stays awake, that same install can
+also be the ohmail server your other devices use.
+
 Since 0.10.0, a desktop install that organizes your own mailbox can serve it
 to your other devices: **Settings → Devices**, one switch. Your phone's
 browser then opens the same client this repository builds — your Ohbox, your
@@ -177,7 +185,9 @@ real HTTPS address. The pane detects whether Tailscale is installed and
 running and walks you through what's missing, in plain words.
 
 Adding a device is a QR code: scan it with the device's camera, and it opens
-your mail and pairs in one step. Each code works once and expires in five
+your mail and pairs in one step — the ohmail app for Android
+([apps/mobile](apps/mobile)) pairs by scanning the same code, or by a typed
+address over the plain-HTTP LAN door below. Each code works once and expires in five
 minutes; every paired device is listed and can be removed at any moment, and
 removing one cuts it off with its next request. Relaunching or updating the
 desktop app does not unpair anything. When host mode is on, closing the window
@@ -305,8 +315,9 @@ below.
 a mailbox Cloud organizes on a machine that does not sleep — which is what
 push, mobile and screening-while-your-laptop-is-shut require. If you have a
 machine of your own that stays awake, host mode (above) gives your other
-devices the same mailbox without Cloud — push notifications are the one job
-that still needs Cloud. Cloud is for when the always-on machine should be
+devices the same mailbox without Cloud — though new-mail push for your phone
+is one job it leaves out: that takes a full server, ours or a self-hosted
+one that has set up its own push keypair. Cloud is for when the always-on machine should be
 ours rather than yours. It is a
 commercial service built from the server source in this repository (see
 "What's in this repository" below — only the billing machinery is separate);
@@ -416,6 +427,14 @@ server source in this repository, and the same server runs on your own box:
 one compose file, prebuilt images, no account, no billing — mailboxes are
 unmetered on a self-host install.
 
+If the machine you would run it on is the desktop in front of you, you may
+already be done: a running desktop app is itself a self-hosted ohmail, and
+host mode ([above](#host-your-own-devices-from-your-desktop)) serves your
+other devices from it. The stack below is for a box without a screen — and
+for things host mode leaves out, like accounts for the other people in your
+household, sign-in from any browser over the open internet, and new-mail
+push for the phone (once the install has its push keypair).
+
 ```bash
 git clone https://github.com/trafficflowhq/ohmail.git
 cd ohmail/deploy/selfhost
@@ -510,7 +529,9 @@ differ, which is what makes a rebuild that matches mean anything.
 
 One app, three platforms: a Rust (Tauri) window around the React
 implementation of the design system, with a Node mail engine beside it that
-the window talks to over a private pipe — no port, no socket, no listener.
+the window talks to over a private pipe — no port, no socket, no listener
+while host mode is off; arming host mode opens exactly the loopback door the
+host section above describes, and nothing else.
 
 **The page reaches nothing directly.** The webview's Content-Security-Policy
 is `connect-src 'none'`, so `fetch`, XHR and WebSocket are refused before they

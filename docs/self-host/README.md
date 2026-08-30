@@ -44,9 +44,13 @@ Plainly, so you can decide with open eyes:
   attachment staging, and a local mail sink. The stack runs prebuilt images
   from `ghcr.io/trafficflowhq` (`ohmail-server`, `ohmail-worker`,
   `ohmail-web`), built for amd64 and arm64 and pinnable with
-  `OHMAIL_IMAGE_TAG`. If a pull answers "not found", the images for that tag
-  have not been published yet — the first public image release is what turns
-  these guides from a description into a procedure.
+  `OHMAIL_IMAGE_TAG`. If a pull answers "not found", that tag's images have
+  not finished publishing — pin `OHMAIL_IMAGE_TAG` to the previous release,
+  or build the three images from a clone and tag them with the names the
+  compose file pulls, e.g.
+  `docker build -f apps/server/Dockerfile -t ghcr.io/trafficflowhq/ohmail-server:local .`
+  (likewise `apps/worker/Dockerfile.selfhost` → `ohmail-worker` and
+  `apps/webapp/Dockerfile` → `ohmail-web`), then set `OHMAIL_IMAGE_TAG=local`.
 - **The Umbrel app is a draft.** The manifest lives in
   [`deploy/umbrel/`](../../deploy/umbrel/) and is not yet in an app store.
   [UMBREL.md](./UMBREL.md) separates what works today from what is still
