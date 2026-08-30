@@ -70,11 +70,18 @@ function ScheduledBody() {
                   <ScheduledRow row={row} />
                 </View>
               ))}
-              {/* The stated degradation, once at the foot rather than on every row. */}
-              <Rule inset={18} />
-              <Txt variant="caption" tone="ink3" style={{ paddingHorizontal: 18, paddingTop: 10, lineHeight: 16 }}>
-                {Copy.scheduledEditNote}
-              </Txt>
+              {/* The stated degradation, once at the foot rather than on every row — and only
+                  while a row can actually BE cancelled. A screen showing nothing but failed
+                  appointments has no Cancel anywhere, so a sentence about what cancelling does
+                  would be an instruction pointing at a control that is not there. */}
+              {rows.some((r) => r.cancellable) ? (
+                <>
+                  <Rule inset={18} />
+                  <Txt variant="caption" tone="ink3" style={{ paddingHorizontal: 18, paddingTop: 10, lineHeight: 16 }}>
+                    {Copy.scheduledEditNote}
+                  </Txt>
+                </>
+              ) : null}
             </>
           )}
         </Panel>
