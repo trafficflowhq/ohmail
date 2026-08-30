@@ -300,6 +300,21 @@ export class WorkflowsService {
    */
   private async applyInverse(tx: LedgerTx, ctx: ServiceContext, inv: WorkflowInverse): Promise<void> {
     if (inv.tool === "file_message") {
+      // THE SAME ACCOUNT SCOPE ITS TWO SIBLINGS ALREADY HAVE. `draft_reply` deletes with
+      // `eq(drafts.accountId, ctx.accountId)` and `add_kb_entry` with
+      // `eq(kbEntries.accountId, ctx.accountId)`; this branch wrote `folder_state` keyed on
+      // `message_id` alone, which has no account column to disagree with.
+      //
+      // The inverse rows are read from `audit_log` scoped to this account, so the only way a
+      // foreign message id could appear in one was for a RUN to have written it — which the
+      // workflow runner's own ownership check now refuses. This is therefore the second lock on a
+      // door that is already shut, and it is worth having for two reasons: an audit row written
+      // before that check existed is still undoable, and a branch that is account-scoped in two of
+      // its three arms is a branch whose third arm reads as an oversight to everyone who edits it.
+      const [owned] = await tx.select({ id: messages.id }).from(messages)
+        .where(and(eq(messages.id, inv.messageId), eq(messages.accountId, ctx.accountId)))
+        .limit(1);
+      if (!owned) return;
       const observed = await this.observedFolder(tx, inv.messageId);
       const reconcileStatus = observed === inv.toFolder ? "reconciled" : "pending";
       // Re-set DESIRED to the prior folder — the worker reconciles the physical move.

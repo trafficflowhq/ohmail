@@ -467,6 +467,54 @@ function toolFor(name: string): Tool | undefined {
  * `accountId`) is no_ai OR no_forward OR no_kb OR sensitivity-flagged OR priority.
  * Run as ONE SQL predicate (not a post-filter) so a flag can never be forgotten.
  */
+/**
+ * Do ALL of `messageIds` belong to `accountId`?
+ *
+ * ── WHY THIS IS SEPARATE FROM {@link anySensitive}, WHICH ALREADY TAKES AN ACCOUNT ───────────
+ *
+ * Because {@link anySensitive} FAILS OPEN on a foreign id, and must. Its question is "is any of
+ * these flagged?", asked with `eq(messages.accountId, accountId)` in the predicate — so a message
+ * belonging to somebody else matches no row, the answer is "none are flagged", and the run
+ * proceeds. That is the correct answer to the question it asks and the wrong answer to the
+ * question nobody was asking: "may this account act on these at all?"
+ *
+ * Nothing else asked it either. `validateSteps` checks the tool ALLOWLIST and the shape of
+ * `args`; a step is `{tool, args}` with `args.messageId` a free string. `fileMessageTool.apply`
+ * reads the prior folder state, writes the desired one and records the change — and
+ * `upsertFolderState` is keyed on `message_id` alone, with no account column to disagree with.
+ * So an authenticated, verified account could author a workflow naming ANOTHER account's message
+ * id, run it, and set that message's desired folder; the worker then performs the physical IMAP
+ * move on a mailbox the caller has no relationship with. The mailbox is the master, so that write
+ * is not one this product can take back.
+ *
+ * IT IS CHECKED HERE, AT `resolveTargets`, AND NOT INSIDE EACH TOOL. Every tool already declares
+ * the message ids it will touch so the sensitivity layers can see them; that declaration is
+ * exactly the ownership question's input too. One check at each of the two places the executor
+ * already resolves targets covers every tool that exists and every tool anybody adds later — a
+ * per-tool check would be a rule each new tool has to remember, which is the shape of enforcement
+ * account isolation is specifically not allowed to have.
+ *
+ * IT ASKS "DOES ANY TARGET BELONG TO SOMEBODY ELSE?", NOT "DOES EVERY TARGET BELONG TO ME?", and
+ * the difference is a behaviour this executor already guarantees. An id matching NO message is not
+ * foreign, it is missing — and a missing target is supposed to reach its tool and throw
+ * `target_missing` at its own step, leaving the steps before it committed. That is the documented
+ * no-auto-rollback property, with its own test. The `every-target-is-mine` form refused those runs
+ * at the pre-flight instead, took the guarantee away as a side effect, and would have been a
+ * second change smuggled in under a security fix.
+ *
+ * The cost is a weak oracle: a foreign id fails the run at the pre-flight and an unknown id fails
+ * it at a step, so the two are distinguishable from the run row. It is worth nothing — the ids are
+ * v4 UUIDs, so distinguishing "exists elsewhere" from "does not exist" requires already holding
+ * the id that the check exists to refuse.
+ */
+async function anyForeign(tx: Tx, accountId: string, messageIds: string[]): Promise<boolean> {
+  if (messageIds.length === 0) return false;
+  const rows = await tx.select({ id: messages.id }).from(messages)
+    .where(and(inArray(messages.id, uniq(messageIds)), ne(messages.accountId, accountId)))
+    .limit(1);
+  return rows.length > 0;
+}
+
 async function anySensitive(tx: Tx, accountId: string, messageIds: string[]): Promise<boolean> {
   if (messageIds.length === 0) return false;
   const rows = await tx.select({ id: messages.id }).from(messages)
@@ -544,6 +592,12 @@ export class WorkflowExecutor {
     // WHOLE-RUN SENSITIVITY PRE-FLIGHT. Resolve EVERY step's targets and refuse the
     // ENTIRE run (act on NOTHING) if any is sensitivity-flagged. This runs before any step.
     const allTargets = uniq(steps.flatMap((s) => toolFor(s.tool)?.resolveTargets(s.args ?? {}) ?? []));
+    // OWNERSHIP FIRST, because the sensitivity question presumes it. `anySensitive` scopes its
+    // own query to the account and therefore answers "not flagged" about a message belonging to
+    // somebody else — a correct answer that reads as permission. See {@link anyForeign}.
+    if (await anyForeign(deps.db, run.accountId, allTargets)) {
+      return this.fail(deps.db, run, now, "not_owned", -1);
+    }
     if (await anySensitive(deps.db, run.accountId, allTargets)) {
       return this.fail(deps.db, run, now, "sensitive", -1);
     }
@@ -577,6 +631,9 @@ export class WorkflowExecutor {
         //      time; this one exists because prepare moved the model and the money EARLIER than
         //      the in-tx check, and a message flagged sensitive since the pre-flight must not
         //      reach a model or a ledger row on the strength of a check that runs after both.
+        if (await anyForeign(deps.db, run.accountId, targets)) {
+          throw new WorkflowStepError("not_owned");
+        }
         if (await anySensitive(deps.db, run.accountId, targets)) {
           throw new WorkflowStepError("sensitive");
         }
@@ -607,6 +664,7 @@ export class WorkflowExecutor {
             return;
           }
           // Sensitivity second layer: per-step structural RE-CHECK in its OWN query.
+          if (await anyForeign(tx, run.accountId, targets)) throw new WorkflowStepError("not_owned");
           if (await anySensitive(tx, run.accountId, targets)) throw new WorkflowStepError("sensitive");
 
           const { effect, inverse } = await tool.apply(
