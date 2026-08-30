@@ -66,12 +66,18 @@ let MIRRORED = 0;
  */
 let MAIL_STATE: { key: string; clock: boolean; settled: boolean } =
   { key: "quiet", clock: false, settled: true };
+/**
+ * The freshness verdict the pane passes on to `holdingsSpeak`. `unknown` is NOT a state key — the
+ * ladder's stale arm does not fire for it — so it can only be refused through this.
+ */
+let FRESHNESS: { state: "unknown" | "stale" | "current" } = { state: "current" };
 
 vi.mock("../../webapp/app/shell/MailStateProvider", () => ({
   useMailState: () => ({
     state: MAIL_STATE,
     mailboxes: FACTS,
     mirrored: MIRRORED,
+    freshness: FRESHNESS,
     refresh: () => { refreshed += 1; },
   }),
 }));
@@ -150,6 +156,7 @@ beforeEach(() => {
   FACTS = [MAILBOX];
   MIRRORED = 0;
   MAIL_STATE = { key: "quiet", clock: false, settled: true };
+  FRESHNESS = { state: "current" };
   refreshed = 0;
   bridged = [];
   bridgeReply = () => new Response(null, { status: 202 });
@@ -435,6 +442,17 @@ describe("the holdings line — a windowed copy stated plainly, on the pane, wit
       mountPoint?.remove();
       root = null;
     }
+  });
+
+  it("A DOOR WHOSE CURRENCY IS UNKNOWN SAYS NOTHING — it cannot know the promise is good", async () => {
+    // The freshness probe hanging or refusing while the local feed serves perfectly: no key on the
+    // ladder is wrong, and nothing on screen knows whether the account is reachable.
+    FACTS = [counted(73_525)];
+    MIRRORED = 5_107;
+    FRESHNESS = { state: "unknown" };
+    const text = (await render("cloud")).textContent ?? "";
+    expect(text).not.toContain("73,525");
+    expect(text).not.toContain("nothing is missing");
   });
 
   it("THE LOCAL DOOR NEVER SHOWS IT, even holding a previous account's counts", async () => {

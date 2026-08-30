@@ -146,6 +146,16 @@ interface MailStateBinding {
    * which is also the strip's own denominator, so the two cannot disagree.
    */
   mirrored: number;
+  /**
+   * THE FRESHNESS VERDICT the ladder judged — the probed one on the desktop (the sidecar's stamp
+   * against the hosted account), the engine's own everywhere else.
+   *
+   * Published because `unknown` is not a `MailStateKey` and therefore cannot be read off
+   * {@link MailState}: the stale arm does not fire for it, so a door whose currency has never
+   * been established is indistinguishable from a current one by key alone. `holdingsSpeak` is its
+   * one consumer, and needs it for exactly that distinction.
+   */
+  freshness: FreshnessFacts;
   /** Re-read the mailbox facts now. The Settings pane calls it after a connect or a resync. */
   refresh: () => void;
 }
@@ -168,6 +178,11 @@ export function MailStateProvider({
   const sync = useSyncStatus();
   const demo = useDemoMode();
   const engineFreshness = useFreshness();
+  /* THE ENGINE ON SCREEN. Read here rather than beside the adoption effect below because the
+     readers' generation guard ({@link answersFor}) needs it, and a hook must not be called after
+     the callbacks that close over it. `EngineProvider`'s adoption rule — a different engine is a
+     different mailbox — is what makes this identity meaningful. */
+  const probeEngine = useEngine();
   const [facts, setFacts] = useState<MailboxFacts[] | null>(null);
   const [probedFreshness, setProbedFreshness] = useState<FreshnessFacts | null>(null);
   const [beat, setBeat] = useState(() => Date.now());
@@ -249,11 +264,56 @@ export function MailStateProvider({
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
+  /**
+   * **WHICH ENGINE AN IN-FLIGHT ANSWER BELONGS TO** — the generation token for both readers, and
+   * the ENGINE ITSELF rather than a counter, because that is exactly the identity the answer is
+   * about and a counter would be a second spelling of it.
+   *
+   * Review finding, round 4. Clearing the held answers on adoption is not enough on its own: a
+   * request issued against engine A resolves whenever the network says so, and `alive.current`
+   * only asks whether the component is still mounted. A slow `GET /mailboxes` for the previous
+   * account landing after the switch would `setFacts` the OLD rows straight back over the clear,
+   * and a slow `/mirror/freshness` would re-label the new mirror with the old door's staleness —
+   * both of which look exactly like a correct poll and neither of which any timeout catches.
+   *
+   * Written during render, which is the documented "latest value" use of a ref: every reader
+   * captures it at the moment it ASKS and compares on the way back, so an answer whose engine is
+   * no longer the one on screen is dropped rather than published.
+   */
+  const answersFor = useRef<unknown>(null);
+  answersFor.current = probeEngine;
+
+  /**
+   * **THE FRAME BEFORE THE EFFECT** — the adoption clear, done during RENDER.
+   *
+   * The effect below is passive: React COMMITS the render that first carried the new engine and
+   * runs the effect afterwards, so there is exactly one painted frame in which the previous
+   * account's facts sit under the new mirror. One frame is enough to render a sentence pairing
+   * this device's new count with somebody else's total, and this provider's whole contract is
+   * that it publishes one answer nobody has to qualify.
+   *
+   * The state-adjustment-during-render pattern, which React documents for precisely this: the
+   * render output is discarded and re-run before anything is committed, so the stale frame never
+   * exists rather than being corrected afterwards. It is confined to this component's own state,
+   * which is the pattern's condition.
+   *
+   * The effect still runs, and still does two things this cannot: it re-ASKS (a render may not
+   * start requests), and it fires on a `freshnessProbe` change as well — a Cloud → local door
+   * switch drops the probe without necessarily changing the engine.
+   */
+  const [adopted, setAdopted] = useState<unknown>(probeEngine);
+  if (adopted !== probeEngine) {
+    setAdopted(probeEngine);
+    setFacts(null);
+    setProbedFreshness(null);
+  }
+
   const read = useCallback(async (): Promise<void> => {
     if (!probe) return;
+    const mine = answersFor.current;
     try {
       const got = await probe();
-      if (alive.current) setFacts(got);
+      if (alive.current && answersFor.current === mine) setFacts(got);
     } catch {
       // NOT `setFacts([])`. A refusal or a dead network is "we still cannot see", which is what
       // `facts` already says — and if we DID see mailboxes a moment ago, the last thing we knew
@@ -264,9 +324,12 @@ export function MailStateProvider({
 
   const readFreshness = useCallback(async (): Promise<void> => {
     if (!freshnessProbe) return;
+    const mine = answersFor.current;
     try {
       const got = await freshnessProbe();
-      if (alive.current) setProbedFreshness(got);
+      // The engine guard is {@link answersFor}'s — a verdict about the door that has just been
+      // left may not be published over the one now on screen.
+      if (alive.current && answersFor.current === mine) setProbedFreshness(got);
     } catch {
       // KEEP THE LAST ANSWER. A stale claim may only be withdrawn by evidence of currency; a
       // dead bridge mapped to anything else would either unlabel a days-old mirror (mapped
@@ -298,7 +361,6 @@ export function MailStateProvider({
    * until the new door's probe answers. Keyed on the probe too, so a probe that disappears
    * (Cloud → local door, where none is passed) drops the old answer rather than freezing it.
    */
-  const probeEngine = useEngine();
   useEffect(() => {
     setProbedFreshness(null);
     /* AND THE MAILBOX FACTS WITH IT, on exactly the same rule — this half was missing, and a
@@ -337,8 +399,8 @@ export function MailStateProvider({
   }, [probe, read]);
 
   const binding = useMemo<MailStateBinding>(
-    () => ({ state, mailboxes: facts, mirrored, refresh: () => void read() }),
-    [state, facts, mirrored, read],
+    () => ({ state, mailboxes: facts, mirrored, freshness, refresh: () => void read() }),
+    [state, facts, mirrored, freshness, read],
   );
 
   return <MailStateContext.Provider value={binding}>{children}</MailStateContext.Provider>;

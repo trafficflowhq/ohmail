@@ -261,7 +261,7 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
   const t = useTranslations("mailboxes");
   /* The SAME binding the sync line reads, and `refresh` is what its own comment offers this pane:
      "Re-read the mailbox facts now. The Settings pane calls it after a connect or a resync." */
-  const { mailboxes: facts, mirrored, state: mailState, refresh } = useMailState();
+  const { mailboxes: facts, mirrored, state: mailState, freshness, refresh } = useMailState();
   /* What can go wrong here: the engine refuses a resync (offline, most often), or the operating
      system refuses to open a browser. One line, rendered where the press happened. */
   const [problem, setProblem] = useState<string | null>(null);
@@ -472,20 +472,18 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
            pair is comparable and the SENTENCE is false at the moment it would be said:
 
             · `cloud` — the claim promises that the rest loads FROM THE ACCOUNT, which is only a
-              thing the hosted door can do. It is not merely redundant on the standalone door
-              (whose engine reports no hosted counts, so the arithmetic would withhold anyway):
-              `MailStateProvider` does not clear the mailbox facts when the engine is swapped, and
-              `readMailboxFacts` keeps one function identity across the switch, so a Cloud install
-              re-pointed at the local door can carry the OLD account's `hostedMessageCount` for up
-              to one 30-second poll. Without this gate that stale total would appear under "Local
-              mailboxes on this computer", paired with the new door's count, promising a reach-past
-              that door has no account to reach into.
+              thing the hosted door can do. A standalone install has no account to reach into, and
+              its engine reports no hosted counts, so the arithmetic would withhold anyway — this
+              gate is the statement of intent in front of that coincidence, and it is what makes
+              the door, rather than the shape of the data, the thing that decides.
             · `holdingsSpeak` — the mirror has actually been read, and the loop is not frozen. See
               its own doc-block; the short version is that a cold launch would otherwise announce
               "holds 0 of your M messages" about a machine whose store already holds them — only
               this client's own count is still climbing — and that a stopped session cannot keep
               the sentence's promise. */
-        const held = cloud && holdingsSpeak(mailState) ? deviceHoldings(facts, mirrored) : null;
+        const held = cloud && holdingsSpeak(mailState, freshness)
+          ? deviceHoldings(facts, mirrored)
+          : null;
         return held === null ? null : (
           <p className="set-note-inline">
             {t("desktopHoldsCount", { count: held.count, total: held.total })}

@@ -515,8 +515,26 @@ export const HOLDINGS_SILENT_KEYS: readonly MailStateKey[] = [
   "stopped", "failing", "stale", "catchingUp",
 ];
 
-export function holdingsSpeak(state: MailState): boolean {
-  return state.settled && !HOLDINGS_SILENT_KEYS.includes(state.key);
+export function holdingsSpeak(
+  state: MailState,
+  /**
+   * The SAME freshness verdict the ladder judged — the desktop's probed one, which is the
+   * sidecar's stamp against the hosted account.
+   *
+   * A THIRD gate, and the one the key list cannot express (review finding, round 4). `stale` is a
+   * KEY and is refused above; `unknown` is NOT a key — the ladder's stale arm simply does not fire
+   * for it — so a door whose freshness has never been established falls through to `quiet`, and
+   * `settled` can be true on nothing more than "this client's first drain finished". That is
+   * exactly the shape of a desktop whose `/mirror/freshness` is hanging or refusing while the
+   * local feed serves perfectly: nothing on screen is wrong, and nothing on screen knows whether
+   * the hosted account is reachable either. A promise about on-demand loading may only be made
+   * from evidence, so `unknown` is silence, the same direction every other clause here points.
+   */
+  freshness: { state: "unknown" | "stale" | "current" },
+): boolean {
+  return state.settled
+    && freshness.state === "current"
+    && !HOLDINGS_SILENT_KEYS.includes(state.key);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
