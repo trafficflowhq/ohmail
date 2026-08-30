@@ -15,7 +15,8 @@
     "./adapters/organizer-profile": "./src/adapters/organizer-profile.ts",
     "./adapters/organizer-profile-store": "./src/adapters/organizer-profile-store.ts",
     "./adapters/drizzle-repo": "./src/adapters/drizzle-repo.ts",
-    "./folder-name": "./src/folder-name.ts"
+    "./folder-name": "./src/folder-name.ts",
+    "./drain-policy": "./src/drain-policy.ts"
   },
   "dependencies": {
     "drizzle-orm": "0.36.4",
