@@ -317,16 +317,27 @@ function derivedScreenerEffects(
   // composed a follow-up `move`, which is the composition that lost a race against the decide's
   // own `folder_state` write and filed bulk mail to the Ohbox for senders admitted to Reads.
   const destination = decideFolder(m);
+  // THE DENY-SIDE READ-MARK IS THE SERVER'S OWN, SO THE OVERLAY CARRIES IT TOO. The decide
+  // transaction marks mail filed to the two demoting folders read — `MARK_READ_ON_DECIDE` in
+  // `screener-service.ts`, keyed on the APPLIED FOLDER, never the decision — so an overlay that
+  // preserved `unread` showed a bold row that silently unbolded one drain later (found by the
+  // verb-parity matrix's optimistic leg). Derived from the destination exactly as the server
+  // derives it, so a future deny-side folder inherits the flip with the filing.
+  //
+  // The ALLOW side stays unflipped, and that half of the old rule is still true: "&read" is not
+  // a field on `POST /screener/:id`; the seen half of a "file & read" admission is a separate
+  // `mark_seen` the surface composes, so the two halves of THIS mutation keep saying exactly
+  // what its own wire request says.
+  const denyRead = destination === FOLDER_OF_VIEW.screened || destination === FOLDER_OF_VIEW.spam
+    ? { unread: false, lastReadAt: iso }
+    : {};
   const effects: MutationEffect[] = reader
     .list<EngineMessage>("message")
     .filter((x) => x.folder === FOLDER_OF_VIEW.screener && senderKey(x.from.address) === key)
     .map((msg) => ({
       type: "message",
       id: msg.id,
-      // NO `unread` FLIP. "&read" is STILL not a field on `POST /screener/:id`, so the seen
-      // half of a "file & read" remains a separate `mark_seen` the surface dispatches — the
-      // two halves of THIS mutation say exactly what the wire says.
-      entity: { ...msg, folder: destination, updatedAt: iso } satisfies EngineMessage,
+      entity: { ...msg, folder: destination, ...denyRead, updatedAt: iso } satisfies EngineMessage,
       move: { from: msg.folder, to: destination },
     }));
 
