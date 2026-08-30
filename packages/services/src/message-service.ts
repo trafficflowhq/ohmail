@@ -1,14 +1,13 @@
 import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import {
   mailboxes, messages, folderState, messageBodies, messageStates, claimIdempotencyKey, recordChange,
-  type LedgerTx, type Tx,
+  upsertDesiredSeen, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import type { Destination, NativeLocator } from "@trafficflow/core/mail";
 import { httpsUnsubscribeUri, unsubscribeHeaderState } from "@trafficflow/core/mail";
 import type { Db, ServiceContext } from "./context.js";
 import { foldersEnabled, userFolderById } from "./folders.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
-import { upsertDesiredSeen } from "./flag-intent.js";
 import { materializeMessage } from "./dto/materialize.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
 import type { Folder, MessageBodyBatchItem, MessageBodyDTO, MessageDTO, Page, WithheldMarker } from "./dto/types.js";
@@ -881,9 +880,9 @@ export class MessageService {
     return loc?.folder ?? "INBOX";
   }
 
-  // The `flag_state` intent writer lives in `flag-intent.ts` now — `TriageService`'s resurface
-  // re-unread writes the same intent, and two copies would be two answers to when a `\Seen`
-  // round trip is owed.
+  // The `flag_state` intent writer lives in `@trafficflow/db` (`flag-intent.ts`) now — the
+  // Screener's mark-read-on-dismiss and the worker's read-state retro pass write the same
+  // intent, and a second copy would be a second answer to when a `\Seen` round trip is owed.
 
   /** Upsert folder_state desired=<folder>, pending, us — preserving observedFolder on conflict. */
   private async upsertDesired(tx: Tx, id: string, observed: string, folder: string, now: Date): Promise<void> {

@@ -2,13 +2,13 @@ import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import {
   messages,
   folderState,
-  flagState,
   contacts,
   accountSettings,
   rules as rulesTbl,
   routingDecisions,
   claimIdempotencyKey,
   recordChange,
+  upsertDesiredSeen,
   screenerLedgerSource,
   storeScreenerSuggestion,
   screenerSuggestionsBySender,
@@ -930,22 +930,14 @@ export class ScreenerReadService {
         // it draws. ADDITIVE: `desired_seen = true` is a `\Seen` to ADD, never a flag to remove,
         // and the worker's `reconcileFlags` applies it on the real server — the API opens no IMAP.
         //
-        // Shape mirrors `MessageService.upsertDesiredSeen`: `observed_seen` is supplied only on
-        // the INSERT (held mail has no `flag_state` row at ingest — `pipeline.ts` writes only
-        // `folder_state`), and on the UPDATE it is deliberately omitted so the worker's observed
-        // truth is preserved and `reconcile_status` is recomputed in SQL against the STORED value.
+        // THE shared intent writer (`@trafficflow/db` `flag-intent.ts` — this block used to be
+        // its inline twin): `observed_seen` (`!m.unread` — held mail has no `flag_state` row at
+        // ingest, `pipeline.ts` writes only `folder_state`) is supplied for the INSERT alone,
+        // and on the UPDATE the worker's observed truth is preserved with `reconcile_status`
+        // recomputed in SQL against the STORED value.
         // A `\Seen` already on the server ⇒ `reconciled`, no needless STORE.
         if (MARK_READ_ON_DECIDE.has(appliedFolder)) {
-          await tx.insert(flagState).values({
-            messageId: m.messageId, desiredSeen: true, observedSeen: !m.unread,
-            lastSetBy: "us", reconcileStatus: m.unread ? "pending" : "reconciled", conflict: false,
-          }).onConflictDoUpdate({
-            target: flagState.messageId,
-            set: {
-              desiredSeen: true, lastSetBy: "us", conflict: false, updatedAt: ctx.now(),
-              reconcileStatus: sql`case when ${flagState.observedSeen} = true then 'reconciled' else 'pending' end`,
-            },
-          });
+          await upsertDesiredSeen(tx, m.messageId, !m.unread, true, ctx.now());
           // The mirror the client renders. `unread` is written by the API at mark-read time, never
           // by the reconciler (see `scripts/undo-runaway-reads.mjs`), so without this the lists
           // would still show the dismissed mail bold. `last_read_at` tracks the flag, as

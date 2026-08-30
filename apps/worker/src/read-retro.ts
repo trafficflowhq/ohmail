@@ -1,5 +1,5 @@
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
-import { flagState, folderState, messages, recordChange, type Tx } from "@trafficflow/db";
+import { and, asc, eq, inArray } from "drizzle-orm";
+import { folderState, messages, recordChange, upsertDesiredSeen, type Tx } from "@trafficflow/db";
 import { silentLogger, type Logger } from "@trafficflow/core";
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
@@ -146,18 +146,10 @@ export async function readStateRetroPass(
         // Held/demoted mail has no flag_state row at ingest, so this is the INSERT branch:
         // observed_seen = false (the candidate is unread), desired_seen = true ⇒ pending ⇒ the
         // reconciler will add \Seen. On the rare conflict, observed_seen is preserved (worker owns
-        // it) and reconcile_status is recomputed in SQL against the STORED value — the exact shape
-        // `MessageService.upsertDesiredSeen` and `screener-service#decide` use.
-        await tx.insert(flagState).values({
-          messageId: row.id, desiredSeen: true, observedSeen: false,
-          lastSetBy: "us", reconcileStatus: "pending", conflict: false,
-        }).onConflictDoUpdate({
-          target: flagState.messageId,
-          set: {
-            desiredSeen: true, lastSetBy: "us", conflict: false, updatedAt: now,
-            reconcileStatus: sql`case when ${flagState.observedSeen} = true then 'reconciled' else 'pending' end`,
-          },
-        });
+        // it) and reconcile_status is recomputed in SQL against the STORED value — THE shared
+        // intent writer (`@trafficflow/db` `flag-intent.ts`); this loop carried its inline twin
+        // until the spelling was unified there.
+        await upsertDesiredSeen(tx, row.id, false, true, now);
         // The mirror the client renders — written by us, never the reconciler. `unread = false`
         // negates the candidate predicate, which is the whole of the idempotency.
         await tx.update(messages)

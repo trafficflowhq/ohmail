@@ -39,6 +39,11 @@ export * from "./schema-mail.js";
 // the worker's pass both count by. A pure predicate over the mail schema, nothing more.
 export { junkSweepCandidateWhere, JUNK_SWEEP_SOURCE_PILE } from "./junk-sweep.js";
 
+// The ONE spelling of the read-state intent — see the module header for why it lives here
+// (both the services and the worker write it, and the worker may not import services at
+// runtime). Reaches `schema-mail.js` alone, so the closure rule above holds.
+export { upsertDesiredSeen } from "./flag-intent.js";
+
 export {
   allocateSeq, allocateSeqRange, recordChange, recordChanges, minRetainedSeq, seqBounds,
   CHANGE_LOG_CHANNEL, changeWakePayload, parseChangeWake,
