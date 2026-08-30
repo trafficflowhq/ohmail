@@ -1881,6 +1881,16 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
 
     /** The drain itself, ALREADY GATED. Never called from outside this closure. */
     const drain = async (maxCycles: number): Promise<number> => {
+      // ── THE MARKER-SURFACING PREFLIGHT, AT THE TOP OF THE ONE DRAIN BOTH DOORS SHARE ──────
+      //
+      // Routing no longer depends on this — `importDecisionOpenNow` below evaluates the question
+      // from the folder each cycle — but the CONFIRM SURFACE does (review round 17): the hold it
+      // must offer for answering is readable only through the durable marker this preflight (or
+      // the seed, which `start()`'s door reaches only after the whole drain) writes. Without it
+      // a local takeover could route in hold mode for its entire launch with no candidate on
+      // screen and no way to release. Self-guarding: one folder read per pre-seed drain entry,
+      // nothing once seeded or held.
+      await profileSync.armHoldFromFolder();
       // BEFORE the cycles, not after: a resurface is a local database fact and does not depend on
       // the mailbox being reachable, so it must survive a cycle that throws on a dead connection.
       await resurfaceDue();
@@ -1933,6 +1943,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // `syncUntilQuiet()` then stopped with the delete unfinished until the next poll.
         const { hasBacklog, owesFiling } = await runSyncCycle({
           ...syncDeps, ...screening, classifier: ai.classifierForCycle(),
+          // The routing half of the organizer-profile hold (TAKEOVER-RESCREEN), EVALUATED from
+          // the current facts at every cycle edge — never cached; see the worker's cycle for
+          // the argument (fifteen review rounds of arm/release orderings, each with a
+          // mirror-image race). One `ohmail/_meta` FETCH per cycle; a store serialize and an
+          // indexed read only when a foreign document is present; a faulted read answers what
+          // the previous cycle answered.
+          importDecisionOpen: await profileSync.importDecisionOpenNow(),
         });
         cycleMs.push(Date.now() - cycleStart);
         cycles++;

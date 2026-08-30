@@ -157,6 +157,15 @@ export interface SyncDeps {
    */
   screeningCutoff?: Date;
   /**
+   * A found FOREIGN organizer profile's import decision is open for this mailbox, so the consent
+   * gate adopts placement instead of re-screening it — see `PlanDeps.importDecisionOpen`
+   * (TAKEOVER-RESCREEN) for the defect and the boundaries. ABSENT ⇒ inert ⇒ byte-identical
+   * routing for the reconcile backstop and every test. The hosts resolve it per cycle from the
+   * profile hold's own state (`profile.ts#OrganizerProfileSync.importDecisionOpen`), the same
+   * one-reading discipline as `screeningCutoff` above.
+   */
+  importDecisionOpen?: boolean;
+  /**
    * The per-message terminal-failure ledger, one per attached mailbox.
    *
    * ABSENT ⇒ ONE PER CALL, not "no boundary". `apps/sidecar` imports this loop — the desktop
@@ -550,7 +559,7 @@ export async function runSyncCycle(input: SyncDeps): Promise<{ hasBacklog: boole
 }
 
 async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; owesFiling: boolean }> {
-  const { repo, adapter, accountId, mailboxId, classifier, credits, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, storageCap, log } = deps;
+  const { repo, adapter, accountId, mailboxId, classifier, credits, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, importDecisionOpen, storageCap, log } = deps;
   const deadLetters = deps.deadLetters ?? new DeadLetterLedger();
   const version = deps.buildVersion ?? buildVersionOf(process.env);
   deadLetters.beginCycle();
@@ -850,7 +859,7 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
   // ingested; a FLAG is a cursor-only signal, and a DELETE is the move evidence recorded above.
   for (const ch of [...batch.creates, ...batch.moves]) {
     await attempt(ch, async () => {
-      const plan = await planChange(ch, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff });
+      const plan = await planChange(ch, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, importDecisionOpen });
       await fencedIngest(deps, (txRepo) =>
         commitChange(plan, { repo: txRepo, routing: txRepo, accountId, mailboxId, storageCap }),
       );
@@ -1043,7 +1052,7 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
 async function retryFailedMessages(
   deps: SyncDeps, deadLetters: DeadLetterLedger, version: string,
 ): Promise<void> {
-  const { repo, adapter, accountId, mailboxId, classifier, credits, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, storageCap, log } = deps;
+  const { repo, adapter, accountId, mailboxId, classifier, credits, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, importDecisionOpen, storageCap, log } = deps;
   // A backend that cannot re-read one message degrades to the pre-0041 behaviour rather than
   // erroring: the rows stay owed and a later deploy (or a real adapter) picks them up.
   if (!adapter.fetchByUid) return;
@@ -1147,7 +1156,7 @@ async function retryFailedMessages(
       // dual-key lookup answers `duplicate` for a message a previous attempt already committed, and
       // `own_copy` for a Sent twin of mail we hold.
       try {
-        const plan = await planChange(change, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff });
+        const plan = await planChange(change, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, importDecisionOpen });
         await fencedIngest(deps, (txRepo) =>
           commitChange(plan, { repo: txRepo, routing: txRepo, accountId, mailboxId, storageCap }),
         );

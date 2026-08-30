@@ -411,6 +411,48 @@ export interface PlanDeps {
    * and every existing caller and test all produce.
    */
   screeningCutoff?: Date;
+  /**
+   * A FOREIGN ORGANIZER PROFILE'S IMPORT DECISION IS OPEN FOR THIS MAILBOX — the routing half of
+   * the write-behind HOLD (TAKEOVER-RESCREEN). ABSENT ⇒ inert ⇒ byte-identical routing for every
+   * existing caller and test.
+   *
+   * ── THE DEFECT (measured live, the 2026-08-29 self-host takeover drill) ──────────────────
+   *
+   * A mailbox organized elsewhere arrives carrying its decisions: the travelling profile in
+   * `ohmail/_meta` answers for every sender its outgoing organizer screened. The write-behind
+   * detects that document, HOLDS it, and asks the user whether to import — but the sync loop ran
+   * at full authority while that question was open, and an incoming organizer whose own store is
+   * COLD has no `contacts` row for anyone. So the drill's takeover physically moved all 31 INBOX
+   * messages of already-screened-in senders into `ohmail/Screener`, on the real server, while the
+   * document answering for every one of them sat FOUND in the same mailbox. The decisions existed,
+   * were detected, and were not consulted. The user's inbox was emptied into the consent gate by
+   * the act of leaving.
+   *
+   * ── WHAT THIS FLAG DOES ───────────────────────────────────────────────────────────────────
+   *
+   * While the decision is open, the GATE's own verdicts adopt the arrival folder — the same
+   * subordination as {@link screeningCutoff}, with the same three refusals: a `rule` verdict is
+   * the user's and stands; the auth-fail demotion is a statement about the MESSAGE and is never
+   * subordinated; sensitivity and the bounce arm resolve before this and are not re-demoted. The
+   * adopted row is committed with {@link NewPlan.passive} attribution (`last_set_by: 'external'`),
+   * because that is what the placement IS — the standing state of the user's own mailbox, made
+   * under its previous organizer — and it is what keeps every retro pass from re-deciding it
+   * after the import lands. The mailbox is the master; the incoming organizer must not undo what
+   * the outgoing one's decisions already placed.
+   *
+   * The hold ends the way the write-behind's own hold ends — the user answers (import applied or
+   * declined), or the found document turns out to already equal local state — and ordinary
+   * screening resumes for mail ingested from then on. Mail adopted during the window stays where
+   * the master had it: placement on the master is user intent, and un-adopting it would be the
+   * defect again, one import later. The window's honest cost is that a genuinely new stranger
+   * arriving mid-window lands wherever the server delivered it instead of at the gate — bounded
+   * by the user answering the import question the product is already asking them; the virgin
+   * connect (no travelling document at all) never arms this and screens exactly as before.
+   *
+   * Resolved once per cycle by the worker from the profile hold's own state
+   * (`profile.ts#OrganizerProfileSync.importDecisionOpen`), on `screeningCutoff`'s discipline.
+   */
+  importDecisionOpen?: boolean;
 }
 
 /**
@@ -893,10 +935,22 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
       && arrivedAt !== null
       && arrivedAt.getTime() < deps.screeningCutoff.getTime();
 
+    /* ── THE GATE DEFERS WHILE THE MAILBOX'S TRAVELLING DECISIONS AWAIT THEIR ANSWER ─────────
+     *
+     * See {@link PlanDeps.importDecisionOpen} — the routing half of the organizer-profile HOLD
+     * (TAKEOVER-RESCREEN). The same two refusals as the baseline block above, for the same
+     * reasons: a `rule` verdict is the user's decision and stands, and the auth-fail demotion is
+     * a statement about THIS message that an open import question must not excuse. No date term:
+     * the window is bounded by the user's answer, not by a clock, and the mail it protects is
+     * precisely the mail whose placement the previous organizer already decided.
+     */
+    const heldForImport = deps.importDecisionOpen === true
+      && decision.source === "screener"
+      && authVerdict !== "fail";
 
     let desired: string = (sensitivity.sensitive && !deniedByConsent) || admitBounce
       ? "INBOX"
-      : preBaselineBacklog
+      : preBaselineBacklog || heldForImport
         ? change.locator.folder
         : decision.destination ?? change.locator.folder;
 
@@ -994,6 +1048,24 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
         // at commit is what makes "the verdict on the row is the verdict that routed" a
         // property of the code and not of two call sites staying in step.
         authVerdict,
+        // A placement ADOPTED under the import hold is the standing state of the user's own
+        // mailbox, not this organizer's decision — `passive` commits it `last_set_by:
+        // 'external'`, which is what keeps every retro pass (`rule-retro`, `screener-auto`,
+        // `ohbox-tidy`, `read-retro`) from re-deciding it after the import lands. Without this
+        // one word the hold would only postpone the re-screen it exists to prevent.
+        //
+        // ONLY when the hold's arm actually decided. Two exclusions, each a review finding:
+        //  · `desired` must equal the arrival folder (round 3) — the sensitive and bounce lifts
+        //    pick INBOX, a REAL move when the mail sits elsewhere, and `reconcileFolders` skips
+        //    `external` rows, so stamping a lift passive would leave the server where it was
+        //    while the database and every client claim INBOX;
+        //  · and not `admitBounce` even when no move is needed (rounds 9 and 13) — a
+        //    corroborated DSN that ARRIVED in the INBOX was still placed by THIS organizer's
+        //    own decision, and an `external` stamp would hide it from the retro passes that are
+        //    entitled to revisit decisions we made. (The sensitive lift needs no third term: it
+        //    cannot co-fire with a gate verdict — `deniedByConsent` covers the gate's own
+        //    folders — and `heldForImport` requires the gate's verdict.)
+        ...(heldForImport && !admitBounce && desired === change.locator.folder ? { passive: true } : {}),
         ai,
       },
     };

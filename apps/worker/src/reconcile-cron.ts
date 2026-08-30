@@ -10,6 +10,7 @@ import {
   markMailboxStoodDown, stampMailboxSyncNow, type LeaderFence,
 } from "./mailboxes.js";
 import { LeaderFencedError, runSyncCycle, type SyncDeps } from "./sync.js";
+import { OrganizerProfileSync } from "./profile.js";
 import { makeStorageCapResolver } from "./storage-cap.js";
 import {
   CLOUD_DISPLAY_NAME, LeaseUnavailableError, cloudInstallId, readMailboxLease,
@@ -283,6 +284,29 @@ export async function runReconcileCron(
     }
 
     await adapter.ensureFolders();
+    // ── THE IMPORT HOLD, ARMED FROM THE MAILBOX ITSELF (TAKEOVER-RESCREEN, rounds 4 and 6) ────
+    //
+    // This pass runs precisely when no worker leads, so the in-memory hold died with the worker
+    // that held it — and this pass EXECUTES authorized takeovers (the `takeover:` arm above), so
+    // it can be the FIRST organizer a travelling document ever meets, with no durable marker yet
+    // for a database-only predicate to read. The same preflight as the worker's attach and the
+    // sidecar's drain: read `ohmail/_meta`, arm on a found-foreign-different (or newer) document,
+    // write the marker the confirm surface needs, reconcile a stale one (`lapseStaleMarker`).
+    // Read-only against the mailbox; the write-behind stays the always-on worker's — this pass
+    // never calls `onOrganize`.
+    const profileSync = new OrganizerProfileSync({
+      db: db as unknown as Tx, accountId, mailboxId, adapter,
+      self: {
+        installId: config.organizer?.installId ?? cloudInstallId(config.environment ?? "production"),
+        kind: "cloud",
+      },
+      producerVersion: config.buildVersion ?? "dev",
+      log: (event, detail) => {
+        if (/_failed$/.test(event)) log.warn(event, { ...detail });
+        else log.info(event, { ...detail });
+      },
+    });
+    await profileSync.armHoldFromFolder();
     const deps: SyncDeps = {
       repo: makeDrizzleRepo(db), adapter, accountId, mailboxId,
       // The same host string the adapter above dials names whose report may be believed.
@@ -305,8 +329,14 @@ export async function runReconcileCron(
       // to reason about than a memo whose whole safety argument is about who holds the mailbox.
     };
     try {
-      await runSyncCycle(deps);
-      await runSyncCycle(deps); // second pass converges any adopt-then-mark rows
+      // The hold is EVALUATED from the current facts before each pass — never cached (see
+      // `importDecisionOpenNow`): an answer landing between the preflight and the first pass,
+      // or while the first pass drains a large batch, must not leave a pass adopting strangers
+      // under a question that has closed — and a document this pass itself just took over (the
+      // cron executes authorized takeovers) is seen by the evaluation, marker or no marker. A
+      // faulted read costs one stale cycle, retried at the second pass.
+      await runSyncCycle({ ...deps, importDecisionOpen: await profileSync.importDecisionOpenNow() });
+      await runSyncCycle({ ...deps, importDecisionOpen: await profileSync.importDecisionOpenNow() });
     } catch (err) {
       if (!(err instanceof LeaderFencedError)) throw err;
       // NOT A FAILURE — a handover. The fence keys on the shard, so one refusal means every later

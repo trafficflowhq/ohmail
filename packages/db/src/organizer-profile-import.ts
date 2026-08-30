@@ -78,7 +78,11 @@ export interface ProfileFoundMarker {
 export async function latestProfileFoundMarker(
   db: Tx, accountId: string, mailboxId: string,
 ): Promise<ProfileFoundMarker | null> {
-  const [row] = await db.select({ payload: auditLog.payload })
+  // A short window, newest first: a `lapsed` row closes ONLY the marker it names (see the
+  // organizer's `MarkerFact`), so the read may need to look past a stale lapse to the held
+  // marker a successor process wrote just before it. Five rows bounds the walk generously —
+  // markers are deduplicated per distinct fact, so consecutive rows are distinct facts.
+  const rows = await db.select({ payload: auditLog.payload })
     .from(auditLog)
     .where(and(
       eq(auditLog.accountId, accountId),
@@ -86,20 +90,55 @@ export async function latestProfileFoundMarker(
       sql`${auditLog.payload}->>'mailboxId' = ${mailboxId}`,
     ))
     .orderBy(desc(auditLog.createdAt))
-    .limit(1);
-  if (!row) return null;
-  const p = row.payload as Partial<ProfileFoundMarker> | null;
-  if (!p || typeof p.mailboxId !== "string" || (p.state !== "found" && p.state !== "newer")) return null;
-  return {
-    mailboxId: p.mailboxId,
-    state: p.state,
-    fingerprint: typeof p.fingerprint === "string" ? p.fingerprint : null,
-    heldForImport: p.heldForImport === true,
-    ...(typeof p.v === "number" ? { v: p.v } : {}),
-    ...(typeof p.updatedAt === "string" ? { updatedAt: p.updatedAt } : {}),
-    ...(p.producer && typeof p.producer === "object" ? { producer: p.producer as { kind: string; version: string } } : {}),
-    ...(p.counts && typeof p.counts === "object" ? { counts: p.counts as ProfileFoundMarker["counts"] } : {}),
+    .limit(5);
+  const shape = (raw: unknown): ({ mailboxId: string; state: string } & Partial<Omit<ProfileFoundMarker, "state">> & { v?: unknown }) | null => {
+    const p = raw as ({ mailboxId?: unknown; state?: unknown } & Partial<Omit<ProfileFoundMarker, "state">>) | null;
+    return p && typeof p.mailboxId === "string" && typeof p.state === "string"
+      ? (p as { mailboxId: string; state: string } & Partial<Omit<ProfileFoundMarker, "state">>)
+      : null;
   };
+  /** Lapse subjects seen while walking newest→oldest; a held marker matching one is closed.
+   *
+   * A SAME-SUBJECT re-ask closed by a stale lapse is the accepted residual here (review round
+   * 12 raised the generation question, round 13 pressed it): a document that vanished and
+   * reappeared BYTE-IDENTICALLY across a handoff, with the old process's lapse landing after
+   * the successor's marker, reads as closed. It SELF-HEALS: the successor's in-memory hold
+   * keeps routing safe regardless, and the next preflight of any organizer re-arms and writes
+   * a fresh held marker — which, arriving after the lapse, stands (the dedup compares against
+   * the LATEST row, and that row is the lapse). Marker generations would close the window at
+   * the cost of a second identity scheme in a table read by three surfaces; the bounded,
+   * self-healing residual is the better trade. */
+  const lapsedFingerprints = new Set<string>();
+  const lapsedVersions = new Set<number>();
+  for (const row of rows) {
+    const p = shape(row.payload);
+    if (!p) return null;
+    if (p.state === "lapsed") {
+      if (typeof p.fingerprint === "string") lapsedFingerprints.add(p.fingerprint);
+      if (typeof (p as { v?: unknown }).v === "number") lapsedVersions.add((p as { v: number }).v);
+      // A legacy lapse with NO subject (rows written before the subject rode along) closes
+      // whatever came before it — the old reading, kept so existing rows keep their meaning.
+      if (p.fingerprint == null && (p as { v?: unknown }).v == null) return null;
+      continue;
+    }
+    if (p.state !== "found" && p.state !== "newer") return null;
+    const closed =
+      (p.state === "found" && typeof p.fingerprint === "string" && lapsedFingerprints.has(p.fingerprint))
+      || (p.state === "newer" && typeof (p as { v?: unknown }).v === "number"
+        && lapsedVersions.has((p as { v: number }).v));
+    if (closed) return null;
+    return {
+      mailboxId: p.mailboxId as string,
+      state: p.state,
+      fingerprint: typeof p.fingerprint === "string" ? p.fingerprint : null,
+      heldForImport: p.heldForImport === true,
+      ...(typeof (p as { v?: unknown }).v === "number" ? { v: (p as { v: number }).v } : {}),
+      ...(typeof p.updatedAt === "string" ? { updatedAt: p.updatedAt } : {}),
+      ...(p.producer && typeof p.producer === "object" ? { producer: p.producer as { kind: string; version: string } } : {}),
+      ...(p.counts && typeof p.counts === "object" ? { counts: p.counts as ProfileFoundMarker["counts"] } : {}),
+    };
+  }
+  return null;
 }
 
 /** What a resolution names: the exact document content (v1), or the refused version (newer). */
@@ -114,12 +153,13 @@ export type ProfileImportSubject =
  * same content never nags twice.
  */
 /**
- * Has the user answered ANY import question for this mailbox since `since`? The release valve
- * for a hold whose exact fingerprint was never answered: the folder's document can change while
- * the decision is open (the previous organizer writes again), the confirm surface answers the
- * CURRENT content, and a hold keyed to the older fingerprint would otherwise stay frozen until
- * the process re-attaches. Any answer after the hold began means the mailbox's import question
- * is settled — the local store is the ratified truth either way.
+ * Has the user answered ANY import question for this mailbox since `since`?
+ *
+ * NO LONGER a release valve for the organizer's hold (2026-08-30): the hold now re-derives its
+ * subject from the folder (`profile.ts#reholdFromFolder`), and a mailbox-wide valve let a STALE
+ * answer to a superseded document release a re-armed hold on the document that replaced it.
+ * Kept as a generic query for surfaces that ask the coarse question ("has this mailbox's import
+ * conversation had any answer lately"), with no hold semantics attached.
  */
 export async function profileImportResolutionSince(
   db: Tx, o: { accountId: string; mailboxId: string; since: Date },

@@ -297,6 +297,27 @@ state.
 Only the active organizer writes — the organizer lease already serializes
 writers, so last-incumbent-wins and no merge algorithm exists.
 
+## A found document holds the writer — and the screening
+
+An organizer that takes over a mailbox and finds a foreign document it cannot
+call its own does two things with the one question the document poses, and
+refuses to answer it itself:
+
+- **The write-behind holds.** The found document is surfaced for the user's
+  import decision and is never overwritten while that decision is open — a
+  decline or an applied import releases the hold.
+- **The consent gate holds with it.** While the decision is open, mail whose
+  only verdict would be the gate's own ("nobody has ruled on this sender")
+  keeps the folder the mailbox already has it in, instead of being re-screened
+  by a store that has not yet imported the decisions travelling with the
+  mailbox. The mailbox is the master: its standing placement was made under
+  the previous organizer and is not undone by the act of switching. A rule in
+  the incoming store still applies, and a message that fails authentication is
+  still held — the hold defers only the "unknown sender" verdict, and ordinary
+  screening resumes once the import question is answered: before the next sync
+  pass for the document the answer names, and within the organizer's next
+  profile pass when the document changed under an open question.
+
 ## What a reader in another mail client sees
 
 `ohmail/_meta` is unsubscribed, so ordinary mail clients hide it. Someone who

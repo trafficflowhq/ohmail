@@ -2023,6 +2023,20 @@ export async function startWorkerWithLock(
         runtimes.set(mb.mailboxId, rt);
         await beat();
 
+        // ── ARM THE PROFILE HOLD BEFORE THE FIRST ROUTING DECISION (TAKEOVER-RESCREEN) ───
+        //
+        // A mailbox taken over from another organizer arrives CARRYING its decisions — the
+        // travelling profile in `ohmail/_meta`. The write-behind's ordinary seed discovers it at
+        // the END of the first completed cycle, which is after that cycle has already routed:
+        // the drill measured a cold takeover moving all 31 INBOX messages of already-screened-in
+        // senders into the Screener while the document answering for them sat one FETCH away.
+        // This read-only detection runs here — after the lease gate above said organize, before
+        // any cycle can route — so `cycle()`'s `importDecisionOpen` is true from the very first
+        // ingest. Never throws; on a read fault the seed retries at the first tick and the
+        // residual is at most one pre-fix cycle (the method's doc carries the direction
+        // argument). Ordinary mailboxes (no document, our own document, an in-sync one) return
+        // in one FETCH and arm nothing.
+        await rt.profile.armHoldFromFolder();
 
         // ── MAKE THE MAILBOX SCREENER-SHAPED, ONCE, BEFORE THE FIRST DRAIN ───────────────
         //
@@ -3026,6 +3040,17 @@ export async function startWorkerWithLock(
             // The cap is refreshed per cycle like the screening posture beside it, so an
             // upgrade's headroom (or a downgrade's new ceiling) applies without a re-attach.
             storageCap: await storageCapFor(rt.accountId),
+            // The routing half of the organizer-profile hold (TAKEOVER-RESCREEN), EVALUATED
+            // from the current facts at every cycle edge — never cached: the review rounds
+            // measured that any arm/release choreography over a folder, a store and a
+            // resolutions table that all move independently has a mirror-image race for every
+            // ordering. `importDecisionOpenNow` reads what stands NOW (the folder verdict on a
+            // clock — a short takeover TTL before the seed, the flush cadence after — plus a
+            // serialize and an indexed read only while a foreign document is actually present)
+            // and never throws: a faulted read answers the previous cycle, or a provably armed
+            // hold before the first success. The attach-time preflight above remains for the
+            // durable marker the confirm surface needs and for the write-behind's own hold.
+            importDecisionOpen: await rt.profile.importDecisionOpenNow(),
           });
           rt.failures = 0;
           // …and the shard-wide database condition, on the ONLY evidence strong enough to end it:
