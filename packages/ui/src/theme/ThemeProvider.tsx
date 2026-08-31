@@ -153,39 +153,24 @@ function readStored(storageKey: string): ThemePreference | null {
  */
 export function themeInitScript(
   storageKey = "ohmail.theme",
-  opts: {
-    /**
-     * Stamp the FACE and LAYOUT axes too. OPT-IN, and false is the safe default on purpose
-     * (review-caught): every host mounts this provider — the landing, the admin console —
-     * but only hosts that wired the face CONTROLS may activate the face, or a Linux visitor
-     * gets an ohmarchy landing with no way back. The product door passes true.
-     */
-    faces?: boolean;
-    faceStorageKey?: string;
-    accountFaceStorageKey?: string;
-    layoutStorageKey?: string;
-  } = {},
+  faceStorageKey = "ohmail.face",
+  accountFaceStorageKey = "ohmail.face.account",
+  layoutStorageKey = "ohmail.layout",
 ): string {
   const key = JSON.stringify(storageKey);
-  const themeHalf =
-    `(function(){try{var t=localStorage.getItem(${key});if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}`;
-  if (!opts.faces) return themeHalf + `})()`;
-  const faceKey = JSON.stringify(opts.faceStorageKey ?? "ohmail.face");
-  const accountKey = JSON.stringify(opts.accountFaceStorageKey ?? "ohmail.face.account");
-  const layoutKey = JSON.stringify(opts.layoutStorageKey ?? "ohmail.layout");
-  /* The face half re-encodes the provider's resolution order verbatim: device pin, account
-     mirror, Linux-desktop detection (see linuxDesktopDevice — the regexes here must match
-     it), paper. Only the "ohmarchy" outcome stamps; paper is absence. EACH STORAGE READ SITS
-     IN ITS OWN try (review-caught): a blocked jar must fall through to the detection, not
-     skip it — otherwise a sandboxed context flashes paper and re-skins after hydration. */
+  const faceKey = JSON.stringify(faceStorageKey);
+  const accountKey = JSON.stringify(accountFaceStorageKey);
+  const layoutKey = JSON.stringify(layoutStorageKey);
+  /* The face half re-encodes the provider's resolution order verbatim: device pin,
+     account mirror, Linux-desktop detection (see linuxDesktopDevice — the regexes here
+     must match it), paper. Only the "ohmarchy" outcome stamps; paper is absence. */
   return (
-    themeHalf +
-    `var f=null;try{f=localStorage.getItem(${faceKey})}catch(e){}` +
-    `if(f!=="paper"&&f!=="ohmarchy"){try{f=localStorage.getItem(${accountKey})}catch(e){}}` +
+    `(function(){try{var t=localStorage.getItem(${key});if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}` +
+    `try{var f=localStorage.getItem(${faceKey});` +
+    `if(f!=="paper"&&f!=="ohmarchy")f=localStorage.getItem(${accountKey});` +
     `if(f!=="paper"&&f!=="ohmarchy")f=(/Linux/.test(navigator.platform||"")&&!/Android|CrOS/.test(navigator.userAgent||""))?"ohmarchy":"paper";` +
-    `if(f==="ohmarchy")try{document.documentElement.dataset.face="ohmarchy"}catch(e){}` +
-    `var l=null;try{l=localStorage.getItem(${layoutKey})}catch(e){}` +
-    `if(l==="zero")try{document.documentElement.dataset.layout="zero"}catch(e){}})()`
+    `if(f==="ohmarchy")document.documentElement.dataset.face="ohmarchy"}catch(e){}` +
+    `try{var l=localStorage.getItem(${layoutKey});if(l==="zero")document.documentElement.dataset.layout="zero"}catch(e){}})()`
   );
 }
 
@@ -201,15 +186,6 @@ export interface ThemeProviderProps {
   accountFaceStorageKey?: string;
   /** Device key for the layout; follows `storageKey === null` into non-persistence. */
   layoutStorageKey?: string;
-  /**
-   * Activate the FACE and LAYOUT axes on this host. OPT-IN, default false (review-caught):
-   * the provider is mounted by every surface — landing, admin — but only a host whose UI
-   * wired the face controls may detect/stamp it, or a Linux visitor's landing flips to a
-   * half-skinned ohmarchy with no control anywhere to flip back. With false the provider is
-   * exactly the pre-face provider: face reads "paper", teach 0, nothing stamped, storage
-   * untouched.
-   */
-  faces?: boolean;
 }
 
 export function ThemeProvider({
@@ -219,7 +195,6 @@ export function ThemeProvider({
   faceStorageKey = "ohmail.face",
   accountFaceStorageKey = "ohmail.face.account",
   layoutStorageKey = "ohmail.layout",
-  faces = false,
 }: ThemeProviderProps) {
   // null = not yet hydrated: render with the deterministic default and do
   // NOT touch <html> — the themeInitScript stamp stays in charge until the
@@ -250,7 +225,6 @@ export function ThemeProvider({
   // adopted answer — the live one arrives via adoptAccountFace when the host's consent
   // read lands), and the Linux detection. SSR and the first client render stay "paper".
   useEffect(() => {
-    if (!faces) return; // the axis is not active on this host — leave storage and state alone
     setDevicePin((current) => {
       if (current !== undefined) return current; // a click beat us to it — user wins
       if (storageKey === null) return null; // persistence disabled (tests, showcases)
@@ -282,7 +256,7 @@ export function ThemeProvider({
       }
     });
     setLinux(linuxDesktopDevice());
-  }, [faces, storageKey, faceStorageKey, accountFaceStorageKey, layoutStorageKey]);
+  }, [storageKey, faceStorageKey, accountFaceStorageKey, layoutStorageKey]);
 
   // Stamp <html data-theme> exactly like the prototype: absent = system.
   // Skipped until adoption so hydration never clobbers the pre-paint stamp.
@@ -318,19 +292,19 @@ export function ThemeProvider({
   // Stamp <html data-face> — absent = paper. Skipped until adoption, so the init script's
   // pre-paint stamp is never clobbered by a hydrating render that has not read storage yet.
   useEffect(() => {
-    if (!faces || devicePin === undefined) return;
+    if (devicePin === undefined) return;
     const root = document.documentElement;
     if (face === "ohmarchy") root.dataset.face = "ohmarchy";
     else delete root.dataset.face;
-  }, [faces, devicePin, face]);
+  }, [devicePin, face]);
 
   // Stamp <html data-layout> — absent = classic, the same skip-until-adoption contract.
   useEffect(() => {
-    if (!faces || layoutPin === undefined) return;
+    if (layoutPin === undefined) return;
     const root = document.documentElement;
     if (layout === "zero") root.dataset.layout = "zero";
     else delete root.dataset.layout;
-  }, [faces, layoutPin, layout]);
+  }, [layoutPin, layout]);
 
   const setTheme = useCallback((p: ThemePreference) => setStored(p), []);
   const toggle = useCallback(() => {

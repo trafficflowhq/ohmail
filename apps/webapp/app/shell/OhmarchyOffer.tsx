@@ -2,7 +2,7 @@
 
 /**
  * THE OPTION B OFFER — the one-line invitation a Linux device gets to take its ohmarchy
- * default account-wide (owner-decided, OHMARCHY-PLAN.md §3a).
+ * default account-wide (OHMARCHY-PLAN.md §3a).
  *
  * The DETECTION half lives in the ThemeProvider (a Linux device with no explicit choice
  * anywhere defaults to the ohmarchy face, for that device only); this is the half that asks
