@@ -919,12 +919,15 @@ async function moveDestinations(
  * Two RUNS of this pass no longer reach here at the same time: each page opens by taking the
  * mailbox row `FOR UPDATE`, so a second run is serialized a statement earlier and the
  * `sensitive-rescreen.pg.test.ts` concurrency case would now pass with this `FOR UPDATE`
- * removed. It is not decoration, and the reason is that the mailbox lock is THIS pass's alone:
- * every other writer of `folder_state` — the API's move, the Screener's apply, `rule-retro`,
- * `ohbox-tidy`, `screener-auto`, the worker's reconciler — takes no mailbox row on the way in.
- * The row lock here is what makes a page's read-decide-write atomic against THEM, which is the
- * case that matters in production and the one no test in this file can express with two copies
- * of the same pass. That
+ * removed. It is not decoration, and the reason is the OTHER writers of `folder_state`: the API's
+ * move, the Screener's apply, `rule-retro`, `ohbox-tidy` and `screener-auto` take no mailbox row
+ * on the way in, so nothing above serializes them against a page and this lock is the only thing
+ * that makes a page's read-decide-write atomic against them. (The worker's reconciler is the
+ * exception and is NOT in that list — its fenced write group takes `mailboxes FOR UPDATE` first,
+ * which is the whole reason the page order had to move to match it. An earlier draft of this
+ * paragraph put it in the list, and it would have made this comment contradict the lock-order
+ * block a hundred lines up.) The case that matters in production is therefore one no test in this
+ * file can express with two copies of the same pass. That
  * claim is `sensitive-rescreen.pg.test.ts` on real Postgres, because PGlite is single-connection
  * and `FOR UPDATE` there is a no-op that always succeeds.
  */
