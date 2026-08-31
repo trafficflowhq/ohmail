@@ -16,7 +16,7 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
-## [0.13.0] — 2026-08-31
+## [0.13.0] — 2026-09-01
 
 A feature release. ohmail has a second look — **ohmarchy**, a tiling, keyboard-first
 appearance you can turn on per device or across your account — a second window arrangement
