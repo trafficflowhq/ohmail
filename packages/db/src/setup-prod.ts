@@ -373,14 +373,18 @@ export async function setupProdDatabase(
   try {
     // NEUTRALIZE THE ROLE'S SERVER-SIDE DEFAULTS BEFORE ANY WORK ON THIS SESSION. Once
     // `ROLE_DEFAULT_TIMEOUTS` is applied below, EVERY future connection under this role —
-    // including this one, and every one after it — starts with a 55 s statement ceiling and a
-    // 60 s idle-in-transaction ceiling. `ensureWithheldProvenanceIndex` a few lines down runs a
-    // `CREATE INDEX CONCURRENTLY` over the schema's largest table specifically because a
-    // migration-time index build must not hold a write lock — it is exactly the kind of
-    // multi-minute statement a request-scoped default is sized to kill. This session (and the
-    // provisioning session below) must run under NO ceiling, forever, not only on the run that
-    // first sets the role default.
+    // including this one, and every one after it — starts with a 55 s statement ceiling, a 30 s
+    // LOCK-WAIT ceiling, and a 60 s idle-in-transaction ceiling. `ensureWithheldProvenanceIndex`
+    // a few lines down runs a `CREATE INDEX CONCURRENTLY` over the schema's largest table
+    // specifically because a migration-time index build must not hold a write lock — it is
+    // exactly the kind of multi-minute statement a request-scoped default is sized to kill, and
+    // under real production contention the wait to even START that build could exceed 30 s on
+    // its own (found by review: the first version of this neutralization reset only the
+    // statement/idle ceilings and left `lock_timeout` inherited). This session (and the
+    // provisioning session below) must run under NO ceiling on any of the three, forever, not
+    // only on the run that first sets the role default.
     await pre.unsafe(`set statement_timeout = 0`);
+    await pre.unsafe(`set lock_timeout = 0`);
     await pre.unsafe(`set idle_in_transaction_session_timeout = 0`);
     // IDENTITY FIRST, then mutate. The report used to name the server it had reached only
     // AFTER migrating it, which is the wrong order for a command that runs DDL: an operator
@@ -456,6 +460,7 @@ export async function setupProdDatabase(
     // indexes, and the role default this function itself installs (below) must not be able to
     // kill its own provisioning pass.
     await client.unsafe(`set statement_timeout = 0`);
+    await client.unsafe(`set lock_timeout = 0`);
     await client.unsafe(`set idle_in_transaction_session_timeout = 0`);
     log("ensuring search extensions (pg_trgm + trigram GIN indexes)");
     await ensureSearchExtensions(db);
