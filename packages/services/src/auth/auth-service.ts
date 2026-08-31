@@ -2680,6 +2680,58 @@ export class AuthService extends SessionLifecycle {
     ));
   }
 
+  /**
+   * SIGNING OUT A DEVICE TAKES ITS WAKE REGISTRATION WITH IT — the same rule as
+   * {@link revokeDevice} one door over, and the door people actually use.
+   *
+   * ── THE HOLE THIS CLOSES ────────────────────────────────────────────────────────────────
+   *
+   * `push_subscriptions` rows are stamped with the registering session's `device_id`
+   * (`push-service.ts`, whose own comment says the stamp is "what lets `DELETE /devices/:id`
+   * take the wake registration down with the credential"). Only `revokeDevice` ever used that
+   * stamp, and `revokeDevice` is reachable only from a SERVER's Devices pane. The base
+   * `logout` revoked the session family and nothing else — so a phone that forgot a server,
+   * or a person who signed out, kept a live row and the worker kept POSTing "something
+   * changed" to a device that could no longer open the account. Nothing unregisters the
+   * distributor either, so the endpoint keeps answering 2xx and the worker's prune-on-410
+   * never fires: the row and the traffic are permanent.
+   *
+   * A non-`allDevices` logout IS the device saying its credential is done. That is the same
+   * statement `revokeDevice` makes about somebody else's device, and it deserves the same
+   * consequence. `allDevices` says it about every device, so it takes every row.
+   *
+   * ── WHY HERE AND NOT IN `SessionLifecycle` ──────────────────────────────────────────────
+   *
+   * The base class also boots the desktop-host door, whose mail-only database has no
+   * `push_subscriptions` table at all — the same reason `revokeDevice`'s prune lives here.
+   *
+   * ── ORDER, AND THE ONE THING THIS DELIBERATELY DOES NOT DO ──────────────────────────────
+   *
+   * AFTER `super.logout`, so a step-up refusal on the `allDevices` arm deletes nothing. And a
+   * session with NO device row (a browser ceremony mints none) prunes nothing: web-push rows
+   * carry `device_id = NULL`, so there is no predicate that names THIS browser rather than
+   * every deviceless registration on the account, and deleting them all would silently turn
+   * another browser's notifications off. That residue is a separate finding with a separate
+   * fix (stamp the browser's own registration), not something to guess at from here.
+   */
+  override async logout(ctx: ServiceContext, b: { allDevices?: boolean } = {}): Promise<void> {
+    await super.logout(ctx, b);
+    const db = asTx(ctx);
+    if (b.allDevices) {
+      await db.delete(pushSubscriptions).where(eq(pushSubscriptions.accountId, ctx.accountId));
+      return;
+    }
+    if (!ctx.sessionId) return;
+    const row = (await db.select({ deviceId: sessions.deviceId }).from(sessions)
+      .where(eq(sessions.id, ctx.sessionId)).limit(1))[0];
+    const deviceId = row?.deviceId ?? null;
+    if (deviceId === null) return;
+    await db.delete(pushSubscriptions).where(and(
+      eq(pushSubscriptions.accountId, ctx.accountId),
+      eq(pushSubscriptions.deviceId, deviceId),
+    ));
+  }
+
 }
 
 /**
