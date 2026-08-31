@@ -1228,6 +1228,7 @@
     "tagToggle": "Tag: {name}…",
     "goTag": "Go to tag: {name}",
     "toggleTheme": "Toggle light / dark",
+    "cycleLayout": "Switch layout (Zero / classic)",
     "resurfaceSel": "Resurface selection"
   },
   "dock": {
@@ -2157,6 +2158,7 @@
     "park": "Park it (out of the way, still here)",
     "resurface": "Resurface it later",
     "palette": "Command palette",
+    "layout": "Switch layout (Zero / classic)",
     "sheet": "This list",
     "escape": "Close what is open",
     "zoneMenu": "Focus the menu",

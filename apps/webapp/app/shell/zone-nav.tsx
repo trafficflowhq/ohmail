@@ -142,6 +142,23 @@ function railHidden(): boolean {
   return document.querySelector(`${RAIL}.open`) == null;
 }
 
+/**
+ * THE ZERO LADDER'S DRAWER SUMMON — `h` keeps its one meaning (OHMARCHY-PLAN §12: "toward
+ * the rail", which at ribbon widths means drawer-in). Under the Zero layout the rail below
+ * 900px is a docked icon ribbon (or, under 392px, off canvas entirely), and the FULL rail is
+ * a user-summoned drawer — so "step into the rail" where the full rail is not standing means
+ * SUMMON it, not focus a translated button nobody can see.
+ *
+ * A module-level seam, not a layout read: the shell REGISTERS the summon only while the Zero
+ * layout is active (`AppShell`'s effect — the one ledgered layout branch), so under classic
+ * this is null and `enterRail` refuses exactly as it always has. Zone-nav itself never asks
+ * the appearance, which keeps the census's zone model appearance-free.
+ */
+let railSummon: (() => void) | null = null;
+export function setRailSummon(fn: (() => void) | null): void {
+  railSummon = fn;
+}
+
 function refresh(): void {
   const next = computeZone();
   if (next === zone) return;
@@ -231,7 +248,11 @@ function tryFocus(el: HTMLElement | null | undefined): boolean {
 
 /** Step into the rail, landing on the row for the view the reader is already in. */
 function enterRail(): void {
-  if (railHidden()) return;
+  if (railHidden()) {
+    // Zero only (see setRailSummon): the drawer is the rail's reachable form here.
+    railSummon?.();
+    return;
+  }
   const active = document.querySelector<HTMLElement>(`${RAIL} .ritem.on`);
   if (tryFocus(active)) return;
   for (const el of railItems()) if (tryFocus(el)) return;

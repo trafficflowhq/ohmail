@@ -1,0 +1,331 @@
+/* =====================================================================
+   THE ZERO LAYOUT — `data-layout="zero"` (OHMARCHY-PLAN.md §3b; the
+   arrangement follows the design phase's Zero prototype, and the shipping
+   app stays the truth for every feature's anatomy).
+
+   ── WHAT THIS FILE IS ALLOWED TO BE ────────────────────────────────────
+   The ONE home for `[data-layout]` selectors outside the token package
+   (one-ui-census FACE_LAYOUT_CSS_HOMES — a layout-scoped rule anywhere
+   else is a styled fork). It composes the SAME components into the Zero
+   arrangement and speaks ONLY in tokens (--gap-*, --lift-*, --r-*, --ink*,
+   --hair*, --tint*), so paper resolves the identical geometry through its
+   calm values and ohmarchy through the ring ladder — the layout never
+   names a color or a radius of its own. Classic is the ABSENT state of
+   `data-layout`: no selector below can match a classic document, which is
+   what keeps classic byte-identical by construction
+   (test/zero-layout-purity.test.ts, the faces-paper-purity argument).
+
+   ── THE LADDER (owner-ruled, §12 — boundaries derived from content
+      floors, one degradation per step) ───────────────────────────────────
+     ≥901       three tiles: full rail | list | reader. 900 is the shell's
+                own established breakpoint (`max-width: 900px` is narrow),
+                so the full-rail tier starts where classic desktop always
+                did — the demo's "≥900" read against the app's inclusive
+                edge lands at 901, the app's model winning by §0.
+     722–900    the rail (only) gives: a PERSISTENT DOCKED 52px icon
+                ribbon; both content tiles stay. The ribbon never
+                auto-floats — only ≡ or `h` summons the full rail as a
+                drawer over the tiles, esc puts it back.
+     392–721    the split (only) gives: one content tile beside the docked
+                ribbon; opening a mail pushes the reader into the tile
+                slot (the same reader sheet, re-housed — no second reader
+                exists). The hint foot goes (keys are noise on one-tile
+                widths); button keycaps stay, as paper's action bar keeps
+                its caps on the phone.
+     ≤391       FLOATING is the last resort: even the ribbon would rob the
+                tile of its floor, so the rail leaves the flow and Zero
+                stands on classic's own phone model (topbar, overlay
+                drawer, full-screen reader) — "the paper shell's <900
+                drawer model", per the demo's own derivation.
+   The JS half of the same ladder is shell/narrow.ts: under zero the
+   reading column leaves at 721, not 900, and every "is the column
+   hidden" call site asks that one module.
+
+   ── THE RIBBON'S FACES ARE THE QUICK-NAV KEYS ──────────────────────────
+   The demo's ribbon shows icons because the demo HAS a rail icon set; the
+   shipping rail's rows are text, and inventing icons for them would be a
+   design decision this lane does not own. The rows' established identity
+   IS their quick-nav key (AppShell numbers the piles off menu order;
+   Search wears /), so the ribbon paints each row's key from the
+   presentation-free `data-nav-key` attribute — self-teaching chrome, no
+   new anatomy, and a row with no key simply does not ride the ribbon
+   (its place is the drawer, one ≡ or `h` away).
+   ===================================================================== */
+
+/* ── every width: the statusline foot (the vim-statusline idiom — lane A's
+      generated foot, restyled by tokens, never forked). Docked flush to the
+      master tile's bottom edge with a hairline, the demo's #om-hints
+      register. ─────────────────────────────────────────────────────────── */
+:root[data-layout="zero"] .list-hints {
+  border-top: 1px solid var(--hair-soft);
+  padding: 7px 14px 8px;
+  margin: 0;
+}
+
+/* ═══ the ribbon tiers, 392–900: docked 52px rail, no topbar ═══════════ */
+@media (min-width: 392px) and (max-width: 900px) {
+  :root[data-layout="zero"] .topbar {
+    display: none;
+  }
+  :root[data-layout="zero"] .deck {
+    grid-template-columns: 52px 1fr;
+    gap: 0 var(--gap-tile);
+    padding: var(--gap-edge);
+  }
+  /* The docked ribbon — the SAME rail, in flow, minified. `:not(.open)` on
+     purpose: the open drawer keeps classic's own fixed-drawer rules (the
+     full rail floated over the tiles, scrim behind — Omarchy's scratchpad
+     gesture translated), which is exactly the §12 model. */
+  :root[data-layout="zero"] .deck > .rail:not(.open) {
+    position: static;
+    inset: auto;
+    z-index: auto;
+    transform: none;
+    transition: none;
+    width: auto;
+    padding: 10px 5px;
+    border-radius: var(--r-overlay);
+    background: var(--panel);
+    box-shadow: var(--lift-1);
+    overflow-x: hidden;
+  }
+  /* head: the mark yields to the ≡ (its duties — identity — need no 52px
+     restatement; the drawer keeps the wordmark). */
+  :root[data-layout="zero"] .deck > .rail:not(.open) .wordmark {
+    padding: 0 0 8px;
+    display: flex;
+    justify-content: center;
+  }
+  :root[data-layout="zero"] .deck > .rail:not(.open) .wordmark b {
+    display: none;
+  }
+  :root[data-layout="zero"] .deck > .rail .rail-expand {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 26px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-ctl);
+    color: var(--ink3);
+    background: none;
+    cursor: pointer;
+  }
+  :root[data-layout="zero"] .deck > .rail .rail-expand:hover {
+    color: var(--ink);
+    background: var(--tint);
+  }
+  /* THE OPEN DRAWER IS THE FULL RAIL, at the full rail's own width — classic's 76%
+     phone drawer read oversized beside a 52px ribbon (VM adjacency, shot w2e-08): the
+     §12 model is "the same rail, temporarily floated", so it floats at the width it
+     stands with at ≥901. The head becomes a row so the way-back ≡ sits at its end. */
+  :root[data-layout="zero"] .deck > .rail.open {
+    inset: 0 auto 0 0;
+    width: 248px;
+  }
+  :root[data-layout="zero"] .deck > .rail.open .wordmark {
+    display: flex;
+    align-items: center;
+  }
+  :root[data-layout="zero"] .deck > .rail.open .rail-expand {
+    width: 26px;
+    margin-left: auto;
+  }
+  /* compose — the rail's first tile-item, minified to its pencil */
+  :root[data-layout="zero"] .deck > .rail:not(.open) .compose-cta {
+    font-size: 0;
+    gap: 0;
+    justify-content: center;
+    padding: 8px 0;
+  }
+  :root[data-layout="zero"] .deck > .rail:not(.open) .compose-cta kbd {
+    display: none;
+  }
+  /* everything that cannot speak at 52px rides the drawer instead */
+  :root[data-layout="zero"] .deck > .rail:not(.open) .rlabel,
+  :root[data-layout="zero"] .deck > .rail:not(.open) .rlabel-toggle,
+  :root[data-layout="zero"] .deck > .rail:not(.open) .rgroup.rsub,
+  :root[data-layout="zero"] .deck > .rail:not(.open) .frow,
+  :root[data-layout="zero"] .deck > .rail:not(.open) .fsec,
+  :root[data-layout="zero"] .deck > .rail:not(.open) .rsub-empty,
+  :root[data-layout="zero"] .deck > .rail:not(.open) .mbx,
+  :root[data-layout="zero"] .deck > .rail:not(.open) .rail-dock,
+  :root[data-layout="zero"] .deck > .rail:not(.open) .rail-mail,
+  :root[data-layout="zero"] .deck > .rail:not(.open) .ritem:not([data-nav-key]),
+  :root[data-layout="zero"] .deck > .rail:not(.open) .ritem .cnt {
+    display: none;
+  }
+  /* a place-row's face is its key (data-nav-key — see the header). The key
+     also carries the row's state: ink3 at rest, ink while the count is
+     live, accent and bold while the count is HOT — the demo's corner dots,
+     said in this rail's own vocabulary. */
+  :root[data-layout="zero"] .deck > .rail:not(.open) .ritem {
+    font-size: 0;
+    justify-content: center;
+    padding: 6px 0;
+    position: relative;
+  }
+  :root[data-layout="zero"] .deck > .rail:not(.open) .ritem::after {
+    content: attr(data-nav-key);
+    font-size: 11px;
+    line-height: 1;
+    color: var(--ink3);
+    border: 1px solid var(--hair-soft);
+    border-radius: var(--r-ctl);
+    padding: 2px 5px;
+  }
+  :root[data-layout="zero"] .deck > .rail:not(.open) .ritem:has(.cnt span:not(:empty))::after {
+    color: var(--ink);
+    border-color: var(--hair);
+  }
+  :root[data-layout="zero"] .deck > .rail:not(.open) .ritem:has(.cnt.hot span:not(:empty))::after {
+    color: var(--accent-ink);
+    font-weight: 700;
+    border-color: var(--accent-hair);
+  }
+  /* active place: the inset accent bar (the demo's), not the -10px dot the
+     full rail hangs in its gutter */
+  :root[data-layout="zero"] .deck > .rail:not(.open) .ritem.on::before {
+    content: none;
+  }
+  :root[data-layout="zero"] .deck > .rail:not(.open) .ritem.on {
+    box-shadow: inset 2px 0 0 var(--accent);
+    background: var(--tint2);
+  }
+  /* the foot keeps the doorbell: the sync SENTENCE stays with the strip
+     (the one-of-two invariant at narrow widths is untouched), but the
+     pull affordance — the demo's whole rail-foot — stands as its icon. */
+  :root[data-layout="zero"] .deck > .rail:not(.open) .rail-sync-slot {
+    display: block;
+    margin-top: auto;
+    padding: 0;
+  }
+  :root[data-layout="zero"] .deck > .rail:not(.open) .rail-sync-slot .rail-sync {
+    display: none;
+  }
+  :root[data-layout="zero"] .deck > .rail:not(.open) .rail-pull {
+    font-size: 0;
+    gap: 0;
+    justify-content: center;
+    margin: 0;
+    padding: 7px 0;
+  }
+}
+
+/* ═══ 722–900: the split survives beside the ribbon — the tier classic
+       never had. These undo exactly the STRUCTURAL half of app.css's
+       narrow block; the tighter in-tile densities it also sets are kept
+       deliberately (they are nearer the demo's own compact register than
+       desktop gutters would be — named in the close-out). ═══════════════ */
+@media (min-width: 722px) and (max-width: 900px) {
+  :root[data-layout="zero"] .view.split {
+    grid-template-columns: var(--split);
+    column-gap: var(--gap-tile);
+  }
+  :root[data-layout="zero"] .view-ohbox .read-col,
+  :root[data-layout="zero"] .view-history .read-col,
+  :root[data-layout="zero"] .view-tag .read-col,
+  :root[data-layout="zero"] .view-triage .read-col,
+  :root[data-layout="zero"] .view-folder .read-col {
+    display: block;
+  }
+  :root[data-layout="zero"] .view-reads .list-col,
+  :root[data-layout="zero"] .view-receipts .list-col {
+    display: flex;
+  }
+  :root[data-layout="zero"] .view-screener .scn-read {
+    display: block;
+  }
+  :root[data-layout="zero"] .stream-top {
+    display: none;
+  }
+  :root[data-layout="zero"] .view .list-hints,
+  :root[data-layout="zero"] .view .stream-hints {
+    display: flex;
+  }
+  /* boot skeleton: the three-tile shape with the ribbon's column, so the
+     first paint and the hydrated ladder agree (data-layout is stamped
+     pre-paint by the boot script). */
+  :root[data-layout="zero"] .boot-sk-window {
+    display: grid;
+    grid-template-columns: 52px minmax(0, 1fr) 1.2fr;
+    flex-direction: row;
+  }
+  :root[data-layout="zero"] .boot-sk-rail,
+  :root[data-layout="zero"] .boot-sk-reader {
+    display: block;
+  }
+  :root[data-layout="zero"] .boot-sk-topbar {
+    display: none;
+  }
+}
+
+/* ═══ 392–721: one content tile, push navigation. The reader SHEET is the
+       one reader (no second one is built); here it is re-housed into the
+       tile slot beside the standing ribbon — same component, same escape
+       ladder, different slot. ═══════════════════════════════════════════ */
+@media (min-width: 392px) and (max-width: 721px) {
+  /* The shell stays lit and live: the ribbon beside the reader is real
+     chrome, not backdrop — classic's 5% exhale is an overlay's grammar,
+     and this tier's reader is a tile. */
+  :root[data-layout="zero"] body.reading .shell {
+    opacity: 1;
+    transform: none;
+    pointer-events: auto;
+  }
+  :root[data-layout="zero"] .reader {
+    inset: var(--gap-edge) var(--gap-edge) var(--gap-edge)
+      calc(var(--gap-edge) + 52px + var(--gap-tile));
+    padding: 0;
+    background: var(--panel);
+    box-shadow: var(--lift-1);
+    border-radius: var(--r-overlay);
+  }
+  :root[data-layout="zero"] .reader .msg {
+    max-width: none;
+    min-height: 100%;
+    box-shadow: none;
+    border-radius: 0;
+    background: transparent;
+    animation: none;
+    padding: 24px 22px 22px;
+  }
+  /* the way back sits inside the tile it leaves */
+  :root[data-layout="zero"] .reader-close {
+    top: calc(var(--gap-edge) + 10px);
+    left: calc(var(--gap-edge) + 52px + var(--gap-tile) + 10px);
+  }
+  /* THE DRAWER OUTRANKS THE RE-HOUSED READER (review finding, round 1): classic stacks the
+     drawer (--z-drawer, 40) under the reader (--z-read, 50) because its reader covers the
+     whole page and the drawer is unreachable behind it. Here the ribbon stays operable
+     BESIDE the reader, so its ≡ can summon the drawer while reading — and a drawer under
+     the sheet is a sliver nobody can use. The scrim rides one step below the drawer,
+     exactly classic's own relationship. */
+  :root[data-layout="zero"] .deck > .rail.open {
+    z-index: calc(var(--z-read) + 2);
+  }
+  :root[data-layout="zero"] .rail-bg {
+    z-index: calc(var(--z-read) + 1);
+  }
+  /* boot skeleton: ribbon + one tile */
+  :root[data-layout="zero"] .boot-sk-window {
+    display: grid;
+    grid-template-columns: 52px minmax(0, 1fr);
+    flex-direction: row;
+  }
+  :root[data-layout="zero"] .boot-sk-rail {
+    display: block;
+  }
+  :root[data-layout="zero"] .boot-sk-topbar {
+    display: none;
+  }
+}
+
+/* ═══ ≤391: floating tier — classic's own phone model (topbar, overlay
+       drawer, full-screen reader) with the deck's edge on the token. ═══ */
+@media (max-width: 391px) {
+  :root[data-layout="zero"] .deck {
+    padding: 0 var(--gap-edge) var(--gap-edge);
+  }
+}

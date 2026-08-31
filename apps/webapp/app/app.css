@@ -3293,6 +3293,13 @@ textarea.c-input:read-only {
 .rail-bg {
   display: none;
 }
+/* The rail-head's ≡ (AppShell's `wordmark` slot). At rest it exists nowhere: only the Zero
+   layout's ribbon tiers reveal it (zero-layout.css), where the docked 52px rail needs a
+   pointer path to the full drawer beside `h`. Hidden HERE, unconditionally, so classic —
+   either face — renders the rail it always rendered. */
+.rail-expand {
+  display: none;
+}
 .stream-top {
   display: none;
 }

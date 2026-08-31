@@ -7,6 +7,11 @@ import { Providers } from "./providers";
 import { DEFAULT_LOCALE, localeFromCookieHeader } from "../shell/locale";
 import { loadCatalog } from "../../i18n/catalog";
 import "../app.css";
+/* AFTER app.css, so the Zero layout's overrides sit later in the cascade than the
+   classic narrow blocks they re-arrange (specificity already favors them; order
+   keeps it unambiguous). Classic is untouched by construction — every selector in
+   the file requires [data-layout="zero"] (test/zero-layout-purity.test.ts). */
+import "../zero-layout.css";
 
 /*
  * THE OTHER ROOT LAYOUT of the single-origin app — see

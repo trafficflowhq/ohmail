@@ -135,7 +135,8 @@ import { useDraftReply, type DraftedReply } from "./draft-reply";
 import { RichEditor } from "./RichEditor";
 import { TagPicker, placePicker, type TagPickerState } from "./TagPicker";
 import { KeymapProvider, useKeyBindings, type KeyBinding } from "./keymap";
-import { ZoneCursor } from "./zone-nav";
+import { readColumnHidden } from "./narrow";
+import { ZoneCursor, setRailSummon } from "./zone-nav";
 import "./zone-cursor.css";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { SyncBar } from "./SyncBar";
@@ -2226,16 +2227,12 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
       : readerMessage;
 
   /**
-   * Is the reading column absent? Under 900px `app.css` sets `display:none` on it, so a
+   * Is the reading column absent? Below the active layout's breakpoint (`narrow.ts` — 900px
+   * classic, 721px zero) `app.css`/`zero-layout.css` set `display:none` on it, so a
    * split-pane selection shows the user nothing and "opened" has to mean the reader sheet.
-   * One predicate, used by `openReply` (which had it inline) and by `openMessage`.
+   * One predicate, used by `openReply` (which had it inline) and by `openMessage` — now the
+   * shared module's, so the Zero ladder moves every call site at once.
    */
-  const readColumnHidden = useCallback(
-    () =>
-      typeof window !== "undefined" &&
-      window.matchMedia?.("(max-width: 900px)").matches === true,
-    [],
-  );
 
   /**
    * OPENING THE READER — THE ONE GATE.
@@ -2263,7 +2260,7 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
     (messageId: string) => {
       if (readColumnHidden()) setReaderFor(messageId);
     },
-    [readColumnHidden],
+    [],
   );
 
   const waitingLive = screener.waiting.filter((w) => !screener.isExiting(w.id));
@@ -2581,7 +2578,7 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
     // reply would mount into a pane nobody can see and `r` would look broken — measured on
     // the shipped build at 390px. There, the reader IS the open message, so open it.
     if (readColumnHidden()) setReaderFor(messageId);
-  }, [readColumnHidden]);
+  }, []);
 
   /**
    * THE INLINE FORWARD — the reply dock in forward mode, inside the thread.
@@ -2610,7 +2607,7 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
     setReplyBody(readReplyDraft(replyDraftKey("forward", messageId)));
     // The same mobile rule `openReply` states: below 900px the dock lives in the reader.
     if (readColumnHidden()) setReaderFor(messageId);
-  }, [engine, toast, t, readColumnHidden, replyDraftKey]);
+  }, [engine, toast, t, replyDraftKey]);
 
   const closeReply = useCallback(() => setReplyTo(null), []);
 
@@ -2697,7 +2694,7 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
       // so an editor mounted there is one nobody can see.
       if (readColumnHidden()) setReaderFor(messageId);
     },
-    [readColumnHidden],
+    [],
   );
 
   /**
@@ -4403,7 +4400,7 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
           setReaderFor(target.id);
       }
     },
-    [readColumnHidden, screenerRowFor, consentView?.placeOf, parked, pileHolds, folders, presented],
+    [screenerRowFor, consentView?.placeOf, parked, pileHolds, folders, presented],
   );
   /* Assigned here so `openDraft`, which is declared several hundred lines above this, can open a
      reply draft in its own conversation. See {@link openMessageRef}. */
@@ -4542,7 +4539,7 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
     }
     // `route` is a fresh object per hash: the fields below are the identity that matters.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route.messageId, route.view, readerFor, ohboxSel, version, mailState.settled, pileHolds, readColumnHidden, reader]);
+  }, [route.messageId, route.view, readerFor, ohboxSel, version, mailState.settled, pileHolds, reader]);
 
   /**
    * ═══ LOCATE THE ROW, IN WHICHEVER VIEW IT LANDED ══════════════════════════════════════
@@ -4763,6 +4760,34 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
     ],
     "overlay",
   );
+
+  /**
+   * THE LAYOUT CYCLE — `w` flips classic ⇄ Zero (OHMARCHY-PLAN §3b), registered like every
+   * other chord so the `?` sheet and the palette document it from the one registry.
+   *
+   * FACE-INDEPENDENT, BY DECISION (lane E close-out): layout is the contract's own second
+   * axis, orthogonal to the face by construction — the zero stylesheet speaks only in
+   * tokens, so paper resolves the same arrangement through its calm values — and §4's
+   * acceptance criterion runs the keyboard walkthrough in BOTH layouts, which would be a
+   * test of a hidden state under a face gate. The DEFAULT stays classic on every face and
+   * every platform; zero is only ever this device's explicit choice (`ohmail.layout` — the
+   * contract gives layout no account wire, and none is added here).
+   */
+  const cycleLayout = useCallback(() => {
+    theme.setLayout(theme.layout === "zero" ? "classic" : "zero");
+  }, [theme]);
+
+  /**
+   * The Zero drawer summon (zone-nav's module seam): under zero the sub-900px rail is a
+   * docked icon ribbon (off canvas under 392px), and `h`/← toward it means "summon the full
+   * drawer" — §12's one meaning for `h`; the ribbon itself never auto-floats. Registered
+   * ONLY while zero is active, so classic's keyboard behavior does not move.
+   */
+  useEffect(() => {
+    if (theme.layout !== "zero") return;
+    setRailSummon(() => setRailOpen(true));
+    return () => setRailSummon(null);
+  }, [theme.layout]);
 
   /* ── the global key map. Views declare their own; see `keymap.tsx` for precedence. ── */
   const globalKeys: KeyBinding[] = [
@@ -4995,6 +5020,12 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
       run: () => palette.toggle(),
     },
     {
+      chord: "w",
+      group: "app",
+      label: t("shortcuts.layout"),
+      run: cycleLayout,
+    },
+    {
       chord: "?",
       group: "app",
       label: t("shortcuts.sheet"),
@@ -5056,6 +5087,9 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
       });
     }
     list.push({ id: "theme", label: t("palette.toggleTheme"), run: () => theme.toggle() });
+    /* The demo's own ruling for layout controls: "palette and hotkeys only" — no rail
+       button, no Settings row (named in the 3b close-out). */
+    list.push({ id: "layout", label: t("palette.cycleLayout"), keys: ["w"], run: cycleLayout });
     list.push({
       id: "resurface",
       label: t("palette.resurfaceSel"),
@@ -5700,6 +5734,27 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
         <div className="deck">
           <ShellRail
             className={railOpen ? "open" : undefined}
+            /* The default mark plus the Zero ribbon's ≡ — one hidden button, revealed ONLY
+               by zero-layout.css at ribbon widths (`app.css` hides it everywhere at rest, so
+               classic renders exactly what it rendered). At 722–899 and 392–721 the rail is
+               a docked 52px ribbon and this is its drawer summon (`h`'s pointer twin); in
+               the open drawer the same button reads as the way back. */
+            wordmark={
+              <>
+                <b>
+                  <em>oh</em>mail
+                </b>
+                <button
+                  type="button"
+                  className="rail-expand"
+                  aria-label={t("rail.openNav")}
+                  aria-expanded={railOpen}
+                  onClick={() => setRailOpen((o) => !o)}
+                >
+                  <Icon name="menu" />
+                </button>
+              </>
+            }
             composeLabel={t("rail.compose")}
             onCompose={() => {
               setRailOpen(false);

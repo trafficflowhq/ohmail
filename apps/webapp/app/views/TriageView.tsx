@@ -56,15 +56,10 @@ import {
 import { avatarOf, rowStamp, hueOf, resurfaceLabel, rowAddress, senderName, tagsOfMessage } from "../shell/format";
 import { useKeyBindings } from "../shell/keymap";
 import { useZoneNav } from "../shell/zone-nav";
+import { readColumnHidden } from "../shell/narrow";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { TRIAGE_PILES, type TriagePileId } from "../shell/routing";
 
-/** Below this the reading column is `display:none` (app.css), so a tap must open the sheet. */
-function readColumnHidden(): boolean {
-  return (
-    typeof window !== "undefined" && window.matchMedia?.("(max-width: 900px)").matches === true
-  );
-}
 
 /** The pile's own name, for the segment label. */
 const PILE_KEY: Record<TriagePileId, "replyLater" | "setAside" | "resurface"> = {

@@ -259,6 +259,13 @@ export function RailNav({
                 // reads it; it lets an outside surface (the marketing page's embedded demo)
                 // anchor a pointer to a specific entry without depending on label text.
                 data-rail-id={item.id}
+                // The row's key as DATA, invisible everywhere by itself: the Zero layout's
+                // 52px ribbon paints it as the row's face via `content: attr(data-nav-key)`
+                // (zero-layout.css) — the digits ARE this rail's established identity for
+                // the places (the quick-nav grammar), so the ribbon needs no icon set the
+                // paper rail never had. The hover/focus REVEAL above stays JS-owned and
+                // untouched; this attribute renders nothing in any classic layout.
+                data-nav-key={item.navKey ?? item.kbdHint}
                 className={item.id === activeId ? "ritem on" : "ritem"}
                 title={item.title}
                 aria-current={item.id === activeId ? "page" : undefined}

@@ -41,6 +41,7 @@ import { useLoadingGrace } from "../shell/loading-grace";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useZoneNav } from "../shell/zone-nav";
 import { ShortcutHint } from "../shell/ShortcutHint";
+import { readColumnHidden, watchNarrow } from "../shell/narrow";
 /* The reader surfaces' own bound on "still coming" — one mechanism, not a second one shaped like
    it. See {@link useBodyStalled} for why the deadline is derived from the engine's rather than
    picked, and `HeldMail` below for why this pile needs it too. */
@@ -782,15 +783,10 @@ export function ScreenerView({
    * dependency of the body-open effect, and a sampled value left the newly visible preview
    * idle until its stall face appeared (found in the mobile gating).
    */
-  const [narrow, setNarrow] = useState<boolean>(
-    () => typeof window !== "undefined" && window.matchMedia("(max-width: 900px)").matches,
-  );
+  const [narrow, setNarrow] = useState<boolean>(() => readColumnHidden());
   useEffect(() => {
-    const mq = window.matchMedia("(max-width: 900px)");
-    const on = (): void => setNarrow(mq.matches);
-    on();
-    mq.addEventListener?.("change", on);
-    return () => mq.removeEventListener?.("change", on);
+    setNarrow(readColumnHidden());
+    return watchNarrow(setNarrow);
   }, []);
 
   /**
@@ -1118,7 +1114,7 @@ export function ScreenerView({
 
   const selectRow = (id: string) => {
     onSelect(segment, id);
-    if (window.matchMedia("(max-width: 900px)").matches) onFull(true);
+    if (readColumnHidden()) onFull(true);
   };
 
   const row = (x: ScreenerSenderDTO | SpamRow) => {

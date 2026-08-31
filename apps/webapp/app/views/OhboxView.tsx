@@ -22,6 +22,7 @@ import {
 } from "@ohmail/ui";
 import { MarkAllRead } from "../components/MarkAllRead";
 import { ShortcutHint } from "../shell/ShortcutHint";
+import { readColumnHidden } from "../shell/narrow";
 import { groupSection, sendTimeOf, singletonGroup, type OhboxRowGroup } from "./ohbox-groups";
 import { PLACE_LABEL, avatarOf, resurfaceLabel, rowAddress, rowStamp, senderName, sentAvatarOf, sentRowRecipient, tagsOfMessage, hueOf } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
@@ -1165,7 +1166,7 @@ export function OhboxView({
     if (pinnedUnread.current === id) return;
     if (!allRef.current.find((m) => m.id === id)?.unread) return;
     if (typeof window === "undefined" || !window.matchMedia) return;
-    if (window.matchMedia("(max-width: 900px)").matches) return;
+    if (readColumnHidden()) return;
     const timer = window.setTimeout(() => {
       // Through `armRead`, so the row's ink and the verb flip with the debt (see `armedRead`).
       // The render this costs restyles the one row; placement is the session order's and does
@@ -1220,7 +1221,7 @@ export function OhboxView({
     prevReaderId.current = readerId;
     if (!closed) return;
     if (typeof window === "undefined" || !window.matchMedia) return;
-    if (!window.matchMedia("(max-width: 900px)").matches) return;
+    if (!readColumnHidden()) return;
     commitPendingRead();
   }, [readerId, commitPendingRead]);
 
@@ -1761,7 +1762,7 @@ export function OhboxView({
       picked={picked.has(m.id)}
       actions={actions}
       onClick={() => {
-        if (window.matchMedia("(max-width: 900px)").matches) {
+        if (readColumnHidden()) {
           // Mobile: a tap IS the open — there is no reading column to preview into. `open`
           // selects as well as commits, so the cursor lands here exactly once.
           open(m);
@@ -1914,7 +1915,7 @@ export function OhboxView({
         tags={tagsOfMessage(shown, tags).map((tag) => ({ name: tag.name, hue: hueOf(tag) }))}
         picked={g.members.every((m) => picked.has(m.id))}
         onClick={() => {
-          if (window.matchMedia("(max-width: 900px)").matches) {
+          if (readColumnHidden()) {
             open(target);
           } else if (selected != null && g.members.some((m) => m.id === selected.id)) {
             open(target);

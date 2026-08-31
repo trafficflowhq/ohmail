@@ -24,6 +24,9 @@ import { enableDesktopAttachments } from "../../webapp/app/shell/open-attachment
 import { enableExternalLinks, interceptLinkClicks } from "../../webapp/app/shell/open-external";
 import { DesktopLocale } from "./DesktopLocale.js";
 import "../../webapp/app/app.css";
+// After app.css for the webapp door's reason: the Zero layout ladder (data-layout="zero",
+// stamped by this file's boot block below) re-arranges the same shell in this window too.
+import "../../webapp/app/zero-layout.css";
 
 import { bridgeAvailable, connectLocalEngine } from "./bridge-fetch.js";
 import { startOmarchyFeed } from "./omarchy.js";

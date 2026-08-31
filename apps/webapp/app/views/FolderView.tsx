@@ -32,15 +32,10 @@ import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { avatarOf, rowStamp, hueOf, rowAddress, senderName, tagsOfMessage } from "../shell/format";
 import { folderLeafOf, folderParentOf } from "../shell/folders";
 import { useZoneNav } from "../shell/zone-nav";
+import { readColumnHidden } from "../shell/narrow";
 import { useListWindow } from "../shell/list-window";
 import type { OlderMail } from "../shell/older-mail";
 
-/** Below this the reading column is `display:none` (app.css), so a tap must open the sheet. */
-function readColumnHidden(): boolean {
-  return (
-    typeof window !== "undefined" && window.matchMedia?.("(max-width: 900px)").matches === true
-  );
-}
 
 export function FolderView({
   folder,

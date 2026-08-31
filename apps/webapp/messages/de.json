@@ -1228,6 +1228,7 @@
     "tagToggle": "Tag: {name} …",
     "goTag": "Zum Tag: {name}",
     "toggleTheme": "Hell / dunkel wechseln",
+    "cycleLayout": "Anordnung wechseln (Zero / klassisch)",
     "resurfaceSel": "Auswahl wieder auftauchen lassen"
   },
   "dock": {
@@ -2157,6 +2158,7 @@
     "park": "Parken (aus dem Weg, aber weiter da)",
     "resurface": "Später wieder auftauchen lassen",
     "palette": "Befehlspalette",
+    "layout": "Anordnung wechseln (Zero / klassisch)",
     "sheet": "Diese Übersicht",
     "escape": "Schließen, was offen ist",
     "zoneMenu": "Das Menü fokussieren",

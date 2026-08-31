@@ -60,13 +60,8 @@ import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { useListWindow } from "../shell/list-window";
 import { avatarOf, rowStamp, rowAddress, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useZoneNav } from "../shell/zone-nav";
+import { readColumnHidden } from "../shell/narrow";
 
-/** Below this the reading column is `display:none` (app.css), so a tap must open the sheet. */
-function readColumnHidden(): boolean {
-  return (
-    typeof window !== "undefined" && window.matchMedia?.("(max-width: 900px)").matches === true
-  );
-}
 
 export function HistoryView({
   messages,
