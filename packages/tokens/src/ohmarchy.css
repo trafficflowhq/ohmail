@@ -75,7 +75,75 @@
   color-scheme: light;
   --teach: 1;
 }
-[data-face="ohmarchy"][data-theme="dark"]{
+/* nested scheme scopes — a SUBTREE forced light/dark inside an ohmarchy page (the dark
+   viewer's per-message light rendering, showcase panels) must resolve the ohmarchy scheme
+   set, not tokens.css's paper one: face and theme are required on one element by the blocks
+   above, so the descendant forms here keep scheme orthogonal to face (review-caught;
+   OHMARCHY-CONTRACT.md: data-theme keeps meaning "scheme, in either face"). */
+[data-face="ohmarchy"] [data-theme="light"]{
+  --canvas: #f2efe4;
+  --panel: #FFFCF0;
+  --float: #FFFCF0;
+  --ink: #100F0F;
+  --ink2: #383635;
+  --ink3: #5f5e5a;
+  --hair: rgba(16,15,15,0.25);
+  --hair-soft: rgba(16,15,15,0.12);
+  --tint: rgba(16,15,15,0.04);
+  --tint2: rgba(16,15,15,0.08);
+  --accent: #205EA6;
+  --accent-ink: #205EA6;
+  --accent-soft: rgba(32,94,166,0.12);
+  --accent-hair: rgba(32,94,166,0.42);
+  --accent-wash: rgba(32,94,166,0.06);
+  --on-accent: #FFFCF0;
+  --danger: #c74a3f;
+  --focus: #205EA6;
+  --tg-pottery-ink: #2d7b74;
+  --tg-pottery-bg: rgba(58,169,159,0.14);
+  --tg-buch-ink: #69772f;
+  --tg-buch-bg: rgba(135,154,57,0.14);
+  --tg-privat-ink: #aa6225;
+  --tg-privat-bg: rgba(208,119,43,0.14);
+  --tg-olive-ink: #69772f;
+  --tg-olive-bg: rgba(135,154,57,0.14);
+  --tg-verdigris-ink: #2d7b74;
+  --tg-verdigris-bg: rgba(58,169,159,0.14);
+  --tg-denim-ink: #205EA6;
+  --tg-denim-bg: rgba(32,94,166,0.14);
+  --tg-indigo-ink: #205EA6;
+  --tg-indigo-bg: rgba(32,94,166,0.14);
+  --tg-iris-ink: #b25183;
+  --tg-iris-bg: rgba(206,93,151,0.14);
+  --tg-mulberry-ink: #b25183;
+  --tg-mulberry-bg: rgba(206,93,151,0.14);
+  --tg-heather-ink: #c74a3f;
+  --tg-heather-bg: rgba(209,77,65,0.14);
+  --lift-0: 0 0 0 1px rgba(16,15,15,0.4);
+  --lift-1: 0 0 0 2px rgba(89,89,89,0.67);
+  --lift-2: 0 0 0 2px #B7B5AC;
+  --lift-3: 0 0 0 2px #205EA6;
+  --bar-edge: 0 1px 0 0 rgba(16,15,15,0.25);
+  --scrim: rgba(255,252,240,0.5);
+  --sc-fade: linear-gradient(to bottom, transparent, var(--float));
+  --spring: cubic-bezier(0.23,1,0.32,1);
+  --swift: cubic-bezier(0.33,1,0.68,1);
+  --r-ctl: 0;
+  --r-card: 0;
+  --r-overlay: 0;
+  --r-pill: 0;
+  --r-avatar: 0;
+  --focus-w: 2px;
+  --focus-offset: 0px;
+  --gap-tile: 10px;
+  --gap-edge: 10px;
+  --font-ui: 'JetBrainsMono Nerd Font','JetBrains Mono',ui-monospace,'Cascadia Mono',Menlo,Consolas,monospace;
+  --font-size-base: 12px;
+  color-scheme: light;
+  --teach: 1;
+}
+[data-face="ohmarchy"][data-theme="dark"],
+[data-face="ohmarchy"] [data-theme="dark"]{
   --canvas: #13141c;
   --panel: #1a1b26;
   --float: #1a1b26;

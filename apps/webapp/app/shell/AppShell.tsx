@@ -1250,11 +1250,14 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
    */
   const adoptAccountFace = theme.adoptAccountFace;
   const accountThemeFace = consent.themeFace;
-  const consentKnown = consent.known;
+  /* `themeFaceKnown`, NOT `known` (review-caught): the boot cache can make `known` true with
+     the face still resting null, and adopting THAT null would wipe this device's mirror of
+     the account's real answer on every warm boot whose live read is slow. */
+  const themeFaceKnown = consent.themeFaceKnown;
   useEffect(() => {
-    if (!consentKnown) return;
+    if (!themeFaceKnown) return;
     adoptAccountFace(accountThemeFace);
-  }, [adoptAccountFace, accountThemeFace, consentKnown]);
+  }, [adoptAccountFace, accountThemeFace, themeFaceKnown]);
   /**
    * "APPLY FOR ALL DEVICES" — the face's account write, folded to ONE nullable callback for
    * both consumers (the Settings row's scope line and the Option B offer). Null on the demo
@@ -1263,7 +1266,7 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
    * desktop's hosted door) — each null withholds the affordance structurally.
    */
   const applyFaceAllDevices: ApplyFaceAllDevices | null =
-    !demo && consentKnown && consent.setThemeFace !== null ? consent.setThemeFace : null;
+    !demo && themeFaceKnown && consent.setThemeFace !== null ? consent.setThemeFace : null;
   /* The Option B offer's gates (Linux default active, nothing chosen, dismissal) live in the
      hook — see OhmarchyOffer.tsx. */
   const faceOffer = useOhmarchyOffer(applyFaceAllDevices);

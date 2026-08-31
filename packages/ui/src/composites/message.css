@@ -90,8 +90,8 @@
  * panel is cut on one straight line, the reading the stream's card scroll already ships.
  * Guarded structurally by thread-column-shadow.test.ts in the webapp suite. */
 .read-col:has(> .conv){background:none;border-radius:0;box-shadow:none;margin:calc(-1 * var(--gap-edge));padding:var(--gap-edge);
-  -webkit-mask-image:linear-gradient(to right,transparent,#000 16px);
-  mask-image:linear-gradient(to right,transparent,#000 16px)}
+  -webkit-mask-image:linear-gradient(to right,transparent,#000 var(--gap-edge));
+  mask-image:linear-gradient(to right,transparent,#000 var(--gap-edge))}
 /* THE MESSAGE FILLS THE COLUMN EVEN WHEN THE MAIL DOES NOT.
  *
  * A two-line message is a two-line box, so a bar parked at the end of it sits wherever the text

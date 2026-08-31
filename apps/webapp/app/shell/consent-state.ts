@@ -264,6 +264,15 @@ export interface ConsentState {
    * and the worst case of not knowing is the face this device already wears.
    */
   themeFace: "paper" | "ohmarchy" | null;
+  /**
+   * Did {@link themeFace} come from the LIVE wire (or a write's echo)? `signaturesKnown`'s
+   * rule, and here the stake is a WRITE gate (review-caught): the boot cache carries no face,
+   * so `known` alone can be true while `themeFace` is still the resting null — and an
+   * adoption or an "apply for all devices" armed on that state would wipe the device's
+   * mirror of the account's real answer, or offer ohmarchy over an account that explicitly
+   * chose paper, before the live read lands. False means "not yet known", never "none".
+   */
+  themeFaceKnown: boolean;
   /** False until the first answer lands — an onboarding step must not flash before then. */
   known: boolean;
   /**
@@ -373,6 +382,7 @@ const RESTING: ConsentState = {
   // NOTHING FROM AN ACCOUNT — `locale`'s reasoning verbatim: null is the absence of a position
   // and leaves the device's own resolution in charge.
   themeFace: null,
+  themeFaceKnown: false,
   known: false,
   standalone: false,
   cloudClient: false,
@@ -670,6 +680,7 @@ export function useConsentState(
           themeFace: wire.themeFace === "paper" || wire.themeFace === "ohmarchy"
             ? wire.themeFace
             : null,
+          themeFaceKnown: true,
           known: true,
           // Both of these are DERIVED on the way out (see the return) and are written here only
           // because the state object carries them. Nothing may read them off `state`.
@@ -816,7 +827,7 @@ export function useConsentState(
       const at = era.current;
       const res = await write(themeFace);
       const stored = res.themeFace === "paper" || res.themeFace === "ohmarchy" ? res.themeFace : null;
-      applyEcho(at, (prev) => ({ ...prev, themeFace: stored }));
+      applyEcho(at, (prev) => ({ ...prev, themeFace: stored, themeFaceKnown: true }));
       return stored;
     },
     [applyEcho],

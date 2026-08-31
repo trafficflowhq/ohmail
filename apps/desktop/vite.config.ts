@@ -89,6 +89,10 @@ export const SHELL_MESSAGE_NAMESPACES = [
   // guard compares this array against what the sources READ, not against what they display.
   // Omitting it would put `body.loading` in the binary where a sentence belongs.
   "about", "body", "compose", "dock", "ohbox", "palette", "rail", "reads", "receipts",
+  // `ohmarchy` is the Option B offer's line (shell/OhmarchyOffer.tsx) — shared-shell code the
+  // desktop compiles; its gates (Linux device, an account-wide write available) decide whether
+  // it renders, and the census lists what the sources READ, not what they display.
+  "ohmarchy",
   // `attachments` and `mailBody` belong to the two components the reading pane is composed from —
   // the paperclip strip and the sanitized HTML body. They were listed here for two migrations
   // before either component read a catalogue: each rendered from a local `COPY` constant whose

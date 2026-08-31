@@ -36,6 +36,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useTheme, useToast, type FaceName } from "@ohmail/ui";
+import { readOwner } from "./owner-cookie";
 import type { ApplyFaceAllDevices } from "./FaceRow";
 
 /** Device-local dismissal memory. A read failure means "not dismissed", which only re-offers. */
@@ -93,8 +94,14 @@ export function OhmarchyOffer({
         onClick={() => {
           if (saving) return;
           setSaving(true);
+          const owner = readOwner();
           apply("ohmarchy" as FaceName)
             .then((stored) => {
+              /* A resolve that lands after sign-out applies nothing (review-caught): the
+                 sweep cleared the face mirror and the dismissal; recreating either would
+                 hand the next account the departed one's state. The server-side write
+                 stands regardless. */
+              if (readOwner() !== owner) return;
               adoptAccountFace(stored); // the echo, mirrored for the next boot's pre-paint stamp
               onDone();
             })

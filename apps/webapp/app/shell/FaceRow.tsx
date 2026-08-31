@@ -27,9 +27,10 @@
  * real face — `LanguageRow`'s contract.
  */
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { SegmentedControl, SettingsRow, useTheme, useToast, type FaceName } from "@ohmail/ui";
+import { readOwner } from "./owner-cookie";
 
 /** The account write — `useConsentState().setThemeFace`, or null where no wire can store one. */
 export type ApplyFaceAllDevices = (face: FaceName) => Promise<FaceName | null>;
@@ -40,6 +41,11 @@ export function FaceRow({ applyAllDevices }: { applyAllDevices: ApplyFaceAllDevi
   const { face, facePreference, accountFace, setFace, adoptAccountFace } = useTheme();
   /** Local, so a rejection can be reported without any shared flag owning the message. */
   const [saving, setSaving] = useState(false);
+  /* The CURRENT pin, readable at completion time (review-caught): the success handler runs
+     whenever the PATCH resolves, and the closure's `face` is the value at press time — a
+     newer segmented-control choice or a sign-out may have moved the world since. */
+  const pinNow = useRef<FaceName | null>(facePreference);
+  pinNow.current = facePreference;
 
   /* "Applies on all your devices" may only be claimed when the account really governs this
      device: the stored account face matches AND no device pin outranks it. A pin equal to the
@@ -82,14 +88,23 @@ export function FaceRow({ applyAllDevices }: { applyAllDevices: ApplyFaceAllDevi
             onClick={() => {
               if (saving) return;
               setSaving(true);
-              applyAllDevices(face)
+              const submitted = face;
+              const owner = readOwner();
+              applyAllDevices(submitted)
                 .then((stored) => {
+                  /* STALE COMPLETIONS APPLY NOTHING (review-caught). Two ways this resolve
+                     can be late: the person signed out (the sweep already cleared the face
+                     mirror — recreating it would hand the next account the departed one's
+                     answer), or they made a NEWER device choice while the PATCH flew (a
+                     `setFace(null)` now would erase a choice this write knows nothing
+                     about). The write itself happened on the server either way; only this
+                     device's state refuses the echo. */
+                  if (readOwner() !== owner) return;
                   /* The ECHO, then the pin: adopt what the database now holds (also mirrored
-                     for the next boot's pre-paint stamp), and clear the device pin so the
-                     account governs here too. Batched by React, so no intermediate face
-                     flashes. */
+                     for the next boot's pre-paint stamp), and clear the pin so the account
+                     governs here too — but only the pin this press was made under. */
                   adoptAccountFace(stored);
-                  setFace(null);
+                  if (pinNow.current === submitted || pinNow.current === null) setFace(null);
                 })
                 .catch(() => {
                   toast(t("faceFailed"));

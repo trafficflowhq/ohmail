@@ -15,8 +15,11 @@ export function Providers({ children, nonce }: { children: ReactNode; nonce?: st
           (`script-src 'self' 'nonce-…'` — see app/security-headers.ts) an inline
           script without it does not run at all, and the page paints in the wrong
           theme until hydration corrects it. */}
-      <script nonce={nonce} dangerouslySetInnerHTML={{ __html: themeInitScript() }} />
-      <ThemeProvider storageKey="ohmail.theme">
+      <script nonce={nonce} dangerouslySetInnerHTML={{ __html: themeInitScript("ohmail.theme", { faces: true }) }} />
+      {/* `faces` — the paper/ohmarchy axis is ACTIVE on the product door only: this is the
+          host that wired the face controls (Settings → Look, the Option B offer). The
+          landing and the admin mount the same provider and deliberately do not pass it. */}
+      <ThemeProvider storageKey="ohmail.theme" faces>
         <ToastHost>{children}</ToastHost>
       </ThemeProvider>
     </>
