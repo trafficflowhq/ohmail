@@ -99,7 +99,7 @@ export const ohbox: MessageFixture[] = [
     id: "giulia",
     folder: "ohbox",
     from: { name: "Giulia Ferrari", address: "giulia@terracotta-milano.it" },
-    subject: "Re: Glaze order #2214 — arriving early 🎉",
+    subject: "Re: Glaze order #2214 🎉",
     time: "09:12",
     threadCount: 4,
     unread: true,
@@ -128,7 +128,13 @@ export const ohbox: MessageFixture[] = [
     from: { name: "Petra Wyss", address: "petra@makersfest.ch" },
     subject: "Invitation: Tech check — main hall",
     time: "08:39",
-    unread: true,
+    /* READ, deliberately (owner review 2026-08-31): the Ohbox opens with THREE unread rows so
+       the "Earlier" group is on screen without scrolling — the landing demo's two USP callouts
+       point at the group labels, and a fold that hides "Earlier" would have the second callout
+       pointing at nothing. The three that stay unread are giulia (the threaded row — the same
+       review wants a visible thread), petra and ben; this invite, the counter-proposal and the
+       verification code read as this morning's already-handled mail at the top of Earlier. */
+    unread: false,
     /* A NAMELESS text/calendar part — the wire shape Google and Outlook actually send — so the
        demo shows the invite exactly as a live mailbox would: an event card, downloadable as
        invite.ics. The content is served by the fixtures adapter with zero network. */
@@ -164,7 +170,8 @@ export const ohbox: MessageFixture[] = [
     from: { name: "Nadja Lehner", address: "nadja@erdton-atelier.ch" },
     subject: "New time proposed: Glaze evening — planning call",
     time: "08:35",
-    unread: true,
+    /* read — see techcheck's note: the demo keeps three unread rows */
+    unread: false,
     /* An Outlook counter-proposal: METHOD:COUNTER with the original time in X-MS-OLDSTART/END
        and a WINDOWS zone name — the Exchange dialect, VTIMEZONE trap lines included. */
     attachment: {
@@ -215,7 +222,8 @@ export const ohbox: MessageFixture[] = [
     from: { name: "Cinderlock", address: "no-reply@cinderlock.app" },
     subject: "Your verification code",
     time: "08:31",
-    unread: true,
+    /* read — see techcheck's note; a code already used is the natural read state anyway */
+    unread: false,
     snippet: "Your Cinderlock verification code is 481 920. It expires in 10 minutes.",
     body: "Your Cinderlock verification code is 481 920. It expires in 10 minutes.\n\nIf you didn't ask to sign in, you can ignore this message.\n\n— Cinderlock",
     protected: {
@@ -854,7 +862,7 @@ export const search: SearchDemoFixture = {
     {
       who: "Giulia Ferrari",
       where: "Ohbox · 09:12",
-      subject: "Re: Glaze order #2214 — arriving early 🎉",
+      subject: "Re: Glaze order #2214 🎉",
       fuzzyNote: "fuzzy match — “invoice”",
     },
     {
@@ -884,7 +892,7 @@ export const search: SearchDemoFixture = {
 
 export const composeDraft: ComposeDraftFixture = {
   to: { name: "Giulia Ferrari", address: "giulia@terracotta-milano.it" },
-  subject: "Re: Glaze order #2214 — arriving early 🎉",
+  subject: "Re: Glaze order #2214 🎉",
   tagLabel: "AI draft — not sent",
   body: "Buongiorno Giulia, che bella notizia — il 4 agosto va benissimo! La consegna resta all’atelier, come sempre. Verde salvia e bianco opaco: confermati. A presto, Mila",
   grounding:
@@ -937,7 +945,9 @@ export const notificationSettings: NotificationSettingsFixture = {
 /* -------------------------------------------------------------- counts */
 
 export const counts: CountsFixture = {
-  ohboxUnread: 6,
+  /* three, not six, since the 2026-08-31 landing review: see the techcheck fixture's note —
+     the demo's Ohbox must show "Earlier" above the fold, under three unread rows */
+  ohboxUnread: 3,
   /*
    * MAIL FILED IN THE OHBOX FOLDER — thirteen — which is NOT the eleven rows the Ohbox screen
    * shows. The two are different questions and the demo answers both: parking moves nothing on

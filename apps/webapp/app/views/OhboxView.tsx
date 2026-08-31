@@ -2119,13 +2119,14 @@ export function OhboxView({
         {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
         {groupedNew.length > 0 && newTo > newFrom ? (
           <>
-            <ListGroupLabel>{t("newForYou")}</ListGroupLabel>
+            {/* `group`: the landing demo's callout anchors — see ListGroupLabel */}
+            <ListGroupLabel group="new">{t("newForYou")}</ListGroupLabel>
             <ListRows multiSelectable ariaLabel={t("newForYou")}>{groupedNew.slice(newFrom, newTo).map(groupRow)}</ListRows>
           </>
         ) : null}
         {groupedPrev.length > 0 && prevTo > prevFrom ? (
           <>
-            <ListGroupLabel>{t("previouslySeen")}</ListGroupLabel>
+            <ListGroupLabel group="earlier">{t("previouslySeen")}</ListGroupLabel>
             <ListRows multiSelectable ariaLabel={t("previouslySeen")}>{groupedPrev.slice(prevFrom, prevTo).map(groupRow)}</ListRows>
           </>
         ) : null}

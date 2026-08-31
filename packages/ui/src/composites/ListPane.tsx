@@ -87,9 +87,20 @@ export function ListPane({
   );
 }
 
-/** Group label inside a list scroller ("New", "Earlier", "Today"). */
-export function ListGroupLabel({ children }: { children: ReactNode }) {
-  return <div className="grouplabel">{children}</div>;
+/**
+ * Group label inside a list scroller ("New", "Earlier", "Today").
+ *
+ * `group` is an optional, language-independent hook rendered as `data-group` — the same
+ * pattern as `RailNav`'s `data-rail-id` and `Chip`'s `data-chip`: a stable anchor on the
+ * SHIPPED UI that the landing demo's annotations (and tests) can point leaders at without
+ * matching translated text. Purely an attribute; nothing styles or branches on it.
+ */
+export function ListGroupLabel({ children, group }: { children: ReactNode; group?: string }) {
+  return (
+    <div className="grouplabel" data-group={group}>
+      {children}
+    </div>
+  );
 }
 
 /**
