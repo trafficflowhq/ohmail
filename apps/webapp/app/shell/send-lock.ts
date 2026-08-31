@@ -120,9 +120,12 @@ export function sendFingerprint(m: MailSend): string {
  */
 export const SEND_LOCK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
+/** Every owner's lane key starts here. Exported so sign-out can sweep them without respelling it. */
+export const SEND_LOCKS_PREFIX = "ohmail.send.locks.";
+
 /** One key per ACCOUNT, holding every lane — see the header for why it is owner-keyed. */
 export function sendLocksKey(owner: string | null = readOwner()): string {
-  return `ohmail.send.locks.${owner ?? "local"}`;
+  return `${SEND_LOCKS_PREFIX}${owner ?? "local"}`;
 }
 
 function isLock(x: unknown): x is SendLock {

@@ -1,7 +1,11 @@
 import { clearAllMirrors } from "@ohmail/client-engine";
 import { auth } from "./api-client";
-import { clearBootCaches } from "./shell/boot-cache";
+import { clearBootCaches, dropLocalStorageKeys } from "./shell/boot-cache";
+import { COMPOSE_DRAFT_PREFIX, LEGACY_COMPOSE_DRAFT_KEY } from "./shell/compose";
+import { REPLY_DRAFT_PREFIX, REPLY_META_PREFIX } from "./shell/mail-send";
 import { forgetOwner } from "./shell/owner-cookie";
+import { SCREENER_INTENTS_PREFIX } from "./shell/screener-intents";
+import { SEND_LOCKS_PREFIX } from "./shell/send-lock";
 
 /**
  * THE ONE CORRECT WAY TO SIGN OUT OF THE WEB CLIENT.
@@ -55,6 +59,36 @@ export async function signOut(owner?: string): Promise<void> {
     // Cleared by prefix, not by owner — sign-out means this browser forgets, including whatever
     // an earlier account left behind.
     clearBootCaches();
+    // THE DURABLE-DECISION STORES, which are mail and are NOT in the mirror.
+    //
+    // The durability slice moved three user decisions out of memory and onto disk so they
+    // survive a crash — the send lanes, the Screener's intent journal, and the compose scratch
+    // buffer. All three are `localStorage`, all three are owner-keyed, and none of them starts
+    // with the boot-cache prefix, so the sweep above never touched them. This file's own header
+    // claims sign-out "closes the other half — what is left behind at rest", and for these three
+    // it did not: an unfinished message is mail text, readable on a shared machine after the
+    // person signing out believed they had left nothing; a journalled Screener decision would
+    // replay on a later sign-in; a send lane would outlive the session whose key it holds.
+    //
+    // Scoping a key to an account is not by itself what makes sign-out reach it. The compose
+    // scratch was already account-scoped for exactly this purpose, and this sweep was simply
+    // never told about it; the reply buffers are keyed by message id and lane, so they were
+    // never account-scoped at all.
+    //
+    // By prefix and not by owner, for the reason `clearBootCaches` gives: sign-out means this
+    // browser forgets, including whatever an earlier account left behind. The legacy un-owned
+    // compose key goes in the same pass — an exact key is a prefix of itself.
+    dropLocalStorageKeys([
+      SEND_LOCKS_PREFIX,
+      SCREENER_INTENTS_PREFIX,
+      COMPOSE_DRAFT_PREFIX,
+      LEGACY_COMPOSE_DRAFT_KEY,
+      // The reply scratch buffers, which are the same thing one surface along and are WORSE:
+      // keyed by message id and lane only, never by owner, so unlike the compose buffer they
+      // were never account-scoped in the first place. They hold the reply body.
+      REPLY_DRAFT_PREFIX,
+      REPLY_META_PREFIX,
+    ]);
     await clearAllMirrors(owner);
   }
 }

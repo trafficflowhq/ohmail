@@ -89,11 +89,24 @@ export function writeBootCache(scope: string, owner: string, value: unknown): vo
  * is leaving nothing behind.
  */
 export function clearBootCaches(): void {
+  dropLocalStorageKeys([PREFIX]);
+}
+
+/**
+ * Remove every `localStorage` key on this origin matching any of `prefixes`.
+ *
+ * Extracted from {@link clearBootCaches} because sign-out has to sweep MORE than the boot caches
+ * and the sweep is the part nobody should write twice. One pass over the jar for all of them: the
+ * index shifts as keys are removed, so the doomed set is collected before anything is deleted.
+ *
+ * An exact key is a prefix of itself, so a legacy un-owned key is passed here unchanged.
+ */
+export function dropLocalStorageKeys(prefixes: readonly string[]): void {
   try {
     const doomed: string[] = [];
     for (let i = 0; i < window.localStorage.length; i++) {
       const key = window.localStorage.key(i);
-      if (key !== null && key.startsWith(PREFIX)) doomed.push(key);
+      if (key !== null && prefixes.some((p) => key.startsWith(p))) doomed.push(key);
     }
     for (const key of doomed) window.localStorage.removeItem(key);
   } catch {

@@ -150,8 +150,11 @@ export interface ComposePrefill {
  * The legacy key is drained rather than read. Reading it once "to migrate" is exactly the leak
  * — the migrating reader has no way to know whose draft it is.
  */
+/** Every owner's scratch key starts here. Exported so sign-out can sweep them. */
+export const COMPOSE_DRAFT_PREFIX = "ohmail.ui.compose.";
+
 export function composeDraftKey(owner: string | null = readOwner()): string {
-  return `ohmail.ui.compose.${owner ?? "local"}`;
+  return `${COMPOSE_DRAFT_PREFIX}${owner ?? "local"}`;
 }
 
 /** The un-owned key this browser may still hold. Removed on clear, never read. */

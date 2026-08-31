@@ -100,9 +100,12 @@ export interface ScreenerIntent {
  */
 export const INTENT_TTL_MS = 24 * 60 * 60 * 1000;
 
+/** Every owner's journal key starts here. Exported so sign-out can sweep them. */
+export const SCREENER_INTENTS_PREFIX = "ohmail.screener.intents.";
+
 /** One key per ACCOUNT, holding the whole journal — see the header for why it is owner-keyed. */
 export function screenerIntentsKey(owner: string | null = readOwner()): string {
-  return `ohmail.screener.intents.${owner ?? "local"}`;
+  return `${SCREENER_INTENTS_PREFIX}${owner ?? "local"}`;
 }
 
 function isIntent(x: unknown): x is ScreenerIntent {

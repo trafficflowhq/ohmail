@@ -161,7 +161,11 @@ export function sendKeyOf(m: MailSend, surface: "compose" | "inline" = "compose"
  * the editor closed. Keeping the key and the cleanup in one file is also what stops the two
  * from being imported in a cycle.
  */
-export const replyDraftKey = (messageId: string): string => `ohmail.ui.reply:${messageId}`;
+/** Every reply scratch key starts here. Exported so sign-out can sweep them — these hold MAIL
+ * TEXT and, unlike the compose buffer, they are not owner-keyed at all. */
+export const REPLY_DRAFT_PREFIX = "ohmail.ui.reply:";
+
+export const replyDraftKey = (messageId: string): string => `${REPLY_DRAFT_PREFIX}${messageId}`;
 
 /**
  * The buffer HOLDS TWO HALVES NOW, and the key it holds them in did not change.
@@ -220,7 +224,10 @@ export interface ReplyEditorMeta {
   sig?: SignatureState;
 }
 
-export const replyMetaKey = (lane: string): string => `ohmail.ui.replymeta:${lane}`;
+/** Likewise for the reply editor's metadata half. */
+export const REPLY_META_PREFIX = "ohmail.ui.replymeta:";
+
+export const replyMetaKey = (lane: string): string => `${REPLY_META_PREFIX}${lane}`;
 
 export function readReplyMeta(lane: string): ReplyEditorMeta {
   try {
