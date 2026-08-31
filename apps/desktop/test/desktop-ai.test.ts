@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { ThemeProvider } from "@ohmail/ui";
 
 import { clearAiProvider, readAiStatus, saveAiSettings, verifyAiProvider, type LocalAiStatus } from "../src/local-ai.js";
+import { DesktopAiSettings } from "../src/DesktopAiSettings.js";
 import { LocalSuggest } from "../src/local-suggest.js";
 
 /**
@@ -63,6 +64,7 @@ const READY: LocalAiStatus = {
   settings: {
     provider: "ollama",
     anthropic: { classifyModel: "claude-haiku-4-5-20251001", draftModel: "claude-sonnet-5", hasKey: false },
+    openai: { classifyModel: "gpt-4.1-mini", draftModel: "gpt-4.1", hasKey: false },
     ollama: { baseUrl: "http://127.0.0.1:11434", classifyModel: "llama3.2", draftModel: "llama3.2" },
   },
   probe: { ok: true, reason: null, detail: null, models: ["llama3.2:latest"], at: "2026-01-01T00:00:00.000Z" },
@@ -311,5 +313,107 @@ describe("the Screener's suggest control on a standalone install", () => {
     // somebody with a stopped model server gets told their mail is broken.
     expect(el.textContent).toMatch(/did not answer its last verification/);
     expect(el.textContent).toMatch(/Settings, Desktop/);
+  });
+});
+
+/* ── the settings pane, with two hosted vendors sharing one key field ──────────────────── */
+
+describe("the AI settings pane never sends a key to the vendor it was not typed for", () => {
+  /** The pane, mounted on the standalone door with a stand-in engine behind it. */
+  const paneWith = async (
+    status: LocalAiStatus,
+    answer?: (req: Asked) => { status: number; body: string },
+  ): Promise<{ el: HTMLElement; asked: Asked[] }> => {
+    const { asked } = engine(answer ?? (() => ({ status: 200, body: JSON.stringify(status) })));
+    const el = await render(h(DesktopAiSettings, { door: "local" as const }));
+    return { el, asked };
+  };
+
+  const segmentSaying = (el: HTMLElement, text: RegExp): HTMLElement | undefined =>
+    [...el.querySelectorAll("button, [role='radio'], label")]
+      .find((b) => text.test(b.textContent ?? "")) as HTMLElement | undefined;
+
+  /**
+   * THE FINDING THIS TEST EXISTS FOR.
+   *
+   * One key field serves both hosted vendors, because only one vendor's block is ever on screen.
+   * That makes the field's contents outlive the choice that framed them: paste an Anthropic key,
+   * switch the control to OpenAI, press Save, and a live Anthropic credential is sealed into the
+   * OpenAI block and then sent to `api.openai.com` by the verification the write triggers.
+   *
+   * The ENGINE cannot catch this — it receives a well-formed write naming OpenAI and carrying a
+   * key, which is byte-for-byte what a person legitimately choosing OpenAI sends. So the guard has
+   * to be here, and so does the test.
+   */
+  it("discards a typed key when the vendor is switched before saving", async () => {
+    const key = "this-is-not-a-real-api-key-0000";
+    const { el, asked } = await paneWith(UNSET);
+
+    const field = el.querySelector("#ai-key") as HTMLInputElement | null;
+    // Anthropic is the default hosted choice; the field must be on screen to type into.
+    const toAnthropic = segmentSaying(el, /Anthropic/);
+    await act(async () => { toAnthropic?.click(); });
+    const keyField = (el.querySelector("#ai-key") ?? field) as HTMLInputElement;
+    expect(keyField, "the key field must be rendered for a hosted vendor").toBeTruthy();
+
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(keyField, key);
+      keyField.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    // …and now change your mind, without clearing the field yourself.
+    const toOpenAi = segmentSaying(el, /OpenAI/);
+    expect(toOpenAi, "the OpenAI choice must be offered").toBeTruthy();
+    await act(async () => { toOpenAi!.click(); });
+
+    asked.length = 0;
+    const save = buttonSaying(el, /^Save/);
+    await act(async () => { save?.click(); });
+    for (let i = 0; i < 20; i++) await act(async () => { await new Promise((r) => setTimeout(r, 2)); });
+
+    const puts = asked.filter((a) => a.command === "engine_request" && a.method === "PUT");
+    expect(puts.length, "Save must have written once").toBeGreaterThan(0);
+    // The whole claim: the Anthropic key reaches NEITHER block on a write that names OpenAI.
+    for (const p of puts) {
+      expect(p.body, "a key typed for one vendor was submitted under another").not.toContain(key);
+    }
+  });
+
+  /**
+   * A stored key must always have a way out.
+   *
+   * Selecting None clears the provider and KEEPS the sealed envelope, deliberately — switching away
+   * is not an instruction to forget a credential. That makes this row the only route to the
+   * deletion, and while its condition named the Anthropic key alone, a stored OpenAI key with no
+   * provider selected had none: the row disappeared, and reaching it again meant re-selecting the
+   * vendor whose key you were trying to remove.
+   */
+  it("offers Remove when only the OpenAI key is stored and no provider is chosen", async () => {
+    const storedOpenAiOnly: LocalAiStatus = {
+      ...UNSET,
+      settings: {
+        ...UNSET.settings,
+        provider: null,
+        openai: { classifyModel: "gpt-4.1-mini", draftModel: "gpt-4.1", hasKey: true },
+      },
+    };
+    const { el } = await paneWith(storedOpenAiOnly);
+    expect(buttonSaying(el, /Remove/), "a stored key with no provider had no route to deletion")
+      .toBeTruthy();
+  });
+
+  it("still offers Remove for a stored Anthropic key, and none when nothing is stored", async () => {
+    const anthropicOnly: LocalAiStatus = {
+      ...UNSET,
+      settings: {
+        ...UNSET.settings,
+        provider: null,
+        anthropic: { classifyModel: "claude-haiku-4-5-20251001", draftModel: "claude-sonnet-5", hasKey: true },
+      },
+    };
+    expect(buttonSaying((await paneWith(anthropicOnly)).el, /Remove/)).toBeTruthy();
+    // …and the negative control, so the two above are not passing on a row that is always there.
+    expect(buttonSaying((await paneWith(UNSET)).el, /Remove/)).toBeFalsy();
   });
 });

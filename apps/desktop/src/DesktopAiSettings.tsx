@@ -294,7 +294,23 @@ export function DesktopAiSettings({
           <SegmentedControl
             options={CHOICES}
             value={draft.choice}
-            onChange={(choice) => setDraft({ ...draft, choice })}
+            /**
+             * CHANGING THE VENDOR DISCARDS ANYTHING TYPED IN THE KEY FIELD.
+             *
+             * There is one key field and it is shared by both hosted vendors, so without this the
+             * field's contents outlive the choice that framed them: paste an Anthropic key, switch
+             * the control to OpenAI, press Save, and a live Anthropic credential is sealed into the
+             * OpenAI block and then sent to `api.openai.com` by the verification that follows. The
+             * engine cannot catch it — it receives a well-formed write naming OpenAI, which is
+             * exactly what a person choosing OpenAI would send.
+             *
+             * So the field is cleared here, where the framing changes. A key is only ever submitted
+             * for the vendor whose block was on screen when it was typed.
+             */
+            onChange={(choice) => {
+              setDraft({ ...draft, choice });
+              setApiKey("");
+            }}
             ariaLabel="Where the model comes from"
           />
         }
@@ -417,10 +433,20 @@ export function DesktopAiSettings({
         }
       />
 
-      {status.provider || status.settings.anthropic.hasKey ? (
+      {/*
+        * OFFERED WHENEVER ANYTHING IS STORED — a provider, or EITHER vendor's key.
+        *
+        * A key outlives the choice that saved it: selecting None clears the provider and keeps the
+        * sealed envelope, which is deliberate (switching away is not an instruction to forget a
+        * credential). But that makes the row's condition the only way to reach the deletion, and
+        * while it named the Anthropic key alone a stored OpenAI key with no provider selected had
+        * no path to removal at all — the row vanished, and getting it back meant re-selecting
+        * OpenAI and contacting the vendor. Both keys are named here for that reason.
+        */}
+      {status.provider || status.settings.anthropic.hasKey || status.settings.openai.hasKey ? (
         <SettingsRow
           label="Remove"
-          description="Forgets the provider and the stored key. Nothing about your mail changes."
+          description="Forgets the provider and every stored key. Nothing about your mail changes."
           control={
             <Button variant="ghost" className="danger" onClick={() => void act("clearing", clearAiProvider)} disabled={working}>
               {busy === "clearing" ? "Removing…" : "Remove"}

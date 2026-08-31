@@ -83,6 +83,32 @@ function statusFailure(status: number): ProbeFailure {
 }
 
 /**
+ * MODELS THIS ACCOUNT CAN REACH THAT CANNOT ANSWER A CHAT REQUEST.
+ *
+ * `GET /v1/models` on this vendor lists the WHOLE catalogue the key can see — embeddings,
+ * speech, transcription, images, moderation — not just the ones `/v1/chat/completions` accepts.
+ * Anthropic's list happens to be all chat models, so the provider next door never had to know
+ * this, and copying its probe verbatim produced a verification that answered "working" for
+ * `text-embedding-3-small`: both GET requests succeed, the pane says available, the model picker
+ * offers it, and then every classify and every draft fails with a 400. A green that is wrong in
+ * the one direction a verification exists to prevent.
+ *
+ * ── A NAME TEST, AND WHY IT IS NOT A CAPABILITY TEST ────────────────────────────────────────
+ *
+ * The API exposes no capability field: `GET /v1/models/{id}` answers `{id, object, created,
+ * owned_by}` and says nothing about which endpoints accept it. The only free check available is
+ * the name, so that is what this is — deliberately narrow, matching the families that are
+ * unambiguously not chat models, and never a list of the ones that ARE. An allow-list would go
+ * stale the day the vendor ships a new model and would refuse a name that works, which is the
+ * worse failure: this app must not be the reason a valid model is rejected.
+ *
+ * So it catches the realistic mistake — somebody picking an embedding model out of the picker —
+ * and lets an unrecognised name through to be judged by the endpoint itself.
+ */
+export const NOT_CHAT_MODELS =
+  /^(?:text-)?(?:embedding|moderation|omni-moderation|whisper|tts|dall-e|gpt-image|sora|davinci|babbage)\b/i;
+
+/**
  * The JSON text a chat completion carries.
  *
  * `choices[0].message.content` is the whole of it on this API — there is no content-block array to
@@ -275,13 +301,27 @@ export function openaiTransport(opts: OpenAiTransportOptions): AiTransport {
         }
         const body = (await res.json()) as { data?: Array<{ id?: unknown }> };
         models = Array.isArray(body.data)
-          ? body.data.map((m) => m.id).filter((id): id is string => typeof id === "string")
+          ? body.data
+              .map((m) => m.id)
+              .filter((id): id is string => typeof id === "string")
+              // The picker offers what could actually answer. See NOT_CHAT_MODELS.
+              .filter((id) => !NOT_CHAT_MODELS.test(id))
           : [];
       } catch (err) {
         return { ok: false, reason: failureOf(err), detail: null, models: [] };
       }
 
       for (const model of new Set([opts.classifyModel, opts.draftModel])) {
+        // Checked BEFORE the round trip: this one is answerable from the name alone, and a
+        // request that would succeed and still leave the model unusable is worth not making.
+        if (NOT_CHAT_MODELS.test(model)) {
+          return {
+            ok: false,
+            reason: "model_absent",
+            detail: `"${model}" is not a chat model, so it cannot answer suggestions or drafts`,
+            models,
+          };
+        }
         try {
           const res = await fetchWithDeadline(
             opts.fetchImpl,
