@@ -773,6 +773,20 @@ export { STALE_RESUME_MS, BACKLOG_PAGE_LIMIT } from "@trafficflow/core/drain-pol
 export const LAST_DRAIN_AT_META = "lastDrainAt";
 
 /**
+ * WHICH SNAPSHOT'S ROWS THE MIRROR IS HOLDING — the durable half of the abandoned-prefix sweep.
+ *
+ * `GET /sync/snapshot` stamps every row it emits with the SAME `asOfSeq`, and
+ * {@link OhmailEngine.runSnapshot} commits the cursor only with the LAST page. So a bootstrap
+ * interrupted mid-stream leaves the mirror at cursor "0" holding a PREFIX of a snapshot taken at
+ * some point in the past, and this key is where that point is written down — durably, before the
+ * first row of the attempt lands, because the alternative is a variable in one process's memory
+ * and a crash is precisely the case that matters.
+ *
+ * See {@link OhmailEngine.runSnapshot} for what the next attempt does with it.
+ */
+export const SNAPSHOT_PREFIX_SEQ_META = "snapshotPrefixSeq";
+
+/**
  * THE FRESHNESS CONTRACT'S THREE STATES, and the value a surface renders — re-exported from
  * `@trafficflow/core/drain-policy`, where the derivation that produces them lives beside them.
  *
@@ -2024,6 +2038,13 @@ export class OhmailEngine {
    * or unreachable still rejects the drain a moment later, through the path that has always
    * reported it.
    *
+   * ## AND AN ABANDONED ATTEMPT'S ROWS DO NOT SURVIVE INTO THE NEXT ONE
+   *
+   * See {@link OhmailEngine.claimSnapshotPrefix}. A mid-stream failure leaves rows at the OLD
+   * `asOfSeq` in the mirror; a later attempt reads at a NEWER one and cannot mention anything the
+   * server deleted in between, so without the sweep those rows would ride into a completed
+   * bootstrap and the cursor would then commit PAST their tombstones.
+   *
    * A failure on a LATER page is different in kind and is rethrown. Rows carrying `seq ===
    * asOfSeq` are already in the mirror, and `since=0` over them would be silently WRONG: the seq
    * guard drops every replayed change at or below `asOfSeq`, so the pages the snapshot had not
@@ -2032,6 +2053,70 @@ export class OhmailEngine {
    * next drain re-snapshots from page 1 — and if the route really has gone, that page-1 attempt
    * takes the fallback above.
    */
+  /**
+   * CLAIM THIS SNAPSHOT'S SEQ, AND SWEEP AN EARLIER ATTEMPT'S ROWS BEFORE WRITING OVER THEM.
+   *
+   * ── THE DEFECT: A SNAPSHOT SAYS NOTHING ABOUT WHAT IT OMITS ──────────────────────────────
+   *
+   * A cold bootstrap that fails mid-stream is documented above as safe, and for its own rows it
+   * is: they carry `seq === asOfSeq`, the cursor stays "0", and a re-snapshot converges. The
+   * argument has one hole, and it is about the rows the SECOND snapshot does not mention.
+   *
+   *   1. attempt A reads at `asOfSeq` 100 and applies pages 1…3. Message M is in page 2, so the
+   *      mirror holds it at seq 100. Page 4 fails and is rethrown; the cursor is still "0".
+   *   2. the user deletes M — or the provider expunges it — and the log records that at seq 150.
+   *   3. attempt B reads at `asOfSeq` 200. A snapshot is a statement of LIVE state, so M is
+   *      simply absent from it; nothing in B refers to M at all. B completes and its last page
+   *      commits the cursor at 200.
+   *
+   * M is now in the mirror for ever: the row that carries it was never overwritten, and the
+   * `delete` change that would remove it sits at 150, below the cursor the client just adopted.
+   * `/sync` sends a delta once. **Deleted mail comes back and stays.** It is the same class as
+   * the persistence contract in `store.ts` — a cursor advancing on something that is not a
+   * fact — with the falsified fact being "the rows on disk belong to the snapshot the cursor
+   * names".
+   *
+   * ── THE FIX, AND WHY THE PREDICATE IS THE SEQ ────────────────────────────────────────────
+   *
+   * Every row a snapshot emits carries that snapshot's `asOfSeq`, so ONE seq value names ONE
+   * attempt's output exactly. The seq of the attempt whose prefix is on disk is written to
+   * {@link SNAPSHOT_PREFIX_SEQ_META} BEFORE the first row of that attempt is applied, and an
+   * attempt that finds a DIFFERENT seq there sweeps those records out first
+   * ({@link MirrorStore.pruneBySeq}) — a hard delete, so anything the new snapshot does still
+   * carry is simply re-materialized by the page that follows.
+   *
+   * The alternative — remembering the applied ids in a field — is the defect in a different
+   * shape: the whole failure is a process that stopped, and a list in that process's memory
+   * stops with it.
+   *
+   * **`pruneBySeq` refuses seq 0**, which is what protects the durable outbox and the hydrated
+   * bodies: they are client-local records and live there by construction. An account whose log is
+   * empty answers `asOfSeq: 0` and is a no-op on both halves, correctly — there is nothing to
+   * sweep and nothing to claim.
+   *
+   * ## THE MARKER IS NOT CLEARED WHEN THE SNAPSHOT COMPLETES, AND THAT IS DELIBERATE
+   *
+   * After the last page the mirror holds the WHOLE snapshot at that seq, so the key is a true
+   * statement, not a leftover. It is also unreadable from anywhere else: this method is the only
+   * reader, `runSnapshot` is the only caller, and the drain reaches it only at cursor "0" — a
+   * state a completed bootstrap can return to only through `resetForBootstrap`, which clears meta
+   * along with everything else. Clearing it would buy one extra flush on every cold boot and
+   * close no window.
+   */
+  private async claimSnapshotPrefix(asOfSeq: number): Promise<void> {
+    const prior = this.store.getMeta<number>(SNAPSHOT_PREFIX_SEQ_META);
+    if (typeof prior === "number" && prior !== asOfSeq) {
+      // The prefix belongs to a snapshot taken at another point. It cannot be reconciled with
+      // this one — a snapshot says nothing about what it omits — so it goes before this attempt
+      // writes a single row over it.
+      if (await this.store.pruneBySeq(prior)) this.notify();
+    }
+    // DURABLE BEFORE THE FIRST ROW, for the reason the whole class exists: a kill between this
+    // write and the page's must leave a marker that names an attempt with no rows (harmless — the
+    // sweep finds nothing), never rows with no marker (the defect above, unrecoverable).
+    await this.store.setMeta(SNAPSHOT_PREFIX_SEQ_META, asOfSeq);
+  }
+
   private async runSnapshot(): Promise<void> {
     const snapshot = this.snapshotFn;
     if (!snapshot || this.snapshotUnavailable) return;
@@ -2046,6 +2131,7 @@ export class OhmailEngine {
         this.snapshotUnavailable = true;
         return; // nothing was written; `since=0` takes over
       }
+      if (!applied) await this.claimSnapshotPrefix(page.asOfSeq);
       const last = page.nextCursor == null || page.nextCursor === "";
       if (last) {
         // Rows + cursor in ONE flush. The buckets are a formality: `flattenResponse` concatenates

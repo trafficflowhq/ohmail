@@ -133,7 +133,10 @@ export {
 
 // Apply core (the convergence oracle) + stores.
 export { applyToRecords, flattenResponse, maxSeqOf, recordKey, type MirrorRecord } from "./apply.js";
-export { BaseMirrorStore, MemoryMirrorStore, type EntityReader, type MirrorStore } from "./store.js";
+export {
+  BaseMirrorStore, MemoryMirrorStore, MirrorGenerationChanged,
+  type EntityReader, type MirrorStore,
+} from "./store.js";
 export {
   IndexedDbMirrorStore,
   LEGACY_MIRROR_DB,
@@ -269,6 +272,7 @@ export {
   STALE_RESUME_MS,
   BACKLOG_PAGE_LIMIT,
   LAST_DRAIN_AT_META,
+  SNAPSHOT_PREFIX_SEQ_META,
   // The Freshness Contract's three states and the engine's one derivation of them — surfaces
   // render `engine.freshness()`, never a re-derivation from meta (INSTANT-ARCH §6.6).
   type FreshnessState,
