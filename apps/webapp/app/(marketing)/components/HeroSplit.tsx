@@ -102,6 +102,7 @@ export function HeroSplit() {
           height={900}
           alt={t("splitAltPaper")}
           decoding="async"
+          loading="lazy"
         />
         <img
           className="l-hsplit-img is-dark"
@@ -110,6 +111,7 @@ export function HeroSplit() {
           height={900}
           alt={t("splitAltPaper")}
           decoding="async"
+          loading="lazy"
         />
         {/* the ohmarchy layer, clipped along the slanted cut */}
         <div className="l-hsplit-b" aria-hidden={false}>
@@ -120,6 +122,7 @@ export function HeroSplit() {
             height={900}
             alt={t("splitAltOhmarchy")}
             decoding="async"
+          loading="lazy"
           />
           <img
             className="l-hsplit-img is-dark"
@@ -128,6 +131,7 @@ export function HeroSplit() {
             height={900}
             alt={t("splitAltOhmarchy")}
             decoding="async"
+          loading="lazy"
           />
         </div>
         {/* the divider: a drawn line plus the one focusable control */}

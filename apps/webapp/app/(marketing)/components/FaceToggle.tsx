@@ -30,9 +30,29 @@ import { useTheme } from "@ohmail/ui";
  */
 export function FaceToggle() {
   const t = useTranslations("face");
-  const { face, facePreference, accountFace, linuxDevice, setFace } = useTheme();
+  const { face, facePreference, accountFace, linuxDevice, setFace, adoptAccountFace } =
+    useTheme();
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+
+  /* The demo iframe shares this origin, and its own Settings → Look writes the same
+     storage keys (review-caught): a face changed INSIDE the demo left the page and this
+     toggle on the old face until reload. A write from another document fires `storage`
+     here, so the choice is relayed into the ONE provider — which stays the only stamp
+     writer; this is propagation of a persisted choice, not a second machinery. A
+     same-document write fires no storage event, so the relay cannot loop. */
+  useEffect(() => {
+    const isFace = (v: string | null): v is "paper" | "ohmarchy" =>
+      v === "paper" || v === "ohmarchy";
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "ohmail.face") setFace(isFace(e.newValue) ? e.newValue : null);
+      else if (e.key === "ohmail.face.account") {
+        adoptAccountFace(isFace(e.newValue) ? e.newValue : null);
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [setFace, adoptAccountFace]);
 
   /* Auto-flip = detection chose, nobody did: ohmarchy on a Linux device with no device
      pin and no account echo. The wink is a label on that decision, so it disappears the

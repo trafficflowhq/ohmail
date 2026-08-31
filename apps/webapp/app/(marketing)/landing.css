@@ -618,7 +618,11 @@ a.btn {
   background: var(--canvas);
   overflow: clip;
   cursor: ew-resize;
-  touch-action: none; /* the drag IS the gesture here — never a scroll */
+  /* pan-y, NOT none (review-caught): the figure is nearly full-width, and with `none` a
+     swipe that merely STARTS here cannot scroll the page — a scroll trap the height of
+     the hero on every phone. Vertical panning stays the browser's; a horizontal drag
+     still reaches the pointer handlers, which is the only gesture the divider needs. */
+  touch-action: pan-y;
   user-select: none;
   -webkit-user-select: none;
 }

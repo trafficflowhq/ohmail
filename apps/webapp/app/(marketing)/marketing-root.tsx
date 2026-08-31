@@ -167,8 +167,12 @@ const THEME_BOOT =
      word boundary in this template literal into a literal backspace byte (0x08) in the
      served HTML, which silently broke the whole regex. `(?![a-z])` is the same trailing
      boundary with no escape character in it. */
+  /* ONE-SHOT (review-caught): the fragment is consumed — pin written, hash stripped —
+     or a reload would replay the link's choice OVER a newer one the visitor made with
+     the toggle, breaking "an explicit prior choice always wins". */
   `var m=/[#&]face=(paper|ohmarchy)(?![a-z])/.exec(location.hash||"");var f=m?m[1]:null;` +
-  `if(f){try{localStorage.setItem("ohmail.face",f)}catch(e){}}` +
+  `if(f){try{localStorage.setItem("ohmail.face",f)}catch(e){}` +
+  `try{history.replaceState(null,"",location.pathname+location.search)}catch(e){}}` +
   `if(f!=="paper"&&f!=="ohmarchy"){try{f=localStorage.getItem("ohmail.face")}catch(e){}}` +
   `if(f!=="paper"&&f!=="ohmarchy"){try{f=localStorage.getItem("ohmail.face.account")}catch(e){}}` +
   `if(f!=="paper"&&f!=="ohmarchy")f=(/Linux/.test(navigator.platform||"")&&!/Android|CrOS/.test(navigator.userAgent||""))?"ohmarchy":"paper";` +

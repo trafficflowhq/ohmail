@@ -55,3 +55,21 @@
 [data-face="ohmarchy"] .l-nav {
   box-shadow: var(--bar-edge);
 }
+
+/* The bar's utility row, half a step down in mono: 13.5px mono runs ~15%
+   wider than the paper stack and the German bar ("Selbst hosten", "Demo
+   ausprobieren") started wrapping mid-label at desktop widths. 12.5px and
+   a slightly tighter gap ramp put the wrap point back where paper's is —
+   measured across 770–1440 on /de. */
+[data-face="ohmarchy"] .l-nav-inner {
+  gap: clamp(10px, 2vw, 22px);
+}
+[data-face="ohmarchy"] .l-nav-links {
+  gap: clamp(8px, 1.4vw, 18px);
+}
+[data-face="ohmarchy"] .l-nav-links a,
+[data-face="ohmarchy"] .l-nav-demo,
+[data-face="ohmarchy"] .l-nav-signin,
+[data-face="ohmarchy"] .l-nav-github {
+  font-size: 12.5px;
+}

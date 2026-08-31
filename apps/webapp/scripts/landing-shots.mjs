@@ -11,7 +11,8 @@
  *
  * Usage (from the repository root):
  *   pnpm -F @ohmail/webapp build && (pnpm -F @ohmail/webapp start &)
- *   node apps/webapp/scripts/landing-shots.mjs [baseUrl]     # default http://localhost:3000
+ *   node apps/webapp/scripts/landing-shots.mjs [baseUrl]     # default http://localhost:3001
+ *                                                            #   (the webapp's own `start` port)
  *   node apps/webapp/scripts/landing-shots.mjs --faces paper # also re-shoot the paper set
  *
  * What it shoots (into apps/webapp/public/landing/):
@@ -38,9 +39,28 @@ import { chromium } from "@playwright/test";
 const here = (rel) => fileURLToPath(new URL(rel, import.meta.url));
 const OUT = here("../public/landing");
 
+/* Argument parsing that survives its own documentation (review-caught): `--faces paper`
+   must not read `paper` as the baseUrl, and the default port is the one the webapp's own
+   `start` script serves (package.json: `next start -p 3001`). */
 const args = process.argv.slice(2);
-const baseUrl = args.find((a) => !a.startsWith("--")) ?? "http://localhost:3000";
-const alsoPaperStills = args.includes("--faces") && args[args.indexOf("--faces") + 1] === "paper";
+let baseUrl = "http://localhost:3001";
+let alsoPaperStills = false;
+for (let i = 0; i < args.length; i += 1) {
+  const a = args[i];
+  if (a === "--faces") {
+    if (args[i + 1] !== "paper") {
+      console.error(`landing-shots: unknown --faces value "${args[i + 1] ?? ""}" (only: paper)`);
+      process.exit(2);
+    }
+    alsoPaperStills = true;
+    i += 1;
+  } else if (a.startsWith("--")) {
+    console.error(`landing-shots: unknown flag ${a}`);
+    process.exit(2);
+  } else {
+    baseUrl = a;
+  }
+}
 
 /** viewport of the hero captures — 16:10, the demo frame's own aspect */
 const HERO = { width: 1440, height: 900 };
