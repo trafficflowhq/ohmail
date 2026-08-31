@@ -635,7 +635,7 @@ export async function materializeSettings(db: Db, accountId: string, id: string)
     if (b.at !== null) off[b.id] = b.at.toISOString();
   }
   // THE PER-MAILBOX SIGNATURES (mail 0075) ARE DELIBERATELY NOT ON THIS ENTITY, and the
-  // absence is a bound, not an omission (review round 1). Every signature write appends its
+  // absence is a bound, not an omission. Every signature write appends its
   // own settings change row, and this materializer runs once PER ROW with no compaction — so
   // a batch of N signature writes would repeat the account's ENTIRE signature map N times in
   // the next delta (N mailboxes at the 10 000-character ceiling is megabytes of repetition).

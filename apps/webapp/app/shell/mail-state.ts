@@ -1179,7 +1179,7 @@ export interface MailStateInputs {
    * It exists for exactly one reader: the `settled` wrapper. Settled is a statement about the
    * mirror ON SCREEN — the window engine's own in-memory store, which can be mid-first-snapshot
    * and empty while the sidecar's mirror is complete — so upstream freshness must not settle a
-   * pane the rendered store has not populated. Review round 2's finding.
+   * pane the rendered store has not populated.
    */
   engineFreshness: { state: "unknown" | "stale" | "current"; asOf: string | null };
   /**

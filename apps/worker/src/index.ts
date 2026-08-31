@@ -1926,7 +1926,7 @@ export async function startWorkerWithLock(
                * `examinedAll` is true precisely when a WHOLE scan — top to end, however many
                * cycles it took — moved nothing. That is what lets `sync.ts` retire the command
                * over a pile the server refuses outright, without ever walking more than one
-               * window inside one cycle (review rounds 3 and 4).
+               * window inside one cycle.
                */
               const res = await junkSweepPass({
                 db: db as unknown as Tx, repo: fencedRepo, adapter: attachedAdapter,
@@ -3041,7 +3041,7 @@ export async function startWorkerWithLock(
             // upgrade's headroom (or a downgrade's new ceiling) applies without a re-attach.
             storageCap: await storageCapFor(rt.accountId),
             // The routing half of the organizer-profile hold (TAKEOVER-RESCREEN), EVALUATED
-            // from the current facts at every cycle edge — never cached: the review rounds
+            // from the current facts at every cycle edge — never cached: the defects
             // measured that any arm/release choreography over a folder, a store and a
             // resolutions table that all move independently has a mirror-image race for every
             // ordering. `importDecisionOpenNow` reads what stands NOW (the folder verdict on a

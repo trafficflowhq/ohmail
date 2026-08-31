@@ -104,7 +104,7 @@ export class TriageService {
         // `setAt` REFRESHES with every transition: it is "when THIS state was set", and the
         // re-homing predicate below compares reading stamps against it — a second park that
         // kept the first cycle's instant would call a stamp from between the cycles "newer
-        // than the pile entry" and skip the re-homing (review round). The overlay has always
+        // than the pile entry" and skip the re-homing. The overlay has always
         // written a fresh `setAt` per transition; this makes the server agree. The one writer
         // that deliberately PRESERVES `setAt` is `spendResurface` — a release, not a
         // transition into a state — on both sides of the wire.
@@ -143,7 +143,7 @@ export class TriageService {
         && ["reply_later", "set_aside", "bubbled_up", "muted"].includes(prior.state);
       if (b.state === "none" && LEFT_PILE) {
         /**
-         * The scopes live IN the row predicate, atomically (review round on this commit):
+         * The scopes live IN the row predicate, atomically:
          *  · `unread = false` — an unread row returns to "New for you"; a raced mark-unread
          *    must not leave `unread = true` beside a fresh stamp;
          *  · `date is not null` — a dateless row KEEPS whatever stamp it has rather than

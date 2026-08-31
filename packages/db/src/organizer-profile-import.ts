@@ -99,8 +99,8 @@ export async function latestProfileFoundMarker(
   };
   /** Lapse subjects seen while walking newest→oldest; a held marker matching one is closed.
    *
-   * A SAME-SUBJECT re-ask closed by a stale lapse is the accepted residual here (review round
-   * 12 raised the generation question, round 13 pressed it): a document that vanished and
+   * A SAME-SUBJECT re-ask closed by a stale lapse is the accepted residual here, and the
+   * generation question behind it was pressed hard: a document that vanished and
    * reappeared BYTE-IDENTICALLY across a handoff, with the old process's lapse landing after
    * the successor's marker, reads as closed. It SELF-HEALS: the successor's in-memory hold
    * keeps routing safe regardless, and the next preflight of any organizer re-arms and writes

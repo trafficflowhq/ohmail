@@ -98,7 +98,7 @@ function escapeHtml(s: string): string {
  * does not have; a blank line in the stored text becomes two `<br>`s, which is the same
  * vertical gap the plain half's newlines carry.
  *
- * ── WHY THE NO-BREAK SPACES AND THE TAB STOPS (review rounds 1–2) ────────────────────────
+ * ── WHY THE NO-BREAK SPACES AND THE TAB STOPS ─────────────────────────────────────
  *
  * Ordinary paragraph text collapses leading and repeated spaces, and the server's html→text
  * derivation used to collapse them the same way — so a signature using indentation or aligned

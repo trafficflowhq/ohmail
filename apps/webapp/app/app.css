@@ -3746,7 +3746,7 @@ textarea.c-input:read-only {
    replaces the silhouette IN PLACE — same columns, same panels, same row grid — so the arrival
    of the real shell is a fill-in, not a re-layout.
 
-   THE BASE BAR IS DECLARED FIRST, DELIBERATELY (review round): every shaped bar carries
+   THE BASE BAR IS DECLARED FIRST, DELIBERATELY: every shaped bar carries
    `.boot-sk-bar` plus a modifier at equal specificity, so source order IS the cascade — a base
    rule declared after the modifiers silently flattened the wordmark, the title and the time
    stub to the base 9px/tint2. Any new modifier goes BELOW this paragraph. */
@@ -3802,7 +3802,7 @@ textarea.c-input:read-only {
 .boot-sk-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--tint2); flex: none;
   animation: boot-sk-breathe 2s var(--swift) infinite; }
 /* The NARROW shell's topbar, as shape — `.topbar` at ≤900px: 12/16/8 padding, the wordmark
-   left, one `.tb-btn` capsule right. Hidden wide, where no topbar exists (review round: without
+   left, one `.tb-btn` capsule right. Hidden wide, where no topbar exists (without
    it, a long narrow boot ended with a topbar suddenly appearing and every row shifting down). */
 .boot-sk-topbar { display: none; }
 /* The list column. Bare `.boot-sk-list` is the in-list variant (rows only, inside a REAL

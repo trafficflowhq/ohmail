@@ -620,7 +620,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * write and no connection flip to re-derive the world: a phone left open past the staleness
    * threshold would render stale mail unlabeled for ever off a memo whose deps never move.
    * The beat below is bumped by the post-memo watcher whenever the engine's live verdict
-   * differs from what the world actually RENDERED — see it for the three review rounds that
+   * differs from what the world actually RENDERED — see it for the three defects that
    * shaped the comparison.
    */
   const [freshBeat, setFreshBeat] = useState(0);
@@ -724,7 +724,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * THE FRESHNESS WATCHER — the clock's other half, AFTER the memo because its sentinel IS the
    * memo's own output. It compares what the engine would say now against what the world
    * rendered (`boot.staleAsOf`), at arm time and then each minute, and bumps `freshBeat` only
-   * on a difference. Three review rounds shaped this exact form:
+   * on a difference. Three defects shaped this exact form:
    *
    *  · round 2 — no formatted-label ambiguity is possible: both sides of the comparison come
    *    from the same derivation, so "a different stamp that happens to format identically"

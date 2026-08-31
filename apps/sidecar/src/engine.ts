@@ -1128,17 +1128,29 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * ── THE DELETE AND ITS PROOF ARE ONE TRANSACTION, AND THE PROOF IS A READ ─────────────
        *
        * This issued the DELETE, logged `stored_login_cleared` and answered 200 without ever
-       * asking whether the row was gone. Two ways that lied. A credential write racing the
-       * sign-out — a password change, a reseal after a key rotation — could commit AFTER the
-       * delete and put the sealed password straight back, and the shell, seeing the 2xx, went
-       * on to stop the engine and remove `config.json`: sign-out reported, credential restored,
-       * and the desktop's new refusal arm never even reached. And a delete that removed nothing
-       * for any other reason read exactly the same from outside.
+       * asking whether the row was gone, so a delete that removed nothing read exactly the same
+       * from outside as one that worked — and the shell, seeing the 2xx, went on to stop the
+       * engine and remove `config.json`, with its own refusal arm never reached.
        *
-       * So the row is deleted and READ BACK inside one transaction, which is also the fence: a
-       * competing credential write serializes against it rather than landing between the two
-       * statements. A row that survives makes this THROW, which is what turns the shell's
-       * "the engine refused" arm from a comment into a path.
+       * So the row is deleted and READ BACK inside one transaction. A row that survives makes
+       * this THROW, which is what turns the shell's "the engine refused" arm from a comment
+       * into a path.
+       *
+       * ── WHAT THIS DOES *NOT* FENCE, SAID PLAINLY ──────────────────────────────────────────
+       *
+       * The `FOR UPDATE` makes a competing credential write serialize against this transaction;
+       * it does not stop that write COMMITTING IMMEDIATELY AFTER it. A `PATCH /mailboxes/:id`
+       * that has already probed a replacement password and is waiting on the row will resume the
+       * moment this commits and insert the sealed password again — after the 200 has gone back,
+       * so the shell removes the configuration and reports a sign-out over a credential that is
+       * once more in the database.
+       *
+       * Closing that needs what account erasure has: a durable signed-out stamp every credential
+       * writer reads under the same lock and refuses on (`services/src/erasure-fence.ts` is the
+       * pattern). That is a change to the SHARED mailbox service, not to this closure, and it is
+       * ledgered rather than half-done here — a fence that only narrows the window would read
+       * like one that closes it. Precondition: a credential write in flight at the moment of a
+       * sign-out, on a single-user desktop.
        */
       const had = await db.transaction(async (tx) => {
         const before = await tx.select({ mailboxId: mailboxCredentials.mailboxId }).from(mailboxCredentials)
@@ -1920,7 +1932,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       // ── THE MARKER-SURFACING PREFLIGHT, AT THE TOP OF THE ONE DRAIN BOTH DOORS SHARE ──────
       //
       // Routing no longer depends on this — `importDecisionOpenNow` below evaluates the question
-      // from the folder each cycle — but the CONFIRM SURFACE does (review round 17): the hold it
+      // from the folder each cycle — but the CONFIRM SURFACE does: the hold it
       // must offer for answering is readable only through the durable marker this preflight (or
       // the seed, which `start()`'s door reaches only after the whole drain) writes. Without it
       // a local takeover could route in hold mode for its entire launch with no candidate on
@@ -1981,7 +1993,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           ...syncDeps, ...screening, classifier: ai.classifierForCycle(),
           // The routing half of the organizer-profile hold (TAKEOVER-RESCREEN), EVALUATED from
           // the current facts at every cycle edge — never cached; see the worker's cycle for
-          // the argument (fifteen review rounds of arm/release orderings, each with a
+          // the argument (many arm/release orderings were tried, each with a
           // mirror-image race). One `ohmail/_meta` FETCH per cycle; a store serialize and an
           // indexed read only when a foreign document is present; a faulted read answers what
           // the previous cycle answered.

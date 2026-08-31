@@ -5,7 +5,9 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./tokens.css": "./src/tokens.css"
+    "./tokens.css": "./src/tokens.css",
+    "./faces.css": "./src/faces.css",
+    "./ohmarchy.css": "./src/ohmarchy.css"
   },
   "dependencies": {}
 }

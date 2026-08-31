@@ -610,39 +610,122 @@ function readUrlToken(css: string, from: number): { raw: string; end: number } |
 }
 
 /**
+ * WALK A CSS VALUE THE WAY THE TOKENIZER DOES — strings are strings, escapes are characters,
+ * comments are nothing.
+ *
+ * ── WHY A WALK AND NOT A REGEXP ─────────────────────────────────────────────────────────
+ *
+ * Everything this file got wrong about `image-set` bodies was the same mistake in a different
+ * costume: a literal pattern asked a question about text that CSS reads differently.
+ *
+ *  · `/url\(/` missed `\75 rl(…)`, so an escaped candidate presented NO candidates and the
+ *    vacuous `[].every(inert)` kept the whole set — a live reference, uncounted.
+ *  · `/\btype\(/` missed `\74 ype(…)`, so a MIME hint was read as a url and a valid inline
+ *    image was deleted.
+ *  · Decoding the WHOLE body first fixed both and broke a third thing: `\22` inside a quoted
+ *    data URL is the CHARACTER `"`, and decoding it turned payload into a delimiter, splitting
+ *    one valid `data:` candidate into two bogus ones and deleting the image.
+ *  · `/\bvar\(/` on the raw body missed `v\61 r(` in one direction and matched `var(` inside a
+ *    quoted SVG payload in the other — a bypass and a false positive from one line.
+ *
+ * A walk answers all four, because the distinctions are structural: what is inside a string, what
+ * is a function NAME, and what is merely a character in a value. Decoding still happens — but per
+ * TOKEN, on text already known to be a name or a value, which is the only place it is meaningful.
+ *
+ * Linear: one forward pass, every character visited once, no backtracking. That is the property
+ * the whole tokenizer exists to have.
+ */
+interface CssValueScan {
+  /** Every string literal and every `url()`/escaped-`url()` argument, decoded. */
+  candidates: string[];
+  /** Decoded names of the functions this value calls, at any depth. */
+  functions: string[];
+}
+
+function scanCssValue(raw: string): CssValueScan {
+  const candidates: string[] = [];
+  const functions: string[] = [];
+  /** Function names whose ARGUMENT is a MIME hint rather than a resource. */
+  const HINT = new Set(["type", "format"]);
+  let i = 0;
+  let skipDepth = -1;
+  let depth = 0;
+
+  while (i < raw.length) {
+    const c = raw[i]!;
+
+    // A comment is nothing at all — not a string, not a name. `/* " */` used to set quote state.
+    if (c === "/" && raw[i + 1] === "*") {
+      const close = raw.indexOf("*/", i + 2);
+      i = close === -1 ? raw.length : close + 2;
+      continue;
+    }
+
+    // A STRING. Its escapes are characters in the value, so it is read raw here and decoded whole.
+    if (c === '"' || c === "'") {
+      let j = i + 1;
+      let body = "";
+      while (j < raw.length) {
+        const d = raw[j]!;
+        if (d === "\\") { body += raw.slice(j, j + 2); j += 2; continue; }
+        if (d === c || d === "\n" || d === "\r" || d === "\f") break;
+        body += d;
+        j++;
+      }
+      // Inside a MIME hint the string is a media type, never a resource.
+      if (skipDepth === -1) candidates.push(decodeCssEscapes(body).trim());
+      i = j < raw.length && raw[j] === c ? j + 1 : j;
+      continue;
+    }
+
+    // A FUNCTION NAME — possibly written with escapes. `escapedIdentAt` reads one from any
+    // position inside it, and an identifier start is the cheapest anchor.
+    if (continuesIdent(raw.charCodeAt(i))) {
+      const ident = escapedIdentAt(raw, i);
+      const end = ident.start + ident.name.length;
+      if (raw[end] === "(") {
+        const name = decodeCssEscapes(ident.name).trim().toLowerCase();
+        functions.push(name);
+        depth++;
+        if (HINT.has(name) && skipDepth === -1) skipDepth = depth;
+        if (name === "url" || name === "-webkit-url") {
+          // An UNQUOTED url argument runs to the `)`; a quoted one is handled by the string arm
+          // on the next iteration.
+          let j = end + 1;
+          while (j < raw.length && raw.charCodeAt(j) <= 0x20) j++;
+          if (raw[j] !== '"' && raw[j] !== "'") {
+            const close = raw.indexOf(")", j);
+            const stop = close === -1 ? raw.length : close;
+            if (skipDepth === -1) candidates.push(decodeCssEscapes(raw.slice(j, stop)).trim());
+            i = stop;
+            continue;
+          }
+        }
+        i = end + 1;
+        continue;
+      }
+      i = Math.max(end, i + 1);
+      continue;
+    }
+
+    if (c === "(") { depth++; i++; continue; }
+    if (c === ")") {
+      if (skipDepth !== -1 && depth === skipDepth) skipDepth = -1;
+      depth--;
+      i++;
+      continue;
+    }
+    i++;
+  }
+  return { candidates: candidates.filter((u) => u.length > 0), functions };
+}
+
+/**
  * Every REMOTE url a token's body names, in any of the spellings that fetch: a `url()`, or a
  * bare string — which is how `image-set("https://…" 1x)` and `@import"https://…";` name one.
  */
 function urlsIn(inner: string): string[] {
-  const urls: string[] = [];
-  /**
-   * DECODED ONCE, UP FRONT, AND EVERY LITERAL MATCH BELOW RUNS ON THE DECODED TEXT.
-   *
-   * This used to decode only the CANDIDATES it had already found, with literal patterns doing the
-   * finding — which is the same mistake the token finder made one level up, at one level of
-   * nesting deeper. Two things got through it, and each is the other's mirror:
-   *
-   *  · `image-set(\75 rl(/api/…) 1x)` — the inner `url()` is not literal, so no candidate was
-   *    found at all, `[].every(inert)` was vacuously true, and the whole set was copied through
-   *    VERBATIM. Worse, the outer branch advances the scan past the set, so the top-level
-   *    escape-aware pass never visits that backslash either. A live reference, kept and uncounted.
-   *  · `image-set("data:…" \74 ype("image/png"))` — the MIME hint is not literal `type(`, so it
-   *    was not blanked, its `"image/png"` was read as a candidate url, and a standards-valid
-   *    INLINE image was deleted. The false positive the blanking exists to prevent, reintroduced
-   *    by the same literal-matching assumption.
-   *
-   * Decoding the body first fixes both with one line, and it is the rule this file already
-   * follows: decoding decides, it never emits. The caller still slices the ORIGINAL text.
-   */
-  const decoded = decodeCssEscapes(inner);
-  // `type("image/png")` is an image-set candidate's MIME HINT, not a resource. Blanked rather than
-  // removed so every other offset in the decoded text is unchanged.
-  const scanned = decoded.replace(/\btype\(\s*(?:"[^"\n]*"|'[^'\n]*'|[^)\n]*)\)/gi, (m) => " ".repeat(m.length));
-  for (const m of scanned.matchAll(/url\(\s*['"]?([^'")]*)/gi)) urls.push(m[1] ?? "");
-  for (const m of scanned.matchAll(/"([^"\n]*)"|'([^'\n]*)'/g)) urls.push(m[1] ?? m[2] ?? "");
-  // NOT decoded a second time: `decoded` is already the decoded text, and re-running the decoder
-  // over it would read a literal backslash the sender wrote as `\\` as the start of a fresh escape.
-  return urls.map((u) => u.trim()).filter((u) => u.length > 0);
+  return scanCssValue(inner).candidates;
 }
 
 /**
@@ -657,9 +740,13 @@ function urlsIn(inner: string): string[] {
  * A construct this scanner cannot normalise is dropped rather than passed. That is the same rule
  * the unterminated-token branches already follow, applied to the other direction of the same
  * problem: there, the text runs past where we can read; here, the VALUE arrives after.
+ *
+ * Asked of the WALK, not of the raw text, which is what makes it both tighter and looser in the
+ * right places: `v\61 r(` is a substitution and a literal test missed it, while `var(` inside a
+ * quoted SVG data URL is payload and a literal test deleted a legitimate image for it.
  */
 function defersSubstitution(inner: string): boolean {
-  return /\bvar\(/i.test(inner);
+  return scanCssValue(inner).functions.includes("var");
 }
 
 /** The subset of {@link urlsIn} that names a REMOTE host — what the reader's blocked list counts. */
@@ -728,15 +815,27 @@ export function neutraliseCss(
    * linear — the property this tokenizer exists to have.
    */
   let quote: '"' | "'" | null = null;
+  let inComment = false;
   let quoteAt = 0;
   const advanceQuote = (to: number): void => {
     for (let i = quoteAt; i < to; i++) {
       const c = css[i];
+      if (inComment) {
+        if (c === "*" && css[i + 1] === "/") { inComment = false; i++; }
+        continue;
+      }
       if (quote !== null) {
-        // An escape inside a string consumes the next character, so a `\\"` does not close it.
+        // An escape inside a string consumes the next character, so a `\"` does not close it.
         if (c === "\\") { i++; continue; }
         // A raw newline ends an unterminated string (CSS Syntax §4.3.5); the browser does the same.
         if (c === quote || c === "\n" || c === "\r" || c === "\f") quote = null;
+      } else if (c === "/" && css[i + 1] === "*") {
+        // A COMMENT IS NOT A STRING, and reading one as a string was a bypass rather than a
+        // nuisance: `/* " */` left an unmatched quote open, so every escaped `url()` after it in
+        // the sheet looked quoted to the branch below and was passed through untouched. One
+        // character of sender-authored comment disabled the whole rule for the rest of the file.
+        inComment = true;
+        i++;
       } else if (c === '"' || c === "'") {
         quote = c;
       }
@@ -1365,7 +1464,7 @@ function widthAttrPx(v: string | null): number | null {
  * bare `width:600px` really is a declaration; in a SHEET the same text outside a rule is one
  * no browser applies, and a flat read of the sheets — joined, or even one element at a time —
  * turned ruleless fragments, comment text and string data into canvas evidence the rendered
- * document has not got. Four review rounds circled that one seam; the walk is the seam's close.
+ * document has not got. That one seam was circled repeatedly; the walk is its close.
  */
 export function isRigidLayout(root: Element, styleText: string | readonly string[]): boolean {
   if (sheetsDeclare(styleText, declaresCanvas)) return true;
@@ -1560,7 +1659,7 @@ function stripCssComments(css: string): string {
  * ({@link declaresResponsiveCanvas}) and the fixed-width one ({@link declaresCanvas}) — because
  * everything above is about what a SHEET is, not about which width property is asked after.
  * The walk takes the predicate as a parameter rather than existing twice, so the two scans
- * cannot drift apart again one review round at a time.
+ * cannot drift apart again one fix at a time.
  */
 /** A selector list that targets images — `img` as a TAG token; `.imgwrap` is a class and is not. */
 const IMG_SELECTOR = /(?:^|[\s,>+~(])img\b/i;
@@ -1613,7 +1712,7 @@ type Evidence = "live" | "image" | "gone";
  * twice, in both directions at once, so this is the real (small) decision: per
  * comma-alternative, resolve the implicit parent and read the SUBJECT — with CSS escapes
  * respected, because `\&` is identifier data (not a nesting token) and `i\6dg` decodes to
- * the `img` tag (another review round's pair of findings).
+ * the `img` tag (a further pair of defects in the same seam).
  *
  *   · `.card`            → implicit `& .card` — a descendant of an image: `"gone"`.
  *   · `& + .card`        → a live canvas BESIDE the image: `"live"`.

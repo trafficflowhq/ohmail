@@ -151,6 +151,13 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
         bearer={bearer}
         revoked={died}
         onPaired={() => {
+          // A FRESH PAIRING IS ALSO A DEPARTURE, and only the death path used to say so.
+          // `/pair` opens this landing while still paired — the case just above — so a person can
+          // move this browser from one computer to another without ever signing out. `adopt`
+          // retires the old scope, which makes the previous pairing's records unreachable; it does
+          // not make them GONE, and three of them are mail text. Swept here for the same reason
+          // and by the same list as the death path.
+          dropLocalStorageKeys(HOST_SCRATCH_PREFIXES);
           window.history.replaceState(null, "", "/");
           setDied(false);
           setOnPairPath(false);

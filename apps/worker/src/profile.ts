@@ -142,7 +142,7 @@ export class OrganizerProfileSync {
   /** The found FOREIGN document's fingerprint — the hold. Null when no import decision is open. */
   private holdFingerprint: string | null = null;
   /**
-   * The OTHER hold subject: a document written by a NEWER format (review round 2). Its open
+   * The OTHER hold subject: a document written by a NEWER format. Its open
    * question is "update ohmail, or dismiss and organize with what you have" — and while that is
    * unanswered the same routing hold applies, because a v(n+1) document carries decisions this
    * build cannot read but knows exist: routing a takeover from a cold store past them is the
@@ -153,7 +153,7 @@ export class OrganizerProfileSync {
    */
   private holdNewerV: number | null = null;
   /**
-   * When the hold began. Informational since review round 6 (release is by the EXACT subject
+   * When the hold began. Informational only (release is by the EXACT subject
    * only — the since-valve it once fed released a re-armed hold on a stale answer to the
    * document it replaced); kept because "how long has this question been open" is the first
    * thing a debugging session asks.
@@ -208,7 +208,7 @@ export class OrganizerProfileSync {
   /**
    * ══ THE STRUCTURAL ANSWER TO "IS AN IMPORT DECISION OPEN?" — EVALUATED, NEVER CHOREOGRAPHED ══
    *
-   * Fifteen review rounds circled one mechanism: an in-memory hold trying to TRACK a question
+   * Everything here circles one mechanism: an in-memory hold trying to TRACK a question
    * whose truth lives in three places that all move independently — the folder (the previous
    * organizer can write, a hand can expunge, a newer build can pass through), the account store
    * (a sibling mailbox's import converges it), and the resolutions table (any tab can answer).
@@ -324,7 +324,7 @@ export class OrganizerProfileSync {
    * next routing decision is made. {@link importDecisionOpen} alone is the write-behind's view,
    * and the write-behind is DEBOUNCED (five minutes by default): a release that waited for the
    * next flush tick would keep adopting strangers' mail as `last_set_by: 'external'` for a whole
-   * write interval after the person decided (review round 1). One indexed read per cycle,
+   * write interval after the person decided. One indexed read per cycle,
    * only while a decision is open. A read fault keeps the hold — the answer could not be read,
    * the next cycle retries, and holding is the reversible direction: an adopted message can
    * still be screened by the person; a screened message was already the defect.
@@ -334,7 +334,7 @@ export class OrganizerProfileSync {
     const { deps } = this;
     const log = deps.log ?? ((): void => undefined);
     try {
-      // THE EXACT SUBJECT ONLY (review round 6). A mailbox-wide "any answer since the hold
+      // THE EXACT SUBJECT ONLY. A mailbox-wide "any answer since the hold
       // began" valve used to ride along here, from the era when a hold never re-armed: now that
       // `reholdFromFolder` tracks the folder, a STALE answer — a tab declining document A after
       // the folder moved on to B — must not release B's hold. The valve's one legitimate case
@@ -368,7 +368,7 @@ export class OrganizerProfileSync {
       } else if (this.holdFingerprint !== null) {
         const localFp = profileFingerprint(await serializeOrganizerProfile(deps.db, deps.accountId));
         if (localFp === this.holdFingerprint) {
-          // CONVERGENCE (review round 4): the store is ACCOUNT-scoped, so the same travelling
+          // CONVERGENCE: the store is ACCOUNT-scoped, so the same travelling
           // profile imported through a SIBLING mailbox — or a hand-edit — can make local state
           // equal the held document with no resolution row for THIS mailbox. The candidate is
           // gone from the confirm surface the moment they match, so the hold must not outlive
@@ -394,7 +394,7 @@ export class OrganizerProfileSync {
             this.lastWrittenFingerprint = converged;
             this.holdFingerprint = null;
             this.holdSince = null;
-            // The DURABLE half too (review round 14): the in-memory release alone leaves the
+            // The DURABLE half too: the in-memory release alone leaves the
             // held marker standing for ever — `latestProfileFoundMarker` reading a held question and the
             // candidate surface dialing IMAP for a question nothing asks. The lapse names the
             // converged subject, closing exactly it.
@@ -434,7 +434,7 @@ export class OrganizerProfileSync {
     const { deps } = this;
     const log = deps.log ?? ((): void => undefined);
     if (!hasProfileIo(deps.adapter)) return;
-    // NO completed-read memo here, deliberately (review round 10 removed one): the organizer
+    // NO completed-read memo here, deliberately (an earlier one was removed): the organizer
     // lease permits a ONE-CYCLE overlap, so the outgoing organizer's last admitted cycle can
     // append the travelling document AFTER an early preflight honestly read `none` — and a
     // memoized "nothing there" would hide it for the sidecar's whole first drain. Until the
@@ -508,7 +508,7 @@ export class OrganizerProfileSync {
    * Called from the hold blocks when the durable answer has not arrived: the folder can change
    * while the question is open (the previous organizer writes again, a hand-expunge, a newer
    * build passing through), and the confirm surface reads the FOLDER — so the hold must track
-   * the folder or the two disagree about whether a question is open (review round 2: a held
+   * the folder or the two disagree about whether a question is open (a held
    * document REPLACED by another foreign one cleared the hold while the surface kept offering
    * the replacement, and screening resumed under an open prompt). Three outcomes:
    *
@@ -532,7 +532,7 @@ export class OrganizerProfileSync {
       && profileFingerprint(still.doc) === this.holdFingerprint) return "standing";
     if (still.state === "newer" && this.holdNewerV !== null && still.v === this.holdNewerV) return "standing";
     // Decide the NEXT posture while the OLD hold is still armed: every read in the derivation
-    // can throw, and a throw must leave the standing hold standing (review round 5 — a swap that
+    // can throw, and a throw must leave the standing hold standing (a swap that
     // cleared first left the gate open for a debounce interval when the replacement's resolution
     // read faulted). The caller's catch retries next tick either way.
     const next = await this.deriveNextHold(still, localFingerprint);
@@ -542,7 +542,7 @@ export class OrganizerProfileSync {
 
   /**
    * The DECISION half of a hold swap — PURE READS, no state change, so a caller can run it while
-   * a hold it is about to release still stands (review rounds 5 and 8: every release site must
+   * a hold it is about to release still stands (every release site must
    * decide the folder's next posture BEFORE clearing, or a fault mid-derivation strands the
    * mailbox with no hold and no retry).
    */
@@ -610,7 +610,7 @@ export class OrganizerProfileSync {
     log("organizer_profile_detected", {
       mailboxId: deps.mailboxId, accountId: deps.accountId, state: "hold_lapsed",
     });
-    // THE DURABLE HALF OF THE LAPSE (review round 5): the reconcile backstop reads the hold from
+    // THE DURABLE HALF OF THE LAPSE: the reconcile backstop reads the hold from
     // the latest marker + the resolution rows, and a lapse that lived only in this process would
     // leave the backstop adopting for ever on a question nothing asks — the import surface has
     // no candidate to answer. A `lapsed` marker reads as "no open question" to both — for the
@@ -622,8 +622,8 @@ export class OrganizerProfileSync {
    * A DURABLE HELD MARKER WHOSE QUESTION THE FOLDER NO LONGER ASKS — written `lapsed`, so the
    * confirm surface's durable read (`latestProfileFoundMarker`) agrees with
    * reality ACROSS PROCESS DEATHS: a worker that armed and marked a hold, then died before any
-   * rehold tick, must not leave the backstop adopting for ever on a question nothing asks
-   * (review round 5). Called from the preflight and the seed's non-arming arms — the arms that
+   * rehold tick, must not leave the backstop adopting for ever on a question nothing asks.
+   * Called from the preflight and the seed's non-arming arms — the arms that
    * looked at the folder and found no question to hold; an ANSWERED marker needs no lapse (its
    * resolution row already closes the predicate). One indexed read per call, at attach cadence.
    */
@@ -729,7 +729,7 @@ export class OrganizerProfileSync {
         if (fp === this.holdFingerprint) {
           // Local state converged onto the found document (the import was applied, exactly):
           // the hold is over, and there is nothing to write — the document already says this.
-          // The folder is re-read BEFORE the release commits (review round 9, the same rule as
+          // The folder is re-read BEFORE the release commits (the same rule as
           // the cycle-edge convergence arm): the held document may have been REPLACED since —
           // local converged onto A, the folder moved on to unanswered B — and a release that
           // never looked would leave B to surface later as an unheld mid-flight document.
@@ -761,7 +761,7 @@ export class OrganizerProfileSync {
         // write may supersede the document THROUGH the engine's foreign gate (it was surfaced,
         // and now answered); the dirty check is already open (nothing was written since seed).
         // One indexed read per flush interval, only while a decision is open — and the EXACT
-        // held fingerprint only (review round 6). The "any answer since the hold began" valve
+        // held fingerprint only. The "any answer since the hold began" valve
         // that used to ride here belonged to the era when a hold never re-armed: the confirm
         // surface answers the folder's CURRENT document, and `reholdFromFolder` below now moves
         // this hold onto exactly that document — its replacement check refuses one that is
@@ -798,7 +798,7 @@ export class OrganizerProfileSync {
         // NEXT tick serializes the store as the answer left it and resumes write-behind on that.
         return;
       }
-      // AFTER both hold blocks, deliberately (review round 3): `reholdFromFolder` can swap a
+      // AFTER both hold blocks, deliberately: `reholdFromFolder` can swap a
       // newer-format hold for a found one when the folder's document changes shape, and a
       // fingerprint hold walled off behind this return would never run its own release or
       // re-derivation again — held for ever once its document vanished, with nothing for the
@@ -852,7 +852,7 @@ export class OrganizerProfileSync {
         // including the durable marker, which the log line alone is not: the confirm flow
         // reads the database, never the process's stderr.
         this.blockedByNewer = true;
-        // …and the ROUTING hold too (review round 8): the wall below makes this the last look
+        // …and the ROUTING hold too: the wall below makes this the last look
         // this attachment ever takes at the folder, so a newer document that landed mid-write
         // and armed nothing would have mail re-screened under an unanswered update-or-dismiss
         // prompt for the attachment's whole life. ARM-THEN-VERIFY (round 11): a fault in the
@@ -912,10 +912,10 @@ export class OrganizerProfileSync {
     // The preflight (`armHoldFromFolder`) may have armed a hold on a document this read no
     // longer sees — expunged, replaced, or converged-onto in the window between attach and the
     // first tick. The seed is the authoritative reading, so each arm below SUPERSEDES the
-    // provisional hold with what the folder actually asks (review round 1: a hold with no
+    // provisional hold with what the folder actually asks (a hold with no
     // document behind it would suppress screening and write-behind for ever, with nothing for
     // the confirm surface to answer) — and each arm clears it only AFTER its own fallible reads
-    // have answered (review round 9: a clear ahead of a read that then throws strands the
+    // have answered (a clear ahead of a read that then throws strands the
     // mailbox unheld until the retry, with `armed` already remembering a preflight that DID
     // complete).
     const clearProvisionalHold = (): void => {
@@ -1092,7 +1092,7 @@ export class OrganizerProfileSync {
         && (prior.fingerprint ?? null) === fingerprint && (prior.heldForImport ?? false) === heldForImport
         && (prior.v ?? null) === v) {
         // The current fact is ALREADY durable — deduplicated, not skipped — so any older fact
-        // still owed from a failed write is stale here too (review round 11): retried later it
+        // still owed from a failed write is stale here too: retried later it
         // would file AFTER this one and become the "latest" marker over the question the folder
         // actually asks. EXCEPT when the landing fact is a LAPSE (round 14): a lapse closes the
         // subject it names only through a held marker that EXISTS, so an owed `found`/`newer`
@@ -1144,7 +1144,7 @@ type MarkerFact =
   | { state: "newer"; v: number }
   /**
    * A held question the folder no longer asks — see `commitNextHold` and `lapseStaleMarker`.
-   * NAMES THE SUBJECT IT LAPSES (review round 12): a reader honours a lapse only against the
+   * NAMES THE SUBJECT IT LAPSES: a reader honours a lapse only against the
    * held marker it names, so a stale process's lapse — derived from a folder snapshot that
    * predates a successor's newly-armed question — cannot hide that question. `fingerprint` for
    * a found subject, `v` for a newer one; `latestProfileFoundMarker` implements the reading.

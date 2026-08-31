@@ -236,8 +236,8 @@ export function SubjectRuleSheet({
             fragment, stated before anything can be written. */}
         {/* The radio proper is its own small control (the lead line) and the field is a LABELED
             TEXTBOX beside it, never a textbox inside a radio: a radio is an atomic widget, and a
-            focusable descendant inside one is flattened or half-announced by screen readers
-            (review round). Focusing or editing the field selects the choice exactly as pressing
+            focusable descendant inside one is flattened or half-announced by screen readers.
+            Focusing or editing the field selects the choice exactly as pressing
             the radio does; the count and the warnings live in one `role="status"` region the
             field is described by, so the safety feedback is HEARD while focus stays in it. */}
         <div

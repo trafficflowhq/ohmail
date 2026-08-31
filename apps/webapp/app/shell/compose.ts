@@ -257,9 +257,9 @@ export function writeComposeDraft(f: ComposeFields): void {
   }
 }
 
-export function clearComposeDraft(): void {
+export function clearComposeDraft(owner: string | null = storageOwner()): void {
   try {
-    window.localStorage.removeItem(composeDraftKey());
+    window.localStorage.removeItem(composeDraftKey(owner));
     // AND the un-owned key a browser upgraded from an earlier bundle may still hold. This is
     // the only line that touches it: it is drained on the next clear and never read back.
     window.localStorage.removeItem(LEGACY_COMPOSE_DRAFT_KEY);

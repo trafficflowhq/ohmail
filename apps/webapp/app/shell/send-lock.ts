@@ -138,9 +138,9 @@ function isLock(x: unknown): x is SendLock {
     && typeof r.fp === "string";
 }
 
-function load(): SendLock[] {
+function load(owner: string | null = storageOwner()): SendLock[] {
   try {
-    const raw = window.localStorage.getItem(sendLocksKey());
+    const raw = window.localStorage.getItem(sendLocksKey(owner));
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed.filter(isLock) : [];
@@ -149,10 +149,10 @@ function load(): SendLock[] {
   }
 }
 
-function save(rows: SendLock[]): void {
+function save(rows: SendLock[], owner: string | null = storageOwner()): void {
   try {
-    if (rows.length === 0) window.localStorage.removeItem(sendLocksKey());
-    else window.localStorage.setItem(sendLocksKey(), JSON.stringify(rows));
+    if (rows.length === 0) window.localStorage.removeItem(sendLocksKey(owner));
+    else window.localStorage.setItem(sendLocksKey(owner), JSON.stringify(rows));
   } catch {
     /* private mode, or a full quota — the lock is as durable as the tab, exactly as before */
   }
@@ -171,17 +171,17 @@ function save(rows: SendLock[]): void {
  * journal: the caller's clock is the engine's clock, and a guard that reads its own is a guard
  * nobody can drive.
  */
-export function readSendLock(lane: string, fp: string, nowMs: number): string | null {
-  const rows = load();
+export function readSendLock(lane: string, fp: string, nowMs: number, owner: string | null = storageOwner()): string | null {
+  const rows = load(owner);
   if (rows.length === 0) return null;
   const live = rows.filter((r) => nowMs - r.at <= SEND_LOCK_TTL_MS);
   const found = live.find((r) => r.lane === lane);
   if (found && found.fp !== fp) {
     const kept = live.filter((r) => r !== found);
-    save(kept);
+    save(kept, owner);
     return null;
   }
-  if (live.length !== rows.length) save(live);
+  if (live.length !== rows.length) save(live, owner);
   return found?.key ?? null;
 }
 
@@ -192,24 +192,24 @@ export function readSendLock(lane: string, fp: string, nowMs: number): string | 
  * exact window this file exists to close: a process killed between the POST and the write comes
  * back with the mail possibly sent and no record of the key it went under.
  */
-export function claimSendLock(lock: SendLock): void {
-  const rows = load().filter((r) => r.lane !== lock.lane);
+export function claimSendLock(lock: SendLock, owner: string | null = storageOwner()): void {
+  const rows = load(owner).filter((r) => r.lane !== lock.lane);
   rows.push(lock);
-  save(rows);
+  save(rows, owner);
 }
 
 /** Release a lane on a TERMINAL outcome — see the header for why `queued` is not one. */
-export function releaseSendLock(lane: string): void {
-  const rows = load();
+export function releaseSendLock(lane: string, owner: string | null = storageOwner()): void {
+  const rows = load(owner);
   const kept = rows.filter((r) => r.lane !== lane);
-  if (kept.length !== rows.length) save(kept);
+  if (kept.length !== rows.length) save(kept, owner);
 }
 
 /** Every live claim, oldest first — the restart's adoption pass reads this. */
-export function allSendLocks(nowMs: number): SendLock[] {
-  const rows = load();
+export function allSendLocks(nowMs: number, owner: string | null = storageOwner()): SendLock[] {
+  const rows = load(owner);
   if (rows.length === 0) return [];
   const live = rows.filter((r) => nowMs - r.at <= SEND_LOCK_TTL_MS);
-  if (live.length !== rows.length) save(live);
+  if (live.length !== rows.length) save(live, owner);
   return live.slice().sort((a, b) => a.at - b.at);
 }

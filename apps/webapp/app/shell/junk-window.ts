@@ -120,7 +120,7 @@ export type JunkBodyPhase =
   /**
    * `attempt` numbers each ask for one row, so the preview can REMOUNT its body anatomy per
    * try — a retry that reused the mount kept the expired stall timer's "failed" face over the
-   * live second request (review round on the retry).
+   * live second request.
    */
   | { phase: "loading"; attempt: number }
   | { phase: "ready"; text: string }
@@ -380,13 +380,13 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
   /**
    * The server's answer PER SETTLED TERM, for this session: one ask per term, and a term typed
    * again shows the answer it already earned instead of an empty `local` that the debounce
-   * refuses to fill (review round: the answer was discarded while the term stayed marked asked).
+   * refuses to fill (the answer was discarded while the term stayed marked asked).
    */
   const answers = useRef(new Map<string, { items: JunkItemWire[]; mailboxes: JunkMailboxWire[]; truncated: boolean }>());
   /**
    * Terms with an ask IN FLIGHT. Without this, leaving a pending term and typing it again finds
    * no cached answer and kicks a SECOND provider search — and whichever finishes last would
-   * write the cache (review round 2). One ask per term at a time; the cache is written by the
+   * write the cache. One ask per term at a time; the cache is written by the
    * ask that ran, whatever generation is current on screen.
    */
   const pendingTerms = useRef(new Set<string>());
@@ -414,7 +414,7 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
         const answer = { items: notDropped(page.items), mailboxes: page.mailboxes, truncated: page.truncated };
         answers.current.set(term, answer);
         // The answer reaches the SCREEN iff its term is what is typed right now — a person who
-        // left the term and came back mid-flight sees it settle (review round 5: a generation
+        // left the term and came back mid-flight sees it settle (a generation
         // counter stranded exactly that return in `searching`), and an answer for an abandoned
         // term goes only to the cache it came for.
         if (queryRef.current.trim() !== term) return;
@@ -460,7 +460,7 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
     // The automatic kick — ONLY while the segment is on screen, ONLY from `local` (a failed ask
     // waits for the human retry), ONLY when the local filter found nothing, ONLY once the typing
     // has rested, and ONLY for a term the server has not answered this session. Leaving the
-    // segment cancels a pending kick (review round: a dial for a pane no longer visible).
+    // segment cancels a pending kick (a dial for a pane no longer visible).
     const term = query.trim();
     if (!active || term.length === 0 || phase !== "ready" || searchPhase !== "local") return;
     if (localKept.length > 0 || answers.current.has(term) || pendingTerms.current.has(term)) return;

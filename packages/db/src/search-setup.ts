@@ -61,7 +61,7 @@ export async function ensureWithheldProvenanceIndex(
   // THE PREREQUISITE IS THE COLUMN, NOT THE TABLE: `withheld_reason` arrives with mail 0062, so
   // an existing database anywhere in 0002–0061 has the table and not the column — and a prebuild
   // that threw there would abort the setup BEFORE the migrator could ever reach 0062, bricking
-  // exactly the upgrade it runs ahead of (a review round caught the table-only probe). Absent ⇒
+  // exactly the upgrade it runs ahead of (a table-only probe missed it). Absent ⇒
   // defer to the journal: by 0071's position the column exists, and on any database that OLD the
   // table is small enough for the in-transaction build (the marker itself is 0062-new).
   const col = rowsOf<{ present: boolean }>(await db.execute(sql`
@@ -70,7 +70,7 @@ export async function ensureWithheldProvenanceIndex(
        and column_name = 'withheld_reason'`));
   if (col[0]?.present !== true) {
     // DEFERRED TO THE JOURNAL, and the blocking build that implies is bounded by ARITHMETIC,
-    // not hope (a review round asked for a staged migrate-to-0062-then-prebuild dance here; the
+    // not hope (a staged migrate-to-0062-then-prebuild dance was proposed here; the
     // narrowing argument is this paragraph): mail 0062 predates 0071 by days on a product whose
     // whole schema is months old, so no database can carry a LARGE `message_bodies` at 0071's
     // replay position without having crossed 0062 while small — a pre-0062 install is beta-era

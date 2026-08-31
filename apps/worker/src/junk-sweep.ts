@@ -32,7 +32,7 @@ import { completeFiling, SPAM_PILE, type SpecialFolderMap } from "./junk-filing.
 
 /**
  * THE SCAN'S STATE ACROSS CYCLES — a pure decision, extracted so it can be pinned by test
- * (review round 4: a fully refused pile larger than one window never reported `examinedAll`,
+ * (a fully refused pile larger than one window never reported `examinedAll`,
  * because the tail window had not "started at the top"; the stamp then stood for ever and the
  * mailbox re-kicked the same refusals every cycle).
  *
@@ -90,7 +90,7 @@ export async function junkSweepPass(opts: {
    * KEYSET cursor: only candidates whose id sorts AFTER this one (the pass's stable id order).
    * The worker cycle carries the last id it examined across cycles, so a refused prefix is
    * walked past one bounded window per cycle and a candidate is never skipped when the set
-   * shrinks between windows (an OFFSET over a mutable set would — review round 3). Absent (the
+   * shrinks between windows (an OFFSET over a mutable set would). Absent (the
    * default) is the pass as the CLI runs it: from the top.
    */
   afterId?: string;

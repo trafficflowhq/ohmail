@@ -418,7 +418,7 @@ export function planSubjectRule(
     ((field === "subject" ? r.subjectContains : r.bodyContains) ?? "").trim();
   // An EMPTY term is never `already`: a body-only rule's absent `subjectContains` normalizes to
   // "" too, so without this clause an emptied field compared equal to it, the confirm's go
-  // stayed pressable, and the press closed the sheet claiming an existing rule (review round).
+  // stayed pressable, and the press closed the sheet claiming an existing rule.
   const already = clean !== "" && ctx.existing.some(
     (r) => termOf(r).toLowerCase() === clean.toLowerCase() && r.destination === wanted,
   );

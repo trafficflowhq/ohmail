@@ -509,7 +509,7 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   //    the plain truth. A SEPARATE KEY deliberately, not a severity flip on one key: crossing
   //    the tier creates a NEW `alert_state` row, whose NULL `notified_at` the claim machinery
   //    pages immediately, retries after a failed delivery, and survives a crash between passes
-  //    — the properties two review rounds showed a same-key escalation losing (first to the
+  //    — the properties a same-key escalation was twice shown to lose (first to the
   //    repeat schedule, then to the failed-delivery restore path putting the warning's stamp
   //    under a row already marked critical). Key splits ship to BOTH alert drivers in one
   //    deploy window — the version-skew rule written out at the reconciliation rule's key.
@@ -1725,7 +1725,7 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   const byKey = new Map(existing.map((r) => [r.alertKey, r]));
 
   // NO same-key ESCALATION ARM by severity flip alone — that existed for one pass's lifetime
-  // and two review rounds killed it, because without carried state it lacked the claim's three
+  // and it was twice discarded, because without carried state it lacked the claim's three
   // properties (page-at-once, retry-after-failure, crash-survival). A tier that must page
   // immediately is a tier with its OWN KEY (`sync_lag:critical`): a new key's first
   // observation has `notified_at` NULL, which the ordinary claim below pages at once. What DOES

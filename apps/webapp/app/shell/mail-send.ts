@@ -88,6 +88,7 @@ import type { EngineMessage, MutationResult, OhmailEngine } from "@ohmail/client
 import type { ToastFn } from "@ohmail/ui";
 import { clearComposeDraft, type MailSend } from "./compose";
 import { claimSendLock, readSendLock, releaseSendLock, sendFingerprint } from "./send-lock";
+import { storageOwner } from "./storage-owner";
 import { scheduleLabel } from "./format";
 import { EMPTY_RICH, parseRichValue, serializeRichValue, type RichValue } from "./rich-text";
 import type { SignatureState } from "./signature";
@@ -201,7 +202,7 @@ export function writeReplyDraft(messageId: string, value: RichValue): void {
 
 /**
  * THE PER-MESSAGE EDITOR META — the subject as edited and the signature block's state, beside
- * the body scratch and on its lifecycle (review round 1: closing the editor kept the body and
+ * the body scratch and on its lifecycle (closing the editor kept the body and
  * silently dropped these two, so a struck signature came back and a retitled reply lost its
  * title on reopen).
  *
@@ -211,7 +212,7 @@ export function writeReplyDraft(messageId: string, value: RichValue): void {
  * the body scratch's is: a reply's meta lives under the message id, an inline forward's under
  * `fwd:<id>`, and the compose form's under `draft:<rowId>` — the AUTOSAVED ROW's id, because
  * that is the one handle that survives a reload and names the same message on this device
- * (review rounds 2–3: a content key broke on rich drafts, whose local text and server-derived
+ * (a content key broke on rich drafts, whose local text and server-derived
  * text legitimately differ). Cleared where the body scratch clears: in `settle`, because "the
  * send landed" means the whole per-message state is spent — and by the draft verbs that end a
  * row's life (`discardDraft`, the compose cancel).
@@ -400,7 +401,7 @@ export function useMailSend(
     (key: string, m: MailSend) => {
       if (m.inReplyTo === null) {
         if (key === COMPOSE_SEND_KEY) {
-          clearComposeDraft();
+          clearComposeDraft(owner.current);
           // The delivered message's row is spent, and so is the block state keyed to it.
           if (m.draftId) {
             try {
@@ -484,6 +485,26 @@ export function useMailSend(
     [engine, setPhase, toast, t],
   );
 
+  /**
+   * THE MAILBOX THIS HOOK'S STORAGE BELONGS TO, captured once at mount.
+   *
+   * `storageOwner()` answers the mailbox the window is showing NOW, and a send does not settle
+   * now. `engine.mutate`'s promise outlives the surface that started it: the desktop replaces the
+   * mailbox, the shell remounts under the new one (which is what its key is for), and then
+   * mailbox A's promise resolves and runs `absorb` — whose `releaseSendLock` and
+   * `clearComposeDraft` would resolve their keys through the module global and delete MAILBOX B's
+   * unfinished message and B's durable idempotency claim.
+   *
+   * Losing B's draft is the visible half. Losing B's LOCK is the worse one: that record is what
+   * makes a press survive a crash without delivering twice, so clearing it under B reopens the
+   * duplicate-send the durable key exists to prevent.
+   *
+   * Captured in a ref rather than read per call, because the shell is keyed by this same id — one
+   * mount is one mailbox for its whole life, so the value cannot go stale within it, and a
+   * settlement that arrives late writes to the partition it was started in.
+   */
+  const owner = useRef<string | null>(storageOwner());
+
   const absorb = useCallback(
     (key: string, m: MailSend, res: MutationResult) => {
       const next = phaseFor(res);
@@ -505,7 +526,7 @@ export function useMailSend(
         // that stops it. `unverified` is included deliberately, matching `canSend`, which does not
         // lock it: the server refuses every further send of that draft, so the user's next press
         // has to be able to be a genuinely fresh one.
-        releaseSendLock(key);
+        releaseSendLock(key, owner.current);
       }
       // A confirmation is the only outcome that does anything beyond the phase, and `settle`
       // is where all of it lives — so a confirmation from a flush minutes later clears the
@@ -591,10 +612,10 @@ export function useMailSend(
        */
       const now = Date.now();
       const fp = sendFingerprint(m);
-      const resumed = readSendLock(key, fp, now);
+      const resumed = readSendLock(key, fp, now, owner.current);
       const sendKey = resumed ?? crypto.randomUUID();
       if (!resumed) {
-        claimSendLock({ v: 1, lane: key, key: sendKey, at: now, draftId: m.draftId ?? null, fp });
+        claimSendLock({ v: 1, lane: key, key: sendKey, at: now, draftId: m.draftId ?? null, fp }, owner.current);
       }
 
       locked.current.add(key);

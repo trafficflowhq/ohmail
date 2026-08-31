@@ -114,7 +114,7 @@ export async function bubbleUpPass(
       // THE LOCK ORDER: messages first, then message_states — the same order
       // `TriageService.setState` takes (its cross-account guard select is FOR UPDATE on the
       // message row), so a due flip overlapping a user transition on one message QUEUES
-      // instead of deadlocking (review round on the re-homing: opposing first locks were a
+      // instead of deadlocking (found in the re-homing: opposing first locks were a
       // Postgres deadlock, aborting whichever side lost).
       await tx.select({ id: messages.id }).from(messages)
         .where(eq(messages.id, row.messageId)).for("update");

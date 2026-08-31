@@ -90,7 +90,7 @@ const subscribers = new Set<() => void>();
 
 /**
  * The shell's full-screen reader sheet. Its EXISTENCE decides the zone, not focus inside it:
- * the sheet opens without taking focus (review round 2 — ↑/↓ could not scroll the visible
+ * the sheet opens without taking focus (↑/↓ could not scroll the visible
  * sheet until the user first tabbed into it), so while it stands the zone IS "reader",
  * wherever the opening gesture left the caret. The two bindings that would move focus into
  * the surfaces UNDER the sheet keep a dispatch-time gate (`noReaderOverlay`) — every other
@@ -109,10 +109,10 @@ function computeZone(): Zone {
     // The sheet owns the screen — unless something is layered ABOVE it. Document order is
     // half the layering truth: the shell renders every higher surface (screening panels,
     // popovers, the tag picker) AFTER the reader element, so only focus in a node the sheet
-    // PRECEDES can be a layer above it (review round 3). The other half is that the node
+    // PRECEDES can be a layer above it. The other half is that the node
     // must BE a layer: an expired Undo toast keeps an invisible, still-focusable button
     // mounted after the whole shell (`role="status"`, opacity 0 — undo-window.test.ts), and
-    // Tab landing there must not silence the visible reader (review round 4). Every genuine
+    // Tab landing there must not silence the visible reader. Every genuine
     // higher surface here is a dialog or menu and carries the role — the shell's own a11y
     // rule, leaned on rather than a second list of overlay class names. Focus in a layer
     // suspends the walk whole ("none"); everything else leaves the sheet in charge.
@@ -441,11 +441,11 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
   /* Unconditional, unlike everything else the reader config guards: the STREAM views have no
      reading column, but the full-screen sheet can stand over any view, and while it does the
      zone is "reader" — a pair registered only under `cfg.reader` left the sheet unscrollable
-     exactly there (review round 2). With no sheet and no geography the zone is never
+     exactly there. With no sheet and no geography the zone is never
      "reader", so the pair stays declared-inert where it has nothing to scroll. */
   /* `inInput` + the `when` below, together: a keyboard search can open a hit in place while
      the search box keeps focus, so the typing target is a field BURIED UNDER the sheet — the
-     pair must claim ↑/↓ there or the visible reader cannot scroll at all (review round 3).
+     pair must claim ↑/↓ there or the visible reader cannot scroll at all.
      A typing target INSIDE the sheet (an editor in the open message) keeps its native caret:
      the `when` yields for it, and with no sheet standing it yields for every field. */
   const scrollableTyping = (e: KeyboardEvent): boolean => {

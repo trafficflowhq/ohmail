@@ -184,7 +184,7 @@ export function useComposeAutosave(opts: {
     await engine.mutate({ kind: "draft_discard", draftId: id });
     // The row's life ends here for every caller — the compose cancel, and `settled`'s
     // phantom-copy branch — so the editor meta keyed to it (the signature block's state,
-    // `mail-send.ts`) dies with it rather than accumulating in storage (review round 4).
+    // `mail-send.ts`) dies with it rather than accumulating in storage.
     writeReplyMeta(`draft:${id}`, {});
   }, [draftId, engine, release]);
 

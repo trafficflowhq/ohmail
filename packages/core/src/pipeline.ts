@@ -1518,7 +1518,7 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
   //
   // The own-authored arm is NOT plain recording, though — it records AND repoints (see the
   // `sameFolderSameEpochCopy` branch below for the two-halves argument). A first draft here
-  // recorded only, and review round 2 found the regression that costs: Exchange's replace shape
+  // recorded only, and this is the regression that costs: Exchange's replace shape
   // expunges the copy the send path appended, often BELOW the watermark where the expunge is
   // never observed, and a primary left there is a dead locator no promotion can ever repair.
   // The old repoint-on-arrival converged the primary onto the newest observed copy — the one the
@@ -1559,7 +1559,7 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
   //  · REPOINT the primary to the newest observed copy, the convergence Sent has always had.
   //    Without it, the provider-replace shape (Exchange expunging the copy the send path
   //    appended, BELOW the watermark, where the expunge is never observed) leaves
-  //    `messages.native_locator` naming a dead UID for ever — review round 2's finding. The
+  //    `messages.native_locator` naming a dead UID for ever. The
   //    newest observed copy is the one the provider kept; converging onto it is the repair.
   //
   // A stale non-primary row for a below-watermark expunge is the accepted residual: it is never
@@ -1579,7 +1579,7 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
   //
   // A cold Sent scan hands creates over newest-FIRST, so with three copies the arrivals reach
   // this branch in DESCENDING uid order — an unconditional repoint would walk the primary
-  // BACKWARD onto the oldest copy (review round 3), which is precisely the copy the
+  // BACKWARD onto the oldest copy, which is precisely the copy the
   // provider-replace pattern expunges. Within one epoch the uid ordering is the server's own
   // allocation order, so `arrival > stored` is exactly "the copy the server kept most recently".
   const arrivalIsNewer = sameFolderSameEpochCopy

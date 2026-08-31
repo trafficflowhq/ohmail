@@ -57,14 +57,14 @@ import type { JunkFiledHuskRow, WorkerRepo } from "@trafficflow/core/adapters/dr
  * flight per FETCH (`JUNK_RESTORE_FETCH_CHUNK` locators per adapter call — the adapter
  * accumulates every source buffer of one call before returning, so a 50-wide ask at the 8 MiB
  * ceiling could hold ~400 MiB; four at a time caps one call at ingest's own 32 MiB batch
- * bound, and each chunk's buffers release before the next is read — a review round caught the
+ * bound, and each chunk's buffers release before the next is read — what caught the
  * unchunked version). The walk is keyset-paged on `messages.id` within a cycle, because a
  * refused row keeps its husk and stays a candidate: a cursorless page would re-offer the same
  * refusals for ever (`redacted-restore.ts#selectCandidates`, verbatim). Rows this process
  * already declined are SKIPPED WITHOUT A FETCH and — deliberately — without consuming the walk:
  * the page bound is the only thing they cost, so a mailbox whose first two hundred candidates
  * are all remembered refusals still reaches the fresh candidate behind them in the same cycle
- * (the same review round caught the examined-based bound starving exactly that row).
+ * (the examined-based bound starved exactly that row).
  *
  * The refusal memory has two shelves, because two different things can change a verdict:
  *  · {@link refusedFor} — per process, for outcomes only a NEW BUILD changes: over the
@@ -135,7 +135,7 @@ export function capDeferredFor(mailboxId: string): Map<string, number> {
  * WHERE A CAPPED CYCLE LEFT OFF — mailboxId → the keyset cursor to resume from, making the walk
  * a ROTATION rather than a restart. Without this, `maxPages × pageSize` remembered refusals
  * sorting first would make every cycle walk and skip the same prefix and exit at the page cap,
- * so the fresh candidate behind them was never reached (review round 2's finding — round 1's
+ * so the fresh candidate behind them was never reached (the second defect found here — the first
  * fix had only RAISED the starvation threshold). A cycle that completes the walk (a short or
  * empty page) CLEARS the entry, so the next cycle starts from the top and newly un-junked
  * messages with low ids wait at most one rotation.

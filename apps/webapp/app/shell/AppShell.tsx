@@ -1862,7 +1862,7 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
   const [replySig, setReplySig] = useState<SignatureState>(SIG_FOLLOWING);
   const [replySubjectEdit, setReplySubjectEdit] = useState<string | null>(null);
   /**
-   * RETARGETING HYDRATES RATHER THAN BLIND-RESETS (review round 1): closing a half-written
+   * RETARGETING HYDRATES RATHER THAN BLIND-RESETS: closing a half-written
    * reply nulls `replyTo`, and a reset that forgot the per-message meta made Escape drop the
    * retitled subject and resurrect a struck signature while the body survived. The meta lives
    * beside the body scratch under the same lane key (`replyMetaKey`), written by the two
@@ -2833,7 +2833,7 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
     if (seeded) {
       replySeedDrafts.current.delete(key);
       void engine.mutate({ kind: "draft_discard", draftId: seeded });
-      writeReplyMeta(`draft:${seeded}`, {}); // the phantom row's block state dies with it (review round 5)
+      writeReplyMeta(`draft:${seeded}`, {}); // the phantom row's block state dies with it
     }
     // A reply settled. `key` is the answered message's id (`sendKeyOf`), which is exactly the row
     // that should move from "New for you" to "Earlier" — so hand it to the Ohbox for the gesture.
@@ -3069,7 +3069,7 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
   });
   releaseDraft.current = autosave.settled;
   /**
-   * THE BLOCK STATE FOLLOWS THE ROW (review round 3). While autosave holds a row, the compose
+   * THE BLOCK STATE FOLLOWS THE ROW. While autosave holds a row, the compose
    * form's signature state mirrors into the editor meta under `draft:<rowId>` — the handle a
    * reload cannot lose — so reopening the same row from Drafts (before or after a reload)
    * restores a struck or edited block. `following` stores nothing: absence IS the resting
@@ -3178,11 +3178,10 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
         // cross-device fix is a drafts column — a schema change, recorded rather than smuggled.
         // The meta lane leads (it survives a reload); the in-memory state is the fallback for
         // the row autosave still holds, because storage can refuse (a private window) and a
-        // same-session reopen must not resurrect a struck block over a working editor
-        // (review round 4).
+        // same-session reopen must not resurrect a struck block over a working editor.
         ...((): Partial<ComposeFields> => {
           if (d.status !== "draft") return {};
-          // LIVE STATE IS AUTHORITATIVE for the row the composer still holds (review round 5):
+          // LIVE STATE IS AUTHORITATIVE for the row the composer still holds:
           // storage can hold an OLDER value than what is on screen right now if a later write
           // was refused (quota exhaustion is the measured case), and `??` would prefer that
           // stale stored value over the newer in-memory edit. Only for a row autosave does NOT

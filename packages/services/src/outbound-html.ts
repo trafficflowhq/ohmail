@@ -219,7 +219,7 @@ export function htmlToPlainText(html: string): string {
   /**
    * Per-OPEN-ITEM state, innermost last: the pending marker that stood before the item opened.
    *
-   * THE RULE THAT ENDED SEVEN REVIEW ROUNDS OF ANCHOR HEURISTICS (rounds 6–12): a marker is
+   * THE RULE THAT ENDED THE ANCHOR HEURISTICS: a marker is
    * consumable only by a flush inside its own item — the item's close RESTORES whatever marker
    * stood when it opened, unconditionally. `flush()` consumes the marker it emits, so an item
    * whose content flushed has "" to restore over; one whose content DEFERRED into a
@@ -285,7 +285,7 @@ export function htmlToPlainText(html: string): string {
     const kept = line.replace(/[ \t]+/g, " ").replace(/^[ \t]+|[ \t]+$/g, "");
     const body = kept.replace(/\u00a0/g, "").trim() === "" ? "" : kept;
     line = "";
-    // AN EMPTY FLUSH DOES NOT CONSUME `lead` (review round 5). `<li><p>…</p></li>` — TipTap's
+    // AN EMPTY FLUSH DOES NOT CONSUME `lead`. `<li><p>…</p></li>` — TipTap's
     // own markup, not a hypothetical — opens the LI (sets `lead`) and then the `<p>` fires an
     // empty flush on its way in (nothing has been written to `line` yet), and the marker used
     // to be cleared right there, before the paragraph's own content had a chance to use it. A
@@ -332,7 +332,7 @@ export function htmlToPlainText(html: string): string {
     // placeholder collapse one function up: `<li>&nbsp;<br>visible</li>` opens with the
     // author's explicit break structure, and reading the placeholder as empty here cleared
     // the pending list marker with it — the visible text then shipped without its number and
-    // renumbered every item after it (review round 4). A space-width line inside a break run
+    // renumbered every item after it. A space-width line inside a break run
     // is what the html half shows; the text half says the same.
     const body = line.replace(/[ \t]+/g, " ").replace(/^[ \t]+|[ \t]+$/g, "");
     const marker = lead;
@@ -486,7 +486,7 @@ export function htmlToPlainText(html: string): string {
           // cleared HERE, at the item's own close — the list closing later is too late, the
           // marker would already have escaped onto whatever prose follows the list, and the
           // NEXT item must not inherit a marker that was never this item's to give away
-          // (review round 6: `<ol><li><p></p></li></ol><p>after</p>` read "1. after").
+          // (`<ol><li><p></p></li></ol><p>after</p>` read "1. after").
           //
           // THE ITEM'S CLOSE RESTORES THE MARKER IT FOUND — see `liState`'s header for the
           // seven falsified predictions this one unconditional line replaced. The `flush()`

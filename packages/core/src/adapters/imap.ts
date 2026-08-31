@@ -838,7 +838,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * it holds a NEGATIVE answer too, behind a clock. The scan deliberately re-asks a null every
    * cycle so a mailbox that grows a Sent folder starts being watched on the next cycle; a
    * TARGETED fetch has no such discovery duty per call, and on a no-Sent server the re-ask made
-   * every chunked fetch pay a full inventory LIST (review round 3 — round 2's fix covered only
+   * every chunked fetch pay a full inventory LIST (round 2's fix covered only
    * the positive path). The TTL keeps discovery honest: a Sent folder created mid-connection
    * reaches the `ownAuthored` stamp within {@link ImapAdapter.TARGETED_SENT_TTL_MS}.
    */
@@ -2682,7 +2682,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // The Sent path BEFORE the lock: `findSentForScan` may issue LIST, and imapflow's mailbox lock
     // is not re-entrant. Resolved DIRECTLY rather than through `foldersToScan`, whose LIST-STATUS
     // arm re-lists the whole folder inventory on every call — a caller that fetches in chunks
-    // (the junk-restore pass, review round 2) was paying one full LIST per four messages for a
+    // (the junk-restore pass) was paying one full LIST per four messages for a
     // value `findSentForScan` memoises for the connection's life. The watched-set guard is
     // `foldersToScan`'s own, byte for byte, so the `ownAuthored` stamp below is unchanged.
     const nowMs = Date.now();

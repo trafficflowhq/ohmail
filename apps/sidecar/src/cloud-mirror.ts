@@ -1267,7 +1267,7 @@ async function applyUpsert(
       // treats it as the entity's full state: the replay's own copy of the same draft, applying
       // AFTER its parent message lands (message precedes draft in APPLY_ORDER), is what
       // restores the reply relationship, and a ledger that superseded it would leave the draft
-      // detached until its next edit (review round 1 of the diet's client half).
+      // detached until its next edit (found in the diet's client half).
       const wantsReplyParent = Boolean(d.inReplyToMessageId);
       const inReplyTo = d.inReplyToMessageId && (await messagePresent(tx, d.inReplyToMessageId))
         ? d.inReplyToMessageId
@@ -2391,7 +2391,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         // The replay behind this point can run for HOURS on a large account, and the body pass
         // (`backfillBodies`) only runs after `drainSync` returns — so without this ask the
         // window's messages sat bodiless for the replay's whole life, opening blank in exactly
-        // the period the newest-first bootstrap exists to make usable (a review round held the
+        // the period the newest-first bootstrap exists to make usable (an argument was made for the
         // CHANGELOG's sentence against the code, which is the standard the sentence is written
         // to). One bounded newest-first ask, and best-effort: a failure costs nothing the walk
         // does not still owe, so it is logged and the replay proceeds.

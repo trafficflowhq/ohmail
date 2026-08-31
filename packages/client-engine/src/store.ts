@@ -430,7 +430,7 @@ export abstract class BaseMirrorStore implements MirrorStore {
     // set, and the accepted change for a key is exactly the one whose seq the applied record now
     // carries — an equal-seq mutation echo or an out-of-order replay was REFUSED there, and a
     // cascade that read the raw page anyway would purge a body for a change that changed
-    // nothing, violating the idempotent-apply contract (review round 3: rehydrate between the
+    // nothing, violating the idempotent-apply contract (rehydrate between the
     // optimistic echo and the sync replay, and the replay deleted the fresh body again).
     const acceptedSeq = new Map<string, number>();
     for (const r of applied) acceptedSeq.set(recordKey(r.type, r.id), r.seq);

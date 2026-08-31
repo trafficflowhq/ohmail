@@ -780,7 +780,7 @@ export function ScreenerView({
    * IS THE SPLIT'S READ COLUMN OFF SCREEN — the ≤900px breakpoint, SUBSCRIBED rather than
    * sampled: a rotation or window-resize reveals `.scn-read` without touching any other
    * dependency of the body-open effect, and a sampled value left the newly visible preview
-   * idle until its stall face appeared (review round on the mobile gating).
+   * idle until its stall face appeared (found in the mobile gating).
    */
   const [narrow, setNarrow] = useState<boolean>(
     () => typeof window !== "undefined" && window.matchMedia("(max-width: 900px)").matches,
@@ -2382,8 +2382,7 @@ function JunkPreview({
           /* REMOUNTED PER ASK: the stall face (`useBodyStalled`) keys on its mount, so a retry
              that reused it kept "failed" painted over the live second request. And IDLE is not
              LOADING — a hidden narrow-viewport preview holds `idle` with NO request in flight,
-             and mapping it to `loading` started a stall countdown against nothing (both from
-             the review round on this commit). */
+             and mapping it to `loading` started a stall countdown against nothing. */
           key={`${junkKeyOf(item)}:${body.phase === "loading" ? body.attempt : 0}`}
           from={displayAddressee(item.from.name, item.from.address)}
           address={displayAddressUnder(item.from.name, item.from.address)}

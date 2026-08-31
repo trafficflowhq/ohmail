@@ -290,7 +290,7 @@ export async function reconcileBillingMirror(db: Db, opts: ReconcileOptions): Pr
     cursor = page.nextCursor;
   }
 
-  // A SPENT BUDGET SKIPS STRAIGHT TO THE RECORD (review round two). Past the deadline, every
+  // A SPENT BUDGET SKIPS STRAIGHT TO THE RECORD. Past the deadline, every
   // further await — the mirror scan, the listed-id completion, an emit — is a chance for the
   // platform to kill the invocation before `recordReconcileRun`, recreating the silent end the
   // budget exists to remove. Nothing was compared, so nothing is emitted or flagged: the run

@@ -197,7 +197,7 @@ export function useOlderMail(
    * entity is absent every verdict is `"hold"`, and any move sequence that ends in a window
    * prune before the entity returns erases its own evidence — a banned row moved back then
    * pruned reads exactly like a shown row moved out then pruned, so ANY policy that keeps
-   * state across the gap tells one of the two lies (three review rounds each caught one).
+   * state across the gap tells one of the two lies (three separate defects, one each).
    * Refusing to remember and re-asking the server is the only answer that is right in both
    * directions.
    */
