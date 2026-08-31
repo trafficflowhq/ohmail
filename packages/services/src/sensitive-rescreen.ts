@@ -651,9 +651,20 @@ export async function runSensitiveRescreen(
   // Separated, they are a race with the very writer they exist to catch: the detector returns
   // empty, the worker's fenced group then takes `mailboxes`, restores a row behind the cursor and
   // commits, and the marker lands over it. `select mailboxes … for update` FIRST — the page
-  // order, and the worker's own — excludes that group for the length of the check, so what the
-  // check saw is still true when the stamp is written. `for update` and not a plain read: a
-  // shared lock would let the worker's fence in.
+  // order, and the worker's own — excludes that group for the length of the check. `for update`
+  // and not a plain read: a shared lock would let the fence in.
+  //
+  // WHAT IT DOES NOT EXCLUDE, because the claim is exactly as wide as the lock and no wider: a
+  // writer that takes no mailbox row is not blocked by this, and most of them do not — the API's
+  // move, the Screener's apply, `rule-retro`, `ohbox-tidy`, `screener-auto`. One of those can
+  // commit a `folder_state` change between this check's SELECT and the marker UPDATE two
+  // statements below, and under READ COMMITTED the check will have read the older row. The window
+  // is those two statements rather than the whole walk, and closing it properly needs a predicate
+  // lock this isolation level does not offer — SERIALIZABLE for the completion transaction is the
+  // shape, and it is not worth a serialization failure on an operator one-shot. It is the same
+  // residual as a restoration arriving just AFTER the stamp, which no lock here can reach either;
+  // both belong to the writers, and the ledger row for the reconciler's stale-intent write-back
+  // is where the actual fix lives.
   const stamped = await tx.transaction(async (t) => {
     // …AND THE LOCKED READ'S RESULT IS USED, NOT DISCARDED. The mailbox can be GONE by now: an
     // account erasure deletes `folder_state` and then `mailboxes` in one transaction, so a pass
@@ -891,10 +902,12 @@ async function moveDestinations(
  *
  * `FOR UPDATE OF folder_state`, `of` the one table and not the whole join: `message_bodies` is on
  * the NULLABLE side of a LEFT JOIN, which Postgres refuses to lock, and locking `messages` would
- * serialize the pass against ordinary ingest for no benefit. Two concurrent runs both block on the
- * same row; the loser re-reads the committed row and — IF THE WINNER MOVED IT — finds it no longer
- * desired into `INBOX` and drops it, so a message is moved once and `change_log` gains one `move`
- * and not two.
+ * serialize the pass against ordinary ingest for no benefit. A competing writer of the same row
+ * blocks on it; when it proceeds it re-reads the committed row and — IF THIS PASS MOVED IT — finds
+ * it no longer desired into `INBOX` and drops it, so a message is moved once and `change_log`
+ * gains one `move` and not two. (TWO RUNS OF THIS PASS no longer reach that argument: since every
+ * page opens by taking the mailbox row, a second run is serialized a statement earlier. The
+ * writers this lock is for are the ones that take no mailbox row — see below.)
  *
  * A KEPT row is the other half and the claim does not extend to it: the winner wrote nothing, so
  * the row still matches and the loser examines it again. That costs a second evaluation of a

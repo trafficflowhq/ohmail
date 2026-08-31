@@ -239,9 +239,6 @@ async function run(db: Db, args: Args, dryRun: boolean): Promise<void> {
       );
     }
     if (r.truncated) {
-      // TWO REASONS, AND THEY TELL THE OPERATOR DIFFERENT THINGS ABOUT THE NEXT RUN. Collapsing
-      // them into one "run it again to resume" line was a false statement in the second case:
-      // a disturbed run DISCARDS its position on purpose, so the next run starts at the top.
       // THREE STOP REASONS, AND THEY TELL THE OPERATOR DIFFERENT THINGS ABOUT THE NEXT RUN.
       // Collapsing them into one "run it again to resume" line was a false statement in two of
       // the three: a disturbed run DISCARDS its position on purpose, and a mailbox that was
