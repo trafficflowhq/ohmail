@@ -1124,16 +1124,52 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * credential is the only thing on this machine that a person signing out is asking to be gone.
      */
     const forgetStoredLogin = async (): Promise<boolean> => {
-      const had = (await storedLogin()) !== null;
-      await db.delete(mailboxCredentials).where(and(
-        eq(mailboxCredentials.mailboxId, world.mailboxId),
-        eq(mailboxCredentials.transport, "imap"),
-      ));
+      /**
+       * ── THE DELETE AND ITS PROOF ARE ONE TRANSACTION, AND THE PROOF IS A READ ─────────────
+       *
+       * This issued the DELETE, logged `stored_login_cleared` and answered 200 without ever
+       * asking whether the row was gone. Two ways that lied. A credential write racing the
+       * sign-out — a password change, a reseal after a key rotation — could commit AFTER the
+       * delete and put the sealed password straight back, and the shell, seeing the 2xx, went
+       * on to stop the engine and remove `config.json`: sign-out reported, credential restored,
+       * and the desktop's new refusal arm never even reached. And a delete that removed nothing
+       * for any other reason read exactly the same from outside.
+       *
+       * So the row is deleted and READ BACK inside one transaction, which is also the fence: a
+       * competing credential write serializes against it rather than landing between the two
+       * statements. A row that survives makes this THROW, which is what turns the shell's
+       * "the engine refused" arm from a comment into a path.
+       */
+      const had = await db.transaction(async (tx) => {
+        const before = await tx.select({ mailboxId: mailboxCredentials.mailboxId }).from(mailboxCredentials)
+          .where(and(
+            eq(mailboxCredentials.mailboxId, world.mailboxId),
+            eq(mailboxCredentials.transport, "imap"),
+          ))
+          .for("update");
+        await tx.delete(mailboxCredentials).where(and(
+          eq(mailboxCredentials.mailboxId, world.mailboxId),
+          eq(mailboxCredentials.transport, "imap"),
+        ));
+        const after = await tx.select({ mailboxId: mailboxCredentials.mailboxId }).from(mailboxCredentials)
+          .where(and(
+            eq(mailboxCredentials.mailboxId, world.mailboxId),
+            eq(mailboxCredentials.transport, "imap"),
+          ));
+        if (after.length > 0) {
+          throw new ServiceError(
+            "stored_login_not_cleared", 500,
+            "the stored mailbox password is still on this install — the delete did not take. " +
+              "You have not been signed out.",
+          );
+        }
+        return before.length > 0;
+      });
       log("stored_login_cleared", {
         mailboxId: world.mailboxId,
         state: had ? "removed" : "absent",
-        reason: "the sealed mailbox password was removed from this install; the mirror and the " +
-          "mailbox on the user's own server are untouched",
+        reason: "the sealed mailbox password was removed from this install and read back as " +
+          "absent; the mirror and the mailbox on the user's own server are untouched",
       });
       return had;
     };

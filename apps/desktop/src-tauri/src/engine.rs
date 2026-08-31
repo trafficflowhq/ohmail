@@ -1221,15 +1221,17 @@ impl Shell {
     /// door's sealed session is a file, so it is also removed directly — which is what covers the
     /// case where the engine was not serving and there was nothing to ask.
     ///
-    /// ── AND A REFUSED CLEAR IS NOT A SIGN-OUT ───────────────────────────────────────────────
+    /// ── AND A CLEAR THAT DID NOT HAPPEN IS NOT A SIGN-OUT ───────────────────────────────────
     ///
-    /// An unreachable engine and an engine that ANSWERED 5xx are different facts. The first is
-    /// the absence this is best-effort about; the second means the credential is still sealed
-    /// where only the engine can reach it, and on the local door — where the mirror and this
-    /// install's key are both deliberately left in place — that credential stays decryptable in
-    /// the same local security context. So the local door returns `Err` and changes nothing
-    /// rather than reporting a sign-out it did not perform. The cloud door proceeds, because its
-    /// sealed session is a file this function removes itself.
+    /// On the LOCAL door the mailbox password is sealed inside the mirror's database, only the
+    /// engine can reach it, and both the mirror and this install's key are deliberately left in
+    /// place — so any outcome other than a 2xx leaves a credential that is still decryptable in
+    /// the same local security context. A 5xx and an unreachable engine are different reasons
+    /// for the same fact, and both return `Err` and change nothing rather than reporting a
+    /// sign-out that did not happen.
+    ///
+    /// The CLOUD door proceeds on both, and there that is sound: its credential is a sealed
+    /// FILE this function removes itself a few lines down, and that removal is checked too.
     pub fn logout(&self) -> Result<serde_json::Value, String> {
         let config = self.paths.config();
 
@@ -1284,13 +1286,32 @@ impl Shell {
                         ));
                     }
                 }
-                // Unreachable is genuinely the absence case the header argues: nothing is serving,
-                // so nothing holds the credential in memory, and the durable half is covered
-                // below. This arm stays best-effort deliberately.
-                Err(reason) => log_line(format_args!(
-                    "signing out: the engine could not be asked to clear its stored credential \
-                     ({reason}); the sealed session is removed from disk regardless"
-                )),
+                // AND UNREACHABLE IS NOT AN ABSENCE EITHER, ON THE LOCAL DOOR.
+                //
+                // "Nothing is serving, so nothing holds the credential" is true of memory and
+                // says nothing about disk — and on the local door the disk half is exactly the
+                // problem: the mailbox password is sealed INSIDE the mirror's database, only the
+                // engine can reach it, and no file removal below covers it (the sealed-session
+                // file is the CLOUD door's, and the mirror and this install's key are both left
+                // in place on purpose). So an engine that cannot be asked leaves precisely the
+                // residue the 5xx arm above refuses, and the two must answer the same way.
+                //
+                // The cloud door keeps the old reading, and there it is sound: its credential is
+                // a file this function removes itself a few lines down.
+                Err(reason) => {
+                    log_line(format_args!(
+                        "signing out: the engine could not be asked to clear its stored credential \
+                         ({reason})"
+                    ));
+                    if local_door {
+                        return Err(format!(
+                            "The engine could not be reached to clear the stored login ({reason}), \
+                             so your mailbox password is still sealed on this computer and you have \
+                             NOT been signed out. Try again; if it keeps failing, quit ohmail and \
+                             reopen it."
+                        ));
+                    }
+                }
             }
         }
 
@@ -1299,9 +1320,25 @@ impl Shell {
         // platform and does not on another.
         self.engine().stop();
 
+        // ── THE CLOUD DOOR'S SEALED SESSION IS THE CREDENTIAL, SO ITS REMOVAL IS NOT OPTIONAL ──
+        //
+        // This logged the failure and carried on to remove `config.json` and report a clean
+        // sign-out — with `cloud-tokens.seal` still on disk under this install's key, which is
+        // deliberately left in place. Worse than the residue: removing the door configuration
+        // takes away the ordinary path by which the person could retry, because the app is then
+        // NotConfigured and there is nothing to sign out of.
+        //
+        // So a refusal returns before anything else moves. The engine is already stopped, which
+        // is a visible degraded state matching the message, and a retry re-enters this function
+        // with the configuration intact and tries the file again.
         if let (Some(Config::Cloud(_)), Some(root)) = (&config, self.paths.app_data.as_deref()) {
             if let Err(reason) = config::remove_sealed_session(root, Mode::Cloud) {
                 log_line(format_args!("signing out: {reason}"));
+                return Err(format!(
+                    "The stored sign-in could not be removed from this computer ({reason}), so you \
+                     have NOT been signed out. Try again; if it keeps failing, quit ohmail and \
+                     reopen it."
+                ));
             }
         }
 
@@ -2915,8 +2952,23 @@ fn engine_configure<R: tauri::Runtime>(
 /// Forget the account on this install: clear the sealed credential, stop the engine, forget the
 /// door. The mirror and this install's key stay. See [`Shell::logout`].
 ///
-/// Host mode stands down first, for `engine_configure`'s reason: a sign-out stops the engine and
-/// its host listener, and the tailnet registration must not outlive them.
+/// ── THE SIGN-OUT GOES FIRST, AND THE ORDER MOVED FOR A REASON ───────────────────────────────
+///
+/// Host mode used to stand down BEFORE the sign-out, on `engine_configure`'s reasoning: a
+/// sign-out stops the engine and its host listener, and the tailnet registration must not
+/// outlive them. That was right while `logout` could not fail. It can now — a local-door engine
+/// that REFUSES to clear the stored credential returns `Err` and changes nothing — and with the
+/// old order a refusal had already withdrawn the route, unregistered start-at-login, written
+/// `enabled: false` and taken the tray down. The caller was correctly told the sign-out failed
+/// while every paired phone lost the host and an always-on setting was silently turned off:
+/// "changes nothing" was true of the shell and false of the app.
+///
+/// So the credential clear runs first. It refuses BEFORE the engine is stopped or any file is
+/// removed (see [`Shell::logout`]), so a refusal leaves the install exactly as it was, host mode
+/// included. The window this trades for is the reverse one and it is far smaller: between the
+/// engine stopping and the stand-down, in-process and without an await, the registration points
+/// at a listener that has just gone — which is the best-effort case
+/// `stand_down_on_shell_transition` is already documented to accept.
 #[cfg(feature = "local-engine")]
 #[tauri::command(async)]
 fn engine_logout<R: tauri::Runtime>(
@@ -2924,12 +2976,13 @@ fn engine_logout<R: tauri::Runtime>(
     shell: tauri::State<'_, Arc<Shell>>,
     host: tauri::State<'_, Arc<crate::host::HostRuntime<R>>>,
 ) -> Result<serde_json::Value, String> {
+    let out = shell.logout()?;
     crate::host::stand_down_on_shell_transition(
         &app,
         host.inner(),
         "signing out stops the engine the tailnet was served from",
     );
-    shell.logout()
+    Ok(out)
 }
 
 /// One request, down the pipe and back.
