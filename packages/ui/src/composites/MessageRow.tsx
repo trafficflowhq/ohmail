@@ -257,7 +257,10 @@ export function MessageRow(props: MessageRowProps) {
   } = props;
 
   const badges: ReactNode[] = [];
-  if (threadCount) badges.push(<Badge key="thread">⤷ {threadCount}</Badge>);
+  /* `bdg-thread` marks the one strip member that may never shrink — see row.css: under
+     width pressure the strip's tags and place badges give way; the count (bounded at
+     "⤷ NNN") and the faces (three fixed 18px circles) are the strip's point and hold. */
+  if (threadCount) badges.push(<Badge key="thread" className="bdg-thread">⤷ {threadCount}</Badge>);
   /**
    * THE CONVERSATION'S FACES, DIRECTLY AFTER ITS COUNT — see
    * {@link MessageRowProps.participants} for why they stand here and not in the row's lead.

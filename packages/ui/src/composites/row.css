@@ -23,17 +23,25 @@
 .dot-unread{width:5px;height:5px;border-radius:var(--r-avatar);background:var(--accent);flex:none;align-self:center;
   transition:opacity .7s var(--swift)}
 .justseen .dot-unread{opacity:0} /* rows AND stream cards */
-/* the badge strip sits BESIDE `.subj` in this flex row (see MessageRow.tsx): the subject
-   shrinks and ellipsizes, the strip never does — a long subject may not eat a thread's count.
-   The 7px the strip used to bring as margin is a negative offset against the row's 10px gap,
-   so nothing moved visually when it left the subject span. */
+/* the badge strip sits BESIDE `.subj` in this flex row (see MessageRow.tsx): a long subject
+   may not eat a thread's count. The pressure order is deliberate, in three steps: first the
+   SUBJECT shrinks and ellipsizes (its basis is the line's largest, so proportional shrink
+   lands mostly on it); then the strip's tag chips and place badges give way (min-width:0 —
+   their text clips, because a tag is recoverable in the reading pane); the thread count and
+   the participant faces never shrink — bounded at "⤷ NNN" and three 18px circles, they are
+   the strip's point — and the strip's own overflow:hidden is the last fence that keeps a
+   pathological row from pushing the amount off the 390px screen. The 7px the strip used to
+   bring as margin is a negative offset against the row's 10px gap, so nothing moved visually
+   when it left the subject span. */
 .row-mid{display:flex;align-items:baseline;gap:10px;margin-top:2px}
 .row .subj{font-size:13.5px;font-weight:500;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:-.008em;min-width:0}
 .row.seen .subj{color:var(--ink2);font-weight:450}
 .row .amt{margin-left:auto;flex:none;font-variant-numeric:tabular-nums;font-size:12.5px;font-weight:550;color:var(--ink)}
 .row.seen .amt{color:var(--ink2)}
 .row .prev{font-size:12px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
-.row .badges{display:inline-flex;gap:6px;flex:none;margin-left:-3px;vertical-align:1px}
+.row .badges{display:inline-flex;gap:6px;flex:0 1 auto;min-width:0;overflow:hidden;margin-left:-3px;vertical-align:1px}
+.row .badges > *{min-width:0;overflow:hidden}
+.row .badges > .bdg-thread,.row .badges > .thread-circles{flex:none;overflow:visible}
 
 /* THREAD PARTICIPANT CIRCLES — the conversation's faces in the subject line's badge strip,
    standing immediately after its `⤷ N` count. They are NOT the row's lead: the lead is one
