@@ -22,10 +22,19 @@
  * `:root[data-face="ohmarchy"]`. Inline custom properties on <html> would apply to EVERY
  * face — the live feed would repaint paper too, which is exactly the fork-by-side-effect the
  * one-UI law exists to prevent. Scoped, the feed is inert until the theme machinery stamps
- * the ohmarchy face (the 3a settings lane owns the stamp; the attribute name is this
+ * the ohmarchy face (the settings lane owns the stamp; the attribute name is this
  * module's exported constant so the census/contract can hold the two to each other), and
  * `data-omarchy="live"` on <html> is how that machinery knows a live source exists at all —
  * signal, not styling.
+ *
+ * Every declaration carries `!important`, and that is a cascade decision, not a shortcut:
+ * the static token stylesheet's follow-the-system dark block is
+ * `:root:not([data-theme="light"]):not([data-theme="dark"])` — specificity (0,3,0) — which
+ * outranks this rule's (0,2,0) however late the element sits, so on a dark desktop the
+ * static values would silently win every slot both define. The live desktop theme is BY
+ * DESIGN the top of the token cascade whenever the face is on and a live source exists;
+ * importance states that once, survives any future static selector, and nothing in the
+ * token stylesheets declares importance of its own (checked, and cheap to keep true).
  *
  * ── THE FALLBACK IS "KEEP WHAT YOU HAVE", NEVER "RENDER WHAT YOU GOT" ───────────────────────
  *
@@ -69,11 +78,27 @@ const STYLE_ID = "ohmail-omarchy-live";
 /** A token name: a custom property, or the one standard property the mapping emits. */
 const TOKEN_NAME = /^(--[a-z0-9-]{1,64}|color-scheme)$/;
 /** Characters that could restructure a stylesheet - close the block, open a rule, start
- *  an at-rule, escape - banned from values wholesale, control characters included. */
+ *  an at-rule, escape, open a comment, or leave a bracket hanging - banned from values
+ *  wholesale, control characters included. `/` goes as a CHARACTER because no real token
+ *  value carries one and an embedded comment-opener would swallow every later declaration
+ *  in the rule; square brackets likewise. */
 // eslint-disable-next-line no-control-regex
-const VALUE_BANNED = /[{}<>;@\\\u0000-\u001f\u007f]/;
+const VALUE_BANNED = /[{}<>;@\\/[\]\u0000-\u001f\u007f]/;
 const VALUE_MAX = 512;
 const TOKENS_MAX = 200;
+
+/** Parens must pair and nest: CSS error recovery inside an unmatched opening paren ignores
+ *  semicolons, so a value ending rgba( would eat the rest of the rule — the whole theme,
+ *  not one slot. Parens are not simply banned because they are real: the tag washes are
+ *  rgba(...) values. */
+function parensBalanced(value: string): boolean {
+  let depth = 0;
+  for (const ch of value) {
+    if (ch === "(") depth += 1;
+    else if (ch === ")" && --depth < 0) return false;
+  }
+  return depth === 0;
+}
 
 interface TauriInternals {
   invoke(command: string, payload?: Record<string, unknown>, options?: unknown): Promise<unknown>;
@@ -127,7 +152,7 @@ export function fencedTokens(tokens: Record<string, string>): [string, string][]
     if (out.length >= TOKENS_MAX) break;
     if (!TOKEN_NAME.test(name)) continue;
     if (typeof value !== "string" || value.length === 0 || value.length > VALUE_MAX) continue;
-    if (VALUE_BANNED.test(value)) continue;
+    if (VALUE_BANNED.test(value) || !parensBalanced(value)) continue;
     out.push([name, value]);
   }
   return out;
@@ -144,7 +169,8 @@ export function applyOmarchyTokens(tokens: Record<string, string>): void {
     style.id = STYLE_ID;
     doc.head.appendChild(style);
   }
-  const lines = fencedTokens(tokens).map(([name, value]) => `  ${name}: ${value};`);
+  // `!important` per declaration — the module header carries the cascade argument.
+  const lines = fencedTokens(tokens).map(([name, value]) => `  ${name}: ${value} !important;`);
   style.textContent =
     `:root[${OMARCHY_FACE_ATTRIBUTE}="${OMARCHY_FACE_VALUE}"] {\n${lines.join("\n")}\n}`;
   doc.documentElement.setAttribute(OMARCHY_LIVE_ATTRIBUTE, "live");

@@ -34,24 +34,52 @@ export interface OmarchyThemeRaw extends OmarchySystemRaw {
   colorsToml: string;
 }
 
+/** The floors the law promises, verified on the OUTPUT rather than trusted to the walk:
+ *  `ensure`'s walk mixes toward the palette's own foreground, so a palette whose foreground
+ *  sits near its background can run the walk to the end and still land under the floor —
+ *  every step "helped" and none sufficed. All 22 stock themes clear these; the palette that
+ *  fails them is user-authored and unreadable-by-contrast, and the honest answer for it is
+ *  the same as for one that does not parse: keep the last good theme. */
+function clearsFloors(map: OhmarchyMap, t: Record<string, string>): boolean {
+  const panel = t["--panel"];
+  const floors: [string, string, number][] = [
+    ["--ink", panel, 4.5],
+    ["--ink2", panel, 4.5],
+    ["--ink3", panel, 4.5],
+    ["--accent", panel, 3],
+    ["--accent-ink", panel, 4.5],
+    ["--on-accent", t["--accent"], 4.5],
+    ["--danger", panel, 4.5],
+    ...map.TAG_HUES.map(([name]): [string, string, number] => [`--tg-${name}-ink`, panel, 4.5]),
+  ];
+  try {
+    return floors.every(([slot, against, floor]) => map.contrast(t[slot], against) >= floor);
+  } catch {
+    return false; // a slot the contrast math cannot read is a floor not cleared
+  }
+}
+
 /**
  * Map one live theme, or answer `null` for material that is not one — and `null` means the
  * caller KEEPS what it has (the last good token set, or the static defaults), never that it
  * renders a half-mapped theme.
  *
  * A palette the floors have to fight is not a failure: the walks in `mapping.js` are the
- * designed response, and `notes` says which fired. Only unreadable material answers `null`.
+ * designed response, and `notes` says which fired. Unreadable material answers `null` — and
+ * so does a palette the walks could not save, because a floor is a promise about the OUTPUT.
  */
 export function mapOmarchyTheme(raw: OmarchyThemeRaw): OhmarchyMapResult | null {
   const palette = parseColorsToml(raw.colorsToml);
   if (palette === null) return null;
+  const map = omarchyMap();
   let mapped: OhmarchyMapResult;
   try {
-    mapped = omarchyMap().mapTheme(palette);
+    mapped = map.mapTheme(palette);
   } catch {
     /* A palette the law itself refuses (e.g. a required color that is not hex). The last
        good theme is the honest render; broken chrome is not. */
     return null;
   }
+  if (!clearsFloors(map, mapped.tokens)) return null;
   return { ...mapped, tokens: applySettings(mapped.tokens, parseSystem(raw)) };
 }

@@ -115,9 +115,9 @@ describe("the feed's start", () => {
     const rule = styleText();
     expect(rule).not.toBeNull();
     expect(rule).toContain(`:root[${OMARCHY_FACE_ATTRIBUTE}="${OMARCHY_FACE_VALUE}"]`);
-    expect(rule).toContain("--panel: #1a1b26;");
-    expect(rule).toContain("--accent: #7aa2f7;");
-    expect(rule).toContain("color-scheme: dark;");
+    expect(rule).toContain("--panel: #1a1b26 !important;");
+    expect(rule).toContain("--accent: #7aa2f7 !important;");
+    expect(rule).toContain("color-scheme: dark !important;");
     expect(document.documentElement.getAttribute(OMARCHY_LIVE_ATTRIBUTE)).toBe("live");
   });
 
@@ -143,7 +143,7 @@ describe("the push — omarchy theme set, heard live", () => {
     // The real event arrives enveloped; the switch to nord must land in the rule.
     push({ event: OMARCHY_THEME_EVENT, payload: { slug: "nord", colorsToml: NORD_MINIMAL } });
     const afterNord = styleText();
-    expect(afterNord).toContain("--panel: #2e3440;");
+    expect(afterNord).toContain("--panel: #2e3440 !important;");
     expect(afterNord).not.toContain("#1a1b26");
 
     // A half-staged or broken theme: the LAST GOOD set stands, byte for byte.
@@ -167,12 +167,12 @@ describe("the push — omarchy theme set, heard live", () => {
       },
     });
     const rule = styleText()!;
-    expect(rule).toContain("--font-size-base: 14px;");
+    expect(rule).toContain("--font-size-base: 14px !important;");
     expect(rule).toContain("--font-ui: 'JetBrainsMono Nerd Font','JetBrainsMono NF',");
-    expect(rule).toContain("--gap-tile: 10px;");
-    expect(rule).toContain("--gap-edge: 10px;");
-    expect(rule).toContain("--focus-w: 3px;");
-    expect(rule).toContain("--lift-3: 0 0 0 3px #7aa2f7;");
+    expect(rule).toContain("--gap-tile: 10px !important;");
+    expect(rule).toContain("--gap-edge: 10px !important;");
+    expect(rule).toContain("--focus-w: 3px !important;");
+    expect(rule).toContain("--lift-3: 0 0 0 3px #7aa2f7 !important;");
   });
 });
 
@@ -198,6 +198,29 @@ describe("the fence", () => {
       "--too-big": "x".repeat(600),
     });
     expect(pairs).toEqual([["--panel", "#2e3440"]]);
+  });
+
+  it("a comment-opener or a hanging paren is dropped; a real rgba() wash is kept", () => {
+    // A slash would open a comment that swallows every later declaration in the rule, and
+    // CSS error recovery inside an unmatched `(` ignores `;` — either one costs the whole
+    // theme, not one slot. Parens themselves are real: the tag washes are rgba() values.
+    const pairs = fencedTokens({
+      "--lift-2": "0 0 0 2px #4c566a /* eat the rest",
+      "--hair": "rgba(169,177,214,0.25",
+      "--tg-red-bg": "rgba(247,118,142,0.14)",
+    });
+    expect(pairs).toEqual([["--tg-red-bg", "rgba(247,118,142,0.14)"]]);
+  });
+
+  it("every emitted declaration carries the important flag — the live source outranks static tokens", () => {
+    // The static follow-the-system dark block is (0,3,0) against this rule's (0,2,0); without
+    // importance a dark desktop keeps the static values for every slot both define, and the
+    // feed silently does nothing in the commonest configuration.
+    applyOmarchyTokens({ "--panel": "#2e3440", "color-scheme": "dark" });
+    const rule = styleText()!;
+    for (const line of rule.split("\n").slice(1, -1)) {
+      expect(line.endsWith(" !important;"), line).toBe(true);
+    }
   });
 
   it("the payload validator refuses every non-theme shape", () => {
