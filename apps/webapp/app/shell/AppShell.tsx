@@ -1254,10 +1254,21 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
      the face still resting null, and adopting THAT null would wipe this device's mirror of
      the account's real answer on every warm boot whose live read is slow. */
   const themeFaceKnown = consent.themeFaceKnown;
+  const consentStandalone = consent.standalone;
   useEffect(() => {
+    /* A STANDALONE door has no account, so it may not wear one (review-caught, desktop):
+       the provider outlives the desktop's door switch, and the departed cloud account's
+       adopted face — in memory AND in the `ohmail.face.account` mirror — would otherwise
+       skin the standalone mailbox, and the next relaunch, with an answer nobody on this
+       door ever gave. Adopting null clears both. The web never takes this arm (its cloud
+       client is always reachable); the device's own pin is untouched either way. */
+    if (consentStandalone) {
+      adoptAccountFace(null);
+      return;
+    }
     if (!themeFaceKnown) return;
     adoptAccountFace(accountThemeFace);
-  }, [adoptAccountFace, accountThemeFace, themeFaceKnown]);
+  }, [adoptAccountFace, accountThemeFace, themeFaceKnown, consentStandalone]);
   /**
    * "APPLY FOR ALL DEVICES" — the face's account write, folded to ONE nullable callback for
    * both consumers (the Settings row's scope line and the Option B offer). Null on the demo
