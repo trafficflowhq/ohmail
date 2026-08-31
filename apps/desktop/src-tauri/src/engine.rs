@@ -1220,6 +1220,16 @@ impl Shell {
     /// password lives inside the mirror's database and only the engine can reach it. The cloud
     /// door's sealed session is a file, so it is also removed directly — which is what covers the
     /// case where the engine was not serving and there was nothing to ask.
+    ///
+    /// ── AND A REFUSED CLEAR IS NOT A SIGN-OUT ───────────────────────────────────────────────
+    ///
+    /// An unreachable engine and an engine that ANSWERED 5xx are different facts. The first is
+    /// the absence this is best-effort about; the second means the credential is still sealed
+    /// where only the engine can reach it, and on the local door — where the mirror and this
+    /// install's key are both deliberately left in place — that credential stays decryptable in
+    /// the same local security context. So the local door returns `Err` and changes nothing
+    /// rather than reporting a sign-out it did not perform. The cloud door proceeds, because its
+    /// sealed session is a file this function removes itself.
     pub fn logout(&self) -> Result<serde_json::Value, String> {
         let config = self.paths.config();
 
@@ -1234,17 +1244,49 @@ impl Shell {
                 headers: Vec::new(),
                 body: Vec::new(),
             });
+            // Whether a REFUSAL leaves a usable credential behind depends on the door, so the
+            // question is asked once, here, rather than assumed by the arms below.
+            let local_door = matches!(config.mode(), Mode::Local);
             match answer {
-                // BEST EFFORT, and the fallbacks below are why that is not a shrug. An engine that
-                // is not serving has nothing in memory to clear, and the file removal covers the
-                // durable half. Reporting a failure here would refuse a sign-out because the thing
-                // being signed out of was already down.
+                // BEST EFFORT ON THE TRANSPORT, and the fallbacks below are why that is not a
+                // shrug: an engine that is not serving has nothing in memory to clear, and the
+                // file removal covers the durable half. Refusing a sign-out because the thing
+                // being signed out of was already down would be the wrong way round.
                 Ok(res) if (200..300).contains(&res.status) => {}
-                Ok(res) => log_line(format_args!(
-                    "signing out: the engine answered {} to {path}; the sealed session is removed \
-                     from disk regardless",
-                    res.status
-                )),
+                // A REFUSAL IS NOT AN ABSENCE, and this arm used to be treated as one.
+                //
+                // The comment above argues the unreachable-engine case correctly and then applied
+                // it two lines down, where the engine IS serving and answered a 5xx. On the LOCAL
+                // door that is not a cosmetic difference: the mailbox password is sealed INSIDE
+                // the mirror's database and only the engine can reach it, the mirror is
+                // deliberately left in place, and this install's key is left in place too (see
+                // below) — so the credential survives, still decryptable in the same local
+                // security context, while the app reports a clean sign-out.
+                //
+                // So the local door FAILS OUT LOUD and changes nothing: `config.json` stays, the
+                // engine stays configured, and the person is told the truth plus what to try. The
+                // CLOUD door proceeds, because there the sealed session is a FILE this function
+                // removes itself a few lines down and the engine is stopped immediately after —
+                // the refusal costs nothing that survives.
+                Ok(res) => {
+                    log_line(format_args!(
+                        "signing out: the engine REFUSED to clear its stored credential — it \
+                         answered {} to {path}",
+                        res.status
+                    ));
+                    if local_door {
+                        return Err(format!(
+                            "The engine refused to clear the stored login (it answered {}), so \
+                             your mailbox password is still sealed on this computer and you have \
+                             NOT been signed out. Try again; if it keeps refusing, quit ohmail and \
+                             reopen it.",
+                            res.status
+                        ));
+                    }
+                }
+                // Unreachable is genuinely the absence case the header argues: nothing is serving,
+                // so nothing holds the credential in memory, and the durable half is covered
+                // below. This arm stays best-effort deliberately.
                 Err(reason) => log_line(format_args!(
                     "signing out: the engine could not be asked to clear its stored credential \
                      ({reason}); the sealed session is removed from disk regardless"
