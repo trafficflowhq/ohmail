@@ -120,8 +120,9 @@ read. This applies to the ohmarchy look only — in paper, ohmail keeps its own 
   Settings, built from the same palette set as the desktop so the two cannot drift apart, and
   *apply on all devices* stores the choice on your account and does persist. **A device-only
   choice on the phone lasts for that run of the app** — reopen it and you are back on your
-  account's look, or on the default. On the desktop and in the browser a device choice is
-  remembered. The phone also has no Zero layout — that is the desktop and the browser — and its
+  account's look, or on the default. On the desktop, and in a browser that lets ohmail keep
+  local storage, a device choice is remembered; a browser that refuses storage loses it the
+  same way, which is the limit named at the foot of this note. The phone also has no Zero layout — that is the desktop and the browser — and its
   theming is its own machinery rather than the shared stylesheet the other surfaces are checked
   against.
 - **A fifth review pass on the mail-stylesheet reader is owed, not finished.** Four passes
