@@ -1,9 +1,9 @@
 /**
  * The SETTINGS half of the ohmarchy mapping — the system's own font, size, gaps and border
- * weight, read into the token slots `OHMARCHY-TOKENS.md` §5 assigns them. Same contract as
- * color (OHMARCHY-PLAN.md §3c: "the mapping layer is settings→token-slots"), kept beside
- * `mapping.js` rather than inside it so the palette law stays byte-identical to the file
- * Phase 3-zero authored and the gallery still runs.
+ * weight, read into the token slots the ohmarchy token law assigns them. Same contract as
+ * color — the mapping layer is settings→token-slots — kept beside `mapping.js` rather than
+ * inside it so the palette law stays byte-identical to its design-phase original and the
+ * gallery still runs.
  *
  * ── RAW TEXT IN, TOKENS OUT — THE PARSING LIVES HERE, NOT IN THE SHELL ──────────────────────
  *
@@ -155,7 +155,7 @@ export function parseSystem(raw: OmarchySystemRaw | null | undefined): OmarchySe
 const MAPPED_RING = "0 0 0 2px ";
 
 /**
- * Lay the known settings over a mapped token set (OHMARCHY-TOKENS.md §5's table):
+ * Lay the known settings over a mapped token set (the token law's settings table):
  *
  *   --font-ui         the live fc-match families, then the same static tail
  *   --font-size-base  shell.toml base-size

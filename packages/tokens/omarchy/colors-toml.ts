@@ -4,12 +4,12 @@
  *
  * ── WHY A READER OF OUR OWN AND NOT A TOML LIBRARY ──────────────────────────────────────────
  *
- * The file's whole grammar, measured over every theme a real 4.0.2 install ships (the 22 raw
- * files in `fixtures/raw/`, pulled from the VM `OMARCHY-VM.md` describes), is one line shape:
- * `key = "value"` — flat, no sections, no arrays, no escapes, every value double-quoted. The
- * test `omarchy-mapping.test.ts` holds this reader byte-for-byte against the committed
- * JSON parses of all 22, so the day Omarchy's own format grows past this grammar, the fixture
- * refresh fails the suite instead of the reader silently mis-reading a live theme. A TOML
+ * The file's whole grammar, measured over every one of the 22 themes a real Omarchy 4.0.2
+ * install ships (the raw files were pulled off a stock install, never off documentation), is one
+ * line shape: `key = "value"` — flat, no sections, no arrays, no escapes, every value
+ * double-quoted. The monorepo's mapping suite holds this reader byte-for-byte against the
+ * committed JSON parses of all 22, so the day Omarchy's own format grows past this grammar, the
+ * fixture refresh fails the suite instead of the reader silently mis-reading a live theme. A TOML
  * dependency would be a parser for a grammar the file does not use, in the desktop window's
  * bundle, for zero lines saved here.
  *
@@ -54,9 +54,8 @@ function luminance(hex: string): number | null {
  * one, which the caller treats as "keep the last good theme" (never as "map it anyway").
  *
  * `mode` when the file omits it falls back to background luminance — the same chain Omarchy's
- * own `omarchy-theme-color` uses for user themes (OHMARCHY-TOKENS.md §4). All 22 shipped
- * themes carry the key; the fallback exists for the user-authored theme this process will
- * meet in the field.
+ * own `omarchy-theme-color` uses for user themes. All 22 shipped themes carry the key; the
+ * fallback exists for the user-authored theme this process will meet in the field.
  */
 export function parseColorsToml(text: string): OmarchyPalette | null {
   if (typeof text !== "string" || text.length === 0) return null;

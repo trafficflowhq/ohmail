@@ -12,8 +12,8 @@
 //! build is the one compiler that ever sees it. A module with zero dependencies beyond what
 //! `Cargo.toml` already carries for every build (`serde_json` is a direct dependency) is a
 //! module a throwaway harness can compile and RUN against a real Omarchy install before the
-//! tag exists, which is exactly how this one was verified (the VM of `OMARCHY-VM.md`; the
-//! close-out records the runs). Keep it that way: anything Tauri belongs in `omarchy.rs`.
+//! tag exists — which is exactly how this one was verified, against a live Omarchy 4.0.2
+//! system. Keep it that way: anything Tauri belongs in `omarchy.rs`.
 //!
 //! ── RAW TEXT OUT, EVERY PARSE IN THE WINDOW ─────────────────────────────────────────────────
 //!
@@ -32,7 +32,7 @@
 //! release workflow. A 500 ms re-read of three small files costs nothing measurable, needs no
 //! platform branch, and — because it compares CONTENT, not mtimes — cannot be fooled by an
 //! in-place rewrite that keeps size and second. `omarchy theme set` restages over ~3 s
-//! (measured, `OMARCHY-VM.md`), so the debounce below waits for two identical consecutive
+//! (measured on a real install), so the debounce below waits for two identical consecutive
 //! samples — quiet — rather than firing on the first difference and reading a half-staged
 //! directory.
 

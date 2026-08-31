@@ -1,8 +1,8 @@
 //! The feed machinery's unit half: detection against a real directory shape, the read caps,
 //! the payload's contract fields, and the debounce's exact firing rule. The LIVE half — the
 //! watch against a real `omarchy theme set` restage — cannot run where cargo does not, so it
-//! is proven by the harness runs recorded in the 3c close-out (the VM of `OMARCHY-VM.md`
-//! compiles this same file's module standalone and drives it against the real state dir).
+//! is proven by a standalone harness that compiles this same module and drives it against a
+//! real Omarchy install's state dir.
 
 use super::*;
 

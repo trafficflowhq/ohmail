@@ -2,9 +2,9 @@
  * THE OMARCHY THEME FEED, from the window's side of it.
  *
  * On an Omarchy system the desktop's active theme is a live token source for the ohmarchy
- * face (OHMARCHY-PLAN.md §3c): the shell detects Omarchy, reads the staged theme's raw
- * material, and watches it; this module is the half that turns that material into ohmail
- * token values and holds them where the ohmarchy face can wear them.
+ * face: the shell detects Omarchy, reads the staged theme's raw material, and watches it;
+ * this module is the half that turns that material into ohmail token values and holds them
+ * where the ohmarchy face can wear them.
  *
  * ── THE TWO CHANNELS, BOTH THE SHELL'S EXISTING ONES ────────────────────────────────────────
  *
