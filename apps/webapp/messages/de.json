@@ -1802,6 +1802,8 @@
     "signOut": "Abmelden",
     "signOutBusy": "Wird abgemeldet …",
     "signOutBlocked": "Ihre Sitzung ist beendet, aber die in diesem Browser zwischengespeicherte Post liegt noch hier: Ein anderer ohmail-Tab hält sie offen. Schliessen Sie die anderen ohmail-Tabs und tippen Sie erneut auf Abmelden.",
+    "signOutServerRefused": "Die in diesem Browser zwischengespeicherte Post ist entfernt, aber die Sitzung konnte auf dem Server nicht beendet werden: {reason} Ihre Anmeldung funktioniert möglicherweise weiter, bis Sie es erneut versuchen — tippen Sie noch einmal auf Abmelden oder widerrufen Sie dieses Gerät in der Geräteliste.",
+    "erasedMirrorBlocked": "Ihr Konto ist gelöscht. Die in diesem Browser zwischengespeicherte Post konnte nicht entfernt werden, weil ein anderer ohmail-Tab sie offen hält — schliessen Sie die anderen ohmail-Tabs und laden Sie diese Seite neu.",
     "loading": "Diese Sitzung wird geprüft …",
     "mail": "Deine Post liegt auf deinem eigenen Server, in den ohmail-Ordnern, in die sie einsortiert ist. Das hier löscht unsere Kopie; dein Postfach bleibt genau so organisiert, wie es jetzt ist.",
     "goneTitle": "Gelöscht",

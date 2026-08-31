@@ -114,6 +114,10 @@ export function AccountSection() {
   const [signingOut, setSigningOut] = useState(false);
   /** The wipe was blocked by another tab: the mail is still on this browser. See `doSignOut`. */
   const [signOutBlocked, setSignOutBlocked] = useState(false);
+  /** `POST /auth/logout` refused or never arrived, so the SESSION is still live. See `doSignOut`. */
+  const [signOutServerRefused, setSignOutServerRefused] = useState<string | null>(null);
+  /** The erasure landed and the local wipe did not. See `erase`. */
+  const [eraseMirrorBlocked, setEraseMirrorBlocked] = useState(false);
 
   /** The pane can be navigated away from mid-ceremony; nothing may set state after that. */
   const alive = useRef(true);
@@ -137,6 +141,7 @@ export function AccountSection() {
   const doSignOut = useCallback(async (owner: string) => {
     setSigningOut(true);
     setSignOutBlocked(false);
+    setSignOutServerRefused(null);
     const outcome = await signOut(owner);
     /**
      * ── AND IF THE MAIL IS STILL HERE, THIS DOES NOT LEAVE ─────────────────────────────────
@@ -155,6 +160,27 @@ export function AccountSection() {
     if (!outcome.cleared) {
       if (alive.current) {
         setSignOutBlocked(true);
+        setSigningOut(false);
+      }
+      return;
+    }
+    /**
+     * ── AND THE SERVER HALF IS A SECOND FACT, NOT THE SAME ONE ─────────────────────────────
+     *
+     * The header above argues correctly that a failed logout must not stop the local wipe. It
+     * does not license CLAIMING the session ended. `tf_session` is HttpOnly and server-set:
+     * nothing this page can do expires it, so a refused or unreachable logout leaves a live
+     * credential that the next reachable request authenticates with — while this control's own
+     * copy says "Ends this session". Leaving would have put the reader back into the mailbox on
+     * the machine they had just asked to be signed out of.
+     *
+     * So the mail is gone, the pane stays, and the sentence says which half did not happen and
+     * what to do about it. Pressing again is safe and is the first remedy; the second — revoking
+     * this device — works from anywhere and does not need this browser at all.
+     */
+    if (outcome.serverRefused !== null) {
+      if (alive.current) {
+        setSignOutServerRefused(outcome.serverRefused);
         setSigningOut(false);
       }
       return;
@@ -231,13 +257,23 @@ export function AccountSection() {
       // shell opens a mirror on that name before the server has confirmed anything, so a name
       // left behind after an erasure would point the next load at a database that is gone and
       // an account that no longer exists.
+      let remaining: string[] = [];
       try {
         forgetOwner();
-        await clearAllMirrors(owner);
+        // READ THE ANSWER. `clearAllMirrors` returns the mirror names still on this origin —
+        // an IndexedDB delete is BLOCKED, not failed, while another tab holds the database
+        // open, so it resolves without throwing and this used to discard the one value that
+        // said the mailbox copy survived. An erasure that reports itself complete over a
+        // readable local copy is the worst instance of the class this whole change closes:
+        // the account is gone, so there is no ordinary retry flow left to reach it with.
+        remaining = await clearAllMirrors(owner);
       } catch {
         /* the same race `sign-out.ts` already accepts */
       }
       if (!alive.current) return;
+      // The erasure DID happen and its receipt is shown either way — refusing to show it would
+      // hide a completed, irreversible act. What changes is the sentence beside it.
+      setEraseMirrorBlocked(remaining.length > 0);
       setResult(out);
       setStage("done");
     } catch (err) {
@@ -367,6 +403,12 @@ export function AccountSection() {
         {result.subscription === "cancel_failed" ? (
           <p className="acct-warn" role="alert">{t("doneSubFailed")}</p>
         ) : null}
+        {/* The account is erased and the LOCAL copy is not. Said here, beside the receipt,
+            because after an erasure there is no session left to route the reader anywhere
+            else with — the remedy has to be one they can perform on this page. */}
+        {eraseMirrorBlocked ? (
+          <p className="acct-warn" role="alert">{t("erasedMirrorBlocked")}</p>
+        ) : null}
         <div className="acct-actions">
           {/* A full navigation, not a router push: it tears down the engine and its in-memory
               mirror, and the cookies are already cleared, so `/` re-decides and renders the
@@ -412,6 +454,11 @@ export function AccountSection() {
           <div>
             <p className="acct-fine">{t("signOutBody")}</p>
             {signOutBlocked ? <p className="acct-fine acct-warn" role="alert">{t("signOutBlocked")}</p> : null}
+            {signOutServerRefused === null ? null : (
+              <p className="acct-fine acct-warn" role="alert">
+                {t("signOutServerRefused", { reason: signOutServerRefused })}
+              </p>
+            )}
           </div>
           {/* `acct-signout-btn` is `flex:0 0 auto` and `white-space:nowrap`. Without it the
               button is an ordinary flex item beside a paragraph that wants the whole row, so

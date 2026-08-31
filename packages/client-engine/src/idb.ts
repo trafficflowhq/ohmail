@@ -158,13 +158,68 @@ export function purgeLegacyMirror(factory?: IDBFactory): Promise<void> {
 }
 
 /**
+ * EVERY MIRROR NAME THIS ORIGIN HAS EVER OPENED — the answer for a browser that will not
+ * enumerate its own databases.
+ *
+ * `IDBFactory.databases()` is the only way to ask the browser what it holds, and it does not
+ * exist everywhere (Firefox shipped it late; some privacy modes stub it away). Without it,
+ * `clearAllMirrors` could only delete the legacy name and the caller's OWN mirror — and then
+ * reported an empty survivor list, i.e. "this browser holds no mail", over an EARLIER account's
+ * database that it had never even named. The header of `sign-out.ts` promises that this browser
+ * forgets "including whatever an earlier account left behind"; on those engines it did not, and
+ * said it had.
+ *
+ * So the store writes its own name down when it opens one. `localStorage` and not IndexedDB,
+ * deliberately: the registry has to be readable when the databases cannot be listed, and a
+ * synchronous read is what a sign-out's last act can rely on. It holds NAMES ONLY — an account
+ * id is already in the mirror's name and in the `tf_owner` cookie beside it, so this discloses
+ * nothing new — and it is swept by the same sign-out that empties it.
+ *
+ * Failure here is silent by design: a private mode that refuses writes leaves the registry
+ * empty, which is exactly the state this function had before it existed.
+ */
+export const MIRROR_REGISTRY_KEY = "ohmail.mirrors.v1";
+
+function registry(): string[] {
+  try {
+    const raw = globalThis.localStorage?.getItem(MIRROR_REGISTRY_KEY);
+    if (raw === null || raw === undefined) return [];
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((n): n is string => typeof n === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Record a mirror name so a browser without `databases()` can still be told to forget it. */
+export function rememberMirror(name: string): void {
+  try {
+    const held = registry();
+    if (held.includes(name)) return;
+    globalThis.localStorage?.setItem(MIRROR_REGISTRY_KEY, JSON.stringify([...held, name]));
+  } catch {
+    /* storage blocked — the registry is a best-effort widening of the delete set, never a lock */
+  }
+}
+
+function forgetMirrorNames(gone: readonly string[]): void {
+  try {
+    const left = registry().filter((n) => !gone.includes(n));
+    if (left.length === 0) globalThis.localStorage?.removeItem(MIRROR_REGISTRY_KEY);
+    else globalThis.localStorage?.setItem(MIRROR_REGISTRY_KEY, JSON.stringify(left));
+  } catch {
+    /* see `rememberMirror` */
+  }
+}
+
+/**
  * Delete EVERY mirror on this origin — the sign-out / "this is not my computer" path — and
  * ANSWER WITH THE NAMES THAT ARE STILL THERE.
  *
- * `IDBFactory.databases()` is the only way to enumerate, and it does not exist on every
- * engine (Firefox shipped it late; some privacy modes stub it). Where it is missing this
- * still deletes the legacy name and the caller's own mirror, which is the case that
- * matters: a sign-out knows who is signing out.
+ * The delete set is the union of three sources: the legacy name, the caller's own mirror, and
+ * — for the browsers that will not enumerate — every name this origin has opened
+ * ({@link rememberMirror}). `databases()` is still used where it exists, because it is the only
+ * source that can see a mirror written before the registry existed or by another tab.
  *
  * ── THE RETURN VALUE IS THE POINT, AND IT USED TO BE `void` ─────────────────────────────
  *
@@ -182,7 +237,7 @@ export function purgeLegacyMirror(factory?: IDBFactory): Promise<void> {
 export async function clearAllMirrors(owner?: string, factory?: IDBFactory): Promise<string[]> {
   const f = factory ?? (typeof indexedDB !== "undefined" ? indexedDB : undefined);
   if (!f) return [];
-  const names = new Set<string>([LEGACY_MIRROR_DB]);
+  const names = new Set<string>([LEGACY_MIRROR_DB, ...registry()]);
   if (owner) names.add(mirrorDbName(owner));
   const enumerable = typeof f.databases === "function";
   if (enumerable) {
@@ -213,15 +268,32 @@ export async function clearAllMirrors(owner?: string, factory?: IDBFactory): Pro
   if (enumerable) {
     try {
       const present = new Set((await f.databases()).map((i) => i.name).filter((n): n is string => !!n));
-      for (const [n] of outcomes) {
-        if (present.has(n)) stillHere.add(n);
-        else stillHere.delete(n);
-      }
+      // ── ENUMERATION MAY ONLY ADD, NEVER CLEAR ────────────────────────────────────────────
+      //
+      // This used to `delete` a name the second read did not list, which quietly made
+      // enumeration OUTRANK a direct `onblocked` — and `databases()` is the weaker witness of
+      // the two. It is specified to answer databases "in this origin", implementations have
+      // shipped it stale or partial, and a name omitted from it is not evidence that the
+      // database is gone; `onblocked` IS evidence that the delete did not happen. Trusting the
+      // weaker one erased a known survivor from the verdict and handed `signOut` a clean
+      // `cleared: true` over a mirror another tab was still holding — the defect this whole
+      // function was changed to close, reintroduced by its own read-back.
+      //
+      // So the read-back is one-directional: it can only find a name the delete's own outcome
+      // missed (a tab that re-opened the database between the delete and this read). The cost
+      // is over-reporting a `blocked` that completed a moment later, which is the safe
+      // direction — the remedy the copy names is "close the other tab and press again", and
+      // pressing again on an already-clean browser answers empty.
+      for (const [n] of outcomes) if (present.has(n)) stillHere.add(n);
     } catch {
       /* the read-back is unavailable: the outcomes above stand */
     }
   }
-  return [...stillHere].sort();
+  const remaining = [...stillHere].sort();
+  // The registry keeps only what is still there, so it cannot grow without bound and cannot
+  // make a later sign-out re-delete names that are already gone.
+  forgetMirrorNames([...names].filter((n) => !stillHere.has(n)));
+  return remaining;
 }
 
 /**
@@ -275,6 +347,12 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
 
   private async open(): Promise<IDBDatabase> {
     if (this.db) return this.db;
+    // WRITTEN DOWN BEFORE THE DATABASE EXISTS, not after. `open` with a version CREATES the
+    // database, so a name recorded on success would be missing for exactly the failure that
+    // leaves one behind — and the registry's whole job is to name mirrors a later sign-out
+    // could otherwise not see (see `rememberMirror`). A name for a database that was never
+    // created costs one delete of nothing.
+    rememberMirror(this.dbName);
     const req = this.factory.open(this.dbName, 1);
     req.onupgradeneeded = () => {
       const db = req.result;

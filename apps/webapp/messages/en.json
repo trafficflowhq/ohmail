@@ -1802,6 +1802,8 @@
     "signOut": "Sign out",
     "signOutBusy": "Signing out…",
     "signOutBlocked": "Your session is ended, but the mail cached in this browser is still here: another ohmail tab is holding it open. Close ohmail's other tabs and press Sign out again.",
+    "signOutServerRefused": "The mail cached in this browser is removed, but the session could not be ended on the server: {reason} Your sign-in may still work until you try again — press Sign out once more, or revoke this device from the Devices list.",
+    "erasedMirrorBlocked": "Your account is erased. The mail cached in this browser could not be removed, because another ohmail tab is holding it open — close ohmail's other tabs and reload this page.",
     "loading": "Checking this session…",
     "mail": "Your mail is on your own server, in the ohmail folders it is filed into. This deletes our copy; your mailbox stays exactly as organized as it is now.",
     "goneTitle": "Erased",

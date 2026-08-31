@@ -124,6 +124,10 @@ export async function signOut(owner?: string): Promise<SignOutResult> {
     // an IndexedDB delete is BLOCKED (not failed) while another tab holds the database open,
     // and this function used to resolve as though it had worked. See its own header.
     const remaining = await clearAllMirrors(owner);
+    // The mirror-name registry is swept BY `clearAllMirrors` itself (it removes the names it
+    // proved gone and keeps the ones it did not), so it is deliberately NOT in the prefix sweep
+    // above — dropping it there would throw away the only record of a mirror this browser could
+    // not delete, which is the opposite of what a sign-out that could not finish needs.
     return { cleared: remaining.length === 0, remaining, serverRefused };
   }
 }
