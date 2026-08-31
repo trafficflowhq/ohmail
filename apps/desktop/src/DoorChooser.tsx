@@ -34,7 +34,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@ohmail/ui";
 
 import { ProviderPicker } from "../../webapp/app/shell/ProviderPicker";
-import { providerById } from "../../webapp/app/shell/providers";
+import { hostsFor, providerById } from "../../webapp/app/shell/providers";
 import {
   EMPTY_LOCAL,
   beginBrowserSignIn,
@@ -321,10 +321,10 @@ function LocalDoor({
             ...cur,
             providerId: id,
             // The preset's own hosts, so the manual fields open pre-filled where there is
-            // something to pre-fill and empty for the generic entry, which has nothing.
-            imapHost: chosen.imap.host,
+            // something to pre-fill — and, for the generic entry, which has nothing to
+            // pre-fill with, whatever is already typed rather than two empty strings over it.
+            ...hostsFor(chosen, cur),
             imapPort: String(chosen.imap.port),
-            smtpHost: chosen.smtp.host,
             smtpPort: String(chosen.smtp.port),
           }));
         }}

@@ -160,6 +160,33 @@ export const providerById = (id: string): ProviderPreset =>
   PROVIDERS.find((p) => p.id === id) ?? PROVIDERS[PROVIDERS.length - 1]!;
 
 /**
+ * THE HOSTS A NEWLY CHOSEN PRESET IMPOSES — which, for the generic entry, is NEITHER OF THEM.
+ *
+ * All three connect surfaces answer a provider choice by writing the preset's hosts into their
+ * form state. For the seven NAMED presets that is the whole point: the host is a fact the app
+ * knows and the person does not have to type. The generic entry's hosts are the empty string —
+ * it has nothing to say about them, which is exactly why it renders the fields — and copying
+ * that emptiness over the form DELETED WHAT SOMEBODY HAD ALREADY TYPED.
+ *
+ * It is reachable without changing your mind about anything. The picker is a radiogroup whose
+ * checked tile is the group's tab stop, so Space or Enter on it re-fires the choice; so does
+ * clicking the tile you already chose, which is a natural thing to do when a submit has just
+ * failed and the error banner sits directly above the provider grid. Both wiped the IMAP and
+ * SMTP hosts, silently, from fields far enough down the form to be off screen — and the next
+ * submit then failed for a missing host the person could see themselves having typed.
+ *
+ * So: a preset with a host imposes it, and a preset without one leaves what is there. Empty is
+ * not a value here; it is the absence of one, and absence must not overwrite.
+ */
+export const hostsFor = (
+  p: ProviderPreset,
+  current: { imapHost: string; smtpHost: string },
+): { imapHost: string; smtpHost: string } => ({
+  imapHost: p.imap.host || current.imapHost,
+  smtpHost: p.smtp.host || current.smtpHost,
+});
+
+/**
  * THE LABEL A RENDER SITE PUTS ON SCREEN — which is not always {@link ProviderPreset.label}.
  *
  * Seven of the eight labels are brand names and are the same string in every language. The

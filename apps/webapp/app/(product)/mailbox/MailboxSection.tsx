@@ -77,7 +77,7 @@ import {
 import {
   OAUTH_REASONS, beginOAuthReturn, noOAuthOutcome, oauthOutcome, subscribeOAuthOutcome,
 } from "./oauth-return";
-import { providerById, providerLabel, type ProviderPreset } from "../../shell/providers";
+import { hostsFor, providerById, providerLabel, type ProviderPreset } from "../../shell/providers";
 import { ProviderPicker } from "../../shell/ProviderPicker";
 import { AGO_COPY, agoStamp } from "../../shell/format";
 import { isSyncBlockReason, showInboundQuiet, standDownToken } from "../../shell/mail-state";
@@ -1245,7 +1245,9 @@ export function MailboxSection() {
 
   const pickProvider = (id: string): void => {
     const p = providerById(id);
-    setTyped((v) => ({ ...v, provider: p, imapHost: p.imap.host, smtpHost: p.smtp.host }));
+    // `hostsFor`, not the preset's hosts directly: the generic entry has none, and writing its
+    // emptiness over a typed host is how the connect form used to lose one. See `providers.ts`.
+    setTyped((v) => ({ ...v, provider: p, ...hostsFor(p, v) }));
     // A fresh choice re-offers the default path for whatever was picked — the Microsoft tile means
     // sign-in first, never the app-password fields a previous visit may have revealed.
     setMsAppPassword(false);

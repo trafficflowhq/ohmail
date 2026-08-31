@@ -185,7 +185,105 @@ describe("the local door", () => {
     expect(request.payload!.method).toBe("PATCH");
     expect(request.payload!.url).toBe("/mailboxes/mbx-1");
     const body = new TextDecoder().decode(Uint8Array.from(request.payload!.body as number[]));
-    expect(JSON.parse(body)).toEqual({ imap: { pass: "app-password-1234" } });
+    /* THE TRANSPORT TRAVELS WITH THE PASSWORD. This used to be `{ imap: { pass } }` alone; see
+       the reproduction below for why a body carrying only the secret cannot be acted on. */
+    expect(JSON.parse(body)).toEqual({
+      imap: {
+        host: "imap.fastmail.com",
+        port: 993,
+        secure: true,
+        user: "mila@example.com",
+        pass: "app-password-1234",
+      },
+    });
+  });
+
+  /**
+   * REPRODUCTION — "imap host is required" on a first local connect (public issue #5).
+   *
+   * The reporter runs their own mail server, typed every field, and was told the IMAP host was
+   * missing. It was not missing from the FORM; it was missing from the only request that had to
+   * carry it.
+   *
+   * The local door is two steps by design: the transport goes to the SHELL (`engine_configure`,
+   * which writes a settings file), and the password goes to the ENGINE over the bridge — the
+   * shell has no route for a secret and never gets one. The engine then boots, and
+   * `ensureLocalWorld` inserts a `mailboxes` row and NOTHING ELSE: no `mailbox_credentials` row,
+   * because there is no password to seal yet (`apps/sidecar/src/engine.ts` writes that row only
+   * when one arrives in its own config, which on this path it never does).
+   *
+   * So when the password lands at `PATCH /mailboxes/:id` — the local engine mounts the same
+   * `packages/api` route the hosted API does — the service merges the patch over the STORED
+   * transport meta, and there is no stored meta to merge over. `metaOf` keeps host/port/secure/
+   * user and drops the secret, so a pass-only patch merges to a config with no host at all, and
+   * `probedImapMeta` refuses it with exactly the sentence the reporter photographed. Nothing
+   * about it is specific to a custom server; a preset host was equally absent from the body. It
+   * reads as a custom-server problem only because the manual entry is the one where the person
+   * typed a host themselves and can see it sitting in the field.
+   *
+   * The patch is a complete statement about the transport, which is what the merge is built to
+   * accept (patch wins field by field) and what `POST /mailboxes` has always sent.
+   */
+  it("REPRODUCTION: the password patch carries the transport, so a first connect has a host to probe", async () => {
+    const asked = shellThatWorks();
+
+    const own = {
+      ...EMPTY_LOCAL,
+      providerId: "imap",
+      address: "me@my-own-server.example",
+      password: "correct horse battery staple",
+      imapHost: "mail.my-own-server.example",
+      imapPort: "993",
+      smtpHost: "mail.my-own-server.example",
+      smtpPort: "587",
+    };
+    const result = await enterLocalDoor(own, providerById("imap"));
+    expect(result.problem).toBeNull();
+
+    const request = asked.find((a) => a.command === "engine_request")!;
+    const patch = JSON.parse(
+      new TextDecoder().decode(Uint8Array.from(request.payload!.body as number[])),
+    ) as { imap: Record<string, unknown> };
+
+    // The host is the whole point: without it the service has nothing to merge and answers 400.
+    expect(patch.imap.host).toBe("mail.my-own-server.example");
+    // And the rest of what `metaOf` keeps, so the stored credential describes the same dial the
+    // engine was configured with rather than a partial one the probe has to guess at.
+    expect(patch.imap.port).toBe(993);
+    expect(patch.imap.secure).toBe(true);
+    expect(patch.imap.user).toBe("me@my-own-server.example");
+    expect(patch.imap.pass).toBe("correct horse battery staple");
+  });
+
+  /**
+   * The engine is configured with one transport and the credential is probed with another only
+   * if these two ever drift. They are derived from one value each, so they cannot.
+   */
+  it("configures the engine and patches the credential with the SAME host, port and user", async () => {
+    const asked = shellThatWorks();
+    await enterLocalDoor(
+      { ...EMPTY_LOCAL, providerId: "imap", address: "me@example.invalid", user: "login-name",
+        password: "pw", imapHost: "  mail.example.invalid  ", imapPort: "143",
+        smtpHost: "mail.example.invalid", smtpPort: "587" },
+      providerById("imap"),
+    );
+
+    const config = asked.find((a) => a.command === "engine_configure")!.payload!.config as
+      { imap: Record<string, unknown> };
+    const patch = JSON.parse(
+      new TextDecoder().decode(
+        Uint8Array.from(asked.find((a) => a.command === "engine_request")!.payload!.body as number[]),
+      ),
+    ) as { imap: Record<string, unknown> };
+
+    for (const field of ["host", "port", "secure", "user"] as const) {
+      expect(patch.imap[field], field).toEqual(config.imap[field]);
+    }
+    // …and the trimming really happened, so this is not two copies of an untrimmed string.
+    expect(patch.imap.host).toBe("mail.example.invalid");
+    expect(patch.imap.port).toBe(143);
+    expect(patch.imap.secure).toBe(false);
+    expect(patch.imap.user).toBe("login-name");
   });
 
   it("waits for the reconfigured engine before addressing anything to it", async () => {

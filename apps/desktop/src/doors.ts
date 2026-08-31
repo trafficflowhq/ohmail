@@ -504,17 +504,25 @@ export async function enterLocalDoor(
   const smtpHost = f.smtpHost.trim() || preset.smtp.host;
   const smtpPort = portOr(f.smtpPort, preset.smtp.port);
   const user = f.user.trim() || f.address.trim();
+  /**
+   * ONE transport, resolved ONCE, used by BOTH steps below.
+   *
+   * The shell is configured with it and the credential is probed and stored with it, and those
+   * two must describe the same dial. Deriving them separately is how they drift; a single value
+   * is why they cannot. See the patch body for what depended on this.
+   */
+  const imap = {
+    host: f.imapHost.trim() || preset.imap.host,
+    user,
+    port: imapPort,
+    secure: implicitTls(imapPort),
+  };
 
   let status: EngineStatus;
   try {
     status = await engineConfigure({
       mode: "local",
-      imap: {
-        host: f.imapHost.trim() || preset.imap.host,
-        user,
-        port: imapPort,
-        secure: implicitTls(imapPort),
-      },
+      imap,
       ...(smtpHost
         ? { smtp: { host: smtpHost, port: smtpPort, secure: implicitTls(smtpPort) } }
         : {}),
@@ -531,12 +539,27 @@ export async function enterLocalDoor(
 
   /* THE PASSWORD, AND THE ONLY PLACE IT IS WRITTEN DOWN IS THE ENGINE'S OWN STORE.
      The engine tries it before it seals it, so a rejection here is the mail server's answer and
-     not a stored credential that will fail quietly on the next launch. */
+     not a stored credential that will fail quietly on the next launch.
+
+     ── THE TRANSPORT GOES WITH IT, AND A FIRST CONNECT IS IMPOSSIBLE WITHOUT THAT ──────────────
+
+     This body used to be the password alone, on the reasoning that the engine had just been
+     configured with the transport and therefore already knew it. It knows it as a SETTINGS FILE;
+     this route reads `mailbox_credentials`, and on a first connect there is no such row. The
+     engine's boot inserts one only when a password arrives in its own config, which on this path
+     it deliberately never does — the shell has no route for a secret. `ensureLocalWorld` inserts
+     the `mailboxes` row and nothing else.
+
+     So the service merged a pass-only patch over an absent stored meta, got a config with no
+     host, and refused it: **"imap host is required"** — reported by the first external user
+     against their own mail server (issue #5), who had in fact typed every field. The patch is a
+     complete statement about the transport, which is what the merge is built to accept (patch
+     wins field by field) and what `POST /mailboxes` has always sent. */
   try {
     const res = await bridgeFetch(`/mailboxes/${encodeURIComponent(settled.mailboxId)}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ imap: { pass: f.password } }),
+      body: JSON.stringify({ imap: { ...imap, pass: f.password } }),
     });
     if (!res.ok) return { status: settled, problem: await refusal(res) };
   } catch (err) {

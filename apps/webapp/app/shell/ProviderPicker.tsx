@@ -73,8 +73,27 @@ export function ProviderPicker({ value, onChange, note, showHelp = true }: {
   const selected = value ? providerById(value) : null;
   const at = selected ? ORDER.findIndex((p) => p.id === selected.id) : -1;
 
+  /**
+   * A CHOICE THAT DID NOT CHANGE IS NOT A CHOICE, and reporting it as one loses data.
+   *
+   * Every consumer answers `onChange` by writing the chosen preset's hosts into its form, and the
+   * generic entry's hosts are the empty string — so re-notifying the SAME id blanked the IMAP and
+   * SMTP hosts somebody had typed. It is an easy gesture to make by accident: the checked tile is
+   * this group's roving tab stop (Space/Enter re-activates it), and after a failed submit the
+   * error banner sits directly above the grid, which invites one confirming click on the provider
+   * already chosen. `hostsFor` in `providers.ts` makes that write harmless from the other side;
+   * this makes the event honest, which also spares the note its re-animation and the callers their
+   * incidental resets.
+   *
+   * Focus still moves unconditionally — the roving tabindex is about where you ARE, not about
+   * what changed — so arrow navigation is untouched.
+   */
+  const choose = (id: string): void => {
+    if (id !== selected?.id) onChange(id);
+  };
+
   const moveTo = (index: number): void => {
-    onChange(ORDER[index]!.id);
+    choose(ORDER[index]!.id);
     tiles.current[index]?.focus();
   };
 
@@ -128,7 +147,7 @@ export function ProviderPicker({ value, onChange, note, showHelp = true }: {
         // the first tile is, so the group is always enterable with one Tab.
         tabIndex={on || (at < 0 && index === 0) ? 0 : -1}
         className={p.manual ? "pvp-tile pvp-other" : "pvp-tile"}
-        onClick={() => onChange(p.id)}
+        onClick={() => choose(p.id)}
       >
         <span className="pvp-name">{providerLabel(p, t)}</span>
         <span className="pvp-host">{p.manual ? t("otherSub") : p.imap.host}</span>

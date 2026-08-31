@@ -67,7 +67,7 @@ import {
   messageOf, webauthnAvailable,
   type MailboxDTO, type SubscriptionStatus,
 } from "../../api-client";
-import { providerById, type ProviderPreset } from "../../shell/providers";
+import { hostsFor, providerById, type ProviderPreset } from "../../shell/providers";
 import { displayAddress } from "../../shell/idn";
 import { ProviderPicker } from "../../shell/ProviderPicker";
 import { SELF_HOST_BUILD } from "../../hello";
@@ -468,8 +468,10 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
   const pickProvider = (id: string) => {
     const p = providerById(id);
     setProvider(p);
-    setImapHost(p.imap.host);
-    setSmtpHost(p.smtp.host);
+    // The generic entry has no hosts to impose, and writing its emptiness over a typed one is how
+    // this form used to lose it. `providers.ts` carries the rule and the reason.
+    setImapHost((cur) => hostsFor(p, { imapHost: cur, smtpHost: "" }).imapHost);
+    setSmtpHost((cur) => hostsFor(p, { imapHost: "", smtpHost: cur }).smtpHost);
   };
 
   const submitMailbox = (e: React.FormEvent) => {
