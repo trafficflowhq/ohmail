@@ -83,8 +83,11 @@ interface Index {
    * against a mirror whose profile row was already gone; the drain treats that as "mail only".
    *
    * Bounded ({@link MAX_PENDING_WIPES}) because this rides one expo-secure-store value and iOS
-   * warns past 2 KB. Overflow drops the OLDEST, which is the entry a launch has already had the
-   * most chances to retry.
+   * warns past 2 KB. **Overflow REFUSES the new forget; it never evicts an old one.** Dropping
+   * the oldest was the obvious bound and it was this class's own defect: an unpaid debt is the
+   * ONLY remaining name of a mirror still on disk, so evicting it strands that mail for ever —
+   * while the screen had already promised the app would try again at startup. A refusal is
+   * visible and recoverable; a silent eviction is neither.
    */
   wipes?: PendingWipe[];
 }
@@ -99,8 +102,51 @@ export interface PendingWipe {
 
 const PREFIX = "ohmail.servers.v1";
 
-/** See {@link Index.wipes}: the index is one small keystore value and must stay one. */
-const MAX_PENDING_WIPES = 16;
+/**
+ * See {@link Index.wipes}: the index is one small keystore value and must stay one — iOS warns
+ * past 2 KB per value, which is why profiles are one key each rather than a blob.
+ *
+ * Twelve rather than sixteen, and the number is measured rather than chosen: `servers.test.ts`
+ * fills the queue beside several profiles and asserts the whole index value stays under 2 KB.
+ * Reaching it at all means twelve forgets in a row whose mail could not be deleted, which is a
+ * device problem, not a usage pattern — and it is REFUSED out loud rather than absorbed.
+ */
+const MAX_PENDING_WIPES = 12;
+
+/** What {@link ServerProfileStore.markPendingWipe} throws when the queue is full. See above. */
+export const WIPE_QUEUE_FULL =
+  "this phone already has more unfinished deletions than it can record";
+
+/**
+ * ONE WAKE ROW THIS PHONE OWES A SERVER — the durable half of "stop waking me for that account".
+ *
+ * A registration is a row on the server, and taking it down is a request that can be refused.
+ * Two paths hit that: a profile SWITCH (the outgoing server's row must go before the next one
+ * is made, because this build shares one distributor endpoint across every profile), and a
+ * registration SUPERSEDED mid-flight (the request already committed a row on a server the app
+ * has since left). Both used to fire the delete and discard both the id and the verdict — so a
+ * refusal left a row nothing could ever name again, dialling an endpoint that is still live and
+ * therefore never produces the 404/410 the server prunes on.
+ *
+ * Its OWN keystore value rather than a field on the index: iOS warns past 2 KB per value, the
+ * index already carries the profiles and the wipe queue, and these entries are written on a
+ * path that must never make an unrelated index write fail.
+ */
+export interface PendingWakeDrop {
+  /** Whose credential can retry it — the row is deleted on that profile's own server. */
+  profileId: string;
+  /** The server's id for the registration. */
+  subscriptionId: string;
+}
+
+const WAKE_DROPS_KEY = `${PREFIX}.wakes`;
+
+/** Sized for its own 2 KB value, not the index's. ~60 bytes per entry. */
+const MAX_PENDING_WAKE_DROPS = 24;
+
+/** What {@link ServerProfileStore.markPendingWakeDrop} throws when that queue is full. */
+export const WAKE_QUEUE_FULL =
+  "this phone already has more unfinished wake removals than it can record";
 
 /**
  * One persisted wipe entry, defensively. A malformed member is DROPPED rather than throwing —
@@ -157,7 +203,10 @@ export class ServerProfileStore {
     await this.kv.set(PREFIX, JSON.stringify({
       active: idx.active,
       ids: idx.ids,
-      wipes: (idx.wipes ?? []).slice(-MAX_PENDING_WIPES),
+      // NO TRUNCATION HERE. The cap is enforced at `markPendingWipe`, where it can REFUSE;
+      // a silent `slice` in the common writer would drop an unpaid debt on any write at all —
+      // including one that had nothing to do with the queue.
+      wipes: idx.wipes ?? [],
     } satisfies Index));
   }
 
@@ -237,12 +286,25 @@ export class ServerProfileStore {
         accountId: input.accountId,
         refreshToken: input.refreshToken,
       };
-      await this.writeProfile(profile);
+      // ── THE INDEX LEARNS THE ID BEFORE THE CREDENTIAL EXISTS ─────────────────────────────
+      //
+      // These two writes used to be the other way round, and the gap between them could create
+      // a credential NOTHING NAMES: a kill after the profile value landed and before the index
+      // did left `ohmail.servers.v1.<id>` holding a live refresh token with `<id>` in no list —
+      // so the fresh-install purge, which walks `idx.ids`, never even asked for it, removed the
+      // index, and let the generation be stamped as purged. Its "every key was read back" is
+      // vacuous for a key it cannot name.
+      //
+      // Reversed, the same kill leaves an id in the list with no value behind it, which every
+      // reader here already handles by construction: `list()` drops rows whose value is gone,
+      // `active()` answers null, and `purgeAll` names it and removes nothing. An index entry
+      // that over-names is recoverable; a credential that nothing names is not.
       await this.writeIndex({
         ...idx,
         active: profile.id,
         ids: existing ? idx.ids : [...idx.ids, profile.id],
       });
+      await this.writeProfile(profile);
       return profile;
     });
   }
@@ -323,15 +385,28 @@ export class ServerProfileStore {
       const idx = await this.readIndex();
       const owed = idx.wipes ?? [];
       const held = owed.find((w) => w.owner === ownerKey);
+      if (!held && owed.length >= MAX_PENDING_WIPES) throw new Error(WIPE_QUEUE_FULL);
       if (held) {
         if (held.id === profileId || profileId === "") return;
         await this.writeIndex({
           ...idx,
           wipes: owed.map((w) => (w.owner === ownerKey ? { id: profileId, owner: ownerKey } : w)),
         });
-        return;
+      } else {
+        await this.writeIndex({ ...idx, wipes: [...owed, { id: profileId, owner: ownerKey }] });
       }
-      await this.writeIndex({ ...idx, wipes: [...owed, { id: profileId, owner: ownerKey }] });
+      // ── AND THE INTENT IS READ BACK, BEFORE ANYTHING IS DESTROYED ──────────────────────
+      //
+      // "Persist the decision first" is only worth anything if the persistence is checked. A
+      // keystore `set` that resolved without storing left this queue EMPTY while the forget went
+      // on to remove the credential and then promise, on screen, that the app would try the
+      // deletion again at the next launch — and nothing could, because the entry naming the
+      // mirror was never there. The caller refuses the whole forget on this throw, with the
+      // credential still in place, which is the recoverable state.
+      const back = (await this.readIndex()).wipes ?? [];
+      if (!back.some((w) => w.owner === ownerKey && (profileId === "" || w.id === profileId))) {
+        throw new Error(`this phone could not record that "${ownerKey}" is owed a deletion`);
+      }
     });
   }
 
@@ -345,6 +420,56 @@ export class ServerProfileStore {
       const owed = idx.wipes ?? [];
       if (!owed.some((w) => w.owner === ownerKey)) return;
       await this.writeIndex({ ...idx, wipes: owed.filter((w) => w.owner !== ownerKey) });
+    });
+  }
+
+  /* ── the owed WAKE-ROW deletions (see {@link PendingWakeDrop}) ────────────────────────── */
+
+  /** Wake rows this phone still owes a server. Oldest first — the order a launch pays them in. */
+  async pendingWakeDrops(): Promise<PendingWakeDrop[]> {
+    const raw = await this.kv.get(WAKE_DROPS_KEY);
+    if (raw === null) return [];
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.flatMap((d): PendingWakeDrop[] => {
+        if (typeof d !== "object" || d === null) return [];
+        const w = d as Partial<PendingWakeDrop>;
+        if (typeof w.profileId !== "string" || typeof w.subscriptionId !== "string") return [];
+        if (w.profileId === "" || w.subscriptionId === "") return [];
+        return [{ profileId: w.profileId, subscriptionId: w.subscriptionId }];
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Record a wake row this phone failed to take down. Idempotent on the subscription id.
+   *
+   * A FULL QUEUE REFUSES rather than evicting, for {@link Index.wipes}'s reason one surface
+   * over: an entry is the only remaining record of a row a server is still dialling, so
+   * dropping the oldest would strand it permanently and silently. Reaching the cap means many
+   * consecutive failures against unreachable servers, which is a device or network condition
+   * and not a usage pattern.
+   */
+  markPendingWakeDrop(profileId: string, subscriptionId: string): Promise<void> {
+    return this.enqueue(async () => {
+      const owed = await this.pendingWakeDrops();
+      if (owed.some((d) => d.subscriptionId === subscriptionId)) return;
+      if (owed.length >= MAX_PENDING_WAKE_DROPS) throw new Error(WAKE_QUEUE_FULL);
+      await this.kv.set(WAKE_DROPS_KEY, JSON.stringify([...owed, { profileId, subscriptionId }]));
+    });
+  }
+
+  /** The server confirmed the row is gone (2xx, or 404 — absent is the whole ask). */
+  clearPendingWakeDrop(subscriptionId: string): Promise<void> {
+    return this.enqueue(async () => {
+      const owed = await this.pendingWakeDrops();
+      const left = owed.filter((d) => d.subscriptionId !== subscriptionId);
+      if (left.length === owed.length) return;
+      if (left.length === 0) await this.kv.remove(WAKE_DROPS_KEY);
+      else await this.kv.set(WAKE_DROPS_KEY, JSON.stringify(left));
     });
   }
 
@@ -384,6 +509,13 @@ export class ServerProfileStore {
           `the keystore refused to purge ${survivors.length} pairing(s) (${survivors.join(", ")}) — ` +
             `their credentials are still on this phone`,
         );
+      }
+      // The wake queue goes too: its entries name profiles that are being purged, so a retry
+      // after this could only ever present a credential that no longer exists.
+      try {
+        await this.kv.remove(WAKE_DROPS_KEY);
+      } catch {
+        /* the index below is what makes the purge real; this is tidying */
       }
       await this.kv.remove(PREFIX);
       if ((await this.kv.get(PREFIX)) !== null) {

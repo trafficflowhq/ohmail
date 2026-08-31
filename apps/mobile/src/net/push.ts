@@ -311,6 +311,41 @@ export async function dropWakeRow(session: ConnectedSession, id: string | null):
   return { ok: false, reason: res.status === 401 || res.status === 403 ? "refused" : "server_unavailable" };
 }
 
+/** The one thing {@link dropWakeRowOrOwe} needs from the profile store. */
+export interface WakeDebtStore {
+  markPendingWakeDrop(profileId: string, subscriptionId: string): Promise<void>;
+}
+
+/**
+ * TAKE A ROW DOWN, AND IF THE SERVER REFUSES, WRITE THE DEBT DOWN.
+ *
+ * Both callers of this — a profile SWITCH and a registration SUPERSEDED mid-flight — fire it
+ * and walk away: a switch must not wait on a network round trip, and a superseded registration
+ * has nothing left to render into. That is exactly what made the earlier version lose things.
+ * It dropped the subscription id at dispatch and never read the verdict, so a 401, a 500 or a
+ * lost network left a row NOTHING could name again — and because the distributor endpoint is
+ * SHARED with the profile now in use and therefore still answering, the server never gets the
+ * 404/410 it prunes on. The row and its outbound traffic are permanent.
+ *
+ * The debt is durable and paid at the next launch (`pairing.ts#drainPendingWakeDrops`).
+ *
+ * A queue that is full refuses, and that refusal is swallowed here deliberately: there is no
+ * surface in a background switch to show it on, and throwing out of a fire-and-forget call is
+ * an unhandled rejection rather than a report. Never throws, for the same reason.
+ */
+export async function dropWakeRowOrOwe(
+  session: ConnectedSession, id: string, profiles: WakeDebtStore,
+): Promise<WakeDrop> {
+  const dropped = await dropWakeRow(session, id);
+  if (dropped.ok) return dropped;
+  try {
+    await profiles.markPendingWakeDrop(session.profile.id, id);
+  } catch {
+    /* the queue is full — see the note above */
+  }
+  return dropped;
+}
+
 /**
  * Take the registration down: server first, then the distributor.
  *

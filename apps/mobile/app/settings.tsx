@@ -131,8 +131,15 @@ function SettingsBody() {
                 </TapRow>
               </View>
               <View style={{ paddingHorizontal: 20, paddingTop: 10 }}>
+                {/* THE HINT IS A CLAIM, so it is withheld when the sentence above contradicts it.
+                    "Turning this off … removes the registration from your server" is exactly what
+                    `row_remains` says did NOT happen, and the two were rendered together: the same
+                    screen asserting a take-back and its failure. The state's own sentence stands
+                    alone in that case. */}
                 <Txt variant="caption" tone="ink3">
-                  {wake.chosen === null ? Copy.wakeDistributorNoneHint : Copy.wakeDistributorHint}
+                  {wake.state.k === "off" && wake.state.reason === "row_remains"
+                    ? ""
+                    : wake.chosen === null ? Copy.wakeDistributorNoneHint : Copy.wakeDistributorHint}
                 </Txt>
               </View>
             </View>

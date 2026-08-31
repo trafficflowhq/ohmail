@@ -41,6 +41,28 @@ export const Copy = {
   /** A take-back that did not fully land says what remains and what will happen next. */
   serversForgetFailed: (reason: string) => reason,
   serversEmpty: "No pairings yet.",
+  /**
+   * THE FRESH INSTALL WHOSE PURGE WAS REFUSED — a state with no good outcome, said plainly.
+   *
+   * The container is new, so these pairings belong to an installation that no longer exists,
+   * and the keystore would not give them up. Opening them anyway is the exact no-ceremony
+   * reinstall the install-generation marker exists to stop, so the app does not: it refuses,
+   * says why, and names the revoke, which is the one remedy that does not depend on this phone.
+   */
+  /**
+   * THE MARKER COULD NOT BE READ. Its own sentence, because the remedy is different: nothing is
+   * wrong with the pairings and nothing has been deleted — the app simply cannot tell whether
+   * this is the install that stored them, and on iOS the keychain outlives an uninstall, so
+   * using them anyway is exactly the reinstall the check exists to stop.
+   */
+  serversInstallUnknown: (detail: string) =>
+    "ohmail could not check whether this is the same installation that stored your sign-ins "
+    + `(${detail}), so it has not opened them — and it has not removed them either. Restart the `
+    + "app to try again.",
+  serversPurgeRefused: (detail: string) =>
+    "This phone is still holding sign-ins from an earlier installation of ohmail, and it would "
+    + `not let go of them (${detail}). ohmail will not open them. Revoke this device from your `
+    + "server's Devices list, then restart the app.",
 
   choiceManaged: "ohmail (managed)",
   choiceManagedNote: "The hosted service at ohmail.app",
@@ -307,8 +329,9 @@ export const Copy = {
   aboutOnDevice:
     "Forgetting a server deletes its pairing and the mail this phone had copied. Deleting the app "
     + "takes the copied mail with it; on iPhone and iPad the pairing stays in the phone's keychain "
-    + "until ohmail is opened again, which discards it before use — to end it straight away, "
-    + "revoke this device from the server's Devices list. The pairing is never included in a "
+    + "until ohmail is opened again, which discards it before opening anything — and refuses to "
+    + "open anything at all if it cannot — so to end it straight away, revoke this device from "
+    + "the server's Devices list. The pairing is never included in a "
     + "backup. On iPhone and iPad the copied mail is: it lives in this app's documents, which the "
     + "phone's cloud and computer backups include. On Android it is excluded from both.",
 

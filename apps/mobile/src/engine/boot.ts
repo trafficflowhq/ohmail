@@ -199,6 +199,42 @@ export function dbFileName(dbName: string): string {
  * durable, so a kill between the delete and the read-back is retried at the next launch rather
  * than being silently forgotten.
  */
+/**
+ * DOES THIS PHONE STILL HOLD A MIRROR FOR THIS OWNER? — the sentinel that tells an UPGRADE from
+ * a REINSTALL.
+ *
+ * The install-generation marker (`state/install-marker.ts`) lives in the app container, which the
+ * platform removes with the app, and its absence is what makes a reinstall detectable. On the
+ * first launch of the build that ADDS the marker there is no marker either, and the two look
+ * identical — which would have cost every existing user their pairings.
+ *
+ * They are not identical, and the difference is also in the container: an upgrade carries the
+ * MIRRORS of every server that has ever synced, and a reinstall carries none. So this answers the
+ * question with the same read `forgetMirror` uses — SQLite's own catalog for the store's two
+ * tables — and cleans up after itself: opening a name CREATES it, so a database that turns out to
+ * have no mirror tables was made by this call and is removed again.
+ *
+ * The asymmetry is what makes it safe: a genuine reinstall cannot produce a mirror file, and the
+ * only names asked about are ones a profile the keystore already holds derives.
+ */
+export async function mirrorExists(deps: MobileEngineDeps, ownerKey: string): Promise<boolean> {
+  const dbName = mirrorDbName(ownerKey);
+  const probe = await deps.openExecutor(dbName);
+  let tables: ReadonlyArray<unknown>;
+  try {
+    tables = await probe.all(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('entities', 'meta')",
+    );
+  } finally {
+    await probe.close?.();
+  }
+  if (tables.length > 0) return true;
+  // Our own stub: the open above created it. Leaving it would also make the NEXT launch read it
+  // as a mirror, turning one absent answer into a permanent present one.
+  await deps.deleteDatabase(dbName).catch(() => undefined);
+  return false;
+}
+
 export async function forgetMirror(deps: MobileEngineDeps, ownerKey: string): Promise<void> {
   const dbName = mirrorDbName(ownerKey);
   await deps.deleteDatabase(dbName);

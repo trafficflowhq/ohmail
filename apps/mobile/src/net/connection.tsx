@@ -35,6 +35,8 @@
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Platform } from "react-native";
+import { Copy } from "../copy";
+import { mirrorExists, mirrorOwnerKey } from "../engine/boot";
 import { nativeEngineDeps } from "../engine/native";
 import { settleInstallGeneration } from "../state/install-marker";
 import { nativeServerProfiles } from "../state/servers-native";
@@ -43,6 +45,7 @@ import type { FetchLike } from "./bearer";
 import { SyncRunner } from "./drain";
 import {
   connectProfileById,
+  drainPendingWakeDrops,
   drainPendingWipes,
   forgetProfile,
   mobileDeviceKind,
@@ -290,11 +293,53 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         //    app, so without this a reinstall reopened the mailbox with no ceremony. The
         //    marker lives in the app container, which iOS does remove. See `install-marker.ts`
         //    — including why a marker store that will not open leaves the pairings alone.
-        await settleInstallGeneration(env.engineDeps, env.profiles);
+        const install = await settleInstallGeneration(
+          env.engineDeps,
+          env.profiles,
+          // THE UPGRADE SENTINEL. A reinstall's container holds no mirror; an update's holds one
+          // for every server that has ever synced. Without this, the first launch of the build
+          // that introduced the marker would purge every existing pairing on the phone.
+          (profile) => mirrorExists(env.engineDeps, mirrorOwnerKey(profile.origin, profile.accountId)),
+        );
+        //    A REFUSED PURGE STOPS THE LAUNCH HERE, and this is the arm the verdict exists for.
+        //    The container is new, so every stored pairing belongs to an installation that no
+        //    longer exists — and the keystore would not give one up. Reading `active()` after
+        //    that boots the surviving credential, which is precisely the no-ceremony reinstall
+        //    the marker is for: the take-back would have failed AND opened the mailbox. So
+        //    nothing below runs, and the gate routes this sentence to the Servers screen.
+        //    `unknown` deliberately does NOT stop here — see `install-marker.ts` for why a
+        //    store that could not be READ must leave the pairings alone rather than act on a
+        //    guess in either direction.
+        if (install.kind === "purge-refused") {
+          if (stillCurrent()) setState({ k: "refused", reason: Copy.serversPurgeRefused(install.reason) });
+          return;
+        }
+        //    AND `unknown` STOPS THE LAUNCH TOO, without deleting anything.
+        //
+        //    These are two different acts and this arm does only the second. It does NOT purge:
+        //    reading a transient storage failure as a fresh install would delete every pairing
+        //    on the phone for a reason unrelated to the person holding it. But it may not CONNECT
+        //    either — on iOS the keychain outlives an uninstall, so an unverified marker is
+        //    exactly the state in which a stranger's reinstall would open somebody's mailbox, and
+        //    the app's own copy promises the pairing is discarded before use. Refusing keeps both
+        //    halves of that promise: nothing is used, and nothing is destroyed.
+        //
+        //    In practice this is not a hair trigger. The marker rides the same SQLite host every
+        //    mirror does, so a launch that cannot open it is a launch that could not have read
+        //    any mail either.
+        if (install.kind === "unknown") {
+          if (stillCurrent()) setState({ k: "refused", reason: Copy.serversInstallUnknown(install.reason) });
+          return;
+        }
         // 2. FINISH THE FORGETS THAT DID NOT FINISH. A forget writes its intent before it
         //    touches either store, so a kill mid-way leaves the mail owed rather than
         //    stranded — this is where the debt is paid. A refusal keeps the debt.
         await drainPendingWipes(env);
+        // 3. AND THE WAKE ROWS THIS PHONE OWES SOMEBODY'S SERVER. Same rule as the mirrors: a
+        //    take-back the server refused is written down and retried, because the endpoint it
+        //    dials is shared with the profile now in use and therefore never lapses on its own.
+        //    Awaited so a launch cannot start registering before the old rows are answered for.
+        await drainPendingWakeDrops(env);
         await refreshProfiles();
         const active = await env.profiles.active();
         if (!stillCurrent()) return;
@@ -359,7 +404,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
           // only what is React: leaving the live state, and closing the store handle whose
           // database the seam is about to delete. Everything a test would want to assert about
           // a take-back is therefore assertable without rendering a component.
-          let revokeLive: (() => Promise<void>) | null = null;
+          let revokeLive: (() => Promise<boolean>) | null = null;
           let closed: Promise<void> = Promise.resolve();
           if (live.current.k === "live" && live.current.session.profile.id === profileId) {
             const bearer = live.current.session.bearer;

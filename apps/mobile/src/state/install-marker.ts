@@ -34,14 +34,24 @@
  * is a no-op on an already-empty keystore; the reverse order would stamp an install whose
  * credentials were still there and never look again.
  *
- * ── AND THE HONEST COST, STATED RATHER THAN HIDDEN ────────────────────────────────────────
+ * ── AN UPGRADE IS NOT A REINSTALL, AND THE CONTAINER CAN TELL THEM APART ──────────────────
  *
- * The FIRST launch of a build carrying this file finds no marker, because no earlier build
- * ever wrote one — so it purges, and everyone who had already paired re-pairs once. That is
- * indistinguishable from a reinstall by construction: there is no evidence on the device that
- * separates "upgraded" from "reinstalled", and a scheme that guessed would be a scheme that
- * guessed wrong on the security-relevant half. One QR scan is the app's own stated recovery
- * ceremony, and it is the price of the property being real from the second launch onward.
+ * This first said there was no evidence separating "upgraded" from "reinstalled", and accepted
+ * that every existing user would re-pair once on the first launch of the build that added the
+ * marker. That was wrong, and the evidence was already here: **the MIRRORS live in the app
+ * container too.** A reinstall has none — the container went with the app — while an upgrade
+ * from any earlier build has one for every server that has ever synced. So a missing marker is
+ * only a fresh install when the container ALSO holds no mirror for any pairing the keystore
+ * names; otherwise it is an upgrade, and the marker is simply stamped.
+ *
+ * The security property is unchanged, because the sentinel cannot be forged in the direction
+ * that matters: a genuine reinstall cannot produce a mirror file, and the check reads only
+ * databases named by profiles the keystore already holds. It is the same asymmetry the marker
+ * itself rests on, using a file the app was already writing.
+ *
+ * A pairing that has never synced has no mirror, so an upgrade whose ONLY pairing is unused
+ * still purges. That is the honest residual: one re-pair, for a server the person had paired
+ * and never opened.
  *
  * ── A STORE THAT WILL NOT OPEN IS "UNKNOWN", NEVER "FRESH" ────────────────────────────────
  *
@@ -88,6 +98,12 @@ const GENERATION_KEY = "generation";
 export type InstallVerdict =
   /** The marker this install wrote is still there — the keystore is ours. */
   | { kind: "same-install"; generation: string }
+  /**
+   * No marker, but the container still holds a MIRROR for a pairing the keystore names — so the
+   * app was updated, not reinstalled. The marker is stamped and nothing is purged. See the
+   * header for why a mirror is a sentinel a reinstall cannot forge.
+   */
+  | { kind: "upgrade"; generation: string }
   /** No marker: the container is new, so every stored pairing belongs to a dead install. */
   | { kind: "fresh-install"; generation: string; purged: true }
   /** The marker store could not be read. Nothing was purged; the reason is for the log. */
@@ -110,6 +126,13 @@ export type InstallVerdict =
 export async function settleInstallGeneration(
   deps: InstallMarkerHost,
   profiles: ServerProfileStore,
+  /**
+   * Does the app container still hold this pairing's mirror? Supplied by the caller — the engine
+   * composition owns mirror names, and this module deliberately imports nothing from it (see
+   * {@link MarkerDb}). Absent, every missing marker reads as a fresh install, which is the
+   * conservative answer and the one this had before the sentinel existed.
+   */
+  hasMirror?: (profile: { origin: string; accountId: string }) => Promise<boolean>,
 ): Promise<InstallVerdict> {
   let db;
   try {
@@ -125,7 +148,24 @@ export async function settleInstallGeneration(
     const held = rows[0]?.value;
     if (typeof held === "string" && held !== "") return { kind: "same-install", generation: held };
 
-    // No marker ⇒ this container is new ⇒ anything the keystore holds outlived its install.
+    // NO MARKER — so either the container is new, or this is the first launch of the build that
+    // introduced the marker. The mirrors tell them apart: a reinstall has none.
+    const generation = deps.uuid();
+    const stamp = async (): Promise<void> => {
+      await db.batch([
+        { sql: "INSERT OR REPLACE INTO install (key, value) VALUES (?, ?)", params: [GENERATION_KEY, generation] },
+      ]);
+    };
+    if (hasMirror) {
+      for (const profile of await profiles.list()) {
+        if (await hasMirror(profile)) {
+          await stamp();
+          return { kind: "upgrade", generation };
+        }
+      }
+    }
+
+    // Nothing the keystore names has ever synced here, so anything it holds outlived its install.
     // The purge runs BEFORE the stamp, so a kill here is retried rather than skipped — and a
     // purge that could not complete THROWS, which lands on the arm below with the generation
     // still unwritten. Retried at every launch until it lands.
@@ -134,10 +174,7 @@ export async function settleInstallGeneration(
     } catch (err) {
       return { kind: "purge-refused", reason: `the old install's pairings could not be purged: ${String(err)}` };
     }
-    const generation = deps.uuid();
-    await db.batch([
-      { sql: "INSERT OR REPLACE INTO install (key, value) VALUES (?, ?)", params: [GENERATION_KEY, generation] },
-    ]);
+    await stamp();
     return { kind: "fresh-install", generation, purged: true };
   } catch (err) {
     return { kind: "unknown", reason: `the install marker could not be read: ${String(err)}` };

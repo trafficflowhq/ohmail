@@ -238,14 +238,26 @@ export class BearerManagerRN {
    * refused, the manager has already died honestly — `die()`'s idempotence makes the final
    * clear a no-op.
    */
-  async logout(): Promise<void> {
+  async logout(): Promise<boolean> {
+    // ANSWERS WHETHER THE SERVER WAS ACTUALLY TOLD, and that is the whole reason for the return.
+    // The local half happens either way — a device taking its own credential back must not be
+    // blocked by an unreachable server — but the SERVER half is what revokes the session and,
+    // on the hosted tier, takes this device's wake registration down with it. Reporting a forget
+    // over a logout that never landed leaves both alive with nothing left to retry them.
+    //
+    // 401 counts as told: the session this would revoke is already gone, which is the outcome
+    // being asked for. Anything else — a 500, a 503, a dead network — did not land.
+    let told = true;
     if (this.access !== null || this.refresh !== null) {
+      told = false;
       try {
-        await this.fetch(`${this.origin}/auth/logout`, { method: "POST" });
+        const res = await this.fetch(`${this.origin}/auth/logout`, { method: "POST" });
+        told = (res.status >= 200 && res.status < 300) || res.status === 401;
       } catch {
         /* unreachable server — the server-side session ages out; this device is out now */
       }
     }
     await this.die();
+    return told;
   }
 }

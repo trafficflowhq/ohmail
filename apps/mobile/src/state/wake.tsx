@@ -2,7 +2,9 @@ import {
   createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode,
 } from "react";
 import { useConnection } from "../net/connection";
-import { dropWakeRow, forgetWake, registerWake, NO_DISTRIBUTOR, type WakeState } from "../net/push";
+import { dropWakeRowOrOwe, forgetWake, registerWake, NO_DISTRIBUTOR, type WakeState } from "../net/push";
+import type { ConnectedSession } from "../net/pairing";
+import { nativeServerProfiles } from "./servers-native";
 import {
   chooseDistributor, listDistributors, onWake, requestNotificationPermission, savedDistributor,
   unifiedPushDistributor, type DistributorChoice,
@@ -108,6 +110,50 @@ export function WakeProvider({ children }: { children: ReactNode }) {
   const generation = useRef(0);
   const liveSession = useRef<typeof session>(null);
 
+  /**
+   * Take a row down and, if the server refuses, OWE it — see `net/push.ts#dropWakeRowOrOwe`.
+   * Both uses below are fire-and-forget by necessity, which is exactly why the verdict has to
+   * land somewhere durable rather than in a discarded promise.
+   */
+  const owedDrop = useCallback(
+    (on: ConnectedSession, id: string): Promise<void> =>
+      dropWakeRowOrOwe(on, id, nativeServerProfiles()).then(() => undefined),
+    [],
+  );
+
+  /**
+   * ══════════════════════════════════════════════════════════════════════════════════════════
+   *  EVERY WAKE MUTATION RUNS ALONE — one chain, no overlap
+   * ══════════════════════════════════════════════════════════════════════════════════════════
+   *
+   * The generation counter discards a STALE RESULT, and that is all it can do. It cannot undo a
+   * SIDE EFFECT that has already happened on the server or, worse, on the one app-wide connector
+   * registration this build shares between profiles. Two races followed from that, and both
+   * ended with the pane saying "on" over a phone that no wake could reach:
+   *
+   *  · **off, then immediately on.** `turnOff` fires its DELETE and returns; a new choice
+   *    re-registers the SAME endpoint, the server dedupes and answers the SAME id, the pane
+   *    lands on `on` — and then the earlier DELETE arrives and removes the row that was just
+   *    re-adopted. The verdict was fine at the moment it was read and false a moment later.
+   *  · **a superseded registration finishing LAST.** `distributor.register(key)` binds the whole
+   *    app to that server's VAPID key. A's call held for its fifteen-second ceiling, B's
+   *    completed and reported `on`, and then A's landed and rebound the connector to A's key —
+   *    so B's server signs wakes this phone will not render, silently, while Settings says on.
+   *    No generation check can reach back and undo a native side effect.
+   *
+   * So the operations queue instead. Serialization costs a switch the tail of the previous
+   * registration — up to that same ceiling — and buys the only ordering in which the last write
+   * to the connector and the last write to a server row belong to the profile on screen.
+   */
+  const chain = useRef<Promise<unknown>>(Promise.resolve());
+  const serialize = useCallback((op: () => Promise<unknown>): Promise<unknown> => {
+    // `then(op, op)` — a failed operation must not poison the queue, the same shape the profile
+    // store's mutation chain uses.
+    const run = chain.current.then(op, op);
+    chain.current = run.catch(() => undefined);
+    return run;
+  }, []);
+
   /** Re-read the device's own answer. Cheap, synchronous, and the source of truth for the list. */
   const readDevice = useCallback((): void => {
     setChoices(listDistributors());
@@ -141,7 +187,22 @@ export function WakeProvider({ children }: { children: ReactNode }) {
          * clean it up, because at the moment it ran `subscriptionId.current` was still null.
          * So the id is spent here, on the session it was made for, and the row goes down.
          */
-        if (next.k === "on") void dropWakeRow(session, next.id);
+        if (next.k === "on") await owedDrop(session, next.id);
+        /**
+         * ── AND THE CONNECTOR IS RE-BOUND TO WHOEVER IS LIVE NOW ──────────────────────────
+         *
+         * The row was this arm's original job. The other half is the DISTRIBUTOR: a successful
+         * `registerWake` has already bound the app's single connector registration to THIS
+         * server's VAPID key, and if a newer profile registered while we were in flight, the
+         * chain guarantees we ran first — but a completion that is superseded by a session
+         * change with no new registration behind it (a switch to a profile with no distributor
+         * chosen yet, a disconnect and reconnect) would still leave the connector on the old
+         * key. Re-running for the live session is idempotent by the server's own dedupe.
+         */
+        const live = liveSession.current;
+        if (next.k === "on" && live !== null && live !== session && savedDistributor() !== null) {
+          void serialize(() => attemptRef.current(mounted));
+        }
         return;
       }
       subscriptionId.current = next.k === "on" ? next.id : null;
@@ -150,7 +211,8 @@ export function WakeProvider({ children }: { children: ReactNode }) {
       /**
        * A TERMINAL CATCH, even though `registerWake` now maps every failure to a state.
        *
-       * This is invoked as `void attempt(…)`, so anything that escapes is an unhandled rejection —
+       * Every caller queues this and drops the promise (`void serialize(() => attempt(…))`), so
+       * anything that escapes is an unhandled rejection —
        * and the pane would keep its previous state, which after a successful registration means it
        * says "on" about nothing. `registerWake`'s contract is that it does not throw; this is here
        * so that the contract being wrong is a visible "off" rather than a silent lie plus a console
@@ -198,7 +260,9 @@ export function WakeProvider({ children }: { children: ReactNode }) {
     const previousId = subscriptionId.current;
     if (previous && previous !== session && previousId !== null) {
       subscriptionId.current = null;
-      void dropWakeRow(previous, previousId);
+      // QUEUED, like every other wake mutation: the outgoing row's DELETE must not overtake or
+      // be overtaken by the incoming profile's registration.
+      void serialize(() => owedDrop(previous, previousId));
     }
     liveSession.current = session;
     readDevice();
@@ -206,10 +270,10 @@ export function WakeProvider({ children }: { children: ReactNode }) {
       setState({ k: "no_distributor" });
       return () => { alive = false; };
     }
-    if (savedDistributor() !== null) void attempt(mounted);
+    if (savedDistributor() !== null) void serialize(() => attempt(mounted));
     else setState({ k: "no_distributor" });
     return () => { alive = false; };
-  }, [session, attempt, readDevice]);
+  }, [session, attempt, readDevice, owedDrop, serialize]);
 
   /**
    * ── NOTHING IS PAIRED ANY MORE, SO NOTHING MAY BE REGISTERED ──────────────────────────────
@@ -226,11 +290,13 @@ export function WakeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!nothingPaired) return;
     subscriptionId.current = null;
-    void unifiedPushDistributor().unregister().catch(() => undefined);
+    // Queued too — the endpoint is the app's single shared registration, so unregistering it
+    // must not overtake a row deletion still in flight against a server that is being forgotten.
+    void serialize(() => unifiedPushDistributor().unregister().catch(() => undefined));
     chooseDistributor(null);
     readDevice();
     setState({ k: "no_distributor" });
-  }, [nothingPaired, readDevice]);
+  }, [nothingPaired, readDevice, serialize]);
 
   /**
    * A DELIVERED WAKE MEANS ONE THING: PULL.
@@ -261,6 +327,13 @@ export function WakeProvider({ children }: { children: ReactNode }) {
     });
   }, [session, conn]);
 
+  /**
+   * A stable handle on the newest `attempt`, so the superseded arm above can re-run it without
+   * `attempt` having to depend on itself (which is not expressible) or capturing a stale one.
+   */
+  const attemptRef = useRef(attempt);
+  attemptRef.current = attempt;
+
   const choose = useCallback((id: string): void => {
     chooseDistributor(id);
     // Opting into wakes is the moment to ask for the notification permission the KILLED-APP notice
@@ -273,8 +346,13 @@ export function WakeProvider({ children }: { children: ReactNode }) {
     // on, so its result is worth writing even if the pane re-rendered underneath it. The generation
     // check inside `attempt` is what still discards it if the SESSION changed — those are different
     // questions and conflating them is what let a superseded registration land.
-    void attempt(() => true);
-  }, [attempt, readDevice]);
+    //
+    // QUEUED behind any wake mutation still running — in particular a `turnOff` the reader may
+    // have tapped a moment ago, whose DELETE would otherwise land after this registration and
+    // remove the very row the server just handed back (it dedupes on the endpoint, so the id is
+    // often the SAME one).
+    void serialize(() => attempt(() => true));
+  }, [attempt, readDevice, serialize]);
 
   const turnOff = useCallback((): void => {
     const id = subscriptionId.current;
@@ -288,16 +366,17 @@ export function WakeProvider({ children }: { children: ReactNode }) {
     // went, and a refusal replaces "off" with the sentence that says what is still there — this
     // used to render a removal over a 401, a 500 or a dead network alike.
     if (session) {
-      void forgetWake(session, unifiedPushDistributor(), id).then((dropped) => {
+      void serialize(async () => {
+        const dropped = await forgetWake(session, unifiedPushDistributor(), id);
         if (!dropped.ok && liveSession.current === session) setState({ k: "off", reason: "row_remains" });
       });
     } else {
-      void NO_DISTRIBUTOR.unregister();
+      void serialize(() => NO_DISTRIBUTOR.unregister());
     }
     chooseDistributor(null);
     readDevice();
     setState({ k: "no_distributor" });
-  }, [session, readDevice]);
+  }, [session, readDevice, serialize]);
 
   return (
     <WakeContext.Provider value={{ state, choices, chosen, busy, choose, turnOff }}>

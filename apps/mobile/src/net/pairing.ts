@@ -46,6 +46,7 @@ import {
 } from "../engine/boot";
 import { ServerProfileStore, type ServerProfile } from "../state/servers";
 import { BearerManagerRN, type FetchLike, type RefreshVault } from "./bearer";
+import { dropWakeRow } from "./push.js";
 
 /** The hosted service — the managed picker card negotiates against this and nothing else. */
 export const MANAGED_ORIGIN = "https://api.ohmail.app";
@@ -400,11 +401,40 @@ export async function pairWithServer(
     };
   }
 
+  // 3b — AN OWED FORGET FOR THIS MIRROR IS SETTLED BEFORE THE PAIRING IS ADOPTED.
+  //
+  // A forget whose deletion failed leaves `{oldId, owner}` in the durable queue, and a re-pair
+  // of the SAME (origin, account) resolves to that same owner — and, because `add()` re-pairs in
+  // place, often the same profile id. Adopting it would boot the surviving mirror, let the reader
+  // queue work into it, and then have the next launch's drain delete the database the person had
+  // just re-authorized: a debt written against the OLD pairing collected against the NEW one.
+  //
+  // So the debt is paid here, on the mail that is genuinely owed a deletion, before anything is
+  // stored or booted. The mirror is deleted and read back; the pairing starts from empty, which
+  // is what a re-pair after a forget means. If the deletion still cannot land the pairing is
+  // REFUSED — adopting a mirror this app owes a deletion for is the one outcome that cannot be
+  // made honest, and the token is already spent so the sentence says what to do next.
+  const ownerKey = mirrorOwnerKey(origin, identity.accountId);
+  if ((await env.profiles.pendingWipes()).some((w) => w.owner === ownerKey)) {
+    try {
+      await forgetMirror(env.engineDeps, ownerKey);
+      await env.profiles.clearPendingWipe(ownerKey);
+    } catch (err) {
+      return {
+        kind: "refused",
+        reason:
+          `This phone still owes a deletion for that mailbox's copied mail and could not carry ` +
+          `it out (${String(err)}). Restart ohmail so it can finish, then pair again with a fresh code.`,
+      };
+    }
+  }
+
   // 4 — persist (same (origin, account) re-pairs in place), then boot over the manager.
   // The keystore write can REFUSE, and by this line the single-use token is
   // already burned and a server session already minted — so a failure here must resolve to a
   // sentence, not escape as a throw that strands the screen on "Pairing…", and the minted
-  // session is revoked best-effort rather than abandoned live under nobody's control.
+  // session is revoked rather than abandoned live under nobody's control. Whether that
+  // revocation LANDED decides which sentence is told; see the arm itself.
   let profile: ServerProfile;
   try {
     profile = await env.profiles.add({
@@ -414,17 +444,27 @@ export async function pairWithServer(
       refreshToken: tokens.refreshToken,
     });
   } catch (err) {
+    // THE COMPENSATION IS ONLY CLAIMED IF IT LANDED. The status was not read at all, so a 401,
+    // a 500 or a dead network still produced the sentence "the session was closed" over a live
+    // server session — a take-back asserted on the strength of a request having been sent.
+    // 401 counts as closed: the session this would revoke is already gone.
+    let closed = false;
     try {
-      await fetchImpl(`${origin}/auth/logout`, {
+      const res = await fetchImpl(`${origin}/auth/logout`, {
         method: "POST",
         headers: { authorization: `Bearer ${tokens.accessToken as string}` },
       });
+      closed = (res.status >= 200 && res.status < 300) || res.status === 401;
     } catch {
       /* unreachable — the abandoned session ages out server-side */
     }
     return {
       kind: "refused",
-      reason: `this phone could not store the pairing (${String(err)}) — the session was closed; mint a fresh code and try again`,
+      reason: closed
+        ? `this phone could not store the pairing (${String(err)}) — the session was closed; mint a fresh code and try again`
+        : `this phone could not store the pairing (${String(err)}), and the server could not be ` +
+          `reached to close the session it had just opened — revoke this device from its Devices ` +
+          `list, then mint a fresh code and try again`,
     };
   }
   const connected = await buildSession(env, profile, tokens.accessToken);
@@ -439,11 +479,11 @@ export async function pairWithServer(
  * only the refresh token, so the logout's first attempt carries no access token, 401s, and the
  * manager's one recovery spends the refresh into a fresh access token and replays — which
  * revokes the session (`allDevices` stays step-up-gated server-side, so this can only ever end
- * ITSELF). Never throws and never blocks: an unreachable server means the session ages out,
- * and the local forget must not hang on it.
+ * ITSELF). Never throws — but it does ANSWER: `false` means the server was not told, and the
+ * caller must not report a forget over it. See {@link forgetProfile}.
  */
-export async function revokeProfile(env: PairingEnv, profile: ServerProfile): Promise<void> {
-  if (profile.refreshToken === null) return; // already judged dead — nothing live to revoke
+export async function revokeProfile(env: PairingEnv, profile: ServerProfile): Promise<boolean> {
+  if (profile.refreshToken === null) return true; // already judged dead — nothing live to revoke
   const bearer = new BearerManagerRN({
     origin: profile.origin,
     accessToken: null,
@@ -453,9 +493,12 @@ export async function revokeProfile(env: PairingEnv, profile: ServerProfile): Pr
     ...(env.fetchImpl ? { fetchImpl: env.fetchImpl } : {}),
   });
   try {
-    await bearer.fetch(`${profile.origin}/auth/logout`, { method: "POST" });
+    const res = await bearer.fetch(`${profile.origin}/auth/logout`, { method: "POST" });
+    // 401 counts as told: the session this would revoke is already gone.
+    return (res.status >= 200 && res.status < 300) || res.status === 401;
   } catch {
     /* unreachable server — the server-side session ages out; the phone forgot it already */
+    return false;
   }
 }
 
@@ -497,22 +540,53 @@ export type ForgetOutcome =
  *     the close it already scheduled.
  *  3. **Remove the credential**, and read the keystore back. This is the residue that can still
  *     OPEN the mailbox, so its refusal is the loud one.
- *  4. **Revoke server-side**, fire-and-forget. This is also what takes the phone's WAKE
- *     REGISTRATION down: the hosted `logout` prunes `push_subscriptions` for the session's
- *     device, so a forgotten server stops ringing a phone that can no longer open the account.
+ *  4. **Revoke server-side, AWAITED.** This is also what takes the phone's WAKE REGISTRATION
+ *     down: the hosted `logout` prunes `push_subscriptions` for the session's device, so a
+ *     forgotten server stops ringing a phone that can no longer open the account. Its verdict
+ *     shapes the result — see the note at the call for why it is no longer fire-and-forget, and
+ *     why a durable retry queue was rejected.
  *  5. **Delete the mail and read it back** ({@link forgetMirror}).
  */
 export async function forgetProfile(
   env: PairingEnv,
   profileId: string,
-  opts: { closed?: Promise<void>; revoke?: (() => Promise<void>) | null } = {},
+  opts: { closed?: Promise<void>; revoke?: (() => Promise<boolean>) | null } = {},
 ): Promise<ForgetOutcome> {
   const row = (await env.profiles.list()).find((p) => p.id === profileId) ?? null;
-  const ownerKey = row === null ? null : mirrorOwnerKey(row.origin, row.accountId);
+  /**
+   * ── A SECOND FORGET OF A ROW THE FIRST ALREADY REMOVED IS NOT AUTOMATICALLY DONE ──────────
+   *
+   * Two taps before the row re-renders both reach here through the gate. The first writes the
+   * debt, removes the credential and — if the mirror deletion failed — returns `partial` with
+   * the mail still on the phone. The second then found no row, derived no owner key, and
+   * returned `forgotten`: an unearned success that immediately replaced the first tap's honest
+   * warning, and on the last pairing sent the screen to Welcome over a mirror that was still
+   * there. So a missing row is not the end of the question — the durable queue is asked whether
+   * this profile is still owed a forget, and if it is, that debt is what this call finishes.
+   */
+  const owed = row === null
+    ? (await env.profiles.pendingWipes()).find((w) => w.id === profileId) ?? null
+    : null;
+  const ownerKey = row !== null ? mirrorOwnerKey(row.origin, row.accountId) : owed?.owner ?? null;
   // The intent names BOTH stores. An owner key alone made this crash boundary RESURRECT the
   // pairing: a kill here left the profile standing and still active, and the next launch
   // deleted the mirror, cleared the debt, then reconnected and drained the mailbox back.
-  if (ownerKey !== null) await env.profiles.markPendingWipe(profileId, ownerKey);
+  if (ownerKey !== null) {
+    try {
+      await env.profiles.markPendingWipe(profileId, ownerKey);
+    } catch (err) {
+      // NOTHING HAS BEEN TOUCHED YET, and that is why this refusal is safe: the queue is full
+      // of forgets whose mail could not be deleted, and recording one more would mean evicting
+      // one — stranding a mirror whose only remaining name is the entry being dropped. So the
+      // forget does not start. The credential stays, which is the recoverable state.
+      return {
+        kind: "partial",
+        reason:
+          `This phone could not start forgetting that server (${String(err)}). Restart ohmail so ` +
+          `it can finish the deletions it already owes, then try again.`,
+      };
+    }
+  }
 
   try {
     await env.profiles.remove(profileId);
@@ -525,13 +599,26 @@ export async function forgetProfile(
     };
   }
 
-  // Best-effort and never blocking, in both arms: the live session's own manager holds logout;
-  // a stored profile's refresh token is spent into one through `revokeProfile`. An unreachable
-  // server means the family ages out — it must not hold the local forget open.
-  if (opts.revoke) void opts.revoke().catch(() => undefined);
-  else if (row !== null) void revokeProfile(env, row);
+  // ── THE SERVER HALF IS AWAITED, AND ITS ANSWER SHAPES THE RESULT ─────────────────────────
+  //
+  // This was fire-and-forget on the reasoning that an unreachable server must not hold a local
+  // forget open. That reasoning is sound about BLOCKING and was wrong about REPORTING: the
+  // credential this call is destroying is the only thing that could ever retry the logout, and
+  // the logout is what revokes the session AND, on the hosted tier, takes this device's wake
+  // registration down. A forget reported over a logout that never landed leaves both alive with
+  // nothing left to retry them — the take-back class, at the one seam where recovery is
+  // genuinely impossible afterwards.
+  //
+  // A DURABLE REVOCATION DEBT WAS CONSIDERED AND REJECTED, because it would have to carry the
+  // refresh token: retrying a logout needs the credential, so the queue would be a second
+  // durable home for the exact secret the forget exists to remove, kept for as long as the
+  // retries take. That is a worse trade than a sentence naming the remedy — and the remedy
+  // (revoke the device from the server's Devices list) needs neither this phone nor its token.
+  const told = opts.revoke ? await opts.revoke().catch(() => false)
+    : row !== null ? await revokeProfile(env, row)
+    : true;
 
-  if (ownerKey === null) return { kind: "forgotten" };
+  if (ownerKey === null) return told ? { kind: "forgotten" } : { kind: "partial", reason: NOT_TOLD };
   try {
     await (opts.closed ?? Promise.resolve());
     await forgetMirror(env.engineDeps, ownerKey);
@@ -546,8 +633,14 @@ export async function forgetProfile(
     };
   }
   await env.profiles.clearPendingWipe(ownerKey);
-  return { kind: "forgotten" };
+  return told ? { kind: "forgotten" } : { kind: "partial", reason: NOT_TOLD };
 }
+
+/** See {@link forgetProfile}: everything local is gone; the server was not told. */
+const NOT_TOLD =
+  "The pairing and the mail this phone had copied are gone. The server could not be reached to " +
+  "end the session, so it may still count this phone as connected — revoke this device from its " +
+  "Devices list to finish.";
 
 /**
  * Finish the forgets that did not finish — run once at launch, BEFORE any profile is read.
@@ -577,6 +670,51 @@ export async function drainPendingWipes(env: PairingEnv): Promise<string[]> {
     } catch {
       stillOwed.push(owed.owner);
     }
+  }
+  return stillOwed;
+}
+
+/**
+ * PAY THE OWED WAKE-ROW DELETIONS — run at launch, beside {@link drainPendingWipes}.
+ *
+ * A registration is a row on somebody's server, and taking it down is a request that can be
+ * refused. The two paths that hit that — a profile switch, and a registration superseded
+ * mid-flight — used to fire the delete and discard both the id and its verdict, so a refusal
+ * left a row nothing could ever name again. It kept waking a phone for an account it no longer
+ * syncs, and because the distributor endpoint is SHARED and still live, the server never got
+ * the 404/410 it prunes on.
+ *
+ * Ridden through a throwaway manager, exactly as {@link revokeProfile} is and for the same
+ * reason: a stored profile holds only a refresh token, so the first attempt 401s and the
+ * manager's one recovery spends it into an access token and replays. A profile that is gone or
+ * whose credential was refused can never pay its debt, so its entry is DROPPED rather than
+ * retried for ever — the row will lapse with the pairing it belonged to.
+ *
+ * Answers the subscription ids still owed, for the caller's log. Never throws.
+ */
+export async function drainPendingWakeDrops(env: PairingEnv): Promise<string[]> {
+  const stillOwed: string[] = [];
+  const rows = await env.profiles.list();
+  for (const owed of await env.profiles.pendingWakeDrops()) {
+    const profile = rows.find((p) => p.id === owed.profileId);
+    if (profile === undefined || profile.refreshToken === null) {
+      await env.profiles.clearPendingWakeDrop(owed.subscriptionId);
+      continue;
+    }
+    const bearer = new BearerManagerRN({
+      origin: profile.origin,
+      accessToken: null,
+      refreshToken: profile.refreshToken,
+      // A throwaway vault: a rotation spent here must not overwrite the live session's token.
+      vault: { save: async () => undefined, clear: async () => undefined },
+      ...(env.fetchImpl ? { fetchImpl: env.fetchImpl } : {}),
+    });
+    const dropped = await dropWakeRow(
+      { profile, bearer } as unknown as ConnectedSession,
+      owed.subscriptionId,
+    );
+    if (dropped.ok) await env.profiles.clearPendingWakeDrop(owed.subscriptionId);
+    else stillOwed.push(owed.subscriptionId);
   }
   return stillOwed;
 }
@@ -614,6 +752,29 @@ async function buildSession(
   profile: ServerProfile,
   accessToken: string | null,
 ): Promise<ConnectOutcome> {
+  /**
+   * ── A PROFILE THE PERSON ASKED TO FORGET IS NOT BOOTABLE ──────────────────────────────────
+   *
+   * A forget whose CREDENTIAL removal was refused leaves the row in place and the debt in the
+   * queue — correctly, because the row is the only thing that still names it and the launch
+   * retries. What must not follow is the launch then reading that row as the active profile and
+   * connecting it: the retry mechanism would be a resurrection path, and the person would be
+   * looking at the mailbox they pressed Forget on.
+   *
+   * Here rather than at the call sites, for this file's own stated reason: this is the ONE place
+   * every session is built, so launch, switch and re-pair inherit it and a new caller cannot
+   * forget. A re-pair is not caught by it, because `pairWithServer` settles the owed forget
+   * before it ever gets here.
+   */
+  if (await env.profiles.isOwedForget(profile.id)) {
+    return {
+      kind: "refused",
+      reason:
+        "This server is still being forgotten on this phone — ohmail could not remove its " +
+        "sign-in yet. Restart the app to let it finish, or revoke this device from the server's " +
+        "Devices list.",
+    };
+  }
   const bearer = new BearerManagerRN({
     origin: profile.origin,
     accessToken,
