@@ -76,8 +76,9 @@ export function ReceiptsView({
   freshCount?: number;
   /**
    * THE DISPLAYED "{count} new" — {@link FeedPartition.newCount}, the same field the rail and
-   * the phone read, so the pane cannot say "3 new" beside a rail saying "1" (review round 2:
-   * exactly that, over a stale anchor whose above-line rows were already read). Distinct from
+   * the phone read, so the pane cannot say "3 new" beside a rail saying "1" — which is exactly
+   * what one prop for two jobs produced over a stale anchor whose above-line rows were already
+   * read. Distinct from
    * `freshCount`, which is POSITIONAL — it places the waterline and slices the list — and must
    * not shrink with the badge or the line slides up over rows genuinely above it. Absent ⇒
    * `freshCount`, which is what every harness that mounts this view without a shell passed

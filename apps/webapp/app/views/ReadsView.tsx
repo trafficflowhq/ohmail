@@ -334,9 +334,8 @@ export function ReadsView({
    * places the waterline, and over a stale anchor it can stand above rows the mailbox says
    * were read. While this number was `freshCount` and the rail's was `newCount`, one screen
    * said "3 new" beside a rail saying "1" — the cross-surface divergence this whole seam
-   * exists to close, re-created two inches apart (review round 2). One field, every surface:
-   * the rail, this headline, the phone's meta line and its dock all read the selector's own
-   * count now.
+   * exists to close, re-created two inches apart. One field, every surface: the rail, this
+   * headline, the phone's meta line and its dock all read the selector's own count now.
    */
   const newCount = partition.newCount;
   /**
