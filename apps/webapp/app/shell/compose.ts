@@ -143,7 +143,7 @@ export interface ComposePrefill {
  * body — written by one account survived into the next account to sign in on the same browser,
  * where the composer restored it and autosave could persist it as THEIR server draft.
  *
- * The owner suffix is the same shape `searchSortKey` already uses, for the same reason and with
+ * The account suffix is the same shape `searchSortKey` already uses, for the same reason and with
  * the same `"local"` fallback: a device with no account (the standalone desktop, and any moment
  * before sign-in) is a real situation rather than a missing value.
  *
