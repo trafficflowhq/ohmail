@@ -118,13 +118,6 @@ function computeZone(): Zone {
     // suspends the walk whole ("none"); everything else leaves the sheet in charge.
     if (!(el instanceof Element) || el === document.body) return "reader";
     if (sheet.contains(el)) return "reader";
-    // AN OPEN DRAWER OUTRANKS THE SHEET (review finding, round 2): at the Zero push tier
-    // the summoned rail stacks ABOVE the re-housed reader and holds real focus, and calling
-    // that focus "reader" scrolled the sheet with keys aimed at visible navigation. The
-    // guard is the drawer's own open state, not a layout read — in classic the full-screen
-    // sheet covers the ≡ and this state is not reachable by pointer, and if focus is ever
-    // IN an open drawer, the drawer is what the keys should serve there too.
-    if (el.closest(RAIL) && document.querySelector(`${RAIL}.open`) != null) return "rail";
     const pos = sheet.compareDocumentPosition(el);
     if ((pos & Node.DOCUMENT_POSITION_PRECEDING) !== 0) return "reader";
     return el.closest('[role="dialog"], [role="alertdialog"], [role="menu"]') ? "none" : "reader";

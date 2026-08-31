@@ -135,8 +135,8 @@ import { useDraftReply, type DraftedReply } from "./draft-reply";
 import { RichEditor } from "./RichEditor";
 import { TagPicker, placePicker, type TagPickerState } from "./TagPicker";
 import { KeymapProvider, useKeyBindings, type KeyBinding } from "./keymap";
-import { readColumnHidden, readColumnHiddenFor, watchZeroPushTier, zeroPushTier } from "./narrow";
-import { ZoneCursor, currentZone, setRailSummon } from "./zone-nav";
+import { readColumnHidden, readColumnHiddenFor, zeroPushTier } from "./narrow";
+import { ZoneCursor, setRailSummon } from "./zone-nav";
 import "./zone-cursor.css";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { SyncBar } from "./SyncBar";
@@ -1274,12 +1274,8 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
    * "APPLY FOR ALL DEVICES" — the face's account write, folded to ONE nullable callback for
    * both consumers (the Settings row's scope line and the Option B offer). Null on the demo
    * (no session), before the first consent answer (a press racing the boot read would write
-   * over an account whose stance is not yet known), and on a transport that cannot store an
-   * account-wide face — each null withholds the affordance structurally. That last arm no longer
-   * names the desktop's hosted door: it has the knob now (`consentOverBridge.setThemeFace`, over
-   * the same forwarded PATCH its other settings ride). The gate stays because a STANDALONE
-   * desktop window passes no transport at all — it has no account row to store a shared choice
-   * in, and the device pin is the whole of the appearance choice such an install can make.
+   * over an account whose stance is not yet known), and on transports without the knob (the
+   * desktop's hosted door) — each null withholds the affordance structurally.
    */
   const applyFaceAllDevices: ApplyFaceAllDevices | null =
     !demo && themeFaceKnown && consent.setThemeFace !== null ? consent.setThemeFace : null;
@@ -4800,75 +4796,20 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
    * fixed over the very split they duplicate (the double-render defect `enterReader`'s one
    * gate exists to prevent). Asked with the NEW layout's own answer
    * (`readColumnHiddenFor`), because the attribute stamp lands in the provider's effect,
-   * which runs after this one.
-   *
-   * ON THE TRANSITION ONLY (review finding, round 2): a sheet can stand at a WIDE width by
-   * design — `openMessage` raises it for a message no standing column can show (an
-   * archive-only search hit, a parked message from History) — and a wide→wide cycle must
-   * not take the only visible copy of a message away. So the clear fires exactly when this
-   * cycle turns a hidden column into a standing one; every other direction is left as a
-   * window resize across the breakpoint leaves it.
-   *
-   * BOTH ANSWERS AT THE CURRENT WIDTH (review finding, round 3). What is remembered across
-   * cycles is the previous LAYOUT, never its answer: this effect only re-runs when the
-   * layout changes, so a remembered boolean describes the viewport as it was at the last
-   * cycle, and any resize since makes it a lie. The measured hole: mount classic at 1280
-   * (column standing → `false` remembered), resize to 800 where classic hides the column
-   * and a reader sheet legitimately opens, then press `w` — Zero at 800 stands both tiles,
-   * so the new answer is "standing", but the stale `false` reads the cycle as standing→
-   * standing and skips the clear, leaving the sheet fixed over the very column it
-   * duplicates. Asking `readColumnHiddenFor` for BOTH layouts here evaluates both against
-   * the width the visitor is actually at (the function matches its media query at call
-   * time), which makes the comparison a question about the layouts alone and removes the
-   * time dependency that produced the bug.
+   * which runs after this one. The other direction — a cycle that HIDES the column — is
+   * left exactly as a window resize across the breakpoint leaves it: the selection stands,
+   * the next open raises the sheet.
    */
-  const prevCycleLayout = useRef<"classic" | "zero" | null>(null);
   useEffect(() => {
-    const before = prevCycleLayout.current;
-    prevCycleLayout.current = theme.layout;
-    if (before === null || before === theme.layout) return;
-    if (readColumnHiddenFor(before) && !readColumnHiddenFor(theme.layout)) {
+    if (!readColumnHiddenFor(theme.layout)) {
       setReaderFor(null);
       setScreenerFull(false);
     }
   }, [theme.layout]);
 
-  /**
-   * The Zero PUSH TIER, subscribed (review finding, round 2): the sheet's ARIA claim and the
-   * lateral-exit gate below both follow this fact, and a render-time read goes stale when
-   * `w` restamps the layout with the sheet still open, or a resize crosses 391/392.
-   */
-  const [pushTier, setPushTier] = useState(false);
-  useEffect(() => {
-    setPushTier(zeroPushTier());
-    return watchZeroPushTier(setPushTier);
-  }, []);
-
-  /**
-   * FOCUS LEAVES THE DRAWER WITH THE DRAWER (review finding, round 2): a summoned drawer can
-   * hold real focus, and closing it (Escape, scrim, ≡) merely translates the rail off
-   * canvas — focus would stay in invisible navigation and the zone would keep reporting
-   * "rail". The selected row is where the walk came from; failing that, a blur releases
-   * focus to the body, which IS the list zone by derivation.
-   */
-  const prevRailOpen = useRef(railOpen);
-  useEffect(() => {
-    const was = prevRailOpen.current;
-    prevRailOpen.current = railOpen;
-    if (!was || railOpen) return;
-    const rail = document.querySelector(".rail");
-    const el = document.activeElement;
-    if (rail && el instanceof HTMLElement && rail.contains(el)) {
-      const row = document.querySelector<HTMLElement>(".view .row.sel");
-      if (row) row.focus();
-      else el.blur();
-    }
-  }, [railOpen]);
-
-  /* The Zero sheet's lateral-exit gate: the PUSH tier only (review finding, round 2) — at
-     the floating tier (≤391) Zero stands on classic's full-screen modal, whose one exit is
-     Escape. `pushTier` is the subscribed fact above, so the gate follows `w` and resizes. */
-  const zeroSheetUp = pushTier && readerFor != null;
+  /* The Zero sheet's lateral-exit gate, hoisted so the pair below shares ONE appearance
+     read (the census counts occurrences; two inline copies would be two arguments). */
+  const zeroSheetUp = theme.layout === "zero" && readerFor != null;
 
   /* ── the global key map. Views declare their own; see `keymap.tsx` for precedence. ── */
   const globalKeys: KeyBinding[] = [
@@ -5111,9 +5052,6 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
       group: "navigate",
       label: t("shortcuts.zoneList"),
       disabled: !zeroSheetUp,
-      // The drawer outranks the sheet while it holds focus (review finding, round 2): with
-      // both standing, ← belongs to the drawer walk, not to closing the reader behind it.
-      when: () => currentZone() !== "rail",
       run: () => setReaderFor(null),
     },
     {
@@ -5121,7 +5059,6 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
       group: "navigate",
       label: t("shortcuts.zoneList"),
       disabled: !zeroSheetUp,
-      when: () => currentZone() !== "rail",
       run: () => setReaderFor(null),
     },
     {
@@ -6683,10 +6620,10 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
         /* NON-MODAL exactly at the Zero push tier (review finding, round 1): there the sheet is
            the reading TILE beside a live, operable ribbon, and `aria-modal` would tell
            assistive tech that chrome is unreachable. Under 392 the same sheet is the
-           full-screen classic model and stays modal. `pushTier` is SUBSCRIBED (review
-           finding, round 2) — it follows `w` and a resize across the band with the sheet
-           still standing. */
-        modal={!pushTier}
+           full-screen classic model and stays modal. Read at render time: the sheet mounts
+           per open, and a resize crossing the band while it stands re-renders on the next
+           interaction — the same staleness window every render-time media read has. */
+        modal={!zeroPushTier()}
         onClose={() => setReaderFor(null)}
         /* The on-screen back control's accessible name — the stylesheet shows the control at
            phone width, where the esc hint is suppressed for coarse pointers and the backdrop
