@@ -1,4 +1,5 @@
 import { ServiceError } from "@trafficflow/services/mail";
+import { silentLogger } from "@trafficflow/core/mail";
 import { serviceContext } from "../context.js";
 import { errorResponse, jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
@@ -159,9 +160,33 @@ export const privacyRoutes: Route[] = [
         );
         return imageResponse(contentType, body);
       } catch (err) {
+        /* ── EVERY REFUSAL SAYS WHICH ARM IT WAS ─────────────────────────────────────────
+           This `catch` used to answer and log NOTHING, which made the route's own record
+           useless: a production census of its 5xx found `logs[]` empty on every row, because
+           a refusal RETURNED rather than threw and so never reached `withErrorEnvelope`'s
+           line. "Why is this image missing" then has no answer anywhere — the status is in
+           the platform's log and the reason is nowhere.
+
+           `code` names the arm and is the whole point (`consent_required`, a 404 for a
+           cross-account `mid`, the SSRF gate's refusal, the 415, a 424 from the transport).
+           WHAT IS DELIBERATELY ABSENT: the `u` parameter, the resolved host, and the
+           `ServiceError` MESSAGE — the sender chose the url, several of these messages quote
+           it, and keeping the senders a reader's mail links to out of our logs is the reason
+           this proxy exists at all. The `mid` is absent for the same class of reason; the
+           `requestId` the logger already carries is what ties the line to one request.
+
+           Level follows `withErrorEnvelope`: a 4xx here is the proxy working as designed, so
+           it is `warn`; a 5xx is ours and is `error`. */
+        const log = deps.logger ?? silentLogger;
         if (err instanceof ServiceError) {
+          const at = { method: req.method, route: "/img", status: err.httpStatus, code: err.code };
+          if (err.httpStatus >= 500) log.error("request_failed", at);
+          else log.warn("request_failed", at);
           return errorResponse(err.code, err.httpStatus, err.message, err.details, err.retryable);
         }
+        /* The unknown arm keeps the repo-wide event name for "not a refusal, a bug", so the
+           two are still distinguishable by name rather than only by status. */
+        log.error("request_unhandled", { method: req.method, route: "/img", status: 500, err });
         /* ── WHAT REACHES HERE IS OUR OWN FAULT, AND IT MUST STAY A 5xx ──────────────────
            Tempting to answer 424 here, since every upstream refusal now sits off the
            5xx class. That would be wrong, and dangerously so: the `try` above encloses the
