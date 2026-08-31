@@ -43,7 +43,7 @@
  * AWAITED so the toast is chosen from what the server returned. Once the rule
  * lands, the whole sender's bag presents in the Ohbox with zero server moves.
  */
-import { useMemo, useReducer, useRef } from "react";
+import { useEffect, useMemo, useReducer, useRef } from "react";
 import { useTranslations } from "next-intl";
 import {
   FOLDER_OF_VIEW,
@@ -60,6 +60,12 @@ import {
   type ScreenerSenderDTO,
 } from "@ohmail/client-engine";
 import type { SuggestionOverlay } from "./screener-suggest";
+import {
+  armScreenerIntent,
+  disarmScreenerIntent,
+  takeScreenerIntents,
+  type ScreenerIntent,
+} from "./screener-intents";
 import {
   dispatchScreeningChange,
   holdingRules,
@@ -127,6 +133,14 @@ interface PendingEntry {
    * worked.
    */
   quiet: boolean;
+  /**
+   * WHEN THE READER PRESSED — the same stamp the durable intent carries.
+   *
+   * On the entry rather than re-read at commit time for the reason `quiet` is: the commit fires
+   * up to `COMMIT_MS` later, and this has to be the moment of the DECISION so the journal's copy
+   * and the in-memory copy are the same record rather than two clocks that agree by luck.
+   */
+  at: number;
   commitTimer: ReturnType<typeof setTimeout>;
   outTimer: ReturnType<typeof setTimeout>;
 }
@@ -540,14 +554,21 @@ export function useScreenerState(
   /**
    * A refusal with nothing better to say about it: mark the row and name the sender.
    *
-   * `quiet` is the bulk's own flag, threaded from `decide` through {@link PendingEntry} — the same
-   * flag that suppresses the per-row optimistic toast — so the two toasts are suppressed by one
-   * decision rather than by two guesses about who is calling.
+   * `quiet` is the bulk's own flag, threaded from `decide` through {@link ScreenerIntent} — the
+   * same flag that suppresses the per-row optimistic toast — so the two toasts are suppressed by
+   * one decision rather than by two guesses about who is calling.
+   *
+   * IT TAKES THE INTENT, NOT THE LIVE ENTRY, and that is what lets a decision RESTORED from the
+   * journal report its own refusal in the same words: the only thing it ever wanted from the
+   * `ScreenerSenderDTO` was a name to put in the sentence, and the intent carries that name.
    */
-  const refuse = (id: string, entry: PendingEntry) => {
-    markRefused(id);
-    if (entry.quiet) return;
-    toast(t("toastDecideFailed", { sender: senderLabel(entry.sender) }), { duration: UNDO_MS });
+  const refuse = (d: ScreenerIntent) => {
+    markRefused(d.id);
+    if (d.quiet) return;
+    toast(
+      t("toastDecideFailed", { sender: displayAddressee(d.from.name, d.from.address) }),
+      { duration: UNDO_MS },
+    );
   };
 
   /**
@@ -611,6 +632,26 @@ export function useScreenerState(
     );
   };
 
+  /**
+   * THE LIVE ENTRY, AS THE DURABLE RECORD OF ONE DECISION.
+   *
+   * The trim rather than the row — see {@link ScreenerIntent} for what is left out and why
+   * (`ScreenerSenderDTO.held` carries every held message in full; a bulk over a busy queue would
+   * put megabytes of mail text in `localStorage` to record five fields).
+   */
+  const intentOf = (id: string, entry: PendingEntry): ScreenerIntent => ({
+    v: 1,
+    id,
+    dest: entry.dest,
+    read: entry.read,
+    scope: entry.scope,
+    quiet: entry.quiet,
+    at: entry.at,
+    derived: entry.sender.derived === true,
+    heldIds: heldMessageIds(entry.sender),
+    from: { name: entry.sender.from.name ?? null, address: entry.sender.from.address },
+  });
+
   const commit = (id: string) => {
     const entry = s.pending.get(id);
     if (!entry) return;
@@ -622,8 +663,34 @@ export function useScreenerState(
       s.pins = [entry.sender, ...s.pins];
     }
     s.overrides.delete(id);
-    const derived = entry.sender.derived === true;
-    const heldIds = heldMessageIds(entry.sender);
+    dispatchDecision(intentOf(id, entry));
+    bump();
+  };
+
+  /**
+   * SEND ONE DECISION — the only path to the wire, taken by the live timer AND by the boot replay.
+   *
+   * ── WHY IT TAKES A {@link ScreenerIntent} AND NOT A {@link PendingEntry} ─────────────────────
+   *
+   * Because the two callers do not have the same thing in their hands. The live commit holds a
+   * `PendingEntry` with the full `ScreenerSenderDTO`; the boot replay holds a record read off disk
+   * by a session that never saw that row. Written twice, this would be two implementations of one
+   * rule — the shape this repository's own mutation tests keep catching — so it is written once, in
+   * the vocabulary BOTH callers can speak, and the live path adapts to it (`intentOf`) rather than
+   * the durable path guessing at a DTO it cannot reconstruct.
+   *
+   * `disarmScreenerIntent` is called on the SETTLE of each branch and never before the dispatch.
+   * That order is the whole durability contract, one step further along than the journal itself:
+   * `Engine.mutate` persists the verb to its own durable outbox AHEAD of the wire, so from the
+   * moment it settles the outbox is the record and this journal has nothing left to hold — but
+   * between the two, the journal is the ONLY copy, and dropping it early would reopen the defect
+   * at a narrower window instead of closing it.
+   */
+  const dispatchDecision = (d: ScreenerIntent) => {
+    const id = d.id;
+    const derived = d.derived;
+    const heldIds = d.heldIds;
+    const done = () => disarmScreenerIntent(id);
 
     // ── WHERE IS THE REPRESENTATIVE, ACTUALLY? READ THE RAW MIRROR ────────────────────────────
     //
@@ -657,7 +724,7 @@ export function useScreenerState(
       // server would refuse, and it cannot reach it: a fixture row exists only under
       // `FixturesAdapter`, which serves `mutationEffects` in-process and never opens a socket.
       const decision: "yes" | "no" =
-        entry.dest === "screened" || (derived && entry.dest === "spam") ? "no" : "yes";
+        d.dest === "screened" || (derived && d.dest === "spam") ? "no" : "yes";
       // The destination rides the decide on BOTH branches, so the server files where the
       // user pressed on all five; nothing is composed on top but "&read", which is a flag below.
       //
@@ -672,12 +739,13 @@ export function useScreenerState(
         kind: "screener_decide",
         senderId: id,
         decision,
-        dest: entry.dest as ScreenDest,
-        ...(decision === "yes" ? { read: entry.read } : {}),
-        scope: entry.scope,
+        dest: d.dest as ScreenDest,
+        ...(decision === "yes" ? { read: d.read } : {}),
+        scope: d.scope,
       }).then((res) => {
-        if (res.status === "rolled_back") refuse(id, entry);
-      }, () => refuse(id, entry));
+        done();
+        if (res.status === "rolled_back") refuse(d);
+      }, () => { done(); refuse(d); });
     } else {
       // ── PAST THE GATE: a rule, not a decide (#116) ──────────────────────────────────────────
       //
@@ -694,12 +762,13 @@ export function useScreenerState(
       // confirms the real outcome when the undo window closes, and says so on a refusal.
       const sender = senderScreening(engine.read(), id);
       if (sender) {
-        const dest = entry.dest;
-        const plan = planScreeningChange(sender, dest, entry.scope, true);
+        const dest = d.dest;
+        const plan = planScreeningChange(sender, dest, d.scope, true);
         // The toast's subject, not the rule's — the rule was already written from `plan`.
-        const who = entry.scope === "domain" ? displayDomain(sender.domain) : displayAddress(sender.address);
+        const who = d.scope === "domain" ? displayDomain(sender.domain) : displayAddress(sender.address);
         const place = PLACE_LABEL[dest] ?? dest;
         void dispatchScreeningChange(plan, (m) => engine.mutate(m)).then((key) => {
+          done();
           // THE SENTENCE IS UNCHANGED — `toastRuleFailed` says "… moved, but the rule couldn't be
           // made. Future mail is unchanged.", which is strictly more informative than a generic
           // refusal and is true: the mail moved, only the rule was lost. What was missing is the
@@ -708,7 +777,7 @@ export function useScreenerState(
           // looking untouched while the only record faded with the toast.
           if (key === "toastRuleFailed") markRefused(id);
           toast(ts(key, { sender: who, place, count: plan.moved }));
-        }, () => refuse(id, entry));
+        }, () => { done(); refuse(d); });
       } else {
         // ── THE REPRESENTATIVE IS GONE FROM THE MIRROR, and this branch was EMPTY ──────────────
         //
@@ -720,7 +789,16 @@ export function useScreenerState(
         // With no `else`, that dispatched NOTHING: no mutation, no toast, no error, and the row
         // back in the queue on the next render. Of the three ways this commit can fail it was the
         // only one that was completely silent, which makes it the one most worth naming.
-        refuse(id, entry);
+        //
+        // THE INTENT IS DISARMED HERE, and it is the one refusal where that is a judgement rather
+        // than bookkeeping. Nothing was sent, so the journal COULD keep the decision and offer it
+        // to a later, warmer session. It does not, because this arm is only ever reached with the
+        // rep genuinely gone: the boot replay never presents an intent whose rep the mirror cannot
+        // see (see the restore effect), so reaching here from either caller means the mirror has
+        // looked and the message is not there. Holding a decision about mail this device can no
+        // longer name would be a retry loop with no terminating condition but the TTL.
+        done();
+        refuse(d);
       }
     }
 
@@ -740,7 +818,7 @@ export function useScreenerState(
     // of the filed mail stays bold in the Ohbox, which is visible where it happened and is undone
     // by reading it. Left unwatched on purpose rather than by omission, which is what the comment
     // is for.
-    if (derived && entry.read) {
+    if (derived && d.read) {
       for (let i = 0; i < heldIds.length; i += MARK_SEEN_MAX) {
         void engine.mutate({
           kind: "mark_seen",
@@ -749,7 +827,6 @@ export function useScreenerState(
         });
       }
     }
-    bump();
   };
 
   const undo = (ids: string[]) => {
@@ -761,6 +838,13 @@ export function useScreenerState(
       clearTimeout(entry.outTimer);
       s.pending.delete(id);
       s.out.delete(id);
+      // THE UNDO CANCELS THE SCHEDULED INTENT, and it is the half that makes the durable
+      // journal safe to have. A decision is on disk from the moment it is taken; Undo is what
+      // takes it off again, in the same synchronous act that clears the timer. Without this, a
+      // decision the reader had just reversed would be re-committed by the next boot — the
+      // journal would have turned "user always wins" upside down at the one control that exists
+      // to honour it.
+      disarmScreenerIntent(id);
       restored++;
     }
     // NOTHING RESTORED IS NOT AN UNDO, so it does not get the undo sentence. Every id
@@ -803,12 +887,28 @@ export function useScreenerState(
       read,
       scope: opts.scope,
       quiet: opts.quiet === true,
+      at: Date.now(),
       outTimer: setTimeout(() => {
         s.out.delete(id);
         bump();
       }, OUT_MS),
       commitTimer: setTimeout(() => commit(id), COMMIT_MS),
     };
+    /**
+     * THE DECISION IS ON DISK BEFORE ANYTHING ELSE HAPPENS TO IT.
+     *
+     * Ahead of `s.pending.set`, ahead of the toast, ahead of the render — and synchronously, which
+     * is the whole reason this journal is `localStorage` and not the mirror store. Between this
+     * line and `dispatchDecision` there is an 8.4-second window in which the ONLY record of an
+     * explicit consent decision used to be the `commitTimer` above; a tab closed inside it lost the
+     * decision while the toast had already reported it done. Now the window is a scheduled DURABLE
+     * intent: the press lands here, Undo removes it, and a crash resolves one way — the next boot
+     * reads it and commits (see the restore effect and {@link ScreenerIntent}).
+     *
+     * The timers are still armed and still own the HAPPY path. This is not a second mechanism
+     * racing them; it is the record they act on, and the only thing that outlives them.
+     */
+    armScreenerIntent(intentOf(id, entry));
     s.pending.set(id, entry);
     s.out.add(id);
     bump();
@@ -1299,6 +1399,59 @@ export function useScreenerState(
   const flush = () => {
     for (const id of [...s.pending.keys()]) commit(id);
   };
+
+  /**
+   * DECISIONS THIS SESSION INHERITED — the restart half of the durable-intent contract.
+   *
+   * Loaded ONCE, then drained as the mirror becomes able to carry each one. Both halves of that
+   * sentence are load-bearing:
+   *
+   * ── ONCE ────────────────────────────────────────────────────────────────────────────────────
+   *
+   * `restoredIntents.current === null` is the latch. Without it a remount (React strict mode's
+   * double-invoke, a route that rebuilds the shell) would re-read the journal while THIS session's
+   * timers are still armed over the same rows and dispatch each decision twice. The same guard
+   * `OhmailEngine.restoreOutbox` states in its own words — *"an entry this session is already
+   * handling is not a restart's entry"* — is applied to the load as well: an id already in
+   * `s.pending` belongs to a live timer and is not this effect's business.
+   *
+   * ── AS THE MIRROR BECOMES ABLE ──────────────────────────────────────────────────────────────
+   *
+   * This is the failure the fix would otherwise have OPENED, and it is worth naming because it is
+   * the one that makes a durable replay worse than no replay. A derived row's id is a representative
+   * MESSAGE id. At boot the mirror is cold: `engine.read().get("message", id)` answers nothing until
+   * the first drain lands. `dispatchDecision` on an absent rep takes the past-the-gate branch,
+   * `senderScreening` answers null, and the decision is REFUSED — locally, with nothing sent, and
+   * marked "Not saved" on a row nobody is looking at. Replaying at mount would therefore have
+   * converted "the decision survives a crash" into "the decision is destroyed on the next boot, in
+   * a way that looks like the server refused it". Red against the wrong dataset, exactly as the
+   * cold-account trap says.
+   *
+   * So the effect re-runs on `version` — the mirror's own revision, already this hook's render key
+   * — and dispatches only the intents the mirror can now name. A non-derived (fixture) intent has
+   * no such dependency and goes on the first pass. Anything still undispatched stays IN the journal
+   * and is offered again next boot, or swept by {@link INTENT_TTL_MS}; nothing is consumed by an
+   * attempt that could not be made.
+   *
+   * There is no timer and no deadline here on purpose. A deadline would have to choose between
+   * dispatching into a cold mirror (the defect above) and discarding the decision (the defect this
+   * whole slice closes), and the journal already has a bound that needs neither.
+   */
+  const restoredIntents = useRef<ScreenerIntent[] | null>(null);
+  useEffect(() => {
+    if (restoredIntents.current === null) {
+      restoredIntents.current = takeScreenerIntents(Date.now())
+        .filter((r) => !s.pending.has(r.id));
+    }
+    const queue = restoredIntents.current;
+    if (queue.length === 0) return;
+    const raw = engine.read();
+    const ready = queue.filter((r) => !r.derived || raw.get<EngineMessage>("message", r.id) != null);
+    if (ready.length === 0) return;
+    restoredIntents.current = queue.filter((r) => !ready.includes(r));
+    for (const r of ready) dispatchDecision(r);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [version]);
 
   /**
    * See {@link HeldBodyStall}. The RAW reader, deliberately: the projection answers where a
