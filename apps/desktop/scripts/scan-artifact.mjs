@@ -147,6 +147,26 @@ const REAL_CLIENT_MARKERS = ["x-csrf-token", "/sync/snapshot"];
 const FIXTURE_SENTINELS = ["Giulia Ferrari", "Petra Wyss", "terracotta-milano.it"];
 const NO_FIXTURES_REFUSAL = "ohmail Desktop carries no sample mail";
 
+/**
+ * THE OMARCHY PALETTE MAP — present in the window, absent from the served client.
+ *
+ * `packages/tokens/omarchy/mapping.js` registers `window.OHMARCHY_MAP`, and the window reaches it
+ * through `src/omarchy.ts`. The served host client never imports it: measured 2 occurrences in
+ * `dist/` and 0 in `dist-host/`, which is the pairing this file's own law asks for — the window
+ * cannot lose the theme feed to a tree-shake without failing here, and the phone page cannot start
+ * carrying a desktop-only palette table without failing here either.
+ *
+ * WHAT THIS CHECK DOES NOT DO, said plainly so nobody reads more into a green than it carries.
+ * The release that added the theme feed shipped a window bundle that did not BOOT — Vite read the
+ * chunk's one CommonJS marker and converted the whole thing to an ES module, jsdom died on the
+ * `export`, and the map was never registered at runtime. **This byte check would have been green
+ * through all of it**, because the string was in the artifact the entire time; only its execution
+ * was gone. The guard for that is the smoke's Script-goal parse of the emitted chunk
+ * (`scripts/smoke.mjs`), which is where a behavioural claim belongs. This one is a byte claim and
+ * is only ever evidence that the module reached the right artifact and only the right artifact.
+ */
+const OMARCHY_MAP_MARKER = "OHMARCHY_MAP";
+
 const hostedSuggestPresent = text.includes(HOSTED_SUGGEST_MARKER);
 const commandsPresent = SHELL_COMMAND_MARKERS.filter((m) => text.includes(m));
 const commandsMissing = SHELL_COMMAND_MARKERS.filter((m) => !commandsPresent.includes(m));
@@ -155,6 +175,7 @@ const realPresent = REAL_CLIENT_MARKERS.filter((m) => text.toLowerCase().include
 const realMissing = REAL_CLIENT_MARKERS.filter((m) => !realPresent.includes(m));
 const fixturesPresent = FIXTURE_SENTINELS.filter((m) => text.includes(m));
 const noFixturesStubPresent = text.includes(NO_FIXTURES_REFUSAL);
+const omarchyMapPresent = text.includes(OMARCHY_MAP_MARKER);
 
 /* Captured into variables and compared, never piped into a matcher: a producer that dies inside a
    pipe looks exactly like a producer that found nothing, and "found nothing" is the answer half of
@@ -216,6 +237,14 @@ if (wantsEngine) {
         "nothing at all — silently, which is what both of them were added to end.",
     );
   }
+  if (!omarchyMapPresent) {
+    failures.push(
+      "the window bundle carries no Omarchy palette map — nothing but " +
+        "packages/tokens/omarchy/mapping.js puts that name in a bundle, so either src/omarchy.ts " +
+        "stopped reaching it or a build change tree-shook it out. The app would ship with the " +
+        "ohmarchy look unable to follow a desktop theme, and nothing else would say so.",
+    );
+  }
 } else {
   if (present.length > 0) {
     failures.push(`the served host client carries the local-model surface: ${present.join(", ")}`);
@@ -231,6 +260,13 @@ if (wantsEngine) {
       `the served host client names a shell command: ${commandsPresent.join(", ")}. A phone page ` +
         "has no shell; check that nothing in the shared frontend reaches the arming modules from " +
         "the host-client entry.",
+    );
+  }
+  if (omarchyMapPresent) {
+    failures.push(
+      "the served host client carries the Omarchy palette map — that table exists to read a " +
+        "Linux desktop's current theme, which a served page has no way to observe and no business " +
+        "shipping.",
     );
   }
 }
