@@ -16,6 +16,119 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.13.0] — 2026-08-31
+
+A feature release. ohmail has a second look — **ohmarchy**, a tiling, keyboard-first
+appearance you can turn on per device or across your account — a second window arrangement
+to go with it, and a keyboard grammar that reaches every screen in the app. On an Omarchy
+desktop the window follows the theme you set in the system.
+
+### A second look
+
+Settings → General → **Look** now offers two appearances: **paper**, which is what ohmail
+has always looked like, and **ohmarchy**, a denser, tiling, keyboard-first look.
+
+- **It is off by default, everywhere.** Nothing about your current install changes until you
+  choose it.
+- **You choose the scope.** Picking a look applies to the device you are on and nothing else.
+  *Apply on all devices* stores the choice on your account, and every other device you use
+  picks it up.
+- **On Linux, ohmail starts in the ohmarchy look** and says so, with one press to make it
+  account-wide and one to dismiss. Dismiss it and it stays dismissed. A choice you have
+  already made always wins over the offer.
+- Both looks answer light, dark and system exactly as before, including where a message or a
+  panel sets its own scheme inside the page.
+
+### The Zero layout
+
+A second arrangement of the same app: no window header, panes as tiles, one band per zone.
+Press **`w`** to switch between it and the classic layout, or find *Switch layout* in the
+command palette. It is a per-device choice — it is never stored on your account and never
+follows you to another machine — and the classic layout stays the default in both looks.
+
+Zero works with either look, because the arrangement is written in the same design tokens
+both looks fill in. The reading pane behaves differently by design: under Zero at a wide
+enough window the reader is a tile beside a live list rather than a sheet over it, so `h` and
+← put the list back instead of closing a modal.
+
+### The whole app on the keyboard
+
+The keyboard map is one table now, and it covers the app rather than the parts that happened
+to have shortcuts.
+
+- **Go anywhere with `g`.** `g l` / `g p` / `g b` for the triage horizons, `g d` drafts,
+  `g h` history, `g ,` settings, and the stream jumps you already had.
+- **`h` and `l`** move between zones, the lateral twins of the arrows.
+- **`p`** pulls new mail now. **`m`** moves a message and puts the cursor on the first
+  destination. **`d d`** deletes: the first press asks, the second confirms.
+- **`[` and `]`** walk the Screener's sections.
+- **In compose,** `1`–`4` pick a send-later slot, and ⌘↵ sends — or schedules, when the
+  picker is open. Reply-Run takes ⌘↵ too.
+- **The focused zone is drawn, not guessed.** A quiet border in paper, a loud one in
+  ohmarchy, on whichever pane the keyboard is actually in.
+- **Buttons wear their keys.** Where an action has a shortcut, the button shows it, read from
+  the same table the keys come from — so a button and its key cannot drift apart.
+- **`?`** lists everything, and the movement hints at the foot of a section are generated from
+  the live map rather than typed by hand.
+
+Nothing is bound to Super, to Alt, or to a function key, and a test refuses a binding that
+breaks that.
+
+### On an Omarchy desktop, ohmail follows your theme
+
+Run `omarchy theme set` and the ohmail window re-skins itself to match, without a restart and
+without you telling ohmail anything. It reads the theme the desktop is actually using and
+maps its palette onto the ohmarchy look.
+
+It is deliberately conservative about what it will apply: a palette that cannot meet the
+contrast floors ohmail holds itself to is refused, and the theme you had stays. So a theme
+ohmail cannot render legibly leaves the window as it was rather than making text you cannot
+read. This applies to the ohmarchy look only — in paper, ohmail keeps its own colours.
+
+### Under the hood
+
+- **Mail stylesheets are read the way CSS is written.** An `@import` now ends where the CSS
+  grammar says it ends rather than at the first semicolon, and a font family the policy
+  cannot pass is dropped on its own instead of taking the whole stack with it.
+- **A remote image that redirects is followed through the proxy** rather than refused, so
+  images from senders whose CDN redirects now appear when you ask for images.
+- **Pairing a desktop is one identity.** The storage partition, the window and the mail
+  engine move together when you switch which account the app is paired to, instead of one of
+  the three keeping the previous account's state.
+- **A second window opening no longer ends the first one's session.** The guard that keeps two
+  windows from fighting over one mailbox now stands down instead of deleting the session the
+  newer window just created.
+- **Sizes a caller or a sender chooses are bounded where they enter the app's own server
+  half**, with a census that fails if a new door is added without one.
+
+### Known limits, named
+
+- **The Linux `.deb` cannot update itself, and this is not new in 0.13.0.** A build installed
+  from the `.deb` asks the release feed for a Debian package first; the feed publishes only
+  the AppImage; so the app downloads the 130 MB AppImage and then reports *"ohmail could not
+  install the update. Try again in a moment."* Nothing on disk is touched and nothing is
+  damaged — but the in-app updater does not work for a `.deb` install, and it did not work in
+  0.12.x either. **If you want in-app updates on Linux, install the AppImage.** From a `.deb`,
+  update by downloading the new `.deb` and installing it over the old one. The same applies to
+  any distribution package built from the `.deb`.
+- **The phone is not on the look axis yet.** ohmarchy is the desktop and browser app; the
+  mobile app has its own theming and keeps it for now.
+- **A fifth review pass on the mail-stylesheet reader is owed, not finished.** Four passes
+  returned eight, seven, six and three findings, and each one landed on the previous pass's
+  fix. The reading frame also still allows a consented image to be requested from any path on
+  ohmail's own origin, not just the image proxy's — narrower than it was, not closed.
+- **Bounding a size is not the same as parsing it.** On several list endpoints a non-numeric
+  page size or a date without a timezone is still accepted and can fail as a server error
+  rather than a refusal.
+- **Signing out while switching doors can still leave a credential behind.** Changing which
+  door the desktop is on inside the same second as a sign-out can leave the other door's
+  saved mailbox password sealed on disk under a sign-out that reported success. Two
+  deliberate gestures in one second, and it is the strongest credential this app stores.
+- **The limits 0.12.2 named are unchanged**: a restarted compose can still mint a second send
+  key rather than resuming the first; a browser that refuses local storage leaves a decision
+  as durable as the tab; sent mail is recognised by a folder's NAME; and a mailbox that
+  reports a folder identity of zero is still read as "not yet learned".
+
 ## [0.12.2] — 2026-08-31
 
 A correctness patch. The Ohbox stopped calling other people's mail your own,
@@ -2606,7 +2719,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.12.2...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.0
 [0.12.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.12.2
 [0.12.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.12.1
 [0.12.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.12.0
