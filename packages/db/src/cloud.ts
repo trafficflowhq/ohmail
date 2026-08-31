@@ -277,7 +277,7 @@ export {
  * status, stays in `packages/services` where a service error means something.
  */
 export {
-  createStagingTicket, createStagingTicketWithinQuota, outstandingStagingUsage,
+  createStagingTicket, createStagingTicketWithinQuota, outstandingStagingUsage, stagingTicketId,
   readStagingTickets, expiredStagingTickets, deleteStagingTickets,
   attachmentStagingExpiry, ATTACHMENT_STAGING_TTL_MS,
   makeSupabaseStagingStorage, makeS3StagingStorage, s3StagingObjectUrl, stagingObjectPath,
@@ -287,7 +287,7 @@ export {
   STAGING_MAX_OUTSTANDING_TICKETS, STAGING_MAX_OUTSTANDING_BYTES,
   STAGING_QUOTA_LOCK_CLASS, DEFAULT_STAGING_QUOTA, S3_UPLOAD_GRANT_TTL_SECONDS,
   type StagingTicket, type StagingTicketInput,
-  type StagingQuota, type StagingQuotaRefusal, type StagingUsage,
+  type StagingMintOutcome, type StagingQuota, type StagingQuotaRefusal, type StagingUsage,
   type ExpiredStagingTicket, type StagingDrainResult,
   type AttachmentStagingStorage, type AttachmentStagingStorageConfig,
   type S3StagingStorageConfig,

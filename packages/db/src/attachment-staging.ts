@@ -80,6 +80,7 @@
  * quota is a statement about what an account may hold. They are allowed to be temporarily out of
  * step, and the sweep is what closes the gap.
  */
+import { createHash } from "node:crypto";
 import { AwsClient } from "aws4fetch";
 import { and, eq, gt, inArray, lte, sql } from "drizzle-orm";
 import { attachmentStaging } from "./schema-cloud.js";
@@ -101,6 +102,49 @@ export const ATTACHMENT_STAGING_TTL_MS = 24 * 60 * 60 * 1000;
 /** `expires_at` for a ticket minted now. */
 export function attachmentStagingExpiry(now: Date): Date {
   return new Date(now.getTime() + ATTACHMENT_STAGING_TTL_MS);
+}
+
+/**
+ * THE TICKET ID DERIVED FROM THE CALLER'S IDEMPOTENCY KEY — *the durable key IS the identity.*
+ *
+ * ── WHAT THIS CLOSES ────────────────────────────────────────────────────────────────────────
+ *
+ * `POST /attachments/staging` mints a DURABLE ROW and, through it, a signed grant to put bytes in
+ * a bucket somebody pays for. Minted under a random id, a retry after a lost response is a second
+ * row, a second object and a second helping of the per-account quota — and the client cannot tell
+ * the two apart, because the only thing that named the first ticket was the response it never
+ * received. That is the same defect as a send whose lock lives only in the component that issued
+ * it: the record is durable and its KEY is not.
+ *
+ * ── WHY THE ID AND NOT A COLUMN ─────────────────────────────────────────────────────────────
+ *
+ * A separate `idempotency_key` column with a unique index would work and would need a migration,
+ * a schema-census marker and a journal tag. It would also leave the OBJECT PATH derived from a
+ * random id, so a replay would have to read the row back to learn where the bytes go. Deriving
+ * the id instead makes every one of those free: the primary key IS the idempotency key, the
+ * unique index that enforces it already exists (it is the primary key), and
+ * {@link stagingObjectPath} — which is `id`-derived — puts a retry's bytes at exactly the path the
+ * first attempt was given. One ticket, one object, however many times the request is made.
+ *
+ * ── THE SHAPE ───────────────────────────────────────────────────────────────────────────────
+ *
+ * The column is `uuid`, so the digest is formatted as one: 16 bytes of SHA-256 over
+ * `accountId \n key`, with the version and variant nibbles set (the RFC 4122 name-based
+ * construction, with SHA-256 in place of SHA-1). The ACCOUNT is inside the digest so one
+ * account's key can never name another's row — reads are account-scoped as well, and both are
+ * wanted: the scoping is what refuses, and this is what makes a collision unconstructible.
+ *
+ * The id is handed back to the client, exactly as the random one was, and it is no more of a
+ * secret than that one: every read of it is filtered by `account_id`, so knowing an id buys
+ * nothing that knowing the account's credentials does not already buy.
+ */
+export function stagingTicketId(accountId: string, idempotencyKey: string): string {
+  const h = createHash("sha256").update(`${accountId}\n${idempotencyKey}`).digest();
+  const b = Buffer.from(h.subarray(0, 16));
+  b[6] = (b[6]! & 0x0f) | 0x50; // version 5 — name-based, as this is
+  b[8] = (b[8]! & 0x3f) | 0x80; // RFC 4122 variant
+  const hex = b.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 export interface StagingTicketInput {
@@ -257,6 +301,20 @@ export interface StagingUsage {
   bytes: number;
 }
 
+/**
+ * What a mint answered.
+ *
+ * A discriminated union rather than `ticket | null`, because the three outcomes need three
+ * different sentences from the caller: a NEW ticket, the SAME ticket answered again (`replayed`,
+ * which the caller may want to say or count but must not treat as a second grant), a quota
+ * refusal carrying its numbers, and a key whose ticket has aged out. Mapping any of them to a
+ * status is the service layer's job, not this module's.
+ */
+export type StagingMintOutcome =
+  | { ok: true; ticket: StagingTicket; replayed: boolean }
+  | { ok: false; reason: "quota"; refusal: StagingQuotaRefusal }
+  | { ok: false; reason: "expired" };
+
 /** Why a mint was refused, with the numbers a caller needs to say something actionable. */
 export type StagingQuotaRefusal =
   | { limit: "tickets"; outstanding: number; cap: number }
@@ -347,7 +405,7 @@ export async function createStagingTicketWithinQuota(
   tx: LedgerTx,
   i: StagingTicketInput,
   quota: StagingQuota = DEFAULT_STAGING_QUOTA,
-): Promise<{ ok: true; ticket: StagingTicket } | { ok: false; refusal: StagingQuotaRefusal }> {
+): Promise<StagingMintOutcome> {
   // A lock taken on an autocommit handle is released at the end of its own statement and
   // serializes nothing, which would leave the quota exactly as racy as no lock at all — and it
   // would look correct in every single-threaded test.
@@ -360,19 +418,57 @@ export async function createStagingTicketWithinQuota(
     )
   `);
 
+  // ── THE REPLAY BRANCH, INSIDE THE LOCK AND BEFORE THE QUOTA IS EVEN READ ──────────────────
+  //
+  // `i.id` is {@link stagingTicketId}'s digest of the caller's key, so a row under it is THIS
+  // request, already served. Answering with it costs no quota (it is the same row, already
+  // counted), and the caller re-signs a grant for its `object_path` — which is derived from the
+  // id, so the retry's bytes land on the object the first attempt was pointed at. One ticket,
+  // one object, however many times the request is made.
+  //
+  // The lock makes two SIMULTANEOUS mints of one key serialize here rather than race, and the
+  // primary key would refuse the loser's insert even if it did not. Both are wanted: the lock is
+  // what makes the second caller get an ANSWER rather than a constraint violation.
+  const [existing] = await tx.select({
+    id: attachmentStaging.id,
+    objectPath: attachmentStaging.objectPath,
+    filename: attachmentStaging.filename,
+    contentType: attachmentStaging.contentType,
+    sizeBytes: attachmentStaging.sizeBytes,
+    expiresAt: attachmentStaging.expiresAt,
+  }).from(attachmentStaging)
+    .where(and(eq(attachmentStaging.id, i.id), eq(attachmentStaging.accountId, i.accountId)))
+    .limit(1);
+  if (existing) {
+    // EXPIRED IS NOT REPLAYABLE, and it must not be minted over either.
+    //
+    // The row is still here only because the sweep has not reached it, and the sweep deletes the
+    // OBJECT first — so re-signing would hand back a grant for bytes that are on their way out,
+    // and overwriting the row in place would orphan the object it currently names (the one leak
+    // this module's ordering exists to prevent). The refusal is temporary and self-healing: once
+    // the sweep runs, the id is free and a fresh mint under the same key succeeds. It is also
+    // twenty-four hours late by construction — the ticket's TTL and the send's idempotency window
+    // are the same 24 hours — so nothing that could still be a retry can reach it.
+    if (existing.expiresAt.getTime() <= i.now.getTime()) return { ok: false, reason: "expired" };
+    return { ok: true, ticket: existing, replayed: true };
+  }
+
   const usage = await outstandingStagingUsage(tx, i.accountId, i.now);
   if (usage.tickets >= quota.maxTickets) {
-    return { ok: false, refusal: { limit: "tickets", outstanding: usage.tickets, cap: quota.maxTickets } };
+    return {
+      ok: false, reason: "quota",
+      refusal: { limit: "tickets", outstanding: usage.tickets, cap: quota.maxTickets },
+    };
   }
   if (usage.bytes + i.sizeBytes > quota.maxBytes) {
     return {
-      ok: false,
+      ok: false, reason: "quota",
       refusal: {
         limit: "bytes", outstanding: usage.bytes, requested: i.sizeBytes, cap: quota.maxBytes,
       },
     };
   }
-  return { ok: true, ticket: await createStagingTicket(tx, i) };
+  return { ok: true, ticket: await createStagingTicket(tx, i), replayed: false };
 }
 
 /**

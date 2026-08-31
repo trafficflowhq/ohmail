@@ -104,6 +104,12 @@ export interface AttachmentStagingPort {
   /** Mint one ticket + upload grant. Writes the row BEFORE the object can exist; see the service. */
   mint(input: {
     accountId: string; filename: string; contentType: string; sizeBytes: number; now: Date;
+    /**
+     * The caller's `Idempotency-Key`, REQUIRED. The ticket's id is this key's digest, so a retry
+     * after a lost response resolves to the same row and the same object path rather than minting
+     * a second grant against a bucket somebody pays for.
+     */
+    idempotencyKey: string;
   }): Promise<StagedUploadGrantWire>;
   /**
    * The two-phase staged-bytes source `SendService` reads through — `declare` (metadata, so an

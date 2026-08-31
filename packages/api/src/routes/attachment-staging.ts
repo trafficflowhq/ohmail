@@ -60,6 +60,25 @@ import { mailbox, readBody } from "./shared.js";
  * That makes the refusal here the SAME number the compose form states and the same number
  * `SendService` will enforce on the total. It is a per-file bound; the TOTAL is the send's, and it
  * is refused there against the declared sizes before a single byte is transferred.
+ *
+ * ## `Idempotency-Key` IS REQUIRED, AND IT IS READ HERE RATHER THAN BY THE MIDDLEWARE
+ *
+ * A ticket is a DURABLE ROW plus a grant to put bytes in a bucket somebody pays for. Minted
+ * without a stable key, a retry after a lost response mints a SECOND row and uploads a SECOND
+ * copy — and the client cannot tell the two apart, because the only thing that ever named the
+ * first ticket was the response it did not receive. So the key is required and the request is
+ * refused without one, exactly as `POST /drafts/:id/send` refuses a send without one.
+ *
+ * **It deliberately does NOT carry `options: { idempotent: true }`**, and that is not an
+ * oversight to be tidied up later. `withIdempotency` replays a STORED RESPONSE, and this
+ * response contains a SIGNED URL with a lifetime of its own — replaying it would hand a client a
+ * grant that may already have expired, and the handler could not store the response inside its
+ * mutation transaction anyway, because the URL is signed strictly AFTER that transaction commits
+ * (the module header explains why that order cannot be reversed without leaking objects).
+ *
+ * The key is therefore spent where it can actually be honoured: the ticket's PRIMARY KEY is the
+ * key's digest (`stagingTicketId`), so a retry finds the same row, re-signs a fresh grant for the
+ * same object path, and consumes no additional quota. The durable record IS the lock.
  */
 
 interface MintBody {
@@ -85,6 +104,25 @@ export const attachmentStagingRoutes: Route[] = [
         throw new ServiceError("unavailable", 503, "attachment staging is not configured on this deployment");
       }
       const ctx = serviceContext(deps, req);
+
+      // THE KEY, BEFORE ANYTHING IS READ OR WRITTEN. See the header for why this route reads the
+      // header itself rather than mounting `withIdempotency`.
+      const idempotencyKey = (req.headers.get("idempotency-key") ?? "").trim();
+      if (!idempotencyKey) {
+        throw new ServiceError(
+          "validation_failed", 400,
+          "Idempotency-Key is required. Reload the page and try again.",
+        );
+      }
+      // A bound, because the key is hashed into a primary key and an unbounded header is an
+      // unbounded digest input on a route an authenticated caller can make. 255 is a length no
+      // legitimate key needs — the client's is a send's key plus a small index — and it is
+      // deliberately NOT read as a promise about `idempotency_keys.key`, which is `text` and
+      // unbounded; this bound is this route's, for this route's reason.
+      if (idempotencyKey.length > 255) {
+        throw new ServiceError("validation_failed", 400, "Idempotency-Key is too long");
+      }
+
       const body = await readBody<MintBody>(req);
 
       const filename = str(body.filename) || "attachment";
@@ -112,6 +150,7 @@ export const attachmentStagingRoutes: Route[] = [
 
       const grant = await makeStaging(deps.db).mint({
         accountId: ctx.accountId, filename, contentType, sizeBytes, now: ctx.now(),
+        idempotencyKey,
       });
       return jsonResponse(grant, { status: 201 });
     },

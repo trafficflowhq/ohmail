@@ -1709,7 +1709,7 @@ export class HttpAdapter implements EngineAdapter {
       stagedAttachmentIds?: string[];
       forwardOf?: string;
     } = {};
-    const staged = await this.stagedIdsFor(m);
+    const staged = await this.stagedIdsFor(m, idempotencyKey);
     if (staged) sendBody.stagedAttachmentIds = staged;
     else if (m.attachments && m.attachments.length) sendBody.attachments = m.attachments;
     if (m.forwardOf) sendBody.forwardOf = m.forwardOf;
@@ -1820,6 +1820,7 @@ export class HttpAdapter implements EngineAdapter {
    */
   private async stagedIdsFor(
     m: Extract<EngineMutation, { kind: "mail_send" }>,
+    sendKey: string,
   ): Promise<string[] | null> {
     const files = m.attachments ?? [];
     if (!this.stageAttachments || files.length === 0) return null;
@@ -1836,9 +1837,30 @@ export class HttpAdapter implements EngineAdapter {
     }
 
     const ids: string[] = [];
-    for (const file of files) {
+    for (const [index, file] of files.entries()) {
       const bytes = base64ToBytes(file.contentBase64);
       const minted = await this.request("POST", "/attachments/staging", {
+        // ── THE UPLOAD TICKET'S KEY, DERIVED AND NOT MINTED ──────────────────────────────────
+        //
+        // A mint writes a durable row and a grant to put bytes in the server's storage, so a
+        // retry after a lost response would otherwise mint a second ticket and upload a second
+        // copy — a duplicate the client cannot see, on every attempt, for as long as the send
+        // keeps failing. The server's answer to that is to make the ticket's identity the key
+        // it was minted under, and this is the client's half of it.
+        //
+        // The key is the SEND's own idempotency key plus the file's position. Both halves are
+        // load-bearing:
+        //
+        //  · the send key is already durable and is RESUMED on a retry rather than re-minted
+        //    (the send lock is persisted with the compose lane), so this key is stable across a
+        //    reload, a crash, and a fresh tab. Minting one here — a random per attempt, or one
+        //    held in a field — would be the defect this closes, one layer up;
+        //  · the INDEX is what keeps two attachments distinct. Without it, the same file
+        //    attached twice would resolve to one ticket and the send route — which walks the
+        //    DISTINCT ids — would deliver one copy of a file the composer showed twice. A
+        //    message that quietly leaves without something the sender attached is a wrong send,
+        //    and it is the worse failure of the two.
+        idempotencyKey: `${sendKey}:att:${index}`,
         body: {
           mailboxId: m.mailboxId,
           filename: file.filename,

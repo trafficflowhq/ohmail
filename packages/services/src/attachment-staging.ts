@@ -53,7 +53,7 @@
  */
 import { randomUUID } from "node:crypto";
 import {
-  createStagingTicketWithinQuota, readStagingTickets, stagingObjectPath,
+  createStagingTicketWithinQuota, readStagingTickets, stagingObjectPath, stagingTicketId,
   DEFAULT_STAGING_QUOTA,
   type AttachmentStagingStorage, type StagingQuota, type StagingQuotaRefusal,
 } from "@trafficflow/db/cloud";
@@ -233,6 +233,12 @@ export function makeAttachmentStagingPort(deps: {
 }): {
   mint(input: {
     accountId: string; filename: string; contentType: string; sizeBytes: number; now: Date;
+    /**
+     * THE CALLER'S `Idempotency-Key`, REQUIRED — see {@link stagingTicketId}. The ticket's id is
+     * this key's digest, so a retry after a lost response resolves to the SAME row and the SAME
+     * object path instead of minting a second grant against a bucket somebody pays for.
+     */
+    idempotencyKey: string;
   }): Promise<StagedUploadGrant>;
   source: {
     declare(
@@ -245,7 +251,20 @@ export function makeAttachmentStagingPort(deps: {
   const quota = deps.quota ?? DEFAULT_STAGING_QUOTA;
   return {
     async mint(input) {
-      const id = newId();
+      // A MISSING KEY IS A PROGRAMMING ERROR AND IS LOUD ABOUT IT.
+      //
+      // The type says required and the route refuses without one, so this can only be reached by a
+      // caller that bypassed both. It is worth a runtime throw rather than a shrug because the
+      // silent version is catastrophic: `undefined` hashes perfectly well, so every mint on the
+      // deployment would derive the SAME ticket id and collapse into one row — every sender's
+      // attachment overwriting the last. Found by a fixture that did exactly that.
+      const idempotencyKey = (input.idempotencyKey ?? "").trim();
+      if (!idempotencyKey) {
+        throw new Error("attachment staging mint requires an idempotencyKey — it is the ticket's identity");
+      }
+      // THE ID IS THE KEY'S DIGEST, not a fresh random. `newId` survives only as the test seam it
+      // was introduced as — a fixture that wants a deterministic path without inventing a key.
+      const id = deps.newId ? newId() : stagingTicketId(input.accountId, idempotencyKey);
       const objectPath = stagingObjectPath(input.accountId, id);
       // THE QUOTA AND THE INSERT COMMIT TOGETHER, and the network call is strictly outside.
       // `createStagingTicketWithinQuota` takes a per-account advisory lock as its first statement,
@@ -264,7 +283,16 @@ export function makeAttachmentStagingPort(deps: {
           now: input.now,
         }, quota),
       );
-      if (!created.ok) throw stagingQuotaError(created.refusal);
+      if (!created.ok) {
+        if (created.reason === "quota") throw stagingQuotaError(created.refusal);
+        // The key names a ticket whose bytes have aged out. Temporary and self-healing — see
+        // `createStagingTicketWithinQuota` — and worded as the send path words the same fact.
+        throw new ServiceError(
+          "conflict", 409,
+          "This upload has expired. Attach the file again and resend.",
+          undefined, false,
+        );
+      }
       const row = created.ticket;
       const grant = await deps.storage.signUpload(objectPath, input.contentType);
       return {
