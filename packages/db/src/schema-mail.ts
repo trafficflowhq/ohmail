@@ -340,6 +340,61 @@ export const mailboxes = pgTable("mailboxes", {
   // already stamped on every live mailbox. Written by the one-time re-screen pass and by nothing
   // else.
   sensitiveRescreenAt: timestamp("sensitive_rescreen_at", { withTimezone: true }),
+  /**
+   * WHERE THE RE-SCREEN GOT TO — the last `messages.id` of the last COMMITTED page (mail 0081).
+   *
+   * The marker above says whether the pass is FINISHED. This says where it is. They are
+   * different facts and the pass needs both, because it is bounded:
+   * `SENSITIVE_RESCREEN_MAX_PAGES` stops it after 50 000 rows and it then correctly declines to
+   * stamp the marker. Without a resume point the next run started at the beginning again, and
+   * whether that made any progress depended on the rows already seen dropping out of the
+   * candidate query. The MOVERS drop out — a message sent to the Screener is no longer desired
+   * into the Ohbox. The STAYERS do not: a candidate the re-evaluation deliberately leaves in
+   * place (a known sender's login code) satisfies the candidate query for ever. So a mailbox
+   * whose first 50 000 candidates are stayers re-read the same prefix on every run and never
+   * reached the misrouted mail behind it, while reporting progress-shaped counts.
+   *
+   * The same column, for the same reason, as `rules.retro_cursor` (mail 0034) and
+   * `account_settings.ohbox_tidy_cursor` (mail 0043) — this pass was the one member of that
+   * family without one. Per MAILBOX, matching the marker beside it: one run is one mailbox.
+   *
+   * WRITTEN INSIDE THE PAGE'S OWN TRANSACTION, so the position and the work it covers commit
+   * together and a kill between them is not a state the database can hold. Advanced under
+   * `WHERE cursor IS NULL OR cursor < <new>` so two operators running the pass at once cannot
+   * rewind one another; NULLed in the same UPDATE that stamps the marker, so a completed
+   * mailbox has no stale resume point and a `force` re-run starts at the beginning — which is
+   * what makes the `force` test's "zero writes" mean the candidate query is idempotent rather
+   * than that the cursor was already at the end. A dry-run plan READS it as a start and never
+   * advances it: every page it writes is rolled back, this UPDATE included.
+   *
+   * KNOWN LIMIT, stated here rather than rediscovered as a bug — the same one `retro_cursor`
+   * records: a row BEHIND the cursor that becomes a candidate again mid-pass is not reconsidered
+   * by the remainder of that pass. The pass detects the arm it CAN see before it stamps — a
+   * candidate whose `folder_state` was rewritten under the walk, which is how the worker's
+   * completion restores a stale Ohbox intent — and declines the marker, clearing this column so
+   * the next run re-walks the prefix. It cannot see an exclusion being REMOVED (the user deletes
+   * their own rule, or returns a triage state to `none`), because that touches no
+   * `folder_state` row. For that arm the supported remedy is to NULL **both** this column and
+   * `sensitive_rescreen_at`: clearing this one alone does nothing once the marker is stamped,
+   * because the marker is what stops the pass looking at the mailbox at all.
+   */
+  sensitiveRescreenCursor: uuid("sensitive_rescreen_cursor"),
+  /**
+   * WHEN THE WALK THAT CURSOR BELONGS TO BEGAN — the window the completion check looks back over
+   * (mail 0081). NULL exactly when the cursor is NULL.
+   *
+   * The check needs the WALK's start and not the RUN's, and the difference is the whole reason
+   * this is a column rather than a local. The cursor outlives an invocation: run A stores a
+   * prefix and exits, the worker restores one of A's rows to the Ohbox, run B resumes past it.
+   * Against B's own start instant that restoration is in the past and invisible, and B stamps.
+   * Against the WALK's start it is inside the window, B declines the marker, clears both columns,
+   * and the next run re-walks the prefix.
+   *
+   * Written with `coalesce(existing, <run start>)` in the same guarded UPDATE that stores the
+   * cursor, so the first page of a walk sets it and every resumption keeps it. Cleared with the
+   * cursor when the marker lands.
+   */
+  sensitiveRescreenStartedAt: timestamp("sensitive_rescreen_started_at", { withTimezone: true }),
   // ── Mail 0036 — the ONE-TIME repair of bodies a classifier FALSE POSITIVE stored redacted ──
   //
   // A click tracker's percent-escaped slash (`-2F`) put word boundaries around the characters

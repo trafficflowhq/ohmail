@@ -69,8 +69,12 @@ ohmail sensitive re-screen (mail 0030)
   apply [--mailbox <uuid>]      Run the pass. Idempotent; the marker is stamped LAST.
 
   --mailbox <uuid>   restrict to one mailbox. Default: every mailbox with a NULL marker.
-  --force            re-run a mailbox whose marker is already stamped. Writes nothing on a
-                     completed mailbox — this exists to demonstrate that, not to repair.
+  --force            re-run a mailbox whose marker is already stamped. It IGNORES the marker and
+                     nothing else: the candidate query is unchanged, so an UNCHANGED mailbox
+                     moves no mail and records no move change — which is what this exists to
+                     demonstrate. A mailbox that has changed since (a rule deleted, a folder
+                     intent restored on the server) has candidates again and they WILL move.
+                     Either way the run records its own completion row in the audit log.
 
   DATABASE_URL_SESSION must be set. Nothing here opens IMAP: the pass writes the desired
   folder and the worker's reconciler performs the move.
@@ -187,8 +191,17 @@ async function run(db: Db, args: Args, dryRun: boolean): Promise<void> {
       ? "               (nothing moved)\n"
       : moved.map(([to, n]) => `               ${String(n).padStart(6)} → ${to}\n`).join("");
 
+    // WHAT THESE NUMBERS ARE ABOUT. A resumed run's counts describe the REMAINDER, and the
+    // difference matters most in exactly the case the operator is least likely to notice: a
+    // plan that resumes near the end prints small numbers, which read like a nearly clean
+    // mailbox rather than like the tail of a long one.
+    const from = r.resumedFrom === null
+      ? "  from         the beginning of the mailbox\n"
+      : `  from         RESUMED after message ${r.resumedFrom}\n` +
+        "               the counts below are the REMAINDER, not the whole mailbox.\n";
+
     console.log(
-      `${head}` +
+      `${head}${from}` +
       `  examined     ${r.examined}  the candidate set AFTER the exclusions\n` +
       `  ${move}${r.rescreened}\n` +
       `  ${stay}${r.kept}  a known sender's code, a user rule, a header answer\n` +
@@ -209,9 +222,31 @@ async function run(db: Db, args: Args, dryRun: boolean): Promise<void> {
       );
     }
     if (r.truncated) {
+      // TWO REASONS, AND THEY TELL THE OPERATOR DIFFERENT THINGS ABOUT THE NEXT RUN. Collapsing
+      // them into one "run it again to resume" line was a false statement in the second case:
+      // a disturbed run DISCARDS its position on purpose, so the next run starts at the top.
+      const next = r.stoppedBecause === "disturbed"
+        ? "  A message behind the walk became a candidate again while the walk was past it —\n" +
+          "  most likely a folder move completing on the mail server. The resume point was\n" +
+          `  DISCARDED, so the next ${dryRun ? "plan" : "apply"} starts from the beginning of the mailbox.`
+        : dryRun
+          // A plan commits nothing, its cursor UPDATE included, so "run it again" resumes at
+          // the same place it started — saying "again to resume" without this would be the
+          // plan claiming an apply's progress.
+          ? "  A plan stores no position: the next plan starts where this one did."
+          // …and a `--force` run over an ALREADY stamped mailbox stores none either, by the same
+          // rule that keeps a finished mailbox from carrying a stale one. Saying "continues from
+          // this page" there would be wrong in the one mode an operator reaches deliberately.
+          : args.force
+            ? "  --force over a stamped mailbox stores no position: the next run starts from the\n" +
+              "  beginning. Clear the marker if you mean to re-run it as a repair."
+            : "  The resume point is stored, so the next apply continues from this page.";
       console.warn(
-        `  the pass stopped at the page cap (${SENSITIVE_RESCREEN_BATCH} rows/page). The marker\n` +
-        `  is NOT written; run ${dryRun ? "plan" : "apply"} again to resume.`,
+        (r.stoppedBecause === "disturbed"
+          ? "  the pass reached the end of the mailbox but did NOT finish it. The marker is\n" +
+            "  NOT written.\n"
+          : `  the pass stopped at the page cap (${SENSITIVE_RESCREEN_BATCH} rows/page). The marker\n` +
+            "  is NOT written.\n") + next,
       );
     }
   }

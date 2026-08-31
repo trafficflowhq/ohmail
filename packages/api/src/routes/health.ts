@@ -575,6 +575,12 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // order: migration → API. No CHECK (a timestamp closes no set), no index (read by primary
   // key).
   ["accounts", "erased_at"],
+  // mail 0081 — the re-screen's RESUME POINT (`mailboxes.sensitive_rescreen_cursor`, NULL =
+  // start at the beginning, every existing row). `MailboxService.list` selects whole rows, so
+  // an API ahead of this migration 42703s the mailbox list itself, not merely the operator
+  // pass that writes the column.
+  ["mailboxes", "sensitive_rescreen_cursor"],
+  ["mailboxes", "sensitive_rescreen_started_at"],
   // mail 0077_send_later — the draft's appointment (`send_at` + `send_key` + `send_error`, with
   // `status = 'scheduled'`; NULL = no appointment / no failure, every existing row). It earns a
   // marker for the whole-row-select reason `mailboxes.error_code` established, one table over:
@@ -1552,8 +1558,15 @@ export const MAIL_EXPECTED_MARKERS =
  *
  * `0080_sessions_access_token_hash_idx` is probed as `sessions_access_token_hash_idx` — in
  * {@link SCHEMA_INDEX_MARKERS}, not here, because its whole content is an index and
- * `information_schema.columns` is blind to those. It is the newest entry, so it is also the tag
- * below.
+ * `information_schema.columns` is blind to those.
+ *
+ * `0081_sensitive_rescreen_cursor` is probed as BOTH its columns —
+ * `mailboxes.sensitive_rescreen_cursor` and `mailboxes.sensitive_rescreen_started_at`, the
+ * one-time re-screen's durable resume point and the instant of the walk it belongs to (the
+ * window its completion check looks back over). Two markers for a two-column migration, as
+ * `0078_inbound_quiet` above. They are columns on `mailboxes`, and `MailboxService` selects whole
+ * rows, so an API ahead of them 42703s the mailbox list rather than only the operator pass. It is
+ * the newest entry, so it is also the tag below.
  *
  * **THE FIRST VERSION OF THIS BUMPED THE TAG AND ADDED NO MARKER, on the stated ground that "the
  * census probes COLUMNS". That ground is false and the mistake is recorded rather than quietly
@@ -1567,7 +1580,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0080_sessions_access_token_hash_idx";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0081_sensitive_rescreen_cursor";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */

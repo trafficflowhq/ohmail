@@ -568,6 +568,13 @@
       "when": 1791500000000,
       "tag": "0080_sessions_access_token_hash_idx",
       "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1791600000000,
+      "tag": "0081_sensitive_rescreen_cursor",
+      "breakpoints": true
     }
   ]
 }

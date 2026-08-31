@@ -1,0 +1,68 @@
+-- THE ONE-TIME RE-SCREEN HAD NO RESUME POINT — a truncated pass restarted from the same
+-- prefix, for ever.
+--
+--   ALTER TABLE mailboxes ADD COLUMN sensitive_rescreen_cursor uuid
+--
+-- ══ WHAT WAS WRONG ═══════════════════════════════════════════════════════════════════════════
+--
+-- `runSensitiveRescreen` (`packages/services/src/sensitive-rescreen.ts`) walks the Ohbox in
+-- pages of 100 ordered by `messages.id`, and it is bounded: 500 pages, 50 000 rows, then it
+-- stops and declines to write `mailboxes.sensitive_rescreen_at`. Declining the marker is
+-- correct — the mailbox is not corrected, so it must not be stamped as corrected.
+--
+-- The position it stopped at was ordinary JS state. So the next run started at the beginning
+-- again, and whether that ever made progress depended entirely on whether the rows it had
+-- already looked at DROP OUT of the candidate query. The movers do: a message the pass sends to
+-- the Screener is no longer desired into the Ohbox. **The stayers do not.** A stayer is a
+-- candidate the re-evaluation deliberately leaves where it is — a known sender's login code
+-- belongs in the Ohbox — and it satisfies every predicate of the candidate query for ever.
+--
+-- A mailbox whose first 50 000 candidates are stayers therefore reads the same 50 000 rows on
+-- every run and never reaches the misrouted mail behind them. The pass reports progress-shaped
+-- counts (`examined: 50000`) each time and moves nothing, and the operator has no signal that
+-- anything is wrong: `truncated: true` looks like "more work to do", which is exactly what it
+-- would look like if the next run were going to do it.
+--
+-- ══ WHY A COLUMN AND NOT A DERIVED POSITION ══════════════════════════════════════════════════
+--
+-- There is no read that recovers it. `audit_log` records every MOVER this pass made, so a
+-- resume point derived from it would skip past the movers and land back among the stayers — the
+-- rows that are the whole problem. Nothing durable records that a stayer was examined and kept,
+-- because keeping it writes nothing: that is what "kept" means.
+--
+-- ══ THE SHAPE IS THE SIBLING PASSES', DELIBERATELY ═══════════════════════════════════════════
+--
+-- `rules.retro_cursor` (mail 0034) and `account_settings.ohbox_tidy_cursor` (mail 0043) are the
+-- same column for the same reason on the two other retroactive passes: "the last `messages.id`
+-- of the last COMMITTED page". This pass was the one member of that family without one. Scoped
+-- per MAILBOX rather than per account, because `sensitive_rescreen_at` beside it is
+-- per-mailbox and one pass run is one mailbox.
+--
+-- Additive, nullable, no default, NO backfill. NULL is "start at the beginning", which is the
+-- truth for every existing row: no mailbox has a resume point yet, and inventing one would skip
+-- mail. A mailbox already stamped `sensitive_rescreen_at` stays stamped and is still skipped —
+-- the column changes nothing for a mailbox that finished.
+--
+-- ══ AND THE SECOND COLUMN: WHEN THE WALK THE CURSOR BELONGS TO BEGAN ═════════════════════════
+--
+-- A resume point alone is not enough to stamp a mailbox honestly, because reaching an empty page
+-- means "past every candidate in the order I walked" and not "every candidate examined". A row
+-- BEHIND the cursor can become a candidate again while the walk is ahead of it — the worker's
+-- reconciler completes a move with the `desired_folder` it read BEFORE its IMAP round trip
+-- (`apps/worker/src/junk-filing.ts#completeFiling`), so a row this pass moved can be restored to
+-- the Ohbox afterwards. Stamping there would certify a mailbox as corrected over mail nothing
+-- ever looked at, permanently.
+--
+-- The pass therefore checks, before it stamps, for a candidate whose `folder_state` was written
+-- since the walk began, and declines the marker if it finds one. That check needs the instant the
+-- WALK began, not the instant the current process started: the cursor outlives an invocation, so
+-- a restoration that lands BETWEEN two runs is older than the second run and would be invisible
+-- to it. This column is that instant, written once when a walk stores its first page and
+-- preserved across every resumption of the same walk.
+--
+-- Cleared together with the cursor when the marker lands, so the two are never separately true:
+-- a mailbox has either a walk in progress (both set) or none (both NULL).
+--
+-- IF NOT EXISTS so a re-run is a no-op, like every other migration here.
+ALTER TABLE "mailboxes" ADD COLUMN IF NOT EXISTS "sensitive_rescreen_cursor" uuid;--> statement-breakpoint
+ALTER TABLE "mailboxes" ADD COLUMN IF NOT EXISTS "sensitive_rescreen_started_at" timestamp with time zone;

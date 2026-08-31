@@ -103,6 +103,7 @@ export const SENSITIVE_RESCREEN_BATCH = 100;
  */
 export const SENSITIVE_RESCREEN_MAX_PAGES = 500;
 
+
 export interface SensitiveRescreenDeps {
   db: Db;
   mailboxId: string;
@@ -117,8 +118,12 @@ export interface SensitiveRescreenDeps {
    *
    * The pass is idempotent WITHOUT the marker (a message it moved is no longer a candidate), and
    * this flag exists so that claim can be exercised rather than asserted: the `pg.test.ts` runs a
-   * completed mailbox again with `force` and requires zero writes. It is deliberately not a
-   * "re-screen everything" switch — the candidate query is unchanged by it.
+   * completed mailbox again with `force` and requires zero MOVES — no `folder_state` intent, no
+   * `move` change, no per-message audit row. Not zero writes: a completed run records its own
+   * completion row in `audit_log` like any other, and that is not what the claim is about.
+   * It is deliberately not a "re-screen everything" switch — the candidate query is unchanged by
+   * it, so a forced run moves mail only where the mailbox has genuinely CHANGED (a user rule
+   * deleted, an intent restored) and the current candidate query says so.
    */
   force?: boolean;
   /**
@@ -189,8 +194,33 @@ export interface SensitiveRescreenResult {
   rescreened: number;
   /** Rows re-evaluation left in the Ohbox — a known sender, a user rule, a header answer. */
   kept: number;
-  /** The pass hit {@link SENSITIVE_RESCREEN_MAX_PAGES}; the marker is NOT written. */
+  /** The marker is NOT written. {@link SensitiveRescreenResult.stoppedBecause} says why. */
   truncated: boolean;
+  /**
+   * WHY the marker was withheld — `null` when it was not.
+   *
+   * `truncated` alone used to mean one thing and now means two, and an operator acts on the
+   * difference. `"page_cap"` is the old meaning: the walk ran out of pages, and its position is
+   * stored — EXCEPT in the two modes that deliberately store none, a plan (every page is rolled
+   * back) and a `--force` run over an already-stamped mailbox (a finished mailbox may not carry
+   * a position). {@link SensitiveRescreenResult.resumedFrom} is where this run began; where the
+   * NEXT one begins is that, or the beginning, and the CLI says which. `"disturbed"` is the new
+   * one: the
+   * walk reached the end but a candidate had become eligible again behind it, so the position
+   * was DISCARDED and the next run starts from the beginning. Telling an operator "resuming"
+   * in the second case would be a false statement about where their next run begins.
+   */
+  stoppedBecause: "page_cap" | "disturbed" | null;
+  /**
+   * The durable continuation this run STARTED from, or null for a run that started at the
+   * beginning — so `examined` is never read as "the whole mailbox" when it is "the rest of it".
+   *
+   * A resumed run's counts describe the remainder and nothing else. The operator authorising a
+   * plan's numbers has to be able to see that, because a plan that resumed at 50 000 and reports
+   * `examined: 12` is telling the truth about twelve remaining candidates and would be a lie
+   * about a mailbox.
+   */
+  resumedFrom: string | null;
   /**
    * Destination → how many movers went there, READ BACK from the `move` changes this run wrote.
    *
@@ -206,6 +236,7 @@ export interface SensitiveRescreenResult {
 
 const EMPTY: SensitiveRescreenResult = {
   ran: false, examined: 0, rescreened: 0, kept: 0, truncated: false, destinations: {},
+  resumedFrom: null, stoppedBecause: null,
 };
 
 /** One page's outcome — whether the page committed, or was rolled back under a dry run. */
@@ -214,6 +245,18 @@ interface PageResult {
   moved: number;
   stayed: number;
   destinations: Record<string, number>;
+  /**
+   * The last `messages.id` this page examined, or null for an empty page — this page's LOCAL
+   * endpoint, carried out so the loop continues from the row the page actually reached rather
+   * than from a second number computed elsewhere.
+   *
+   * NOT necessarily what the database now holds, and the difference is deliberate: the stored
+   * position only ever moves FORWARD (see the guarded UPDATE), so when another operator has
+   * already stored a higher one this page's UPDATE matches no row and the database keeps theirs.
+   * This run then keeps walking from its own endpoint, which re-reads rows the other run has
+   * already covered — wasteful, never wrong, and strictly better than rewinding the mailbox.
+   */
+  lastId: string | null;
 }
 
 /**
@@ -280,16 +323,28 @@ export async function runSensitiveRescreen(
   const [mailbox] = await tx.select({
     id: mailboxes.id, accountId: mailboxes.accountId, address: mailboxes.address,
     sensitiveRescreenAt: mailboxes.sensitiveRescreenAt,
+    sensitiveRescreenCursor: mailboxes.sensitiveRescreenCursor,
+    sensitiveRescreenStartedAt: mailboxes.sensitiveRescreenStartedAt,
   }).from(mailboxes).where(eq(mailboxes.id, deps.mailboxId)).limit(1);
   if (!mailbox) return EMPTY;
   if (mailbox.sensitiveRescreenAt && !deps.force) return EMPTY;
 
   const accountId = mailbox.accountId;
 
-  // Rules and contacts are read ONCE. The pass is the only writer of the state it decides
-  // against, so re-reading them per page would cost two queries per hundred rows to observe a
-  // change that cannot happen — and would make two pages of one run decide under different
-  // knowledge, which is a worse property than the staleness it would be avoiding.
+  // ── RULES AND CONTACTS ARE READ ONCE, AND THAT IS A SNAPSHOT, NOT AN IMPOSSIBILITY ────────
+  //
+  // This used to say the change "cannot happen" because the pass is the only writer of the state
+  // it decides against. That is false and the correction is worth keeping: the USER writes this
+  // state too, from the running product — adding a contact, writing or deleting a rule — and
+  // nothing stops them doing it while an operator pass is walking their mailbox. So a sender
+  // added to `contacts` after this line is still unknown to every remaining page, and a message
+  // the CURRENT router would keep can be moved to the Screener and the mailbox stamped complete.
+  //
+  // Read once anyway, deliberately: the alternative is two pages of ONE run deciding under
+  // different knowledge, which is a worse property than the staleness it avoids — one run, one
+  // ruleset, one answer per message. The exposure is one operator pass long, the direction is
+  // the Screener (one click returns the whole sender), and the audit row this pass writes for
+  // every mover carries the inverse. The residual is stated here rather than denied.
   const repo = makeDrizzleRepo(tx as unknown as Parameters<typeof makeDrizzleRepo>[0]);
   const rules: Rule[] = await repo.listRules(accountId);
   const known: ReadonlySet<string> = await repo.knownSenders(accountId);
@@ -305,7 +360,32 @@ export async function runSensitiveRescreen(
   let kept = 0;
   const destinations: Record<string, number> = {};
   let truncated = true;
-  let afterId: string | undefined;
+  // WHERE THE LAST RUN GOT TO — read from disk, not from zero. NULL means "start at the
+  // beginning", which is what every mailbox that has never been paged holds. A plan reads the
+  // same value for the same reason: an apply would start here, so a rehearsal that started
+  // anywhere else would be rehearsing a different pass.
+  const resumedFrom = mailbox.sensitiveRescreenCursor ?? null;
+  // THE INSTANT THE WALK BEGAN — the reference for the completion check below. Read from the
+  // injected clock, and compared against `folder_state.updated_at`, which this application
+  // writes (`upsertFolderState`, `upsertScreenerIntent`) rather than the database defaulting:
+  // one clock, both sides.
+  const startedAt = now();
+  // THE WINDOW THE COMPLETION CHECK LOOKS BACK OVER: the WALK's start, not this run's. A walk
+  // that has stored nothing yet has none, and this run's own start is then the honest floor —
+  // it is when this walk began.
+  const walkStartedAt = mailbox.sensitiveRescreenStartedAt ?? startedAt;
+  // ── THE TWO SIDES OF THE COMPARISON ARE STAMPED BY DIFFERENT PROCESSES ───────────────────
+  //
+  // `folder_state.updated_at` is written by whoever touched the row — `upsertFolderState` uses
+  // that process's `new Date()` — and this epoch by this one. A worker whose clock lags this
+  // host would stamp a restoration with an instant just before the epoch and the check would
+  // not see it. Recorded as a residual rather than papered over with a safety margin, because
+  // the margin was tried and is WORSE: widening the floor by minutes makes every candidate
+  // whose folder_state was written shortly before the walk look disturbed, and a pass that
+  // refuses its own marker on an ordinary mailbox never finishes at all. The exposure is one
+  // clock-skew interval at the boundary of one operator run; the fix, if it is ever wanted, is
+  // a database-generated stamp on both sides rather than a fudge on this one.
+  let afterId: string | undefined = resumedFrom ?? undefined;
 
   for (let page = 0; page < maxPages; page++) {
     // ONE PAGE, ONE TOP-LEVEL TRANSACTION — for a plan exactly as for an apply. The two differ
@@ -316,6 +396,41 @@ export async function runSensitiveRescreen(
     let result: PageResult;
     try {
       result = await tx.transaction(async (t) => {
+        // ── THE MAILBOX ROW IS LOCKED FIRST, AND THE ORDER IS THE WHOLE REASON ─────────────
+        //
+        // This page writes `mailboxes` (the resume point at the end) and `folder_state` (the
+        // intents), and the hosted worker's fenced write group writes BOTH TOO, in the opposite
+        // order: `makeSyncWriteFence` (`apps/worker/src/mailboxes.ts`) opens every group with
+        // `select mailboxes … for update` and only then touches `folder_state` through the repo
+        // it hands the callback. A page that took `folder_state` first and reached for
+        // `mailboxes` last would close the cycle — worker holds M and waits for F, page holds F
+        // and waits for M — and Postgres would abort one of them with 40P01. Nothing would be
+        // silently skipped (a page abort takes its moves and its resume point together), but a
+        // live worker could kill the operator pass on every page and the mailbox would never
+        // finish. Found by review, not in production, which is the only reason it is written
+        // here as an invariant rather than in an incident note.
+        //
+        // So: M, then F, then the per-account seq lock inside `recordChange` — the worker's own
+        // order, extended by the lock this pass already took. Held for the page, which is the
+        // same few milliseconds the seq lock is held for and is bounded by the same
+        // {@link SENSITIVE_RESCREEN_BATCH} for the same reason.
+        //
+        // ── AND THE ONE WRITER THIS ORDER CROSSES, STATED RATHER THAN DISCOVERED ───────────
+        //
+        // Account erasure goes the other way: `account-deletion-service.ts` deletes the
+        // account's `folder_state` rows and only later its `mailboxes` rows, in one
+        // transaction — F then M. Two writers with opposite orders means a pass touching both
+        // tables must cross ONE of them, and this is the choice, made deliberately: the
+        // worker's fenced group runs on every live mailbox on every cycle over the very rows
+        // this pass writes, so a cycle with IT is routine; erasure runs once, at the end of an
+        // account's life, and reaching it needs an operator running this one-shot on an account
+        // being deleted in the same seconds. If that does happen Postgres aborts one side with
+        // 40P01 and BOTH are retriable — a page abort takes its moves and its resume point
+        // together, so nothing half-done reaches disk, and the erasure retries. Recorded here
+        // so the next reader does not "fix" the order back and re-open the routine collision.
+        await t.select({ id: mailboxes.id }).from(mailboxes)
+          .where(eq(mailboxes.id, mailbox.id)).for("update");
+
         // The account's high-water seq BEFORE this page writes anything. `allocateSeq` is
         // monotone per account, so everything this page records is strictly above it —
         // which is what lets the read-back below name only rows THIS page wrote.
@@ -383,7 +498,56 @@ export async function runSensitiveRescreen(
         // gated on `dryRun`: a plan and an apply must issue the identical statement sequence, or
         // the rehearsal is not a rehearsal of the thing being rehearsed.
         const dests = await moveDestinations(t, accountId, movedIds, watermark);
-        const outcome: PageResult = { rows, moved, stayed, destinations: dests };
+
+        // ── THE RESUME POINT COMMITS WITH THE PAGE THAT EARNED IT ───────────────────────────
+        //
+        // In THIS transaction, so there is no instant at which the database holds one and not
+        // the other. A kill between the page and its position is then not a state that exists:
+        // either both are on disk, or neither is, and the next run resumes at exactly the row
+        // after the last one it actually examined — not approximately, and not from the top.
+        //
+        // The predicate is what makes two concurrent operators safe. Both runs walk the same
+        // rows (`FOR UPDATE` already serializes them, and the loser re-reads a committed row
+        // that no longer matches and drops it), but the one that is BEHIND must not drag the
+        // stored position backwards — that would re-read a prefix for ever without ever
+        // losing a row, which is the defect this column exists to end, reintroduced by two
+        // processes instead of one. `uuid` compares by bytes in Postgres, the same order the
+        // candidate walk's `order by messages.id asc` uses, so `<` here is the walk's own
+        // order and not a second one.
+        //
+        // Under a dry run this UPDATE is inside the rolled-back transaction like everything
+        // else, so a plan advances only `afterId` in memory and leaves the stored position
+        // exactly as it found it.
+        const lastId = rows.length > 0 ? rows[rows.length - 1]!.messageId : null;
+        if (lastId !== null) {
+          await t.update(mailboxes)
+            .set({
+              sensitiveRescreenCursor: lastId,
+              // `coalesce`, so the FIRST page of a walk sets the epoch and every resumption of
+              // the same walk keeps it. `startedAt` and not `now()`: the check compares against
+              // `folder_state.updated_at`, and a restoration landing between this run's first
+              // read and this page's commit belongs INSIDE the window, not outside it.
+              sensitiveRescreenStartedAt: sql`coalesce(
+                ${mailboxes.sensitiveRescreenStartedAt}, ${startedAt.toISOString()}::timestamptz)`,
+            })
+            .where(and(
+              eq(mailboxes.id, mailbox.id),
+              // A FINISHED MAILBOX STORES NO POSITION. Without this, a stale run outlived by a
+              // faster one writes its own lower position onto a mailbox the other has already
+              // stamped and cleared — and a mailbox that is `at`-stamped WITH a cursor is the one
+              // state that makes a later `force` re-run start at that cursor and read nothing,
+              // turning its "zero writes" from evidence that the candidate query is
+              // self-idempotent into a statement about where the cursor happened to be. The
+              // consequence, stated: a `force` run that TRUNCATES stores nothing and restarts at
+              // the top next time. That is right for what `force` is — evidence, not a repair
+              // (see {@link SensitiveRescreenDeps.force}).
+              sql`${mailboxes.sensitiveRescreenAt} is null`,
+              sql`(${mailboxes.sensitiveRescreenCursor} is null
+                    or ${mailboxes.sensitiveRescreenCursor} < ${lastId}::uuid)`,
+            ));
+        }
+
+        const outcome: PageResult = { rows, moved, stayed, destinations: dests, lastId };
         // THE LAST STATEMENT, AND THE ONLY EXIT. Falling off the end COMMITs the page.
         if (deps.dryRun) throw new DryRunRollback(outcome);
         return outcome;
@@ -402,52 +566,209 @@ export async function runSensitiveRescreen(
       destinations[to] = (destinations[to] ?? 0) + n;
     }
     if (result.rows.length === 0) { truncated = false; break; }
-    afterId = result.rows[result.rows.length - 1]!.messageId;
+    // The SAME id the page's transaction stored, carried out rather than recomputed: one number
+    // decides where the next page starts and where a restart resumes, so there is nowhere for
+    // the two to disagree.
+    afterId = result.lastId ?? afterId;
   }
 
   if (truncated) {
     log.warn("sensitive_rescreen_truncated", {
       mailboxId: mailbox.id, accountId, examined, rescreened, kept, maxPages,
       dryRun: deps.dryRun === true,
-      reason: "the Ohbox backlog exceeded one pass — the marker is NOT written, so the next run " +
-        "resumes it",
+      resumedFrom, resumesAt: deps.dryRun ? resumedFrom : afterId ?? null,
+      reason: "the Ohbox backlog exceeded one pass — the marker is NOT written and " +
+        "`sensitive_rescreen_cursor` holds the last committed page, so the next run resumes " +
+        "there. A dry run stores nothing and the next run resumes where this one started.",
     });
-    return { ran: true, examined, rescreened, kept, truncated: true, destinations };
+    return {
+      ran: true, examined, rescreened, kept, truncated: true, destinations, resumedFrom,
+      stoppedBecause: "page_cap",
+    };
   }
 
-  // A DRY RUN SKIPS THE MARKER RATHER THAN ROLLING IT BACK.
+  // ══════════════════════════════════════════════════════════════════════════════════════════
+  //  THE STAMP IS EARNED, NOT REACHED — and this is what the resume point costs
+  // ══════════════════════════════════════════════════════════════════════════════════════════
   //
-  // Everything above is discarded by a ROLLBACK the DATABASE performs; this block would be
-  // discarded by a sentinel THIS FILE has to remember to throw. Those are not the same
-  // assurance. `sensitive_rescreen_at` is the flag that stops the pass ever looking at a mailbox
-  // again, so a bug in the sentinel path here would leave a mailbox marked corrected that never
-  // was — permanent, silent, and precisely what marking-last exists to prevent. Not reaching the
-  // statement at all is the only shape with no such failure mode.
-  if (deps.dryRun) {
-    log.info("sensitive_rescreen_plan_complete", {
-      mailboxId: mailbox.id, accountId, examined, rescreened, kept, destinations,
-      note: "every page was rolled back; the marker was not written and not attempted",
-    });
-    return { ran: true, examined, rescreened, kept, truncated: false, destinations };
-  }
+  // Reaching an empty page means the walk is past every candidate IN THE ORDER IT WALKED. It does
+  // NOT mean every candidate was examined, because a row BEHIND the cursor can become a candidate
+  // again while the walk is ahead of it — and the marker would then certify a mailbox as
+  // corrected over mail nothing ever looked at, permanently.
+  //
+  // The concrete sequence, found by review of this very change: the worker's reconciler reads a
+  // pending `folder_state` row whose desired folder is still the Ohbox, starts its IMAP move, and
+  // completes with `upsertFolderState(desiredFolder: p.desiredFolder)` — the value it read BEFORE
+  // the move (`apps/worker/src/junk-filing.ts#completeFiling`). If this pass moved that row in
+  // between, the completion writes the Ohbox back over the Screener intent and the row is a
+  // candidate again, now behind the cursor. Before the resume point existed a TRUNCATED run
+  // happened to re-read it; a run that completed always hid it exactly as this one would. So the
+  // hole is older than the cursor and the cursor removes its one accidental recovery — which is
+  // why the recovery is made deliberate here rather than left to luck.
+  //
+  // The detector is `folder_state.updated_at`: every writer of that table stamps it, so a
+  // candidate carrying a stamp from after the WALK began is a row that became eligible under it.
+  // This pass's OWN movers cannot false-positive — a row it moved is desired into the Screener
+  // and is no longer a candidate at all.
+  //
+  // THE WALK's start (`mailboxes.sensitive_rescreen_started_at`) and not this RUN's, because the
+  // cursor outlives an invocation: run A stores a prefix and exits, the worker restores one of
+  // A's rows, run B resumes past it. Measured against B's own start that restoration is in the
+  // past and B stamps over it; measured against the walk's it is inside the window.
+  //
+  // On refusal the resume point is CLEARED, not kept. Keeping it would make the next run resume
+  // past the very row that refused the stamp, find nothing, refuse again on the same evidence,
+  // and never terminate. Cleared, the next run re-walks the prefix, examines the restored row and
+  // stamps — and if the clobber repeats, the pass keeps declining to finish, which is the honest
+  // report of a mailbox that genuinely has not converged.
+  //
+  // WHAT THIS DOES NOT SEE, stated rather than left to be rediscovered: an exclusion REMOVED
+  // mid-run — the user deletes their own rule, or returns a triage state to `none` — makes a row
+  // behind the cursor eligible without touching `folder_state`, so no stamp is refused and that
+  // row is skipped. It is the known limit `rules.retro_cursor` records for the same construction
+  // (mail 0034), it needs the user to withdraw an intent during an operator pass, and the
+  // supported remedy is to NULL ALL THREE of `sensitive_rescreen_at`,
+  // `sensitive_rescreen_cursor` and `sensitive_rescreen_started_at` — the marker because it is
+  // what stops the pass looking at the mailbox at all, and the two walk columns because a walk
+  // that is meant to start over may not inherit a position or a window from the one before it.
+  //
+  // ── THE CHECK AND THE STAMP ARE ONE TRANSACTION, UNDER THE MAILBOX LOCK ──────────────────
+  //
+  // Separated, they are a race with the very writer they exist to catch: the detector returns
+  // empty, the worker's fenced group then takes `mailboxes`, restores a row behind the cursor and
+  // commits, and the marker lands over it. `select mailboxes … for update` FIRST — the page
+  // order, and the worker's own — excludes that group for the length of the check, so what the
+  // check saw is still true when the stamp is written. `for update` and not a plain read: a
+  // shared lock would let the worker's fence in.
+  const stamped = await tx.transaction(async (t) => {
+    // …AND THE LOCKED READ'S RESULT IS USED, NOT DISCARDED. The mailbox can be GONE by now: an
+    // account erasure deletes `folder_state` and then `mailboxes` in one transaction, so a pass
+    // that started before it can arrive here with nothing to stamp. Writing the completion audit
+    // row and the marker into that hole would insert rows into tables the erasure has just swept
+    // and report a mailbox corrected that no longer exists.
+    const [still] = await t.select({ id: mailboxes.id }).from(mailboxes)
+      .where(eq(mailboxes.id, mailbox.id)).for("update");
+    if (!still) return "gone";
 
-  await tx.transaction(async (t) => {
+    const disturbed = await selectCandidates(t, {
+      mailboxId: mailbox.id, ownAddresses, limit: 1, touchedSince: walkStartedAt, lock: false,
+    });
+    if (disturbed.length > 0) {
+      // A PLAN REPORTS IT AND CLEARS NOTHING. Discarding a stored position is a durable act and
+      // a rehearsal may not perform one; the apply it is rehearsing will.
+      if (!deps.dryRun) {
+        await t.update(mailboxes)
+          .set({ sensitiveRescreenCursor: null, sensitiveRescreenStartedAt: null })
+          .where(eq(mailboxes.id, mailbox.id));
+      }
+      return disturbed[0]!.messageId;
+    }
+
+    // ── A DRY RUN LEAVES HERE, HAVING RUN THE CHECK AND NOTHING AFTER IT ────────────────────
+    //
+    // The check itself is a READ under the mailbox lock, so a plan may run it — and MUST, or the
+    // file's headline contract breaks: with the check skipped, a plan over a mailbox whose walk
+    // has already been disturbed reports a clean completion while the apply it is rehearsing
+    // returns `disturbed` and throws the position away. The operator would authorise on numbers
+    // the apply cannot produce, which is the one failure the plan exists to make impossible.
+    //
+    // What a plan skips is everything DURABLE below: the completion audit row and the marker.
+    // Skipped rather than rolled back, and for the reason the page rollback cannot cover them —
+    // `sensitive_rescreen_at` is the flag that stops the pass ever looking at a mailbox again, so
+    // a bug in a sentinel path here would leave a mailbox marked corrected that never was.
+    // Not reaching the statements at all is the only shape with no such failure mode.
+    if (deps.dryRun) return null;
+
     await t.insert(auditLog).values({
       accountId, action: "sensitive_rescreen",
       payload: { mailboxId: mailbox.id, examined, rescreened, kept },
       inverse: null,
     });
-    // `WHERE sensitive_rescreen_at IS NULL`, so the answer is the DATABASE's and not a
-    // read-then-write this process performed: two operators running the pass at once produce
-    // exactly one stamp. Same construction, same reason, as `markKickstarted`.
-    await t.update(mailboxes).set({ sensitiveRescreenAt: now() })
-      .where(and(eq(mailboxes.id, mailbox.id), sql`${mailboxes.sensitiveRescreenAt} is null`));
+    // ── THE STAMP LANDS AND THE RESUME POINT GOES, IN ONE STATEMENT ────────────────────────
+    //
+    // `coalesce(sensitive_rescreen_at, $now)` rather than the `WHERE … IS NULL` this used to
+    // carry, and the difference is the cursor. The predicate kept the DATABASE's answer for the
+    // stamp — two operators finishing at once produce exactly one instant, the first one's,
+    // which `coalesce` preserves — but it made the whole statement a no-op for the loser, and
+    // the loser would then have left `sensitive_rescreen_cursor` set on a mailbox that is
+    // finished. A stale resume point on a completed mailbox is the one state that quietly
+    // breaks the `force` re-run: it would start at the END, read nothing, and report the zero
+    // writes that are supposed to be EVIDENCE that the candidate query is self-idempotent.
+    // The evidence would have become a tautology, and nothing would have failed.
+    await t.update(mailboxes)
+      .set({
+        // `::timestamptz` on the bound parameter, because it is compared against a column
+        // through `coalesce` and postgres-js binds a JS `Date` only where the statement says
+        // what it is; an ISO string plus the cast is what both drivers agree on.
+        sensitiveRescreenAt: sql`coalesce(${mailboxes.sensitiveRescreenAt}, ${now().toISOString()}::timestamptz)`,
+        // BOTH walk columns go. They are one fact — "a walk is in progress, and this is where and
+        // when it started" — so a completed mailbox holding either of them is a state nothing
+        // should be able to read.
+        sensitiveRescreenCursor: null,
+        sensitiveRescreenStartedAt: null,
+      })
+      // A NO-OP ONCE BOTH ARE SETTLED. `coalesce` alone would still take the row lock and write a
+      // new tuple on every completed `force` run and on every loser of a two-operator finish,
+      // which the `WHERE … IS NULL` this replaced did not. The predicate keeps the statement
+      // idempotent while still letting it do EITHER job: stamp an unstamped mailbox, or clear a
+      // resume point left on one that is already stamped.
+      .where(and(
+        eq(mailboxes.id, mailbox.id),
+        sql`(${mailboxes.sensitiveRescreenAt} is null
+              or ${mailboxes.sensitiveRescreenCursor} is not null
+              or ${mailboxes.sensitiveRescreenStartedAt} is not null)`,
+      ));
+    return null;
   });
 
+  if (deps.dryRun) {
+    log.info("sensitive_rescreen_plan_complete", {
+      mailboxId: mailbox.id, accountId, examined, rescreened, kept, destinations, resumedFrom,
+      disturbed: stamped !== null,
+      note: "every page was rolled back; the marker was not written and not attempted, and the " +
+        "stored resume point is exactly where this plan found it",
+    });
+    return stamped !== null
+      ? {
+        ran: true, examined, rescreened, kept, truncated: true, destinations, resumedFrom,
+        stoppedBecause: "disturbed" as const,
+      }
+      : {
+        ran: true, examined, rescreened, kept, truncated: false, destinations, resumedFrom,
+        stoppedBecause: null,
+      };
+  }
+
+  if (stamped === "gone") {
+    log.warn("sensitive_rescreen_mailbox_gone", {
+      mailboxId: mailbox.id, accountId, examined, rescreened, kept, resumedFrom,
+      reason: "the mailbox was deleted while the pass was walking it — nothing was stamped",
+    });
+    return {
+      ran: true, examined, rescreened, kept, truncated: true, destinations, resumedFrom,
+      stoppedBecause: "page_cap",
+    };
+  }
+  if (stamped !== null) {
+    log.warn("sensitive_rescreen_disturbed", {
+      mailboxId: mailbox.id, accountId, examined, rescreened, kept, resumedFrom,
+      messageId: stamped, walkStartedAt: walkStartedAt.toISOString(),
+      reason: "a candidate became eligible again while the walk was past it, so the marker is " +
+        "NOT written and the resume point is cleared — the next run re-walks from the start",
+    });
+    return {
+      ran: true, examined, rescreened, kept, truncated: true, destinations, resumedFrom,
+      stoppedBecause: "disturbed",
+    };
+  }
+
   log.info("sensitive_rescreen_complete", {
-    mailboxId: mailbox.id, accountId, examined, rescreened, kept, destinations,
+    mailboxId: mailbox.id, accountId, examined, rescreened, kept, destinations, resumedFrom,
   });
-  return { ran: true, examined, rescreened, kept, truncated: false, destinations };
+  return {
+    ran: true, examined, rescreened, kept, truncated: false, destinations, resumedFrom,
+    stoppedBecause: null,
+  };
 }
 
 /**
@@ -552,14 +873,38 @@ async function moveDestinations(
  * `FOR UPDATE OF folder_state`, `of` the one table and not the whole join: `message_bodies` is on
  * the NULLABLE side of a LEFT JOIN, which Postgres refuses to lock, and locking `messages` would
  * serialize the pass against ordinary ingest for no benefit. Two concurrent runs both block on the
- * same row; the loser re-reads the committed row, finds it no longer desired into `INBOX`, and
- * drops it — so a message is moved once, and `change_log` gains one `move` and not two. That
+ * same row; the loser re-reads the committed row and — IF THE WINNER MOVED IT — finds it no longer
+ * desired into `INBOX` and drops it, so a message is moved once and `change_log` gains one `move`
+ * and not two.
+ *
+ * A KEPT row is the other half and the claim does not extend to it: the winner wrote nothing, so
+ * the row still matches and the loser examines it again. That costs a second evaluation of a
+ * message neither run will move, and it is why the count a concurrent pair reports can exceed the
+ * candidate set while the MOVES cannot. That
  * claim is `sensitive-rescreen.pg.test.ts` on real Postgres, because PGlite is single-connection
  * and `FOR UPDATE` there is a no-op that always succeeds.
  */
 async function selectCandidates(
   t: Tx,
-  opts: { mailboxId: string; ownAddresses: readonly string[]; limit: number; afterId?: string },
+  opts: {
+    mailboxId: string; ownAddresses: readonly string[]; limit: number; afterId?: string;
+    /**
+     * Only candidates whose `folder_state` row was written at or after this instant — the
+     * completion check's predicate, and nothing else uses it. See the block above the check in
+     * {@link runSensitiveRescreen} for what it detects and what it deliberately cannot.
+     */
+    touchedSince?: Date;
+    /**
+     * `false` for the completion check, which is a detection READ and takes no row lock.
+     *
+     * The walk's `FOR UPDATE` is load-bearing — it is what makes two passes move a message once
+     * — and stays the default. The check must NOT take it. It runs INSIDE the marker
+     * transaction, which already holds the mailbox row: locking `folder_state` rows there would
+     * hold them until the stamp commits, for a query that only needs to know whether one such
+     * row exists, and it would block the very reconciler whose write the check is looking for.
+     */
+    lock?: boolean;
+  },
 ): Promise<RescreenRow[]> {
   const filters = [
     eq(messages.mailboxId, opts.mailboxId),
@@ -608,8 +953,11 @@ async function selectCandidates(
     )`);
   }
   if (opts.afterId) filters.push(gt(messages.id, sql`${opts.afterId}::uuid`));
+  if (opts.touchedSince) {
+    filters.push(sql`${folderState.updatedAt} >= ${opts.touchedSince.toISOString()}::timestamptz`);
+  }
 
-  const rows = await t.select({
+  const q = t.select({
     messageId: messages.id,
     fromAddress: messages.fromAddress,
     subject: messages.subject,
@@ -623,7 +971,8 @@ async function selectCandidates(
     .where(and(...filters))
     .orderBy(asc(messages.id))
     .limit(opts.limit)
-    .for("update", { of: folderState });
+    .$dynamic();
+  const rows = await (opts.lock === false ? q : q.for("update", { of: folderState }));
 
   return rows.map((r) => ({
     messageId: r.messageId,
