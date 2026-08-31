@@ -140,6 +140,13 @@ function isTooLarge(err: unknown): boolean {
   return typeof err === "object" && err !== null && (err as { code?: unknown }).code === TOO_LARGE_CODE;
 }
 
+/** `MessageGoneError`'s code — duck-typed for the reason {@link isTooLarge} states. */
+const MESSAGE_GONE_CODE = "EMSGGONE";
+
+function isMessageGone(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as { code?: unknown }).code === MESSAGE_GONE_CODE;
+}
+
 /**
  * Why a mailbox's parts are missing from an archive, in words the reader can act on.
  *
@@ -278,6 +285,19 @@ export class AttachmentsService {
           "payload_too_large", 413,
           `this attachment is larger than the ${Math.round(ATTACHMENT_MAX_FETCH_BYTES / 1048576)} MiB ` +
             `limit for a single download`,
+        );
+      }
+      // The same argument one condition over. The message is not at that locator any more —
+      // expunged, moved from another client, or its folder recreated under a new UIDVALIDITY, in
+      // which case the adapter refuses rather than downloading part n of whatever now wears the
+      // UID. Untranslated, the route's blanket 502 says "the mail server is having trouble",
+      // which is false and leaves the reader nothing to do; this says what happened and what
+      // fixes it, and the fix is real — the next sync re-resolves the locator by Message-ID.
+      if (isMessageGone(err)) {
+        throw new ServiceError(
+          "not_found", 404,
+          "this attachment is no longer where the mailbox said it was — the message has moved or " +
+            "been deleted. Refresh and try again.",
         );
       }
       throw err;

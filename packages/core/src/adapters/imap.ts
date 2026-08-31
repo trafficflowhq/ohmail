@@ -649,8 +649,21 @@ export class ImapConnectionClosedError extends Error {
   }
 }
 
+/**
+ * The message is not at this locator any more — expunged, moved by another client, or addressed
+ * under a UIDVALIDITY epoch the folder has since left (see `ImapAdapter#assertLocatorEpoch`).
+ *
+ * `code` and `name` are carried for the same reason every sibling error here carries them: a
+ * consumer outside `@trafficflow/core` must be able to recognise this WITHOUT importing the
+ * adapter, which would drag imapflow into the service layer and break the `openAdapter` seam.
+ * `instanceof` remains correct inside core and the worker, which do import it.
+ */
 export class MessageGoneError extends Error {
-  constructor(public locator: NativeLocator) { super(`message not at source locator ${locator.folder}#${locator.ref}`); }
+  readonly code = "EMSGGONE";
+  constructor(public locator: NativeLocator) {
+    super(`message not at source locator ${locator.folder}#${locator.ref}`);
+    this.name = "MessageGoneError";
+  }
 }
 
 /**
@@ -2847,9 +2860,17 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * A vanished source answers null rather than throwing: the caller is mid-decision and its own
    * existence probe already ran, so the honest answer is "nothing to compare", which refuses.
    */
-  private async sourceFingerprintOf(srcPath: string, uid: number): Promise<string | null> {
+  private async sourceFingerprintOf(locator: NativeLocator, srcPath: string, uid: number): Promise<string | null> {
     const lock = await this.client.getMailboxLock(srcPath);
     try {
+      // THE THIRD SOURCE SELECTION, and it is a locator-consuming read like any other — see
+      // {@link assertLocatorEpoch}. `move` releases its lock to look at the destination and
+      // re-acquires it here, so a folder recreated in that window would be fingerprinted at the
+      // recycled UID. The later step-3/step-5 checks would still refuse the WRITE, so nothing
+      // lands on the wrong message either way; what this stops is the ADOPT/REFUSE decision
+      // being taken against a stranger's bytes — and it is what makes "under every source lock"
+      // true rather than nearly true.
+      this.assertLocatorEpoch(locator);
       const one = await this.client.fetchOne(
         String(uid), { uid: true, source: true }, { uid: true },
       );
@@ -2857,6 +2878,70 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     } finally {
       lock.release();
     }
+  }
+
+  /**
+   * ── A UID NAMES A MESSAGE ONLY WITHIN ONE UIDVALIDITY EPOCH ─────────────────────────────────
+   *
+   * This is the one epoch guard for every locator-consuming command on this adapter. Call it
+   * UNDER THE LOCK for `locator.folder`, after the lock has selected the mailbox and before the
+   * command that addresses the UID — `this.client.mailbox` is the epoch the NEXT command will
+   * actually run against, and nothing else is.
+   *
+   * A folder that is deleted and recreated (a provider recycling it, a user recreating it in
+   * another client, a migration between backends) gets a new UIDVALIDITY and re-issues its UIDs
+   * from the bottom, so a ref committed under epoch V addresses a DIFFERENT message under V′.
+   * That needs no attacker and no concurrency: it is ordinary IMAP behaviour, and the outcome
+   * without this guard is a user's move, flag, expunge or attachment read landing on somebody
+   * else's mail in their own mailbox.
+   *
+   * The refusal is {@link MessageGoneError} — deliberately the same signal an expunged UID
+   * produces, because the two mean the same thing to every caller: *the message is not at this
+   * locator any more*. Every consumer already handles it honestly and RE-RESOLVABLY. The
+   * worker's filing and flag passes leave the row pending and let the next `changesSince` adopt
+   * whatever the server now shows (`sync.ts#fileOne`, `#reconcileFlags`), voiding only when the
+   * disappearance is on durable record; the Junk rescue reports the press as stale; the body
+   * re-read passes mark the message unreadable rather than storing the bytes. The message is
+   * never lost — it is re-found by Message-ID and fingerprint on the next scan.
+   *
+   * ── THE TWO `"0"` ESCAPES ARE DELIBERATE AND ARE THE WHOLE COMPATIBILITY STORY ──────────────
+   *
+   *  · **`refEpoch === "0"`** — the locator carries no epoch. That is the sentinel a cold or
+   *    truncated drain persists (`sync.ts#buildCursor` and `soleEpochOf` both name it), and it
+   *    is what hand-written fixtures carry. A ref that never claimed an epoch cannot contradict
+   *    one, so it passes; `changesSince`'s own known-set discipline is what protects those.
+   *  · **`current === "0"`** — the client cannot say what epoch it is at (`mailbox` is `false`,
+   *    or a driver that does not report `uidValidity`). Refusing everything on a server that
+   *    does not answer would break the adapter against nothing; this guard exists to catch a
+   *    CONTRADICTION, not to demand a proof.
+   *
+   * This used to be an opt-in flag on `move` alone (`requireEpoch`), set by the Junk rescue and
+   * by nothing else, with a docblock arguing that the worker's reconciler "keeps its own epoch
+   * machinery". It does — for the READ path: `buildCursor` hands the adapter only the remembered
+   * UIDs of the epoch the cursor names, and `junk-restore.ts` compares epochs before it acts.
+   * The MUTATION path had none of it: `move` was called without the flag, `moveMany` reduced
+   * every locator to a bare UID, and `setFlags` and the two on-demand body reads parsed the ref
+   * and discarded the epoch half. So the mechanism existed and the organizer — the one thing in
+   * this system that writes to the user's real mailbox — was outside it. It is unconditional now,
+   * and there is no opt-out: a caller that wants to act on a locator whose epoch is stale is
+   * asking for the defect.
+   */
+  private assertLocatorEpoch(locator: NativeLocator): void {
+    if (this.locatorEpochStale(locator)) throw new MessageGoneError(locator);
+  }
+
+  /**
+   * The same comparison as {@link assertLocatorEpoch}, as a question rather than a refusal —
+   * for {@link moveMany}, whose contract is to DECLINE a group it cannot prove equivalent
+   * (`batched: false`) rather than to throw one error for fifty messages. Same call discipline:
+   * only meaningful under the lock for `locator.folder`.
+   */
+  private locatorEpochStale(locator: NativeLocator): boolean {
+    const { uidValidity: refEpoch } = parseRef(locator.ref);
+    if (refEpoch === "0") return false;
+    const mb = this.client.mailbox as MailboxObject | false;
+    const current = mb && mb.uidValidity != null ? String(mb.uidValidity) : "0";
+    return current !== "0" && refEpoch !== current;
   }
 
   /**
@@ -2934,31 +3019,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * is bounded: an authentication verdict is read once, from the bytes ingested at first sight,
    * and is never re-derived from a surviving copy.
    */
-  async move(
-    locator: NativeLocator, toFolder: string,
-    opts: {
-      /**
-       * REFUSE THE MOVE WHEN THE SOURCE FOLDER'S UIDVALIDITY NO LONGER MATCHES THE REF'S.
-       *
-       * A UID names a message only within one UIDVALIDITY epoch: a folder that was deleted and
-       * recreated re-issues low UIDs, so a stale ref can silently address a DIFFERENT message.
-       * With this set, a ref whose epoch (the half of `ref` before the `:`) is real (non-"0")
-       * and differs from the opened source folder's current UIDVALIDITY throws
-       * {@link MessageGoneError} — the same honest "no longer what you looked at" signal an
-       * expunge produces — instead of moving whatever now wears that number.
-       *
-       * OPT-IN, not the default, deliberately: the Junk-window rescue sets it (its refs come
-       * from a live list of a folder ohmail never watches, so staleness is the NORMAL hazard
-       * there), while the worker's reconciler keeps its own epoch machinery and its own
-       * conventions — including test fixtures and cold-drain sentinels whose refs carry a
-       * placeholder epoch — and must not change behaviour under a guard written for a
-       * different caller.
-       */
-      requireEpoch?: boolean;
-    } = {},
-  ): Promise<NativeLocator> {
+  async move(locator: NativeLocator, toFolder: string): Promise<NativeLocator> {
     const caps = await this.capabilities();
-    const { uid, uidValidity: refEpoch } = parseRef(locator.ref);
+    const { uid } = parseRef(locator.ref);
     const srcPath = this.toServerPath(locator.folder);
     const dstPath = this.toServerPath(toFolder);
 
@@ -2972,21 +3035,16 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     let sourceAwaitingDelete = false;
 
     /**
-     * The epoch guard, called UNDER EVERY SOURCE LOCK this move takes — see `opts.requireEpoch`.
+     * The epoch guard, called UNDER EVERY SOURCE LOCK this move takes — see
+     * {@link assertLocatorEpoch}.
+     *
      * Once is not enough: the locks are released between steps (imapflow locks are not
      * re-entrant across the destination look), so a folder deleted and recreated mid-move would
      * pass a step-1-only check and still reach `messageMove`/`messageDelete` addressing a
      * recycled UID. Each re-acquisition re-opens the mailbox, so each check reads the epoch the
      * NEXT command will actually run against.
      */
-    const assertEpoch = (): void => {
-      if (!opts.requireEpoch) return;
-      const mb = this.client.mailbox as MailboxObject | false;
-      const current = mb && mb.uidValidity != null ? String(mb.uidValidity) : "0";
-      if (refEpoch !== "0" && current !== "0" && refEpoch !== current) {
-        throw new MessageGoneError(locator);
-      }
-    };
+    const assertEpoch = (): void => this.assertLocatorEpoch(locator);
 
     // Step 1: under the SOURCE lock — probe existence and capture identity. NOTHING is written
     // here any more; the decision to write comes after the destination has been read.
@@ -3014,7 +3072,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // Something is there and we did not pull the body. Pay for it now and look again: this is the
     // rare path by construction, so the common move still costs one SEARCH and no fetch.
     if (look.candidates.length > 0 && sourceFingerprint === null) {
-      sourceFingerprint = await this.sourceFingerprintOf(srcPath, uid);
+      sourceFingerprint = await this.sourceFingerprintOf(locator, srcPath, uid);
       look = await this.destinationLook(dstPath, messageId, sourceFingerprint);
     }
     dstUidValidity = look.uidValidity;
@@ -3171,11 +3229,43 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const wanted = new Map<number, NativeLocator>();
     for (const loc of locators) wanted.set(parseRef(loc.ref).uid, loc);
 
+    // ── THE BATCH IS ONE UID SET, SO IT IS ONE EPOCH OR IT IS NOT A BATCH ──────────────────────
+    //
+    // `UID MOVE 1,2,3` addresses whatever the SELECTed mailbox currently numbers 1, 2 and 3, so a
+    // set assembled from two epochs cannot be right about more than one of them. Declining
+    // (`batched: false`) rather than throwing is this method's own convention for anything it
+    // cannot prove equivalent: the caller re-files the chunk one message at a time, and `move`'s
+    // epoch guard then gives each row its own honest verdict instead of one refusal for fifty.
+    // Sentinel `"0"` refs are excluded from the comparison for the reason
+    // {@link assertLocatorEpoch} states.
+    //
+    // ── AND THE REPRESENTATIVE IS A NON-SENTINEL MEMBER, NEVER JUST `locators[0]` ───────────────
+    //
+    // The under-lock checks below compare ONE member, which is sound only because the set agrees
+    // on its one real epoch. `locators[0]` is not that member when the chunk mixes a sentinel with
+    // a real epoch and the sentinel sorts first: `{0:10, 7:11, 7:12}` passes the set test (one
+    // real epoch) and then checks `0:10`, which by construction never reports stale — so a folder
+    // now at epoch 8 would take `UID MOVE 10,11,12` and relocate three strangers. Picking a
+    // non-sentinel member closes that without costing a batch: every non-sentinel member carries
+    // the SAME epoch, so any one of them speaks for all of them. `undefined` means the whole
+    // chunk is sentinels, and there is nothing to compare.
+    let epochRep: NativeLocator | undefined;
+    {
+      const epochs = new Set(
+        locators.map((l) => parseRef(l.ref).uidValidity).filter((e) => e !== "0"),
+      );
+      if (epochs.size > 1) return empty;
+      epochRep = locators.find((l) => parseRef(l.ref).uidValidity !== "0");
+    }
+
     // Step 1: the existence probe and the Message-IDs, for the whole set, under one source lock.
     const present = new Map<number, string | null>();
     {
       const lock = await this.client.getMailboxLock(srcPath);
       try {
+        // UNDER THE LOCK, BEFORE THE FETCH — the group shares one real epoch (above), so checking
+        // the representative checks the set. A mismatch here means every ref in the chunk is stale.
+        if (epochRep && this.locatorEpochStale(epochRep)) return empty;
         const rows = await this.client.fetchAll(
           [...wanted.keys()].join(","), { uid: true, envelope: true }, { uid: true },
         );
@@ -3224,6 +3314,11 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     {
       const lock = await this.client.getMailboxLock(srcPath);
       try {
+        // THE RECHECK, for `move`'s reason one folder over: the source lock was released while
+        // the destination was inspected, and imapflow re-selects the mailbox on each
+        // re-acquisition — so this reads the epoch `UID MOVE` will actually run against. A step-1
+        // check alone would let a folder recycled in that window take the write.
+        if (epochRep && this.locatorEpochStale(epochRep)) return empty;
         const res = await this.client.messageMove(uids, dstPath, { uid: true });
         if (!res || typeof res === "boolean") return empty;
         const map = res.uidMap;
@@ -3270,6 +3365,11 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const { uid } = parseRef(locator.ref);
     const lock = await this.client.getMailboxLock(this.toServerPath(locator.folder));
     try {
+      // UNDER THE LOCK, BEFORE THE PROBE — see {@link assertLocatorEpoch}. A recycled folder
+      // re-issues low UIDs, and `UID STORE` on a stale ref marks a STRANGER'S message read (or
+      // unread) in the user's own mailbox. One lock, so one check is enough here: unlike `move`
+      // there is no window in which it is released.
+      this.assertLocatorEpoch(locator);
       const present = await this.client.fetchOne(String(uid), { uid: true }, { uid: true });
       if (!present) throw new MessageGoneError(locator);
       const ok = flags.seen
@@ -3510,6 +3610,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const part = partId ?? "1";
     const lock = await this.client.getMailboxLock(serverPath);
     try {
+      // Not a mutation, and it is here for the same reason all the same — see
+      // {@link assertLocatorEpoch}. A recycled folder makes this download part `n` of whatever
+      // message now wears the UID, and there is no witness downstream: the bytes go straight to
+      // the requester as their own attachment. `move` and `setFlags` corrupt the mailbox; this
+      // one hands one person's file to another.
+      this.assertLocatorEpoch(locator);
       const dl = await this.client.download(String(uid), part, { uid: true });
       if (!dl || !dl.content) throw new MessageGoneError(locator);
       const chunks: Buffer[] = [];
@@ -3572,6 +3678,15 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const serverPath = this.toServerPath(locator.folder);
     const lock = await this.client.getMailboxLock(serverPath);
     try {
+      // Both callers of this method WRITE what it returns into the message's own row
+      // (`redacted-restore.ts`, `sensitive-backfill.ts`), so a stale-epoch read is how one
+      // person's mail gets stored as another message's body. Both already refuse on their own
+      // `isSameMessage` witness AFTER the fetch; this refuses BEFORE it, which costs the round
+      // trip rather than spending it — and, unlike the witness, it also covers a message whose
+      // recycled twin happens to look identical. Defence in depth, not a replacement:
+      // {@link assertLocatorEpoch} is blind whenever the server does not report `uidValidity`,
+      // and the witness is what covers that.
+      this.assertLocatorEpoch(locator);
       // `undefined` for the part is what makes this a source fetch, and a source fetch is what
       // makes it `BODY.PEEK[]`. Not `""` — an empty string reaches the same branch by being
       // falsy, which is a property of the driver rather than a thing it promises.

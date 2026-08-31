@@ -52,8 +52,9 @@ import type { ApiDeps } from "./deps.js";
  * A UID names a message only within one UIDVALIDITY epoch, and junk folders get purged and
  * recreated by providers on their own schedule. So: the list carries each row's epoch; the body
  * read REQUIRES the row's epoch and answers 410 on a mismatch rather than serving whatever
- * message now wears the number; the rescue moves with `requireEpoch`, so a stale press can
- * never move a stranger; and the pagination cursor stores each mailbox's epoch beside its
+ * message now wears the number; the rescue's move is
+ * refused on a mismatch by the adapter's own epoch guard, so a stale press can never move a
+ * stranger; and the pagination cursor stores each mailbox's epoch beside its
  * watermark — a renumbered folder restarts that mailbox's window at the top instead of silently
  * skipping everything above a stale mark.
  *
@@ -551,10 +552,41 @@ export async function searchJunk(
  * EPOCH-BOUND: the caller names the UIDVALIDITY its row came from, and a folder renumbered
  * since answers 410 — never the body of whatever message now wears the UID.
  */
+/**
+ * A UIDVALIDITY that arrived over the wire is only usable if it is a REAL epoch — a positive
+ * integer with no leading zero, no sign, no exponent, no whitespace.
+ *
+ * The two verbs below take `(uid, uidValidity)` from the client and `rescueJunk` builds
+ * `${uidValidity}:${uid}` from it, so this value IS the epoch the adapter's guard
+ * (`ImapAdapter#assertLocatorEpoch`) compares against the live folder. That guard treats `"0"` as
+ * "this locator never claimed an epoch" and lets it through — correct for the worker's cold-drain
+ * sentinels, which are minted internally, and wrong for a number a request chose: `uidValidity=0`
+ * would switch the guard off for that caller's own rescue and move whatever now wears the UID.
+ * Nothing crosses an account boundary (the mailbox is still theirs), so this is a footgun rather
+ * than a breach — but it is a footgun in the one place the epoch rule is supposed to hold, and the
+ * adapter cannot tell a supplied zero from a sentinel one. So the boundary that accepts the value
+ * is the boundary that refuses it.
+ *
+ * Rejected here rather than in `routes/screener.ts` so there is ONE rule rather than one per
+ * route: every present and future caller of these two functions gets it, and it is asserted at the
+ * same seam the rest of this module's behaviour is proven at — the Junk window's own suite, which
+ * calls these two functions directly.
+ *
+ * Not `Number(v) > 0`: that accepts `"1e9"`, `" 7 "`, `"0x7"` and `"Infinity"`, none of which is an
+ * epoch — and the comparison downstream is a STRING one against the server's decimal digits, so
+ * such a value would not match anything and would fail somewhere less honest than here.
+ */
+function requireRealEpoch(uidValidity: string): void {
+  if (!/^[1-9][0-9]*$/.test(uidValidity)) {
+    throw new ServiceError("validation_failed", 400, "uidValidity must be the row's epoch, a positive integer");
+  }
+}
+
 export async function junkBody(
   deps: ApiDeps, accountId: string,
   args: { mailboxId: string; uid: number; uidValidity: string },
 ): Promise<{ subject: string; text: string }> {
+  requireRealEpoch(args.uidValidity);
   await requireFolders(deps, accountId);
   const [box] = await junkMailboxesOf(deps, accountId, args.mailboxId);
   if (!box || box.junkFolder === null) {
@@ -686,6 +718,7 @@ export async function rescueJunk(
   if (!box || box.junkFolder === null) {
     throw new ServiceError("no_junk_folder", 404, "this mailbox has no Junk folder");
   }
+  requireRealEpoch(args.uidValidity);
   const ref = makeRef(args.uidValidity, args.uid);
   const allowed = args.allow !== undefined ? await allowSender(deps, ctx, args.allow.sender) : undefined;
 
@@ -744,9 +777,12 @@ export async function rescueJunk(
       }
     }
 
-    // The move itself — epoch-guarded, so a recreated folder's reused UID can never send a
-    // STRANGER to the inbox under a stale press.
-    await opened.adapter.move({ folder: box.junkFolder, ref }, "INBOX", { requireEpoch: true });
+    // The move itself. Epoch-guarded, so a recreated folder's reused UID can never send a
+    // STRANGER to the inbox under a stale press — the guard is `ImapAdapter#assertLocatorEpoch`
+    // and it is unconditional now. It used to be this call site's `{ requireEpoch: true }`, and
+    // the flag was the bug: this was the only caller that set it, so the organizer's own move,
+    // batch-move and flag mutations ran without it.
+    await opened.adapter.move({ folder: box.junkFolder, ref }, "INBOX");
   } catch (err) {
     if (err instanceof MessageGoneError) {
       // The provider (or another client) took it first — or the folder was renumbered. The
