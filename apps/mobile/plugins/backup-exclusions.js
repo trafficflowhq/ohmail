@@ -32,11 +32,26 @@ const fs = require("node:fs");
  *
  * Replacing an include-only ruleset with an exclude-only one would WIDEN the backup to
  * everything not named — the opposite of the intent. So the narrow include is preserved
- * verbatim, `SecureStore` stays excluded (dropping it would put the refresh tokens INTO the
- * backup, which is the one thing the posture is about), and the explicit `database`, `file` and
- * `external` excludes are added on top. Under Android's rules those three are already implied by
- * the include-only shape; they are stated anyway, because a rule that is only true by implication
- * is a rule that stops being true when somebody adds an `<include>`.
+ * verbatim and `SecureStore` stays excluded (dropping it would put the refresh tokens INTO the
+ * backup, which is the one thing the posture is about).
+ *
+ * ── THE THREE REDUNDANT EXCLUDES ARE GONE, AND LINT IS WHY ────────────────────────────────
+ *
+ * This file used to also state `<exclude domain="database|file|external" path="."/>`, on the
+ * argument that a rule true only by implication stops being true when somebody adds an
+ * `<include>`. The argument is sound; the mechanism was not. **Android Lint's
+ * `FullBackupContent` check rejects an exclude for a domain that is not included** — `. is not
+ * in an included path` — and `lintVitalRelease` is FATAL, so those three lines failed the
+ * release APK outright: nine errors, no build, nothing to sign. Found by the first
+ * `android-v0.13.0` tag build; the rules arrived after `android-v0.12.1`, so no released build
+ * ever carried them.
+ *
+ * The protection was never those lines. It is the ruleset being INCLUDE-ONLY over `sharedpref`,
+ * which leaves `databases`, `files` and external storage outside the backup by construction. So
+ * the implication the comment worried about is now asserted directly in
+ * `test/backup-exclusions.test.ts`: there is exactly ONE `<include>` in each rule shape and it
+ * is `sharedpref`. Adding an `<include>` for a mail-bearing domain turns that test red, which is
+ * what the three invalid lines were reaching for and could not deliver.
  *
  * ── ORDER MATTERS, AND IT IS WHY THIS PLUGIN IS LAST IN `app.json` ────────────────────────
  *
@@ -66,9 +81,6 @@ const BACKUP_RULES_XML = `<?xml version="1.0" encoding="utf-8"?>
 <full-backup-content>
   <include domain="sharedpref" path="."/>
   <exclude domain="sharedpref" path="SecureStore"/>
-  <exclude domain="database" path="."/>
-  <exclude domain="file" path="."/>
-  <exclude domain="external" path="."/>
 </full-backup-content>
 `;
 
@@ -79,16 +91,10 @@ const DATA_EXTRACTION_RULES_XML = `<?xml version="1.0" encoding="utf-8"?>
   <cloud-backup>
     <include domain="sharedpref" path="."/>
     <exclude domain="sharedpref" path="SecureStore"/>
-    <exclude domain="database" path="."/>
-    <exclude domain="file" path="."/>
-    <exclude domain="external" path="."/>
   </cloud-backup>
   <device-transfer>
     <include domain="sharedpref" path="."/>
     <exclude domain="sharedpref" path="SecureStore"/>
-    <exclude domain="database" path="."/>
-    <exclude domain="file" path="."/>
-    <exclude domain="external" path="."/>
   </device-transfer>
 </data-extraction-rules>
 `;
