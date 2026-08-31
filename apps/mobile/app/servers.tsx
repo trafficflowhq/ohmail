@@ -17,7 +17,7 @@ import { router } from "expo-router";
 import { Copy } from "../src/copy";
 import { useConnection } from "../src/net/connection";
 import type { Negotiation, PickerStep } from "../src/net/pairing";
-import { MANAGED_ORIGIN, nextStep } from "../src/net/pairing";
+import { MANAGED_ORIGIN, nextStep, stashPairOrigin } from "../src/net/pairing";
 import type { ServerProfile } from "../src/state/servers";
 import { useTheme } from "../src/theme";
 import { Button, Panel, Rule, Screen, Scroller, Section, TapRow, Txt } from "../src/ui/base";
@@ -286,7 +286,12 @@ function ProbeResult({ probe }: { probe: Probe }) {
       <Button label={Copy.stepScan} onPress={() => router.push("/scan")} />
       <Button
         label={Copy.stepManual}
-        onPress={() => router.push({ pathname: "/connect", params: { origin: probe.origin } })}
+        onPress={() => {
+          // The negotiated address travels in this process, not in the route — see
+          // `stashPairOrigin`. A route parameter here is reachable from `ohmail://connect?origin=`.
+          stashPairOrigin(probe.origin);
+          router.push("/connect");
+        }}
       />
     </View>
   );

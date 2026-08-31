@@ -15,10 +15,10 @@
  */
 import { useCallback, useState } from "react";
 import { TextInput, View } from "react-native";
-import { router, useLocalSearchParams } from "expo-router";
+import { router } from "expo-router";
 import { Copy } from "../src/copy";
 import { useConnection } from "../src/net/connection";
-import { parsePairLink } from "../src/net/pairing";
+import { parsePairLink, pendingPairOrigin } from "../src/net/pairing";
 import { useTheme } from "../src/theme";
 import { Button, Panel, Screen, Scroller, Section, Txt } from "../src/ui/base";
 import { DetailBar } from "../src/ui/chrome";
@@ -27,9 +27,12 @@ type Phase = { k: "idle" } | { k: "pairing" } | { k: "failed"; reason: string };
 
 export default function ConnectScreen() {
   const conn = useConnection();
-  // The picker's "enter a pairing token" step carries the address it already negotiated.
-  const params = useLocalSearchParams<{ origin?: string }>();
-  const [origin, setOrigin] = useState(typeof params.origin === "string" ? params.origin : "");
+  // The picker's "enter a pairing token" step carries the address it already negotiated — through
+  // a value held in THIS process, never a route parameter. The app registers the `ohmail` scheme
+  // as a browsable deep link, so a route parameter here would let any web page choose the server
+  // a pairing token is sent to, and that token IS the credential (`/pair/redeem` is public and
+  // anonymous). See `pendingPairOrigin` for the whole reasoning.
+  const [origin, setOrigin] = useState(() => pendingPairOrigin());
   const [token, setToken] = useState("");
   const [phase, setPhase] = useState<Phase>({ k: "idle" });
 

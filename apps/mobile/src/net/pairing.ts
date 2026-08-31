@@ -139,6 +139,41 @@ export function parsePairLink(text: string): { origin: string; token: string } |
   return { origin: normalizeOrigin(`${scheme}://${host}`), token };
 }
 
+/* ── the picker's origin handoff ────────────────────────────────────────────────────────────── */
+
+/**
+ * THE ADDRESS THE MANUAL SCREEN OPENS ON — held in this process, never in a URL.
+ *
+ * `/connect` used to take the picker's negotiated address as a ROUTE PARAMETER, and this app
+ * registers the `ohmail` scheme as a BROWSABLE deep link — so any web page could open
+ * `ohmail://connect?origin=<anything>` and choose the server address that screen would then send
+ * a pairing token to. That is not a cosmetic prefill, because THE TOKEN IS THE CREDENTIAL:
+ * `POST /pair/redeem` is `public + anonymous` and hands a bearer pair to whoever presents the raw
+ * token (`packages/api/src/routes/pair.ts:162-164` — its own docblock says so), inside a
+ * five-minute default TTL (`packages/services/src/pairing.ts:107`). Combined with the screen's
+ * own supported "type the token on its own" path, a prefilled hostile address is a way to have
+ * somebody hand their live grant to a stranger who then redeems it at the real server first.
+ *
+ * A module-level value cannot be reached from outside this process, so the address the manual
+ * screen opens on is now necessarily one THIS APP negotiated in this launch (the picker only
+ * stashes an origin `/hello` answered for). The whole-link paste path is unchanged and still
+ * wins over the field, because a link carries its own origin.
+ *
+ * READ rather than consumed, deliberately: leaving the manual screen and coming back must show
+ * the same address. A stale value is harmless — it can only ever be an app-negotiated origin.
+ */
+let stashedPairOrigin: string | null = null;
+
+/** The picker hands the manual screen the address `/hello` answered for. Not a URL, not a param. */
+export function stashPairOrigin(origin: string): void {
+  stashedPairOrigin = normalizeOrigin(origin);
+}
+
+/** What the manual screen opens on: an address this app negotiated, or nothing at all. */
+export function pendingPairOrigin(): string {
+  return stashedPairOrigin ?? "";
+}
+
 /* ── the server-verified account id ─────────────────────────────────────────────────────────── */
 
 /**
