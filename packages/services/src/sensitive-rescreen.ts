@@ -205,7 +205,7 @@ export interface SensitiveRescreenResult {
   /**
    * WHY the marker was withheld — `null` when it was not.
    *
-   * `truncated` alone used to mean one thing and now means two, and an operator acts on the
+   * `truncated` alone used to mean one thing and now means three, and an operator acts on the
    * difference. `"page_cap"` is the old meaning: the walk ran out of pages, and its position is
    * stored — EXCEPT in the two modes that deliberately store none, a plan (every page is rolled
    * back) and a `--force` run over an already-stamped mailbox (a finished mailbox may not carry
@@ -334,7 +334,13 @@ export async function runSensitiveRescreen(
     sensitiveRescreenCursor: mailboxes.sensitiveRescreenCursor,
     sensitiveRescreenStartedAt: mailboxes.sensitiveRescreenStartedAt,
   }).from(mailboxes).where(eq(mailboxes.id, deps.mailboxId)).limit(1);
-  if (!mailbox) return EMPTY;
+  // A MAILBOX THAT IS NOT THERE IS NOT A MAILBOX THAT IS DONE. `EMPTY` carries
+  // `ran: false, stoppedBecause: null`, which the operator command renders as "SKIPPED — the
+  // marker is stamped", so a mailbox deleted between the target selection and this read reported
+  // itself as already corrected. The two are opposite facts and only one of them is true.
+  if (!mailbox) {
+    return { ...EMPTY, ran: true, truncated: true, stoppedBecause: "mailbox_gone" };
+  }
   if (mailbox.sensitiveRescreenAt && !deps.force) return EMPTY;
 
   const accountId = mailbox.accountId;
@@ -729,6 +735,21 @@ export async function runSensitiveRescreen(
     return null;
   });
 
+  // "gone" IS ANSWERED BEFORE THE PLAN BRANCH, not through it. A mailbox deleted under a plan is
+  // not a disturbed walk — there is no walk left to disturb — and mapping it to `disturbed` would
+  // tell the operator their next run starts from the beginning of a mailbox that no longer exists.
+  if (stamped === "gone") {
+    log.warn("sensitive_rescreen_mailbox_gone", {
+      mailboxId: mailbox.id, accountId, examined, rescreened, kept, resumedFrom,
+      dryRun: deps.dryRun === true,
+      reason: "the mailbox was deleted while the pass was walking it — nothing was stamped",
+    });
+    return {
+      ran: true, examined, rescreened, kept, truncated: true, destinations, resumedFrom,
+      stoppedBecause: "mailbox_gone",
+    };
+  }
+
   if (deps.dryRun) {
     log.info("sensitive_rescreen_plan_complete", {
       mailboxId: mailbox.id, accountId, examined, rescreened, kept, destinations, resumedFrom,
@@ -747,16 +768,6 @@ export async function runSensitiveRescreen(
       };
   }
 
-  if (stamped === "gone") {
-    log.warn("sensitive_rescreen_mailbox_gone", {
-      mailboxId: mailbox.id, accountId, examined, rescreened, kept, resumedFrom,
-      reason: "the mailbox was deleted while the pass was walking it — nothing was stamped",
-    });
-    return {
-      ran: true, examined, rescreened, kept, truncated: true, destinations, resumedFrom,
-      stoppedBecause: "mailbox_gone",
-    };
-  }
   if (stamped !== null) {
     log.warn("sensitive_rescreen_disturbed", {
       mailboxId: mailbox.id, accountId, examined, rescreened, kept, resumedFrom,
@@ -888,7 +899,19 @@ async function moveDestinations(
  * A KEPT row is the other half and the claim does not extend to it: the winner wrote nothing, so
  * the row still matches and the loser examines it again. That costs a second evaluation of a
  * message neither run will move, and it is why the count a concurrent pair reports can exceed the
- * candidate set while the MOVES cannot. That
+ * candidate set while the MOVES cannot.
+ *
+ * ── AND WHAT THIS LOCK IS STILL FOR, NOW THAT THE PAGE TAKES THE MAILBOX ROW FIRST ─────────
+ *
+ * Two RUNS of this pass no longer reach here at the same time: each page opens by taking the
+ * mailbox row `FOR UPDATE`, so a second run is serialized a statement earlier and the
+ * `sensitive-rescreen.pg.test.ts` concurrency case would now pass with this `FOR UPDATE`
+ * removed. It is not decoration, and the reason is that the mailbox lock is THIS pass's alone:
+ * every other writer of `folder_state` — the API's move, the Screener's apply, `rule-retro`,
+ * `ohbox-tidy`, `screener-auto`, the worker's reconciler — takes no mailbox row on the way in.
+ * The row lock here is what makes a page's read-decide-write atomic against THEM, which is the
+ * case that matters in production and the one no test in this file can express with two copies
+ * of the same pass. That
  * claim is `sensitive-rescreen.pg.test.ts` on real Postgres, because PGlite is single-connection
  * and `FOR UPDATE` there is a no-op that always succeeds.
  */

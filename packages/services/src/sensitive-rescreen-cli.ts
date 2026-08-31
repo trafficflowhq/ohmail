@@ -149,10 +149,27 @@ async function upperBounds(db: Db): Promise<Map<string, { ohbox: number; sensiti
  * prints were produced by running the pass, so the only way for them to be wrong about the apply
  * is for the mailbox to change in between.
  */
+/**
+ * The mailbox's CURRENT durable resume point, read at report time.
+ *
+ * The target list is chosen once at the top of a sweep and the marker it carries is a snapshot;
+ * this is the fact as it stands after the run. Only the truncated path asks, so it costs one
+ * indexed read per mailbox that did not finish.
+ */
+async function storedCursor(db: Db, mailboxId: string): Promise<string | null> {
+  const [row] = await db.select({ c: mailboxes.sensitiveRescreenCursor })
+    .from(mailboxes).where(eq(mailboxes.id, mailboxId)).limit(1);
+  return row?.c ?? null;
+}
+
 async function run(db: Db, args: Args, dryRun: boolean): Promise<void> {
   const targets = await selectTargets(db, args);
   if (targets.length === 0) {
-    console.log("nothing to do — every mailbox carries a marker (use --force to include one).");
+    // A NAMED mailbox that selected nothing is not the same fact as "everything is done", and
+    // saying the second was how a typo'd or deleted id read as success.
+    console.log(args.mailboxId
+      ? `no such mailbox in this database: ${args.mailboxId}`
+      : "nothing to do — every mailbox carries a marker (use --force to include one).");
     return;
   }
   const bounds = await upperBounds(db);
@@ -230,11 +247,13 @@ async function run(db: Db, args: Args, dryRun: boolean): Promise<void> {
       // the three: a disturbed run DISCARDS its position on purpose, and a mailbox that was
       // deleted has no next run at all.
       //
-      // `mb.marker` and NOT `args.force`, and that distinction cost a wrong line: `--force`
-      // without `--mailbox` sweeps stamped AND unstamped mailboxes, and only a STAMPED one
-      // declines to store a position. Keying the message on the flag told an unstamped mailbox's
-      // page-cap stop that nothing had been stored when its position was on disk.
-      const wasStamped = mb.marker !== null;
+      // READ BACK FROM THE DATABASE, not from the selection snapshot. `mb.marker` was read when
+      // the targets were chosen and is stale by now: under `--force` another operator can stamp
+      // the mailbox between the two, and a stamped mailbox stores no position — so the snapshot
+      // would say a resume point was stored when none is there. (It is also why this is not
+      // keyed on `args.force`: that flag sweeps stamped AND unstamped mailboxes, and only a
+      // stamped one declines to store.) One extra read on the truncated path only.
+      const stored = await storedCursor(db, mb.id);
       const head = r.stoppedBecause === "mailbox_gone"
         ? "  the mailbox was DELETED while the pass was walking it. Nothing was stamped.\n"
         : r.stoppedBecause === "disturbed"
@@ -255,10 +274,11 @@ async function run(db: Db, args: Args, dryRun: boolean): Promise<void> {
             ? "  A plan stores no position: the next plan starts where this one did."
             // …and an ALREADY stamped mailbox stores none either, by the same rule that keeps a
             // finished mailbox from carrying a stale one.
-            : wasStamped
-              ? "  A stamped mailbox stores no position: the next run starts from the beginning.\n" +
-                "  Clear the marker if you mean to re-run it as a repair."
-              : "  The resume point is stored, so the next apply continues from this page.";
+            : stored === null
+              ? "  No resume point is stored — a stamped mailbox keeps none — so the next run\n" +
+                "  starts from the beginning. Clear the marker if you mean to re-run it as a repair."
+              : `  The resume point is stored (after message ${stored}), so the next apply\n` +
+                "  continues from this page.";
       console.warn(head + next);
     }
   }
