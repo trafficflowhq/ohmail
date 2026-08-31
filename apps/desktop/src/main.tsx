@@ -26,6 +26,7 @@ import { DesktopLocale } from "./DesktopLocale.js";
 import "../../webapp/app/app.css";
 
 import { bridgeAvailable, connectLocalEngine } from "./bridge-fetch.js";
+import { startOmarchyFeed } from "./omarchy.js";
 import { DesktopGate } from "./DesktopGate.js";
 import { errorSentence, GateBoundary } from "./GateBoundary.js";
 import { GateNotice } from "./GateNotice.js";
@@ -86,6 +87,15 @@ async function waitForBoot(): Promise<string | null> {
 enableExternalLinks();
 interceptLinkClicks(document, { trustSameOrigin: true });
 enableDesktopAttachments();
+
+/* THE OMARCHY THEME FEED, armed here for the same reason the two arms above are: it is a
+   capability of the WINDOW, not of any one view. On an Omarchy desktop the shell answers the
+   active theme's raw material and pushes a fresh set whenever `omarchy theme set` completes;
+   `omarchy.ts` maps it and holds the tokens where the ohmarchy face wears them. Everywhere
+   else — and outside the app — the start is one refused ask and silence. Not awaited: the
+   theme feed must never hold the first paint, and its failure mode is "static defaults",
+   which is not a failure a person should wait on. */
+void startOmarchyFeed();
 
 /* The pre-paint theme stamp. `themeInitScript()` from @ohmail/ui exists for
    server-rendered pages, which inline it as a <script>; the desktop CSP forbids

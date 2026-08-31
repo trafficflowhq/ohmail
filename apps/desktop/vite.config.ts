@@ -531,6 +531,8 @@ export default defineConfig({
       { find: /^(?:.*\/)?api-client$/, replacement: r("./src/no-api-client.ts") },
 
       { find: "@ohmail/tokens/tokens.css", replacement: r("../../packages/tokens/src/tokens.css") },
+      { find: "@ohmail/tokens/faces.css", replacement: r("../../packages/tokens/src/faces.css") },
+      { find: "@ohmail/tokens/ohmarchy.css", replacement: r("../../packages/tokens/src/ohmarchy.css") },
       { find: "@ohmail/tokens", replacement: r("../../packages/tokens/src/index.ts") },
       /* `@ohmail/fixtures` needs no entry: its one importer was the real fixtures adapter, which
          the stub alias above takes out of the graph — so the corpus is unresolvable here by

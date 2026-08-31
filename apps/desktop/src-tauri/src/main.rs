@@ -74,6 +74,14 @@ mod engine;
 #[cfg(feature = "local-engine")]
 mod host;
 mod menu;
+// The Omarchy theme feed — on an Omarchy desktop the window follows the system theme live.
+// Two modules on purpose: `omarchy_core` is the Tauri-free machinery a standalone harness
+// can compile and run against a real install (its header says why that matters on a machine
+// with no Rust toolchain), `omarchy` is the command, the event and the thread.
+#[cfg(feature = "local-engine")]
+mod omarchy;
+#[cfg(feature = "local-engine")]
+mod omarchy_core;
 mod updater;
 
 fn main() {
@@ -115,6 +123,13 @@ fn main() {
     // a disarmed one gets a dormant struct and none of the machinery.
     #[cfg(feature = "local-engine")]
     let host_runtime = host::manage(&app, std::sync::Arc::clone(&shell), host_boot);
+
+    // The Omarchy theme feed. On an Omarchy system this spawns the watch that re-skins the
+    // window when the desktop theme changes; everywhere else it is one directory stat and a
+    // return. It sits after the window's grant (`engine::manage`) so the first event can
+    // never race the capability that lets the window hear it.
+    #[cfg(feature = "local-engine")]
+    omarchy::watch(app.handle().clone());
 
     // The one unrequested request this binary makes. Spawned, so nothing here waits on a feed.
     updater::on_launch(app.handle());

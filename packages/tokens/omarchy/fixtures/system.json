@@ -1,0 +1,52 @@
+{
+  "_provenance": {
+    "source": "Omarchy 4.0.2-1 VM (OMARCHY-VM.md): hyprctl getoption, ~/.config/foot/foot.ini, ~/.config/alacritty/alacritty.toml, fc-match monospace, ~/.local/state/omarchy/current/theme/shell.toml (generated; verbatim copy in shell.example.toml)",
+    "extracted": "2026-08-31",
+    "note": "Everything below was read from the running system, not from documentation. shell.toml is Omarchy's own settings-to-surface derivation layer; the alphas and scales here are its theme-independent constants (colors are substituted per theme from colors.toml)."
+  },
+  "hyprland": {
+    "gaps_in": 5,
+    "gaps_out": 10,
+    "border_size": 2,
+    "rounding": 0,
+    "active_border": "colors.accent (themes may override via hyprland_active_border / active_border_color in colors.toml: hackerman, last-horizon, lumon, solitude)",
+    "inactive_border": "rgba(595959aa) — fixed across themes unless the theme overrides"
+  },
+  "font": {
+    "mono_family": "JetBrainsMono Nerd Font",
+    "mono_family_source": "fc-match monospace (fontconfig is the source of truth; omarchy-font-set changes it)",
+    "terminal_size_px": 9,
+    "terminal_padding_px": 14,
+    "shell_base_size_px": 12,
+    "shell_type_scale": {
+      "caption": 10, "body_small": 11, "body": 12, "subtitle": 13,
+      "title": 14, "heading": 16, "display": 24, "display_large": 28,
+      "icon_small": 11, "icon": 14, "icon_large": 18
+    },
+    "scale_with_font": true
+  },
+  "spacing": {
+    "scale": [2, 3, 4, 6, 8, 10, 12, 14, 18],
+    "control_gap": 8, "control_padding_x": 10, "control_padding_y": 6,
+    "input_padding_y": 7, "control_height": 28, "popup_row_height": 28,
+    "row_gap": 8, "row_padding_x": 12, "label_gap": 4,
+    "panel_gap": 14, "panel_padding": 18, "popup_padding": 14
+  },
+  "control_states": {
+    "normal":   { "fill_alpha": 0.04, "border_alpha": 0.40, "border_width": 1 },
+    "hover":    { "fill_alpha": 0.08, "border_alpha": 0.25, "border_width": 1 },
+    "focus":    { "fill_alpha": 0.08, "border_alpha": 0.25, "border_width": 1, "note": "mirrors hover by design: hover, keyboard cursor and tab focus read as one state" },
+    "selected": { "fill_alpha": 0.18, "border_width": 0 },
+    "pressed":  { "fill_alpha": 0.22 },
+    "text_selection": { "fill_alpha": 0.35 },
+    "fill_and_border_color": "colors.foreground"
+  },
+  "surfaces": {
+    "bar": { "background": "colors.background", "text": "colors.foreground", "attention": "colors.red", "height_at_base_12": 26 },
+    "popup_menu_notification": { "background": "colors.background", "text": "colors.foreground", "border": "accent (popups, notifications) or foreground (menu, tooltip, launcher)", "border_width": 1 },
+    "menu_selected_row": { "background": "colors.foreground @ 0.08", "text": "colors.accent" },
+    "scrim": "colors.background @ 0.5",
+    "error": { "text": "colors.red", "border": "colors.red" },
+    "notification_countdown": "colors.accent"
+  }
+}

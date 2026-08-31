@@ -1,0 +1,140 @@
+{
+  "_provenance": {
+    "source": "omarchy theme list + /usr/share/omarchy/themes/*/colors.toml on the Omarchy 4.0.2 VM (OMARCHY-VM.md)",
+    "extracted": "2026-08-31"
+  },
+  "themes": [
+    {
+      "slug": "catppuccin",
+      "name": "Catppuccin",
+      "mode": "dark",
+      "keys": 25
+    },
+    {
+      "slug": "catppuccin-latte",
+      "name": "Catppuccin Latte",
+      "mode": "light",
+      "keys": 25
+    },
+    {
+      "slug": "ethereal",
+      "name": "Ethereal",
+      "mode": "dark",
+      "keys": 25
+    },
+    {
+      "slug": "everforest",
+      "name": "Everforest",
+      "mode": "dark",
+      "keys": 25
+    },
+    {
+      "slug": "flexoki-light",
+      "name": "Flexoki Light",
+      "mode": "light",
+      "keys": 25
+    },
+    {
+      "slug": "gruvbox",
+      "name": "Gruvbox",
+      "mode": "dark",
+      "keys": 25
+    },
+    {
+      "slug": "hackerman",
+      "name": "Hackerman",
+      "mode": "dark",
+      "keys": 26
+    },
+    {
+      "slug": "kanagawa",
+      "name": "Kanagawa",
+      "mode": "dark",
+      "keys": 25
+    },
+    {
+      "slug": "last-horizon",
+      "name": "Last Horizon",
+      "mode": "dark",
+      "keys": 27
+    },
+    {
+      "slug": "lumon",
+      "name": "Lumon",
+      "mode": "dark",
+      "keys": 27
+    },
+    {
+      "slug": "lupine",
+      "name": "Lupine",
+      "mode": "light",
+      "keys": 25
+    },
+    {
+      "slug": "matte-black",
+      "name": "Matte Black",
+      "mode": "dark",
+      "keys": 25
+    },
+    {
+      "slug": "miasma",
+      "name": "Miasma",
+      "mode": "dark",
+      "keys": 25
+    },
+    {
+      "slug": "nord",
+      "name": "Nord",
+      "mode": "dark",
+      "keys": 25
+    },
+    {
+      "slug": "osaka-jade",
+      "name": "Osaka Jade",
+      "mode": "dark",
+      "keys": 25
+    },
+    {
+      "slug": "retro-82",
+      "name": "Retro 82",
+      "mode": "dark",
+      "keys": 25
+    },
+    {
+      "slug": "ristretto",
+      "name": "Ristretto",
+      "mode": "dark",
+      "keys": 25
+    },
+    {
+      "slug": "rose-pine",
+      "name": "Rose Pine",
+      "mode": "light",
+      "keys": 25
+    },
+    {
+      "slug": "solitude",
+      "name": "Solitude",
+      "mode": "dark",
+      "keys": 27
+    },
+    {
+      "slug": "tokyo-night",
+      "name": "Tokyo Night",
+      "mode": "dark",
+      "keys": 25
+    },
+    {
+      "slug": "vantablack",
+      "name": "Vantablack",
+      "mode": "dark",
+      "keys": 25
+    },
+    {
+      "slug": "white",
+      "name": "White",
+      "mode": "light",
+      "keys": 23
+    }
+  ]
+}

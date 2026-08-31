@@ -476,7 +476,7 @@ describe("the Rust side", () => {
    * describe would stay green while the shell grew a capability. Adding a file therefore fails
    * this test until somebody decides which rules it lives under.
    */
-  it("is these thirteen files and no others", () => {
+  it("is these sixteen files and no others", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/src")).sort();
     expect(files).toEqual([
       // Which door this install came in by, and the environment each one composes. Compiled only
@@ -506,6 +506,15 @@ describe("the Rust side", () => {
       // navigation submenu is not, because only the engine build's window may hear the event.
       "menu.rs",
       "menu_tests.rs",
+      // The Omarchy theme feed (§3c): `omarchy_core.rs` is the Tauri-free machinery — detection,
+      // the raw read, the quiet-debounced watch — kept std+serde_json only so a standalone
+      // harness can compile and run it against a real Omarchy install (this repo's machine has
+      // no Rust toolchain); `omarchy.rs` is the thin Tauri layer: the read-only `omarchy_theme`
+      // command, the `omarchy:theme` event, and the watch thread. Both compiled only under
+      // `local-engine`, like `engine.rs`.
+      "omarchy.rs",
+      "omarchy_core.rs",
+      "omarchy_core_tests.rs",
       "updater.rs",
       "updater_tests.rs",
     ]);
@@ -613,14 +622,15 @@ describe("the Rust side", () => {
    * naming its `allow-…` permission cannot be resolved — so neither `cargo check` nor `cargo test`
    * can see it. The set equality below is the only thing that does.
    */
-  it("declares and registers its nineteen commands only in the local build", () => {
+  it("declares and registers its twenty commands only in the local build", () => {
     const build = read("src-tauri/build.rs");
     const engine = read("src-tauri/src/engine.rs");
-    // Host mode's and the default-mail commands are DEFINED in their own modules; registration
-    // and the grant stay in engine.rs (the one invoke_handler, the one capability), so the
-    // per-command sweep below reads all three.
+    // Host mode's, the default-mail and the Omarchy commands are DEFINED in their own modules;
+    // registration and the grant stay in engine.rs (the one invoke_handler, the one capability),
+    // so the per-command sweep below reads all four.
     const hostModule = read("src-tauri/src/host.rs");
     const defaultMailModule = read("src-tauri/src/default_mail.rs");
+    const omarchyModule = read("src-tauri/src/omarchy.rs");
     const COMMANDS = [
       "engine_status",
       "engine_request",
@@ -667,6 +677,12 @@ describe("the Rust side", () => {
       // registry write. `default_mail.rs` states the rule; its tests pin the argv tables.
       "default_mail_status",
       "default_mail_request",
+      // The desktop's own theme, raw — the pull half of the Omarchy feed (§3c). Read-only, no
+      // argument, no path the window may name: on an Omarchy system the shell answers the active
+      // theme's colors.toml, shell.toml and the system's font/gap facts VERBATIM, everywhere
+      // else `None`. The push half is the `omarchy:theme` event over the one listen grant the
+      // window already holds; `omarchy.rs` carries the reasoning.
+      "omarchy_theme",
     ];
 
     expect(build).toMatch(/CARGO_FEATURE_LOCAL_ENGINE/);
@@ -696,14 +712,15 @@ describe("the Rust side", () => {
 
     for (const command of COMMANDS) {
       // Defined, registered, and granted — the three places a name has to appear, and the ones a
-      // half-added command is missing from. Definitions live in engine.rs, host.rs or
-      // default_mail.rs; the registration and the grant are engine.rs's alone (one
+      // half-added command is missing from. Definitions live in engine.rs, host.rs,
+      // default_mail.rs or omarchy.rs; the registration and the grant are engine.rs's alone (one
       // invoke_handler, one capability).
       // `[<(]` because several are generic over the runtime: a command taking an `AppHandle`
       // has to name the runtime it belongs to, or the handler cannot be built for one.
-      expect(engine + hostModule + defaultMailModule, `${command} is not defined`).toMatch(
-        new RegExp(`fn ${command}[<(]`),
-      );
+      expect(
+        engine + hostModule + defaultMailModule + omarchyModule,
+        `${command} is not defined`,
+      ).toMatch(new RegExp(`fn ${command}[<(]`));
       expect(engine, `${command} is not registered`).toMatch(
         new RegExp(`generate_handler!\\[[^\\]]*${command}`, "s"),
       );

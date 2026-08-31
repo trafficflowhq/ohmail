@@ -65,6 +65,12 @@ const WINDOW_COMMANDS: &[&str] = &[
     // naming no URL), `xdg-settings set` on Linux — and never writes a registry value.
     "default_mail_status",
     "default_mail_request",
+    // THE OMARCHY THEME (`src/omarchy.rs`). The window's pull half of the live theme feed:
+    // on an Omarchy system it answers the active theme's raw material (its colors.toml, the
+    // system font and gap facts), everywhere else `None`. Read-only, no argument, no path the
+    // window may name; the push half is the `omarchy:theme` event over the listen grant the
+    // menu already uses.
+    "omarchy_theme",
 ];
 
 fn main() {
