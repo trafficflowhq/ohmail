@@ -90,7 +90,42 @@ export const WORKER_TIMEOUTS = {
 } as const;
 
 /**
- * SERVER-SIDE DEADLINES FOR THE SERVERLESS REQUEST HANDLE — and the premise they replace.
+ * SERVER-SIDE DEADLINES FOR THE SERVERLESS REQUEST HANDLE, AGAINST A DIRECT POSTGRES —
+ * AND WHY THAT QUALIFIER IS LOAD-BEARING, NOT DECORATION.
+ *
+ * ── THE CLAIM THIS COMMENT MADE UNTIL IT WAS MEASURED AGAINST THE REAL TRANSPORT ─────────────
+ *
+ * This block used to say these values fix the 504 family in a pooled deployment. **They do not
+ * there, and the ledger row this closed has been reopened.** A hosted deployment's
+ * `makePooledDb` dials a **transaction-mode** connection pooler in front of Postgres, and
+ * `connection: POOLED_TIMEOUTS` sends these as PostgreSQL StartupMessage parameters, which only
+ * apply to the ONE backend session a startup packet negotiates directly with. A transaction-mode
+ * pooler multiplexes one client socket across many backend sessions, checking one out per
+ * transaction, and there is no contract that it forwards a client's startup parameters onto
+ * whichever backend it hands over.
+ *
+ * Measured directly against a real transaction-mode pooler, read-only, with a bare `postgres.js`
+ * client (no drizzle in the path): `connection: { statement_timeout: "25000", … }` then
+ * `select current_setting('statement_timeout')` returned the pooler's own baseline, not `25000`
+ * — over four sequential round trips. The libpq-style `options: "-c statement_timeout=…"` startup
+ * parameter was tried too and silently ignored the same way. **`sql.unsafe("set local
+ * statement_timeout = '3000'; select …")` in one round trip DID take effect** — `SET LOCAL` is
+ * transaction/statement-scoped Postgres behaviour, independent of pooler cooperation, because it
+ * runs against whichever backend was already checked out for that unit of work. That is the only
+ * mechanism proven to survive this transport, and it is not what `connection:` does.
+ *
+ * The correction — a role-scoped server default via `setupProdDatabase`, verified from
+ * `pg_db_role_setting`, with `packages/db/src/migrate.ts` and `setup-prod.ts` hardened first
+ * against inheriting a shorter baseline for their own long-running statements — is the reopened
+ * ledger item, rather than built into this comment ahead of the code existing.
+ *
+ * ── WHAT THE VALUES BELOW STILL ARE ───────────────────────────────────────────────────────────
+ *
+ * NOT dead code. `makePooledDb` is also how a **self-hosted** deployment reaches its own,
+ * un-pooled Postgres directly — no transaction-mode multiplexing in front of it — and there
+ * `connection: POOLED_TIMEOUTS` is a real, working, session-startup mechanism: exactly what
+ * `pooled-db.pg.test.ts` proves against the docker Postgres on :5433. Read every claim below as
+ * "true for a direct connection", not as a description of what a pooled deployment does.
  *
  * ── THE COMMENT THAT USED TO STAND HERE, AND THE 103 TIMEOUTS IT COST ────────────────────────
  *
@@ -175,9 +210,10 @@ export const API_MAX_DURATION_MS = 60_000;
 //     already exists"). Pass the POOLED (…-pooler) connection string here, not the direct one.
 //   • small `max` + short `idle_timeout` keep each instance's footprint tiny so many
 //     concurrent instances don't exhaust the upstream pooler's connection budget.
-//   • `connection: POOLED_TIMEOUTS` are SERVER-side deadlines, and they are the reason a slow
-//     statement or a held row lock can no longer consume the whole invocation. `connect_timeout`
-//     bounds only the dial; nothing here used to bound what happened after it.
+//   • `connection: POOLED_TIMEOUTS` are SERVER-side deadlines that reach the backend ONLY on a
+//     direct connection (self-host). Measured to be INERT through a transaction-mode pooler in
+//     front of production — see POOLED_TIMEOUTS' own docblock. `connect_timeout` bounds only the
+//     dial in either case; a fix that actually reaches a pooled deployment is still open.
 const pools = new Map<string, ReturnType<typeof postgres>>();
 
 export function makePooledDb(url: string): PostgresJsDatabase<typeof schema> {
