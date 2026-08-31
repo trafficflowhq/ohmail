@@ -47,8 +47,8 @@ import { useTranslations } from "next-intl";
 import { addressBook } from "@ohmail/client-engine";
 import type { EngineDraft, OhmailEngine } from "@ohmail/client-engine";
 import type { Editor } from "@tiptap/react";
-import { Button, Chip, Icon, useToast } from "@ohmail/ui";
-import { useKeyBindings } from "../shell/keymap";
+import { Button, Chip, Icon, Kbd, useToast } from "@ohmail/ui";
+import { chordKeys, useBinding, useKeyBindings } from "../shell/keymap";
 import { go } from "../shell/routing";
 import { displayAddress } from "../shell/idn";
 import { canSend, type SendState } from "../shell/mail-send";
@@ -333,6 +333,8 @@ export function ComposeView({
    * confirm stays disabled below it, and the sentence under the field says why — the server's
    * own refusal (against ITS clock, the one the due scan runs on) remains the authority.
    */
+  /** Is the send chord bound here (a provider stands above)? Gates the Send button's keycap. */
+  const sendChord = useBinding("mod+Enter");
   const [sendLaterOpen, setSendLaterOpen] = useState(false);
   const [openedAt, setOpenedAt] = useState<Date>(() => new Date());
   const [customAt, setCustomAt] = useState("");
@@ -349,7 +351,22 @@ export function ComposeView({
         const now = new Date();
         setOpenedAt(now);
         // Seed the custom field at the floor so the confirm is live the moment the input shows.
-        setCustomAt(localInputValue(new Date(now.getTime() + SEND_LATER_MIN_LEAD_MS).toISOString()));
+        // CEILED to the next whole minute: the input holds minutes, so a seed of now+floor
+        // TRUNCATED lost up to 59 s and sat just under the floor it was meant to stand on —
+        // the confirm (and the ⌘↵ schedule arm) opened disabled (review finding, round 1).
+        // AND RE-CHECKED THROUGH THE INVERSE, because a wall-clock minute is not an instant:
+        // in an autumn DST fold the seeded local time names TWO instants and the inverse
+        // conversion picks the earlier one, which sits under the floor again (review
+        // finding, round 2 — measured at real fold minutes). When that happens the seed
+        // moves one hour ahead, past the fold, where the wall clock is unambiguous.
+        const seedOf = (ms: number): string =>
+          localInputValue(new Date(Math.ceil(ms / 60_000) * 60_000).toISOString());
+        let seed = seedOf(now.getTime() + SEND_LATER_MIN_LEAD_MS);
+        const inverse = instantOfLocalInput(seed);
+        if (inverse === null || Date.parse(inverse) - now.getTime() < SEND_LATER_MIN_LEAD_MS) {
+          seed = seedOf(now.getTime() + SEND_LATER_MIN_LEAD_MS + 3_600_000);
+        }
+        setCustomAt(seed);
       }
       return !open;
     });
@@ -387,6 +404,23 @@ export function ComposeView({
         else go("ohbox");
       },
     },
+    /* ── WITH THE SEND-LATER PICKER OPEN, ⌘↵ SCHEDULES (the ohmarchy keymap, Phase 1) ──
+       The prototype's rule, adopted: a reader who has opened "when should this go?" and
+       presses the send chord means the answer standing in the picker, not "actually, now" —
+       sending immediately from under an open scheduling question was the one way the chord
+       could contradict the screen. Two entries, disjoint gates, the registry's own pattern
+       for a contested chord: the first enabled one is the truth the `?` sheet shows. The
+       custom field seeds at the floor on open (`toggleSendLater`), so the schedule arm is
+       live the moment the picker is — `customUsable` only goes false when the user types a
+       past time, and then the chord is honestly inert beside the equally-refusing button. */
+    {
+      chord: "mod+Enter",
+      group: "message",
+      label: t("keySchedule"),
+      inInput: true,
+      disabled: !sendLaterOpen || !customUsable || !canSend(send, plan.mutation),
+      run: () => { if (customIso) pickSendLater(customIso); },
+    },
     {
       chord: "mod+Enter",
       group: "message",
@@ -394,8 +428,53 @@ export function ComposeView({
       inInput: true,
       // ONE rule, the button's. A typo'd recipient is already expressed as `to: []` inside the
       // mutation (`composePlan`), so there is deliberately no second term about it here.
-      disabled: !canSend(send, plan.mutation),
+      disabled: sendLaterOpen || !canSend(send, plan.mutation),
       run: () => onSend(),
+    },
+    /* ── THE PICKER'S PRESETS, ON THE DIGITS (the prototype's "Send later open: 1 2 3 4") ──
+       View-scope digits OUTRANK the global pile numbers exactly while the picker is open —
+       which is the point: a picker holding focus was one keypress from navigating the whole
+       app away from the message being scheduled. `1` is inert past ~17:45 for the reason the
+       button is absent then (the honest menu omits a promise measured in seconds); `4` walks
+       focus into the custom field, where the digits type again because the registry's typing
+       guard owns that question. Each preset calls the button's own `pickSendLater` — one
+       path to the schedule, whichever finger took it. */
+    {
+      chord: "1",
+      group: "message",
+      label: t("keyLaterTonight"),
+      // Enabled WHENEVER the picker is open, even past ~17:45 when the evening preset is
+      // no longer offered — a disabled binding here would fall through to the global pile
+      // `1` and NAVIGATE AWAY from the message being scheduled (review finding, round 1).
+      // With the picker open the digit belongs to the picker; without a usable evening it
+      // claims the key and does nothing, exactly as the absent button offers nothing.
+      disabled: !sendLaterOpen,
+      run: () => {
+        if (eveningUsable) pickSendLater(eveningIso);
+      },
+    },
+    {
+      chord: "2",
+      group: "message",
+      label: t("keyLaterTomorrow"),
+      disabled: !sendLaterOpen,
+      run: () => pickSendLater(tomorrowNine(openedAt)),
+    },
+    {
+      chord: "3",
+      group: "message",
+      label: t("keyLaterMonday"),
+      disabled: !sendLaterOpen,
+      run: () => pickSendLater(nextWeekNine(openedAt)),
+    },
+    {
+      chord: "4",
+      group: "message",
+      label: t("keyLaterPick"),
+      disabled: !sendLaterOpen,
+      run: () => {
+        document.querySelector<HTMLInputElement>("#compose-send-at")?.focus();
+      },
     },
   ]);
 
@@ -844,6 +923,9 @@ export function ComposeView({
                     onClick={() => { if (customIso) pickSendLater(customIso); }}
                   >
                     {t("sendLaterConfirm")}
+                    {/* The chord's cap moves HERE while the picker is open — ⌘↵ schedules
+                        the standing custom time, which is exactly this button's press. */}
+                    {sendChord ? <Kbd>{chordKeys("mod+Enter").join(" ")}</Kbd> : null}
                   </Button>
                   <Button variant="ghost" onClick={closeSendLater}>{t("sendLaterClose")}</Button>
                 </div>
@@ -863,6 +945,13 @@ export function ComposeView({
                 onClick={() => onSend()}
               >
                 {send.phase === "sending" ? t("sending") : t("send")}
+                {/* The verb's chord, from the live registry — the action-bar law (§12): an
+                    action button wears its keycap always; no binding here, no cap. HIDDEN
+                    while the send-later picker is open, because there the chord SCHEDULES
+                    (the picker's own confirm wears it then) — a cap on Send-now claiming a
+                    key that schedules would be the bar advertising a lie (review finding,
+                    round 1). */}
+                {sendChord && !sendLaterOpen ? <Kbd>{chordKeys("mod+Enter").join(" ")}</Kbd> : null}
               </Button>
               {/* SEND LATER — beside Send because it is the same act on a different clock. The
                   SAME lock (`locked`) gates it: a message that may not be sent now may not be

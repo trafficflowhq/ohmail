@@ -36,7 +36,8 @@ export interface FocusReplyOverlayProps {
   onDone: () => void;
   onSkip: () => void;
   onClose: () => void;
-  doneLabel?: string;
+  /** ReactNode so the host can put the verb's keycap ON the button (the always-on-caps law). */
+  doneLabel?: ReactNode;
   skipLabel?: string;
   /** Rendered when the pile is exhausted (step >= total). */
   emptyState?: ReactNode;

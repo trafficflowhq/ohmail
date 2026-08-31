@@ -755,7 +755,9 @@
     "keyAllSpam": "alle wartenden Absender als Spam markieren",
     "keyFile": "diesen Absender nach {dest} einsortieren",
     "keyFileRead": "nach {dest} einsortieren und als gelesen markieren",
-    "retry": "Erneut versuchen"
+    "retry": "Erneut versuchen",
+    "keySegPrev": "vorheriger Abschnitt",
+    "keySegNext": "nächster Abschnitt"
   },
   "triage": {
     "title": "Triage",
@@ -974,7 +976,12 @@
     "sendLaterPast": "Diese Zeit ist vorbei. Wähle eine Zeit in der Zukunft.",
     "sendLaterZone": "Zeiten in deiner Zeitzone ({zone}).",
     "sendLaterUnavailable": "Später senden ist für Nachrichten mit Anhängen oder Weiterleitungen noch nicht verfügbar.",
-    "toastScheduled": "Geplant für {when}."
+    "toastScheduled": "Geplant für {when}.",
+    "keySchedule": "Versand planen",
+    "keyLaterTonight": "Später senden: heute Abend",
+    "keyLaterTomorrow": "Später senden: morgen früh",
+    "keyLaterMonday": "Später senden: Montagmorgen",
+    "keyLaterPick": "Später senden: Zeit wählen"
   },
   "draftReply": {
     "verb": "Antwort entwerfen",
@@ -2157,7 +2164,19 @@
     "zoneRead": "Die geöffnete Nachricht fokussieren",
     "zoneMenuUp": "Im Menü nach oben",
     "zoneMenuDown": "Im Menü nach unten",
-    "zoneScroll": "Die geöffnete Nachricht scrollen"
+    "zoneScroll": "Die geöffnete Nachricht scrollen",
+    "goLater": "Zu Später antworten",
+    "goParked": "Zu Geparkt",
+    "goResurface": "Zu Wieder auftauchen",
+    "goDrafts": "Zu Entwürfe",
+    "goHistory": "Zum Verlauf",
+    "goSettings": "Zu den Einstellungen",
+    "pull": "Neue Mails jetzt abrufen",
+    "frSend": "Antwort senden, nächste Nachricht",
+    "move": "An einen anderen Ort verschieben",
+    "deleteAsk": "Löschen — fragt zuerst",
+    "deleteConfirm": "Löschen bestätigen",
+    "panelClose": "Offene Zeile schließen"
   },
   "viewError": {
     "title": "Diese Ansicht wurde nicht geladen.",

@@ -163,6 +163,55 @@ export function useZone(): Zone {
   return useSyncExternalStore(subscribe, currentZone, () => "list");
 }
 
+/**
+ * FOCUS-BORDER-AS-CURSOR, THE MECHANISM (ohmarchy Phase 1) — the derived zone, REFLECTED
+ * ONTO THE DOCUMENT so CSS can paint which tile the keys land in. The deep prototype does
+ * exactly this (`document.documentElement.dataset.tile`), and the shipping shell adopts the
+ * same surface: `:root[data-zone="rail"|"list"|"reader"|"none"]`.
+ *
+ * `data-zone` is FOCUS STATE, not appearance — it names where the keys land, which is one
+ * fact in every theme. How LOUDLY a theme paints it is the appearance side, and that rides
+ * the contract's tokens alone (OHMARCHY-CONTRACT.md: teaching intensity is the `--teach`
+ * token, focus loudness `--focus-w`/`--focus-offset`, all defined in the token stylesheet's
+ * face blocks) — paper's quiet reading is `zone-cursor.css`; the ohmarchy face re-resolves
+ * the same rules through its own token values. Tokens change, the mechanism does not (the
+ * one-UI law: teaching intensity is a parameter, never a fork).
+ *
+ * A component rather than an effect in `AppShell` so the subscription re-renders NOTHING —
+ * it returns null and writes the attribute imperatively, the way the store itself is
+ * module-level: a focus crossing must not re-render a six-thousand-line shell to move one
+ * attribute.
+ */
+export function ZoneCursor(): null {
+  const zone = useZone();
+  useEffect(() => {
+    const root = document.documentElement;
+    root.setAttribute("data-zone", zone);
+    return () => {
+      root.removeAttribute("data-zone");
+    };
+  }, [zone]);
+  /* The cursor keeps the DERIVATION live even where no view declares a zone config: the
+     focus observers used to ride `useZoneNav` alone, so on a view without it (Compose) no
+     focus move ever re-derived, and the attribute could stand on "rail" while the caret
+     sat in a compose field (review finding, round 1). Same pair, same semantics as the
+     hook's — Set semantics on the store make a second installation one refresh, not two. */
+  useEffect(() => {
+    const onFocusIn = (): void => refresh();
+    const onFocusOut = (): void => {
+      void Promise.resolve().then(refresh);
+    };
+    document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("focusout", onFocusOut);
+    refresh();
+    return () => {
+      document.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("focusout", onFocusOut);
+    };
+  }, []);
+  return null;
+}
+
 /* ── focus movement ──────────────────────────────────────────────────────────────────────
    Every helper moves REAL focus and then trusts the derivation above. `focus()` on an
    element the browser will not focus (hidden, or removed between query and call) leaves
@@ -348,16 +397,30 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
   };
 
   /* Two bindings per contested chord, gated to disjoint zones, so the `?` sheet shows the
-     label for the zone the reader is actually in — the dedup keeps the enabled one. */
+     label for the zone the reader is actually in — the dedup keeps the enabled one.
+
+     ── h / l ARE THE ARROWS' LATERAL TWINS (the ohmarchy keymap, Phase 1) ────────────────
+     The prototype's one-table grammar reads "h / l · ← / →: move tile focus", and the
+     letters ride HERE, beside the arrows they alias, rather than in a second table — same
+     zone gates, same handlers, so the pair cannot drift. Only the LATERAL axis gets
+     letters: j/k already walk the list from the views' own bindings (view scope, which
+     wins over these), so a vertical twin here would be a third opinion about what j is.
+     The letters obey the typing guard exactly as every bare key does — `h` in a field
+     types an h — which the arrows never needed; that asymmetry is why the reader-scroll
+     pair below has no letter twins (`inInput` scrolling is the arrows' alone). */
+  const lateralTwins = (alias: "h" | "l") =>
+    (b: KeyBinding): KeyBinding[] => [b, { ...b, chord: alias, inInput: false }];
+  const left = lateralTwins("h");
+  const right = lateralTwins("l");
   const bindings: KeyBinding[] = [
-    {
+    ...left({
       chord: "ArrowLeft",
       group: "navigate",
       label: t("zoneMenu"),
       disabled: z !== "list",
       run: enterRail,
-    },
-    {
+    }),
+    ...left({
       chord: "ArrowLeft",
       group: "navigate",
       label: t("zoneList"),
@@ -367,21 +430,21 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
       // is Escape, which the shell's overlay ladder owns.
       when: noReaderOverlay,
       run: focusList,
-    },
-    {
+    }),
+    ...right({
       chord: "ArrowRight",
       group: "navigate",
       label: t("zoneList"),
       disabled: z !== "rail",
       run: focusList,
-    },
-    {
+    }),
+    ...right({
       chord: "ArrowRight",
       group: "navigate",
       label: t("zoneRead"),
       disabled: z !== "list" || !cfg.reader || cfg.reader.disabled,
       run: enterReader,
-    },
+    }),
     {
       chord: "ArrowUp",
       group: "navigate",

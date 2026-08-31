@@ -1061,6 +1061,26 @@ export function ScreenerView({
       disabled: !waiting || state.waitingCount === 0,
       run: () => state.markAllSpam(scopeOf),
     },
+    /* ── [ / ] WALK THE THREE SEGMENTS (the ohmarchy keymap, Phase 1) ──────────────────
+       Waiting · Screened out · Spam, in the segmented control's own order, via the SAME
+       `goScreener` its clicks dispatch — the junk-rescue flow becomes keyboard-whole
+       (`]` `]` to Spam, j to a row, then the decision letter that files it back).
+       Clamped rather than wrapped: `[` on Waiting and `]` on Spam are declared inert, so
+       the `?` sheet says which direction is real instead of promising a carousel. */
+    {
+      chord: "[",
+      group: "screener",
+      label: t("keySegPrev"),
+      disabled: segment === "waiting",
+      run: () => goScreener(segment === "spam" ? "screened" : "waiting"),
+    },
+    {
+      chord: "]",
+      group: "screener",
+      label: t("keySegNext"),
+      disabled: segment === "spam",
+      run: () => goScreener(segment === "waiting" ? "screened" : "spam"),
+    },
     // The five destinations, each with the letter that files it. The mail destinations also
     // carry a ⇧ twin that marks the held mail read; the demoting ones (Screen out, Spam) do
     // NOT — you don't read what you triage out, so the twin is dropped rather than made a

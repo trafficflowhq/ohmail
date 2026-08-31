@@ -1,0 +1,29 @@
+/* ═══ FOCUS-BORDER-AS-CURSOR — paper's rendering of the zone attribute ══════════════════
+ *
+ * `ZoneCursor` (zone-nav.tsx) reflects the derived focus zone onto the root:
+ * `:root[data-zone="rail"|"list"|"reader"|"none"]`. This file is PAPER's reading of that
+ * surface, and paper is deliberately quiet about it:
+ *
+ *   · the LIST is the resting zone — it wears nothing, exactly as the resting rail wears
+ *     no keycaps; the row cursor (`.row.sel`) and the `:focus-visible` ring already say
+ *     where the keys land, and a third outline over the whole column would be chrome
+ *     charged to every reader for the benefit of none;
+ *   · the RAIL and the READING COLUMN are zones you STEP INTO (`←`/`→`, `h`/`l`), and the
+ *     step is acknowledged with one hairline of the soft accent — the same register as
+ *     the focus ring, not a new color.
+ *
+ * The ohmarchy face later reads the SAME attribute through its own token values (the
+ * contract's `--teach` / `--focus-w` / `--focus-offset`, OHMARCHY-CONTRACT.md); nothing
+ * here forks — a theme changes what these rules resolve to, never which attribute is
+ * consulted (the one-UI law). Tokens only, so both light and dark answer without a rule
+ * of their own. Box-shadow rather than border: the tile must not change size when the
+ * cursor arrives, and an inset shadow costs no layout.
+ */
+
+:root[data-zone="rail"] .deck > .rail {
+  box-shadow: inset 2px 0 0 var(--accent-soft);
+}
+
+:root[data-zone="reader"] .view .read-col {
+  box-shadow: inset 0 0 0 1px var(--accent-soft);
+}

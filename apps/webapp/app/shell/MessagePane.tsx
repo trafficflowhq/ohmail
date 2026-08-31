@@ -20,7 +20,7 @@ import { replyAllRecipients } from "./compose-from";
 import { InlineReply } from "./InlineReply";
 import { inlineForwardKey } from "./mail-send";
 import { chordKeys, useBinding, useKeyPress } from "./keymap";
-import { useBodyStalled, useMessageChrome } from "./message-chrome";
+import { useBodyStalled, useMessageChrome, type MessageBarPanel } from "./message-chrome";
 import { subscribeSessionRevival, useSessionDead } from "./session-truth";
 import { MoreMenu, type MoreMenuItem } from "./MoreMenu";
 import "./action-bar.css";
@@ -145,7 +145,33 @@ export type BulkAction =
  * ({@link MoreMenu}), anchored to the button that opened it. What is left here is exactly the
  * two ceremonies.
  */
-type BarPanel = "move" | "resurface" | "delete";
+type BarPanel = MessageBarPanel;
+
+/**
+ * THE OPEN PANEL, RESOLVED THROUGH THE CHROME WHERE A SHELL PROVIDES ONE — the reply-draft
+ * rule (`message-chrome.tsx` header) applied to the bar's strip: this bar is mounted in the
+ * reading column AND the reader sheet (and on the open stream card), and a Move row opened
+ * by key in one must be the row the reader is looking at in the other. The chrome keys the
+ * panel by message id, so a different message's bar always renders at rest.
+ *
+ * The local `useState` is the PROVIDER-LESS fallback (the desktop shell, bare view tests):
+ * no chrome setter means each mount keeps its own strip, exactly the pre-chrome behaviour,
+ * which is honest where only one mount can exist. Both arms clear on a message change —
+ * a half-open destination row must not carry over (the rule both hosts already stated).
+ */
+function useBarPanel(messageId: string): [BarPanel | null, (next: BarPanel | null) => void] {
+  const chrome = useMessageChrome();
+  const [localPanel, setLocalPanel] = useState<BarPanel | null>(null);
+  useEffect(() => setLocalPanel(null), [messageId]);
+  const set = chrome.setBarPanel;
+  if (set) {
+    return [
+      chrome.barPanel?.messageId === messageId ? chrome.barPanel.panel : null,
+      (next) => set(next ? { messageId, panel: next } : null),
+    ];
+  }
+  return [localPanel, setLocalPanel];
+}
 
 /**
  * A verb's keycap, READ FROM THE LIVE REGISTRY.
@@ -247,6 +273,15 @@ function ActionBar({
   const deleteNoteId = useId();
   useEffect(() => {
     if (panel === "delete") deleteCancelRef.current?.focus();
+  }, [panel]);
+  /* The `m`/`d` keys themselves are declared at the SHELL (AppShell's global map, beside
+     r/a/e/b/s) so the sheet documents them even while no bar is mounted — "a shortcut that
+     vanishes from the documentation when the list is empty is a shortcut nobody learns"
+     (`keymap.tsx`). What the bar owns is the FOCUS half of the ceremony: `m` lands on the
+     first destination (as the delete ask lands on Cancel), so `m` then ↵ files. */
+  const moveFirstRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (panel === "move") moveFirstRef.current?.focus();
   }, [panel]);
   /** Hoisted above `toggleRead`, which needs it to decide WHICH key it is standing in for. */
   const read = !message.unread;
@@ -434,6 +469,7 @@ function ActionBar({
       </button>
       <button type="button" className="abar-b" onClick={() => onPanel("move")}>
         {t("actionMove")}
+        <Key chord="m" />
       </button>
     </>
   );
@@ -501,11 +537,13 @@ function ActionBar({
       <div className="abar">
         <div className="abar-panel">
           <span className="abar-lab">{t("moveLabel")}</span>
-          {MOVE_TARGETS.filter((v) => FOLDER_OF_VIEW[v] !== message.folder).map((v) => (
+          {MOVE_TARGETS.filter((v) => FOLDER_OF_VIEW[v] !== message.folder).map((v, i) => (
             <button
               key={v}
               type="button"
               className="abar-b abar-solo"
+              /* Where `m` lands focus — the first destination, so `m` then ↵ files. */
+              ref={i === 0 ? moveFirstRef : undefined}
               onClick={() => {
                 onPanel(null);
                 onAction(`move:${v}`);
@@ -556,6 +594,7 @@ function ActionBar({
             }}
           >
             {t("actionDelete")}
+            <Key chord="d" />
           </button>
           <button type="button" className="abar-b" ref={deleteCancelRef} onClick={() => onPanel(null)}>
             {t("moveCancel")}
@@ -863,8 +902,7 @@ export function MessageActionBar({
   onAction: (action: MessageAction) => void;
 }) {
   const chrome = useMessageChrome();
-  const [panel, setPanel] = useState<BarPanel | null>(null);
-  useEffect(() => setPanel(null), [message.id]);
+  const [panel, setPanel] = useBarPanel(message.id);
   return (
     <ActionBar
       message={message}
@@ -908,11 +946,9 @@ export function MessagePane({
    */
   const isProtected = isProtectedMessage(message);
   const mine = tagsOfMessage(message, tags);
-  const [panel, setPanel] = useState<BarPanel | null>(null);
+  // Shared with every other mount of this message's bar; clears when the message changes.
+  const [panel, setPanel] = useBarPanel(message.id);
   const chrome = useMessageChrome();
-
-  // A half-open destination row must not carry over to the next message.
-  useEffect(() => setPanel(null), [message.id]);
 
   /**
    * THE CONVERSATION — oldest first, empty when there is no conversation.

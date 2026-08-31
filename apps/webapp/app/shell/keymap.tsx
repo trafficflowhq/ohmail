@@ -186,8 +186,25 @@ export function chordMatches(chord: string, e: KeyboardEvent): boolean {
   const key = parts[parts.length - 1]!;
   const wantMod = parts.includes("mod");
   const wantShift = parts.includes("shift");
-  if (e.altKey) return false;
-  if (wantMod !== (e.metaKey || e.ctrlKey)) return false;
+  /**
+   * AltGr PRODUCES CHARACTERS, Alt CHORDS ARE CEDED — two different facts about the same
+   * modifier bit. On many layouts the app's bare punctuation only exists under AltGr
+   * (`[`/`]` are AltGr+8/9 on German keyboards), and Windows spells AltGr as ctrl+alt —
+   * so a flat `altKey ⇒ no` made those bindings unreachable for exactly the keyboards
+   * the keys were added for (review finding, round 1). A keypress composed WITH AltGr is
+   * therefore judged by the character it produced, and its alt/ctrl bits are ignored;
+   * a plain Alt chord stays refused, which is the collision policy (no Alt bindings).
+   */
+  /* CHARACTER keys only: the exemption exists because AltGr is how some layouts TYPE the
+     character, so it applies exactly where a character was typed (`key.length === 1`).
+     AltGr+Enter or AltGr+arrows produce no character — those stay refused as the Alt
+     chords they are (review finding, round 2). */
+  const altGr =
+    key.length === 1
+    && typeof e.getModifierState === "function"
+    && e.getModifierState("AltGraph");
+  if (e.altKey && !altGr) return false;
+  if (wantMod !== (e.metaKey || (e.ctrlKey && !altGr))) return false;
   if (wantShift && !e.shiftKey) return false;
   // `?` is itself typed with Shift on most layouts, so only LETTERS are held to the rule.
   if (!wantShift && e.shiftKey && /^[a-z]$/.test(key)) return false;
@@ -420,6 +437,23 @@ export function useOptionalKeyBindings(bindings: KeyBinding[], scope: BindingSco
 export function useBinding(chord: string): KeyBinding | null {
   const ctx = useContext(KeymapContext);
   return ctx ? (ctx.bindings.find((b) => b.chord === chord) ?? null) : null;
+}
+
+/**
+ * THE BINDING THAT WOULD ACTUALLY RUN — {@link useBinding}'s sibling for the hint foot.
+ *
+ * `useBinding` answers "is this chord spoken for HERE", which is what a button's keycap
+ * asks (a disabled owner still owns the key, and the cap must not vanish while the verb
+ * rests). A TEACHING line asks the stricter question — "what will this key DO right now" —
+ * and a disabled first declaration is not an answer, it is what the dispatcher skips. So
+ * this walks past disabled entries to the first LIVE one, exactly as `onKey` filters, and
+ * exactly the rule `groupedBindings` dedups by ("Disabled bindings … never shadow an
+ * enabled one below them"). Null-safe for `useBinding`'s reason: no provider, no hint —
+ * never a guessed one.
+ */
+export function useEnabledBinding(chord: string): KeyBinding | null {
+  const ctx = useContext(KeymapContext);
+  return ctx ? (ctx.bindings.find((b) => b.chord === chord && !b.disabled) ?? null) : null;
 }
 
 /**

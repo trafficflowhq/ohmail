@@ -135,6 +135,8 @@ import { useDraftReply, type DraftedReply } from "./draft-reply";
 import { RichEditor } from "./RichEditor";
 import { TagPicker, placePicker, type TagPickerState } from "./TagPicker";
 import { KeymapProvider, useKeyBindings, type KeyBinding } from "./keymap";
+import { ZoneCursor } from "./zone-nav";
+import "./zone-cursor.css";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { SyncBar } from "./SyncBar";
 import { MailStateProvider, useMailState, type FreshnessProbe, type MailboxProbe } from "./MailStateProvider";
@@ -151,7 +153,7 @@ import {
   resolveReplyFrom,
   type ReplyEnvelopeEdit,
 } from "./compose-from";
-import { MessageChromeProvider } from "./message-chrome";
+import { MessageChromeProvider, type MessageBarPanel } from "./message-chrome";
 import { SenderMenu, type SenderMenuState } from "./SenderMenu";
 import { SenderAuditPanel, type SenderAuditState } from "./SenderAuditPanel";
 import { attributeMessages } from "./sender-audit";
@@ -1019,6 +1021,9 @@ export function AppShell({
           every view mounted under it can declare bindings into the same table, which is
           also the table the `?` sheet is generated from. */}
       <KeymapProvider>
+        {/* The derived focus zone, reflected as `:root[data-zone]` for the tile-cursor CSS
+            (`zone-cursor.css`). See `ZoneCursor`. */}
+        <ZoneCursor />
         <MailStateHost probe={mailboxFacts} freshnessProbe={mirrorFreshness}>
           <ShellInner
             mailboxFacts={mailboxFacts}
@@ -1839,6 +1844,10 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
      title. It lives here for the reason every overlay here does: `MessagePane` is mounted TWICE
      while the reader is open, so a sheet held per-pane would be two sheets. */
   const [subjectRule, setSubjectRule] = useState<SubjectRuleState | null>(null);
+  /* The action bar's open destination strip (Move / Resurface / the delete confirm) — held
+     here for the mounted-twice reason the reply draft is; keyed by message id so it can never
+     render over another message's bar. See `message-chrome.tsx` (`barPanel`). */
+  const [barPanel, setBarPanel] = useState<{ messageId: string; panel: MessageBarPanel } | null>(null);
   /* The inline reply. The id and the text live HERE, not in `MessagePane`, because
      that pane is mounted twice whenever the reader is open — see `message-chrome.tsx`. */
   const [replyTo, setReplyTo] = useState<string | null>(null);
@@ -4641,6 +4650,11 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
           ? (receiptsCur ? (reader.get<EngineMessage>("message", receiptsCur) ?? null) : null)
           : null);
 
+  /* A half-open destination strip must not carry over when the cursor moves — the same rule
+     the pane enforced per mount while it owned the state (see `useBarPanel`). */
+  const focusedId = focused?.id ?? null;
+  useEffect(() => setBarPanel(null), [focusedId]);
+
   /**
    * ESCAPE HAS ONE OWNER, and this ORDERED LIST is it.
    *
@@ -4682,6 +4696,11 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
     // at that is not one of the anchored popovers above — Escape closed everything else in
     // this list and left exactly this one standing (the backdrop tap was the only way out).
     [railOpen, () => setRailOpen(false)],
+    // The action bar's open destination strip (Move / Resurface / the delete confirm). Above
+    // the reply editor and the reader because it stands OVER the bar inside them — a strip
+    // opened by `m` or `d` is the innermost question on screen, and Escape answering it must
+    // not close the editor or the sheet underneath instead.
+    [barPanel != null, () => setBarPanel(null)],
     [replyTo != null, () => setReplyTo(null)],
     [readerFor != null, () => setReaderFor(null)],
   ];
@@ -4738,7 +4757,32 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
     { chord: "g e", group: "navigate", label: t("shortcuts.goReceipts"), run: () => go("receipts") },
     { chord: "g s", group: "navigate", label: t("shortcuts.goScreener"), run: () => go("screener") },
     { chord: "g t", group: "navigate", label: t("shortcuts.goTriage"), run: () => go("triage") },
+    /* ── THE REST OF THE `g` LEADER (the ohmarchy keymap, Phase 1) ──────────────────────
+       The prototype's grammar reaches every place through `g`; the shipping leader stopped
+       at five. The three triage horizons take the pile's own initial (Later / Parked /
+       resurface-Back — the prototype's letters), and the three app places take theirs
+       (`g ,` for Settings is the editor convention the prototype adopted). Two prototype
+       rows are deliberately NOT here: `g c` said Receipts, but `g e` shipped first and c
+       is Compose everywhere else in the app — the shipping key wins; and `g /` duplicated
+       `/`, which is already global — a second spelling would be sheet noise, not grammar. */
+    { chord: "g l", group: "navigate", label: t("shortcuts.goLater"), run: () => goTriage("reply") },
+    { chord: "g p", group: "navigate", label: t("shortcuts.goParked"), run: () => goTriage("aside") },
+    { chord: "g b", group: "navigate", label: t("shortcuts.goResurface"), run: () => goTriage("resurface") },
+    { chord: "g d", group: "navigate", label: t("shortcuts.goDrafts"), run: () => go("drafts") },
+    { chord: "g h", group: "navigate", label: t("shortcuts.goHistory"), run: () => go("history") },
+    { chord: "g ,", group: "navigate", label: t("shortcuts.goSettings"), run: () => go("settings") },
     { chord: "/", group: "navigate", label: t("shortcuts.search"), run: () => go("search") },
+    {
+      /* Pull new mail — the doorbell's own verb, from the keyboard. The SAME single-flight
+         `pull` the two PullNewMail buttons press, so the latch, the settle watch and the
+         honest toast apply identically; `available` is the binding's own gate (demo and
+         cloudless builds render no doorbell, and the key disappears with the button). */
+      chord: "p",
+      group: "app",
+      label: t("shortcuts.pull"),
+      disabled: !pullBinding.available || pullBinding.pulling,
+      run: () => pullBinding.pull(),
+    },
     { chord: "c", group: "app", label: t("shortcuts.compose"), run: () => go("compose") },
     {
       chord: "f",
@@ -4785,6 +4829,32 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
         if (!focused) return;
         if (readerMessage != null || route.view === "ohbox") toggleReply(focused.id, true);
         else onStreamAction("reply_all", focused);
+      },
+    },
+    {
+      /* SEND, INSIDE THE REPLY RUN. The overlay's Done button and this chord are one path —
+         the run below mirrors `onDone` (AppShell's FocusReplyOverlay wiring) verbatim, so
+         the no-message refusal and the shared scratch buffer behave identically. Declared
+         BEFORE the inline reply's `mod+Enter` because the run's overlay stands over
+         everything while it is open; both are `disabled`-gated on disjoint states, so the
+         dispatcher's first-enabled rule is what actually decides. `inInput` for the same
+         reason as the reply's: the run's editor holds focus, which is the whole use case. */
+      chord: "mod+Enter",
+      group: "message",
+      label: t("shortcuts.frSend"),
+      inInput: true,
+      disabled: fr == null || fr.step >= fr.items.length,
+      run: () => {
+        if (!fr || fr.step >= fr.items.length) return;
+        const item = fr.items[fr.step]!;
+        if (!item.messageId) return;
+        const v = frValues[frKeyOf(item)] ?? EMPTY_RICH;
+        mailSend.send({
+          kind: "mail_send",
+          inReplyTo: item.messageId,
+          body: v.text,
+          ...(v.html ? { html: v.html } : {}),
+        });
       },
     },
     {
@@ -4855,6 +4925,53 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
       label: t("shortcuts.resurface"),
       disabled: focused == null,
       run: () => focused && onMessageAction("resurface", focused),
+    },
+    {
+      /* MOVE — opens the bar's destination strip on the focused message (`barPanel`, the
+         chrome-held state every mount of that bar renders), where the pane lands focus on
+         the first destination so `m` then ↵ files. A toggle, the `r` convention. Declared
+         HERE, not in the bar, so the sheet documents it even while nothing is open. */
+      chord: "m",
+      group: "message",
+      label: t("shortcuts.move"),
+      disabled: focused == null,
+      run: () => {
+        if (!focused) return;
+        setBarPanel((p) =>
+          p?.panel === "move" && p.messageId === focused.id
+            ? null
+            : { messageId: focused.id, panel: "move" },
+        );
+      },
+    },
+    {
+      /* DELETE — the prototype's two-press ceremony: the first `d` ASKS (the same confirm
+         strip the ⋯ menu opens, focus landing on Cancel), the second CONFIRMS by clicking
+         the strip's own danger button — the ONE dispatch site of `"delete"` stays that
+         button, so the flag-off race cannot ghost-delete (flag gone ⇒ strip gone ⇒ nothing
+         to click). The gates are the strip's own render gates (folders on, mirror holds the
+         row), so the sheet never advertises a delete the bar would refuse to draw. */
+      chord: "d",
+      group: "message",
+      label:
+        barPanel?.panel === "delete" ? t("shortcuts.deleteConfirm") : t("shortcuts.deleteAsk"),
+      disabled:
+        focused == null
+        || consent.foldersEnabled !== true
+        || reader.get<EngineMessage>("message", focused.id) == null,
+      /* A HELD KEY IS ONE PRESS. Key auto-repeat would otherwise walk the whole ceremony on
+         its own — the first repeat opens the ask, a later repeat confirms it — turning a
+         finger resting on `d` into an un-undoable delete (review finding, round 1). The
+         second press of the ceremony must be a second PHYSICAL press. */
+      when: (e) => !e.repeat,
+      run: () => {
+        if (!focused) return;
+        if (barPanel?.panel === "delete" && barPanel.messageId === focused.id) {
+          document.querySelector<HTMLButtonElement>(".abar-delete .abar-danger")?.click();
+        } else {
+          setBarPanel({ messageId: focused.id, panel: "delete" });
+        }
+      },
     },
     {
       chord: "mod+k",
@@ -5198,6 +5315,13 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
       group: "navigate" as const,
       // The rail's own label, so the sheet and the rail cannot disagree about what `3` is.
       label: t("shortcuts.goPile", { pile: item.label }),
+      /* A HELD DIGIT IS ONE NAVIGATION. Auto-repeat re-running a jump is never wanted — and
+         it was exploitable across a boundary: hold `1` with compose's send-later picker
+         open, the first press schedules and CLOSES the picker, and the repeats then fell
+         through to THIS binding and navigated away from the message being scheduled
+         (review finding, round 2). A repeat falls through to nothing (no digit is a
+         sequence prefix), so it simply does not fire. */
+      when: (e: KeyboardEvent) => !e.repeat,
       run: () => {
         // The SAME conversion the rail handler uses, from the same table. A `startsWith`
         // test here would be a second opinion about which rows are triage rows.
@@ -5424,6 +5548,10 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
       conversationOf,
       bodyOf: bodyOfMessage, hydrateBody, hydrateThread,
       attachments, remoteImages,
+      // The action bar's open destination strip — held here for the mounted-twice reason the
+      // reply draft is (a strip opened by key in the column must be the strip the sheet
+      // shows). Keyed by message id in the value itself; cleared on focus moves below.
+      barPanel, setBarPanel,
     }),
     [ownAddresses, absoluteTime, toggleAbsoluteTime, replyTo, replyAll, replyMode, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome,
       replyEnvelope, replyFromId, replyAttachments, replySig, replySubjectEdit,
@@ -5431,7 +5559,7 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
       consent.signatures, consent.signaturesKnown, sendSurfaceMaxTotalBytes, replyBook,
       openSenderMenu, ownNameOf, writeTo, openReply, openForward, openSubjectRule,
       conversationOf, bodyOfMessage, hydrateBody, hydrateThread, attachments, remoteImages,
-      consent.foldersEnabled, reader],
+      consent.foldersEnabled, reader, barPanel],
   );
 
   // Resolved here rather than inside the popover so a sender whose last message has just
@@ -6508,7 +6636,17 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
         }}
         onSkip={() => fr && setFr({ ...fr, step: fr.step + 1 })}
         onClose={() => setFr(null)}
-        doneLabel={frPhase === "sending" ? t("reply.sending") : t("triage.frDone")}
+        doneLabel={
+          frPhase === "sending" ? (
+            t("reply.sending")
+          ) : (
+            <>
+              {t("triage.frDone")}
+              {/* The verb's chord (the run's own ⌘↵ binding) — the always-on-caps law. */}
+              <Kbd>⌘ ↵</Kbd>
+            </>
+          )
+        }
         skipLabel={t("triage.frSkip")}
       />
 

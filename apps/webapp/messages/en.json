@@ -755,7 +755,9 @@
     "keyAllSpam": "mark every waiting sender spam",
     "keyFile": "file this sender to {dest}",
     "keyFileRead": "file to {dest} and mark read",
-    "retry": "Retry"
+    "retry": "Retry",
+    "keySegPrev": "previous section",
+    "keySegNext": "next section"
   },
   "triage": {
     "title": "Triage",
@@ -974,7 +976,12 @@
     "sendLaterPast": "That time has passed. Pick a future time.",
     "sendLaterZone": "Times are in your time zone ({zone}).",
     "sendLaterUnavailable": "Send later isn't available for messages with attachments or forwards yet.",
-    "toastScheduled": "Scheduled for {when}."
+    "toastScheduled": "Scheduled for {when}.",
+    "keySchedule": "Schedule the send",
+    "keyLaterTonight": "Send later: this evening",
+    "keyLaterTomorrow": "Send later: tomorrow morning",
+    "keyLaterMonday": "Send later: Monday morning",
+    "keyLaterPick": "Send later: pick a time"
   },
   "draftReply": {
     "verb": "Draft reply",
@@ -2157,7 +2164,19 @@
     "zoneRead": "Focus the open message",
     "zoneMenuUp": "Up the menu",
     "zoneMenuDown": "Down the menu",
-    "zoneScroll": "Scroll the open message"
+    "zoneScroll": "Scroll the open message",
+    "goLater": "Go to Answer Later",
+    "goParked": "Go to Parked",
+    "goResurface": "Go to Resurface",
+    "goDrafts": "Go to Drafts",
+    "goHistory": "Go to History",
+    "goSettings": "Go to Settings",
+    "pull": "Pull new mail now",
+    "frSend": "Send this reply, next message",
+    "move": "Move to another place",
+    "deleteAsk": "Delete — asks first",
+    "deleteConfirm": "Confirm the delete",
+    "panelClose": "Close the open row"
   },
   "viewError": {
     "title": "This view didn't load.",

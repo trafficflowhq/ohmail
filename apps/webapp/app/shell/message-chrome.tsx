@@ -29,6 +29,13 @@ import { SIG_FOLLOWING, type SignatureState } from "./signature";
 import type { ReplyEnvelopeEdit } from "./compose-from";
 import type { RemoteImagesChrome } from "./remote-images";
 
+/**
+ * The three sub-rows that can take the action bar's place. Declared HERE and not in
+ * `MessagePane` because the chrome carries the open one (see `barPanel`), and the pane
+ * importing the chrome's type is the direction that cannot cycle.
+ */
+export type MessageBarPanel = "move" | "resurface" | "delete";
+
 export interface MessageChrome {
   /**
    * THE READER'S OWN ADDRESSES, so the message header can fold a recipient that IS the reader
@@ -82,6 +89,21 @@ export interface MessageChrome {
    */
   absoluteTime: boolean;
   onToggleAbsoluteTime: () => void;
+  /**
+   * THE ACTION BAR'S OPEN DESTINATION PANEL (Move / Resurface / the delete confirm), SHARED
+   * across every mount of the bar — the reply-draft argument at the top of this file, applied
+   * to a strip: the focused message's bar renders in the reading column AND the reader sheet
+   * (and on the open stream card), and a panel opened by key in one had to be visible in the
+   * one the reader is actually looking at. Keyed by message id so a panel can never render
+   * over a different message's bar; the shell clears it when focus moves (the same "a
+   * half-open Move row must not carry over" rule the local state used to enforce per pane).
+   *
+   * OPTIONAL with a no-op setter absent, so the inert default and every provider-less mount
+   * (the desktop shell, bare view tests) keep compiling — there the bar falls back to nothing
+   * open, which is the resting strip.
+   */
+  barPanel?: { messageId: string; panel: MessageBarPanel } | null;
+  setBarPanel?: (next: { messageId: string; panel: MessageBarPanel } | null) => void;
   /** The message id whose inline reply editor is open, if any. */
   replyTo: string | null;
   /**
