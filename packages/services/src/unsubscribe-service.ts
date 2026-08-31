@@ -310,6 +310,36 @@ const escapeKeyPart = (s: string): string => s.replace(/%/g, "%25").replace(/\|/
  * closed here and must not be read as closed. What IS closed is the no-forgery attack above,
  * unconditionally and in every deployment.
  *
+ * **THE SECOND RESIDUAL, FOUND BY REVIEW AND ACCEPTED RATHER THAN CLOSED: A LIST WHOSE POSTERS
+ * KEEP THEIR OWN `From` DOMAIN NO LONGER COLLAPSES TO ONE CLAIM.** Some mailing-list software
+ * preserves each poster's original `From` while the list infrastructure injects one shared
+ * `List-ID` and one shared one-click route — a discussion list rather than a newsletter. Under
+ * this key, `alice@a.example` and `bob@b.example` posting to the SAME list now derive TWO keys,
+ * not one, so the automatic pass may send an RFC 8058 POST once per author domain actually seen
+ * rather than once per list.
+ *
+ * **NOT REVERSED, because reversing it reopens the vulnerability this whole function exists for.**
+ * Any rule that collapses two different claimed domains onto one key — "same List-ID, any
+ * domain" — is EXACTLY the rule an attacker exploits: `evil.example` carrying the victim's
+ * `List-ID` would once again match whatever the victim's real domain claims, because nothing
+ * distinguishes "a second legitimate poster" from "a hostile domain claiming the same list name"
+ * without an authenticated signal, and an authenticated signal is unavailable for the entire
+ * production corpus (above). There is no version of this key that is BOTH domain-independent and
+ * closed against the sender-chosen-key attack; picking one is picking which failure mode to keep.
+ *
+ * **WHY THIS DIRECTION IS THE RIGHT ONE TO KEEP.** A repeat send is a REPEATED, IDEMPOTENT-AT-THE
+ * -SENDER courtesy — this file's own `onScreenOut` doc and the standing project decision
+ * (`POST /messages/:id/unsubscribe is not idempotent — deliberate: its effect lives at a third
+ * party where a replay is not ours to promise; a repeat POST re-sends the same RFC 8058 request,
+ * which is what a mail client's own button does`) already treat a second identical request as
+ * harmless. A silenced victim list is not recoverable at all: the mailbox never asks again. Over-
+ * splitting costs the sender a handful of extra, harmless POSTs; under-splitting costs the reader
+ * a subscription they can never leave through this feature again. Bounded on the side that is
+ * bounded, closed on the side that is not — see the mixed-domain regression, which proves both
+ * that a discussion-list shape still fires independently PER domain (bounded, not silently
+ * dropped) and that two posts from the SAME domain still collapse to one (the property `List-ID`
+ * was chosen for is not thrown away, only narrowed to one domain at a time).
+ *
  * **THE COST OF CHANGING THE KEY, MEASURED.** Old `list:<id>` rows no longer match the key their
  * list now derives — 58 rows across 5 mailboxes in production. Each may cost ONE further
  * one-click POST the next time a message from that list is screened out; RFC 8058 requests are
