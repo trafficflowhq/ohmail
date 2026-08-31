@@ -25,6 +25,10 @@ import type { Cursor } from "./types.js";
 
 /** What a bound parameter may be. Everything this store writes is TEXT, but the seam allows
  * what SQLite itself allows so an executor does not need a translation layer. */
+/** What a closed {@link SqlMirrorStore} rejects with. A sentence a bug report can carry. */
+export const SQL_MIRROR_CLOSED =
+  "this mirror was closed — a new session builds a new store rather than reopening this one";
+
 export type SqlValue = string | number | null;
 
 /** One row, as the executor hands it back — column name → value. */
@@ -156,6 +160,9 @@ export class SqlMirrorStore extends BaseMirrorStore {
     this.opener = opts.open;
   }
 
+  /** See {@link close}: once closed, this instance may never open — or create — its database. */
+  private closed = false;
+
   /**
    * Open lazily, once: create the schema, then bind ownership — BEFORE the handle is published,
    * and therefore before `load()` can read a record out of it. An ownership check that ran
@@ -168,6 +175,18 @@ export class SqlMirrorStore extends BaseMirrorStore {
    * (risk 1): an app that looks freshly installed over a mailbox that is actually on the device.
    */
   private open(): Promise<SqlExecutor> {
+    // ── A CLOSED STORE IS CLOSED FOR GOOD ─────────────────────────────────────────────────
+    //
+    // `close()` used to null the handle and nothing more, so any later call simply opened the
+    // database again — which on this arm means CREATING it. That turned a forget into a race:
+    // the connection layer closes the store, the mirror is deleted and read back as absent, the
+    // screen says the mail is gone, and then a mutation that was still in flight settles,
+    // touches the store, and recreates the same database with its outbox and its pages in it.
+    // No debt is left to delete it, because the forget had already cleared one.
+    //
+    // So the latch is permanent for this instance. A new session builds a new store — which is
+    // what every caller here already does — and this one never speaks to sqlite again.
+    if (this.closed) return Promise.reject(new Error(SQL_MIRROR_CLOSED));
     if (this.db) return Promise.resolve(this.db);
     if (!this.opening) {
       this.opening = (async () => {
@@ -310,6 +329,7 @@ export class SqlMirrorStore extends BaseMirrorStore {
   }
 
   close(): void {
+    this.closed = true;
     void this.db?.close?.();
     this.db = null;
     this.opening = null;

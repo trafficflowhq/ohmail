@@ -346,7 +346,11 @@ export class ServerProfileStore {
       // credential stayed readable under a key nothing lists any more. So the value goes, the
       // value is read back, and the row leaves the list only once it is really gone.
       await this.kv.remove(`${PREFIX}.${id}`);
-      if ((await this.readProfile(id)) !== null) {
+      // `kv.get`, not `readProfile`: that maps "absent" and "present but unreadable" to the same
+      // `null`, so a malformed value surviving a refused remove read as an empty keystore — and
+      // the id then left the index, which is the only durable name those credential-bearing
+      // bytes had. Whether the value PARSES is not the question a removal asks.
+      if ((await this.kv.get(`${PREFIX}.${id}`)) !== null) {
         throw new Error(`this phone still holds the pairing "${id}" — the keystore refused to forget it`);
       }
       const idx = await this.readIndex();
