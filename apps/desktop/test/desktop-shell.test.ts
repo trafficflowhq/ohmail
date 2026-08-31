@@ -109,6 +109,66 @@ describe("tauri.conf.json", () => {
   });
 
   /**
+   * THE PLACES A STRANGER READS THE VERSION, WHICH THE CENSUS ABOVE DOES NOT OPEN.
+   *
+   * The test above covers the five MACHINE-READABLE statements — the ones a build reads. It does
+   * not open the four places a PERSON reads, and those are the ones a download lands on: the two
+   * sentences in this app's README that spell the number out, the download badge at the top of the
+   * public README, and the changelog's own heading and link references. A release that bumps the
+   * five and leaves any of the four behind ships an installer whose filename disagrees with the
+   * page offering it, and the suite that exists to stop exactly that reports green.
+   *
+   * This was found by review during the 0.12.2 release: the comment above claims the census
+   * prevents a partial bump, and for four of nine stating places it did not. The claim is the thing
+   * under test, so the test is widened rather than the comment softened.
+   *
+   * The changelog is asserted only to CONTAIN a section for the current version — a changelog is
+   * append-only history, so every earlier version legitimately appears in it, and pinning the
+   * newest heading by position would fail the moment an Unreleased section grows.
+   */
+  it("states the same version everywhere a person reads it", () => {
+    const v = conf.version;
+    const read = (rel: string) => fs.readFileSync(path.resolve(APP, rel), "utf8");
+    const appReadme = read("README.md");
+    const pubReadme = read("../../public/ohmail/README.md");
+    const changelog = read("../../public/ohmail/CHANGELOG.md");
+
+    /* The desktop README states the number twice, and ONLY these two sentences are statements —
+     * a bare `x.y.z` anywhere else in that file is illustration, not a claim about this build
+     * (the CFBundleVersion passage argues about a hypothetical `0.8.0` bundle being read as a
+     * downgrade, and that number must not move with the release). So each stating sentence is
+     * matched by its own words and the captured number compared, rather than sweeping the file
+     * for semvers — which is what this assertion did in its first draft, and it went red on that
+     * very passage. Matching the sentence also means deleting one fails here rather than passing
+     * vacuously. */
+    const statements: [string, RegExp][] = [
+      ["the \"every place it is written\" sentence",
+        /The version is \*\*`(\d+\.\d+\.\d+)`\*\*, bare, in every place it is written/],
+      ["the CFBundleShortVersionString sentence",
+        /`CFBundleShortVersionString` is `(\d+\.\d+\.\d+)` and is what the app/],
+    ];
+    for (const [what, re] of statements) {
+      const found = re.exec(appReadme)?.[1];
+      expect(found, `apps/desktop/README.md no longer carries ${what}`).toBeTruthy();
+      expect(found, `apps/desktop/README.md states ${found} in ${what}`).toBe(v);
+    }
+
+    // The download badge is what the public README offers people; a stale one advertises the
+    // previous release from a page whose link resolves to this one.
+    const badge = /img\.shields\.io\/badge\/download-v([^-]+)-/.exec(pubReadme)?.[1];
+    expect(badge, "the public README has no download badge to check").toBeTruthy();
+    expect(badge).toBe(v);
+
+    // The changelog needs a section for this release and a link reference that resolves to its
+    // tag; the Unreleased comparison has to start from this release, not the one before it.
+    expect(changelog, `no changelog section for ${v}`).toContain(`## [${v}] — `);
+    expect(changelog, `no changelog link reference for ${v}`)
+      .toContain(`[${v}]: https://github.com/trafficflowhq/ohmail/releases/tag/v${v}`);
+    expect(changelog, "the Unreleased comparison does not start at this release")
+      .toContain(`[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v${v}...HEAD`);
+  });
+
+  /**
    * THE DESKTOP MAY LAG THE WEB, BUT ONLY WITHIN THE SAME FEATURE RELEASE.
    *
    * The web app deploys continuously and the installers are cut by hand, so the two numbers are
