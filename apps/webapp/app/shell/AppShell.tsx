@@ -5747,6 +5747,9 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
                    passing it here would slide the line up over rows that are genuinely above
                    it. Two questions, two numbers, and only one of them is positional. */
                 freshCount={receiptsPartition.fresh.length}
+                /* …and the badge, separately: what the pane's headline SAYS. Same field as the
+                   rail (`receiptsNew`), so the two numbers on screen cannot disagree. */
+                newCount={receiptsNew}
                 tags={tags}
                 now={now}
                 cur={receiptsCur}

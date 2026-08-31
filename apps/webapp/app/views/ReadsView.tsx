@@ -328,11 +328,17 @@ export function ReadsView({
   const showWaterline = partition.waterline != null && win.start <= freshCount && win.end > freshCount;
   const unreadCount = all.filter((m) => m.unread).length;
   /**
-   * WHAT THE PANE COUNTS: "new since last visit" — the fresh side of the line — never an
-   * unread count. Per-row read state renders too (the quiet ink on `\Seen` rows), but the
-   * headline number is the line's statement, and the two must not be conflated.
+   * WHAT THE PANE COUNTS: the BADGE — the fresh side of the line that is still unread on the
+   * server ({@link FeedPartition.newCount}) — never a bare unread count over the pile, and no
+   * longer the bare `freshCount` either. `freshCount` is POSITIONAL: it slices the list and
+   * places the waterline, and over a stale anchor it can stand above rows the mailbox says
+   * were read. While this number was `freshCount` and the rail's was `newCount`, one screen
+   * said "3 new" beside a rail saying "1" — the cross-surface divergence this whole seam
+   * exists to close, re-created two inches apart (review round 2). One field, every surface:
+   * the rail, this headline, the phone's meta line and its dock all read the selector's own
+   * count now.
    */
-  const newCount = freshCount;
+  const newCount = partition.newCount;
   /**
    * THE MARK-ALL PRESS CLEARS BOTH STATEMENTS THE VIEW MAKES, because a press that clears
    * only one was measured lying: the button (keyed on unread) vanished while the count and

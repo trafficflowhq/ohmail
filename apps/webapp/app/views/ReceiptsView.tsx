@@ -38,6 +38,7 @@ export function ReceiptsView({
   messages,
   waterline = null,
   freshCount,
+  newCount,
   tags,
   threadParticipants,
   absoluteTime,
@@ -73,6 +74,16 @@ export function ReceiptsView({
    * cannot disagree. Absent ⇒ everything is fresh (`messages.length`).
    */
   freshCount?: number;
+  /**
+   * THE DISPLAYED "{count} new" — {@link FeedPartition.newCount}, the same field the rail and
+   * the phone read, so the pane cannot say "3 new" beside a rail saying "1" (review round 2:
+   * exactly that, over a stale anchor whose above-line rows were already read). Distinct from
+   * `freshCount`, which is POSITIONAL — it places the waterline and slices the list — and must
+   * not shrink with the badge or the line slides up over rows genuinely above it. Absent ⇒
+   * `freshCount`, which is what every harness that mounts this view without a shell passed
+   * before the two numbers could differ.
+   */
+  newCount?: number;
   /**
    * THE PEOPLE IN A ROW'S CONVERSATION, for its lead circles — bound to the engine's reader by
    * the shell (this view has none) and mapped to `{initials, hue}`. A LOOKUP into the shell's
@@ -156,6 +167,8 @@ export function ReceiptsView({
   }, []);
   /** Where the line sits in the flat list; everything is fresh until the shell says otherwise. */
   const fresh = Math.min(freshCount ?? all.length, all.length);
+  /** What the headline SAYS — the badge, never the position. See the prop's own comment. */
+  const shownNew = newCount ?? fresh;
   /**
    * The mark-all press clears both of this view's statements — the unread ids through the
    * shell's chunked `mark_seen`, the "N new" count through one line-commit to the top via
@@ -435,8 +448,8 @@ export function ReceiptsView({
     <section className="view split view-receipts">
       <ListPane
         title={t("title")}
-        /* "New since last visit" — the fresh side of the line, never an unread count. */
-        meta={t("meta", { count: fresh })}
+        /* "New since last visit", still unread on the server — the badge, never the position. */
+        meta={t("meta", { count: shownNew })}
         action={
           onMarkAllRead ? (
             <MarkAllRead
@@ -481,7 +494,7 @@ export function ReceiptsView({
       >
         <div className="stream-top">
           <h1>{t("title")}</h1>
-          <span className="meta num">{t("meta", { count: fresh })}</span>
+          <span className="meta num">{t("meta", { count: shownNew })}</span>
         </div>
         <div className="stream-hints">
           <ShortcutHint />
