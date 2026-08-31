@@ -2,6 +2,7 @@ import { sql, type SQL } from "drizzle-orm";
 import type { ServiceContext, Db } from "./context.js";
 import { materializeMessages } from "./dto/materialize.js";
 import { clampLimit } from "./pagination.js";
+import { ServiceError } from "./errors.js";
 import type { MessageDTO } from "./dto/types.js";
 
 /**
@@ -356,6 +357,30 @@ export class SearchService {
 
   // ── filter → WHERE (account scope always first) ───────────────────────
 
+  /**
+   * The two date bounds are the only filter values that are CAST rather than compared.
+   *
+   * `${f.dateFrom}::timestamptz` is parameterized, so there is no injection here — but the cast
+   * is evaluated by Postgres, and a string that is not an instant raises 22007
+   * `invalid input syntax for type timestamp with time zone`. That reaches `withErrorEnvelope`
+   * as an unhandled error and answers **500 `internal`** for what is plainly a bad request:
+   * `GET /search?q=x&dateFrom=notadate`.
+   *
+   * It is refused HERE rather than in `routes/search.ts` because the route is not the only door.
+   * `apps/sidecar/src/cloud-read.ts` calls `searchService.search` directly, so a check living in
+   * the route would guard the hosted door and not the desktop one — the shape this repository
+   * treats as a finding in its own right.
+   *
+   * The message matches the one `MessageService.list` already gives for `beforeDate`, because
+   * they are the same refusal about the same kind of value.
+   */
+  private static instantOr400(value: string, field: string): string {
+    if (Number.isNaN(new Date(value).getTime())) {
+      throw new ServiceError("validation_failed", 400, `${field} must be an ISO instant`);
+    }
+    return value;
+  }
+
   private whereSql(accountId: string, f: SearchFilters): SQL {
     // `deleted_at is null` unconditionally (mail 0065): search is a living view, and a deleted
     // or fully-expunged message must not come back as a hit over its stored (husked) headers.
@@ -364,8 +389,12 @@ export class SearchService {
     if (f.sender !== undefined) preds.push(sql`lower(m.from_address) = lower(${f.sender})`);
     if (f.unread !== undefined) preds.push(sql`m.unread = ${f.unread}`);
     if (f.hasAttachments !== undefined) preds.push(sql`m.has_attachments = ${f.hasAttachments}`);
-    if (f.dateFrom !== undefined) preds.push(sql`m.date >= ${f.dateFrom}::timestamptz`);
-    if (f.dateTo !== undefined) preds.push(sql`m.date <= ${f.dateTo}::timestamptz`);
+    if (f.dateFrom !== undefined) {
+      preds.push(sql`m.date >= ${SearchService.instantOr400(f.dateFrom, "dateFrom")}::timestamptz`);
+    }
+    if (f.dateTo !== undefined) {
+      preds.push(sql`m.date <= ${SearchService.instantOr400(f.dateTo, "dateTo")}::timestamptz`);
+    }
     return sql.join(preds, sql` and `);
   }
 }
