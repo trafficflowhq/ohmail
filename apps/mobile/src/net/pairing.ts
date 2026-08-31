@@ -509,7 +509,10 @@ export async function forgetProfile(
 ): Promise<ForgetOutcome> {
   const row = (await env.profiles.list()).find((p) => p.id === profileId) ?? null;
   const ownerKey = row === null ? null : mirrorOwnerKey(row.origin, row.accountId);
-  if (ownerKey !== null) await env.profiles.markPendingWipe(ownerKey);
+  // The intent names BOTH stores. An owner key alone made this crash boundary RESURRECT the
+  // pairing: a kill here left the profile standing and still active, and the next launch
+  // deleted the mirror, cleared the debt, then reconnected and drained the mailbox back.
+  if (ownerKey !== null) await env.profiles.markPendingWipe(profileId, ownerKey);
 
   try {
     await env.profiles.remove(profileId);
@@ -547,7 +550,16 @@ export async function forgetProfile(
 }
 
 /**
- * Finish the forgets that did not finish — run once at launch, before any profile is read.
+ * Finish the forgets that did not finish — run once at launch, BEFORE any profile is read.
+ *
+ * ── THE CREDENTIAL GOES FIRST HERE TOO, AND THAT ORDER IS THE WHOLE POINT ───────────────────
+ *
+ * An owed entry naming a profile means the person pressed Forget and the process died before
+ * the keystore row went. Deleting only the mirror in that state is worse than doing nothing:
+ * the profile is still there and still ACTIVE, so the launch that follows reconnects it and
+ * drains the entire mailbox back onto the phone — a forget interrupted at its documented crash
+ * point coming back as a paired server with the mail in it. So the row is removed first, and
+ * only then is the mirror deleted and read back.
  *
  * A refusal KEEPS the debt: the entry stays in the index and the next launch tries again. That
  * is the whole reason the intent is durable, so swallowing the failure here is the design and
@@ -555,12 +567,15 @@ export async function forgetProfile(
  */
 export async function drainPendingWipes(env: PairingEnv): Promise<string[]> {
   const stillOwed: string[] = [];
-  for (const ownerKey of await env.profiles.pendingWipes()) {
+  for (const owed of await env.profiles.pendingWipes()) {
     try {
-      await forgetMirror(env.engineDeps, ownerKey);
-      await env.profiles.clearPendingWipe(ownerKey);
+      // Idempotent: `remove` on a row that is already gone touches nothing and its read-back
+      // passes, so a debt whose credential half landed before the kill costs one no-op.
+      if (owed.id !== "") await env.profiles.remove(owed.id);
+      await forgetMirror(env.engineDeps, owed.owner);
+      await env.profiles.clearPendingWipe(owed.owner);
     } catch {
-      stillOwed.push(ownerKey);
+      stillOwed.push(owed.owner);
     }
   }
   return stillOwed;

@@ -271,6 +271,15 @@ export async function registerWake(
 }
 
 /**
+ * Did the server row really go? `ok: false` means it is still there and still causes wakes.
+ *
+ * A verdict and not `void`, because "the registration was removed" is a claim the Settings pane
+ * makes to a person: this helper answered `void` for a 401, a 500 and a dead network alike, and
+ * the pane said the registration was gone over a row the server had kept.
+ */
+export type WakeDrop = { ok: true } | { ok: false; reason: string };
+
+/**
  * TAKE ONE SERVER ROW DOWN, and leave the distributor alone.
  *
  * Split out of {@link forgetWake} for the case that has no other answer: SWITCHING PROFILES.
@@ -284,15 +293,22 @@ export async function registerWake(
  * Never throws: a take-back the user asked for must not fail in their face because a server is
  * unreachable, and a row whose endpoint has gone quiet is pruned server-side on the first 404/410.
  */
-export async function dropWakeRow(session: ConnectedSession, id: string | null): Promise<void> {
-  if (id === null) return;
+export async function dropWakeRow(session: ConnectedSession, id: string | null): Promise<WakeDrop> {
+  if (id === null) return { ok: true };
+  let res: Response;
   try {
-    await session.bearer.fetch(`${session.profile.origin}/push/subscriptions/${id}`, {
+    res = await session.bearer.fetch(`${session.profile.origin}/push/subscriptions/${id}`, {
       method: "DELETE",
     });
   } catch {
-    /* unreachable server: the local forget still happens, and a dead endpoint prunes itself */
+    return { ok: false, reason: "server_unavailable" };
   }
+  // 404 IS SUCCESS, and it is the only status besides 2xx that is: the row this call exists to
+  // remove is absent, which is the whole thing being asked for. Everything else — a 401 on a
+  // dead credential, a 500, a proxy's HTML error page — leaves the row where it was, and this
+  // used to report all of them as a removal because it read no status at all.
+  if (res.status === 404 || (res.status >= 200 && res.status < 300)) return { ok: true };
+  return { ok: false, reason: res.status === 401 || res.status === 403 ? "refused" : "server_unavailable" };
 }
 
 /**
@@ -305,15 +321,21 @@ export async function dropWakeRow(session: ConnectedSession, id: string | null):
  * the distributor started answering 410.
  *
  * Neither half throws. A forget is something a person did on purpose; it must not fail in their
- * face because a server is unreachable, and the local state is cleared either way.
+ * face because a server is unreachable, and the local state is cleared either way — but the
+ * SERVER's verdict is returned, so the pane can stop claiming a removal it did not get.
  */
 export async function forgetWake(
   session: ConnectedSession, distributor: UnifiedPushDistributor, id: string | null,
-): Promise<void> {
-  await dropWakeRow(session, id);
+): Promise<WakeDrop> {
+  const dropped = await dropWakeRow(session, id);
   try {
     await distributor.unregister();
   } catch {
-    /* best-effort by contract */
+    /* best-effort by contract: the endpoint is this phone's own, and a server that keeps
+       POSTing to an unregistered one prunes on the first 404/410 it gets back */
   }
+  // The DISTRIBUTOR half is genuinely best-effort; the SERVER ROW is not, and its verdict is
+  // what the pane renders. A forget still clears the local state either way — a take-back the
+  // person asked for must not fail in their face — but it no longer CLAIMS the row is gone.
+  return dropped;
 }

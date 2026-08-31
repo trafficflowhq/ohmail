@@ -91,7 +91,17 @@ export type InstallVerdict =
   /** No marker: the container is new, so every stored pairing belongs to a dead install. */
   | { kind: "fresh-install"; generation: string; purged: true }
   /** The marker store could not be read. Nothing was purged; the reason is for the log. */
-  | { kind: "unknown"; reason: string };
+  | { kind: "unknown"; reason: string }
+  /**
+   * The container is new, and the keystore REFUSED to give the old install's pairings up.
+   *
+   * Its own verdict rather than `unknown`, because the two say opposite things: `unknown` means
+   * we could not ask, and this means we asked, acted, and a live credential is still on the
+   * phone. The generation is deliberately NOT stamped, so every later launch tries again —
+   * a purge that reported itself done over a surviving refresh token would be the take-back
+   * class's own defect inside its own fix.
+   */
+  | { kind: "purge-refused"; reason: string };
 
 /**
  * Settle whether this launch belongs to the install that stored the pairings, purging them
@@ -116,8 +126,14 @@ export async function settleInstallGeneration(
     if (typeof held === "string" && held !== "") return { kind: "same-install", generation: held };
 
     // No marker ⇒ this container is new ⇒ anything the keystore holds outlived its install.
-    // The purge runs BEFORE the stamp, so a kill here is retried rather than skipped.
-    await profiles.purgeAll();
+    // The purge runs BEFORE the stamp, so a kill here is retried rather than skipped — and a
+    // purge that could not complete THROWS, which lands on the arm below with the generation
+    // still unwritten. Retried at every launch until it lands.
+    try {
+      await profiles.purgeAll();
+    } catch (err) {
+      return { kind: "purge-refused", reason: `the old install's pairings could not be purged: ${String(err)}` };
+    }
     const generation = deps.uuid();
     await db.batch([
       { sql: "INSERT OR REPLACE INTO install (key, value) VALUES (?, ?)", params: [GENERATION_KEY, generation] },

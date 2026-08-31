@@ -288,6 +288,12 @@ export const Copy = {
    * WHAT THE ON-DEVICE COPY DOES AND DOES NOT LEAVE. Three true sentences, and the third is
    * here because the product cannot yet make it false.
    *
+   * The uninstall sentence is careful for a reason. On iOS the Keychain item survives deleting
+   * the app and no code of ours runs at that moment, so the credential is genuinely still there
+   * until the NEXT launch's install-generation purge discards it — "deleting the app removes
+   * both" was a claim about an instant at which nothing we wrote can act. The remedy that works
+   * immediately is the server-side revoke, so the sentence names it.
+   *
    * The pairing credential is kept out of every backup (`WHEN_UNLOCKED_THIS_DEVICE_ONLY`), and
    * on Android this app's own backup rules now keep the mirror out too. On iOS the mirror lives
    * in the app's Documents directory, which the platform's own cloud and computer backups include
@@ -299,10 +305,12 @@ export const Copy = {
    * When the exclusion ships, this sentence goes with it.
    */
   aboutOnDevice:
-    "Forgetting a server deletes its pairing and the mail this phone had copied, and deleting the "
-    + "app removes both. The pairing itself is never included in a backup. On iPhone and iPad the "
-    + "copied mail is: it lives in this app's documents, which the phone's cloud and computer "
-    + "backups include. On Android it is excluded from both.",
+    "Forgetting a server deletes its pairing and the mail this phone had copied. Deleting the app "
+    + "takes the copied mail with it; on iPhone and iPad the pairing stays in the phone's keychain "
+    + "until ohmail is opened again, which discards it before use — to end it straight away, "
+    + "revoke this device from the server's Devices list. The pairing is never included in a "
+    + "backup. On iPhone and iPad the copied mail is: it lives in this app's documents, which the "
+    + "phone's cloud and computer backups include. On Android it is excluded from both.",
 
   /* ------------------------------------------------------------- new mail */
 
@@ -370,6 +378,17 @@ export const Copy = {
   wakeDistributorNone: "None",
   wakeDistributorNoneHint:
     "Turning this off stops wake notifications and removes the registration from your server.",
+  /**
+   * THE SERVER KEPT THE ROW. Its own sentence, because the hint above is a CLAIM and the server
+   * can refuse it: this phone stops listening either way (the distributor registration is gone),
+   * so no wake reaches it, but the row is still there and the server keeps dialling an endpoint
+   * that no longer exists until its own prune fires. Saying "removed" over that would be exactly
+   * the unearned take-back the rest of this release is about.
+   */
+  wakeRowRemains:
+    "Wake notifications are off on this phone. Your server would not remove the registration, so "
+    + "it may keep trying the old address for a while — try again, or revoke this device from the "
+    + "server's Devices list.",
   /** The distributor exists and the registration did not land. One sentence per real cause. */
   wakeOff: (reason: string): string => reason === "endpoint_refused"
     ? "Your distributor's address was refused by the server, so wake notifications are off. Mail "

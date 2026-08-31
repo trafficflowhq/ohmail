@@ -25,6 +25,8 @@ import { DetailBar } from "../src/ui/chrome";
 
 export default function ServersScreen() {
   const conn = useConnection();
+  /** What a forget could not take back. Held HERE — see the note beside where it renders. */
+  const [forgetFailure, setForgetFailure] = useState<string | null>(null);
 
   return (
     <Screen>
@@ -43,7 +45,12 @@ export default function ServersScreen() {
           <Panel style={{ marginTop: 14, paddingBottom: 12 }}>
             <Section style={{ paddingTop: 16 }}>{Copy.serversProfiles}</Section>
             {conn.profiles.map((p) => (
-              <ProfileRow key={p.id} profile={p} active={p.id === conn.activeId} />
+              <ProfileRow
+                key={p.id}
+                profile={p}
+                active={p.id === conn.activeId}
+                onForgetFailed={(r) => setForgetFailure(r === "" ? null : r)}
+              />
             ))}
             <View style={{ paddingHorizontal: 20, paddingTop: 6 }}>
               <Txt variant="caption" tone="ink3" style={{ lineHeight: 16 }}>
@@ -52,6 +59,24 @@ export default function ServersScreen() {
             </View>
           </Panel>
         ) : null}
+
+        {/* ── THE FAILURE OUTLIVES THE ROW IT IS ABOUT ────────────────────────────────────
+            A partial forget removes the CREDENTIAL and leaves the mail, so by the time the
+            outcome comes back the profile row is gone from `conn.profiles` and the component
+            that asked for the forget has unmounted. Holding the sentence in the row meant a
+            `setState` into a tree that no longer existed: the server vanished from the list and
+            the only notice that mail was still on the phone was thrown away — the exact
+            false-success shape this whole change is about. So it lives here, above the list,
+            and survives the row's removal. */}
+        {forgetFailure === null ? null : (
+          <Panel style={{ marginTop: 14, paddingVertical: 14 }}>
+            <View style={{ paddingHorizontal: 20 }}>
+              <Txt variant="caption" tone="ink2" style={{ lineHeight: 16 }}>
+                {Copy.serversForgetFailed(forgetFailure)}
+              </Txt>
+            </View>
+          </Panel>
+        )}
 
         <AddPanel />
       </Scroller>
@@ -128,19 +153,15 @@ function LiveFacts() {
   );
 }
 
-function ProfileRow({ profile, active }: { profile: ServerProfile; active: boolean }) {
+function ProfileRow({ profile, active, onForgetFailed }: {
+  profile: ServerProfile;
+  active: boolean;
+  /** Raised to the SCREEN, because a partial forget removes this very row. See its note there. */
+  onForgetFailed: (reason: string) => void;
+}) {
   const conn = useConnection();
   const t = useTheme();
   const needsPair = profile.refreshToken === null;
-  /**
-   * WHAT A FORGET COULD NOT TAKE BACK, in the row that asked for it.
-   *
-   * `conn.forget` answers an Attempt now, because a take-back that half-landed must not be
-   * reported as one — the pairing may be gone while the copied mail is still on the device.
-   * Rendering it here rather than as a toast keeps the sentence beside the server it is about,
-   * and it survives the re-render the forget itself causes.
-   */
-  const [failure, setFailure] = useState<string | null>(null);
   // Forgetting the FINAL pairing returns to the welcome screen — explicitly, from the
   // action itself. The tabs' redirect cannot be trusted to fire here: while /servers is
   // the focused route, the gated layouts behind it may never re-render their verdict, and
@@ -149,11 +170,13 @@ function ProfileRow({ profile, active }: { profile: ServerProfile; active: boole
   // removes exactly this row).
   const forget = async () => {
     const wasLast = conn.profiles.length === 1;
-    setFailure(null);
+    onForgetFailed("");
     const outcome = await conn.forget(profile.id);
     if (!outcome.ok) {
-      setFailure(outcome.reason);
-      return; // the row stays on screen: something it names is still here
+      // NOT a local setState: the credential half succeeds first, so this component is usually
+      // already unmounted by the time the outcome arrives. The screen holds it instead.
+      onForgetFailed(outcome.reason);
+      return;
     }
     if (wasLast) router.replace("/welcome");
   };
@@ -189,13 +212,6 @@ function ProfileRow({ profile, active }: { profile: ServerProfile; active: boole
       <View style={{ flexDirection: "row", paddingHorizontal: 12, paddingBottom: 6 }}>
         <Button label={Copy.serversForget} variant="quiet" onPress={() => void forget()} />
       </View>
-      {failure === null ? null : (
-        <View style={{ paddingHorizontal: 20, paddingBottom: 8 }}>
-          <Txt variant="caption" tone="ink2" style={{ lineHeight: 16 }}>
-            {Copy.serversForgetFailed(failure)}
-          </Txt>
-        </View>
-      )}
     </View>
   );
 }

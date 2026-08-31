@@ -130,7 +130,20 @@ export function WakeProvider({ children }: { children: ReactNode }) {
     setBusy(true);
     try {
       const next = await registerWake(session, unifiedPushDistributor());
-      if (!fresh()) return;
+      if (!fresh()) {
+        /**
+         * ── A SUPERSEDED REGISTRATION STILL CREATED A ROW ────────────────────────────────────
+         *
+         * Dropping the RESULT was right and dropping the row with it was the bug. `registerWake`
+         * has a fifteen-second ceiling, so a profile switch inside that window lands here — and
+         * the POST has already committed a `push_subscriptions` row on the OUTGOING server,
+         * against the one endpoint this whole app shares. The session-change effect below cannot
+         * clean it up, because at the moment it ran `subscriptionId.current` was still null.
+         * So the id is spent here, on the session it was made for, and the row goes down.
+         */
+        if (next.k === "on") void dropWakeRow(session, next.id);
+        return;
+      }
       subscriptionId.current = next.k === "on" ? next.id : null;
       setState(next);
     } catch {
@@ -268,8 +281,19 @@ export function WakeProvider({ children }: { children: ReactNode }) {
     subscriptionId.current = null;
     // The SERVER first, then the device — `forgetWake`'s order, for its reason: the row is what
     // causes wakes, so it goes before the endpoint that receives them stops existing.
-    if (session) void forgetWake(session, unifiedPushDistributor(), id);
-    else void NO_DISTRIBUTOR.unregister();
+    //
+    // THE LOCAL STATE CLEARS EITHER WAY, AND THE CLAIM DOES NOT. Turning wakes off is something
+    // a person did on purpose and must not fail in their face, so the distributor choice and the
+    // pane's state move immediately. But `forgetWake` now answers whether the SERVER row really
+    // went, and a refusal replaces "off" with the sentence that says what is still there — this
+    // used to render a removal over a 401, a 500 or a dead network alike.
+    if (session) {
+      void forgetWake(session, unifiedPushDistributor(), id).then((dropped) => {
+        if (!dropped.ok && liveSession.current === session) setState({ k: "off", reason: "row_remains" });
+      });
+    } else {
+      void NO_DISTRIBUTOR.unregister();
+    }
     chooseDistributor(null);
     readDevice();
     setState({ k: "no_distributor" });

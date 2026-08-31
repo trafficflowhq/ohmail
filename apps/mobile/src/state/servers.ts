@@ -61,29 +61,59 @@ interface Index {
   active: string | null;
   ids: string[];
   /**
-   * MIRROR OWNER KEYS WHOSE MAIL IS OWED A DELETION — the durable half of "forget".
+   * FORGETS THAT ARE OWED — the durable half of "forget", and it names BOTH stores.
    *
-   * A forget removes a credential from the keystore and mail from a SQLite file, and those are
-   * two stores: a kill between them used to leave the mail behind for ever, because the profile
+   * A forget removes a credential from the keystore and mail from a SQLite file. Those are two
+   * stores, and a kill between them used to leave the mail behind for ever, because the profile
    * carrying the origin and account that NAME the mirror was already gone. So the intent is
    * written here BEFORE either store is touched, and cleared only once the deletion has been
    * read back as landed — the same "persist the decision first, execute it second" rule the
    * durability class arrived at, applied to a take-back instead of an action.
    *
-   * Owner keys, not profile ids: the profile is the thing being removed, and the mirror is
-   * named by `(origin, account)` — which is exactly what a forgotten row no longer holds.
+   * **Each entry carries the PROFILE ID as well as the mirror key, and that pairing is
+   * load-bearing.** An owner key alone made the crash boundary this exists for RESURRECT the
+   * thing being forgotten: a kill after the intent was written and before
+   * `remove(profileId)` left the profile standing and still ACTIVE, so the next launch
+   * dutifully deleted the mirror, cleared the debt, then reconnected the pairing and drained
+   * the whole mailbox back onto the phone. A forget interrupted at its documented crash point
+   * came back as a paired server with the mail in it. With the id here, the launch drain
+   * removes the credential FIRST and the profile can never be booted.
+   *
+   * `id` may be empty for an entry written before this field existed, or for a wipe owed
+   * against a mirror whose profile row was already gone; the drain treats that as "mail only".
    *
    * Bounded ({@link MAX_PENDING_WIPES}) because this rides one expo-secure-store value and iOS
    * warns past 2 KB. Overflow drops the OLDEST, which is the entry a launch has already had the
    * most chances to retry.
    */
-  wipes?: string[];
+  wipes?: PendingWipe[];
+}
+
+/** One owed forget: the credential to remove, and the mirror to delete. See {@link Index.wipes}. */
+export interface PendingWipe {
+  /** The profile row still to be removed, or "" when there is none left to remove. */
+  id: string;
+  /** `mirrorOwnerKey(origin, accountId)` — the database to delete and read back. */
+  owner: string;
 }
 
 const PREFIX = "ohmail.servers.v1";
 
 /** See {@link Index.wipes}: the index is one small keystore value and must stay one. */
 const MAX_PENDING_WIPES = 16;
+
+/**
+ * One persisted wipe entry, defensively. A malformed member is DROPPED rather than throwing —
+ * an unreadable index must lose the list and never the app (the same rule `readIndex` states) —
+ * and the bare-string shape an earlier build wrote is read as "mail only, no profile left".
+ */
+function readWipe(raw: unknown): PendingWipe[] {
+  if (typeof raw === "string") return raw === "" ? [] : [{ id: "", owner: raw }];
+  if (typeof raw !== "object" || raw === null) return [];
+  const w = raw as Partial<PendingWipe>;
+  if (typeof w.owner !== "string" || w.owner === "") return [];
+  return [{ id: typeof w.id === "string" ? w.id : "", owner: w.owner }];
+}
 
 /** Keystore-safe, unique-per-device id. Not a credential — collision-resistance suffices. */
 function mintId(): string {
@@ -109,9 +139,7 @@ export class ServerProfileStore {
       return {
         active: typeof parsed.active === "string" ? parsed.active : null,
         ids: Array.isArray(parsed.ids) ? parsed.ids.filter((i): i is string => typeof i === "string") : [],
-        wipes: Array.isArray(parsed.wipes)
-          ? parsed.wipes.filter((w): w is string => typeof w === "string" && w !== "")
-          : [],
+        wipes: Array.isArray(parsed.wipes) ? parsed.wipes.flatMap(readWipe) : [],
       };
     } catch {
       // An unreadable index loses the LIST, never a mirror: profiles re-pair with one scan
@@ -131,6 +159,14 @@ export class ServerProfileStore {
       ids: idx.ids,
       wipes: (idx.wipes ?? []).slice(-MAX_PENDING_WIPES),
     } satisfies Index));
+  }
+
+  /**
+   * Is this profile owed a forget? Read at LAUNCH, before anything boots: an entry naming a
+   * profile means the person pressed Forget and the process died before the credential went.
+   */
+  async isOwedForget(profileId: string): Promise<boolean> {
+    return (await this.readIndex()).wipes?.some((w) => w.id === profileId) === true;
   }
 
   private async readProfile(id: string): Promise<ServerProfile | null> {
@@ -271,35 +307,44 @@ export class ServerProfileStore {
 
   /* ── the owed deletions (see {@link Index.wipes}) ─────────────────────────────────────── */
 
-  /** Mirror owner keys this phone still owes a deletion. Launch order: oldest first. */
-  async pendingWipes(): Promise<string[]> {
+  /** Forgets this phone still owes, oldest first — the order a launch pays them in. */
+  async pendingWipes(): Promise<PendingWipe[]> {
     return [...((await this.readIndex()).wipes ?? [])];
   }
 
   /**
-   * Record that a mirror is owed a deletion — the FIRST act of a forget, before the credential
-   * is removed and before the database is touched. Idempotent: an owner key already owed keeps
-   * its place in the queue rather than jumping it.
+   * Record that a forget is owed — the FIRST act, before the credential is removed and before
+   * the database is touched. Idempotent on the mirror key; a re-marked entry keeps its place in
+   * the queue rather than jumping it, but DOES adopt a profile id it did not have (a second
+   * forget of a re-paired server must remove the new row too).
    */
-  markPendingWipe(ownerKey: string): Promise<void> {
+  markPendingWipe(profileId: string, ownerKey: string): Promise<void> {
     return this.enqueue(async () => {
       const idx = await this.readIndex();
       const owed = idx.wipes ?? [];
-      if (owed.includes(ownerKey)) return;
-      await this.writeIndex({ ...idx, wipes: [...owed, ownerKey] });
+      const held = owed.find((w) => w.owner === ownerKey);
+      if (held) {
+        if (held.id === profileId || profileId === "") return;
+        await this.writeIndex({
+          ...idx,
+          wipes: owed.map((w) => (w.owner === ownerKey ? { id: profileId, owner: ownerKey } : w)),
+        });
+        return;
+      }
+      await this.writeIndex({ ...idx, wipes: [...owed, { id: profileId, owner: ownerKey }] });
     });
   }
 
   /**
-   * The deletion landed and was read back. Clearing is the LAST act, so a kill anywhere before
-   * it leaves the wipe owed and the next launch finishes it.
+   * The forget landed and was read back at both stores. Clearing is the LAST act, so a kill
+   * anywhere before it leaves the debt owed and the next launch finishes it.
    */
   clearPendingWipe(ownerKey: string): Promise<void> {
     return this.enqueue(async () => {
       const idx = await this.readIndex();
       const owed = idx.wipes ?? [];
-      if (!owed.includes(ownerKey)) return;
-      await this.writeIndex({ ...idx, wipes: owed.filter((w) => w !== ownerKey) });
+      if (!owed.some((w) => w.owner === ownerKey)) return;
+      await this.writeIndex({ ...idx, wipes: owed.filter((w) => w.owner !== ownerKey) });
     });
   }
 
@@ -307,22 +352,43 @@ export class ServerProfileStore {
    * REMOVE EVERY PAIRING THIS PHONE HOLDS — the first-launch purge (`install-marker.ts`).
    *
    * iOS Keychain items survive an app delete and are readable again by the same bundle id, so
-   * a reinstall used to open the mailbox with no ceremony. The purge is unconditional and
-   * best-effort per key: a value that refuses to be removed must not stop the ones that would,
-   * and the INDEX goes last — an index without its profiles is a phone with nothing to boot,
-   * while profiles without an index are unreachable values the next `add()` overwrites.
+   * a reinstall used to open the mailbox with no ceremony.
+   *
+   * ── EVERY KEY IS READ BACK, AND THE INDEX IS THE LAST THING TO GO ────────────────────────
+   *
+   * This was written best-effort per key — "one stubborn value must not keep the rest alive" —
+   * and that reasoning had the take-back class's own defect inside it. A `remove` that refused
+   * was swallowed, the INDEX was deleted anyway, and the caller stamped the install as purged:
+   * a live refresh token would have survived the purge that claimed it, permanently stranded
+   * under a key nothing lists any more and never retried. So the loop tries every key (that
+   * part was right — a refusal on one must not skip the others), reads each one back, and
+   * THROWS if any survives, before the index is touched. The index is what names them; while a
+   * value is still there, its name is the only way back to it.
    */
   purgeAll(): Promise<void> {
     return this.enqueue(async () => {
       const idx = await this.readIndex();
+      const survivors: string[] = [];
       for (const id of idx.ids) {
         try {
           await this.kv.remove(`${PREFIX}.${id}`);
         } catch {
-          /* one stubborn value must not keep the rest of the pairings alive */
+          /* the read-back below is the judge, not this catch */
         }
+        // `kv.get` and not `readProfile`: an unparseable value reads as `null` there, and for a
+        // purge "still present" is the question, not "still valid".
+        if ((await this.kv.get(`${PREFIX}.${id}`)) !== null) survivors.push(id);
+      }
+      if (survivors.length > 0) {
+        throw new Error(
+          `the keystore refused to purge ${survivors.length} pairing(s) (${survivors.join(", ")}) — ` +
+            `their credentials are still on this phone`,
+        );
       }
       await this.kv.remove(PREFIX);
+      if ((await this.kv.get(PREFIX)) !== null) {
+        throw new Error("the keystore refused to remove the pairing index");
+      }
     });
   }
 }

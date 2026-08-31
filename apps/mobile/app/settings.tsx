@@ -49,7 +49,9 @@ export function wakeSentence(state: WakeState): string {
     case "not_supported_here": return Copy.wakeDesktopHost;
     case "server_has_no_key": return Copy.wakeServerNoKey;
     case "on": return Copy.wakeOn;
-    case "off": return Copy.wakeOff(state.reason);
+    // `row_remains` is not "we could not set it up" — it is "we could not take it back", and the
+    // two have different sentences and different remedies.
+    case "off": return state.reason === "row_remains" ? Copy.wakeRowRemains : Copy.wakeOff(state.reason);
   }
 }
 
