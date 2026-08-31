@@ -24,28 +24,29 @@
   transition:opacity .7s var(--swift)}
 .justseen .dot-unread{opacity:0} /* rows AND stream cards */
 /* the badge strip sits BESIDE `.subj` in this flex row (see MessageRow.tsx): a long subject
-   may not eat a thread's count. The pressure order is deliberate, in three steps: first the
-   SUBJECT shrinks and ellipsizes (its basis is the line's largest, so proportional shrink
-   lands mostly on it); then the strip's tag chips and place badges give way (min-width:0 —
-   their text clips, because a tag is recoverable in the reading pane); the thread count and
-   the participant faces never shrink — bounded at "⤷ NNN" and three 18px circles, they are
-   the strip's point — and the strip's own overflow:hidden is the last fence that keeps a
-   pathological row from pushing the amount off the 390px screen. The 7px the strip used to
-   bring as margin is a negative offset against the row's 10px gap, so nothing moved visually
-   when it left the subject span. */
+   may not eat a thread's count. The give-way order under width pressure lives with the strip
+   rules below. The 7px the strip used to bring as margin is a negative offset against the
+   row's 10px gap, so nothing moved visually when it left the subject span. */
 .row-mid{display:flex;align-items:baseline;gap:10px;margin-top:2px}
 .row .subj{font-size:13.5px;font-weight:500;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:-.008em;min-width:0}
 .row.seen .subj{color:var(--ink2);font-weight:450}
 .row .amt{margin-left:auto;flex:none;font-variant-numeric:tabular-nums;font-size:12.5px;font-weight:550;color:var(--ink)}
 .row.seen .amt{color:var(--ink2)}
 .row .prev{font-size:12px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
-/* the strip's floor is its BOUNDED members: direct children (count, faces, clip, protected —
-   all intrinsically small) are flex:none, the unbounded tail (tags, place/state notes) lives
-   in `.bdg-tail`, which alone shrinks and clips. `min-width:min-content` then equals the
-   bounded members' width because a scroll container's min-content contribution is zero — so
-   the outer flex can never squeeze the count or the faces out of view (review-caught: a flat
-   strip with overflow:hidden clipped exactly the members it meant to keep). */
-.row .badges{display:inline-flex;gap:6px;flex:0 1 auto;min-width:min-content;margin-left:-3px;vertical-align:1px}
+/* THE GIVE-WAY ORDER IS FLEX-SHRINK ARITHMETIC, deliberately — not intrinsic sizing.
+   `min-width:min-content` on the strip was tried as the floor and measured DIFFERENT across
+   engines: Chromium floored it at the bounded members, Firefox kept part of the tail's
+   intrinsic width in the floor and pushed the amount off a 320px row (review-caught, then
+   measured in both). Shrink resolution has no such divergence: the subject's shrink factor
+   is orders above the strip's, so the subject absorbs the whole deficit down to zero before
+   the strip gives a pixel; only then does the strip shrink, and inside it the tail
+   (unbounded: tag chips, place/state notes) collapses and clips while the bounded members
+   (count, faces, clip, protected — direct flex:none children) hold. The subject keeps a
+   6ch floor so a short subject is never wiped out by somebody's long tags — the order is:
+   subject down to a readable fragment, then the tail collapses, and only a row too narrow
+   for the bounded members plus the amount (well under the 390px target) clips further. */
+.row .subj{flex-shrink:1000;min-width:6ch}
+.row .badges{display:inline-flex;gap:6px;flex:0 1 auto;min-width:0;overflow:hidden;margin-left:-3px;vertical-align:1px}
 .row .badges > *{flex:none}
 .row .badges > .bdg-tail{display:inline-flex;gap:6px;flex:0 1 auto;min-width:0;overflow:hidden}
 .row .badges > .bdg-tail > *{flex:none}
