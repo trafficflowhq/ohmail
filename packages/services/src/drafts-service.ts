@@ -1,5 +1,5 @@
 import { and, eq, isNull, ne } from "drizzle-orm";
-import { claimIdempotencyKey, drafts, mailboxes, recordChange, threads, type Tx } from "@trafficflow/db";
+import { claimIdempotencyKey, drafts, mailboxes, messages, recordChange, threads, type Tx } from "@trafficflow/db";
 import type { EmailAddress } from "@trafficflow/core/mail";
 import type { ServiceContext } from "./context.js";
 import { IdempotencyRaceLost, ServiceError } from "./errors.js";
@@ -123,6 +123,7 @@ export class DraftsService {
           .for("key share");
         if (t.length === 0) throw new ServiceError("not_found", 404, "thread not found");
       }
+      await this.requireOwnedReplyTarget(tx, ctx, body.inReplyToMessageId ?? null);
       const [row] = await tx.insert(drafts).values({
         accountId: ctx.accountId,
         mailboxId,
@@ -216,6 +217,7 @@ export class DraftsService {
           .for("key share");
         if (t.length === 0) throw new ServiceError("not_found", 404, "thread not found");
       }
+      await this.requireOwnedReplyTarget(tx, ctx, patch.inReplyToMessageId ?? null);
       // Scope the UPDATE to the account: a cross-account id matches 0 rows. A mailbox move
       // additionally requires `status = 'draft'` IN THE PREDICATE â not in a prior read â
       // because the send path flips the row to `sending` in its own transaction, and a check
@@ -408,6 +410,42 @@ export class DraftsService {
    * still produces), and a row that exists but is rich is a 400 explaining what to send instead.
    * A `WHERE html IS NULL` added to the update would collapse both into "not found".
    */
+  /**
+   * THE REPLY TARGET IS THE ACCOUNT'S OWN MESSAGE, OR IT IS A 404.
+   *
+   * `drafts.in_reply_to_message_id` carries a foreign key to `messages.id` and NOTHING checked
+   * whose message that was: both write paths took the value straight from the request body. The
+   * asymmetry was visible inside `create` and `update` themselves — the `thread_id` block says so
+   * in its own comment, *"the read is also the OWNERSHIP check the column never had: account
+   * isolation is absolute, so another account's thread id is a 404, not a stored reference"* — and
+   * the column written on the next line had no such read.
+   *
+   * ── WHAT THE UNCHECKED EDGE ACTUALLY DOES ────────────────────────────────────────────────────
+   *
+   * It is not primarily a disclosure: the id is stored, not dereferenced into the draft. It is a
+   * WRITE into another account's referential graph, and the damage lands when that account tries
+   * to leave. The foreign key declares no `ON DELETE`, so it restricts — a stranger's draft row
+   * pointing at a victim's message makes deleting that message fail, and account erasure deletes
+   * messages. One row authored by somebody the victim has never heard of can hold their erasure
+   * open, and the victim can neither see nor remove the row that does it.
+   *
+   * Precondition: knowing a message id. That is not a defence — isolation is required to be
+   * structural rather than to rest on an identifier being hard to guess — but it is why this is a
+   * cross-account WRITE rather than a leak.
+   *
+   * A key-share read, matching the thread block, so the FK check that follows cannot race a
+   * concurrent delete of the row it just approved.
+   */
+  private async requireOwnedReplyTarget(
+    tx: Tx, ctx: ServiceContext, messageId: string | null,
+  ): Promise<void> {
+    if (!messageId) return;
+    const m = await tx.select({ id: messages.id }).from(messages)
+      .where(and(eq(messages.id, messageId), eq(messages.accountId, ctx.accountId)))
+      .for("key share");
+    if (m.length === 0) throw new ServiceError("not_found", 404, "reply target not found");
+  }
+
   private async refuseIfRich(ctx: ServiceContext, id: string): Promise<void> {
     const [row] = await ctx.db.select({ html: drafts.html }).from(drafts)
       .where(and(eq(drafts.id, id), eq(drafts.accountId, ctx.accountId))).limit(1);
