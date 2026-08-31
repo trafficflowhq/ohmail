@@ -44,7 +44,7 @@ import {
   readImageQualityLevel,
   writeImageQualityLevel,
 } from "../components/image-quality";
-import { readOwner } from "./owner-cookie";
+import { storageOwner } from "./storage-owner";
 
 export function ImageQualityRow() {
   const t = useTranslations("settings");
@@ -55,7 +55,7 @@ export function ImageQualityRow() {
   // Post-mount, never during render — see the hydration note above. The account cookie is read
   // in the same effect for the same reason: there is no document on the server.
   useEffect(() => {
-    owner.current = readOwner();
+    owner.current = storageOwner();
     setLevel(readImageQualityLevel(owner.current));
   }, []);
 

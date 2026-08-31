@@ -47,6 +47,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { OhmailEngine } from "@ohmail/client-engine";
 
 import { AppShell } from "../../webapp/app/shell/AppShell";
+import { setStorageOwner } from "../../webapp/app/shell/storage-owner";
 import { BootSkeleton } from "../../webapp/app/shell/BootSkeleton";
 import { go } from "../../webapp/app/shell/routing";
 import { BootStatus } from "./BootStatus.js";
@@ -323,6 +324,29 @@ export function DesktopGate() {
   const [live, setLive] = useState<{ key: string; engine: OhmailEngine } | null>(null);
   const gate = gateFor(shell ?? { kind: "none" });
   const mount = mailMount(shell ?? { kind: "none" }, live?.key ?? null);
+  /**
+   * WHOSE `localStorage` PARTITION THE SHARED SHELL IS ABOUT TO USE — established HERE, in
+   * render, above the `AppShell` this component returns.
+   *
+   * There is no account cookie on this door, and until this line that meant `readOwner()`
+   * answered `null` and the shared shell's four owner-keyed keys all resolved to the literal
+   * `"local"`. One install serves as many mailboxes as the user has connected and mounts a
+   * different engine for each of them, so a single shared key meant the compose scratch buffer,
+   * the durable send lanes, the Screener's intent journal and the Search order were common to
+   * every mailbox at once. The compose buffer is mail text: an unfinished message written under
+   * one mailbox was restored into the next mailbox's composer, where autosave could persist it
+   * as that mailbox's draft and Send could deliver it under that identity.
+   *
+   * `mount.key` is `status.mailboxId` — the same id `live` is keyed by, so the partition and the
+   * engine change together by construction rather than by two places agreeing.
+   *
+   * **It cannot be an effect.** `AppShell` reads the compose scratch in its own `useEffect`, and
+   * React runs a child's effects before its parent's — so an effect here would set the owner one
+   * commit after the shell had already read the previous mailbox's key. A module write during
+   * render is the ordering the shell needs, it is idempotent, and it is the same shape as the
+   * render-phase state adjustment on the very next line.
+   */
+  setStorageOwner(mount.kind === "engine" ? mount.key : null);
   if (mount.kind === "engine" && live?.key !== mount.key) {
     setLive({ key: mount.key, engine: createLocalEngine() });
   } else if (mount.kind !== "engine" && live !== null) {

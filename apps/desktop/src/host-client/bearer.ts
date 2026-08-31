@@ -64,6 +64,43 @@ export interface BearerTokens {
 /** Where the refresh token survives a page load. One key; the access token is never stored. */
 export const REFRESH_STORAGE_KEY = "ohmail.host.refreshToken";
 
+/**
+ * WHICH PAIRING THIS BROWSER'S SCRATCH SPACE BELONGS TO — a random id, and never a credential.
+ *
+ * The shared shell keeps four things in `localStorage` per account: the compose scratch buffer,
+ * the durable send lanes, the Screener's intent journal and the Search order. On a cookie-bearing
+ * door the account id partitions them. This door mints no cookie by construction, so all four
+ * used to land on one key shared by every pairing this origin has ever held — and a host door's
+ * origin is an address on a tailnet or a LAN, which is reusable: a laptop paired to one computer,
+ * unpaired, and paired to another at the same address would restore the first computer's
+ * unfinished message into the second one's composer.
+ *
+ * This is NOT the mirror's owner id and does not try to be. The mirror on this door is in memory
+ * and rebuilt per page load, exactly because naming a persistent one needs a server-CONFIRMED id
+ * (this file's own header, and `engine.tsx`). Partitioning scratch space is a weaker question: all
+ * it has to guarantee is that two pairings never collide, and a random id per pairing gives that
+ * without confirming anything. It authorises nothing, proves nothing, and a forged value gets
+ * whoever forged it an empty partition of their own.
+ *
+ * Minted on a REDEEM and kept across every rotation — a rotated token is the same pairing, and
+ * re-minting per rotation would throw away somebody's half-written message every time the access
+ * token aged out. Cleared with the refresh token when the session dies.
+ */
+export const PAIR_SCOPE_STORAGE_KEY = "ohmail.host.pairScope";
+
+/** An id-shaped random scope. `randomUUID` where the platform has it, 128 bits of hex otherwise. */
+function mintPairScope(): string {
+  const c = globalThis.crypto as Crypto | undefined;
+  if (c && typeof c.randomUUID === "function") return c.randomUUID();
+  if (c && typeof c.getRandomValues === "function") {
+    const bytes = c.getRandomValues(new Uint8Array(16));
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  // No crypto at all is a browser this door cannot serve anyway (the redeem is HTTPS-or-tailnet
+  // only). A time-and-random id still partitions two pairings, which is this value's whole job.
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
 /** The same loose-init shape `bridge-fetch.ts` uses, satisfying both http-adapter declarations. */
 type FetchLike = (url: string, init?: unknown) => Promise<Response>;
 
@@ -115,15 +152,45 @@ export class BearerManager {
     return this.refresh !== null;
   }
 
-  /** Adopt a freshly minted pair — the redeem's answer, and every successful rotation's. */
-  adopt(tokens: BearerTokens): void {
+  /**
+   * Adopt a freshly minted pair — the redeem's answer, and every successful rotation's.
+   *
+   * `fresh` says this is a NEW PAIRING rather than a rotation of the one already held, and it is
+   * the only thing that re-mints {@link PAIR_SCOPE_STORAGE_KEY}. The redeem passes it; the
+   * rotation inside `rotate()` does not, because a rotated token is the same pairing and a new
+   * scope there would discard the user's half-written message every time an access token aged
+   * out. See that constant's header for what the scope is and is not.
+   */
+  adopt(tokens: BearerTokens, opts: { fresh?: boolean } = {}): void {
     this.access = tokens.accessToken;
     this.refresh = tokens.refreshToken;
     this.generation++;
     try {
       this.storage?.setItem(REFRESH_STORAGE_KEY, tokens.refreshToken);
+      // A pairing with no scope stored is also a fresh one: an install upgraded from a bundle
+      // that predates this key holds a refresh token and nothing else, and leaving it unscoped
+      // would leave it on the shared partition this exists to end.
+      if (opts.fresh === true || this.storage?.getItem(PAIR_SCOPE_STORAGE_KEY) == null) {
+        this.storage?.setItem(PAIR_SCOPE_STORAGE_KEY, mintPairScope());
+      }
     } catch {
       /* Storage refused: the session lives for this page load and the next one re-pairs. */
+    }
+  }
+
+  /**
+   * WHICH PAIRING'S SCRATCH SPACE THIS PAGE IS USING, or `null` when there is no pairing.
+   *
+   * Read from storage on every call rather than cached: `adopt` and `die` both write it, and a
+   * second tab on this origin can change it under this one. `null` whenever the browser refuses
+   * storage — a surface that cannot persist a scope also cannot persist the things it scopes.
+   */
+  pairScope(): string | null {
+    if (this.refresh === null) return null;
+    try {
+      return this.storage?.getItem(PAIR_SCOPE_STORAGE_KEY) ?? null;
+    } catch {
+      return null;
     }
   }
 
@@ -138,6 +205,11 @@ export class BearerManager {
     this.refresh = null;
     try {
       this.storage?.removeItem(REFRESH_STORAGE_KEY);
+      // The scratch space this pairing owned goes with it. The next pairing on this origin mints
+      // a new scope and therefore cannot read what this one left — which is the whole point of
+      // the key. The VALUES under the old scope are unreachable rather than deleted; the shared
+      // shell's own sign-out sweep is what clears them by prefix.
+      this.storage?.removeItem(PAIR_SCOPE_STORAGE_KEY);
     } catch {
       /* already gone */
     }

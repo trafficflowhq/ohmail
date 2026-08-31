@@ -11,7 +11,7 @@
  */
 import type { ComposeAttachment, EmailAddress, EngineMutation } from "@ohmail/client-engine";
 import type { SignatureState } from "./signature";
-import { readOwner } from "./owner-cookie";
+import { storageOwner } from "./storage-owner";
 
 /** The compose form, verbatim as typed. `to` is TEXT; `plan()` is what turns it into addresses. */
 export interface ComposeFields {
@@ -144,8 +144,15 @@ export interface ComposePrefill {
  * where the composer restored it and autosave could persist it as THEIR server draft.
  *
  * The account suffix is the same shape `searchSortKey` already uses, for the same reason and with
- * the same `"local"` fallback: a device with no account (the standalone desktop, and any moment
- * before sign-in) is a real situation rather than a missing value.
+ * the same `"local"` fallback: a device with no account is a real situation rather than a missing
+ * value.
+ *
+ * **The owner is `storageOwner()`, not `readOwner()`, and the difference is the standalone
+ * desktop.** There is no cookie there, so this key used to resolve to the literal `"local"` for
+ * every mailbox on the install at once — and the desktop mounts a different engine per mailbox.
+ * The leak this key was created to stop (an unfinished message reaching the next account) was
+ * therefore wide open on the one door that has no sign-out between the two. `storage-owner.ts`
+ * is where the host supplies the identity a cookie cannot.
  *
  * The legacy key is drained rather than read. Reading it once "to migrate" is exactly the leak
  * — the migrating reader has no way to know whose draft it is.
@@ -153,7 +160,7 @@ export interface ComposePrefill {
 /** Every owner's scratch key starts here. Exported so sign-out can sweep them. */
 export const COMPOSE_DRAFT_PREFIX = "ohmail.ui.compose.";
 
-export function composeDraftKey(owner: string | null = readOwner()): string {
+export function composeDraftKey(owner: string | null = storageOwner()): string {
   return `${COMPOSE_DRAFT_PREFIX}${owner ?? "local"}`;
 }
 

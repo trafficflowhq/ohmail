@@ -39,8 +39,11 @@
  *
  * Owner-keyed, in the shape `composeDraftKey` and `searchSortKey` already use and for the same
  * reason: `localStorage` is per-ORIGIN, and a decision one account made must never be replayed by
- * the next account to sign in on the same browser. The `"local"` fallback is the standalone
- * desktop and every moment before sign-in — a real situation, not a missing value.
+ * the next account to sign in on the same browser. The owner is `storageOwner()` — the cookie
+ * where there is one, and otherwise the identity the HOST establishes, because the standalone
+ * desktop has no cookie and mounts one engine per mailbox: a `"local"` fallback there meant every
+ * mailbox on the install replaying every other mailbox's decisions. The fallback is now only what
+ * it always claimed to be, a surface with genuinely no account.
  *
  * Storage can refuse (Safari private mode throws on write). Every access is wrapped, and a refusal
  * means a decision is only as durable as the tab — which is precisely today's behaviour, so a
@@ -48,7 +51,7 @@
  */
 
 import type { DecisionDestination, DecisionScope } from "@ohmail/ui";
-import { readOwner } from "./owner-cookie";
+import { storageOwner } from "./storage-owner";
 
 /**
  * ONE SCHEDULED DECISION — the trim, not the row.
@@ -104,7 +107,7 @@ export const INTENT_TTL_MS = 24 * 60 * 60 * 1000;
 export const SCREENER_INTENTS_PREFIX = "ohmail.screener.intents.";
 
 /** One key per ACCOUNT, holding the whole journal — see the header for why it is owner-keyed. */
-export function screenerIntentsKey(owner: string | null = readOwner()): string {
+export function screenerIntentsKey(owner: string | null = storageOwner()): string {
   return `${SCREENER_INTENTS_PREFIX}${owner ?? "local"}`;
 }
 

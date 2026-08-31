@@ -49,7 +49,7 @@
  * — the next compose on this account opens at the level chosen — and it is the SAME value the
  * Settings → General row edits, through the same two functions, so the two surfaces cannot
  * disagree. What changed from the first shipping of this dial is the KEY: the value is stored
- * per account (`imageQualityKeyFor`; the id is `readOwner`'s, the one the mail mirror is named
+ * per account (`imageQualityKeyFor`; the id is `storageOwner`'s, the one the mail mirror is named
  * for), because the old account-less key meant a control that looks personal silently rewrote
  * the preference for EVERYONE who signs in on the machine. A surface with no account — the
  * standalone desktop, the demo — uses the account-less key, where every pre-scoping choice
@@ -100,7 +100,7 @@ import {
   readImageQualityLevel,
   writeImageQualityLevel,
 } from "./image-quality";
-import { readOwner } from "../shell/owner-cookie";
+import { storageOwner } from "../shell/storage-owner";
 
 /**
  * The dial's own order — the table's, unreversed.
@@ -401,10 +401,10 @@ export function ComposeAttach({
    */
   const [level, setLevel] = useState<ImageQualityLevel>(DEFAULT_IMAGE_QUALITY_LEVEL);
   const levelRef = useRef<ImageQualityLevel>(DEFAULT_IMAGE_QUALITY_LEVEL);
-  /** Whose preference the dial edits — `readOwner`'s account id, `null` where there is none. */
+  /** Whose preference the dial edits — `storageOwner`'s id, `null` where there is none. */
   const owner = useRef<string | null>(null);
   useEffect(() => {
-    owner.current = readOwner();
+    owner.current = storageOwner();
     const stored = readImageQualityLevel(owner.current);
     setLevel(stored);
     levelRef.current = stored;

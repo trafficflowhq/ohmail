@@ -138,11 +138,13 @@ export const IMAGE_QUALITY_RULES: Readonly<Record<ImageQualityLevel, ImageQualit
  * It is stored in `localStorage` like the theme — per-machine, about how this install behaves,
  * worth neither a column nor a request on every change — and it is KEYED BY ACCOUNT, because a
  * browser is not a person: on a shared machine, one account's "send my photos at full size" must
- * not become another account's default. The account id is the same one the mail mirror is named
- * for (`shell/owner-cookie.ts` → `readOwner`); a surface with no account — the standalone
- * desktop, the demo — passes `null` and gets the account-less key, which is also every value
- * stored before the preference was scoped, so an earlier choice is honored as the fallback
- * rather than silently reset.
+ * not become another account's default. The account id is `shell/storage-owner.ts` →
+ * `storageOwner`: the mirror's own name where a cookie confirms one, and otherwise the identity
+ * the HOST establishes — so the standalone desktop keeps one preference per MAILBOX rather than
+ * one shared by every mailbox on the install. A surface with genuinely no account — the demo —
+ * passes `null` and gets the account-less key, which is also every value stored before the
+ * preference was scoped, so an earlier choice is honored as the fallback rather than silently
+ * reset.
  *
  * ── A NEW KEY, BECAUSE THE OLD VALUES MEAN THE OPPOSITE ──────────────────────────────────────
  *

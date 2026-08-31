@@ -204,9 +204,12 @@ export const UI_KEYS = {
  * but the same habit. Per device because it is chrome: this is not a fact about the mailbox, and
  * a laptop and a phone are allowed to disagree about it.
  *
- * `owner` is `readOwner()`, which is `null` on the standalone desktop and before sign-in. That
- * case gets its own stable key rather than a blank suffix — a device with no account is a real
- * situation, not a missing value.
+ * `owner` is `storageOwner()` — the account cookie where there is one, and otherwise whatever
+ * identity the HOST established for this surface (`storage-owner.ts`). It is `null` only before
+ * sign-in and on a surface with genuinely no account; that case gets its own stable key rather
+ * than a blank suffix — a device with no account is a real situation, not a missing value. It is
+ * NOT `readOwner()`, which is null on the whole standalone desktop and so gave every mailbox on
+ * an install one shared key.
  */
 export function searchSortKey(owner: string | null): string {
   return `ohmail.ui.search.sort.${owner ?? "local"}`;

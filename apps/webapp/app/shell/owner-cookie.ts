@@ -32,8 +32,22 @@
  *
  * This directory is shared with the standalone desktop client, which has no API, no session and
  * no server-side of any kind — so it cannot import the API package that defines the name, and the
- * string is repeated instead. The two are held together by a test that reads both files. On the
- * desktop there is no such cookie, `readOwner` answers null, and nothing here changes anything.
+ * string is repeated instead. The two are held together by a test that reads both files.
+ *
+ * ── WHAT THIS MODULE IS NOT, ON THE DESKTOP ─────────────────────────────────────────────────
+ *
+ * There is no such cookie on the desktop, so `readOwner` answers `null` there. **The sentence
+ * that used to stand here — "and nothing here changes anything" — was false, and it was false in
+ * the direction that costs a user.** Four `localStorage` keys in this shell are built as
+ * `` `<prefix>${owner ?? "local"}` ``, so a `null` owner is not "no scoping needed": it is
+ * every mailbox on the install sharing ONE key. The desktop mounts a different engine per
+ * mailbox, so that collapsed key carried an unfinished message, a Screener decision and a send
+ * lane from whichever mailbox wrote it into whichever mailbox opened next.
+ *
+ * A cookie is not the only way to know whose storage this is, and this module is not the place
+ * that decides — {@link ./storage-owner} is. It composes this reader with an identity the HOST
+ * supplies (the desktop's mounted mailbox, the host door's pairing), and the key builders resolve
+ * through it. Reading the cookie is still exactly what this file does and all it does.
  */
 
 /** The cookie the API sets beside the session. Kept identical to the API's own constant. */
@@ -49,6 +63,18 @@ export const OWNER_COOKIE = "tf_owner";
  * cookie existed, and the shell falls back to asking first and painting second.
  */
 const OWNER_SHAPE = /^[A-Za-z0-9._~-]{1,128}$/;
+
+/**
+ * Does this string name an account the way an id does?
+ *
+ * Exported because the cookie is no longer the only source of an owner: a host-supplied identity
+ * (`storage-owner.ts`) is about to become part of a `localStorage` key and has to pass the SAME
+ * test, from the SAME regex. Two spellings of "id-shaped" is how one door ends up scoping and
+ * another silently does not.
+ */
+export function isOwnerShaped(value: string): boolean {
+  return OWNER_SHAPE.test(value);
+}
 
 /**
  * The account this browser last signed in as, or `null`.

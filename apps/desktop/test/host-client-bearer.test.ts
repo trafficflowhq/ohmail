@@ -283,3 +283,86 @@ describe("logout", () => {
     expect(offline.paired()).toBe(false);
   });
 });
+
+/**
+ * ═══ WHICH PAIRING THE SHARED SHELL'S SCRATCH SPACE BELONGS TO ════════════════════════════════
+ *
+ * This door mints no cookie by construction, so until the pairing scope existed, `readOwner()`
+ * answered `null` here and all four of the shared shell's owner-keyed `localStorage` keys — the
+ * compose scratch buffer, the durable send lanes, the Screener intent journal and the Search
+ * order — resolved to the literal `…local`. Every pairing this ORIGIN had ever held therefore
+ * shared one partition, and a host door's origin is a tailnet or LAN address, which is reusable:
+ * the same phone, paired to a second computer at an address the first one used, restored the
+ * first computer's unfinished message into the second one's composer.
+ *
+ * The scope is a random id and not a credential — see `PAIR_SCOPE_STORAGE_KEY`. What these cases
+ * hold it to is the lifetime, which is the only part that can be wrong in a way that costs
+ * something: minted on a REDEEM, kept across every ROTATION, gone when the session dies.
+ *
+ * ── THE MUTATIONS EACH WAS WATCHED AGAINST ────────────────────────────────────────────────────
+ *
+ *  · mint unconditionally in `adopt` (drop the `fresh`/absent test) → "a rotation keeps the
+ *    pairing's scope" goes red, and every rotation would discard a half-written message;
+ *  · never mint unless `fresh` (drop the `== null` arm) → "an install upgraded from a bundle with
+ *    no scope adopts one" goes red, and an existing pairing stays on the shared partition for
+ *    ever;
+ *  · leave the scope in storage in `die()` → "a new pairing cannot read the previous one's
+ *    scratch" goes red, because the next redeem finds the old scope and reuses it.
+ */
+describe("the pairing scope", () => {
+  const PAIR_SCOPE_KEY = "ohmail.host.pairScope";
+  const pair: BearerTokens = { accessToken: "access-1", refreshToken: "refresh-1" };
+
+  it("a redeem mints one, and it is id-shaped so it can be part of a storage key", () => {
+    const storage = memoryStorage();
+    const bearer = new BearerManager({ storage, fetchImpl: async () => new Response("") });
+    expect(bearer.pairScope(), "no pairing, no scope").toBeNull();
+
+    bearer.adopt(pair, { fresh: true });
+    const scope = bearer.pairScope();
+    expect(scope).not.toBeNull();
+    expect(scope).toMatch(/^[A-Za-z0-9._~-]{1,128}$/);
+    expect(storage.getItem(PAIR_SCOPE_KEY)).toBe(scope);
+  });
+
+  it("a rotation keeps the pairing's scope — a rotated token is the same pairing", () => {
+    const storage = memoryStorage();
+    const bearer = new BearerManager({ storage, fetchImpl: async () => new Response("") });
+    bearer.adopt(pair, { fresh: true });
+    const first = bearer.pairScope();
+
+    // The rotation path inside the manager adopts WITHOUT `fresh`.
+    bearer.adopt({ accessToken: "access-2", refreshToken: "refresh-2" });
+    expect(
+      bearer.pairScope(),
+      "re-minting per rotation would throw away a half-written message every time a token aged out",
+    ).toBe(first);
+  });
+
+  it("an install upgraded from a bundle that had no scope adopts one rather than staying shared", () => {
+    // A refresh token in storage and nothing else — exactly what an older bundle left behind.
+    const storage = memoryStorage({ [REFRESH_STORAGE_KEY]: "refresh-old" });
+    const bearer = new BearerManager({ storage, fetchImpl: async () => new Response("") });
+    expect(bearer.pairScope(), "nothing stored yet").toBeNull();
+
+    bearer.adopt({ accessToken: "a", refreshToken: "refresh-old" });
+    expect(bearer.pairScope(), "the upgrade does not leave the pairing on the shared partition").not.toBeNull();
+  });
+
+  it("a new pairing cannot read the previous one's scratch space", async () => {
+    const storage = memoryStorage();
+    const bearer = new BearerManager({ storage, fetchImpl: async () => new Response("") });
+    bearer.adopt(pair, { fresh: true });
+    const first = bearer.pairScope();
+
+    await bearer.logout();
+    expect(bearer.pairScope(), "no pairing, no scope").toBeNull();
+    expect(storage.getItem(PAIR_SCOPE_KEY), "the scope goes with the refresh token").toBeNull();
+
+    bearer.adopt({ accessToken: "access-9", refreshToken: "refresh-9" }, { fresh: true });
+    expect(
+      bearer.pairScope(),
+      "the next computer at this address gets its own partition, not the previous one's",
+    ).not.toBe(first);
+  });
+});

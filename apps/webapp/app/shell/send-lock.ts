@@ -47,7 +47,7 @@
  */
 
 import type { MailSend } from "./compose";
-import { readOwner } from "./owner-cookie";
+import { storageOwner } from "./storage-owner";
 
 /** One lane's unsettled send. `v` names the shape; an unrecognised record is ignored, not guessed. */
 export interface SendLock {
@@ -124,7 +124,7 @@ export const SEND_LOCK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const SEND_LOCKS_PREFIX = "ohmail.send.locks.";
 
 /** One key per ACCOUNT, holding every lane — see the header for why it is owner-keyed. */
-export function sendLocksKey(owner: string | null = readOwner()): string {
+export function sendLocksKey(owner: string | null = storageOwner()): string {
   return `${SEND_LOCKS_PREFIX}${owner ?? "local"}`;
 }
 

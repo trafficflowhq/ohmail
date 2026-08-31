@@ -109,7 +109,11 @@ export function PairScreen({
       }
       const { ok, answer } = outcome;
       if (ok && answer.tokens?.accessToken && answer.tokens.refreshToken) {
-        bearer.adopt(answer.tokens);
+        // `fresh` — a REDEEM, which is a new pairing and therefore a new scratch partition. The
+        // rotation inside the manager adopts without it, because a rotated token is the same
+        // pairing and re-minting there would discard a half-written message every time an access
+        // token aged out. See `PAIR_SCOPE_STORAGE_KEY`.
+        bearer.adopt(answer.tokens, { fresh: true });
         onPaired();
         return;
       }

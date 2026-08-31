@@ -35,6 +35,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { HttpAdapter, OhmailEngine } from "@ohmail/client-engine";
 import { AppShell } from "../../../webapp/app/shell/AppShell";
+import { dropLocalStorageKeys } from "../../../webapp/app/shell/boot-cache";
+import { COMPOSE_DRAFT_PREFIX, LEGACY_COMPOSE_DRAFT_KEY } from "../../../webapp/app/shell/compose";
+import { REPLY_DRAFT_PREFIX, REPLY_META_PREFIX } from "../../../webapp/app/shell/mail-send";
+import { SCREENER_INTENTS_PREFIX } from "../../../webapp/app/shell/screener-intents";
+import { SEND_LOCKS_PREFIX } from "../../../webapp/app/shell/send-lock";
+import { setStorageOwner } from "../../../webapp/app/shell/storage-owner";
 import { BearerManager } from "./bearer.js";
 import { PairScreen } from "./PairScreen.js";
 import { mailboxFactsOverBearer, olderBodyOverBearer, profileImportOverBearer } from "./transports.js";
@@ -46,6 +52,30 @@ import { mailboxFactsOverBearer, olderBodyOverBearer, profileImportOverBearer } 
  * this bundle is a browser artifact; the two are held together by the suite instead.
  */
 export const HOST_CLIENT_SEND_MAX_TOTAL_BYTES = 32 * 1024 * 1024;
+
+/**
+ * THE DURABLE-DECISION STORES THIS DOOR LEAVES AT REST, and what has to reach them when the
+ * pairing ends.
+ *
+ * The shared shell keeps five things in `localStorage` past a reload: the compose scratch buffer,
+ * the per-message reply body and its editor metadata, the durable send lanes, and the Screener's
+ * intent journal. Three of those are MAIL TEXT. A phone that has been signed out of this door,
+ * or whose session the computer revoked, must not still be holding somebody's half-written
+ * message — the same rule, and the same prefix list, that `apps/webapp/app/sign-out.ts` applies
+ * on the hosted door.
+ *
+ * By PREFIX and not by scope, deliberately: ending a pairing means this browser forgets, and a
+ * key left behind under a retired scope is unreachable rather than gone. An exact key is a prefix
+ * of itself, which is how the legacy un-owned compose key rides along.
+ */
+export const HOST_SCRATCH_PREFIXES: readonly string[] = [
+  COMPOSE_DRAFT_PREFIX,
+  LEGACY_COMPOSE_DRAFT_KEY,
+  SEND_LOCKS_PREFIX,
+  SCREENER_INTENTS_PREFIX,
+  REPLY_DRAFT_PREFIX,
+  REPLY_META_PREFIX,
+];
 
 export function HostGate({ bearer }: { bearer: BearerManager }) {
   const [paired, setPaired] = useState(bearer.paired());
@@ -59,6 +89,11 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
   useEffect(
     () =>
       bearer.onSessionDead(() => {
+        // WHAT IS LEFT AT REST GOES WITH THE PAIRING. `bearer.die()` has already dropped the
+        // refresh token and the pairing scope, so nothing on this page can read these keys again
+        // — but unreachable is not gone, and three of them are mail text on a device somebody
+        // just signed out of. See HOST_SCRATCH_PREFIXES.
+        dropLocalStorageKeys(HOST_SCRATCH_PREFIXES);
         // Land on /pair with the plain sentence — the ruled shape for a rotation failure. The
         // path is replaced (not pushed) so Back cannot return to a dead mailbox.
         window.history.replaceState(null, "", "/pair");
@@ -93,6 +128,22 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
   const mailboxFacts = useMemo(() => mailboxFactsOverBearer(bearer), [bearer]);
   const profileImport = useMemo(() => profileImportOverBearer(bearer), [bearer]);
   const olderBody = useMemo(() => olderBodyOverBearer(bearer), [bearer]);
+
+  /**
+   * WHOSE `localStorage` PARTITION THE SHARED SHELL USES ON THIS DOOR — established in render,
+   * above the `AppShell` below, for the ordering reason `storage-owner.ts` states: the shell
+   * reads the compose scratch in its own effect, and a child's effects run before its parent's.
+   *
+   * There is no cookie here by construction (bearer-only in both directions), so until this line
+   * every pairing this origin has ever held shared one key. A host door's origin is an address on
+   * a tailnet or a LAN and addresses are reused, so that is not hypothetical: the same phone,
+   * paired to a second computer at an address the first one used, restored the first computer's
+   * unfinished message into the second one's composer.
+   *
+   * `null` while unpaired, which is the correct answer and not a fallback — the branch below
+   * renders the pairing landing, which stores nothing per account.
+   */
+  setStorageOwner(paired ? bearer.pairScope() : null);
 
   if (onPairPath || !paired || engine === null) {
     return (

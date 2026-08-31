@@ -47,7 +47,7 @@ import { displayTime, metaLine, PLACE_LABEL, placeLabel, senderName } from "../s
 import { displayAddress } from "../shell/idn";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useZoneNav } from "../shell/zone-nav";
-import { readOwner } from "../shell/owner-cookie";
+import { storageOwner } from "../shell/storage-owner";
 import { searchSortKey, usePersistedChoice } from "../shell/persisted-ui";
 import "./search-keys.css";
 
@@ -219,15 +219,17 @@ export function SearchView({
   /**
    * THE ORDER, remembered per account and per device.
    *
-   * `readOwner()` in a `useMemo` with no deps rather than at module scope: it reads a cookie, so
-   * it must not run while this module is being evaluated on the server, and the account cannot
-   * change without a remount. A signed-out or standalone client gets the `local` key — see
-   * `searchSortKey`.
+   * `storageOwner()` in a `useMemo` with no deps rather than at module scope: it reads a cookie,
+   * so it must not run while this module is being evaluated on the server, and the account
+   * cannot change without a remount. On a door with no cookie the host supplies the identity
+   * instead (`storage-owner.ts`), so the desktop keeps one order per MAILBOX rather than one
+   * order shared by the whole install; a surface with genuinely no account still gets the
+   * `local` key — see `searchSortKey`.
    *
    * Deliberately NOT a server setting. This is chrome, it is legitimately per-machine, and the
    * alternative costs a column, a migration and a request on every change of a dropdown.
    */
-  const sortStorageKey = useMemo(() => searchSortKey(readOwner()), []);
+  const sortStorageKey = useMemo(() => searchSortKey(storageOwner()), []);
   const [sort, setSort] = usePersistedChoice<ServerSearchSort>(
     sortStorageKey,
     SERVER_SEARCH_SORTS,
