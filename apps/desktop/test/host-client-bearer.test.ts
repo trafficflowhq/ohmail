@@ -409,6 +409,19 @@ describe("the pairing scope", () => {
     expect(dead, "the stale tab did not end its own session").toBe(true);
     expect(res.status).toBe(401);
     expect(stale.paired(), "and it is no longer paired").toBe(false);
+
+    /**
+     * AND IT LEFT THE SUCCESSOR'S CREDENTIAL ALONE, which is the half that makes this guard safe.
+     *
+     * The first version called `die()`, which clears `localStorage` — correct when the SESSION is
+     * over, and exactly wrong here: the jar no longer holds THIS tab's credential, it holds the
+     * NEW pairing's. Ending that way would have destroyed the new account's session from a
+     * background rotation in an old tab, with no user act at all. The guard would have caused the
+     * outage it was written to prevent.
+     */
+    expect(storage.getItem(REFRESH_STORAGE_KEY), "the successor's refresh token was deleted").toBe("r-b");
+    expect(storage.getItem(PAIR_SCOPE_KEY), "the successor's scope was deleted").toBe(other.pairScope());
+    expect(other.paired(), "the new pairing is still live").toBe(true);
   });
 
   it("a same-pairing rotation from another tab is still adopted — the scope did not move", async () => {

@@ -271,6 +271,25 @@ export class BearerManager {
     for (const cb of [...this.deadListeners]) cb();
   }
 
+  /**
+   * END THIS TAB'S SESSION WITHOUT TOUCHING THE SHARED CREDENTIAL — the difference between
+   * `die()` and this one is the whole reason it exists.
+   *
+   * `die()` clears `localStorage`, which is correct when the SESSION is over: revoked, reused-past,
+   * signed out. It is exactly wrong for the case in `rotate` above, where the storage does not hold
+   * this tab's credential any more — it holds the SUCCESSOR's, because another tab re-paired this
+   * origin. Calling `die()` there deletes the new pairing's refresh token and its scope: the guard
+   * written to stop a stale tab acting as the new account would instead destroy the new account's
+   * session, from a background rotation, with no user act at all.
+   *
+   * So this drops the in-memory pair and tells the gate, and leaves the jar alone.
+   */
+  private standDown(): void {
+    this.access = null;
+    this.refresh = null;
+    for (const cb of [...this.deadListeners]) cb();
+  }
+
   /** Subscribe to the session ending — revoked, reused-past, expired. Returns the unsubscribe. */
   onSessionDead(cb: () => void): () => void {
     this.deadListeners.add(cb);
@@ -295,7 +314,7 @@ export class BearerManager {
       // is not showing. Ending it is the honest answer, and it is the same one the gate already
       // renders for a revoked family.
       if (this.readScope() !== this.scopeAtStart) {
-        this.die();
+        this.standDown();
         return false;
       }
       try {

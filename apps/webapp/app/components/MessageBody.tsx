@@ -856,6 +856,13 @@ export function neutraliseCss(
         // character of sender-authored comment disabled the whole rule for the rest of the file.
         inComment = true;
         i++;
+      } else if (c === "\\") {
+        // AN ESCAPE OUTSIDE A STRING CONSUMES ITS NEXT CHARACTER TOO. Without this, `\"` in an
+        // ordinary declaration — a legal escaped quote in an identifier or a value — opened a
+        // string that nothing closed, and every escaped function name after it in the rule was
+        // treated as quoted text and left alone. The same one-character disable as the comment
+        // case above, reached a different way.
+        i++;
       } else if (c === '"' || c === "'") {
         quote = c;
       }
