@@ -443,8 +443,25 @@ export const DETERMINISTIC_MESSAGE_FAILURE_CODES = [
   "mime_too_large", "mime_unparseable", "data_exception",
 ] as const satisfies readonly MessageFailureCode[];
 
+/**
+ * The ledger's in-memory identity for one message coordinate — and it is DELIMITED, because the
+ * three parts are variable-length and a folder name is chosen by the mail server.
+ *
+ * The first version was `${folder}${uidValidity}${uid}`, and concatenating variable-length parts
+ * with no separator is ambiguous by construction: `("Notes1", "2", 34)` and `("Notes", "12", 34)` both
+ * produce `Notes1234`. That is not a theoretical collision, because it decides whether a message is
+ * SKIPPED — `has()` answers `terminal` for the colliding entry, `runSyncCycle` skips the message
+ * without parsing or committing it, and on a UID-watermarked folder such as Sent nothing
+ * enumerates it again. So one malformed message could make a perfectly good one at an unrelated
+ * coordinate permanently invisible, and the durable failure row would describe the other message.
+ *
+ * `JSON.stringify` of the tuple rather than a chosen separator character: every separator that is
+ * legal in an IMAP folder name is a separator an adversarial or merely unusual server can put IN
+ * the folder name, and JSON escapes what it must. The key is a Map key and nothing else — it is
+ * never persisted, never parsed back, and never shown — so the encoding is free to be verbose.
+ */
 const keyOf = (folder: string, uidValidity: string, uid: number): string =>
-  `${folder}${uidValidity}${uid}`;
+  JSON.stringify([folder, uidValidity, uid]);
 
 /**
  * The ledger itself: per mailbox, held on the `MailboxRuntime`'s `SyncDeps` so it lives as long as
