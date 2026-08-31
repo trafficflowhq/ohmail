@@ -71,6 +71,30 @@ export function zeroPushTier(): boolean {
 }
 
 /**
+ * {@link zeroPushTier}, SUBSCRIBED — a render-time read goes stale the moment `w` restamps
+ * the layout or a resize crosses the band with the sheet still standing (review finding,
+ * round 2), and nothing re-renders for either. Same sources as {@link watchNarrow}: the
+ * band's media query and the `data-layout` attribute.
+ */
+export function watchZeroPushTier(onChange: (push: boolean) => void): () => void {
+  if (typeof window === "undefined" || !window.matchMedia) return () => {};
+  const emit = (): void => onChange(zeroPushTier());
+  const mq = window.matchMedia("(min-width: 392px) and (max-width: 721px)");
+  mq.addEventListener?.("change", emit);
+  const mo =
+    typeof MutationObserver !== "undefined"
+      ? new MutationObserver((muts) => {
+          if (muts.some((m) => m.attributeName === "data-layout")) emit();
+        })
+      : null;
+  mo?.observe(document.documentElement, { attributes: true, attributeFilter: ["data-layout"] });
+  return () => {
+    mq.removeEventListener?.("change", emit);
+    mo?.disconnect();
+  };
+}
+
+/**
  * SUBSCRIBED, not sampled — the Screener's need: a rotation or resize reveals `.scn-read`
  * without touching any other dependency, and a sampled value left the newly visible
  * preview idle (its own header). Subscribes BOTH breakpoints plus the `data-layout`
