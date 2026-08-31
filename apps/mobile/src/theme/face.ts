@@ -70,6 +70,32 @@ export function accountGovernsFace(
   return account === face && pin === null;
 }
 
+/**
+ * MAY THE "APPLY ON ALL DEVICES" AFFORDANCE BE OFFERED AT ALL? (review-caught.)
+ *
+ * Two conditions, and the first is the one a first draft gets wrong. `account` is `null` both
+ * when the account has NO preference and when nobody has asked it yet, and those must not be
+ * treated alike by a WRITE: with no device pin the control shows paper, so a press made before
+ * the account's face was read would PATCH paper over an ohmarchy the account really holds whose
+ * read was slow or failing. `accountKnown` is "an answer has been adopted this session — a
+ * successful read, or a write's own echo", the same fact the webapp carries as `themeFaceKnown`
+ * and gates the same affordance on.
+ *
+ * The second condition is {@link accountGovernsFace}: there is nothing to offer when the account
+ * already governs this device — the scope line simply says so.
+ *
+ * A withheld affordance is drawn NOWHERE, never disabled: a control that cannot control is worse
+ * than a sentence saying which scope this device is in.
+ */
+export function accountWideOffered(
+  accountKnown: boolean,
+  face: FaceName,
+  pin: FaceName | null,
+  account: FaceName | null,
+): boolean {
+  return accountKnown && !accountGovernsFace(face, pin, account);
+}
+
 /** Teaching intensity — the contract's one JS-visible switch: 0 (paper, calm) / 1 (ohmarchy). */
 export function teachOf(face: FaceName): 0 | 1 {
   return face === "ohmarchy" ? 1 : 0;

@@ -1274,8 +1274,12 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
    * "APPLY FOR ALL DEVICES" — the face's account write, folded to ONE nullable callback for
    * both consumers (the Settings row's scope line and the Option B offer). Null on the demo
    * (no session), before the first consent answer (a press racing the boot read would write
-   * over an account whose stance is not yet known), and on transports without the knob (the
-   * desktop's hosted door) — each null withholds the affordance structurally.
+   * over an account whose stance is not yet known), and on a transport that cannot store an
+   * account-wide face — each null withholds the affordance structurally. That last arm no longer
+   * names the desktop's hosted door: it has the knob now (`consentOverBridge.setThemeFace`, over
+   * the same forwarded PATCH its other settings ride). The gate stays because a STANDALONE
+   * desktop window passes no transport at all — it has no account row to store a shared choice
+   * in, and the device pin is the whole of the appearance choice such an install can make.
    */
   const applyFaceAllDevices: ApplyFaceAllDevices | null =
     !demo && themeFaceKnown && consent.setThemeFace !== null ? consent.setThemeFace : null;

@@ -214,6 +214,21 @@ export interface World {
    */
   face: {
     account: FaceName | null;
+    /**
+     * HAS THE ACCOUNT'S FACE BEEN READ AT ALL this session? (review-caught, and the whole reason
+     * `account` alone is not enough.) `account: null` means two different things until this is
+     * true — "the account has no preference" and "nobody has asked yet" — and the account-wide
+     * WRITE must not fire on the second: with no device pin the control shows paper, and pressing
+     * "apply on all devices" would PATCH paper over an ohmarchy the account really holds while its
+     * read was slow or failing. The webapp carries the same fact as `themeFaceKnown` and
+     * `AppShell` gates the affordance on it.
+     *
+     * True once an answer has been ADOPTED — a successful read, or a write's own echo. A read the
+     * coordinator refused (one that overlapped a write) does not count, which is the conservative
+     * direction: the thing being gated is precisely the act that must not run on a value nobody
+     * trusts.
+     */
+    known: boolean;
     /** An account write is on the wire — the control disables rather than double-writing. */
     pending: boolean;
     /**
@@ -319,9 +334,9 @@ function emptyWorld(actions: WorldActions): World {
       soleCreateMailboxId: null,
     },
     signatures: null,
-    // No account, so no account face and nothing to write one to. `false` is "not confirmed",
-    // which is exactly what nothing-connected means — the empty world's own rule.
-    face: { account: null, pending: false, applyAll: () => Promise.resolve(false) },
+    // No account, so no account face, nothing that could have been read, and nothing to write one
+    // to. `false` is "not confirmed", which is exactly what nothing-connected means.
+    face: { account: null, known: false, pending: false, applyAll: () => Promise.resolve(false) },
     message: () => undefined,
     sendOutcome: () => "unknown",
     actions,
@@ -335,7 +350,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   /* The DEVICE half of the face lives in the prefs store (above this provider), and the account
      half is here. This layer only ever CLEARS the pin, and only after a confirmed account write —
      which is what "apply on all devices" asked for. It never sets one. */
-  const { setFacePin } = usePrefs();
+  const { facePin, setFacePin } = usePrefs();
 
   const session = conn.state.k === "live" ? conn.state.session : null;
   const engine = session?.engine ?? null;
@@ -409,7 +424,16 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * rule the signatures keep one field up.
    */
   const [accountFace, setAccountFace] = useState<FaceName | null>(null);
+  /** See {@link World.face.known} — `accountFace: null` is ambiguous until this is true. */
+  const [accountFaceKnown, setAccountFaceKnown] = useState(false);
   const [facePending, setFacePending] = useState(false);
+  /**
+   * THE PIN AS IT STANDS RIGHT NOW, readable at write-completion time (review-caught). The
+   * selector is live while the PATCH flies, so the pin may have moved since the press; a closure
+   * over the render's value would release a choice this write knows nothing about.
+   */
+  const pinNow = useRef(facePin);
+  pinNow.current = facePin;
   /** `conn.syncNow` behind a ref so the machine below keeps one identity across renders. */
   const syncNowRef = useRef(conn.syncNow);
   syncNowRef.current = conn.syncNow;
@@ -459,11 +483,21 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     }
     const faces = faceScope({
       write: (face) => writeThemeFace(session, face),
-      adopt: (face) => { if (faceCurrent.current === faces) setAccountFace(face); },
-      /* The pin is dropped only on a confirmed write, and only while this session still owns
-         the machine — a late settle from a session the user has left must not touch the face of
-         the one on screen. */
-      clearPin: () => { if (faceCurrent.current === faces) setFacePin(null); },
+      adopt: (face) => {
+        if (faceCurrent.current !== faces) return;
+        setAccountFace(face);
+        // Adopting IS knowing: this value came from a successful read or a write's echo.
+        setAccountFaceKnown(true);
+      },
+      /* The pin is released only on a confirmed write, only while this session still owns the
+         machine (a late settle from a session the user has left must not touch the face of the
+         one on screen), and only when it is still the pin the press was made under — a newer
+         choice made while the PATCH flew is a decision this write knows nothing about. A pin of
+         `null` is released too, which is a no-op and keeps the webapp `FaceRow`'s exact rule. */
+      clearPin: (submitted) => {
+        if (faceCurrent.current !== faces) return;
+        if (pinNow.current === submitted || pinNow.current === null) setFacePin(null);
+      },
     });
     faceCurrent.current = faces;
     // The signatures ride the flag's read but keep their OWN ordering: the machine's epoch
@@ -508,6 +542,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
        outranks it either way) is deliberately left alone — it belongs to the phone, not to
        whoever is signed in on it. */
     setAccountFace(null);
+    setAccountFaceKnown(false);
     setFacePending(false);
     drainOwed.current = false; // the debt was the old session's; the new one owes nothing
     if (machine) void machine.refresh();
@@ -806,7 +841,12 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         };
       })(),
       signatures,
-      face: { account: accountFace, pending: facePending, applyAll: applyFaceAllDevices },
+      face: {
+        account: accountFace,
+        known: accountFaceKnown,
+        pending: facePending,
+        applyAll: applyFaceAllDevices,
+      },
       message: (id) => liveMessage(engine, id, { now: new Date(), zone, foldersEnabled: foldersOn }),
       sendOutcome: outcomeOf,
       actions,
@@ -820,7 +860,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, session, scopes, zone, actions, version, outcomeSeq, outcomeOf, freshBeat,
     foldersOn, foldersPending, setFoldersEnabled, signatures, conn.syncing, conn.syncError,
-    accountFace, facePending, applyFaceAllDevices]);
+    accountFace, accountFaceKnown, facePending, applyFaceAllDevices]);
 
   /**
    * THE FRESHNESS WATCHER — the clock's other half, AFTER the memo because its sentinel IS the

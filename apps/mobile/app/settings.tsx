@@ -18,7 +18,12 @@ import { View } from "react-native";
 import { Copy } from "../src/copy";
 import { type WakeState } from "../src/net/push";
 import { useWake } from "../src/state/wake";
-import { accountGovernsFace, type FaceName, type ThemePref } from "../src/theme";
+import {
+  accountGovernsFace,
+  accountWideOffered,
+  type FaceName,
+  type ThemePref,
+} from "../src/theme";
 import { usePrefs } from "../src/state/store";
 import { useWorld } from "../src/state/world";
 import { Button, Panel, Rule, Screen, Scroller, Section, TapRow, Txt } from "../src/ui/base";
@@ -93,6 +98,7 @@ function SettingsBody() {
           <FacePanel
             pin={facePin}
             account={w.face.account}
+            accountKnown={w.face.known}
             pending={w.face.pending}
             setPin={setFacePin}
             applyAll={w.face.applyAll}
@@ -203,8 +209,14 @@ function SettingsBody() {
  * scope line says which of the two states this device is in.
  *
  * The apply-all affordance is WITHHELD, not disabled, where no account can hold a face — the
- * webapp `FaceRow`'s rule, expressed the same way: `applyAll` is only offered while the world is
- * live, and a control that cannot control is never drawn.
+ * webapp `FaceRow`'s rule, expressed the same way: a control that cannot control is never drawn.
+ * TWO conditions withhold it, and the second is the subtle one (review-caught):
+ *
+ *  · nothing is connected, so there is no account row to store a shared choice in;
+ *  · the account's face has not been READ yet ({@link World.face.known}). While it is unknown,
+ *    `account` is null, the control shows paper, and pressing apply-all would PATCH paper over an
+ *    ohmarchy the account really holds whose read was slow or failed. The webapp gates the same
+ *    affordance on `themeFaceKnown` for the same reason.
  *
  * The failure is said and the control does not move wrongly: the device flip cannot fail (it is
  * local), and a refused account write leaves the segmented control on this device's real face
@@ -213,12 +225,14 @@ function SettingsBody() {
 function FacePanel({
   pin,
   account,
+  accountKnown,
   pending,
   setPin,
   applyAll,
 }: {
   pin: FaceName | null;
   account: FaceName | null;
+  accountKnown: boolean;
   pending: boolean;
   setPin: (face: FaceName | null) => void;
   applyAll: (face: FaceName) => Promise<boolean>;
@@ -252,7 +266,7 @@ function FacePanel({
         <Txt variant="caption" tone="ink3" style={{ marginTop: 6 }}>
           {governed ? Copy.faceScopeAll : Copy.faceScopeDevice}
         </Txt>
-        {governed ? null : (
+        {accountWideOffered(accountKnown, face, pin, account) ? (
           <Button
             label={Copy.faceApplyAll}
             variant="quiet"
@@ -267,7 +281,7 @@ function FacePanel({
               });
             }}
           />
-        )}
+        ) : null}
         {failed ? (
           <Txt variant="caption" tone="ink3" style={{ marginTop: 6 }}>
             {Copy.faceFailed}
