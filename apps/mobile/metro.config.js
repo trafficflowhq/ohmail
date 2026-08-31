@@ -20,8 +20,22 @@
  *    literally and fails on a file that does not exist. TypeScript solves this
  *    with `extensionAlias`, and webpack needs the same hint. The
  *    `resolveRequest` hook below is Metro's version of it: for a relative
- *    `.js` specifier coming from a file inside `packages/`, try `.ts`/`.tsx`
- *    first, then fall through to the stock resolver.
+ *    `.js` specifier coming from a file inside `packages/` OR from this app's
+ *    own source, try `.ts`/`.tsx` first, then fall through to the stock
+ *    resolver.
+ *
+ *    THE APP'S OWN SOURCE WAS NOT COVERED UNTIL IT BROKE THE BUNDLE, and the
+ *    scoping is why it took a release ceremony to notice. The hook tested
+ *    `originModulePath.includes("/packages/")`, so a NodeNext specifier written
+ *    in `apps/mobile` itself fell through to the stock resolver and failed:
+ *    `Unable to resolve module ./push.js from apps/mobile/src/net/pairing.ts`.
+ *    Three sibling specifiers had been harmless for the same reason they were
+ *    invisible — they are `import type`, erased before Metro ever sees them —
+ *    so the first VALUE import written in the house style was the first one to
+ *    fail, and it failed the Android bundle outright rather than degrading.
+ *    The app is authored in the same style as the packages it consumes, so it
+ *    gets the same hint. Caught by the pre-tag Hermes export, which exists for
+ *    exactly this; nothing shipped broken.
  */
 const { getDefaultConfig } = require("expo/metro-config");
 const path = require("node:path");
@@ -46,7 +60,8 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     moduleName.startsWith(".") &&
     moduleName.endsWith(".js") &&
     context.originModulePath &&
-    context.originModulePath.includes(`${path.sep}packages${path.sep}`)
+    (context.originModulePath.includes(`${path.sep}packages${path.sep}`) ||
+      context.originModulePath.startsWith(`${projectRoot}${path.sep}`))
   ) {
     const base = path.resolve(path.dirname(context.originModulePath), moduleName.slice(0, -3));
     for (const ext of TS_EXTENSIONS) {
