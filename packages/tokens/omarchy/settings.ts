@@ -62,13 +62,20 @@ const MAX_FONT_PX = 200;
 const MAX_GAP_PX = 200;
 const MAX_BORDER_PX = 32;
 
-/** One CSS-safe family name: quotes and control characters stripped, whitespace collapsed. */
+/** One CSS-safe family name: quotes and control characters stripped, whitespace collapsed —
+ *  and a name carrying stylesheet-structural punctuation is REFUSED, not repaired. The live
+ *  token set crosses a fence in the window that bans those characters from whole values
+ *  (comment-openers and hanging brackets can eat the entire rule); quoted, `'Mono/Code'`
+ *  would be legal CSS, but teaching the fence quote-awareness widens the one boundary that
+ *  must stay simple. Refusing HERE keeps the degradation per-ingredient: this family drops,
+ *  the rest of the stack and every other slot survive. */
 function familyName(raw: string): string | null {
   const name = raw
     .replace(/["'\\]/g, "")
     .replace(/[\u0000-\u001f\u007f]/g, "")
     .replace(/\s+/g, " ")
     .trim();
+  if (/[{}<>;@/[\]()]/.test(name)) return null;
   return name.length > 0 && name.length <= 64 ? name : null;
 }
 
