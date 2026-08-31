@@ -19,6 +19,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
+import { presentsUnread } from "@ohmail/client-engine";
 import type { EngineMessage, MessageBody, TagDTO, WaterlineMeta } from "@ohmail/client-engine";
 import { ListPane, ListRows, MessageRow, Waterline } from "@ohmail/ui";
 import { MarkAllRead } from "../components/MarkAllRead";
@@ -379,7 +380,9 @@ export function ReceiptsView({
         now={now}
         current={current === m.id}
         expanded={expandedId === m.id}
-        unread={isUnread(m)}
+        /* Presented, exactly as the row below — see it for why `isUnread` still decides
+           every ACT and every count in this view. */
+        unread={presentsUnread(m)}
         bodyText={body.text}
         bodyState={body.state}
         bodyHtml={body.html}
@@ -411,9 +414,16 @@ export function ReceiptsView({
       /* `data-unseen` for the sweep; NO dot — newness is position relative to the line,
          exactly as in Reads. Read state renders truthfully beside it: a `\Seen` receipt
          takes the quiet ink, an unread one keeps full weight (see the Reads row for the
-         live measurement behind this). */
-      unread={isUnread(m)}
-      seen={!isUnread(m)}
+         live measurement behind this).
+
+         `presentsUnread` and not the `isUnread` prop, and the split is deliberate: the pin is
+         state rather than a folder, so a resurfaced receipt is listed here AND at the top of
+         the Ohbox, and the two must draw it the same way. `isUnread` stays the answer for
+         everything that ACTS or COUNTS in this view — the mark-all list, the landing cursor,
+         the scroll sweep's re-judgement — so a pinned row that is already read is observed
+         and skipped rather than written. */
+      unread={presentsUnread(m)}
+      seen={!presentsUnread(m)}
       dotless
       selected={current === m.id}
       tags={tagsOfMessage(m, tags).map((tag) => ({ name: tag.name, hue: hueOf(tag) }))}

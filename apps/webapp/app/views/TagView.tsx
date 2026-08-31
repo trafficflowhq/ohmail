@@ -216,9 +216,15 @@ export function TagView({
           the Ohbox omits it: the "open reading mode" button would sit at exactly the widths
           where the sheet duplicates this column. */}
       <ReadColumn regionLabel={tReader("pane")}>
+        {/* THE PANE AGREES WITH THE ROW IT WAS OPENED FROM. `presentsUnread` and not the
+            stored flag: a resurfaced message is drawn unread in the list beside this pane, and
+            a pane offering "Mark unread" over a bold row is the two-derivations defect at arm's
+            length — worse, the fallback verb WRITES `unread: true`, when what a pinned row needs
+            is the deliberate read that releases it. The projection is presentation only;
+            `onAction` still carries the real message. */}
         {shown ? (
           <MessagePane
-            message={shown}
+            message={shown.unread === presentsUnread(shown) ? shown : { ...shown, unread: presentsUnread(shown) }}
             tags={tags}
             now={now}
             onAction={(a) => onAction(a, shown)}

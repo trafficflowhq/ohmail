@@ -68,12 +68,24 @@ function Dock({ state, navigation }: DockProps) {
   const insets = useSafeAreaInsets();
   const w = useWorld();
 
-  // The world's own numbers — the engine's counts over the mirror.
+  /**
+   * The world's own numbers — the engine's counts over the mirror, and NOT a third derivation
+   * computed here.
+   *
+   * The two streams read `newCount`, which is `FeedPartition`'s own field (above this device's
+   * waterline AND still unread on the server) — the same number the browser and desktop rails
+   * show, so one account cannot report two different counts for the same pile. Counting
+   * `items.filter(unread)` here, as this used to, was a third answer: it took every unread row
+   * in the stream whether or not the line had already carried it, and once a resurfaced row is
+   * DRAWN unread (`presentsUnread`, which `toMail` applies) it would have counted pins as new
+   * mail as well. What is drawn and what is counted are different questions; `WorldMail.unread`
+   * answers the first, these fields answer the second.
+   */
   const badgeOf: Record<string, number> = {
     index: w.ohbox.unread,
     screener: w.screener.waiting.length,
-    reads: w.reads.items.filter((m) => m.unread).length,
-    receipts: w.receipts.groups.reduce((n, g) => n + g.items.filter((m) => m.unread).length, 0),
+    reads: w.reads.newCount,
+    receipts: w.receipts.newCount,
     more: 0,
   };
 

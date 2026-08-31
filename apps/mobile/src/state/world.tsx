@@ -123,6 +123,13 @@ export interface World {
     items: WorldMail[];
     waterlineAboveId: string | null;
     waterLabel: string;
+    /**
+     * THE STREAM'S BADGE — `FeedPartition.newCount` carried through unchanged, so the dock and
+     * the screen's meta line read ONE number and the browser's rail reads the same field. It is
+     * published here because the dock used to compute its own (`items.filter(unread)`), which
+     * counted mail below the line as well and, once a pinned row is drawn unread, counted pins.
+     */
+    newCount: number;
     meta: string;
   };
   receipts: {
@@ -130,6 +137,8 @@ export interface World {
     waterlineAboveId: string | null;
     waterLabel: string;
     total: number;
+    /** The stream's badge — see {@link WorldState.reads.newCount}. */
+    newCount: number;
     meta: string;
   };
   screener: { waiting: ScreenerRow[]; screened: ScreenerRow[]; spam: ScreenerRow[]; meta: string };
@@ -261,8 +270,8 @@ function emptyWorld(actions: WorldActions): World {
     account: { name: "", email: "" },
     ohbox: { resurfaced: [], fresh: [], seen: [], unread: 0, total: 0, meta: "" },
     doorbell: { initials: [], count: 0 },
-    reads: { items: [], waterlineAboveId: null, waterLabel: Copy.waterline, meta: "" },
-    receipts: { groups: [], waterlineAboveId: null, waterLabel: Copy.waterline, total: 0, meta: "" },
+    reads: { items: [], waterlineAboveId: null, waterLabel: Copy.waterline, newCount: 0, meta: "" },
+    receipts: { groups: [], waterlineAboveId: null, waterLabel: Copy.waterline, total: 0, newCount: 0, meta: "" },
     screener: { waiting: [], screened: [], spam: [], meta: "" },
     piles: [],
     pilesMeta: "",
@@ -658,6 +667,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         waterlineAboveId: receipts.waterlineAboveId,
         waterLabel: Copy.waterline,
         total: receipts.total,
+        newCount: receipts.newCount,
         meta: `${receipts.newCount} new`,
       },
       screener: {

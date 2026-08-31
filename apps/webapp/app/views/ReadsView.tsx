@@ -11,6 +11,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
+import { presentsUnread } from "@ohmail/client-engine";
 import type {
   EngineMessage,
   FeedPartition,
@@ -562,9 +563,17 @@ export function ReadsView({
          message (including one read before this client ever ran, or in another client)
          takes the quiet ink, an unread one keeps full weight. Measured live without this:
          a warm import rendered every row at unread weight, and "Mark all read" changed
-         nothing visible. */
-      unread={m.unread}
-      seen={!m.unread}
+         nothing visible.
+
+         `presentsUnread`, because a message can be resurfaced WHEREVER it lives: the pin is
+         state, not a folder, so a `ohmail/Reads` issue put back at the top of the Ohbox is
+         listed in both places at once — and one of them drawing it bold while the other drew
+         it grey is precisely the inconsistency this derivation exists to remove. It cannot
+         cost a stray write: the scroll observer this attribute arms re-judges against the
+         STORED flag before it marks anything (`onSeen` below), so a pinned row that is
+         already read is observed and skipped. */
+      unread={presentsUnread(m)}
+      seen={!presentsUnread(m)}
       dotless
       selected={current === m.id}
       tags={tagsOfMessage(m, tags).map((tag) => ({ name: tag.name, hue: hueOf(tag) }))}
@@ -605,7 +614,9 @@ export function ReadsView({
         now={now}
         current={current === m.id}
         expanded={expandedId === m.id}
-        unread={m.unread}
+        /* Presented, exactly as the row above — one message drawn twice must not be drawn
+           two ways. See the row for why the sweep is unaffected. */
+        unread={presentsUnread(m)}
         bodyText={body.text}
         bodyState={body.state}
         bodyHtml={body.html}

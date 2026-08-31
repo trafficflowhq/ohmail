@@ -5739,7 +5739,14 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
                 onToggleTime={toggleAbsoluteTime}
                 messages={receipts}
                 waterline={receiptsPartition.waterline}
-                freshCount={receiptsNew}
+                /* THE LINE'S POSITION, NOT THE BADGE. `freshCount` slices this view's list —
+                   it is `receiptsPartition.fresh.length`, the count of rows ABOVE the anchor,
+                   and the waterline is drawn between the two halves it cuts. `receiptsNew`
+                   (the rail's number) is the same prefix INTERSECTED with what is still unread
+                   on the server, which is smaller whenever this device's line is stale — and
+                   passing it here would slide the line up over rows that are genuinely above
+                   it. Two questions, two numbers, and only one of them is positional. */
+                freshCount={receiptsPartition.fresh.length}
                 tags={tags}
                 now={now}
                 cur={receiptsCur}
