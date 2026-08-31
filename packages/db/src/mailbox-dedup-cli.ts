@@ -87,6 +87,11 @@ async function main(): Promise<number> {
   const db = drizzle(client);
   const now = new Date();
   try {
+    // `client.ts#ROLE_DEFAULT_TIMEOUTS` is a ROLE-ONLY default (every database this role opens,
+    // not only production's), so this scan across the real mailbox/message tables must not
+    // silently inherit a 55 s ceiling.
+    await client.unsafe(`set statement_timeout = 0`);
+    await client.unsafe(`set idle_in_transaction_session_timeout = 0`);
     console.log(`[db:mailboxes:dedup] target host=${new URL(url).hostname}`);
     const groups = await findActiveAddressDuplicates(db);
     if (groups.length === 0) {

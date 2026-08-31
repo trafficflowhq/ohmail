@@ -145,6 +145,27 @@ export async function runMigrations(
     if (!Number.isInteger(MIGRATION_LOCK_TIMEOUT_MS) || MIGRATION_LOCK_TIMEOUT_MS < 0) {
       throw new Error(`MIGRATION_LOCK_TIMEOUT_MS must be a non-negative integer`);
     }
+    // ── NEUTRALIZE THE ROLE'S SERVER-SIDE DEFAULTS, BEFORE ANYTHING ELSE ON THIS SESSION ──────
+    //
+    // `setupProdDatabase` applies `ROLE_DEFAULT_TIMEOUTS` (`client.ts`) as an `ALTER ROLE …
+    // SET` — a Postgres session default, not a client-side option, so it reaches this
+    // connection too and it reaches it BEFORE the advisory-lock call below, not after. Two
+    // consequences, both live-tested:
+    //
+    //  · `statement_timeout` (55 s in `ROLE_DEFAULT_TIMEOUTS`) would cut the `pg_advisory_lock`
+    //    call itself short of the 120 s `MIGRATION_LOCK_TIMEOUT_MS` this module already argues
+    //    for — a lock WAIT is one long-running statement from the server's point of view, and a
+    //    role default sized for a serverless request has no reason to fit a migration's own
+    //    intended wait.
+    //  · `idle_in_transaction_session_timeout` (60 s) would end a long journal pass the moment
+    //    any one statement inside it left the connection briefly idle between drizzle calls,
+    //    which the two-pass migrator's own transactions do routinely.
+    //
+    // Reset to 0 (unlimited) HERE, before the lock dance, so every later line in this function
+    // keeps meaning what its own comments say it means, regardless of what role default exists
+    // on the database it happens to run against.
+    await sql`set statement_timeout = 0`;
+    await sql`set idle_in_transaction_session_timeout = 0`;
     await sql.unsafe(`set lock_timeout = ${MIGRATION_LOCK_TIMEOUT_MS}`);
     try {
       await sql`select pg_advisory_lock(${key})`;

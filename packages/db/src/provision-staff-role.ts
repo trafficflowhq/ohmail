@@ -112,6 +112,12 @@ async function main(): Promise<number> {
   });
 
   try {
+    // `client.ts#ROLE_DEFAULT_TIMEOUTS` is a ROLE-ONLY default (every database this role opens,
+    // not only the one this script targets) precisely because that is the only shape proven to
+    // reach a transaction-mode pooler. This is a hand-run DDL script and must not inherit it as
+    // a ceiling on its own statements.
+    await sql.unsafe(`set statement_timeout = 0`);
+    await sql.unsafe(`set idle_in_transaction_session_timeout = 0`);
     const who = (await sql`select current_database() db, current_user usr`)[0]!;
     console.log(`database : ${who.db}\nconnected: ${who.usr}\n`);
 

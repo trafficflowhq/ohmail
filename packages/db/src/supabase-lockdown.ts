@@ -110,6 +110,10 @@ async function main(): Promise<number> {
   /** Relations the external probe will ask about — read from the database, unioned with the list. */
   let probeTables: string[] = [...SENSITIVE_PROBE_TABLES];
   try {
+    // `client.ts#ROLE_DEFAULT_TIMEOUTS` is a ROLE-ONLY default, so this hand-run DDL script must
+    // not silently inherit a 55 s ceiling on its own statements.
+    await sql.unsafe(`set statement_timeout = 0`);
+    await sql.unsafe(`set idle_in_transaction_session_timeout = 0`);
     const who = (await sql<Array<{ db: string; usr: string }>>`
       SELECT current_database() AS db, current_user AS usr`)[0]!;
     console.log(`database : ${who.db}\nconnected: ${who.usr}\n`);

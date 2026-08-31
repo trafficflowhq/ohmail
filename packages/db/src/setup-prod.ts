@@ -4,6 +4,7 @@ import postgres from "postgres";
 import { readJournalOf, type JournalEntry, type JournalSpec } from "./baseline.js";
 import { onNotice } from "./notices.js";
 import { runMigrations, JOURNALS } from "./migrate.js";
+import { ROLE_DEFAULT_TIMEOUTS } from "./client.js";
 import { ensureSearchExtensions, ensureWithheldProvenanceIndex } from "./search-setup.js";
 import { transactionPoolerReason, sessionUrlRejection } from "./session-url.js";
 import {
@@ -153,6 +154,19 @@ export interface ProdSetupReport {
     /** Relations whose answer proves nothing. Never a pass. */
     unknown: string[];
   } | null;
+  /**
+   * `ROLE_DEFAULT_TIMEOUTS` (`client.ts`) applied via `ALTER ROLE … SET …` — ROLE-ONLY, not
+   * `IN DATABASE …`, which measurement showed does not reach the production transaction-mode
+   * pooler even though the catalog row is correct; see the long comment where this is applied
+   * for the full story — and read back from `pg_db_role_setting` (`setdatabase = 0`). `null`
+   * only when the connection's own identity could not be read back (never expected in
+   * practice); `verified` is per-GUC so a partial write (one ALTER succeeding, another silently
+   * rejected) is visible rather than averaged away, and any `false` here joins `problems` below.
+   */
+  roleDefaults: {
+    role: string;
+    verified: Record<keyof typeof ROLE_DEFAULT_TIMEOUTS, boolean>;
+  } | null;
 }
 
 /** Options for {@link setupProdDatabase}. */
@@ -253,6 +267,20 @@ async function rows<T>(db: SqlExecutor, query: SQL): Promise<T[]> {
 }
 
 /**
+ * A Postgres identifier, quoted the standard way: wrapped in double quotes, any embedded double
+ * quote doubled. `ALTER ROLE`/`ALTER DATABASE` take an identifier where a bind parameter cannot
+ * go — Postgres identifiers are never literals — so this is the guard against a role or database
+ * name containing a character that would otherwise close the quoted identifier early. The names
+ * passed through it here are READ BACK from `current_user`/`current_database()` a moment before
+ * use, never caller input, so there is no injection surface; the quoting is a correctness
+ * requirement (a role legitimately containing a `"` would otherwise break the statement), not a
+ * defence against an adversarial name.
+ */
+function quoteIdent(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`;
+}
+
+/**
  * The `when` values recorded in ONE journal's own migrations table, addressed by its PINNED
  * schema. An absent table is an empty set, not a fallback to somebody else's table — see the
  * pinning note at the top of this file for what the fallback cost.
@@ -343,6 +371,17 @@ export async function setupProdDatabase(
   let before: AppliedWhens;
   let hostRoles: string[];
   try {
+    // NEUTRALIZE THE ROLE'S SERVER-SIDE DEFAULTS BEFORE ANY WORK ON THIS SESSION. Once
+    // `ROLE_DEFAULT_TIMEOUTS` is applied below, EVERY future connection under this role —
+    // including this one, and every one after it — starts with a 55 s statement ceiling and a
+    // 60 s idle-in-transaction ceiling. `ensureWithheldProvenanceIndex` a few lines down runs a
+    // `CREATE INDEX CONCURRENTLY` over the schema's largest table specifically because a
+    // migration-time index build must not hold a write lock — it is exactly the kind of
+    // multi-minute statement a request-scoped default is sized to kill. This session (and the
+    // provisioning session below) must run under NO ceiling, forever, not only on the run that
+    // first sets the role default.
+    await pre.unsafe(`set statement_timeout = 0`);
+    await pre.unsafe(`set idle_in_transaction_session_timeout = 0`);
     // IDENTITY FIRST, then mutate. The report used to name the server it had reached only
     // AFTER migrating it, which is the wrong order for a command that runs DDL: an operator
     // pointed at the wrong database found out by reading the success message. This logs
@@ -413,8 +452,85 @@ export async function setupProdDatabase(
   const client = postgres(url, { max: 1, onnotice: onNotice });
   const db = drizzle(client);
   try {
+    // Same reasoning as the `pre` session above: `ensureSearchExtensions` builds trigram GIN
+    // indexes, and the role default this function itself installs (below) must not be able to
+    // kill its own provisioning pass.
+    await client.unsafe(`set statement_timeout = 0`);
+    await client.unsafe(`set idle_in_transaction_session_timeout = 0`);
     log("ensuring search extensions (pg_trgm + trigram GIN indexes)");
     await ensureSearchExtensions(db);
+
+    // ── THE ROLE-LEVEL SERVER DEADLINES, APPLIED AND VERIFIED FAIL-CLOSED ─────────────────
+    //
+    // `client.ts#ROLE_DEFAULT_TIMEOUTS`' whole docblock is the "why": a client-side
+    // `connection: {…}` startup parameter is measured INERT through this deployment's
+    // transaction-mode pooler, so the mechanism that actually reaches a pooled backend is a
+    // Postgres ROLE default — read by Postgres itself at backend session start, with zero
+    // pooler cooperation required.
+    //
+    // `current_user`/`current_database()` rather than a caller-supplied name: this step must
+    // configure exactly the identity and database THIS connection is already authenticated as,
+    // never a name a caller could get wrong and silently configure nothing. `ALTER ROLE` takes
+    // no bind parameters (the same trap `migrate.ts` already documents for `SET`), and a role or
+    // database name can never be a bind parameter in any case — Postgres identifiers are not
+    // literals. Both are read back from the server a moment before use and quoted with `sql.raw`
+    // for the READ value, not interpolated from caller input.
+    //
+    // READBACK, NOT TRUST. `ALTER ROLE` reports success even when nothing changed underneath — a
+    // typo'd GUC name is silently ignored by some Postgres builds, and there is no reason to
+    // believe the write landed just because the statement did not throw. `pg_db_role_setting` is
+    // the catalog Postgres itself reads at session start, so reading it back — and pushing a
+    // MISMATCH onto `problems` rather than merely logging one — is the fail-closed shape every
+    // other verification in this function already takes.
+    //
+    // ── ROLE-ONLY (`setdatabase = 0`), NOT `IN DATABASE …` — MEASURED, AND IT WAS THE BUG ─────
+    //
+    // The first version of this step scoped the ALTER to `IN DATABASE <current_database()>`,
+    // proved it against a real backend, and it was STILL inert through the production
+    // transaction-mode pooler: a bare probe with no client options came back at the pooler's own
+    // baseline, not the configured value, even though `pg_db_role_setting` correctly held the
+    // (role, database)-scoped row. Diagnosed by reading the FULL catalog on the live database:
+    // every one of Supabase's OWN hardened defaults — `anon` (`statement_timeout=3s`),
+    // `authenticated` (`8s`), `authenticator` (`8s`/`lock_timeout=8s`) — is `setdatabase = 0`,
+    // ROLE-ONLY, with not one database-scoped row anywhere in the catalog. Matching that exact
+    // shape (dropping `IN DATABASE …` from the ALTER) reached the backend on the first try,
+    // verified live on both the transaction-mode and session pooler ports.
+    //
+    // The cost is a WIDER blast radius than originally designed: a role-only default applies to
+    // EVERY database this role ever connects to, not only the one this run targets — which is
+    // why `migrate.ts` and this function's own `pre`/`client` connections neutralize it
+    // immediately on connect (see the comment beside `postgres(url, …)` above), and why
+    // `provision-staff-role.ts`/`mailbox-dedup-cli.ts` do the same. It is not a new risk this
+    // deployment did not already carry: it is the identical shape Supabase's own roles already
+    // use for the identical reason.
+    const roleIdent = await rows<{ role: string }>(db, sql`select current_user as role`);
+    const roleName = roleIdent[0]?.role ?? "";
+    let roleDefaults: ProdSetupReport["roleDefaults"] = null;
+    if (roleName === "") {
+      log("role-level server deadlines SKIPPED: could not read back current_user");
+    } else {
+      log(`applying role-level server deadlines to ${roleName} (role-wide, every database)`);
+      for (const [guc, ms] of Object.entries(ROLE_DEFAULT_TIMEOUTS)) {
+        await client.unsafe(`alter role ${quoteIdent(roleName)} set ${guc} = '${ms}ms'`);
+      }
+      const settings = await rows<{ setconfig: string[] | null }>(
+        db,
+        sql`select rs.setconfig from pg_db_role_setting rs
+              join pg_roles r on r.oid = rs.setrole
+              where r.rolname = ${roleName} and rs.setdatabase = 0`,
+      );
+      const flat = (settings[0]?.setconfig ?? []).reduce<Record<string, string>>((acc, kv) => {
+        const eq = kv.indexOf("=");
+        if (eq > 0) acc[kv.slice(0, eq)] = kv.slice(eq + 1);
+        return acc;
+      }, {});
+      roleDefaults = {
+        role: roleName,
+        verified: Object.fromEntries(
+          Object.entries(ROLE_DEFAULT_TIMEOUTS).map(([guc, ms]) => [guc, flat[guc] === `${ms}ms`]),
+        ) as Record<keyof typeof ROLE_DEFAULT_TIMEOUTS, boolean>,
+      };
+    }
 
     // ── THE SUPABASE DATA API LOCKDOWN'S SECOND PASS, AND THE CENSUS THAT IS THE VERDICT ──
     //
@@ -614,6 +730,7 @@ export async function setupProdDatabase(
       fuzzy,
       supabaseLockdown,
       supabaseDataApi,
+      roleDefaults,
     };
 
     const problems: string[] = [...journalProblems(statuses)];
@@ -647,6 +764,15 @@ export async function setupProdDatabase(
     }
     if (!report.changeLogCompositeIndex) {
       problems.push("no change_log index leading with (account_id, seq) — the /events poll would seq-scan");
+    }
+    // FAIL-CLOSED, not a warning: a role default that did not actually land is a 504 family with
+    // no evidence, since nothing else reads or reports it. See ROLE_DEFAULT_TIMEOUTS' docblock.
+    if (!roleDefaults) {
+      problems.push("role-level server deadlines were not applied — current_user/current_database() unreadable");
+    } else {
+      for (const [guc, ok] of Object.entries(roleDefaults.verified)) {
+        if (!ok) problems.push(`role-level server deadline did not take: ${guc} on ${roleDefaults.role}`);
+      }
     }
     if (problems.length > 0) {
       throw new Error(`production database setup verification FAILED:\n  - ${problems.join("\n  - ")}`);

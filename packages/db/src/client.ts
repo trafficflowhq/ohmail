@@ -114,10 +114,10 @@ export const WORKER_TIMEOUTS = {
  * runs against whichever backend was already checked out for that unit of work. That is the only
  * mechanism proven to survive this transport, and it is not what `connection:` does.
  *
- * The correction — a role-scoped server default via `setupProdDatabase`, verified from
+ * The correction is {@link ROLE_DEFAULT_TIMEOUTS}, below — a role-scoped Postgres server default
+ * rather than a client-side option, applied by `setupProdDatabase` and verified from
  * `pg_db_role_setting`, with `packages/db/src/migrate.ts` and `setup-prod.ts` hardened first
- * against inheriting a shorter baseline for their own long-running statements — is the reopened
- * ledger item, rather than built into this comment ahead of the code existing.
+ * against inheriting it as a ceiling on their own long-running statements.
  *
  * ── WHAT THE VALUES BELOW STILL ARE ───────────────────────────────────────────────────────────
  *
@@ -201,6 +201,63 @@ export const POOLED_TIMEOUTS = {
  */
 export const API_MAX_DURATION_MS = 60_000;
 
+/**
+ * THE MECHANISM THAT ACTUALLY REACHES A TRANSACTION-MODE POOLER — a Postgres ROLE-ONLY default,
+ * applied by `setupProdDatabase` (`ALTER ROLE … SET …`, deliberately NOT `IN DATABASE …`) and
+ * verified from `pg_db_role_setting`, not a client-side connection option.
+ *
+ * ── WHY A ROLE DEFAULT, AFTER TWO OTHER MECHANISMS FAILED ─────────────────────────────────────
+ *
+ * `POOLED_TIMEOUTS` and `WORKER_TIMEOUTS` are both `connection: {…}` startup parameters, and
+ * both are measured INERT through this deployment's connection pooler — on BOTH the
+ * transaction-mode port and the port `apps/worker` calls "session", identically: a bare
+ * `postgres.js` client sending `connection: { statement_timeout: "25000", … }` and then reading
+ * `current_setting('statement_timeout')` back gets the pooler's own baseline, not the requested
+ * value, on either port, in every round trip tried. The libpq-style `options: "-c
+ * statement_timeout=…"` startup parameter was tried too and silently ignored the same way. A
+ * ROLE default is different in kind: `pg_db_role_setting` is read by POSTGRES ITSELF at backend
+ * session start, with zero pooler cooperation required.
+ *
+ * **AND IT HAD TO BE ROLE-ONLY, NOT `IN DATABASE …` — a second measured failure, not a design
+ * choice made up front.** The first version scoped the ALTER to the connecting database, proved
+ * the catalog row was correct, and it was STILL inert through the transaction-mode pooler: a
+ * bare probe with no client options came back at the pooler's own baseline. The catalog itself
+ * gave the answer — every one of the platform's own pre-existing hardened role defaults
+ * (three roles, unrelated to this codebase) is `setdatabase = 0`, role-only, and not one is
+ * database-scoped. Matching that exact shape reached the backend on the first try. The cost is a wider blast radius than
+ * originally intended — the default now applies to every database this role ever opens, not only
+ * the one production database — which is why every connection that legitimately needs more than
+ * these ceilings (`migrate.ts`, `setup-prod.ts`'s own provisioning connections,
+ * `provision-staff-role.ts`, `mailbox-dedup-cli.ts`) neutralizes it immediately on connect rather
+ * than relying on scope to exclude it.
+ *
+ * ── WHY ONE SHARED VALUE AND NOT THE API'S OWN TIGHTER ONE ────────────────────────────────────
+ *
+ * A role default is necessarily shared: it is a fact about the ROLE, not about which factory
+ * opened the connection, so `makePooledDb`'s request-scoped needs and `makeOwnedDb`'s long-lived
+ * worker needs land on ONE set of numbers. These are `WORKER_TIMEOUTS`' values, not
+ * `POOLED_TIMEOUTS`' tighter ones — `lock_timeout` and `idle_in_transaction_session_timeout`
+ * carried over verbatim, `statement_timeout` at 55 s rather than 60 s so the database still gives
+ * up strictly before {@link API_MAX_DURATION_MS} rather than racing it. The measured 504 family
+ * was **waits, not runaways** — every one of the 103 timeouts sat at the platform's own ceiling
+ * with no variance, which `lock_timeout`/`idle_in_transaction_session_timeout` address directly.
+ * The API's original, tighter 25 s/10 s intent is an explicitly open residual: revisit it only if
+ * live evidence ever shows a genuine runaway-STATEMENT family, which the measured population did
+ * not contain.
+ *
+ * ── WHAT THIS DOES NOT TOUCH ───────────────────────────────────────────────────────────────────
+ *
+ * `POOLED_TIMEOUTS` and `WORKER_TIMEOUTS` stay exactly as they are: they are the working
+ * mechanism for a self-hosted deployment dialling its own Postgres directly, with no pooler
+ * multiplexing in front of it, which is precisely what `pooled-db.pg.test.ts` and
+ * `worker-timeouts.pg.test.ts` prove and all they ever proved.
+ */
+export const ROLE_DEFAULT_TIMEOUTS = {
+  lock_timeout: 30_000,
+  statement_timeout: 55_000,
+  idle_in_transaction_session_timeout: 60_000,
+} as const;
+
 // Serverless (Vercel) request-scoped Db. One pool per connection
 // string, module-cached so a WARM function instance reuses it across requests instead of
 // opening a new connection per invocation (which storms/exhausts the upstream pooler under
@@ -213,7 +270,8 @@ export const API_MAX_DURATION_MS = 60_000;
 //   • `connection: POOLED_TIMEOUTS` are SERVER-side deadlines that reach the backend ONLY on a
 //     direct connection (self-host). Measured to be INERT through a transaction-mode pooler in
 //     front of production — see POOLED_TIMEOUTS' own docblock. `connect_timeout` bounds only the
-//     dial in either case; a fix that actually reaches a pooled deployment is still open.
+//     dial in either case; the mechanism that reaches a pooled deployment is
+//     ROLE_DEFAULT_TIMEOUTS, a role-level server default applied by `setupProdDatabase`.
 const pools = new Map<string, ReturnType<typeof postgres>>();
 
 export function makePooledDb(url: string): PostgresJsDatabase<typeof schema> {
