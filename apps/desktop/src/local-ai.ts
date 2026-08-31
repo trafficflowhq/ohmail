@@ -3,9 +3,10 @@
  *
  * A standalone install has no account, no subscription and nothing metered, so the two AI features
  * it has — a routing suggestion for a first-contact sender, and a reply draft — run against a model
- * its owner supplies. Two ways to supply one: an API key you hold, or a model server running on
- * this machine. And one honest third state, nothing configured, which is not an error: rules-only
- * routing is the product's floor and a complete mail organizer without a model.
+ * its owner supplies. Three ways to supply one: an Anthropic key you hold, an OpenAI key you hold,
+ * or a model server running on this machine. And one honest fourth state, nothing configured, which
+ * is not an error: rules-only routing is the product's floor and a complete mail organizer without
+ * a model.
  *
  * ── THE SECRET GOES DOWN THE PIPE, NEVER THROUGH THE SHELL ──────────────────────────────────
  *
@@ -30,7 +31,7 @@ import { bridgeFetch } from "./bridge-fetch.js";
 /** Where the engine serves this install's own AI settings. Root-relative, like every path here. */
 const AI_PATH = "/local/ai";
 
-export type AiProviderKind = "anthropic" | "ollama";
+export type AiProviderKind = "anthropic" | "openai" | "ollama";
 
 /** Why the chosen provider cannot answer right now. The engine's word; the pane renders it. */
 export type AiUnavailableReason =
@@ -61,9 +62,17 @@ export interface AiProbeReport {
   at: string;
 }
 
+/** One hosted vendor's half. `hasKey` is the whole of what is ever said about the key. */
+export interface HostedAiSettings {
+  classifyModel: string;
+  draftModel: string;
+  hasKey: boolean;
+}
+
 export interface LocalAiSettings {
   provider: AiProviderKind | null;
-  anthropic: { classifyModel: string; draftModel: string; hasKey: boolean };
+  anthropic: HostedAiSettings;
+  openai: HostedAiSettings;
   ollama: { baseUrl: string; classifyModel: string; draftModel: string };
 }
 
@@ -73,7 +82,7 @@ export interface LocalAiStatus {
   available: boolean;
   unavailableReason: AiUnavailableReason | null;
   /** WHERE MESSAGE CONTENT GOES, as the engine states it rather than as the window infers it. */
-  contentGoesTo: "anthropic" | "this_machine" | null;
+  contentGoesTo: "anthropic" | "openai" | "this_machine" | null;
   settings: LocalAiSettings;
   probe: AiProbeReport | null;
   /**
@@ -87,6 +96,7 @@ export interface LocalAiStatus {
 export interface LocalAiWrite {
   provider?: AiProviderKind | null;
   anthropic?: { classifyModel?: string; draftModel?: string; apiKey?: string };
+  openai?: { classifyModel?: string; draftModel?: string; apiKey?: string };
   ollama?: { baseUrl?: string; classifyModel?: string; draftModel?: string };
 }
 
@@ -183,10 +193,28 @@ export function contentDestination(status: LocalAiStatus): string {
   switch (status.contentGoesTo) {
     case "anthropic":
       return "Sender, subject and a short extract go to Anthropic, billed to your own account.";
+    case "openai":
+      return "Sender, subject and a short extract go to OpenAI, billed to your own account.";
     case "this_machine":
       return "Sender, subject and a short extract go to the model server you named. Nothing leaves this machine if that server is on it.";
     default:
       return "Nothing is sent anywhere. Mail is filed by rules alone, which is the whole product without a model.";
+  }
+}
+
+/**
+ * The vendor's own name, for a sentence a person reads.
+ *
+ * With two key-carrying providers, "no API key is stored" is ambiguous in exactly the situation
+ * that needs precision — somebody who has a key saved for one vendor and has just switched to the
+ * other. The provider comes from the status the engine sent, so the name and the state are one
+ * fact rather than two that can disagree.
+ */
+function vendorName(provider: AiProviderKind | null): string {
+  switch (provider) {
+    case "anthropic": return "Anthropic";
+    case "openai": return "OpenAI";
+    default: return "The chosen provider";
   }
 }
 
@@ -198,7 +226,7 @@ export function unavailableLine(status: LocalAiStatus): string | null {
     case "not_configured":
       return "No model is set up on this install.";
     case "key_absent":
-      return "Anthropic is chosen and no API key is stored.";
+      return `${vendorName(status.provider)} is chosen and no API key is stored.`;
     case "key_unreadable":
       return "A key is stored and this install's key does not open it. Enter it again to seal it afresh.";
     case "unverified":

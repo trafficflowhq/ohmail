@@ -82,3 +82,61 @@ Every path lands on the same stack, so every guide shares the same facts:
   never lose.** It encrypts your mailbox credentials at rest. Losing it
   means re-entering every connected mailbox. [BACKUP.md](./BACKUP.md) says
   where to keep it.
+
+## Screener suggestions and reply drafts
+
+Both are off until you configure a model, and both are optional: with no model
+configured the Screener still holds first contact, rules still file mail, and
+search still works. That is the floor, not a degraded mode — what changes is
+that the suggestion and the draft are plainly unavailable rather than quietly
+broken.
+
+**There are two run-it-yourself surfaces and they do not offer the same
+choices today.** They are listed apart rather than together because a single
+sentence covering both would be wrong about one of them:
+
+| Surface | Anthropic | OpenAI | Local (Ollama) |
+| --- | --- | --- | --- |
+| **Desktop app**, opening your mail server directly | yes | yes | yes |
+| **This server stack** (`docker compose`) | yes | not yet | not yet |
+
+### On this server stack
+
+One value in `.env`:
+
+```
+ANTHROPIC_API_KEY=sk-ant-…
+```
+
+Requests go to Anthropic under your own key, billed to your account. Leave it
+unset and the AI surfaces answer as unconfigured. **OpenAI and a local Ollama
+are not wired into this stack yet** — the desktop app has them, this one does
+not, and setting an `OPENAI_API_KEY` here does nothing.
+
+### In the desktop app
+
+Settings → Suggestions and drafts, where you pick one of three:
+
+- **Your Anthropic key.** Requests go to `api.anthropic.com`, billed to you.
+- **Your OpenAI key.** Requests go to `api.openai.com`, billed to you.
+- **A model on this machine**, served by [Ollama](https://ollama.com). The
+  address defaults to `http://127.0.0.1:11434` and is yours to change; nothing
+  leaves the machine if the server is on it.
+
+For the local option, install Ollama and pull a model before you choose it:
+
+```
+ollama pull llama3.2
+```
+
+Saving discards the previous test and runs a new one, so the pane tells you
+whether what you just saved actually works rather than leaving you to find out
+when the next message arrives. A model server that is running but does not have
+the model you named is reported as exactly that — the most common way this is
+set up wrongly, and the one that otherwise looks identical to a working setup.
+
+Whichever you choose, an API key is sealed under a key held in your operating
+system's keystore, is never written down in the clear, is never read back, and
+is sent to no host but its own vendor's. Mail carrying a one-time code or other
+authentication material is refused before any request is built and is never
+sent to any model, under any provider.

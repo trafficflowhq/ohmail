@@ -42,19 +42,42 @@ import {
   type LocalAiStatus,
 } from "./local-ai.js";
 
-/** The three choices, including the one that is not a provider. */
+/** The four choices, including the one that is not a provider. */
 type Choice = "none" | AiProviderKind;
+
+/**
+ * The two providers that take a key of your own, as data.
+ *
+ * The pane renders ONE hosted block driven by this table rather than one block per vendor. The
+ * fields are identical — a key, a model for suggestions, a model for drafts — and a second copy of
+ * that JSX is how one vendor's block eventually keeps a stale `hasKey` hint, or sends its key
+ * under the other's field name, while both look right in review.
+ */
+const HOSTED = {
+  anthropic: { label: "Your Anthropic key", vendor: "Anthropic" },
+  openai: { label: "Your OpenAI key", vendor: "OpenAI" },
+} as const;
+
+type HostedKind = keyof typeof HOSTED;
+
+function isHosted(choice: Choice): choice is HostedKind {
+  return choice === "anthropic" || choice === "openai";
+}
 
 const CHOICES: Array<{ id: Choice; label: string }> = [
   { id: "none", label: "None" },
-  { id: "anthropic", label: "Your Anthropic key" },
+  { id: "anthropic", label: HOSTED.anthropic.label },
+  { id: "openai", label: HOSTED.openai.label },
   { id: "ollama", label: "A model on this machine" },
 ];
 
 /** What is configured, in one line, for the row somebody reads before they read anything else. */
 function summary(status: LocalAiStatus): string {
-  if (status.provider === "anthropic") return `Anthropic · ${status.settings.anthropic.classifyModel}`;
-  if (status.provider === "ollama") return `On this machine · ${status.settings.ollama.classifyModel}`;
+  const p = status.provider;
+  if (p === "anthropic" || p === "openai") {
+    return `${HOSTED[p].vendor} · ${status.settings[p].classifyModel}`;
+  }
+  if (p === "ollama") return `On this machine · ${status.settings.ollama.classifyModel}`;
   return "Not set up";
 }
 
@@ -63,11 +86,16 @@ function summary(status: LocalAiStatus): string {
  *
  * `apiKey` is deliberately NOT part of it and is held apart: it is the one value that travels in
  * one direction, so it is cleared after a successful save rather than round-tripped.
+ *
+ * The two hosted vendors keep SEPARATE model fields, mirroring the engine's separate blocks. A
+ * shared pair would silently rewrite one vendor's saved models with the other's on every save.
  */
 interface Draft {
   choice: Choice;
   anthropicClassify: string;
   anthropicDraft: string;
+  openaiClassify: string;
+  openaiDraft: string;
   ollamaBaseUrl: string;
   ollamaClassify: string;
   ollamaDraft: string;
@@ -78,11 +106,19 @@ function draftOf(status: LocalAiStatus): Draft {
     choice: status.provider ?? "none",
     anthropicClassify: status.settings.anthropic.classifyModel,
     anthropicDraft: status.settings.anthropic.draftModel,
+    openaiClassify: status.settings.openai.classifyModel,
+    openaiDraft: status.settings.openai.draftModel,
     ollamaBaseUrl: status.settings.ollama.baseUrl,
     ollamaClassify: status.settings.ollama.classifyModel,
     ollamaDraft: status.settings.ollama.draftModel,
   };
 }
+
+/** Which draft members a hosted vendor's two model fields live in. */
+const HOSTED_FIELDS = {
+  anthropic: { classify: "anthropicClassify", draft: "anthropicDraft" },
+  openai: { classify: "openaiClassify", draft: "openaiDraft" },
+} as const satisfies Record<HostedKind, { classify: keyof Draft; draft: keyof Draft }>;
 
 export function DesktopAiSettings({
   /**
@@ -179,14 +215,28 @@ export function DesktopAiSettings({
   const save = (): Promise<void> =>
     act("saving", async () => {
       const d = draft!;
+      const typed = apiKey.trim();
+      /**
+       * The key goes ONLY to the vendor whose block is on screen.
+       *
+       * There is one key field, because only one hosted vendor's block is ever shown; attaching
+       * what was typed in it to both vendors would send a key belonging to one company to the
+       * other one on the very next save. Empty stays omitted, which is what makes changing a
+       * model free of a trip to your provider's dashboard: an absent key keeps the stored one.
+       */
+      const withKey = (kind: HostedKind): { apiKey?: string } =>
+        typed !== "" && d.choice === kind ? { apiKey: typed } : {};
       return saveAiSettings({
         provider: d.choice === "none" ? null : d.choice,
         anthropic: {
           classifyModel: d.anthropicClassify,
           draftModel: d.anthropicDraft,
-          // OMITTED WHEN EMPTY, and that is the whole reason changing a model does not cost you a
-          // trip to your provider's dashboard: an absent key keeps the stored one.
-          ...(apiKey.trim() === "" ? {} : { apiKey: apiKey.trim() }),
+          ...withKey("anthropic"),
+        },
+        openai: {
+          classifyModel: d.openaiClassify,
+          draftModel: d.openaiDraft,
+          ...withKey("openai"),
         },
         ollama: {
           baseUrl: d.ollamaBaseUrl,
@@ -250,12 +300,12 @@ export function DesktopAiSettings({
         }
       />
 
-      {draft.choice === "anthropic" ? (
+      {isHosted(draft.choice) ? (
         <>
           {status.canStoreKey ? (
             <>
               <label className="join-label" htmlFor="ai-key">
-                API key {status.settings.anthropic.hasKey ? "— one is stored; leave empty to keep it" : ""}
+                API key {status.settings[draft.choice].hasKey ? "— one is stored; leave empty to keep it" : ""}
               </label>
               <input
                 id="ai-key"
@@ -263,14 +313,14 @@ export function DesktopAiSettings({
                 type="password"
                 autoComplete="off"
                 spellCheck={false}
-                placeholder={status.settings.anthropic.hasKey ? "•••••••• stored" : "Paste your key"}
+                placeholder={status.settings[draft.choice].hasKey ? "•••••••• stored" : "Paste your key"}
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
               />
               <p className="join-hint">
                 The key goes straight to the mail engine, which seals it under a key held in this
                 computer&rsquo;s keychain. It is never shown again, never written down in the clear,
-                and is sent nowhere but Anthropic.
+                and is sent nowhere but {HOSTED[draft.choice].vendor}.
               </p>
             </>
           ) : (
@@ -285,8 +335,10 @@ export function DesktopAiSettings({
             id="ai-a-classify"
             className="join-input"
             list="ai-models"
-            value={draft.anthropicClassify}
-            onChange={(e) => setDraft({ ...draft, anthropicClassify: e.target.value })}
+            value={draft[HOSTED_FIELDS[draft.choice].classify]}
+            onChange={(e) =>
+              setDraft({ ...draft, [HOSTED_FIELDS[draft.choice as HostedKind].classify]: e.target.value })
+            }
           />
 
           <label className="join-label" htmlFor="ai-a-draft">Model for reply drafts</label>
@@ -294,8 +346,10 @@ export function DesktopAiSettings({
             id="ai-a-draft"
             className="join-input"
             list="ai-models"
-            value={draft.anthropicDraft}
-            onChange={(e) => setDraft({ ...draft, anthropicDraft: e.target.value })}
+            value={draft[HOSTED_FIELDS[draft.choice].draft]}
+            onChange={(e) =>
+              setDraft({ ...draft, [HOSTED_FIELDS[draft.choice as HostedKind].draft]: e.target.value })
+            }
           />
         </>
       ) : null}

@@ -93,7 +93,7 @@ row. Each is backed by a real folder on your own mail server.
 
 ## The AI Screener
 
-With AI on — your own Anthropic key or a local model through
+With AI on — your own Anthropic or OpenAI key, or a local model through
 [Ollama](https://ollama.com), and off until you turn it on — the Screener
 proposes a door for each waiting sender, with a confidence and a reason, and
 one press accepts. Switch on auto-suggest and the proposal is already waiting
@@ -102,6 +102,32 @@ often enough for it to graduate; from then on that one pattern files itself,
 spam included, every move recorded and reversible. A one-time code inside a
 message is stripped before any model sees it, and automatic routing leaves
 that mail alone entirely.
+
+Pick the model in Settings → Suggestions and drafts. Three options, and each
+model is yours to name:
+
+- **Your Anthropic key** — requests go to `api.anthropic.com`, billed to your
+  account.
+- **Your OpenAI key** — requests go to `api.openai.com`, billed to your
+  account.
+- **A model on this machine** — served by Ollama at
+  `http://127.0.0.1:11434` by default, or any address you give it. Install
+  Ollama and `ollama pull llama3.2` before choosing it. Nothing leaves the
+  machine if the server is on it.
+
+A key is sealed under a key held in your operating system's keystore, is never
+written down in the clear, is never read back, and is sent to no host but its
+own vendor's. The endpoint for a key is fixed in the code and no setting can
+move it — the option whose address you can change is the local one, which
+carries no key. Saving runs a fresh test, so a server that is not running, or
+is running without the model you named, is reported while you are still in the
+settings rather than the next time you open your mail.
+
+Configure nothing and the Screener still holds first contact, rules still file
+mail, and search still works — the suggestion and the draft are simply not
+offered. Running ohmail on your own server instead? The provider list there is
+shorter today; [docs/self-host/README.md](docs/self-host/README.md) has the
+table.
 
 Spam needs no AI at all: one press files the message into your mailbox's own
 Junk folder — where the mailbox has one — and the sender rule remembers, so
@@ -347,7 +373,8 @@ release.
 server over TLS, mirrors your mailbox to a database on your own disk, and files
 mail into `ohmail/` folders on the server itself. Nothing leaves your computer
 but the IMAP connection to your provider, the signed update check, and — only
-if you turn it on — your own AI key or a local Ollama. No telemetry, no
+if you turn it on — requests to whichever model provider you chose. Choose a
+local Ollama and that last one stays on your machine too. No telemetry, no
 analytics.
 
 Your mail password is sealed under a per-install key and never written in the
