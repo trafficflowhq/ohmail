@@ -100,6 +100,56 @@ export abstract class BaseMirrorStore implements MirrorStore {
   protected highSeq = 0;
   protected ver = 0;
 
+  /* ══════════════════════════════════════════════════════════════════════════════════════════
+     THE PERSISTENCE CONTRACT — *the durable cursor moves only after the page it covers is
+     durably committed.*
+
+     ── WHAT WAS WRONG, AND WHY EVERY TEST WAS GREEN OVER IT ────────────────────────────────
+
+     `applyResponse` advanced the in-memory cursor and the in-memory records and THEN awaited a
+     persist that can fail. IndexedDB gives the write itself atomicity — page and cursor land in
+     one transaction or neither does — so the single failed flush was harmless. The next one was
+     not: on the retry `applyToRecords` REFUSES the same-seq changes (that is the seq guard doing
+     its job), so the dirty set is empty, and the flush writes the NEWER cursor over a disk that
+     never received the earlier page's rows. Reload, and the mirror asks `/sync` for changes after
+     a cursor whose rows it does not hold. The gap is permanent: deltas are only ever sent once.
+
+     Nothing in memory is wrong at any point, which is exactly why no assertion about the reader
+     could see it — the defect is a claim about DISK, and it only becomes visible after a restart.
+
+     ── THE CONTRACT ────────────────────────────────────────────────────────────────────────
+
+     A record applied in memory is UNFLUSHED until a `persist` that carried it has resolved. The
+     unflushed set survives a failed flush and rides the next one, so a cursor is never written
+     without every row it covers going with it, in the same transaction. Two consequences worth
+     stating because they are the ones a reader will want:
+
+      · The in-memory cursor is deliberately NOT rolled back on a failed flush. It is what the
+        next `/sync` asks from, and memory genuinely holds the page; rolling it back would
+        re-request a page the seq guard would then refuse, which is how the hole was reachable in
+        the first place. What must not run ahead is the DURABLE cursor, and it now cannot.
+      · A flush that fails repeatedly accumulates. That is bounded by the mirror itself — the
+        records are already in memory — and the alternative is dropping a row on the floor.
+
+     ── AND THE WIPE OWES THE SAME PROMISE ──────────────────────────────────────────────────
+
+     `resetForBootstrap` cleared memory and then awaited a wipe that can fail. On failure the disk
+     kept the OLD rows while memory was empty, the 410 re-bootstrap then wrote a fresh cursor over
+     them, and mail the server had deleted came back on the next restart and stayed. So a failed
+     wipe is REMEMBERED (`wipeOwed`) and retried ahead of the next flush; until it succeeds nothing
+     is written at all, which is the safe direction — a mirror that cannot clear itself must not
+     advance past the state it failed to clear.
+     ══════════════════════════════════════════════════════════════════════════════════════════ */
+
+  /** Records applied in memory whose flush has not yet resolved, newest per key. */
+  private readonly unflushed = new Map<string, MirrorRecord>();
+  /** Meta entries in the same state. */
+  private readonly unflushedMeta = new Map<string, unknown>();
+  /** The cursor waiting to become durable, or `null` when the durable one is current. */
+  private unflushedCursor: Cursor | null = null;
+  /** A `wipe()` that was asked for and did not complete. Nothing may be written while it stands. */
+  private wipeOwed = false;
+
   abstract load(): Promise<void>;
   /** Flush a dirty set + (optionally) the new cursor + meta entries atomically. */
   protected abstract persist(
@@ -121,6 +171,61 @@ export abstract class BaseMirrorStore implements MirrorStore {
 
   getCursor(): Cursor {
     return this.cursor;
+  }
+
+  /**
+   * THE ONE WRITE PATH — see the persistence contract above.
+   *
+   * Everything that persists goes through here rather than calling `persist` directly, because the
+   * carry-forward is only a contract if there is no second door. On success only the entries THIS
+   * flush actually wrote are retired, matched by IDENTITY rather than by key.
+   *
+   * **That last part is defence in depth and is labelled as such rather than counted as
+   * coverage.** Every flush adds its records and captures its batch with only `settleWipe`
+   * between them, so a concurrent apply is captured by its own flush and a key-wise delete would
+   * lose nothing today — mutating it reddens nothing, which is written here rather than left for
+   * somebody to find and read as a tested guard. It stays because it makes "a flush retires
+   * exactly what it wrote" true LOCALLY, without a reader having to trace which awaits sit
+   * between the add and the capture. That trace is what a future edit will get wrong.
+   */
+  private async flush(
+    dirty: MirrorRecord[],
+    cursor: Cursor | null,
+    metaEntries: Array<[string, unknown]>,
+  ): Promise<void> {
+    for (const rec of dirty) this.unflushed.set(recordKey(rec.type, rec.id), rec);
+    for (const [k, v] of metaEntries) this.unflushedMeta.set(k, v);
+    if (cursor !== null) this.unflushedCursor = cursor;
+    if (this.unflushed.size === 0 && this.unflushedMeta.size === 0 && this.unflushedCursor === null) {
+      // Still settle an owed wipe: a reset with nothing to write afterwards must not leave the
+      // old database standing because the next caller happened to have no rows.
+      await this.settleWipe();
+      return;
+    }
+    await this.settleWipe();
+    const batch = [...this.unflushed.entries()];
+    const metaBatch = [...this.unflushedMeta.entries()];
+    const batchCursor = this.unflushedCursor;
+    await this.persist(batch.map(([, r]) => r), batchCursor, metaBatch);
+    for (const [key, rec] of batch) {
+      if (this.unflushed.get(key) === rec) this.unflushed.delete(key);
+    }
+    for (const [key, val] of metaBatch) {
+      if (this.unflushedMeta.get(key) === val) this.unflushedMeta.delete(key);
+    }
+    if (this.unflushedCursor === batchCursor) this.unflushedCursor = null;
+  }
+
+  /**
+   * A WIPE THAT DID NOT HAPPEN IS OWED, NOT FORGOTTEN.
+   *
+   * Retried ahead of every flush and re-thrown on failure, so a store that cannot clear itself
+   * writes nothing at all rather than writing a fresh cursor over rows it meant to delete.
+   */
+  private async settleWipe(): Promise<void> {
+    if (!this.wipeOwed) return;
+    await this.wipe();
+    this.wipeOwed = false;
   }
 
   forceCursor(cursor: Cursor): void {
@@ -163,7 +268,7 @@ export abstract class BaseMirrorStore implements MirrorStore {
   async setMeta(key: string, value: unknown): Promise<void> {
     this.meta.set(key, value);
     this.ver++;
-    await this.persist([], null, [[key, value]]);
+    await this.flush([], null, [[key, value]]);
   }
 
   /**
@@ -241,7 +346,7 @@ export abstract class BaseMirrorStore implements MirrorStore {
     this.highSeq = Math.max(this.highSeq, maxSeqOf(changes));
     if (dirty.length > 0) {
       this.ver++;
-      await this.persist(dirty, null, []);
+      await this.flush(dirty, null, []);
     }
   }
 
@@ -250,7 +355,7 @@ export abstract class BaseMirrorStore implements MirrorStore {
     const rec: MirrorRecord = { type, id, seq: 0, entity };
     this.records.set(recordKey(type, id), rec);
     this.ver++;
-    await this.persist([rec], null, []);
+    await this.flush([rec], null, []);
   }
 
   async applyResponse(resp: SyncResponse): Promise<void> {
@@ -261,8 +366,10 @@ export abstract class BaseMirrorStore implements MirrorStore {
     this.highSeq = Math.max(this.highSeq, maxSeqOf(changes));
     this.cursor = resp.cursor;
     this.ver++;
-    // One atomic flush: page + cursor together (contract §3.3 step 3).
-    await this.persist(dirty, resp.cursor, []);
+    // One atomic flush: page + cursor together (contract §3.3 step 3) — and, since the
+    // persistence contract above, every page an earlier flush failed to write goes with it, so
+    // the durable cursor can never run ahead of the rows it covers.
+    await this.flush(dirty, resp.cursor, []);
   }
 
   /** See {@link MirrorStore.prune} — hard delete, body cascade, cursor and maxSeq untouched. */
@@ -271,7 +378,12 @@ export abstract class BaseMirrorStore implements MirrorStore {
     for (const { type, id } of keys) {
       const key = recordKey(type, id);
       if (this.records.delete(key)) gone.push(key);
+      // A pruned row must leave the UNFLUSHED set too, or the next carry-forward would write back
+      // a record the pass has just decided this device does not keep — the eviction undone by the
+      // very mechanism that exists to stop writes going missing.
+      this.unflushed.delete(key);
       if (type !== "message") continue;
+      this.unflushed.delete(recordKey("message_body", id));
       // The cascade. Note it runs whether or not the message record itself was present: a body
       // whose message is already gone is precisely the orphan this must not leave behind.
       const bodyKey = recordKey("message_body", id);
@@ -288,7 +400,13 @@ export abstract class BaseMirrorStore implements MirrorStore {
     this.cursor = "0";
     this.highSeq = 0;
     this.ver++;
-    await this.wipe();
+    // Nothing carried forward may survive a reset: an unflushed record from before the 410 would
+    // be written back into the database the reset exists to empty.
+    this.unflushed.clear();
+    this.unflushedMeta.clear();
+    this.unflushedCursor = null;
+    this.wipeOwed = true;
+    await this.settleWipe();
   }
 
   snapshot(): Map<string, unknown> {
