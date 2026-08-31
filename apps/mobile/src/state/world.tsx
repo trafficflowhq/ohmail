@@ -38,10 +38,18 @@ import {
 } from "react";
 import { Copy } from "../copy";
 import { useConnection } from "../net/connection";
-import { readFoldersEnabled, writeFoldersEnabled, type FoldersConsent } from "../net/consent";
+import {
+  readFoldersEnabled,
+  writeFoldersEnabled,
+  writeThemeFace,
+  type FoldersConsent,
+} from "../net/consent";
 import { readFolderSummary } from "../net/folder-ops";
 import * as Crypto from "expo-crypto";
+import type { FaceName } from "../theme/face";
+import { faceScope } from "./face-scope";
 import { foldersFlag, freshestRead } from "./folders-flag";
+import { usePrefs } from "./store";
 import {
   flushQueued,
   liveActions,
@@ -194,6 +202,27 @@ export interface World {
    * renders from a server-confirmed answer or not at all, never from a guess.
    */
   signatures: Readonly<Record<string, string>> | null;
+  /**
+   * THE APPEARANCE FACE'S ACCOUNT SCOPE (OHMARCHY-PLAN.md §3a). The DEVICE scope is not here —
+   * it is `usePrefs().facePin`, which needs no session and works with the radio off; this half
+   * is the account's synced answer and the one press that writes it.
+   *
+   * `account` rides the folders flag's own `GET /consent` cadence (boot + after every drain), so
+   * a face chosen in the webapp's Settings reaches an open phone without a new mechanism. `null`
+   * means the account has no preference, and the empty world has none either — a face is an
+   * account's state, and there is no account until something is connected.
+   */
+  face: {
+    account: FaceName | null;
+    /** An account write is on the wire — the control disables rather than double-writing. */
+    pending: boolean;
+    /**
+     * "Apply on all devices": PATCH the account, adopt the ECHO, drop this device's pin.
+     * Resolves `true` only when the account confirmed it; `false` is the failure sentence's cue
+     * and leaves both the adopted face and the pin exactly as they were.
+     */
+    applyAll(face: FaceName): Promise<boolean>;
+  };
   message(id: string): WorldMail | undefined;
   /**
    * WHAT BECAME OF A QUEUED SEND — how a locked composer settles. `pending` while the key
@@ -290,6 +319,9 @@ function emptyWorld(actions: WorldActions): World {
       soleCreateMailboxId: null,
     },
     signatures: null,
+    // No account, so no account face and nothing to write one to. `false` is "not confirmed",
+    // which is exactly what nothing-connected means — the empty world's own rule.
+    face: { account: null, pending: false, applyAll: () => Promise.resolve(false) },
     message: () => undefined,
     sendOutcome: () => "unknown",
     actions,
@@ -300,6 +332,10 @@ function emptyWorld(actions: WorldActions): World {
 
 export function WorldProvider({ children }: { children: ReactNode }) {
   const conn = useConnection();
+  /* The DEVICE half of the face lives in the prefs store (above this provider), and the account
+     half is here. This layer only ever CLEARS the pin, and only after a confirmed account write —
+     which is what "apply on all devices" asked for. It never sets one. */
+  const { setFacePin } = usePrefs();
 
   const session = conn.state.k === "live" ? conn.state.session : null;
   const engine = session?.engine ?? null;
@@ -367,6 +403,13 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * issue order.
    */
   const [signatures, setSignatures] = useState<Readonly<Record<string, string>> | null>(null);
+  /**
+   * THE ACCOUNT'S FACE, and a write in flight. `null` is "the account has no preference", which
+   * is also where a fresh session starts — account A's face must never skin account B, the same
+   * rule the signatures keep one field up.
+   */
+  const [accountFace, setAccountFace] = useState<FaceName | null>(null);
+  const [facePending, setFacePending] = useState(false);
   /** `conn.syncNow` behind a ref so the machine below keeps one identity across renders. */
   const syncNowRef = useRef(conn.syncNow);
   syncNowRef.current = conn.syncNow;
@@ -397,8 +440,32 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * reconnect flush already carry for exactly this shape).
    */
   const current = useRef<ReturnType<typeof foldersFlag> | null>(null);
+  /**
+   * ONE {@link faceScope} PER SESSION, beside the folders machine and built with it — it closes
+   * over the same `session`, so a superseded machine cannot write to a server the app has left,
+   * and its epoch resets to "no write yet" for a fresh session exactly like `accountFace` does.
+   *
+   * It rides the folders machine's `GET /consent` rather than issuing one of its own: the read
+   * already happens at boot and after every drain, and a second request for a field the first
+   * one carries would be a new mechanism for nothing. What the face needs on top is the ISSUE
+   * stamp, which is why `beginRead()` is taken before the fetch and its applier called after —
+   * see `face-scope.ts` for the race that shape exists for.
+   */
+  const faceCurrent = useRef<ReturnType<typeof faceScope> | null>(null);
   const machine = useMemo(() => {
-    if (!session) return (current.current = null);
+    if (!session) {
+      faceCurrent.current = null;
+      return (current.current = null);
+    }
+    const faces = faceScope({
+      write: (face) => writeThemeFace(session, face),
+      adopt: (face) => { if (faceCurrent.current === faces) setAccountFace(face); },
+      /* The pin is dropped only on a confirmed write, and only while this session still owns
+         the machine — a late settle from a session the user has left must not touch the face of
+         the one on screen. */
+      clearPin: () => { if (faceCurrent.current === faces) setFacePin(null); },
+    });
+    faceCurrent.current = faces;
     // The signatures ride the flag's read but keep their OWN ordering: the machine's epoch
     // protects the flag against a user's write; nothing writes signatures from this phone, so
     // freshest-successful-read-wins is the whole rule (`freshestRead`). Identity-gated like
@@ -407,7 +474,17 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       if (current.current === m) setSignatures(ans.signatures);
     });
     const m = foldersFlag({
-      read: () => sigRead(() => readFoldersEnabled(session)),
+      read: () => {
+        /* Stamped BEFORE the request leaves — the whole point of the two-phase read. */
+        const applyFace = faces.beginRead();
+        return sigRead(async () => {
+          const ans = await readFoldersEnabled(session);
+          // `null` from the read is "could not ask", which the applier must not read as "the
+          // account has no face" — the two are different answers (face-scope.ts's contract).
+          applyFace(ans === null ? undefined : ans.themeFace);
+          return ans;
+        });
+      },
       write: (on) => writeFoldersEnabled(session, on),
       apply: (on) => { if (current.current === m) setFoldersOn(on); },
       drain: () => {
@@ -418,7 +495,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       },
     });
     return (current.current = m);
-  }, [session]);
+  }, [session, setFacePin]);
   useEffect(() => {
     setFoldersOn(false);
     setFoldersPending(false);
@@ -426,9 +503,32 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // (account A's signature must never dress account B's composer); the tracker itself is
     // rebuilt with the machine, so its tally starts over with it.
     setSignatures(null);
+    /* And the FACE, for the same reason and one more: an account's appearance choice is that
+       account's state, so the next session starts with none and the device's own pin (which
+       outranks it either way) is deliberately left alone — it belongs to the phone, not to
+       whoever is signed in on it. */
+    setAccountFace(null);
+    setFacePending(false);
     drainOwed.current = false; // the debt was the old session's; the new one owes nothing
     if (machine) void machine.refresh();
   }, [machine]);
+  const applyFaceAllDevices = useCallback(
+    async (face: FaceName): Promise<boolean> => {
+      const f = faceCurrent.current;
+      if (!f) return false;
+      setFacePending(true);
+      try {
+        return await f.applyAll(face);
+      } finally {
+        // Only the session that started the write clears its own pending flag — a session swap
+        // already reset it once (the effect above) and owns it from there.
+        if (faceCurrent.current === f) setFacePending(false);
+      }
+    },
+    // `machine` is the dependency rather than `faceCurrent`: the two are built together, so this
+    // callback's identity moves exactly when the session's machines are rebuilt.
+    [machine],
+  );
   /*
    * THE FLAG IS RE-READ AFTER EVERY COMPLETED DRAIN — the flush effect's own signal
    * (`conn.syncing` falling). The toggle is per-ACCOUNT, and another client's flip writes
@@ -706,6 +806,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         };
       })(),
       signatures,
+      face: { account: accountFace, pending: facePending, applyAll: applyFaceAllDevices },
       message: (id) => liveMessage(engine, id, { now: new Date(), zone, foldersEnabled: foldersOn }),
       sendOutcome: outcomeOf,
       actions,
@@ -718,7 +819,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // failure sentence is part of what an unsettled screen renders.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, session, scopes, zone, actions, version, outcomeSeq, outcomeOf, freshBeat,
-    foldersOn, foldersPending, setFoldersEnabled, signatures, conn.syncing, conn.syncError]);
+    foldersOn, foldersPending, setFoldersEnabled, signatures, conn.syncing, conn.syncError,
+    accountFace, facePending, applyFaceAllDevices]);
 
   /**
    * THE FRESHNESS WATCHER — the clock's other half, AFTER the memo because its sentinel IS the

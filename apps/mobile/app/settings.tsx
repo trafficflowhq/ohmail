@@ -18,10 +18,10 @@ import { View } from "react-native";
 import { Copy } from "../src/copy";
 import { type WakeState } from "../src/net/push";
 import { useWake } from "../src/state/wake";
-import type { ThemePref } from "../src/theme";
+import { accountGovernsFace, type FaceName, type ThemePref } from "../src/theme";
 import { usePrefs } from "../src/state/store";
 import { useWorld } from "../src/state/world";
-import { Panel, Rule, Screen, Scroller, Section, TapRow, Txt } from "../src/ui/base";
+import { Button, Panel, Rule, Screen, Scroller, Section, TapRow, Txt } from "../src/ui/base";
 import { DetailBar } from "../src/ui/chrome";
 import { Gated } from "../src/ui/Gated";
 import { Segmented } from "../src/ui/Segmented";
@@ -57,7 +57,7 @@ export function wakeSentence(state: WakeState): string {
 
 function SettingsBody() {
   const w = useWorld();
-  const { themePref, setTheme } = usePrefs();
+  const { themePref, setTheme, facePin, setFacePin } = usePrefs();
   const wake = useWake();
 
   return (
@@ -85,6 +85,18 @@ function SettingsBody() {
               {Copy.themeNote}
             </Txt>
           </View>
+
+          {/*
+            LOOK — the face, in the same panel as light/dark because they are the same class of
+            decision: how the app is drawn, changing nothing about anybody's mail.
+          */}
+          <FacePanel
+            pin={facePin}
+            account={w.face.account}
+            pending={w.face.pending}
+            setPin={setFacePin}
+            applyAll={w.face.applyAll}
+          />
         </Panel>
 
         {/*
@@ -176,6 +188,93 @@ function SettingsBody() {
         </Panel>
       </Scroller>
     </Screen>
+  );
+}
+
+/**
+ * THE FACE, AND ITS TWO SCOPES — the phone's half of OHMARCHY-PLAN.md §3a.
+ *
+ * The segmented control is "only this device": it writes the DEVICE PIN, instantly, with no
+ * server involved — which is why it works with the radio off, on a phone that has never been
+ * paired, and while a sync is failing. The quiet line under it is "apply on all devices": one
+ * press PATCHes the account (`{themeFace}` alone — the one axis this control owns), adopts the
+ * ECHO, and clears the pin, so the account governs this device too, which is what the press
+ * asked for. A pinned device deliberately ignores an account change made on a laptop, and the
+ * scope line says which of the two states this device is in.
+ *
+ * The apply-all affordance is WITHHELD, not disabled, where no account can hold a face — the
+ * webapp `FaceRow`'s rule, expressed the same way: `applyAll` is only offered while the world is
+ * live, and a control that cannot control is never drawn.
+ *
+ * The failure is said and the control does not move wrongly: the device flip cannot fail (it is
+ * local), and a refused account write leaves the segmented control on this device's real face
+ * with one sentence under it.
+ */
+function FacePanel({
+  pin,
+  account,
+  pending,
+  setPin,
+  applyAll,
+}: {
+  pin: FaceName | null;
+  account: FaceName | null;
+  pending: boolean;
+  setPin: (face: FaceName | null) => void;
+  applyAll: (face: FaceName) => Promise<boolean>;
+}) {
+  const [failed, setFailed] = useState(false);
+  /* The face on screen — the provider resolves the same way; this recomputes it rather than
+     reading the theme, because the CONTROL must show the choice, and reading `useTheme().face`
+     would draw the same value through a longer path. `accountGovernsFace` is the pure rule. */
+  const face: FaceName = pin ?? account ?? "paper";
+  const governed = accountGovernsFace(face, pin, account);
+  return (
+    <>
+      <Section style={{ paddingTop: 18 }}>{Copy.face}</Section>
+      <View style={{ paddingHorizontal: 16 }}>
+        <Segmented<FaceName>
+          value={face}
+          /* Device-local and instant — the "only this device" scope. Never the account. */
+          onChange={(next) => {
+            if (next === face) return;
+            setFailed(false);
+            setPin(next);
+          }}
+          segments={[
+            { value: "paper", label: Copy.facePaper },
+            { value: "ohmarchy", label: Copy.faceOhmarchy },
+          ]}
+        />
+        <Txt variant="caption" tone="ink3" style={{ marginTop: 10 }}>
+          {Copy.faceHint}
+        </Txt>
+        <Txt variant="caption" tone="ink3" style={{ marginTop: 6 }}>
+          {governed ? Copy.faceScopeAll : Copy.faceScopeDevice}
+        </Txt>
+        {governed ? null : (
+          <Button
+            label={Copy.faceApplyAll}
+            variant="quiet"
+            style={{ alignSelf: "flex-start", marginTop: 4, paddingHorizontal: 0 }}
+            onPress={() => {
+              // `pending` guards the double-write, exactly like the wake rows and the Folders
+              // pane — one write on the wire at a time, and the second press is not asked for.
+              if (pending) return;
+              setFailed(false);
+              void applyAll(face).then((ok) => {
+                if (!ok) setFailed(true);
+              });
+            }}
+          />
+        )}
+        {failed ? (
+          <Txt variant="caption" tone="ink3" style={{ marginTop: 6 }}>
+            {Copy.faceFailed}
+          </Txt>
+        ) : null}
+      </View>
+    </>
   );
 }
 

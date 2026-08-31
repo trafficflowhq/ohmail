@@ -302,6 +302,25 @@ export const Copy = {
   settings: "Settings",
   theme: "Appearance",
   themeNote: "Follows the system unless set.",
+
+  /**
+   * Settings → Look — the FACE and its scope (OHMARCHY-PLAN.md §3a). Every line is the webapp
+   * catalogue's own (`settings.face*` in `apps/webapp/messages/en.json`), held byte-equal by
+   * `ohmarchy-face.test.ts` for the reason the folders copy is: one product, one sentence per
+   * decision, and a person who read it on a laptop must not meet a paraphrase on their phone.
+   *
+   * `faceScopeDevice` is the honest one on a phone: the scope line says which state this device
+   * is in, and a pin — including one this session made and has not sent to the account — means
+   * this device only.
+   */
+  face: "Look",
+  faceHint: "ohmarchy — a tiling, keyboard-first look inspired by Omarchy.",
+  facePaper: "paper",
+  faceOhmarchy: "ohmarchy",
+  faceScopeAll: "Applies on all your devices.",
+  faceScopeDevice: "Applies on this device only.",
+  faceApplyAll: "Apply on all devices",
+  faceFailed: "Couldn't save that — try again.",
   about: "About this build",
   /** The About block — states what is real on this build, no more. */
   aboutLive: (origin: string) =>

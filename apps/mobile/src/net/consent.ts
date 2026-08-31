@@ -1,3 +1,4 @@
+import { faceOf, type FaceName } from "../theme/face.js";
 import type { ConnectedSession } from "./pairing.js";
 
 /**
@@ -30,7 +31,7 @@ import type { ConnectedSession } from "./pairing.js";
  * interface, the safe branch in both directions).
  */
 
-/** The two fields this app reads off `GET /consent` today. */
+/** The three fields this app reads off `GET /consent` today. */
 export interface FoldersConsent {
   on: boolean;
   /**
@@ -42,6 +43,20 @@ export interface FoldersConsent {
    * actually serves — exactly `consent-state.ts`'s `wire.signatures ?? {}`.
    */
   signatures: Record<string, string>;
+  /**
+   * THE ACCOUNT'S APPEARANCE FACE (OHMARCHY-PLAN.md §3a) — `paper`, `ohmarchy`, or `null` for
+   * "this account has no preference". Rides this read for the signatures' reason: one `GET
+   * /consent` per boot and per drain already exists, so a face chosen in the webapp's Settings
+   * reaches an open phone with no new mechanism.
+   *
+   * ONE null, unlike the webapp's `themeFaceKnown` pair. There, `null` inside the state has to
+   * be told apart from "the field has not been read yet", because a boot cache can make the
+   * consent state known with the face still resting. Here the SHAPE carries that: a
+   * `FoldersConsent` exists only inside a 200 answer, so `themeFace: null` in one always means
+   * the account really has no face — and an ABSENT field (an API deployed before this) means the
+   * same thing, because a server that cannot store a face has none to report.
+   */
+  themeFace: FaceName | null;
 }
 
 /** The wire map, kept only if it is really `{ string: string }` — a malformed field reads as absent. */
@@ -58,13 +73,19 @@ export async function readFoldersEnabled(session: ConnectedSession): Promise<Fol
   try {
     const res = await session.bearer.fetch(`${session.profile.origin}/consent`, { method: "GET" });
     if (res.status !== 200) return null;
-    const body = (await res.json()) as { foldersEnabledAt?: unknown; signatures?: unknown };
+    const body = (await res.json()) as {
+      foldersEnabledAt?: unknown; signatures?: unknown; themeFace?: unknown;
+    };
     // The wire's contract: an instant means on, `null` means off — and an ABSENT field means a
     // server too old to know about folders, which reads as off exactly like the webapp's
     // `wire.foldersEnabledAt != null` (consent-state.ts).
     return {
       on: typeof body.foldersEnabledAt === "string" && body.foldersEnabledAt !== "",
       signatures: signaturesOf(body.signatures),
+      // A value this build does not know (a future face, a malformed field) reads as "no
+      // preference" rather than throwing the whole read away: the other two fields on this
+      // answer are unaffected by a face nobody here can draw.
+      themeFace: faceOf(body.themeFace),
     };
   } catch {
     return null;
@@ -86,4 +107,31 @@ export async function writeFoldersEnabled(session: ConnectedSession, enabled: bo
   if (res.status !== 200) throw new Error(`consent write refused (${res.status})`);
   const body = (await res.json()) as { foldersEnabledAt?: unknown };
   return { on: typeof body.foldersEnabledAt === "string" && body.foldersEnabledAt !== "" };
+}
+
+/**
+ * "APPLY ON ALL DEVICES" for the appearance face — one `PATCH /consent/settings {themeFace}`.
+ *
+ * ONE AXIS ONLY, and that is what makes it safe to share a row with four other controls: the
+ * route tests presence with `in`, so an omitted key is "leave this alone". A body carrying
+ * anything else would overwrite settings this control does not own with whatever it happened to
+ * hold — the same rule `local-consent.ts` states for the desktop's bridge.
+ *
+ * Resolves to what the ACCOUNT STORED, never to the argument. A server may accept the request
+ * and hold something else (a value this build asked for that its own list does not allow), and
+ * the only thing separating "the account adopted ohmarchy" from "it did not" is whether the
+ * caller reads the echo — the discipline every consent knob in this product keeps. Rejects on
+ * refusal or transport failure, which the Settings pane shows as its one failure sentence.
+ */
+export async function writeThemeFace(
+  session: ConnectedSession, face: FaceName,
+): Promise<FaceName | null> {
+  const res = await session.bearer.fetch(`${session.profile.origin}/consent/settings`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ themeFace: face }),
+  });
+  if (res.status !== 200) throw new Error(`consent write refused (${res.status})`);
+  const body = (await res.json()) as { themeFace?: unknown };
+  return faceOf(body.themeFace);
 }

@@ -3,14 +3,21 @@
  *
  * Theme preference lives in the prefs store, so it has to be read *inside* that
  * provider and handed to the theme provider — hence the small `Shell` split.
+ *
+ * The FACE (paper / ohmarchy) is resolved in the same place and for the same reason, from the
+ * two scopes that decide it: this device's pin (the prefs store) and the account's synced
+ * answer (the world layer's consent read). `resolveFace` is the whole of the order and lives in
+ * `src/theme/face.ts`, where the node suite can drive it — the provider only receives the
+ * verdict. That is also why `Shell` sits INSIDE `WorldProvider`: the account half of the
+ * appearance comes off the mirror's own consent read.
  */
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { ThemeProvider, useTheme } from "../src/theme";
+import { ThemeProvider, resolveFace, useTheme } from "../src/theme";
 import { ConnectionProvider } from "../src/net/connection";
 import { PrefsProvider, usePrefs } from "../src/state/store";
-import { WorldProvider } from "../src/state/world";
+import { WorldProvider, useWorld } from "../src/state/world";
 import { WakeProvider } from "../src/state/wake";
 import { Toast } from "../src/ui/chrome";
 
@@ -40,8 +47,9 @@ export default function RootLayout() {
 
 function Shell() {
   const prefs = usePrefs();
+  const world = useWorld();
   return (
-    <ThemeProvider pref={prefs.themePref}>
+    <ThemeProvider pref={prefs.themePref} face={resolveFace(prefs.facePin, world.face.account)}>
       <Screens />
     </ThemeProvider>
   );

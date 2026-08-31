@@ -28,6 +28,9 @@
  *     surface, because every panel also carries its own background step.
  */
 import type { ViewStyle } from "react-native";
+import type { FaceName } from "./face";
+import { DEFAULT_FACE } from "./face";
+import { ohmarchyLift, type FaceShadowLayer } from "./ohmarchy";
 import { css, oklch, type Oklch } from "./oklch";
 import type { SchemeName } from "./palette";
 
@@ -125,11 +128,34 @@ export function liftLayers(scheme: SchemeName, level: LiftLevel): Layer[] {
 }
 
 /**
+ * THE FACE'S OWN LADDER, and why this is a lookup rather than a translation.
+ *
+ * Paper's ladder is authored above as OKLCH layers because the CSS it transcribes is authored
+ * that way. ohmarchy's is GENERATED (`./ohmarchy.ts`) already in React Native's own layer shape,
+ * because the palette mapping emits `#rrggbb` / `rgba()` and flat rings — there is nothing left
+ * to convert. So the two faces meet at this one function, which every caller below goes through,
+ * and no component learns that a second ladder exists (the one-UI law: a component reads tokens,
+ * never the face).
+ */
+function faceLayers(
+  scheme: SchemeName,
+  level: LiftLevel,
+  face: FaceName,
+  ySign: 1 | -1,
+): readonly FaceShadowLayer[] {
+  if (face === "ohmarchy") {
+    const layers = ohmarchyLift[scheme][level];
+    return ySign === 1 ? layers : layers.map((l) => ({ ...l, offsetY: l.offsetY * ySign }));
+  }
+  return shadowLayers(scheme, level, ySign);
+}
+
+/**
  * A ready style fragment. Apply to the same View that paints the background and
  * the radius — see caveat (1) above.
  */
-export function lift(scheme: SchemeName, level: LiftLevel): ViewStyle {
-  return { boxShadow: shadowLayers(scheme, level, 1) };
+export function lift(scheme: SchemeName, level: LiftLevel, face: FaceName = DEFAULT_FACE): ViewStyle {
+  return { boxShadow: faceLayers(scheme, level, face, 1) };
 }
 
 /**
@@ -141,11 +167,11 @@ export function lift(scheme: SchemeName, level: LiftLevel): ViewStyle {
  * Flipping the offset keeps the token's own colour, blur and spread rather than
  * inventing a second shadow that only looks similar.
  */
-export function liftUp(scheme: SchemeName, level: LiftLevel): ViewStyle {
-  return { boxShadow: shadowLayers(scheme, level, -1) };
+export function liftUp(scheme: SchemeName, level: LiftLevel, face: FaceName = DEFAULT_FACE): ViewStyle {
+  return { boxShadow: faceLayers(scheme, level, face, -1) };
 }
 
-function shadowLayers(scheme: SchemeName, level: LiftLevel, ySign: 1 | -1) {
+function shadowLayers(scheme: SchemeName, level: LiftLevel, ySign: 1 | -1): FaceShadowLayer[] {
   return ladders[scheme][level].map((layer) => ({
     offsetX: layer.x,
     offsetY: layer.y * ySign,

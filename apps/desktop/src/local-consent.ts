@@ -88,7 +88,7 @@ async function patch<T>(body: Record<string, unknown>): Promise<T> {
 }
 
 /**
- * The six calls the shared hook makes, over the bridge.
+ * The ten calls the shared hook makes, over the bridge.
  *
  * A constant rather than a factory: it holds no state, and one object per module is what lets the
  * hook keep a stable wire identity across renders.
@@ -117,4 +117,28 @@ export const consentOverBridge: ConsentTransport = {
     patch<{ signatures: Record<string, string> }>({
       signatures: { [mailboxId]: signature },
     }),
+  /**
+   * "APPLY FOR ALL DEVICES" FOR THE APPEARANCE FACE (OHMARCHY-PLAN.md §3a) — the last knob this
+   * transport was missing, and the reason the affordance was withheld here.
+   *
+   * The face has two scopes. The DEVICE scope needs no wire at all — it is the ThemeProvider's
+   * own pin, so the segmented control in Settings already worked in this window and on a
+   * standalone install alike. The ACCOUNT scope is one field on the consent row, and
+   * `AppShell` folds it to a nullable callback: null wherever no transport can store one, which
+   * withheld the "apply for all devices" line here STRUCTURALLY rather than drawing a control
+   * that could not control. This is that null closing.
+   *
+   * No new channel: the same forwarded `PATCH /consent/settings` every other knob above rides,
+   * naming ONE axis so a face choice cannot overwrite a dormancy window set in a browser tab a
+   * moment ago. The echo is the account's stored value — `paper` is STORED as `paper` and never
+   * collapsed to NULL (`setThemeFace` in packages/services), because "no preference" and "asked
+   * for paper" are different answers and only the first may be overridden by a later account
+   * write.
+   *
+   * A STANDALONE door never reaches this: the transport is wired on the hosted door alone
+   * (`DesktopGate`'s `accountDoor` branch), and there is no account row behind a standalone
+   * engine to hold a face — its window keeps the device pin, which is the whole of the
+   * appearance choice a machine with no account can make.
+   */
+  setThemeFace: (themeFace) => patch<{ themeFace: string | null }>({ themeFace }),
 };

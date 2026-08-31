@@ -10,7 +10,9 @@
  *   TOKEN                     OKLCH (L C H / a)              -> sRGB hex
  *   ─────────────────────────────────────────────────────────────────────
  */
+import { DEFAULT_FACE, type FaceName } from "./face";
 import { css, oklch, type Oklch } from "./oklch";
+import { ohmarchyPalettes } from "./ohmarchy";
 
 export type SchemeName = "light" | "dark";
 export type TagHueName = "moss" | "ochre" | "rosewood";
@@ -127,6 +129,13 @@ export const palettes: Record<SchemeName, Palette> = {
   dark: build("dark"),
 };
 
-export function paletteOf(scheme: SchemeName): Palette {
-  return palettes[scheme];
+/**
+ * The palette for one appearance — scheme × face.
+ *
+ * Paper's set is authored above (OKLCH, converted); ohmarchy's is generated from the same web
+ * face (`./ohmarchy.ts`). Two palettes of ONE shape, chosen here, which is why no component
+ * anywhere reads the face: it reads `theme.c`, as it always did.
+ */
+export function paletteOf(scheme: SchemeName, face: FaceName = DEFAULT_FACE): Palette {
+  return face === "ohmarchy" ? ohmarchyPalettes[scheme] : palettes[scheme];
 }

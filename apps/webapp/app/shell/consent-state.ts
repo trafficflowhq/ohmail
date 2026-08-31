@@ -808,10 +808,12 @@ export function useConsentState(
   );
 
   /**
-   * "APPLY FOR ALL DEVICES" — the account-wide face write. `null` when the transport predates
-   * the knob (the desktop's hosted door), so the settings row can withhold the affordance
-   * structurally instead of drawing a control that cannot control. Echo-not-the-argument and
-   * the era rule, exactly as every sibling below.
+   * "APPLY FOR ALL DEVICES" — the account-wide face write. `null` when the transport cannot
+   * store one, so the settings row can withhold the affordance structurally instead of drawing a
+   * control that cannot control. Echo-not-the-argument and the era rule, exactly as every
+   * sibling below. (Both shipping transports carry the knob now — the Cloud client, and the
+   * desktop's hosted door over the bridge; the gate stays because a host that cannot reach an
+   * account row must not be handed an account-wide control.)
    */
   const writeThemeFace = useCallback(
     async (themeFace: "paper" | "ohmarchy" | null): Promise<"paper" | "ohmarchy" | null> => {
@@ -832,9 +834,11 @@ export function useConsentState(
     },
     [applyEcho],
   );
-  // Null when the transport predates the knob (the desktop's hosted door), so the settings row
-  // withholds the "apply for all devices" affordance structurally — a control that cannot
-  // control is the built-and-unreachable shape the injected-node seam exists to avoid.
+  // Null when the transport cannot store an account-wide face, so the settings row withholds the
+  // "apply for all devices" affordance structurally — a control that cannot control is the
+  // built-and-unreachable shape the injected-node seam exists to avoid. A STANDALONE desktop
+  // window passes no transport at all and keeps only the device pin, which is the whole of the
+  // appearance choice a machine with no account row can make.
   const setThemeFace =
     typeof (transport ?? CLOUD_CONSENT).setThemeFace === "function" ? writeThemeFace : null;
 
