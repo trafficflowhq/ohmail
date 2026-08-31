@@ -366,11 +366,16 @@ export function MessageRow(props: MessageRowProps) {
           </span>
         ) : null}
       </span>
+      {/* The badge strip is the SUBJECT'S SIBLING, never its child (2026-08-31). Inside
+          `.subj` — a nowrap/hidden/ellipsis span — every badge vanished the moment a subject
+          ran long: the thread's `⤷ N`, the participants, the tag chips, all silently cut by
+          the ellipsis, at exactly the list widths the product actually renders (a 368px demo
+          pane hid the fixture thread's count in the mono face). A thread count is information,
+          not decoration, so the subject is what yields: it keeps min-width:0 and truncates,
+          the strip is flex:none and always lands. */}
       <span className="row-mid">
-        <span className="subj">
-          {subject}
-          {badges.length ? <span className="badges">{badges}</span> : null}
-        </span>
+        <span className="subj">{subject}</span>
+        {badges.length ? <span className="badges">{badges}</span> : null}
         {amount ? <span className="amt num">{amount}</span> : null}
       </span>
       {preview ? <span className="prev" style={{ display: "block" }}>{preview}</span> : null}
