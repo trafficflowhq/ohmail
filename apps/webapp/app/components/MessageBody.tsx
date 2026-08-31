@@ -469,7 +469,83 @@ function continuesIdent(code: number): boolean {
  * in the length of the stylesheet. An unterminated token ends the scan and the remainder is
  * copied verbatim — a token the browser will not parse either.
  */
-const CSS_TOKEN = /@import|(?:-webkit-)?image-set\(|url\(/gi;
+const CSS_TOKEN = /@import|(?:-webkit-)?image-set\(|url\(|\\(?:[0-9a-fA-F]{1,6}[ \t\n\r\f]?|[^\n\r\f])/gi;
+
+/**
+ * THE NAME OF A FUNCTION CAN BE ESCAPED TOO, AND FOR A WHILE ONLY ITS ARGUMENT WAS.
+ *
+ * {@link decodeCssEscapes} was added because `url(htt\70 s://…)` hid a SCHEME from a regexp
+ * reading raw text. The same trick works one token to the left: `\75 rl(…)` and
+ * `\69 mage-set("…")` are a `url` and an `image-set` to the CSS tokenizer — an ident's escapes
+ * are decoded before its name is compared — and were not to the literal alternatives above. A
+ * stylesheet could therefore name a resource in a spelling this scanner never saw, and the shape
+ * that matters is the same one the relative-url branch exists for: `\75 rl(/api/…)` has no
+ * `<base>` to resolve against, so it becomes an authenticated same-origin GET, which the frame's
+ * CSP permits once the reader has pressed "Show images" (`img-src data: 'self'`).
+ *
+ * The scan therefore also stops on an ESCAPE, and from there reads the identifier it sits in.
+ *
+ * ── WHY IT IS ANCHORED ON THE BACKSLASH AND BOUNDED ─────────────────────────────────────
+ *
+ * This file's whole tokenizer exists because the rule it replaced was quadratic on hostile
+ * input — 500 KB measured at 95.3 s on the main thread — so a pattern that scans an identifier
+ * run from every position would reintroduce exactly that. A backslash is a single literal, found
+ * by the same forward-only scan as the other three starts, and the walk out from it is capped:
+ * the longest name this cares about is `-webkit-image-set`, and every character of it written as
+ * a six-digit hex escape is 17 × 8 = 136 characters. {@link ESCAPED_NAME_MAX} is that, rounded
+ * up. Past the cap the token is not one of ours by construction, so the walk stops rather than
+ * running to the end of the sheet.
+ */
+const ESCAPED_NAME_MAX = 160;
+
+/** Is this the hex of a CSS escape? */
+function isHexDigit(code: number): boolean {
+  return (code >= 0x30 && code <= 0x39) || (code >= 0x41 && code <= 0x46) || (code >= 0x61 && code <= 0x66);
+}
+
+/**
+ * The identifier an escape at `at` belongs to, and where it ends.
+ *
+ * `name` is the RAW text; the caller decodes it. Nothing read here is ever emitted, so a reading
+ * this gets wrong can cost a picture and can never manufacture a url — {@link decodeCssEscapes}'s
+ * rule, and this walk lives under it.
+ *
+ * The forward walk consumes ESCAPE SEQUENCES, not merely identifier characters, and that is the
+ * one thing a naive version gets wrong: the space in `\75 rl` terminates the escape and belongs
+ * to it, so a walk that stopped at the first non-identifier character read the name of
+ * `\75 rl(…)` as `\75` and concluded it was not a function at all. Both directions are capped by
+ * {@link ESCAPED_NAME_MAX} so the walk is O(1) per backslash and the scan stays linear.
+ */
+function escapedIdentAt(css: string, at: number): { start: number; name: string; end: number } {
+  let start = at;
+  const back = Math.max(0, at - ESCAPED_NAME_MAX);
+  while (start > back && continuesIdent(css.charCodeAt(start - 1))) start--;
+
+  let i = at;
+  const limit = Math.min(css.length, start + ESCAPED_NAME_MAX);
+  while (i < limit) {
+    const code = css.charCodeAt(i);
+    if (code === 0x5c) {
+      i++;
+      let hex = 0;
+      while (i < limit && hex < 6 && isHexDigit(css.charCodeAt(i))) {
+        i++;
+        hex++;
+      }
+      if (hex > 0) {
+        // ONE optional whitespace terminates a hex escape and is part of it (CSS Syntax §4.3.7).
+        const w = css.charCodeAt(i);
+        if (w === 0x20 || w === 0x09 || w === 0x0a || w === 0x0d || w === 0x0c) i++;
+      } else if (i < limit) {
+        i++; // `\X` — one literal character
+      }
+      continue;
+    }
+    if (!continuesIdent(code)) break;
+    i++;
+  }
+  return { start, name: css.slice(start, i), end: i };
+}
 
 /**
  * `\70` is `p`. `url(htt\70 s://evil.example/x)` is `https://` to the CSS tokenizer and is
@@ -539,9 +615,32 @@ function readUrlToken(css: string, from: number): { raw: string; end: number } |
  */
 function urlsIn(inner: string): string[] {
   const urls: string[] = [];
-  for (const m of inner.matchAll(/url\(\s*['"]?([^'")]*)/gi)) urls.push(m[1] ?? "");
-  for (const m of inner.matchAll(/"([^"\n]*)"|'([^'\n]*)'/g)) urls.push(m[1] ?? m[2] ?? "");
+  // `type("image/png")` is an image-set candidate's MIME HINT, not a resource. Reading its string
+  // as a url made the inert test below fail on a standards-valid inline candidate, and a
+  // sanitizer's false positive costs the reader their picture — the one failure mode a policy
+  // like this one is not allowed to have. Blanked rather than removed so every other offset in
+  // `inner` is unchanged, which keeps this readable beside the spans the caller slices.
+  const scanned = inner.replace(/\btype\(\s*(?:"[^"\n]*"|'[^'\n]*'|[^)\n]*)\)/gi, (m) => " ".repeat(m.length));
+  for (const m of scanned.matchAll(/url\(\s*['"]?([^'")]*)/gi)) urls.push(m[1] ?? "");
+  for (const m of scanned.matchAll(/"([^"\n]*)"|'([^'\n]*)'/g)) urls.push(m[1] ?? m[2] ?? "");
   return urls.map((u) => decodeCssEscapes(u).trim()).filter((u) => u.length > 0);
+}
+
+/**
+ * DOES THIS TOKEN BODY NAME SOMETHING THAT IS NOT SUBSTITUTED UNTIL AFTER WE HAVE DECIDED?
+ *
+ * `var()` is resolved at computed-value time, long after this function has run and returned its
+ * verdict. So `image-set(var(--x) 1x)` presented an EMPTY candidate list to the inert test —
+ * `[].every(inert)` is `true` — and was therefore kept verbatim, while `--x: "/api/…"` two rules
+ * above it survived on its own (a custom-property declaration holding a bare string contains no
+ * `url(`, no `image-set(` and no `@import`, so nothing here ever looked at it). The pair fetched.
+ *
+ * A construct this scanner cannot normalise is dropped rather than passed. That is the same rule
+ * the unterminated-token branches already follow, applied to the other direction of the same
+ * problem: there, the text runs past where we can read; here, the VALUE arrives after.
+ */
+function defersSubstitution(inner: string): boolean {
+  return /\bvar\(/i.test(inner);
 }
 
 /** The subset of {@link urlsIn} that names a REMOTE host — what the reader's blocked list counts. */
@@ -593,11 +692,49 @@ export function neutraliseCss(
   CSS_TOKEN.lastIndex = 0;
   let m: RegExpExecArray | null;
   while ((m = CSS_TOKEN.exec(css)) !== null) {
-    const start = m.index;
+    let start = m.index;
     let end: number;
     let replacement: string;
+    /** What this token IS, once an escaped name has been decoded. */
+    let kind: "import" | "image-set" | "url";
 
-    if (m[0][0] === "@") {
+    if (m[0][0] === "\\") {
+      // AN ESCAPE. Almost always inside a string and none of our business; occasionally it is a
+      // character of a FUNCTION NAME written to hide it from the three literal alternatives —
+      // `\75 rl(…)`, `\69 mage-set(…)`, `@\69 mport …`. See {@link escapedFunctionName}.
+      const ident = escapedIdentAt(css, start);
+      const decoded = decodeCssEscapes(ident.name).toLowerCase();
+      // A FUNCTION token is the identifier IMMEDIATELY followed by `(` — CSS Syntax §4.3.4 admits
+      // no whitespace there, and neither does this: `\75 rl (x)` is an ident beside a
+      // parenthesized group, it fetches nothing, and treating it as a url would be a false
+      // positive in a sanitizer.
+      const isFunction = css[ident.end] === "(";
+      // An AT-RULE name is not followed by `(` at all; the `@` before it is what names it.
+      const atRule = !isFunction && ident.start > 0 && css[ident.start - 1] === "@";
+      if (atRule && decoded === "import") {
+        start = ident.start - 1;
+        kind = "import";
+        CSS_TOKEN.lastIndex = ident.end;
+      } else if (isFunction && (decoded === "image-set" || decoded === "-webkit-image-set")) {
+        start = ident.start;
+        kind = "image-set";
+        CSS_TOKEN.lastIndex = ident.end + 1;
+      } else if (isFunction && decoded === "url") {
+        start = ident.start;
+        kind = "url";
+        CSS_TOKEN.lastIndex = ident.end + 1;
+      } else {
+        continue;
+      }
+    } else if (m[0][0] === "@") {
+      kind = "import";
+    } else if (m[0].endsWith("image-set(")) {
+      kind = "image-set";
+    } else {
+      kind = "url";
+    }
+
+    if (kind === "import") {
       // `@import`, and only when the at-rule NAME ends here. An unterminated prelude runs to
       // the end of the sheet — CSS Syntax §5.4.2 ends an at-rule at EOF — so cutting to EOS is
       // not a shortcut, it is the same span the browser would have consumed.
@@ -606,7 +743,7 @@ export function neutraliseCss(
       end = semi === -1 ? css.length : semi + 1;
       for (const url of remoteUrlsIn(css.slice(CSS_TOKEN.lastIndex, end))) onSheet(url);
       replacement = CUT;
-    } else if (m[0].endsWith("image-set(")) {
+    } else if (kind === "image-set") {
       // AN UNCLOSED FUNCTION IS STILL A REFERENCE. CSS Syntax §4.3.6 closes a `url` token at
       // EOF and returns it, so "copy the remainder verbatim and stop" would leave a live,
       // uncounted remote url behind — the DoS-safe answer and the leak-unsafe one. Everything
@@ -620,7 +757,12 @@ export function neutraliseCss(
       // candidates are relative is not a set with no urls in it. The whole set goes unless
       // EVERY candidate is inert — a set is one declaration and there is no partial answer.
       const allInert = urlsIn(inner).every((u) => INERT_CSS_URL.test(u));
-      replacement = remote.length > 0 || close === -1 || !allInert ? "none" : css.slice(start, end);
+      // AND a set whose candidate arrives by substitution is a set we have not read. See
+      // {@link defersSubstitution}: `image-set(var(--x) 1x)` presents no candidates at all, so
+      // the inert test above passes vacuously and the set was kept.
+      replacement = remote.length > 0 || close === -1 || !allInert || defersSubstitution(inner)
+        ? "none"
+        : css.slice(start, end);
     } else {
       const token = readUrlToken(css, CSS_TOKEN.lastIndex);
       end = token === null ? css.length : token.end;
