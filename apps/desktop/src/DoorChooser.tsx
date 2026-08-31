@@ -323,7 +323,9 @@ function LocalDoor({
             // The preset's own hosts, so the manual fields open pre-filled where there is
             // something to pre-fill — and, for the generic entry, which has nothing to
             // pre-fill with, whatever is already typed rather than two empty strings over it.
-            ...hostsFor(chosen, cur),
+            // The previous choice decides whether the hosts in the form are the person's own
+            // typing (keep) or a preset's (never carry into another provider's attempt).
+            ...hostsFor(chosen, cur, cur.providerId ? providerById(cur.providerId) : null),
             imapPort: String(chosen.imap.port),
             smtpPort: String(chosen.smtp.port),
           }));

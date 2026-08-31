@@ -178,13 +178,34 @@ export const providerById = (id: string): ProviderPreset =>
  * So: a preset with a host imposes it, and a preset without one leaves what is there. Empty is
  * not a value here; it is the absence of one, and absence must not overwrite.
  */
+/**
+ * ── PROVENANCE IS THE WHOLE RULE, AND LEAVING IT OUT WAS A CREDENTIAL LEAK ──────────────────
+ *
+ * The first version of this took only the current values and kept them whenever the incoming
+ * preset had none. That is wrong in a way that is worse than the bug it fixed, and a review
+ * caught it: the form's host field does not record WHO put the value there. Choose Gmail (the
+ * form fills in `imap.gmail.com`), then choose "any other IMAP mailbox" — the generic preset has
+ * no host, so the Gmail host was kept, and the fields now show a host the person never typed,
+ * pre-filled and easy to miss. They then enter THEIR OWN server's password and submit, and the
+ * probe dials Gmail with it.
+ *
+ * So the previous choice is a parameter. Values are the person's own exactly when the previous
+ * choice was ALSO the manual entry — every other value in that field was put there by a preset,
+ * and a preset's value must never survive into a different provider's attempt.
+ */
 export const hostsFor = (
-  p: ProviderPreset,
+  next: ProviderPreset,
   current: { imapHost: string; smtpHost: string },
-): { imapHost: string; smtpHost: string } => ({
-  imapHost: p.imap.host || current.imapHost,
-  smtpHost: p.smtp.host || current.smtpHost,
-});
+  previous: ProviderPreset | null,
+): { imapHost: string; smtpHost: string } => {
+  // A named preset always imposes its own hosts — they are the fact the app knows.
+  if (!next.manual) return { imapHost: next.imap.host, smtpHost: next.smtp.host };
+  // The generic entry has nothing to impose. Keep what is there only when it is the person's
+  // own typing, which is exactly when they were already on the generic entry.
+  return previous?.manual
+    ? { imapHost: current.imapHost, smtpHost: current.smtpHost }
+    : { imapHost: "", smtpHost: "" };
+};
 
 /**
  * THE LABEL A RENDER SITE PUTS ON SCREEN — which is not always {@link ProviderPreset.label}.

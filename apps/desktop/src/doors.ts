@@ -566,6 +566,37 @@ export async function enterLocalDoor(
     return { status: settled, problem: sentence(err) };
   }
 
+  /**
+   * ── AND NOW REPLACE THE ENGINE, BECAUSE THE ONE THAT IS RUNNING CANNOT USE THAT PASSWORD ────
+   *
+   * The engine builds its IMAP adapter ONCE, at boot, from whatever password resolved then —
+   * `engine.ts` says so where it builds it: "A password entered AFTER the process is up therefore
+   * takes effect on the next launch rather than this one". On this path the engine booted seconds
+   * ago with no password at all, so the adapter it is holding cannot log in, and the credential we
+   * have just sealed is not reachable by anything until something re-reads it.
+   *
+   * Without this the door SUCCEEDED and the app stayed empty: no error, no sync, no explanation —
+   * mail appeared only if the person happened to quit and reopen. That is the worst shape a
+   * first-run failure can take, because everything the user can see says it worked.
+   *
+   * `engineConfigure` is the replacement, and it is the same call that started this one — the
+   * settings are identical, so this is a relaunch and not a reconfiguration. A failure here is
+   * reported rather than swallowed: the credential IS stored, so the honest sentence is about the
+   * engine not coming back, and relaunching the app fixes it.
+   */
+  try {
+    await engineConfigure({
+      mode: "local",
+      imap,
+      ...(smtpHost ? { smtp: { host: smtpHost, port: smtpPort, secure: implicitTls(smtpPort) } } : {}),
+      address: f.address.trim(),
+    });
+  } catch (err) {
+    return { status: settled, problem: sentence(err) };
+  }
+  const restarted = await settle();
+  if (restarted.state !== "serving") return { status: restarted, problem: stalled(restarted) };
+
   return { status: await engineStatus(), problem: null };
 }
 

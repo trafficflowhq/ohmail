@@ -1247,7 +1247,7 @@ export function MailboxSection() {
     const p = providerById(id);
     // `hostsFor`, not the preset's hosts directly: the generic entry has none, and writing its
     // emptiness over a typed host is how the connect form used to lose one. See `providers.ts`.
-    setTyped((v) => ({ ...v, provider: p, ...hostsFor(p, v) }));
+    setTyped((v) => ({ ...v, provider: p, ...hostsFor(p, v, v.provider) }));
     // A fresh choice re-offers the default path for whatever was picked — the Microsoft tile means
     // sign-in first, never the app-password fields a previous visit may have revealed.
     setMsAppPassword(false);

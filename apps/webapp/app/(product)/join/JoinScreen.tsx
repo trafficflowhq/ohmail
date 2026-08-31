@@ -469,9 +469,10 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
     const p = providerById(id);
     setProvider(p);
     // The generic entry has no hosts to impose, and writing its emptiness over a typed one is how
-    // this form used to lose it. `providers.ts` carries the rule and the reason.
-    setImapHost((cur) => hostsFor(p, { imapHost: cur, smtpHost: "" }).imapHost);
-    setSmtpHost((cur) => hostsFor(p, { imapHost: "", smtpHost: cur }).smtpHost);
+    // this form used to lose it — but a NAMED preset's host must never survive into a manual
+    // attempt either, so the previous choice goes in too. `providers.ts` carries both reasons.
+    setImapHost((cur) => hostsFor(p, { imapHost: cur, smtpHost: "" }, provider).imapHost);
+    setSmtpHost((cur) => hostsFor(p, { imapHost: "", smtpHost: cur }, provider).smtpHost);
   };
 
   const submitMailbox = (e: React.FormEvent) => {

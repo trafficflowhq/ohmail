@@ -286,6 +286,41 @@ describe("the local door", () => {
     expect(patch.imap.user).toBe("login-name");
   });
 
+  /**
+   * REPRODUCTION — the door succeeded and the app stayed empty.
+   *
+   * The engine builds its IMAP adapter once, at boot, from whatever password resolved then. On a
+   * first connect it boots with NO password (the shell has no route for one), so the adapter it
+   * holds cannot log in. Sealing the credential a moment later does not reach that adapter —
+   * `engine.ts` is explicit that a password entered after the process is up takes effect on the
+   * next launch. Measured against a real mailbox: patch the credential into the running engine
+   * and ask it to sync, and it mirrors nothing; relaunch over the same data directory and the
+   * same mailbox mirrors immediately.
+   *
+   * So the door has to replace the engine after it seals the password, and the ordering is the
+   * whole point: configure, settle, seal, configure AGAIN, settle again.
+   */
+  it("REPRODUCTION: replaces the engine after sealing the password, so the mailbox actually syncs", async () => {
+    const asked = shellThatWorks();
+    const result = await enterLocalDoor(filled, providerById("fastmail"));
+    expect(result.problem).toBeNull();
+
+    const order = asked.map((a) => a.command);
+    const seal = order.indexOf("engine_request");
+    // Two configures: the one that created the engine, and the one that replaces it.
+    const configures = order.filter((c) => c === "engine_configure").length;
+    expect(configures, "the engine is replaced after the credential is sealed").toBe(2);
+    expect(order.lastIndexOf("engine_configure")).toBeGreaterThan(seal);
+    // …and the door waits for the replacement before it reports success.
+    expect(order.lastIndexOf("engine_status")).toBeGreaterThan(order.lastIndexOf("engine_configure"));
+
+    // The replacement is a RELAUNCH — same settings, so nothing about the mailbox changes.
+    const [first, second] = asked.filter((a) => a.command === "engine_configure");
+    expect(second!.payload!.config).toEqual(first!.payload!.config);
+    // And still no secret in either of them.
+    expect(JSON.stringify(second!.payload)).not.toContain("app-password-1234");
+  });
+
   it("waits for the reconfigured engine before addressing anything to it", async () => {
     /* `engine_configure` answers `starting`, and a `starting` engine has no mailbox id and no
        bridge. Sending the password against that answer would address `/mailboxes/undefined`. */
