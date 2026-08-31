@@ -551,7 +551,7 @@ export async function forgetProfile(
  *
  * A refusal KEEPS the debt: the entry stays in the index and the next launch tries again. That
  * is the whole reason the intent is durable, so swallowing the failure here is the design and
- * not a shrug. Answers the owner keys whose mail is still on the device, for the caller's log.
+ * not a shrug. Answers the mirror keys whose mail is still on the device, for the caller's log.
  */
 export async function drainPendingWipes(env: PairingEnv): Promise<string[]> {
   const stillOwed: string[] = [];
