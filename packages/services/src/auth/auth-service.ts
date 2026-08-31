@@ -615,7 +615,20 @@ export class AuthService extends SessionLifecycle {
         namespace: "register:ip",
         ip,
         now: ctx.now(),
-        max: this.cfg.publicSignup
+        // ON `openGate`, NEVER ON `publicSignup` — the two disagree on exactly the case that
+        // matters, and the comment above already states the intended rule ("the cap is tighter
+        // when the gate is OPEN"). `publicSignup` is the deployment MODE; `openGate` is whether
+        // THIS request is taking the open path. With the flag on, an offered invite code takes
+        // the invite path "byte for byte" (see above) — and was nonetheless being metered
+        // against the five-slot public ceiling, on the SAME `register:ip` counter the public
+        // path fills. Five stranger attempts from one NAT therefore denied a live, operator-
+        // issued invite for the whole window: the one signup path that is supposed to be
+        // available when the public valve is closing was the first to shut.
+        //
+        // Sharing one counter across both paths is deliberate and stays: the counter means
+        // "registrations from this client in this window" and only the CEILING is per-path, so
+        // a public flood stops at five and still leaves fifteen slots the invite path can claim.
+        max: openGate
           ? this.cfg.maxPublicRegistrationsPerWindow
           : this.cfg.maxRegistrationsPerWindow,
         windowMs: this.cfg.failureWindowMs,
