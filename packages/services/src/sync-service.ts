@@ -5,6 +5,7 @@ import {
 } from "@trafficflow/db";
 import type { Db, ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
+import { clampPageLimit } from "./pagination.js";
 import {
   approvalRowToDTO, draftRowToDTO, folderRowToDTO, materialize, materializeApprovals,
   materializeDrafts, materializeMessages,
@@ -231,7 +232,7 @@ export class SyncService {
 
   async getChanges(ctx: ServiceContext, opts: GetChangesOptions = {}): Promise<SyncResponse> {
     const { db, accountId } = ctx;
-    const limit = Math.min(Math.max(1, opts.limit ?? DEFAULT_LIMIT), MAX_LIMIT);
+    const limit = clampPageLimit(opts.limit, DEFAULT_LIMIT, MAX_LIMIT);
 
     // since omitted / "0" ⇒ bootstrap (full replay from seq 0).
     const sinceSeq = opts.since && opts.since !== "0" ? this.decodeCursor(opts.since) : 0n;
@@ -625,7 +626,7 @@ export class SyncService {
    */
   async getSnapshot(ctx: ServiceContext, opts: GetSnapshotOptions = {}): Promise<SnapshotResponse> {
     const { db, accountId } = ctx;
-    const limit = Math.min(Math.max(1, opts.limit ?? DEFAULT_LIMIT), MAX_LIMIT);
+    const limit = clampPageLimit(opts.limit, DEFAULT_LIMIT, MAX_LIMIT);
     const cursor = opts.cursor && opts.cursor !== "" ? this.decodeSnapshotCursor(opts.cursor) : null;
 
     // THE GAP-FREE SEQ IS FIXED BEFORE ANY ENTITY READ. See `highWaterSeq` for what depends on

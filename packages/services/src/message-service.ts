@@ -9,7 +9,7 @@ import type { Db, ServiceContext } from "./context.js";
 import { foldersEnabled, userFolderById } from "./folders.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { materializeMessage } from "./dto/materialize.js";
-import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
+import { clampLimit, clampPageLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
 import type { Folder, MessageBodyBatchItem, MessageBodyDTO, MessageDTO, Page, WithheldMarker } from "./dto/types.js";
 
 /**
@@ -391,7 +391,7 @@ export class MessageService {
    */
   async getBodies(ctx: ServiceContext, opts: GetBodiesOptions): Promise<Page<MessageBodyBatchItem>> {
     if (opts.ids !== undefined) return this.getBodiesByIds(ctx, opts.ids);
-    const limit = Math.min(Math.max(1, opts.limit ?? BODIES_DEFAULT_LIMIT), BODIES_MAX_LIMIT);
+    const limit = clampPageLimit(opts.limit, BODIES_DEFAULT_LIMIT, BODIES_MAX_LIMIT);
 
     const filters = [eq(messages.accountId, ctx.accountId)];
     if (opts.after) {

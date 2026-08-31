@@ -21,7 +21,7 @@ export {
   materializeRoutingDecision, materializeApproval, materializeRule, materializeDraft,
 } from "./dto/materialize.js";
 export {
-  clampLimit, encodeListCursor, decodeListCursor,
+  clampLimit, clampPageLimit, encodeListCursor, decodeListCursor,
   DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT,
 } from "./pagination.js";
 export {
