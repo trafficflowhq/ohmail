@@ -163,13 +163,13 @@ export const privacyRoutes: Route[] = [
           return errorResponse(err.code, err.httpStatus, err.message, err.details, err.retryable);
         }
         /* ── WHAT REACHES HERE IS OUR OWN FAULT, AND IT MUST STAY A 5xx ──────────────────
-           Tempting to answer 424 here, since this slice moved every upstream refusal off the
+           Tempting to answer 424 here, since every upstream refusal now sits off the
            5xx class. That would be wrong, and dangerously so: the `try` above encloses the
            ownership check, the consent read, the grants read and a `tracker_events` insert, so
            a database outage or a `TypeError` in our own code would take the same "somebody
            else's dependency" label — and Vercel's 5xx alerting, which the 424 exists to keep
-           honest, would then ignore a real ohmail outage. That is this slice's own incident,
-           inverted.
+           honest, would then ignore a real outage of ours — the same confusion the 424 exists
+           to end, pointed the other way.
            Transport failures are named where they happen instead (`makeNodeRemoteFetch` wraps
            DNS/TLS/reset/timeout as a 424 `ServiceError`), so anything still unknown at this
            point is a bug in ours and says so. */
