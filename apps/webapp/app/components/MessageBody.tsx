@@ -311,6 +311,32 @@ const REMOTE_URL = /^https?:\/\//i;
 const CID_URL = /^cid:/i;
 
 /**
+ * THE ONLY URL SCHEMES A STYLESHEET MAY NAME, and it is a POSITIVE list on purpose.
+ *
+ * {@link SAFE_HREF} is the positive list DOMPurify applies to `href`/`src`/`background`, so
+ * `<img src="/api/x">` loses its attribute. The CSS path gets neither check: `style` is in
+ * DOMPurify's own `URI_SAFE_ATTRIBUTES` and a `<style>` element is TEXT, so the only url policy
+ * on that path is {@link neutraliseCss}. Its final branch asked "is this remote?" and kept
+ * everything else verbatim, which is a different question from the one its comment answered —
+ * a RELATIVE url is not `https?://` and is not inert either.
+ *
+ * What that admitted, once the reader loads images: a srcdoc document has no `<base>` (the head
+ * is discarded, see the sanitize call), so it resolves against the EMBEDDER. `url(/api/…)`
+ * becomes `https://ohmail.app/api/…` — permitted by the frame's own `img-src data: 'self'`, and
+ * a cookie-bearing request because the sandbox keeps `allow-same-origin`. `url(//host/x)`
+ * becomes `https://host/x`, a remote fetch that passed neither the proxy nor the counter.
+ * Sender-authored mail could therefore issue an unbounded number of authenticated same-origin
+ * GETs on open, and none of them appeared in the blocked list the reader is shown.
+ *
+ * So the question the branch asks is now "is this inert?" rather than "is this not remote?".
+ * `data:` carries its own bytes and `cid:` names a part of this very message; both fetch
+ * nothing. Everything else — relative, protocol-relative, scheme-relative, a fragment, an
+ * unknown scheme — becomes `none`, and the counter-case in `test/message-body.test.ts` is what
+ * stops this from degenerating into "delete every url".
+ */
+const INERT_CSS_URL = /^(?:data:|cid:)/i;
+
+/**
  * THE ONLY SHAPE A RESOLVED EMBEDDED IMAGE MAY TAKE: a base64 `data:` URI of one of the four
  * raster image types — the same closed set the engine mints from (`INLINE_IMAGE_MIME`).
  *
@@ -511,11 +537,16 @@ function readUrlToken(css: string, from: number): { raw: string; end: number } |
  * Every REMOTE url a token's body names, in any of the spellings that fetch: a `url()`, or a
  * bare string — which is how `image-set("https://…" 1x)` and `@import"https://…";` name one.
  */
-function remoteUrlsIn(inner: string): string[] {
+function urlsIn(inner: string): string[] {
   const urls: string[] = [];
   for (const m of inner.matchAll(/url\(\s*['"]?([^'")]*)/gi)) urls.push(m[1] ?? "");
   for (const m of inner.matchAll(/"([^"\n]*)"|'([^'\n]*)'/g)) urls.push(m[1] ?? m[2] ?? "");
-  return urls.map((u) => decodeCssEscapes(u).trim()).filter((u) => REMOTE_URL.test(u));
+  return urls.map((u) => decodeCssEscapes(u).trim()).filter((u) => u.length > 0);
+}
+
+/** The subset of {@link urlsIn} that names a REMOTE host — what the reader's blocked list counts. */
+function remoteUrlsIn(inner: string): string[] {
+  return urlsIn(inner).filter((u) => REMOTE_URL.test(u));
 }
 
 /**
@@ -582,9 +613,14 @@ export function neutraliseCss(
       // from the token to the end goes.
       const close = closingParen(css, CSS_TOKEN.lastIndex);
       end = close === -1 ? css.length : close + 1;
-      const remote = remoteUrlsIn(css.slice(CSS_TOKEN.lastIndex, end));
+      const inner = css.slice(CSS_TOKEN.lastIndex, end);
+      const remote = remoteUrlsIn(inner);
       for (const url of remote) onRemote(url); // counted even though the whole set is dropped
-      replacement = remote.length > 0 || close === -1 ? "none" : css.slice(start, end);
+      // THE SAME NARROWING AS THE `url()` BRANCH BELOW, for the same reason: a set whose
+      // candidates are relative is not a set with no urls in it. The whole set goes unless
+      // EVERY candidate is inert — a set is one declaration and there is no partial answer.
+      const allInert = urlsIn(inner).every((u) => INERT_CSS_URL.test(u));
+      replacement = remote.length > 0 || close === -1 || !allInert ? "none" : css.slice(start, end);
     } else {
       const token = readUrlToken(css, CSS_TOKEN.lastIndex);
       end = token === null ? css.length : token.end;
@@ -595,9 +631,16 @@ export function neutraliseCss(
         replacement = proxied === null ? "none" : `url("${cssString(proxied)}")`;
       } else if (token === null) {
         replacement = "none"; // unterminated: the browser reads it to EOF, so so do we
-      } else {
-        // data: and cid: stay, verbatim. Nothing is fetched by them.
+      } else if (INERT_CSS_URL.test(url)) {
+        // `data:` and `cid:` stay, verbatim. Nothing is fetched by them.
         replacement = css.slice(start, end);
+      } else {
+        // NOT remote, NOT inert — a relative or protocol-relative reference, which the frame
+        // resolves against the embedder and can therefore fetch. See {@link INERT_CSS_URL}.
+        // Not counted through `onRemote`: the reader's blocked list names hosts the SENDER
+        // asked for, and this url names none — showing them `/api/messages/…` would be a
+        // sentence about our own origin, not about the message.
+        replacement = "none";
       }
     }
 
