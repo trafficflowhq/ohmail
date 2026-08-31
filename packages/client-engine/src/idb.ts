@@ -178,37 +178,99 @@ export function purgeLegacyMirror(factory?: IDBFactory): Promise<void> {
  * Failure here is silent by design: a private mode that refuses writes leaves the registry
  * empty, which is exactly the state this function had before it existed.
  */
-export const MIRROR_REGISTRY_KEY = "ohmail.mirrors.v1";
+export const MIRROR_REGISTRY_PREFIX = "ohmail.mirror.";
 
-function registry(): string[] {
+/**
+ * What a fenced store throws from every write path. Not a sentinel anyone branches on today —
+ * it is a sentence a bug report can carry, and the reason a write does not vanish quietly.
+ */
+/**
+ * What a wipe can honestly say. `remaining` is the mirror names still on this origin; `inventory`
+ * is whether the question could be answered COMPLETELY at all — a browser with neither
+ * `databases()` nor a usable registry can only report on the two names it already knew, and an
+ * empty list from it is not a clean browser.
+ */
+export interface WipeVerdict {
+  remaining: string[];
+  inventory: "complete" | "partial";
+}
+
+export const MIRROR_FENCED =
+  "this browser's copy of the mailbox was removed by a sign-out; reload the page";
+
+/**
+ * CAN THIS BROWSER'S INVENTORY BE TRUSTED TO BE COMPLETE?
+ *
+ * Two independent sources answer "what mirrors are on this origin": `IDBFactory.databases()`,
+ * and the registry the store writes as it opens one. Where NEITHER is available the delete set
+ * is just the legacy name plus the caller's own mirror — and an empty survivor list then means
+ * "the two names I know about are gone", not "this browser holds no mail". Reporting that as a
+ * clean wipe is the precise shape this whole function was changed to stop.
+ *
+ * A registry write is best-effort by design (a private mode refuses storage), so an EMPTY
+ * registry cannot be told apart from a registry that was never writable. This probes the store
+ * instead: if a round trip works, an empty registry is evidence; if it does not, the inventory
+ * is admitted as partial and the caller must not claim a clean browser.
+ */
+function registryReadable(): boolean {
   try {
-    const raw = globalThis.localStorage?.getItem(MIRROR_REGISTRY_KEY);
-    if (raw === null || raw === undefined) return [];
-    const parsed: unknown = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter((n): n is string => typeof n === "string") : [];
+    const probe = `${MIRROR_REGISTRY_PREFIX}__probe`;
+    globalThis.localStorage?.setItem(probe, "1");
+    const ok = globalThis.localStorage?.getItem(probe) === "1";
+    globalThis.localStorage?.removeItem(probe);
+    return ok;
   } catch {
-    return [];
+    return false;
   }
+}
+
+/**
+ * ONE KEY PER MIRROR, NOT ONE ARRAY OF THEM — and the difference is a lost database.
+ *
+ * The registry was a single JSON array, read-modify-written on first open. `localStorage` is
+ * shared across every tab of the origin and offers no atomic update, so two tabs first-opening
+ * different mirrors at once both read the same list and the second write erases the first's
+ * name. That is ordinary multi-tab use, and it defeated the registry's ONE purpose: on a browser
+ * without `databases()` the lost name is a database nothing can enumerate and nothing can name,
+ * so a later sign-out deletes what it knows about and reports a clean browser over it.
+ *
+ * One key per name has no read-modify-write at all: two tabs writing different names touch
+ * different keys, and two tabs writing the SAME name write the same bytes.
+ */
+function registry(): string[] {
+  const out: string[] = [];
+  try {
+    const ls = globalThis.localStorage;
+    if (!ls) return out;
+    for (let i = 0; i < ls.length; i++) {
+      const key = ls.key(i);
+      if (key !== null && key.startsWith(MIRROR_REGISTRY_PREFIX)) {
+        const name = key.slice(MIRROR_REGISTRY_PREFIX.length);
+        if (name !== "") out.push(name);
+      }
+    }
+  } catch {
+    /* storage blocked — `registryReadable()` is what turns that into an honest verdict */
+  }
+  return out;
 }
 
 /** Record a mirror name so a browser without `databases()` can still be told to forget it. */
 export function rememberMirror(name: string): void {
   try {
-    const held = registry();
-    if (held.includes(name)) return;
-    globalThis.localStorage?.setItem(MIRROR_REGISTRY_KEY, JSON.stringify([...held, name]));
+    globalThis.localStorage?.setItem(`${MIRROR_REGISTRY_PREFIX}${name}`, "1");
   } catch {
     /* storage blocked — the registry is a best-effort widening of the delete set, never a lock */
   }
 }
 
 function forgetMirrorNames(gone: readonly string[]): void {
-  try {
-    const left = registry().filter((n) => !gone.includes(n));
-    if (left.length === 0) globalThis.localStorage?.removeItem(MIRROR_REGISTRY_KEY);
-    else globalThis.localStorage?.setItem(MIRROR_REGISTRY_KEY, JSON.stringify(left));
-  } catch {
-    /* see `rememberMirror` */
+  for (const name of gone) {
+    try {
+      globalThis.localStorage?.removeItem(`${MIRROR_REGISTRY_PREFIX}${name}`);
+    } catch {
+      /* see `rememberMirror` */
+    }
   }
 }
 
@@ -231,12 +293,13 @@ function forgetMirrorNames(gone: readonly string[]): void {
  * stayed on disk. On the shared or borrowed computer this whole path exists for, that is the
  * one promise it must not break silently.
  *
- * An empty array is the only thing that means "this browser holds no mirror". Anything else
- * is the caller's to say out loud.
+ * An empty `remaining` is the only thing that means "this browser holds no mirror" — and only
+ * when `inventory` is `complete`. Anything else is the caller's to say out loud.
  */
-export async function clearAllMirrors(owner?: string, factory?: IDBFactory): Promise<string[]> {
+export async function clearAllMirrors(owner?: string, factory?: IDBFactory): Promise<WipeVerdict> {
   const f = factory ?? (typeof indexedDB !== "undefined" ? indexedDB : undefined);
-  if (!f) return [];
+  // No IndexedDB at all: nothing was ever written, so there is nothing to be unsure about.
+  if (!f) return { remaining: [], inventory: "complete" };
   const names = new Set<string>([LEGACY_MIRROR_DB, ...registry()]);
   if (owner) names.add(mirrorDbName(owner));
   const enumerable = typeof f.databases === "function";
@@ -265,6 +328,7 @@ export async function clearAllMirrors(owner?: string, factory?: IDBFactory): Pro
    * as a survival.
    */
   const stillHere = new Set(outcomes.filter(([, o]) => o !== "deleted").map(([n]) => n));
+  let inventory: WipeVerdict["inventory"] = enumerable || registryReadable() ? "complete" : "partial";
   if (enumerable) {
     try {
       const present = new Set((await f.databases()).map((i) => i.name).filter((n): n is string => !!n));
@@ -284,16 +348,27 @@ export async function clearAllMirrors(owner?: string, factory?: IDBFactory): Pro
       // is over-reporting a `blocked` that completed a moment later, which is the safe
       // direction — the remedy the copy names is "close the other tab and press again", and
       // pressing again on an already-clean browser answers empty.
-      for (const [n] of outcomes) if (present.has(n)) stillHere.add(n);
+      // EVERY MIRROR THE BROWSER STILL ADMITS TO, not only the ones this call attempted.
+      //
+      // Scoping the read-back to `outcomes` assumed the delete set was the whole inventory,
+      // which is the assumption the first enumeration may have already broken: a listing that
+      // is partial on the first call and complete on the second surfaces a mirror this call
+      // never tried to delete — an earlier account's, older than the registry — and it would
+      // have been reported as absent because it was never attempted. A name the browser says is
+      // there is there, whoever asked for it.
+      for (const n of present) if (n === LEGACY_MIRROR_DB || n.startsWith(MIRROR_DB_PREFIX)) stillHere.add(n);
     } catch {
-      /* the read-back is unavailable: the outcomes above stand */
+      // The read-back is unavailable. The delete outcomes stand, and the inventory is no longer
+      // provably complete: an enumeration that refused cannot rule out a database it did not
+      // list, which is exactly the claim `cleared` rests on.
+      inventory = registryReadable() ? "complete" : "partial";
     }
   }
   const remaining = [...stillHere].sort();
   // The registry keeps only what is still there, so it cannot grow without bound and cannot
   // make a later sign-out re-delete names that are already gone.
   forgetMirrorNames([...names].filter((n) => !stillHere.has(n)));
-  return remaining;
+  return { remaining, inventory };
 }
 
 /**
@@ -317,6 +392,12 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
    * fenced against. Refreshed by `open()`, by `load()`, and by this store's own `wipe()`.
    */
   private generation = 0;
+
+  /**
+   * This database was DELETED under us — see the `onversionchange` handler. Once set, this
+   * instance never opens again: reopening would recreate the mail a sign-out just removed.
+   */
+  private fenced = false;
 
   constructor(opts: IndexedDbMirrorStoreOptions = {}) {
     super();
@@ -346,6 +427,7 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
   }
 
   private async open(): Promise<IDBDatabase> {
+    if (this.fenced) throw new Error(MIRROR_FENCED);
     if (this.db) return this.db;
     // WRITTEN DOWN BEFORE THE DATABASE EXISTS, not after. `open` with a version CREATES the
     // database, so a name recorded on success would be missing for exactly the failure that
@@ -382,9 +464,26 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
      * subsequent `open()` hung behind the pending delete. Every existing test in
      * `idb-owner.test.ts` called `close()` first, so none of them could see it.
      */
-    db.onversionchange = () => {
+    db.onversionchange = (ev) => {
       db.close();
       if (this.db === db) this.db = null;
+      /**
+       * ── AND A DELETE FENCES THIS STORE FOR GOOD ──────────────────────────────────────────
+       *
+       * Yielding is only half of cooperating. `newVersion === null` means the connection was
+       * closed for a DELETE, and every modern tab of this app runs this same handler — so the
+       * usual two-tab sign-out does not even produce a `blocked`: both stores close, the delete
+       * succeeds, the verdict is clean, and then the OTHER tab's next drain, flush or tap calls
+       * `open()`, recreates the database at generation 0 and writes mail back into it. The
+       * person was told this browser holds nothing while a live tab was re-filling it.
+       *
+       * So a delete is permanent for this instance. `open()` refuses afterwards; `load()` reads
+       * that refusal as "empty", which is the truth and keeps a lingering page from throwing;
+       * every WRITE path lets it through, because a write that silently vanished would be the
+       * same lie one layer down. The tab recovers by reloading, which is what a signed-out tab
+       * has to do anyway.
+       */
+      if ((ev as IDBVersionChangeEvent).newVersion === null) this.fenced = true;
     };
     this.db = db;
     return db;
@@ -439,6 +538,15 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
   }
 
   async load(): Promise<void> {
+    // A FENCED STORE READS AS EMPTY, and does not throw. A page that lingers after a wipe (ours
+    // shows a confirmation before navigating) must not die on an `InvalidStateError`, and the
+    // honest answer to "what does this browser hold" is: nothing.
+    if (this.fenced) {
+      this.records.clear();
+      this.meta.clear();
+      this.highSeq = 0;
+      return;
+    }
     const db = await this.open();
     const tx = db.transaction([ENTITIES, META], "readonly");
 

@@ -67,8 +67,69 @@ export interface SignOutResult {
    * — so the mail is still here and the caller must say so rather than navigating away.
    */
   remaining: string[];
+  /**
+   * FALSE means this browser could not be asked what it holds — no `IDBFactory.databases()` and
+   * no usable storage for the mirror registry — so an empty `remaining` proves only that the two
+   * names we already knew are gone. It is a different sentence from a blocked wipe, with a
+   * different remedy, and it must not read as a clean browser.
+   */
+  inventoryComplete: boolean;
   /** The server refused or was unreachable. The local half ran anyway; the caller is told. */
   serverRefused: string | null;
+}
+
+/**
+ * EVERYTHING THIS BROWSER HOLDS FOR AN ACCOUNT, removed and read back — the local half on its
+ * own, so the two acts that need it cannot drift apart.
+ *
+ * It was inline in `signOut`, and account ERASURE — which reaches the same browser state by a
+ * different door — cleared only the mirror and the `tf_owner` cookie. Every durable store the
+ * durability slice added was left behind after an irreversible deletion, on the one screen with
+ * no session left to retry from. Two callers, one implementation, and the census in
+ * `sign-out-clears-durable-stores.test.ts` reads this list.
+ */
+export async function forgetThisBrowser(owner?: string): Promise<{
+  remaining: string[];
+  inventoryComplete: boolean;
+}> {
+  forgetOwner();
+  // The boot caches: the account's dormancy window, screening baseline and own addresses,
+  // remembered so the next boot can paint the partitioned piles before the server answers
+  // (`shell/boot-cache.ts`). Cleared by prefix, not by owner — this browser forgets, including
+  // whatever an earlier account left behind.
+  const survivors = [...clearBootCaches()];
+  // THE DURABLE-DECISION STORES, which are mail and are NOT in the mirror.
+  //
+  // The durability slice moved three user decisions out of memory and onto disk so they survive
+  // a crash — the send lanes, the Screener's intent journal, and the compose scratch buffer. All
+  // three are `localStorage`, all three are owner-keyed, and none of them starts with the
+  // boot-cache prefix, so that sweep never touched them. An unfinished message is mail text,
+  // readable on a shared machine; a journalled Screener decision would replay on a later
+  // sign-in; a send lane would outlive the session whose key it holds.
+  //
+  // Scoping a key to an account is not by itself what makes a sign-out reach it. The compose
+  // scratch was already account-scoped for exactly this purpose and the sweep was simply never
+  // told about it; the reply buffers are keyed by message id and lane, so they were never
+  // account-scoped at all.
+  survivors.push(...dropLocalStorageKeys([
+    SEND_LOCKS_PREFIX,
+    SCREENER_INTENTS_PREFIX,
+    COMPOSE_DRAFT_PREFIX,
+    LEGACY_COMPOSE_DRAFT_KEY,
+    // The reply scratch buffers, which are the same thing one surface along and are WORSE:
+    // keyed by message id and lane only, never by owner, so unlike the compose buffer they were
+    // never account-scoped in the first place. They hold the reply body.
+    REPLY_DRAFT_PREFIX,
+    REPLY_META_PREFIX,
+  ]));
+  // The mirror-name registry is swept BY `clearAllMirrors` itself (it removes the names it proved
+  // gone and keeps the ones it did not), so it is deliberately NOT in the prefix sweep above —
+  // dropping it there would throw away the only record of a mirror this browser could not delete.
+  const wipe = await clearAllMirrors(owner);
+  return {
+    remaining: [...survivors, ...wipe.remaining].sort(),
+    inventoryComplete: wipe.inventory === "complete",
+  };
 }
 
 export async function signOut(owner?: string): Promise<SignOutResult> {
@@ -80,54 +141,39 @@ export async function signOut(owner?: string): Promise<SignOutResult> {
   try {
     await auth.logout();
   } catch (err) {
-    serverRefused = err instanceof Error ? err.message : String(err);
+    /**
+     * ── 401 AND 403 ARE "ALREADY GONE", NOT "REFUSED" ─────────────────────────────────────
+     *
+     * Without this the retry the copy asks for could never succeed. A blocked wipe keeps the
+     * pane in place AFTER the logout has already landed and cleared the cookies; the reader
+     * closes the other tab and presses again, exactly as told — and the second `auth.logout()`
+     * answers 401, because the session it would revoke is gone. Read as a refusal, that turned
+     * a completed sign-out into a permanent "the session may still be live", pressing again for
+     * ever in a dead signed-in shell.
+     *
+     * The outcome being asked for is "this session no longer exists", and a 401 is the server
+     * saying exactly that.
+     */
+    // A STRUCTURAL READ OF `status`, not `err instanceof ApiError`, and the difference is not
+    // style. Callers' tests mock `./api-client` — one of them supplies `{ auth }` and nothing
+    // else — so `ApiError` can be `undefined` at runtime, and `x instanceof undefined` THROWS
+    // from inside this catch: the whole local cleanup would be skipped and the sign-out would
+    // leave the name and the mail on the machine, which is the exact failure this file exists
+    // to prevent. Reading the field cannot throw, and `ApiError` is the only thing that sets it.
+    const status = (err as { status?: unknown } | null)?.status;
+    const alreadyGone = status === 401 || status === 403;
+    serverRefused = alreadyGone ? null : err instanceof Error ? err.message : String(err);
   }
   {
-    forgetOwner();
-    // The boot caches go in the same act, for the same reason the cookie does: they are the
-    // account's dormancy window, screening baseline and own addresses, remembered so the next
-    // boot can paint the partitioned piles before the server answers (`shell/boot-cache.ts`).
-    // Cleared by prefix, not by owner — sign-out means this browser forgets, including whatever
-    // an earlier account left behind.
-    clearBootCaches();
-    // THE DURABLE-DECISION STORES, which are mail and are NOT in the mirror.
-    //
-    // The durability slice moved three user decisions out of memory and onto disk so they
-    // survive a crash — the send lanes, the Screener's intent journal, and the compose scratch
-    // buffer. All three are `localStorage`, all three are owner-keyed, and none of them starts
-    // with the boot-cache prefix, so the sweep above never touched them. This file's own header
-    // claims sign-out "closes the other half — what is left behind at rest", and for these three
-    // it did not: an unfinished message is mail text, readable on a shared machine after the
-    // person signing out believed they had left nothing; a journalled Screener decision would
-    // replay on a later sign-in; a send lane would outlive the session whose key it holds.
-    //
-    // Scoping a key to an account is not by itself what makes sign-out reach it. The compose
-    // scratch was already account-scoped for exactly this purpose, and this sweep was simply
-    // never told about it; the reply buffers are keyed by message id and lane, so they were
-    // never account-scoped at all.
-    //
-    // By prefix and not by owner, for the reason `clearBootCaches` gives: sign-out means this
-    // browser forgets, including whatever an earlier account left behind. The legacy un-owned
-    // compose key goes in the same pass — an exact key is a prefix of itself.
-    dropLocalStorageKeys([
-      SEND_LOCKS_PREFIX,
-      SCREENER_INTENTS_PREFIX,
-      COMPOSE_DRAFT_PREFIX,
-      LEGACY_COMPOSE_DRAFT_KEY,
-      // The reply scratch buffers, which are the same thing one surface along and are WORSE:
-      // keyed by message id and lane only, never by owner, so unlike the compose buffer they
-      // were never account-scoped in the first place. They hold the reply body.
-      REPLY_DRAFT_PREFIX,
-      REPLY_META_PREFIX,
-    ]);
-    // THE ONE THING THAT ANSWERS. `clearAllMirrors` reports the names still on disk, because
-    // an IndexedDB delete is BLOCKED (not failed) while another tab holds the database open,
-    // and this function used to resolve as though it had worked. See its own header.
-    const remaining = await clearAllMirrors(owner);
-    // The mirror-name registry is swept BY `clearAllMirrors` itself (it removes the names it
-    // proved gone and keeps the ones it did not), so it is deliberately NOT in the prefix sweep
-    // above — dropping it there would throw away the only record of a mirror this browser could
-    // not delete, which is the opposite of what a sign-out that could not finish needs.
-    return { cleared: remaining.length === 0, remaining, serverRefused };
+    const local = await forgetThisBrowser(owner);
+    // `cleared` needs BOTH: nothing left, and a browser that could actually be asked. Where
+    // neither `databases()` nor a usable registry exists, an empty list only means "the two
+    // names I already knew are gone" — see `clearAllMirrors`'s own header.
+    return {
+      cleared: local.remaining.length === 0 && local.inventoryComplete,
+      remaining: local.remaining,
+      inventoryComplete: local.inventoryComplete,
+      serverRefused,
+    };
   }
 }

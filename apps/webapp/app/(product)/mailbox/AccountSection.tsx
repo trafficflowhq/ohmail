@@ -59,12 +59,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
-import { clearAllMirrors } from "@ohmail/client-engine";
 import { Button, SettingsNote, SettingsSection } from "@ohmail/ui";
 // The ONE correct way out — revokes server-side and wipes the local mirror. The sign-out guard
 // asserts every `auth.logout` call in this app goes through it, so never call logout directly.
-import { signOut } from "../../sign-out";
-import { forgetOwner } from "../../shell/owner-cookie";
+import { forgetThisBrowser, signOut } from "../../sign-out";
 import {
   account,
   ApiError,
@@ -114,6 +112,8 @@ export function AccountSection() {
   const [signingOut, setSigningOut] = useState(false);
   /** The wipe was blocked by another tab: the mail is still on this browser. See `doSignOut`. */
   const [signOutBlocked, setSignOutBlocked] = useState(false);
+  /** This browser will not say what it holds, so the wipe cannot be proved complete. */
+  const [signOutUnverified, setSignOutUnverified] = useState(false);
   /** `POST /auth/logout` refused or never arrived, so the SESSION is still live. See `doSignOut`. */
   const [signOutServerRefused, setSignOutServerRefused] = useState<string | null>(null);
   /** The erasure landed and the local wipe did not. See `erase`. */
@@ -141,6 +141,7 @@ export function AccountSection() {
   const doSignOut = useCallback(async (owner: string) => {
     setSigningOut(true);
     setSignOutBlocked(false);
+    setSignOutUnverified(false);
     setSignOutServerRefused(null);
     const outcome = await signOut(owner);
     /**
@@ -153,9 +154,14 @@ export function AccountSection() {
      * exactly the borrowed machine this control exists for.
      *
      * Staying put costs a dead shell behind an actionable sentence; leaving costs a silent
-     * false promise about somebody's mail. The remedy is one gesture (close the other tab and
-     * press again), and the session and cookie are already gone either way — so pressing again
-     * is safe and is what the copy asks for.
+     * false promise about somebody's mail. The session and cookie are already gone either way —
+     * so pressing again is safe and is the first thing the copy asks for.
+     *
+     * THE SENTENCE NAMES BOTH CAUSES, because this arm cannot tell them apart. A survivor here
+     * is either a blocked delete (another tab) or a refused one (the browser said no), and the
+     * verdict is a list of names, not a list of reasons. Saying only "another tab" would hand
+     * somebody with no second tab a remedy that cannot work, so it names both and ends with the
+     * one that always works.
      */
     if (!outcome.cleared) {
       if (alive.current) {
@@ -178,6 +184,18 @@ export function AccountSection() {
      * what to do about it. Pressing again is safe and is the first remedy; the second — revoking
      * this device — works from anywhere and does not need this browser at all.
      */
+    if (!outcome.inventoryComplete) {
+      // ITS OWN SENTENCE, not the blocked one. Nothing is holding a database open here — this
+      // browser simply will not say which local databases it has, and the registry it would
+      // otherwise fall back on is not writable either. The deletes we could name went through;
+      // what cannot be claimed is that they were all of them. "Close your other tabs" would be
+      // a false instruction, and the remedy is a different one.
+      if (alive.current) {
+        setSignOutUnverified(true);
+        setSigningOut(false);
+      }
+      return;
+    }
     if (outcome.serverRefused !== null) {
       if (alive.current) {
         setSignOutServerRefused(outcome.serverRefused);
@@ -257,23 +275,31 @@ export function AccountSection() {
       // shell opens a mirror on that name before the server has confirmed anything, so a name
       // left behind after an erasure would point the next load at a database that is gone and
       // an account that no longer exists.
-      let remaining: string[] = [];
+      // DEFAULTS TO UNCLEAN, and only a wipe that returns proves otherwise. Initialising this
+      // to `false` made every exception before or during the wipe — a `tf_owner` clear throwing on
+      // a locked-down storage, the mirror wipe throwing at all — indistinguishable from a
+      // verified clean browser, on the one screen that can never be reached again: the account
+      // is gone, so there is no session left to route a retry through.
+      let unclean = true;
       try {
-        forgetOwner();
-        // READ THE ANSWER. `clearAllMirrors` returns the mirror names still on this origin —
-        // an IndexedDB delete is BLOCKED, not failed, while another tab holds the database
-        // open, so it resolves without throwing and this used to discard the one value that
-        // said the mailbox copy survived. An erasure that reports itself complete over a
-        // readable local copy is the worst instance of the class this whole change closes:
-        // the account is gone, so there is no ordinary retry flow left to reach it with.
-        remaining = await clearAllMirrors(owner);
+        // THE SAME LOCAL CLEANUP SIGN-OUT DOES, not a subset of it. This used to be
+        // `forgetOwner()` plus the mirror wipe, which left every durable localStorage store the
+        // durability slice added — the compose and reply scratch buffers, the Screener intent
+        // journal, the send lanes — sitting on the machine after an IRREVERSIBLE deletion, with
+        // no session left to reach them from. One implementation, two callers.
+        //
+        // And its ANSWER is read: an IndexedDB delete is BLOCKED, not failed, while another tab
+        // holds the database open, and a localStorage removal can refuse. Both resolve without
+        // throwing, and this discarded the one value that said the mail survived.
+        const local = await forgetThisBrowser(owner);
+        unclean = local.remaining.length > 0 || !local.inventoryComplete;
       } catch {
-        /* the same race `sign-out.ts` already accepts */
+        /* the same race `sign-out.ts` already accepts — and `unclean` stays true */
       }
       if (!alive.current) return;
       // The erasure DID happen and its receipt is shown either way — refusing to show it would
       // hide a completed, irreversible act. What changes is the sentence beside it.
-      setEraseMirrorBlocked(remaining.length > 0);
+      setEraseMirrorBlocked(unclean);
       setResult(out);
       setStage("done");
     } catch (err) {
@@ -454,6 +480,7 @@ export function AccountSection() {
           <div>
             <p className="acct-fine">{t("signOutBody")}</p>
             {signOutBlocked ? <p className="acct-fine acct-warn" role="alert">{t("signOutBlocked")}</p> : null}
+            {signOutUnverified ? <p className="acct-fine acct-warn" role="alert">{t("signOutUnverified")}</p> : null}
             {signOutServerRefused === null ? null : (
               <p className="acct-fine acct-warn" role="alert">
                 {t("signOutServerRefused", { reason: signOutServerRefused })}

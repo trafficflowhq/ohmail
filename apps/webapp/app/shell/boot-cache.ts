@@ -88,8 +88,8 @@ export function writeBootCache(scope: string, owner: string, value: unknown): vo
  * some earlier account left behind is exactly what must not survive the one act whose meaning
  * is leaving nothing behind.
  */
-export function clearBootCaches(): void {
-  dropLocalStorageKeys([PREFIX]);
+export function clearBootCaches(): string[] {
+  return dropLocalStorageKeys([PREFIX]);
 }
 
 /**
@@ -100,16 +100,39 @@ export function clearBootCaches(): void {
  * index shifts as keys are removed, so the doomed set is collected before anything is deleted.
  *
  * An exact key is a prefix of itself, so a legacy un-owned key is passed here unchanged.
+ *
+ * ANSWERS THE KEYS THAT SURVIVED. See the read-back below for why `void` was not enough.
  */
-export function dropLocalStorageKeys(prefixes: readonly string[]): void {
+export function dropLocalStorageKeys(prefixes: readonly string[]): string[] {
   try {
     const doomed: string[] = [];
     for (let i = 0; i < window.localStorage.length; i++) {
       const key = window.localStorage.key(i);
       if (key !== null && prefixes.some((p) => key.startsWith(p))) doomed.push(key);
     }
-    for (const key of doomed) window.localStorage.removeItem(key);
+    for (const key of doomed) {
+      try {
+        window.localStorage.removeItem(key);
+      } catch {
+        /* one refusal must not spare the rest — the read-back below is the judge */
+      }
+    }
+    // ── AND THE SURVIVORS ARE ANSWERED, because this sweep is not hygiene ──────────────────
+    //
+    // These prefixes hold MAIL: an unfinished message, a reply body, a journalled Screener
+    // decision, a send lane. `void` plus a swallowing catch meant a removal that refused was
+    // indistinguishable from one that worked, and `signOut` earned its clean verdict over
+    // message text still readable on a shared machine. A key that is still there after this
+    // is named, and the caller decides what to say about it.
+    return doomed.filter((key) => {
+      try {
+        return window.localStorage.getItem(key) !== null;
+      } catch {
+        return true; // cannot be checked ⇒ cannot be claimed gone
+      }
+    });
   } catch {
-    /* storage blocked — there was nothing cached there to clear */
+    /* storage is entirely unavailable — nothing was ever cached there to clear */
+    return [];
   }
 }
