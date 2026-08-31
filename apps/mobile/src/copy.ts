@@ -32,8 +32,14 @@ export const Copy = {
   serversAdd: "Add a server",
   serversNeedsPair: "Pairing ended — scan a fresh QR to pair again.",
   serversForget: "Forget",
+  // CLAIMS ARE CONTRACTS. This sentence used to stop at "removes the pairing", and that was the
+  // whole truth: forget closed a database handle and left the mail on the phone for ever. Now it
+  // deletes the copied mail as well and reads the database back to check, so the promise is one
+  // the code keeps — and `serversForgetFailed` is what gets said on the launch where it cannot.
   serversForgetNote:
-    "Forgetting removes the pairing from this phone. The server's Devices list can revoke it there too.",
+    "Forgetting deletes the pairing and the mail this phone had copied. The server's Devices list can revoke it there too.",
+  /** A take-back that did not fully land says what remains and what will happen next. */
+  serversForgetFailed: (reason: string) => reason,
   serversEmpty: "No pairings yet.",
 
   choiceManaged: "ohmail (managed)",
@@ -278,6 +284,25 @@ export const Copy = {
   /** The About block — states what is real on this build, no more. */
   aboutLive: (origin: string) =>
     `Paired with ${origin}. Mail syncs into an on-device mirror; reading, triage, reply, forward and tags are live. Compose from scratch and search arrive with later updates.`,
+  /**
+   * WHAT THE ON-DEVICE COPY DOES AND DOES NOT LEAVE. Three true sentences, and the third is
+   * here because the product cannot yet make it false.
+   *
+   * The pairing credential is kept out of every backup (`WHEN_UNLOCKED_THIS_DEVICE_ONLY`), and
+   * on Android this app's own backup rules now keep the mirror out too. On iOS the mirror lives
+   * in the app's Documents directory, which the platform's own cloud and computer backups include
+   * unless the file is marked excluded — and marking it needs native code this build does not
+   * carry. (The brand name for that backup service is deliberately not written here: the privacy
+   * census bans real brand strings in this app's source, and the sentence is clear without it.)
+   * Saying so is the whole of the fix available today: an unstated limitation on a product that
+   * sells on "your mailbox is yours" is the kind of claim CLAIMS-ARE-CONTRACTS exists to stop.
+   * When the exclusion ships, this sentence goes with it.
+   */
+  aboutOnDevice:
+    "Forgetting a server deletes its pairing and the mail this phone had copied, and deleting the "
+    + "app removes both. The pairing itself is never included in a backup. On iPhone and iPad the "
+    + "copied mail is: it lives in this app's documents, which the phone's cloud and computer "
+    + "backups include. On Android it is excluded from both.",
 
   /* ------------------------------------------------------------- new mail */
 

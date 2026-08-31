@@ -37,6 +37,24 @@ export function expoSqlExecutor(db: SQLite.SQLiteDatabase): SqlExecutor {
 export function nativeEngineDeps(): MobileEngineDeps {
   return {
     openExecutor: async (dbName) => expoSqlExecutor(await SQLite.openDatabaseAsync(dbFileName(dbName))),
+    /**
+     * The real deletion — the one call in this app that removes mail from the device.
+     *
+     * `deleteDatabaseAsync` REJECTS on a name that is not there ("Database ... not found"), and
+     * the seam's contract is that deleting an absent name resolves: `forgetMirror` deletes
+     * twice (the mail, then the empty file its read-back probe created) and a pending wipe is
+     * replayed at every launch, so "already gone" is the ordinary case, not a failure. Swallowed
+     * HERE rather than at the call site, so the caller's own read-back stays the only thing that
+     * decides whether the take-back landed — a deleter that silently did nothing is caught by
+     * the probe, not by this catch.
+     */
+    deleteDatabase: async (dbName) => {
+      try {
+        await SQLite.deleteDatabaseAsync(dbFileName(dbName));
+      } catch {
+        /* absent, or held: the caller's read-back is the judge */
+      }
+    },
     uuid: () => Crypto.randomUUID(),
   };
 }

@@ -2,7 +2,7 @@ import {
   createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode,
 } from "react";
 import { useConnection } from "../net/connection";
-import { forgetWake, registerWake, NO_DISTRIBUTOR, type WakeState } from "../net/push";
+import { dropWakeRow, forgetWake, registerWake, NO_DISTRIBUTOR, type WakeState } from "../net/push";
 import {
   chooseDistributor, listDistributors, onWake, requestNotificationPermission, savedDistributor,
   unifiedPushDistributor, type DistributorChoice,
@@ -166,6 +166,27 @@ export function WakeProvider({ children }: { children: ReactNode }) {
     // A NEW GENERATION. Every attempt still in the air for the previous session is now superseded
     // and will discard its own result rather than writing it over this one's.
     generation.current += 1;
+    /**
+     * ── THE PREVIOUS SERVER'S ROW GOES DOWN BEFORE THE NEXT ONE GOES UP ────────────────────
+     *
+     * This build holds ONE UnifiedPush registration for the whole app, and every paired server
+     * stores its own `push_subscriptions` row against that one endpoint. So leaving profile A's
+     * row behind on a switch to B does not leave a dormant record — it leaves A's server POSTing
+     * wakes to a phone that no longer syncs A, indefinitely, while the app answers each one by
+     * syncing B. The file's own header already named this failure for the state-overwrite half
+     * ("left A's row live, sending wakes to a phone that had moved on") and fixed only that half.
+     *
+     * The ROW and not the distributor: unregistering the endpoint would take the next profile's
+     * wakes down with it (see `dropWakeRow`). Fire-and-forget on the OUTGOING session's own
+     * bearer, which is still usable — the connection layer's teardown closes the store, not the
+     * credential — and it must not hold the switch open.
+     */
+    const previous = liveSession.current;
+    const previousId = subscriptionId.current;
+    if (previous && previous !== session && previousId !== null) {
+      subscriptionId.current = null;
+      void dropWakeRow(previous, previousId);
+    }
     liveSession.current = session;
     readDevice();
     if (!session) {
@@ -176,6 +197,27 @@ export function WakeProvider({ children }: { children: ReactNode }) {
     else setState({ k: "no_distributor" });
     return () => { alive = false; };
   }, [session, attempt, readDevice]);
+
+  /**
+   * ── NOTHING IS PAIRED ANY MORE, SO NOTHING MAY BE REGISTERED ──────────────────────────────
+   *
+   * Forgetting the last server takes its `push_subscriptions` row down server-side (the hosted
+   * `logout` prunes by device), but the DISTRIBUTOR registration is this phone's own and no
+   * server can reach it: without this the connector keeps holding an endpoint for an app that
+   * is paired with nothing, and the chosen-distributor preference keeps saying wakes are on.
+   *
+   * Gated on the LAST pairing precisely because the registration is shared — dropping it while
+   * another profile still exists would silently turn that profile's wakes off.
+   */
+  const nothingPaired = conn.profiles.length === 0;
+  useEffect(() => {
+    if (!nothingPaired) return;
+    subscriptionId.current = null;
+    void unifiedPushDistributor().unregister().catch(() => undefined);
+    chooseDistributor(null);
+    readDevice();
+    setState({ k: "no_distributor" });
+  }, [nothingPaired, readDevice]);
 
   /**
    * A DELIVERED WAKE MEANS ONE THING: PULL.

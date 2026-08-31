@@ -132,6 +132,15 @@ function ProfileRow({ profile, active }: { profile: ServerProfile; active: boole
   const conn = useConnection();
   const t = useTheme();
   const needsPair = profile.refreshToken === null;
+  /**
+   * WHAT A FORGET COULD NOT TAKE BACK, in the row that asked for it.
+   *
+   * `conn.forget` answers an Attempt now, because a take-back that half-landed must not be
+   * reported as one — the pairing may be gone while the copied mail is still on the device.
+   * Rendering it here rather than as a toast keeps the sentence beside the server it is about,
+   * and it survives the re-render the forget itself causes.
+   */
+  const [failure, setFailure] = useState<string | null>(null);
   // Forgetting the FINAL pairing returns to the welcome screen — explicitly, from the
   // action itself. The tabs' redirect cannot be trusted to fire here: while /servers is
   // the focused route, the gated layouts behind it may never re-render their verdict, and
@@ -140,7 +149,12 @@ function ProfileRow({ profile, active }: { profile: ServerProfile; active: boole
   // removes exactly this row).
   const forget = async () => {
     const wasLast = conn.profiles.length === 1;
-    await conn.forget(profile.id);
+    setFailure(null);
+    const outcome = await conn.forget(profile.id);
+    if (!outcome.ok) {
+      setFailure(outcome.reason);
+      return; // the row stays on screen: something it names is still here
+    }
     if (wasLast) router.replace("/welcome");
   };
   return (
@@ -175,6 +189,13 @@ function ProfileRow({ profile, active }: { profile: ServerProfile; active: boole
       <View style={{ flexDirection: "row", paddingHorizontal: 12, paddingBottom: 6 }}>
         <Button label={Copy.serversForget} variant="quiet" onPress={() => void forget()} />
       </View>
+      {failure === null ? null : (
+        <View style={{ paddingHorizontal: 20, paddingBottom: 8 }}>
+          <Txt variant="caption" tone="ink2" style={{ lineHeight: 16 }}>
+            {Copy.serversForgetFailed(failure)}
+          </Txt>
+        </View>
+      )}
     </View>
   );
 }

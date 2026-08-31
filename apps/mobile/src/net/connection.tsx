@@ -36,16 +36,18 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Platform } from "react-native";
 import { nativeEngineDeps } from "../engine/native";
+import { settleInstallGeneration } from "../state/install-marker";
 import { nativeServerProfiles } from "../state/servers-native";
 import type { ServerProfile } from "../state/servers";
 import type { FetchLike } from "./bearer";
 import { SyncRunner } from "./drain";
 import {
   connectProfileById,
+  drainPendingWipes,
+  forgetProfile,
   mobileDeviceKind,
   negotiate,
   pairWithServer,
-  revokeProfile,
   type ConnectedSession,
   type Negotiation,
   type PairingEnv,
@@ -79,8 +81,14 @@ export interface Connection {
   pair(origin: string, token: string): Promise<Attempt>;
   /** Switch the live session to a stored profile — BY ID; the row is re-read in the gate. */
   switchTo(profileId: string): Promise<Attempt>;
-  /** Forget the pairing on this phone AND revoke it server-side (best-effort). */
-  forget(profileId: string): Promise<void>;
+  /**
+   * Forget the pairing on this phone — the CREDENTIAL, the MAIL, and the server-side session.
+   *
+   * Answers an {@link Attempt} rather than `void` because a take-back that could not complete
+   * must not be reported as one: `{ok: false}` carries the sentence naming what is still on the
+   * device and why, and the deletion stays owed so the next launch retries it.
+   */
+  forget(profileId: string): Promise<Attempt>;
   /** End the session without forgetting the pairing. The mirror stays on disk — that is the point. */
   disconnect(): Promise<void>;
   /**
@@ -152,12 +160,19 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
    * sync status — a standing failure sentence, a busy flag mid-round — must not stand as the
    * next session's, and the disowned round's own landing reports nothing.
    */
-  const teardown = useCallback((session: ConnectedSession) => {
+  const teardown = useCallback((session: ConnectedSession): Promise<void> => {
     offDead.current?.();
     offDead.current = null;
     const inFlight = runner.inFlight() ?? Promise.resolve();
     runner.disown();
-    void inFlight.catch(() => undefined).then(() => session.store.close());
+    // RETURNED, not only scheduled. Every caller but one wants this fire-and-forget (leaving a
+    // session must not wait on a drain), but `forget` has to DELETE the database this handle is
+    // on — and deleting a file underneath an open sqlite handle is the kind of thing that works
+    // on one platform and not another, which is the same rule the desktop shell states for its
+    // own data directory. So the promise is handed back and exactly one caller awaits it.
+    const closed = inFlight.catch(() => undefined).then(() => session.store.close());
+    void closed;
+    return closed;
   }, [runner]);
 
   const drain = useCallback(
@@ -269,6 +284,17 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void gate
       .run(async (stillCurrent) => {
+        // ── BEFORE A SINGLE PROFILE IS READ ────────────────────────────────────────────────
+        //
+        // 1. IS THIS THE INSTALL THAT STORED THEM? On iOS the Keychain outlives deleting the
+        //    app, so without this a reinstall reopened the mailbox with no ceremony. The
+        //    marker lives in the app container, which iOS does remove. See `install-marker.ts`
+        //    — including why a marker store that will not open leaves the pairings alone.
+        await settleInstallGeneration(env.engineDeps, env.profiles);
+        // 2. FINISH THE FORGETS THAT DID NOT FINISH. A forget writes its intent before it
+        //    touches either store, so a kill mid-way leaves the mail owed rather than
+        //    stranded — this is where the debt is paid. A refusal keeps the debt.
+        await drainPendingWipes(env);
         await refreshProfiles();
         const active = await env.profiles.active();
         if (!stillCurrent()) return;
@@ -329,16 +355,16 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         }),
       forget: (profileId) =>
         gate.run(async () => {
-          // Forgetting REVOKES server-side too (best-effort, after the local removal, never
-          // blocking it): the live session's own manager holds logout; a stored profile's
-          // refresh token is spent into one through `revokeProfile` — otherwise the family
-          // stays live on the server until it ages out.
-          const row = (await env.profiles.list()).find((p) => p.id === profileId) ?? null;
+          // THE CEREMONY LIVES AT THE SEAM (`pairing.ts#forgetProfile`) — this provider owns
+          // only what is React: leaving the live state, and closing the store handle whose
+          // database the seam is about to delete. Everything a test would want to assert about
+          // a take-back is therefore assertable without rendering a component.
           let revokeLive: (() => Promise<void>) | null = null;
+          let closed: Promise<void> = Promise.resolve();
           if (live.current.k === "live" && live.current.session.profile.id === profileId) {
             const bearer = live.current.session.bearer;
             revokeLive = () => bearer.logout();
-            teardown(live.current.session);
+            closed = teardown(live.current.session);
             setState({ k: "idle" });
           } else if (live.current.k === "connecting") {
             // SETTLE a state no later transition will. Every other transition ends by setting
@@ -351,10 +377,9 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
             // the reason the Servers screen exists.
             setState({ k: "idle" });
           }
-          await env.profiles.remove(profileId);
+          const outcome = await forgetProfile(env, profileId, { closed, revoke: revokeLive });
           await refreshProfiles();
-          if (revokeLive !== null) void revokeLive().catch(() => undefined);
-          else if (row !== null) void revokeProfile(env, row);
+          return outcome.kind === "forgotten" ? { ok: true } : { ok: false, reason: outcome.reason };
         }),
       disconnect: () =>
         gate.run(async () => {

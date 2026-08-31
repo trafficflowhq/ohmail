@@ -271,6 +271,31 @@ export async function registerWake(
 }
 
 /**
+ * TAKE ONE SERVER ROW DOWN, and leave the distributor alone.
+ *
+ * Split out of {@link forgetWake} for the case that has no other answer: SWITCHING PROFILES.
+ * This build holds ONE UnifiedPush registration for the whole app (the connector's default
+ * instance), so the endpoint the phone is reachable at is shared by every paired server — and
+ * each server stores its own `push_subscriptions` row against it. Leaving profile A's row live
+ * while the phone moves to profile B means A's server keeps POSTing wakes to a phone that no
+ * longer syncs A, for ever; unregistering the DISTRIBUTOR to stop it would take B's wakes down
+ * with it. So the row goes and the endpoint stays.
+ *
+ * Never throws: a take-back the user asked for must not fail in their face because a server is
+ * unreachable, and a row whose endpoint has gone quiet is pruned server-side on the first 404/410.
+ */
+export async function dropWakeRow(session: ConnectedSession, id: string | null): Promise<void> {
+  if (id === null) return;
+  try {
+    await session.bearer.fetch(`${session.profile.origin}/push/subscriptions/${id}`, {
+      method: "DELETE",
+    });
+  } catch {
+    /* unreachable server: the local forget still happens, and a dead endpoint prunes itself */
+  }
+}
+
+/**
  * Take the registration down: server first, then the distributor.
  *
  * That order matters and is the opposite of the intuitive one. The server row is what causes
@@ -285,15 +310,7 @@ export async function registerWake(
 export async function forgetWake(
   session: ConnectedSession, distributor: UnifiedPushDistributor, id: string | null,
 ): Promise<void> {
-  if (id !== null) {
-    try {
-      await session.bearer.fetch(`${session.profile.origin}/push/subscriptions/${id}`, {
-        method: "DELETE",
-      });
-    } catch {
-      /* unreachable server: the local forget still happens, and a dead endpoint prunes itself */
-    }
-  }
+  await dropWakeRow(session, id);
   try {
     await distributor.unregister();
   } catch {

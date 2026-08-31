@@ -38,6 +38,7 @@
 import type { OhmailEngine, SqlMirrorStore } from "@ohmail/client-engine";
 import {
   bootEngine,
+  forgetMirror,
   mirrorOwnerKey,
   normalizeOrigin,
   type IdentityVerdict,
@@ -456,6 +457,113 @@ export async function revokeProfile(env: PairingEnv, profile: ServerProfile): Pr
   } catch {
     /* unreachable server — the server-side session ages out; the phone forgot it already */
   }
+}
+
+/* ── forget: the take-back, and it is three stores ──────────────────────────────────────────── */
+
+export type ForgetOutcome =
+  /** The credential is gone from the keystore and the mail is gone from the device. */
+  | { kind: "forgotten" }
+  /**
+   * Something the user was told would go is still here. `reason` is a showable sentence naming
+   * WHAT remains and what happens next; the deletion stays owed in the profile index either way.
+   */
+  | { kind: "partial"; reason: string };
+
+/**
+ * FORGET A PAIRING — the whole ceremony, at the seam rather than in the React provider.
+ *
+ * ── WHY THIS IS NOT THREE LINES IN A CALLBACK ───────────────────────────────────────────────
+ *
+ * "Forget this server" spans THREE stores — the keystore (the credential), a SQLite database
+ * (the mail), and the server (the session and its wake registration) — and it used to touch
+ * one of them. `env.profiles.remove` plus a best-effort logout; the mirror's handle was closed
+ * and the file left on disk holding every header in the 90-day window and every body the reader
+ * had opened. The app had NO deletion path at all, so the only way to get that mail off the
+ * phone was to uninstall it.
+ *
+ * A take-back is a mutation like any other. It must be performed at every place the thing
+ * exists, VERIFIED there, and honest when it cannot be — which is why this is a function with
+ * an outcome type and not a callback that resolves to `void`.
+ *
+ * ── THE ORDER IS FORCED, AND THE FIRST STEP IS THE DURABLE INTENT ───────────────────────────
+ *
+ *  1. **Mark the wipe owed.** The mirror is named by `(origin, account)` — exactly what the
+ *     forgotten profile row stops holding. A kill between the removal and the deletion would
+ *     otherwise strand the mail under a name nothing on the device could still derive. Written
+ *     first, cleared last, drained at every launch ({@link drainPendingWipes}).
+ *  2. **Wait for the store handle to close.** Deleting a database underneath a live sqlite
+ *     handle is the kind of thing that works on one platform and not another; the caller passes
+ *     the close it already scheduled.
+ *  3. **Remove the credential**, and read the keystore back. This is the residue that can still
+ *     OPEN the mailbox, so its refusal is the loud one.
+ *  4. **Revoke server-side**, fire-and-forget. This is also what takes the phone's WAKE
+ *     REGISTRATION down: the hosted `logout` prunes `push_subscriptions` for the session's
+ *     device, so a forgotten server stops ringing a phone that can no longer open the account.
+ *  5. **Delete the mail and read it back** ({@link forgetMirror}).
+ */
+export async function forgetProfile(
+  env: PairingEnv,
+  profileId: string,
+  opts: { closed?: Promise<void>; revoke?: (() => Promise<void>) | null } = {},
+): Promise<ForgetOutcome> {
+  const row = (await env.profiles.list()).find((p) => p.id === profileId) ?? null;
+  const ownerKey = row === null ? null : mirrorOwnerKey(row.origin, row.accountId);
+  if (ownerKey !== null) await env.profiles.markPendingWipe(ownerKey);
+
+  try {
+    await env.profiles.remove(profileId);
+  } catch (err) {
+    return {
+      kind: "partial",
+      reason:
+        `This phone would not let go of the pairing (${String(err)}). ` +
+        `Revoke this device from the server's Devices list, which ends the session wherever it is held.`,
+    };
+  }
+
+  // Best-effort and never blocking, in both arms: the live session's own manager holds logout;
+  // a stored profile's refresh token is spent into one through `revokeProfile`. An unreachable
+  // server means the family ages out — it must not hold the local forget open.
+  if (opts.revoke) void opts.revoke().catch(() => undefined);
+  else if (row !== null) void revokeProfile(env, row);
+
+  if (ownerKey === null) return { kind: "forgotten" };
+  try {
+    await (opts.closed ?? Promise.resolve());
+    await forgetMirror(env.engineDeps, ownerKey);
+  } catch (err) {
+    // HONEST. The pairing and its credential are gone — that half is done, and it is the half
+    // that could still open the mailbox — but the mail is still here and the wipe is still owed.
+    return {
+      kind: "partial",
+      reason:
+        `The pairing is removed, but the mail this phone had copied could not be deleted ` +
+        `(${String(err)}). ohmail will try again the next time it starts.`,
+    };
+  }
+  await env.profiles.clearPendingWipe(ownerKey);
+  return { kind: "forgotten" };
+}
+
+/**
+ * Finish the forgets that did not finish — run once at launch, before any profile is read.
+ *
+ * A refusal KEEPS the debt: the entry stays in the index and the next launch tries again. That
+ * is the whole reason the intent is durable, so swallowing the failure here is the design and
+ * not a shrug. Answers the owner keys whose mail is still on the device, for the caller's log.
+ */
+export async function drainPendingWipes(env: PairingEnv): Promise<string[]> {
+  const stillOwed: string[] = [];
+  for (const ownerKey of await env.profiles.pendingWipes()) {
+    try {
+      await forgetMirror(env.engineDeps, ownerKey);
+      await env.profiles.clearPendingWipe(ownerKey);
+    } catch {
+      stillOwed.push(ownerKey);
+    }
+  }
+  return stillOwed;
 }
 
 /**

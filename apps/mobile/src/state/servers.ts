@@ -56,13 +56,34 @@ export interface ServerProfile {
   refreshToken: string | null;
 }
 
-/** The persisted index — which profiles exist and which one the app boots. */
+/** The persisted index — which profiles exist, which one the app boots, and what is owed. */
 interface Index {
   active: string | null;
   ids: string[];
+  /**
+   * MIRROR OWNER KEYS WHOSE MAIL IS OWED A DELETION — the durable half of "forget".
+   *
+   * A forget removes a credential from the keystore and mail from a SQLite file, and those are
+   * two stores: a kill between them used to leave the mail behind for ever, because the profile
+   * carrying the origin and account that NAME the mirror was already gone. So the intent is
+   * written here BEFORE either store is touched, and cleared only once the deletion has been
+   * read back as landed — the same "persist the decision first, execute it second" rule the
+   * durability class arrived at, applied to a take-back instead of an action.
+   *
+   * Owner keys, not profile ids: the profile is the thing being removed, and the mirror is
+   * named by `(origin, account)` — which is exactly what a forgotten row no longer holds.
+   *
+   * Bounded ({@link MAX_PENDING_WIPES}) because this rides one expo-secure-store value and iOS
+   * warns past 2 KB. Overflow drops the OLDEST, which is the entry a launch has already had the
+   * most chances to retry.
+   */
+  wipes?: string[];
 }
 
 const PREFIX = "ohmail.servers.v1";
+
+/** See {@link Index.wipes}: the index is one small keystore value and must stay one. */
+const MAX_PENDING_WIPES = 16;
 
 /** Keystore-safe, unique-per-device id. Not a credential — collision-resistance suffices. */
 function mintId(): string {
@@ -88,12 +109,28 @@ export class ServerProfileStore {
       return {
         active: typeof parsed.active === "string" ? parsed.active : null,
         ids: Array.isArray(parsed.ids) ? parsed.ids.filter((i): i is string => typeof i === "string") : [],
+        wipes: Array.isArray(parsed.wipes)
+          ? parsed.wipes.filter((w): w is string => typeof w === "string" && w !== "")
+          : [],
       };
     } catch {
       // An unreadable index loses the LIST, never a mirror: profiles re-pair with one scan
       // each, and the stranded per-profile values are overwritten by their next add().
-      return { active: null, ids: [] };
+      return { active: null, ids: [], wipes: [] };
     }
+  }
+
+  /**
+   * The ONE place the index is written, so no caller can drop a field it did not know about.
+   * `wipes` was added after `add`, `remove` and `setActive` were each writing their own object
+   * literal, and every one of those literals would have silently erased an owed deletion.
+   */
+  private async writeIndex(idx: Index): Promise<void> {
+    await this.kv.set(PREFIX, JSON.stringify({
+      active: idx.active,
+      ids: idx.ids,
+      wipes: (idx.wipes ?? []).slice(-MAX_PENDING_WIPES),
+    } satisfies Index));
   }
 
   private async readProfile(id: string): Promise<ServerProfile | null> {
@@ -165,10 +202,11 @@ export class ServerProfileStore {
         refreshToken: input.refreshToken,
       };
       await this.writeProfile(profile);
-      await this.kv.set(PREFIX, JSON.stringify({
+      await this.writeIndex({
+        ...idx,
         active: profile.id,
         ids: existing ? idx.ids : [...idx.ids, profile.id],
-      } satisfies Index));
+      });
       return profile;
     });
   }
@@ -176,12 +214,27 @@ export class ServerProfileStore {
   /** Forget a pairing on this phone. (The server's Devices list is the server-side take-back.) */
   remove(id: string): Promise<void> {
     return this.enqueue(async () => {
-      const idx = await this.readIndex();
+      // ── THE CREDENTIAL FIRST, READ BACK, AND ONLY THEN THE INDEX ─────────────────────────
+      //
+      // A keystore `remove` that REFUSED is indistinguishable from one that worked until
+      // somebody asks, and what survives it is a refresh token — the one residue of a forget
+      // that can still open the mailbox. Dropping the id from the index first would make that
+      // refusal INVISIBLE in the worst way: the server would vanish from the picker while its
+      // credential stayed readable under a key nothing lists any more. So the value goes, the
+      // value is read back, and the row leaves the list only once it is really gone.
       await this.kv.remove(`${PREFIX}.${id}`);
-      await this.kv.set(PREFIX, JSON.stringify({
+      if ((await this.readProfile(id)) !== null) {
+        throw new Error(`this phone still holds the pairing "${id}" — the keystore refused to forget it`);
+      }
+      const idx = await this.readIndex();
+      await this.writeIndex({
+        ...idx,
         active: idx.active === id ? null : idx.active,
         ids: idx.ids.filter((i) => i !== id),
-      } satisfies Index));
+      });
+      if ((await this.readIndex()).ids.includes(id)) {
+        throw new Error(`this phone still lists the pairing "${id}" — the keystore refused to forget it`);
+      }
     });
   }
 
@@ -190,7 +243,7 @@ export class ServerProfileStore {
     return this.enqueue(async () => {
       const idx = await this.readIndex();
       if (!idx.ids.includes(id)) throw new Error(`no server profile "${id}" on this phone`);
-      await this.kv.set(PREFIX, JSON.stringify({ active: id, ids: idx.ids } satisfies Index));
+      await this.writeIndex({ ...idx, active: id });
     });
   }
 
@@ -213,6 +266,63 @@ export class ServerProfileStore {
       const p = await this.readProfile(id);
       if (p === null) return;
       await this.writeProfile({ ...p, refreshToken: null });
+    });
+  }
+
+  /* ── the owed deletions (see {@link Index.wipes}) ─────────────────────────────────────── */
+
+  /** Mirror owner keys this phone still owes a deletion. Launch order: oldest first. */
+  async pendingWipes(): Promise<string[]> {
+    return [...((await this.readIndex()).wipes ?? [])];
+  }
+
+  /**
+   * Record that a mirror is owed a deletion — the FIRST act of a forget, before the credential
+   * is removed and before the database is touched. Idempotent: an owner key already owed keeps
+   * its place in the queue rather than jumping it.
+   */
+  markPendingWipe(ownerKey: string): Promise<void> {
+    return this.enqueue(async () => {
+      const idx = await this.readIndex();
+      const owed = idx.wipes ?? [];
+      if (owed.includes(ownerKey)) return;
+      await this.writeIndex({ ...idx, wipes: [...owed, ownerKey] });
+    });
+  }
+
+  /**
+   * The deletion landed and was read back. Clearing is the LAST act, so a kill anywhere before
+   * it leaves the wipe owed and the next launch finishes it.
+   */
+  clearPendingWipe(ownerKey: string): Promise<void> {
+    return this.enqueue(async () => {
+      const idx = await this.readIndex();
+      const owed = idx.wipes ?? [];
+      if (!owed.includes(ownerKey)) return;
+      await this.writeIndex({ ...idx, wipes: owed.filter((w) => w !== ownerKey) });
+    });
+  }
+
+  /**
+   * REMOVE EVERY PAIRING THIS PHONE HOLDS — the first-launch purge (`install-marker.ts`).
+   *
+   * iOS Keychain items survive an app delete and are readable again by the same bundle id, so
+   * a reinstall used to open the mailbox with no ceremony. The purge is unconditional and
+   * best-effort per key: a value that refuses to be removed must not stop the ones that would,
+   * and the INDEX goes last — an index without its profiles is a phone with nothing to boot,
+   * while profiles without an index are unreachable values the next `add()` overwrites.
+   */
+  purgeAll(): Promise<void> {
+    return this.enqueue(async () => {
+      const idx = await this.readIndex();
+      for (const id of idx.ids) {
+        try {
+          await this.kv.remove(`${PREFIX}.${id}`);
+        } catch {
+          /* one stubborn value must not keep the rest of the pairings alive */
+        }
+      }
+      await this.kv.remove(PREFIX);
     });
   }
 }

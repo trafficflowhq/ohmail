@@ -158,6 +158,11 @@ function SettingsBody() {
             <Txt variant="note" tone="ink2">
               {Copy.aboutLive(w.account.name)}
             </Txt>
+            {/* What leaving actually leaves — including the one thing this build cannot yet
+                take back (an iOS backup carries the copied mail). See `Copy.aboutOnDevice`. */}
+            <Txt variant="note" tone="ink3">
+              {Copy.aboutOnDevice}
+            </Txt>
           </View>
         </Panel>
       </Scroller>

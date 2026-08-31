@@ -29,6 +29,7 @@ import {
   OhmailEngine,
   SqlMirrorStore,
   flattenResponse,
+  mirrorDbName,
   type EngineAdapter,
   type SqlExecutor,
   type StorePolicy,
@@ -43,6 +44,21 @@ export interface MobileEngineDeps {
    * (an expo-sqlite file, a node:sqlite handle).
    */
   openExecutor: (dbName: string) => SqlExecutor | Promise<SqlExecutor>;
+  /**
+   * REMOVE the named mirror database from the device — the take-back's other half, and
+   * REQUIRED rather than optional on purpose.
+   *
+   * A platform half that can only ever CREATE mail on a phone is not a complete platform
+   * half. Forgetting a server used to close the store handle and stop there: the SQLite file
+   * stayed on disk holding every header in the window plus every hydrated body, and the app
+   * had no deletion path at all. Making this a required member means a new platform half
+   * cannot compile until it answers the question "and how does this device forget?".
+   *
+   * Deleting a name that does not exist MUST resolve, not throw: {@link forgetMirror} deletes
+   * twice by design (once for the mail, once for the empty file its own read-back probe
+   * creates) and a pending wipe is retried at every launch.
+   */
+  deleteDatabase: (dbName: string) => Promise<void>;
   /** RFC 4122 v4 — the engine's Idempotency-Key generator. */
   uuid: () => string;
   /** Override the transport (tests). Absent, `HttpAdapter` binds the global RN fetch. */
@@ -149,6 +165,62 @@ export function normalizeOrigin(origin: string): string {
 export function dbFileName(dbName: string): string {
   const safe = dbName.replace(/[^A-Za-z0-9.-]/gu, (ch) => `_${ch.codePointAt(0)!.toString(16)}_`);
   return `${safe}.db`;
+}
+
+/**
+ * REMOVE ONE MIRROR FROM THIS PHONE — and then READ BACK to prove it is gone.
+ *
+ * ── WHY A READ-BACK AND NOT A CALL ──────────────────────────────────────────────────────────
+ *
+ * "Forget" is a take-back, and a take-back is a mutation like any other: it has to be performed
+ * at the place the thing exists, VERIFIED there, and honest when it cannot be. Awaiting
+ * {@link MobileEngineDeps.deleteDatabase} proves only that a function returned — which is
+ * exactly the evidence the defect this closes already had, because the app's forget path called
+ * `store.close()` (a handle) and no deletion at all. A test that asserts a deleter was called
+ * would pass against a deleter that does nothing.
+ *
+ * So the proof is at the store: re-open the SAME name and ask SQLite's own catalog whether the
+ * mirror's two tables are there. `SqlMirrorStore` creates exactly `entities` (every header,
+ * every hydrated body, every tombstone) and `meta` (the cursor, the `__owner` stamp and the
+ * durable outbox). A database that has neither is a file this call created a moment ago, which
+ * is the only shape that means the delete landed. A database that HAS them is mail that
+ * survived, and this throws rather than letting a screen say the phone forgot.
+ *
+ * ── THE SECOND DELETE IS NOT A BELT-AND-BRACES, IT IS THE PROBE'S OWN LITTER ────────────────
+ *
+ * Opening a deleted name CREATES it (that is what `openExecutor` means on both platform
+ * halves). An empty database is not mail, but leaving one behind on every forget is residue
+ * from the act whose entire meaning is leaving nothing behind — so the probe cleans up after
+ * itself. Best-effort, because by then the assertion is already made and a failure here can
+ * only ever strand an empty file.
+ *
+ * The caller owns the ORDER: every handle on this database must be closed first (a live drain
+ * reopens the store through its own opener), and the pending-wipe marker must already be
+ * durable, so a kill between the delete and the read-back is retried at the next launch rather
+ * than being silently forgotten.
+ */
+export async function forgetMirror(deps: MobileEngineDeps, ownerKey: string): Promise<void> {
+  const dbName = mirrorDbName(ownerKey);
+  await deps.deleteDatabase(dbName);
+
+  const probe = await deps.openExecutor(dbName);
+  let survivors: ReadonlyArray<{ name: unknown }>;
+  try {
+    survivors = (await probe.all(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('entities', 'meta')",
+    )) as ReadonlyArray<{ name: unknown }>;
+  } finally {
+    await probe.close?.();
+  }
+  await deps.deleteDatabase(dbName).catch(() => undefined);
+
+  if (survivors.length > 0) {
+    throw new Error(
+      `the mail this phone held for ${ownerKey} is still on the device — ` +
+        `the mirror database "${dbName}" survived being deleted ` +
+        `(${survivors.map((r) => String(r.name)).sort().join(", ")})`,
+    );
+  }
 }
 
 /**
