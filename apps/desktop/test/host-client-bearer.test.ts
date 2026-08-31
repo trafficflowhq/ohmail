@@ -339,14 +339,40 @@ describe("the pairing scope", () => {
     ).toBe(first);
   });
 
-  it("an install upgraded from a bundle that had no scope adopts one rather than staying shared", () => {
-    // A refresh token in storage and nothing else — exactly what an older bundle left behind.
+  it("an upgraded install has a scope BEFORE anything renders, not at its first adopt", () => {
+    /**
+     * The upgrade arm used to live in `adopt`, and `adopt` runs on a redeem or a rotation —
+     * neither of which has happened when a browser that already holds a refresh token loads this
+     * build for the first time. `paired()` was true while `pairScope()` was still null, so the
+     * gate set the storage owner to `null` and mounted the shared shell on the old un-owned
+     * `…local` partition: the PREVIOUS pairing's compose buffer, send lanes and Screener journal,
+     * read by the shell's own effects before any request could 401 and rotate.
+     *
+     * The manager is constructed above `createRoot`, so minting in the constructor closes the
+     * window entirely. This case asserts the state at construction and nothing later.
+     */
     const storage = memoryStorage({ [REFRESH_STORAGE_KEY]: "refresh-old" });
     const bearer = new BearerManager({ storage, fetchImpl: async () => new Response("") });
-    expect(bearer.pairScope(), "nothing stored yet").toBeNull();
 
-    bearer.adopt({ accessToken: "a", refreshToken: "refresh-old" });
-    expect(bearer.pairScope(), "the upgrade does not leave the pairing on the shared partition").not.toBeNull();
+    expect(bearer.paired(), "the pairing is held").toBe(true);
+    expect(
+      bearer.pairScope(),
+      "the shell would mount on the previous pairing's shared partition",
+    ).not.toBeNull();
+    expect(storage.getItem(PAIR_SCOPE_KEY)).toBe(bearer.pairScope());
+  });
+
+  it("a browser with no pairing is given no scope", () => {
+    const storage = memoryStorage();
+    const bearer = new BearerManager({ storage, fetchImpl: async () => new Response("") });
+    expect(bearer.pairScope()).toBeNull();
+    expect(storage.getItem(PAIR_SCOPE_KEY), "nothing to scope, nothing written").toBeNull();
+  });
+
+  it("construction does not re-mint over a scope the pairing already has", () => {
+    const storage = memoryStorage({ [REFRESH_STORAGE_KEY]: "r", [PAIR_SCOPE_KEY]: "scope-kept" });
+    const bearer = new BearerManager({ storage, fetchImpl: async () => new Response("") });
+    expect(bearer.pairScope(), "a reload is not a new pairing").toBe("scope-kept");
   });
 
   it("a new pairing cannot read the previous one's scratch space", async () => {

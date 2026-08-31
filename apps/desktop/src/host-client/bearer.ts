@@ -145,6 +145,33 @@ export class BearerManager {
     } catch {
       this.refresh = null;
     }
+    /**
+     * A PAIRING THAT EXISTS MUST HAVE A SCOPE BEFORE THE FIRST RENDER, NOT AT ITS FIRST ADOPT.
+     *
+     * The upgrade arm used to live in {@link adopt}, and `adopt` runs on a redeem or a rotation —
+     * neither of which has happened when a browser that already holds a refresh token loads this
+     * build for the first time. `paired()` was therefore true while `pairScope()` was still null,
+     * so `HostGate` set the storage owner to `null` and mounted the shared shell on the old
+     * un-owned `…local` partition: the previous pairing's compose buffer, send lanes and Screener
+     * journal, read by the shell's own effects before any request could 401 and rotate.
+     *
+     * Minting here closes that window because the manager is constructed before anything renders
+     * (`main.tsx` builds it above `createRoot`). It is the same one-time upgrade: a pairing with a
+     * token and no scope gets one, and a browser with no pairing gets nothing.
+     */
+    this.ensureScope();
+  }
+
+  /** Give the held pairing a scope if it has none. No pairing, no scope — and never a re-mint. */
+  private ensureScope(): void {
+    if (this.refresh === null) return;
+    try {
+      if (this.storage?.getItem(PAIR_SCOPE_STORAGE_KEY) == null) {
+        this.storage?.setItem(PAIR_SCOPE_STORAGE_KEY, mintPairScope());
+      }
+    } catch {
+      /* storage refused: `pairScope()` answers null and the shell partitions as un-owned */
+    }
   }
 
   /** Whether this browser holds a pairing at all — what the gate renders the shell on. */
@@ -167,11 +194,13 @@ export class BearerManager {
     this.generation++;
     try {
       this.storage?.setItem(REFRESH_STORAGE_KEY, tokens.refreshToken);
-      // A pairing with no scope stored is also a fresh one: an install upgraded from a bundle
-      // that predates this key holds a refresh token and nothing else, and leaving it unscoped
-      // would leave it on the shared partition this exists to end.
-      if (opts.fresh === true || this.storage?.getItem(PAIR_SCOPE_STORAGE_KEY) == null) {
+      // A REDEEM re-mints; a rotation does not. The upgrade case is NOT handled here — it is
+      // handled in the constructor, because by the time `adopt` runs the shell has already
+      // mounted and read a partition. See `ensureScope`.
+      if (opts.fresh === true) {
         this.storage?.setItem(PAIR_SCOPE_STORAGE_KEY, mintPairScope());
+      } else {
+        this.ensureScope();
       }
     } catch {
       /* Storage refused: the session lives for this page load and the next one re-pairs. */

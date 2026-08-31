@@ -485,6 +485,11 @@ export function DesktopGate() {
      has not caught up. React re-renders before painting, so that render is never seen; it still
      has to draw something, and the honest something is the line below. */
   const engine = mount.kind === "engine" && live?.key === mount.key ? live.engine : null;
+  /* The mailbox this render is for, captured beside the engine so the shell's key below is
+     the same id the engine and the storage partition were chosen by. Narrowed here rather
+     than at the render, where the early return has already made it non-null in fact but not
+     in the type. */
+  const shellKey = mount.kind === "engine" ? mount.key : "opening";
 
   if (engine === null) {
     /* A door is chosen and no engine has served yet — a first launch migrating a database, or an
@@ -521,6 +526,22 @@ export function DesktopGate() {
   return (
     <>
       <AppShell
+        /**
+         * KEYED BY THE MAILBOX, so a mailbox change REMOUNTS the shell.
+         *
+         * Partitioning the storage was only half of it, and the missing half is worse than the
+         * half that was fixed. `ShellInner` holds the compose form in React state and loads the
+         * scratch buffer in a mount effect with an empty dependency list. Without a key, React
+         * preserves that component across a mailbox switch: the storage owner moves to B and the
+         * engine is replaced, while mailbox A's recipients, subject and body are still sitting in
+         * state — and the next autosave writes them into B's partition, or a press sends them
+         * under B's identity. The keys were per-mailbox and the TEXT was not.
+         *
+         * `mount.key` is the same id the partition and the engine are chosen by, so all three
+         * change together or none does. A remount costs a re-read of the correct buffer, which is
+         * exactly the behaviour that was wanted.
+         */
+        key={shellKey}
         /* Always false, structurally: the early return above means this line is only reached
            with a real engine behind the window, and `demo` — the ribbon, the frozen clock, the
            fixtures adapter — would be a lie about somebody's own mail. The desktop has no demo

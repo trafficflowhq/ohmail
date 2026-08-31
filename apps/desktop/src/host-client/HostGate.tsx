@@ -162,6 +162,14 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
 
   return (
     <AppShell
+      /**
+       * KEYED BY THE PAIRING, for the reason `DesktopGate` states: partitioning the storage does
+       * not move the SHELL STATE that writes into it. A tab whose pairing changes underneath it —
+       * another tab redeems a new QR on this origin, and this tab's next rotation adopts the
+       * stored token — would otherwise keep the previous pairing's compose in state while the
+       * owner beneath it has already become the new one.
+       */
+      key={bearer.pairScope() ?? "unpaired"}
       demo={false}
       engine={engine}
       /* The sync strip's mailbox facts, over the same bearer socket — the door serves

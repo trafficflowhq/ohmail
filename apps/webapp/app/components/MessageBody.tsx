@@ -615,15 +615,34 @@ function readUrlToken(css: string, from: number): { raw: string; end: number } |
  */
 function urlsIn(inner: string): string[] {
   const urls: string[] = [];
-  // `type("image/png")` is an image-set candidate's MIME HINT, not a resource. Reading its string
-  // as a url made the inert test below fail on a standards-valid inline candidate, and a
-  // sanitizer's false positive costs the reader their picture — the one failure mode a policy
-  // like this one is not allowed to have. Blanked rather than removed so every other offset in
-  // `inner` is unchanged, which keeps this readable beside the spans the caller slices.
-  const scanned = inner.replace(/\btype\(\s*(?:"[^"\n]*"|'[^'\n]*'|[^)\n]*)\)/gi, (m) => " ".repeat(m.length));
+  /**
+   * DECODED ONCE, UP FRONT, AND EVERY LITERAL MATCH BELOW RUNS ON THE DECODED TEXT.
+   *
+   * This used to decode only the CANDIDATES it had already found, with literal patterns doing the
+   * finding — which is the same mistake the token finder made one level up, at one level of
+   * nesting deeper. Two things got through it, and each is the other's mirror:
+   *
+   *  · `image-set(\75 rl(/api/…) 1x)` — the inner `url()` is not literal, so no candidate was
+   *    found at all, `[].every(inert)` was vacuously true, and the whole set was copied through
+   *    VERBATIM. Worse, the outer branch advances the scan past the set, so the top-level
+   *    escape-aware pass never visits that backslash either. A live reference, kept and uncounted.
+   *  · `image-set("data:…" \74 ype("image/png"))` — the MIME hint is not literal `type(`, so it
+   *    was not blanked, its `"image/png"` was read as a candidate url, and a standards-valid
+   *    INLINE image was deleted. The false positive the blanking exists to prevent, reintroduced
+   *    by the same literal-matching assumption.
+   *
+   * Decoding the body first fixes both with one line, and it is the rule this file already
+   * follows: decoding decides, it never emits. The caller still slices the ORIGINAL text.
+   */
+  const decoded = decodeCssEscapes(inner);
+  // `type("image/png")` is an image-set candidate's MIME HINT, not a resource. Blanked rather than
+  // removed so every other offset in the decoded text is unchanged.
+  const scanned = decoded.replace(/\btype\(\s*(?:"[^"\n]*"|'[^'\n]*'|[^)\n]*)\)/gi, (m) => " ".repeat(m.length));
   for (const m of scanned.matchAll(/url\(\s*['"]?([^'")]*)/gi)) urls.push(m[1] ?? "");
   for (const m of scanned.matchAll(/"([^"\n]*)"|'([^'\n]*)'/g)) urls.push(m[1] ?? m[2] ?? "");
-  return urls.map((u) => decodeCssEscapes(u).trim()).filter((u) => u.length > 0);
+  // NOT decoded a second time: `decoded` is already the decoded text, and re-running the decoder
+  // over it would read a literal backslash the sender wrote as `\\` as the start of a fresh escape.
+  return urls.map((u) => u.trim()).filter((u) => u.length > 0);
 }
 
 /**
@@ -689,6 +708,42 @@ export function neutraliseCss(
   if (css.length === 0) return css;
   let out = "";
   let copied = 0;
+
+  /**
+   * IS THIS POSITION INSIDE A CSS STRING? — carried forward, never recomputed.
+   *
+   * Only the escape branch asks. `content:"\\75 rl(/api/x)"` is a STRING whose visible text is
+   * `url(/api/x)`; it names no resource and the browser fetches nothing. The escape-aware branch
+   * had no notion of quoting, so it decoded the identifier, saw the `(` beside it and rewrote a
+   * piece of the sender's visible text into `none` — a sanitizer silently editing a message that
+   * was never dangerous.
+   *
+   * The three LITERAL branches deliberately keep their existing behaviour, quoted or not: they
+   * are what the mutation-XSS guards are written against (a sheet is neutralised so that no
+   * arrangement of quotes the browser resolves differently can leave a live token), and narrowing
+   * them here would be a security change smuggled in behind a false-positive fix. This restricts
+   * only the branch this file just added.
+   *
+   * The cursor only moves forward and every character is visited once, so the whole thing stays
+   * linear — the property this tokenizer exists to have.
+   */
+  let quote: '"' | "'" | null = null;
+  let quoteAt = 0;
+  const advanceQuote = (to: number): void => {
+    for (let i = quoteAt; i < to; i++) {
+      const c = css[i];
+      if (quote !== null) {
+        // An escape inside a string consumes the next character, so a `\\"` does not close it.
+        if (c === "\\") { i++; continue; }
+        // A raw newline ends an unterminated string (CSS Syntax §4.3.5); the browser does the same.
+        if (c === quote || c === "\n" || c === "\r" || c === "\f") quote = null;
+      } else if (c === '"' || c === "'") {
+        quote = c;
+      }
+    }
+    quoteAt = Math.max(quoteAt, to);
+  };
+
   CSS_TOKEN.lastIndex = 0;
   let m: RegExpExecArray | null;
   while ((m = CSS_TOKEN.exec(css)) !== null) {
@@ -701,7 +756,10 @@ export function neutraliseCss(
     if (m[0][0] === "\\") {
       // AN ESCAPE. Almost always inside a string and none of our business; occasionally it is a
       // character of a FUNCTION NAME written to hide it from the three literal alternatives —
-      // `\75 rl(…)`, `\69 mage-set(…)`, `@\69 mport …`. See {@link escapedFunctionName}.
+      // `\75 rl(…)`, `\69 mage-set(…)`, `@\69 mport …`. See {@link escapedIdentAt}.
+      advanceQuote(start);
+      // Inside a string it is TEXT. See {@link advanceQuote}.
+      if (quote !== null) continue;
       const ident = escapedIdentAt(css, start);
       const decoded = decodeCssEscapes(ident.name).toLowerCase();
       // A FUNCTION token is the identifier IMMEDIATELY followed by `(` — CSS Syntax §4.3.4 admits
@@ -788,6 +846,9 @@ export function neutraliseCss(
 
     out += css.slice(copied, start) + replacement;
     copied = end;
+    // Keep the quote cursor with the scan: the state is about the ORIGINAL text, which is where
+    // every subsequent match is found.
+    advanceQuote(end);
     CSS_TOKEN.lastIndex = end;
   }
   return copied === 0 ? css : out + css.slice(copied);
@@ -803,7 +864,21 @@ export function neutraliseCss(
  */
 function neutraliseStyleAttr(el: Element, onRemote: (url: string) => string | null): void {
   const style = el.getAttribute("style");
-  if (!style || !/url\(|image-set\(|@import/i.test(style)) return;
+  /**
+   * THE FAST PATH HAS TO KNOW EVERY SPELLING THE SCANNER KNOWS, or it decides on the scanner's
+   * behalf that there is nothing to scan.
+   *
+   * This precheck exists to skip `neutraliseCss` on the overwhelming majority of style attributes
+   * that name no resource. It listed the three LITERAL token starts — and when the scanner
+   * learned to read an escaped function name, this did not, so `style="background:\75 rl(/api/…)"`
+   * returned here untouched and reached the frame intact. An inline style is the easiest place in
+   * a message to put one, so the fix one function up bought nothing on the most likely surface.
+   *
+   * A backslash is now enough to hand it to the scanner: it is the same anchor `CSS_TOKEN` uses,
+   * it costs one extra character in the test, and being over-inclusive here is free — the scanner
+   * is what decides, and on text that names nothing it returns the input unchanged.
+   */
+  if (!style || !/url\(|image-set\(|@import|\\/i.test(style)) return;
   el.setAttribute("style", neutraliseCss(style, onRemote));
 }
 
