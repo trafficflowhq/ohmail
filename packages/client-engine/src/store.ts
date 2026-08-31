@@ -203,6 +203,21 @@ export abstract class BaseMirrorStore implements MirrorStore {
       return;
     }
     await this.settleWipe();
+    /**
+     * AN UNFLUSHED RECORD IS WRITTEN ONLY WHILE IT IS STILL *THE* RECORD IN MEMORY.
+     *
+     * The carry-forward's own failure mode, and it is not hypothetical: `load()` REPLACES
+     * `this.records` from disk, and `resetForBootstrap` empties it. A carried record from before
+     * either one is a row memory has since disowned, and writing it back would resurrect it on
+     * disk while the reader shows it gone — the exact inversion of the defect this contract
+     * closes. Identity is the right test rather than presence: every writer here (`applyToRecords`,
+     * the body cascade, `putLocal`) leaves the object it produced AS the map's value, so a key
+     * whose value is no longer this object has been superseded by a newer apply — which flushed
+     * itself — or dropped.
+     */
+    for (const [key, rec] of [...this.unflushed]) {
+      if (this.records.get(key) !== rec) this.unflushed.delete(key);
+    }
     const batch = [...this.unflushed.entries()];
     const metaBatch = [...this.unflushedMeta.entries()];
     const batchCursor = this.unflushedCursor;
