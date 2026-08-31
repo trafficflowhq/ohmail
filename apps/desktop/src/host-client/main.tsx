@@ -24,6 +24,9 @@ import { createRoot } from "react-dom/client";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 
 import "../../../webapp/app/app.css";
+// After app.css, the standalone entry's reason: this window stamps data-layout pre-paint
+// too, so the Zero ladder must reach the hosted door's shell as well.
+import "../../../webapp/app/zero-layout.css";
 import { DesktopLocale } from "../DesktopLocale.js";
 import { BearerManager } from "./bearer.js";
 import { HostGate } from "./HostGate.js";

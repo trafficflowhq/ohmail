@@ -118,6 +118,13 @@ function computeZone(): Zone {
     // suspends the walk whole ("none"); everything else leaves the sheet in charge.
     if (!(el instanceof Element) || el === document.body) return "reader";
     if (sheet.contains(el)) return "reader";
+    // AN OPEN DRAWER OUTRANKS THE SHEET (review finding, round 2): at the Zero push tier
+    // the summoned rail stacks ABOVE the re-housed reader and holds real focus, and calling
+    // that focus "reader" scrolled the sheet with keys aimed at visible navigation. The
+    // guard is the drawer's own open state, not a layout read — in classic the full-screen
+    // sheet covers the ≡ and this state is not reachable by pointer, and if focus is ever
+    // IN an open drawer, the drawer is what the keys should serve there too.
+    if (el.closest(RAIL) && document.querySelector(`${RAIL}.open`) != null) return "rail";
     const pos = sheet.compareDocumentPosition(el);
     if ((pos & Node.DOCUMENT_POSITION_PRECEDING) !== 0) return "reader";
     return el.closest('[role="dialog"], [role="alertdialog"], [role="menu"]') ? "none" : "reader";
@@ -246,11 +253,39 @@ function tryFocus(el: HTMLElement | null | undefined): boolean {
   return document.activeElement === el;
 }
 
+/**
+ * FOCUS FOLLOWS THE SUMMON (review finding, round 1): the summon is a React state setter, so
+ * the drawer exists only after the commit — a keypress-time focus attempt lands on
+ * nothing and the zone stays "list", making the FIRST `h` a mere reveal and demanding a
+ * second to enter. So the entry retries briefly until the drawer stands, then lands on
+ * the active row exactly as {@link enterRail} does for a standing rail. `setTimeout`
+ * rather than rAF: this must also run where the environment is not visual (jsdom), and
+ * a 16ms cadence is one frame either way. Bounded — a drawer that never mounts (the
+ * summon raced a close) stops asking after ~200ms and focus stays put, which fails QUIET.
+ */
+function focusRailWhenOpen(tries = 12): void {
+  const attempt = (): void => {
+    const open = document.querySelector<HTMLElement>(`${RAIL}.open`);
+    if (open) {
+      if (tryFocus(open.querySelector<HTMLElement>(".ritem.on"))) return;
+      for (const el of open.querySelectorAll<HTMLElement>("button:not([disabled])")) {
+        if (tryFocus(el)) return;
+      }
+      return;
+    }
+    if (tries-- > 0) setTimeout(attempt, 16);
+  };
+  setTimeout(attempt, 16);
+}
+
 /** Step into the rail, landing on the row for the view the reader is already in. */
 function enterRail(): void {
   if (railHidden()) {
     // Zero only (see setRailSummon): the drawer is the rail's reachable form here.
-    railSummon?.();
+    if (railSummon) {
+      railSummon();
+      focusRailWhenOpen();
+    }
     return;
   }
   const active = document.querySelector<HTMLElement>(`${RAIL} .ritem.on`);

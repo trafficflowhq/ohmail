@@ -16,6 +16,14 @@ export interface ReaderProps {
    * from under it in the same frame, which reads as Esc having lost the draft.
    */
   closeOnEscape?: boolean;
+  /**
+   * Whether this sheet CLAIMS the whole page for assistive tech (`aria-modal`). Default
+   * true — the overlay grammar. The Zero layout's push tier re-houses the same sheet into
+   * a tile SLOT beside live chrome (the docked ribbon stays operable), and telling a
+   * screen reader that operable chrome is outside a modal is a lie — so the host passes
+   * false exactly there. Presentation is untouched either way; only the ARIA claim moves.
+   */
+  modal?: boolean;
   ariaLabel?: string;
   /**
    * The accessible name of the on-screen back control — a translated string, because the
@@ -38,6 +46,7 @@ export function Reader({
   children,
   hint,
   closeOnEscape = true,
+  modal = true,
   ariaLabel = "Reading",
   closeLabel = "Back",
 }: ReaderProps) {
@@ -69,7 +78,7 @@ export function Reader({
       <div
         className="reader"
         role="dialog"
-        aria-modal="true"
+        aria-modal={modal ? "true" : undefined}
         aria-label={ariaLabel}
         onClick={(e) => {
           if (e.target === e.currentTarget) onClose();
