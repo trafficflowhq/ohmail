@@ -533,9 +533,15 @@ export function liveOhbox(pres: EntityReader, v: WorldView): WorldOhbox {
     resurfaced,
     fresh,
     seen,
-    // Every pinned row counts: the meta line says what the screen shows, and the screen draws
-    // all of them unread (`presentsUnread` — the rows above are already projected through it).
-    unread: fresh.length + resurfaced.filter((m) => m.unread).length,
+    /* THE COUNT IS ABOUT THE MAILBOX; THE BOLD IS ABOUT THE PIN — and they are allowed to
+       differ, on both surfaces, in the same direction.
+       `box.resurfaced`, not the mapped rows above: those have been through `toMail`, whose
+       `unread` is `presentsUnread` and therefore true for every pin. Counting them would make
+       this line say "1 unread" over a message the mail server calls read — and the shell's own
+       Ohbox meta counts genuine unread for exactly that reason, so the phone would also be the
+       one surface reporting a different number for the same mailbox. A pinned row is drawn
+       unread because it is pinned; it is not NEW mail, and neither list claims it is. */
+    unread: fresh.length + box.resurfaced.filter((m) => m.unread).length,
     total: resurfaced.length + fresh.length + seen.length,
   };
 }
