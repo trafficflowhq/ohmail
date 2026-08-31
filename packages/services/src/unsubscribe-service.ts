@@ -327,18 +327,30 @@ const escapeKeyPart = (s: string): string => s.replace(/%/g, "%25").replace(/\|/
  * production corpus (above). There is no version of this key that is BOTH domain-independent and
  * closed against the sender-chosen-key attack; picking one is picking which failure mode to keep.
  *
- * **WHY THIS DIRECTION IS THE RIGHT ONE TO KEEP.** A repeat send is a REPEATED, IDEMPOTENT-AT-THE
- * -SENDER courtesy — this file's own `onScreenOut` doc and the standing project decision
- * (`POST /messages/:id/unsubscribe is not idempotent — deliberate: its effect lives at a third
- * party where a replay is not ours to promise; a repeat POST re-sends the same RFC 8058 request,
- * which is what a mail client's own button does`) already treat a second identical request as
- * harmless. A silenced victim list is not recoverable at all: the mailbox never asks again. Over-
- * splitting costs the sender a handful of extra, harmless POSTs; under-splitting costs the reader
- * a subscription they can never leave through this feature again. Bounded on the side that is
- * bounded, closed on the side that is not — see the mixed-domain regression, which proves both
- * that a discussion-list shape still fires independently PER domain (bounded, not silently
- * dropped) and that two posts from the SAME domain still collapse to one (the property `List-ID`
- * was chosen for is not thrown away, only narrowed to one domain at a time).
+ * **WHAT "BOUNDED" DOES NOT MEAN HERE — CORRECTED BY A SECOND REVIEW ROUND, WHICH IS THE REASON
+ * THIS PARAGRAPH DOES NOT SAY "HARMLESS".** The first version of this note leaned on "RFC 8058
+ * requests are idempotent at the sender" — true of RETRYING the SAME request (this file's own
+ * `onScreenOut` doc, and the standing project decision that `POST /messages/:id/unsubscribe` is
+ * not idempotent because "a repeat POST re-sends the same RFC 8058 request, which is what a mail
+ * client's own button does"). It does NOT cover this case: a one-click URL normally carries a
+ * PER-MESSAGE opaque token, so Alice's and Bob's messages POST to two DIFFERENT URLs. These are
+ * not a replay of one request — they are two DISTINCT requests, and nothing here can promise a
+ * third party's system treats "confirm from token A" and "confirm from token B" for the same
+ * underlying subscription identically. **In the fully adversarial-shaped case — a discussion list
+ * whose every poster happens to use a distinct domain — this key provides NO deduplication at
+ * all: N messages derive N keys and N sends, exactly the per-message granularity `unsubscribeListKey`
+ * was written to avoid**, proven rather than asserted by the all-distinct-domain regression
+ * alongside the mixed-domain one.
+ *
+ * **WHY THIS DIRECTION IS STILL THE RIGHT ONE TO KEEP, ARGUED ON THE ASYMMETRY THAT ACTUALLY
+ * HOLDS.** Not "the fan-out is harmless" — that a repeated send to a legitimate, real third party
+ * costs at most a redundant unsubscribe confirmation at THEIR system, for a recipient who already
+ * asked to leave the list, is a bounded, recoverable, self-correcting cost even without an
+ * idempotency guarantee. A silenced victim list is neither: the mailbox never asks again, ever,
+ * for the life of that mailbox. Over-splitting is bounded by the number of distinct domains a
+ * list's own posters actually use (which the mixed-domain and all-distinct-domain regressions
+ * both measure directly rather than assume); under-splitting is unbounded in the worst
+ * direction — permanent. That asymmetry, not a claim of harmlessness, is the whole argument.
  *
  * **THE COST OF CHANGING THE KEY, MEASURED.** Old `list:<id>` rows no longer match the key their
  * list now derives — 58 rows across 5 mailboxes in production. Each may cost ONE further
