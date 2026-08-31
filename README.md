@@ -318,8 +318,18 @@ requires trusting nobody.
 > `--appimage-extract-and-run`.
 
 The `.deb` installs with `sudo apt install ./ohmail-linux-amd64.deb` and pulls
-in WebKitGTK. A `.deb` cannot replace itself in place, so it does not
-auto-update — the AppImage is the Linux build that applies its own updates.
+in WebKitGTK.
+
+> [!IMPORTANT]
+> **A `.deb` install cannot update itself — and it will still offer to.** A
+> build installed from the `.deb` asks the release feed for a Debian package,
+> does not find one (the feed publishes the AppImage), falls back to the
+> AppImage, downloads it, and then reports *"ohmail could not install the
+> update."* Nothing on disk is touched and nothing is broken. Update by
+> installing the new `.deb` over the old one — or use the **AppImage**, which is
+> the Linux build that applies its own updates. The same applies to any
+> distribution package built from the `.deb`.
+
 Uninstall with `sudo apt remove ohmail`.
 
 ## Updates
