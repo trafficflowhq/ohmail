@@ -26,7 +26,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { type EngineMessage, type FolderEntity, type TagDTO } from "@ohmail/client-engine";
+import { presentsUnread, type EngineMessage, type FolderEntity, type TagDTO } from "@ohmail/client-engine";
 import { ListGroupLabel, ListPane, ListRows, MessageRow, ReadColumn } from "@ohmail/ui";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { avatarOf, rowStamp, hueOf, rowAddress, senderName, tagsOfMessage } from "../shell/format";
@@ -265,8 +265,8 @@ export function FolderView({
                       subject={m.subject}
                       preview={m.snippet}
                       amount={m.amount}
-                      unread={m.unread}
-                      seen={!m.unread}
+                      unread={presentsUnread(m)}
+                      seen={!presentsUnread(m)}
                       selected={shown?.id === m.id}
                       threadCount={m.threadCount}
                       hasAttachment={m.hasAttachments}
@@ -309,8 +309,12 @@ export function FolderView({
                   subject={m.subject}
                   preview={m.snippet}
                   amount={m.amount}
-                  unread={m.unread}
-                  seen={!m.unread}
+                  /* READ STATE AS DRAWN — `presentsUnread`, the one derivation every surface
+                     bolds from: a resurfaced message reads unread wherever it is listed. The
+                     ORDER above still splits on the stored flag, deliberately: this list is
+                     "unread first" about the mailbox, and a pin is a fact about our triage. */
+                  unread={presentsUnread(m)}
+                  seen={!presentsUnread(m)}
                   selected={shown?.id === m.id}
                   threadCount={m.threadCount}
                   hasAttachment={m.hasAttachments}

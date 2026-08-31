@@ -8,7 +8,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
-import { isOwnSent, isResurfaced } from "@ohmail/client-engine";
+import { isOwnSent, isResurfaced, presentsUnread } from "@ohmail/client-engine";
 import type { EngineMessage, TagDTO } from "@ohmail/client-engine";
 import {
   Doorbell,
@@ -1691,12 +1691,24 @@ export function OhboxView({
     ) : null;
 
   /**
-   * READ-STATE AS PRESENTED — the store's flag minus the armed read (see `armedRead`). Used by
-   * exactly the surfaces that SHOW read-state: the row's dot/ink and the open message's verb.
+   * READ-STATE AS PRESENTED — {@link presentsUnread} minus the armed read (see `armedRead`). Used
+   * by exactly the surfaces that SHOW read-state: the row's dot/ink and the open message's verb.
    * Everything that acts on or counts read-state (`unreadIds`, mark-all-read, the dwell's and the
    * commit's re-judgements, the slide) keeps reading the store's own flag.
+   *
+   * ── A PINNED ROW IS UNREAD, AND THE ARMED READ DOES NOT SUBTRACT FROM IT ────────────────
+   *
+   * `presentsUnread` answers `true` for every resurfaced row (owner ruling 2026-08-31 — the
+   * engine holds the reasoning), and the `armedRead` subtraction is applied to what is LEFT of
+   * that, never over the top of it. Which is the point: the arming exists so a message being
+   * read stops looking new, and a resurfaced row is not claiming to be new — it is claiming the
+   * reader asked to see it again, and that claim is answered by Done or by a reply, not by
+   * looking. Subtracting the arm here would put the flip-flop straight back: the row would
+   * unbold on the dwell, the glance-read would land without spending the pin, and the next
+   * render would re-bold it from a state nothing had changed.
    */
-  const effUnread = (m: EngineMessage): boolean => m.unread && m.id !== armedRead;
+  const effUnread = (m: EngineMessage): boolean =>
+    isResurfaced(m) ? true : presentsUnread(m) && m.id !== armedRead;
 
   /**
    * `actions` is threaded only by the pin group's own mapper below — `row` itself stays unary
@@ -2083,11 +2095,17 @@ export function OhboxView({
         {/* RESURFACED — pinned at the very top under its own quiet label, whole and outside
             the window (a scheduled set is small). It is a different claim from "New for you": not
             "this arrived" but "you asked to see this again now", so it earns its own heading rather
-            than being folded in. Reading one clears the pin server-side (`MessageService.markSeen`),
-            and the row slides down to "Earlier" on the same mechanism a read row in "New for you"
-            does — but only once the selector actually files it there, which is the whole reason the
-            slide keys on section membership rather than on the read flag (see `earlierIds`). Until
-            that answer arrives the row stays pinned, read, exactly where the reader left it.
+            than being folded in.
+
+            EVERY ROW HERE IS DRAWN UNREAD, whatever its stored flag says (owner ruling
+            2026-08-31 — `presentsUnread`, and `effUnread` above for how the armed read is kept
+            off it). A DELIBERATE read clears the pin server-side (`MessageService.markSeen`
+            without the glance label), and the row then slides down to "Earlier" on the same
+            mechanism a read row in "New for you" does — but only once the selector actually
+            files it there, which is the whole reason the slide keys on section membership
+            rather than on the read flag (see `earlierIds`). A GLANCE — the two-second dwell —
+            records the reading and spends no pin, so the row does not move and does not change
+            appearance: that non-event is the fix for the flip-flop this group was reported for.
             Each pinned row carries the "Done" release control — see `doneFor`. */}
         {displayResurfaced.length > 0 ? (
           <>
@@ -2230,11 +2248,15 @@ export function OhboxView({
         {selected ? (
           <MessagePane
             /* The pane derives its read-state verb from `message.unread`, so the open message
-               travels with its PRESENTED state: an armed read offers "Mark unread" — the only
-               honest action on a message that is being read — while the store's flag waits for
-               the departure write. See `armedRead`; the shell does the same for the reader
-               sheet via `onReadArmed`. */
-            message={selected.unread && !effUnread(selected) ? { ...selected, unread: false } : selected}
+               travels with its PRESENTED state — in BOTH directions. An armed read offers
+               "Mark unread" (the only honest action on a message that is being read) while the
+               store's flag waits for the departure write; a RESURFACED row offers "Mark as
+               read" whatever its stored flag says, because that is what the row beside it is
+               drawing and a pane that disagreed with its own list is the inconsistency this
+               whole seam exists to close. Pressing it is a deliberate read, which spends the
+               pin and releases the row — one of the three ways out, beside Done and a reply.
+               See `armedRead`; the shell does the same for the reader sheet via `onReadArmed`. */
+            message={effUnread(selected) === selected.unread ? selected : { ...selected, unread: effUnread(selected) }}
             tags={tags}
             now={now}
             onAction={(a) => {

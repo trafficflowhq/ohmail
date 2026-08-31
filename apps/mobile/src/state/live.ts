@@ -49,6 +49,7 @@ import {
   ohboxView,
   physicalFolderOf,
   presentationReader,
+  presentsUnread,
   readsPartition,
   receiptsByDay,
   rulesList,
@@ -255,7 +256,12 @@ function toMail(reader: EntityReader, m: EngineMessage, v: WorldView): WorldMail
     body: body.text,
     bodyState: body.state,
     snippet: m.snippet,
-    unread: m.unread,
+    /* READ STATE AS DRAWN, not as stored — the one shared derivation, so the phone bolds
+       exactly the rows the desktop and the browser do (owner ruling 2026-08-31: a resurfaced
+       message reads unread until Done or a reply releases it). `markSeen` below is unaffected:
+       it takes the direction it is given and is the DELIBERATE verb, so pressing "Mark as
+       read" on a pinned row spends the pin, which is the release this presentation implies. */
+    unread: presentsUnread(m),
     pile: pileOf(reader, m),
     // The phone holds no `GET /mailboxes` facts, so the reader cannot be told apart — the
     // predicate's documented degradation: offered from two listed people, withheld at one.
@@ -527,6 +533,8 @@ export function liveOhbox(pres: EntityReader, v: WorldView): WorldOhbox {
     resurfaced,
     fresh,
     seen,
+    // Every pinned row counts: the meta line says what the screen shows, and the screen draws
+    // all of them unread (`presentsUnread` — the rows above are already projected through it).
     unread: fresh.length + resurfaced.filter((m) => m.unread).length,
     total: resurfaced.length + fresh.length + seen.length,
   };
@@ -545,7 +553,11 @@ export function liveReads(pres: EntityReader, v: WorldView): WorldReads {
   return {
     items,
     waterlineAboveId: p.seen[0]?.id ?? null,
-    newCount: items.filter((m) => m.unread).length,
+    // The SELECTOR's count, not a second one computed here. This used to be
+    // `items.filter(unread)` — every unread row in the stream, above the line or below it —
+    // while the shell's rail counted `fresh.length`; one badge, two derivations, two numbers.
+    // See `FeedPartition.newCount`.
+    newCount: p.newCount,
   };
 }
 
@@ -568,10 +580,14 @@ export function liveReceipts(pres: EntityReader, v: WorldView): WorldReceipts {
     items: g.items.map((m) => toMail(pres, m, v)),
   }));
   const all = groups.flatMap((g) => g.items);
+  // ONE partition read, for both facts it carries: the anchor the line renders above, and the
+  // badge (`FeedPartition.newCount` — the shell's rail reads the same field, so the phone and
+  // the browser cannot report different numbers for the same stream).
+  const part = feedPartition(pres, "receipts");
   return {
     groups,
-    waterlineAboveId: feedPartition(pres, "receipts").seen[0]?.id ?? null,
-    newCount: all.filter((m) => m.unread).length,
+    waterlineAboveId: part.seen[0]?.id ?? null,
+    newCount: part.newCount,
     total: all.length,
   };
 }

@@ -28,7 +28,7 @@
  */
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
-import { type EngineMessage, type TagDTO } from "@ohmail/client-engine";
+import { presentsUnread, type EngineMessage, type TagDTO } from "@ohmail/client-engine";
 import { Button, Kbd, ListPane, ListRows, MessageRow, ReadColumn, TagDot } from "@ohmail/ui";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { avatarOf, rowStamp, hueOf, placeLabel, rowAddress, senderName, tagsOfMessage } from "../shell/format";
@@ -189,8 +189,11 @@ export function TagView({
                 subject={m.subject}
                 preview={m.snippet}
                 amount={m.amount}
-                unread={m.unread}
-                seen={!m.unread}
+                /* READ STATE AS DRAWN. A tagged message can be a RESURFACED one, and a row
+                   that said "read" here while the Ohbox drew the same message bold would be the
+                   two-derivations defect in miniature — see `presentsUnread` for the ruling. */
+                unread={presentsUnread(m)}
+                seen={!presentsUnread(m)}
                 selected={shown?.id === m.id}
                 threadCount={m.threadCount}
                 hasAttachment={m.hasAttachments}

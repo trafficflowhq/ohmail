@@ -23,6 +23,7 @@ import {
   addressBook,
   bodyOf,
   consentPartition,
+  isResurfaced,
   ohboxView,
   physicalFolderOf,
   presentationReader,
@@ -2145,9 +2146,23 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
    * read it.
    */
   const [ohboxArmedRead, setOhboxArmedRead] = useState<string | null>(null);
+  /**
+   * THE SHEET'S MESSAGE, WITH READ STATE AS THE LIST BEHIND IT DRAWS IT.
+   *
+   * Two subtractions and one addition, and they are the same pair `OhboxView.effUnread` applies —
+   * shared through `presentsUnread` so the sheet and the row it was opened from cannot disagree:
+   *
+   *  · a RESURFACED message reads unread whatever its stored flag says (owner ruling
+   *    2026-08-31), so the sheet offers "Mark as read" — the deliberate verb that spends the pin
+   *    and releases the row, which is the action a pinned message actually has;
+   *  · an ARMED read reads read, so the sheet offers "Mark unread" while the departure write
+   *    still waits — and the arm does NOT subtract from a pin, for the reason `effUnread` gives.
+   */
+  const sheetPresentsUnread =
+    readerMessage != null && (isResurfaced(readerMessage) || (readerMessage.unread && readerMessage.id !== ohboxArmedRead));
   const sheetMessage: EngineMessage | null =
-    readerMessage != null && readerMessage.unread && readerMessage.id === ohboxArmedRead
-      ? { ...readerMessage, unread: false }
+    readerMessage != null && readerMessage.unread !== sheetPresentsUnread
+      ? { ...readerMessage, unread: sheetPresentsUnread }
       : readerMessage;
 
   /**
@@ -2407,16 +2422,19 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
   const receiptsUnread = receipts.filter(receiptsIsUnread).length;
   /**
    * WHAT THE RAIL COUNTS FOR THE STREAMS: "new since last visit" — the fresh side of each
-   * view's line — never an unread count. Reads and Receipts carry no per-row unread status,
-   * so an unread badge there would be a number derived from a signal the piles themselves no
-   * longer show, and it would keep demanding attention for mail that is simply old. The
-   * fresh count is the line's own statement, it goes quiet when a visit ends, and
-   * `rail.readsTitle` ("{count} new") has said exactly this all along. `receiptsUnread`
-   * above survives for Mark-all-read only (Reads computes its own inside the view) — that
-   * control is about `\Seen` on the user's other clients, not about this pile's newness.
+   * view's line, still unread on the server ({@link FeedPartition.newCount}, which holds the
+   * whole argument and the report that produced it). Never a bare unread count over the pile:
+   * Reads and Receipts carry no per-row unread status, so a badge derived from a signal the
+   * piles themselves no longer show would keep demanding attention for mail that is simply old.
+   * And never the bare `fresh.length` this used to be — the line is per-device, so that number
+   * differed by thirteen between this app and the desktop over a pile the mail server said was
+   * entirely read. `rail.readsTitle` ("{count} new") has said exactly this all along.
+   * `receiptsUnread` above survives for Mark-all-read only (Reads computes its own inside the
+   * view) — that control is about `\Seen` on the user's other clients, not about this pile's
+   * newness.
    */
-  const readsNew = partition.fresh.length;
-  const receiptsNew = receiptsPartition.fresh.length;
+  const readsNew = partition.newCount;
+  const receiptsNew = receiptsPartition.newCount;
 
   /* ── route transitions: overlays close, pending screener work lands ── */
   const prevRoute = useRef(route);

@@ -499,6 +499,55 @@ export function isResurfaced(m: Pick<EngineMessage, "triage">): boolean {
 }
 
 /**
+ * ═══ READ STATE AS EVERY SURFACE DRAWS IT — RESURFACE IS UNREAD, DERIVED ═════════════════
+ *
+ * Owner ruling, 2026-08-31: "resurfaced messages should always be marked as unread, until they
+ * are done / replied to." This is the ONE place that rule lives, and it is a DERIVATION rather
+ * than a stamp — which is the whole of why it can be true on two screens at once.
+ *
+ * ── WHY NOT A STAMP: THE HISTORY THIS CORRECTS ──────────────────────────────────────────
+ *
+ * The product has now tried both stamps. The FIRST was the worker's: `bubbleUpPass` forced
+ * `messages.unread = true`, cleared `lastReadAt` and queued a `\Seen` removal against the real
+ * mailbox, with a rescue pass re-applying the mark to rows it judged had missed it. That is the
+ * flip-flopping this was reported for — the pass and the reader argued, cycle after cycle, over a
+ * row the reader had just read. It was removed on 2026-08-26 (`bubbleUpPass`,
+ * `TriageService.setState`, `mutations.ts` triage_set), and the reading now sticks.
+ *
+ * What was ALSO removed with it was the attention signal the pin is FOR, and the
+ * ruling above puts it back — WITHOUT the stamp. Nothing writes read state to say a row is
+ * resurfaced; the row's placement already says it, and this reads that placement. So:
+ *
+ *   · no pass can fight the user, because no pass writes anything;
+ *   · no `\Seen` intent is queued, so the user's other mail clients are left alone — the
+ *     mailbox stays the master, and a resurface is a fact about OUR triage, not about theirs;
+ *   · the presentation cannot race the mirror, because it is computed from the mirror;
+ *   · a GLANCE (the Ohbox's two-second dwell) still lands its read and still does not spend the
+ *     pin, and the row does not visibly change under the reader — which is exactly the
+ *     flip-flop the 2026-08-26 change was reported for. The genuine read is recorded; it simply
+ *     is not what this row is drawn from while it is pinned.
+ *
+ * ── WHAT RELEASES IT ────────────────────────────────────────────────────────────────────
+ *
+ * Anything that clears `triage.state` away from `resurfaced`: Done (`resurface_done`), a reply
+ * settling, and every other DELIBERATE verb that already spends the pin (the read pill, `⇧I`,
+ * bulk read, read-all, move, delete). After the release the row's GENUINE read state applies,
+ * unchanged — which is the second half of the ruling, and it needs no code of its own because
+ * this function stops answering `true` the moment the state is gone.
+ *
+ * ── PRESENTATION ONLY. IT MUST NEVER REACH A WRITE OR A COUNT OF REAL MAIL ──────────────
+ *
+ * Every caller here is drawing something. The things that ACT on read state — `commitPendingRead`
+ * re-judging the debt, `markRead`, mark-all-read's id list, the Ohbox header's "N new", the
+ * per-folder unread badges — keep reading `m.unread`, the stored flag. Feeding this into any of
+ * them would mark a message read that was never read (mark-all-read), or claim mail is new that
+ * is not (the header), which is the same class of lie the stamp was.
+ */
+export function presentsUnread(m: Pick<EngineMessage, "unread" | "triage">): boolean {
+  return isResurfaced(m) || m.unread;
+}
+
+/**
  * WHICH BOTTOM PILE A TRIAGE STATE FILES INTO — the ONE answer, for the lister and the filter.
  *
  * {@link triagePiles} calls this to decide which pile a record joins, and {@link parkedMessageIds}
@@ -858,6 +907,45 @@ export interface FeedPartition {
   fresh: EngineMessage[];
   /** At and below the anchor — the anchor was on screen when the reader last left. */
   seen: EngineMessage[];
+  /**
+   * ═══ THE STREAM'S BADGE — ONE NUMBER, ONE DERIVATION, EVERY SURFACE ══════════════════════
+   *
+   * `fresh` that is STILL UNREAD. Not `fresh.length`, and not "every unread row in the pile" —
+   * both of those shipped, on different surfaces, for the same badge.
+   *
+   * ── WHY THE COUNT MAY NOT BE `fresh.length` ────────────────────────────────────────────
+   *
+   * The anchor is CLIENT state and says so ({@link MessageMutation} `feed_mark_seen` — `/sync`
+   * has no `view_meta` entity type), so each device carries its own "last visit". For the LINE
+   * that is correct and load-bearing: it must hold still for the whole visit and move exactly
+   * once, on the way out, or the list re-sorts under the reader. For a COUNT it is a lie the
+   * moment two devices disagree — and it was reported as exactly that: one account open on a
+   * desktop and in a browser, side by side, the browser's rail saying "Reads 13" and the
+   * desktop's saying nothing, while the mail server held ZERO unread messages in that pile.
+   * Both numbers were `fresh.length`. Only the anchors differed, and one was thirteen visits
+   * stale.
+   *
+   * The mailbox is the master and it answers the question the badge is actually asking. A
+   * message the server reports `\Seen` has been read — here, on the phone, in whatever client
+   * the reader used — and read mail does not demand attention. So the badge is the intersection:
+   * above this device's line AND unread on the server. Two devices with different lines agree
+   * whenever the mail is read, which is the case that produced the report; where they still
+   * differ, the mail really is unread and the smaller line is the honest one.
+   *
+   * It also keeps the LINE exactly where it was — nothing here moves `fresh`/`seen`, so
+   * "a committed waterline outranks `\Seen`" (R10-5) is untouched and reading a row mid-visit
+   * still does not re-partition the list under the cursor. Only the number drops, which is what
+   * a badge is for.
+   *
+   * ── AND WHY IT MAY NOT BE "EVERY UNREAD ROW IN THE PILE" ────────────────────────────────
+   *
+   * That was the phone's answer (`liveReads`/`liveReceipts` counted `items.filter(unread)` over
+   * the whole stream) while the shell's was `fresh.length`. Two surfaces, two derivations, one
+   * badge: on a stream holding old unread mail below the line the phone demanded attention the
+   * shell did not. The line means something — mail below it was on screen when you left — so the
+   * count respects it.
+   */
+  newCount: number;
 }
 
 /**
@@ -886,8 +974,10 @@ export function feedPartition(reader: EntityReader, view: FeedView): FeedPartiti
   const waterline = reader.get<WaterlineMeta>("view_meta", waterlineIdOf(view)) ?? null;
   const anchor = waterline ? all.findIndex((m) => m.id === waterline.newestSeenId) : -1;
   const idx = anchor >= 0 ? anchor : all.findIndex((m) => !m.unread);
-  if (idx < 0) return { waterline, fresh: all, seen: [] };
-  return { waterline, fresh: all.slice(0, idx), seen: all.slice(idx) };
+  const cut = idx < 0
+    ? { fresh: all, seen: [] as EngineMessage[] }
+    : { fresh: all.slice(0, idx), seen: all.slice(idx) };
+  return { waterline, ...cut, newCount: cut.fresh.filter((m) => m.unread).length };
 }
 
 export function readsPartition(reader: EntityReader): FeedPartition {
