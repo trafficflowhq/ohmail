@@ -582,7 +582,17 @@ function closingParen(css: string, from: number): number {
   let depth = 1;
   for (let i = from; i < css.length; i++) {
     const c = css[i];
-    if (c === '"' || c === "'") {
+    // A COMMENT IS NOT SYNTAX. CSS strips comments before it parses, so a `)` inside one closes
+    // nothing — and reading it as the close truncated the token here: `image-set(/* ) */ "/api/x")`
+    // ended at the comment, the body scanned was an unterminated comment with no candidates, the
+    // vacuous `every(inert)` kept the prefix, and the real bare-string candidate sat in the text
+    // the scan resumed into, where no token start matches a bare string. A live reference, kept
+    // and uncounted, from one comment.
+    if (c === "/" && css[i + 1] === "*") {
+      const close = css.indexOf("*/", i + 2);
+      if (close === -1) return -1; // runs to EOF, so the function never closes
+      i = close + 1;
+    } else if (c === '"' || c === "'") {
       const close = css.indexOf(c, i + 1);
       if (close === -1) return -1;
       i = close;

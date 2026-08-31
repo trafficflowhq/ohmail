@@ -35,7 +35,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { HttpAdapter, OhmailEngine } from "@ohmail/client-engine";
 import { AppShell } from "../../../webapp/app/shell/AppShell";
-import { dropLocalStorageKeys } from "../../../webapp/app/shell/boot-cache";
+import { dropLocalStorageKeys, type LocalSweep } from "../../../webapp/app/shell/boot-cache";
 import { COMPOSE_DRAFT_PREFIX, LEGACY_COMPOSE_DRAFT_KEY } from "../../../webapp/app/shell/compose";
 import { REPLY_DRAFT_PREFIX, REPLY_META_PREFIX } from "../../../webapp/app/shell/mail-send";
 import { SCREENER_INTENTS_PREFIX } from "../../../webapp/app/shell/screener-intents";
@@ -77,6 +77,29 @@ export const HOST_SCRATCH_PREFIXES: readonly string[] = [
   REPLY_META_PREFIX,
 ];
 
+/**
+ * WHAT THE SWEEP COULD NOT DO IS A FACT, NOT A SHRUG.
+ *
+ * `dropLocalStorageKeys` returns a verdict — which matched keys are still present, and whether the
+ * jar could be walked at all — precisely because a browser that refuses proves nothing by naming
+ * no survivors. Both departure paths here discarded it and went straight to the landing, so a
+ * private window or a refusing storage layer produced a signed-out screen over mail text that is
+ * still on the device.
+ *
+ * This door has no toast host at the moment either path runs (one is unmounting the shell, the
+ * other replacing it), so the verdict goes to the console rather than to a surface that is not
+ * there. That is deliberately the weakest useful thing: it is on record, it is greppable, and it
+ * does not pretend the sweep succeeded. A visible sentence belongs beside this door's own sign-out
+ * copy, and is named as the follow-up rather than invented here.
+ */
+function reportSweep(sweep: LocalSweep): void {
+  if (sweep.enumerated && sweep.survivors.length === 0) return;
+  console.warn("ohmail host client: the scratch sweep did not complete", {
+    enumerated: sweep.enumerated,
+    survivors: sweep.survivors.length,
+  });
+}
+
 export function HostGate({ bearer }: { bearer: BearerManager }) {
   const [paired, setPaired] = useState(bearer.paired());
   /** True when the CURRENT unpaired state was a mid-use death — the landing says so. */
@@ -93,7 +116,7 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
         // refresh token and the pairing scope, so nothing on this page can read these keys again
         // — but unreachable is not gone, and three of them are mail text on a device somebody
         // just signed out of. See HOST_SCRATCH_PREFIXES.
-        dropLocalStorageKeys(HOST_SCRATCH_PREFIXES);
+        reportSweep(dropLocalStorageKeys(HOST_SCRATCH_PREFIXES));
         // Land on /pair with the plain sentence — the ruled shape for a rotation failure. The
         // path is replaced (not pushed) so Back cannot return to a dead mailbox.
         window.history.replaceState(null, "", "/pair");
@@ -157,7 +180,7 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
           // retires the old scope, which makes the previous pairing's records unreachable; it does
           // not make them GONE, and three of them are mail text. Swept here for the same reason
           // and by the same list as the death path.
-          dropLocalStorageKeys(HOST_SCRATCH_PREFIXES);
+          reportSweep(dropLocalStorageKeys(HOST_SCRATCH_PREFIXES));
           window.history.replaceState(null, "", "/");
           setDied(false);
           setOnPairPath(false);
