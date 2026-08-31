@@ -1,7 +1,7 @@
 import { randomInt, randomUUID } from "node:crypto";
 // `lt` is imported UNDER AN ALIAS: `lt` is the local name every 2FA verify uses for its
 // login-token row, and the shadowing turns a comparison into "call an object".
-import { and, count, desc, eq, gt, isNull, lt as lessThan, or, sql } from "drizzle-orm";
+import { and, count, desc, eq, gt, inArray, isNull, lt as lessThan, or, sql } from "drizzle-orm";
 import { accounts, users, devices, sessions, type Tx } from "@trafficflow/db";
 import {
   credentials,
@@ -2705,31 +2705,60 @@ export class AuthService extends SessionLifecycle {
    * The base class also boots the desktop-host door, whose mail-only database has no
    * `push_subscriptions` table at all — the same reason `revokeDevice`'s prune lives here.
    *
-   * ── ORDER, AND THE ONE THING THIS DELIBERATELY DOES NOT DO ──────────────────────────────
+   * ── ORDER, ATOMICITY, AND THE ONE THING THIS DELIBERATELY DOES NOT DO ───────────────────
    *
-   * AFTER `super.logout`, so a step-up refusal on the `allDevices` arm deletes nothing. And a
-   * session with NO device row (a browser ceremony mints none) prunes nothing: web-push rows
+   * AFTER `super.logout`, so a step-up refusal on the `allDevices` arm deletes nothing — and in
+   * ONE TRANSACTION with it, which is not a tidiness point. `super.logout` revokes the session
+   * family, and that family is the only credential that could ever ask for this again: a crash
+   * between two autocommitted statements would leave the row live AND the caller unable to
+   * retry, because the middleware refuses the revoked session before this method is reached.
+   * The endpoint keeps answering 2xx, so the worker's prune-on-404/410 never fires either. One
+   * transaction makes the pair all-or-nothing, and the retry a client already performs on a
+   * failed logout then finds a session that still works.
+   *
+   * A session with NO device row (a browser ceremony mints none) prunes nothing: web-push rows
    * carry `device_id = NULL`, so there is no predicate that names THIS browser rather than
    * every deviceless registration on the account, and deleting them all would silently turn
    * another browser's notifications off. That residue is a separate finding with a separate
    * fix (stamp the browser's own registration), not something to guess at from here.
    */
   override async logout(ctx: ServiceContext, b: { allDevices?: boolean } = {}): Promise<void> {
-    await super.logout(ctx, b);
-    const db = asTx(ctx);
-    if (b.allDevices) {
-      await db.delete(pushSubscriptions).where(eq(pushSubscriptions.accountId, ctx.accountId));
-      return;
-    }
-    if (!ctx.sessionId) return;
-    const row = (await db.select({ deviceId: sessions.deviceId }).from(sessions)
-      .where(eq(sessions.id, ctx.sessionId)).limit(1))[0];
-    const deviceId = row?.deviceId ?? null;
-    if (deviceId === null) return;
-    await db.delete(pushSubscriptions).where(and(
-      eq(pushSubscriptions.accountId, ctx.accountId),
-      eq(pushSubscriptions.deviceId, deviceId),
-    ));
+    await this.inTransaction(ctx, async (txCtx) => {
+      await super.logout(txCtx, b);
+      const db = asTx(txCtx);
+      if (b.allDevices) {
+        // ── SCOPED TO THIS USER'S DEVICES, because that is what the base logout revoked ───────
+        //
+        // `super.logout`'s mass arm revokes sessions and refresh families for `ctx.userId`
+        // alone; an account can hold several users, and deleting every push row on the ACCOUNT
+        // took another user's registrations down while that user stayed signed in — a take-back
+        // reaching past the thing it was taking back. The device rows carry the user, so the
+        // prune follows the same scope the revoke used.
+        //
+        // Deviceless rows (a browser's web-push) are not reached, and cannot be: nothing on them
+        // names a user. That is the residue named on its own row, not a gap to guess at here.
+        const mine = txCtx.userId;
+        if (!mine) return;
+        await db.delete(pushSubscriptions).where(and(
+          eq(pushSubscriptions.accountId, txCtx.accountId),
+          inArray(
+            pushSubscriptions.deviceId,
+            db.select({ id: devices.id }).from(devices)
+              .where(and(eq(devices.accountId, txCtx.accountId), eq(devices.userId, mine))),
+          ),
+        ));
+        return;
+      }
+      if (!txCtx.sessionId) return;
+      const row = (await db.select({ deviceId: sessions.deviceId }).from(sessions)
+        .where(eq(sessions.id, txCtx.sessionId)).limit(1))[0];
+      const deviceId = row?.deviceId ?? null;
+      if (deviceId === null) return;
+      await db.delete(pushSubscriptions).where(and(
+        eq(pushSubscriptions.accountId, txCtx.accountId),
+        eq(pushSubscriptions.deviceId, deviceId),
+      ));
+    });
   }
 
 }
