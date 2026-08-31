@@ -296,18 +296,6 @@
     top: calc(var(--gap-edge) + 10px);
     left: calc(var(--gap-edge) + 52px + var(--gap-tile) + 10px);
   }
-  /* THE DRAWER OUTRANKS THE RE-HOUSED READER (review finding, round 1): classic stacks the
-     drawer (--z-drawer, 40) under the reader (--z-read, 50) because its reader covers the
-     whole page and the drawer is unreachable behind it. Here the ribbon stays operable
-     BESIDE the reader, so its ≡ can summon the drawer while reading — and a drawer under
-     the sheet is a sliver nobody can use. The scrim rides one step below the drawer,
-     exactly classic's own relationship. */
-  :root[data-layout="zero"] .deck > .rail.open {
-    z-index: calc(var(--z-read) + 2);
-  }
-  :root[data-layout="zero"] .rail-bg {
-    z-index: calc(var(--z-read) + 1);
-  }
   /* boot skeleton: ribbon + one tile */
   :root[data-layout="zero"] .boot-sk-window {
     display: grid;
