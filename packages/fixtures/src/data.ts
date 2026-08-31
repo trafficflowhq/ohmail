@@ -128,12 +128,12 @@ export const ohbox: MessageFixture[] = [
     from: { name: "Petra Wyss", address: "petra@makersfest.ch" },
     subject: "Invitation: Tech check — main hall",
     time: "08:39",
-    /* READ, deliberately (owner review 2026-08-31): the Ohbox opens with THREE unread rows so
-       the "Earlier" group is on screen without scrolling — the landing demo's two USP callouts
-       point at the group labels, and a fold that hides "Earlier" would have the second callout
-       pointing at nothing. The three that stay unread are giulia (the threaded row — the same
-       review wants a visible thread), petra and ben; this invite, the counter-proposal and the
-       verification code read as this morning's already-handled mail at the top of Earlier. */
+    /* READ, deliberately: the demo's Ohbox opens with exactly THREE unread rows — giulia
+       (the threaded conversation), petra and ben — so the "Earlier" group stands above the
+       fold. The landing demo's callouts point at the two group labels, and a fold that hides
+       "Earlier" would leave the second one pointing at nothing. This invite, the
+       counter-proposal and the verification code read as this morning's already-handled mail
+       at the top of Earlier. */
     unread: false,
     /* A NAMELESS text/calendar part — the wire shape Google and Outlook actually send — so the
        demo shows the invite exactly as a live mailbox would: an event card, downloadable as
@@ -945,8 +945,8 @@ export const notificationSettings: NotificationSettingsFixture = {
 /* -------------------------------------------------------------- counts */
 
 export const counts: CountsFixture = {
-  /* three, not six, since the 2026-08-31 landing review: see the techcheck fixture's note —
-     the demo's Ohbox must show "Earlier" above the fold, under three unread rows */
+  /* three, not six — see the techcheck fixture's note: the demo's Ohbox shows "Earlier"
+     above the fold, under exactly three unread rows */
   ohboxUnread: 3,
   /*
    * MAIL FILED IN THE OHBOX FOLDER — thirteen — which is NOT the eleven rows the Ohbox screen
