@@ -132,6 +132,17 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
    * that matters: a re-pair after a death builds a fresh engine rather than reviving one whose
    * in-flight drains were refused.
    */
+  /**
+   * WHICH PAIRING THIS PAGE IS SERVING — read every render, because a re-pair changes it under us.
+   *
+   * `paired` is a boolean and `bearer` is one long-lived object, so neither of them CHANGES when a
+   * `/pair` redeem swaps the credential while the tab is already paired — the explicitly supported
+   * gesture one branch below. The engine memo therefore kept account A's in-memory mirror and
+   * served it under account B's session: two accounts' mail in one mirror, which is the
+   * cross-account lesson this door's own header cites as the reason it has no persistent one.
+   */
+  const scope = bearer.pairScope();
+
   const engine = useMemo(
     () =>
       paired
@@ -143,7 +154,9 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
             }),
           })
         : null,
-    [paired, bearer],
+    // `scope` is the dependency that matters on a RE-PAIR: a fresh redeem mints a new one, so the
+    // engine (and the mirror inside it) is rebuilt for the account that is now being served.
+    [paired, bearer, scope],
   );
 
   /* Stable identities: the shared hooks (`useProfileImport`, the mail-state probe) treat their
@@ -166,7 +179,7 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
    * `null` while unpaired, which is the correct answer and not a fallback — the branch below
    * renders the pairing landing, which stores nothing per account.
    */
-  setStorageOwner(paired ? bearer.pairScope() : null);
+  setStorageOwner(paired ? scope : null);
 
   if (onPairPath || !paired || engine === null) {
     return (
@@ -199,7 +212,7 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
        * stored token — would otherwise keep the previous pairing's compose in state while the
        * owner beneath it has already become the new one.
        */
-      key={bearer.pairScope() ?? "unpaired"}
+      key={scope ?? "unpaired"}
       demo={false}
       engine={engine}
       /* The sync strip's mailbox facts, over the same bearer socket — the door serves

@@ -677,7 +677,17 @@ function scanCssValue(raw: string): CssValueScan {
       let body = "";
       while (j < raw.length) {
         const d = raw[j]!;
-        if (d === "\\") { body += raw.slice(j, j + 2); j += 2; continue; }
+        if (d === "\\") {
+          // A BACKSLASH-NEWLINE IS A LINE CONTINUATION, not two characters of the value: CSS
+          // removes it (Syntax §4.3.5), so a `data:` URI a formatter wrapped across two lines is
+          // one candidate. Keeping the pair made it fail the `data:` test and deleted the image.
+          const nl = raw[j + 1];
+          if (nl === "\n" || nl === "\f") { j += 2; continue; }
+          if (nl === "\r") { j += raw[j + 2] === "\n" ? 3 : 2; continue; }
+          body += raw.slice(j, j + 2);
+          j += 2;
+          continue;
+        }
         if (d === c || d === "\n" || d === "\r" || d === "\f") break;
         body += d;
         j++;

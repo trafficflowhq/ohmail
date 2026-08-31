@@ -160,6 +160,27 @@ export class BearerManager {
      * token and no scope gets one, and a browser with no pairing gets nothing.
      */
     this.ensureScope();
+    this.scopeAtStart = this.readScope();
+  }
+
+  /**
+   * The pairing this manager belongs to, remembered at construction.
+   *
+   * `rotate` re-reads the shared refresh token deliberately — another TAB may have rotated the
+   * SAME pairing while this one sat idle, and presenting a consumed token is the theft signal. But
+   * "the stored token changed" has two causes and only one of them is that: the other is a fresh
+   * `/pair` redeem, which points this origin at a DIFFERENT computer. Adopting there made a stale
+   * tab authenticate as the new account while still rendering the old one's mail. The scope is
+   * what tells the two apart, and it exists now.
+   */
+  private scopeAtStart: string | null;
+
+  private readScope(): string | null {
+    try {
+      return this.storage?.getItem(PAIR_SCOPE_STORAGE_KEY) ?? null;
+    } catch {
+      return null;
+    }
   }
 
   /** Give the held pairing a scope if it has none. No pairing, no scope — and never a re-mint. */
@@ -202,6 +223,11 @@ export class BearerManager {
       } else {
         this.ensureScope();
       }
+      // THIS manager now belongs to whatever scope is stored — it either minted it or confirmed
+      // it. Without this line the check in `rotate` would fire on the manager's own first adopt
+      // (constructed before any pairing existed, so it started with none) and end a session that
+      // nothing was wrong with.
+      this.scopeAtStart = this.readScope();
     } catch {
       /* Storage refused: the session lives for this page load and the next one re-pairs. */
     }
@@ -263,6 +289,15 @@ export class BearerManager {
       // while this manager sat idle (or while this call waited for the lock); its rotation wrote
       // storage, and presenting this manager's stale copy would be the reuse signal. Re-read
       // under the lock, adopt the head, present that.
+      // A DIFFERENT PAIRING IS NOT A ROTATION OF THIS ONE. If the scope has moved since this
+      // manager was built, the origin has been re-paired to another computer: this tab's session
+      // is over, and adopting the successor's token would make it act as an account whose mail it
+      // is not showing. Ending it is the honest answer, and it is the same one the gate already
+      // renders for a revoked family.
+      if (this.readScope() !== this.scopeAtStart) {
+        this.die();
+        return false;
+      }
       try {
         const stored = this.storage?.getItem(REFRESH_STORAGE_KEY) ?? null;
         if (stored !== null && stored !== this.refresh) this.refresh = stored;

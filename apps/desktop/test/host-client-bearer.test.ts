@@ -375,6 +375,60 @@ describe("the pairing scope", () => {
     expect(bearer.pairScope(), "a reload is not a new pairing").toBe("scope-kept");
   });
 
+  it("a stale tab whose origin was re-paired elsewhere ends, rather than adopting the successor", async () => {
+    /**
+     * `rotate` re-reads the shared refresh slot on purpose: another TAB may have rotated the SAME
+     * pairing while this one sat idle, and presenting a consumed token is the theft signal. But a
+     * changed token has two causes and only one of them is that. The other is a fresh `/pair`
+     * redeem pointing this origin at a DIFFERENT computer — after which this tab would present the
+     * successor's token, adopt its access token, and go on rendering the previous account's mail
+     * while acting as the new one.
+     *
+     * The pairing scope tells the two apart, and it only exists because of the partition work.
+     * This is what it buys beyond storage keys.
+     */
+    const storage = memoryStorage();
+    // One request, refused. The rotation must never reach `/auth/refresh`.
+    const { fetch, seen } = scripted([() => json(401, { error: { code: "unauthorized" } })]);
+    const stale = new BearerManager({ storage, fetchImpl: fetch });
+    stale.adopt({ accessToken: "a-1", refreshToken: "r-a" }, { fresh: true });
+
+    let dead = false;
+    stale.onSessionDead(() => { dead = true; });
+
+    // Another tab redeems a fresh QR for a different computer at this same origin.
+    const other = new BearerManager({ storage, fetchImpl: async () => new Response("") });
+    other.adopt({ accessToken: "b-1", refreshToken: "r-b" }, { fresh: true });
+
+    const res = await stale.fetch("/messages", {});
+
+    expect(
+      seen.filter((r) => r.url === "/auth/refresh"),
+      "it presented the successor pairing's refresh token",
+    ).toEqual([]);
+    expect(dead, "the stale tab did not end its own session").toBe(true);
+    expect(res.status).toBe(401);
+    expect(stale.paired(), "and it is no longer paired").toBe(false);
+  });
+
+  it("a same-pairing rotation from another tab is still adopted — the scope did not move", async () => {
+    // The case the check must NOT break: one pairing, two tabs, the other rotated first.
+    const storage = memoryStorage();
+    const { fetch, seen } = scripted([
+      () => json(401, {}),
+      () => json(200, { tokens: { accessToken: "a-2", refreshToken: "r-a2" } }),
+      () => json(200, { ok: true }),
+    ]);
+    const tab = new BearerManager({ storage, fetchImpl: fetch });
+    tab.adopt({ accessToken: "a-1", refreshToken: "r-a" }, { fresh: true });
+    // …the other tab rotates the SAME pairing: the refresh token moves, the scope does not.
+    storage.setItem(REFRESH_STORAGE_KEY, "r-a-rotated");
+
+    const res = await tab.fetch("/messages", {});
+    expect(seen.some((r) => r.url === "/auth/refresh"), "the rotation was refused wrongly").toBe(true);
+    expect(res.status).toBe(200);
+  });
+
   it("a new pairing cannot read the previous one's scratch space", async () => {
     const storage = memoryStorage();
     const bearer = new BearerManager({ storage, fetchImpl: async () => new Response("") });
