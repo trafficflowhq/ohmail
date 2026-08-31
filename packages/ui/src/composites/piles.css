@@ -1,11 +1,11 @@
 /* triage piles — stacked sheets, raised on hover */
 .piles{display:flex;gap:26px;padding:16px 34px 26px;flex-wrap:wrap;align-items:flex-start} /* top room for the stacked-sheet layers, sides for shadow bleed */
 .pile{position:relative;flex:1;min-width:230px;max-width:330px}
-.pile-stack{position:relative;border-radius:20px;background:var(--float);
+.pile-stack{position:relative;border-radius:var(--r-overlay);background:var(--float);
   box-shadow:var(--lift-2);padding:18px 20px;
   transition:transform .3s var(--spring), box-shadow .3s var(--swift)}
 .pile-stack::before,.pile-stack::after{content:"";position:absolute;left:10px;right:10px;height:12px;
-  border-radius:14px 14px 0 0;background:var(--panel);box-shadow:0 -2px 8px -4px oklch(0.35 0.05 52/.10)}
+  border-radius:var(--r-card) var(--r-card) 0 0;background:var(--panel);box-shadow:0 -2px 8px -4px oklch(0.35 0.05 52/.10)}
 .pile-stack::before{top:-6px;z-index:-1}
 .pile-stack::after{top:-11px;left:20px;right:20px;z-index:-2;opacity:.55}
 .pile:hover .pile-stack{transform:translateY(-5px);box-shadow:var(--lift-3)}

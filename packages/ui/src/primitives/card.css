@@ -1,9 +1,9 @@
 /* cards — surfaces sculpted out of the page by light falloff, no borders */
-.card{background:var(--panel);border-radius:20px}
+.card{background:var(--panel);border-radius:var(--r-overlay)}
 .card.float{background:var(--float)}
-.card.r-card{border-radius:22px}
-.card.r-overlay{border-radius:24px}
-.card.r-reader{border-radius:28px}
+.card.r-card{border-radius:calc(var(--r-overlay) * 22 / 20)}
+.card.r-overlay{border-radius:calc(var(--r-pill) * 24 / 99)}
+.card.r-reader{border-radius:calc(var(--r-pill) * 28 / 99)}
 .card.lift-0{box-shadow:var(--lift-0)}
 .card.lift-1{box-shadow:var(--lift-1)}
 .card.lift-2{box-shadow:var(--lift-2)}

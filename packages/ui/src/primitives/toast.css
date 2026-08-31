@@ -1,6 +1,6 @@
 /* toast — floats at the foot of the page, carries its own undo */
 .toast{position:fixed;left:50%;bottom:72px;translate:-50% 12px;z-index:var(--z-toast);
-  background:var(--float);border-radius:99px;box-shadow:var(--lift-2);
+  background:var(--float);border-radius:var(--r-pill);box-shadow:var(--lift-2);
   padding:9px 18px;font-size:12.5px;color:var(--ink);opacity:0;pointer-events:none;
   transition:opacity .25s var(--swift), translate .3s var(--spring);max-width:88vw;text-align:center}
 .toast.on{opacity:1;translate:-50% 0;pointer-events:auto}

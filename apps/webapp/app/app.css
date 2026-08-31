@@ -54,8 +54,10 @@ body.reading .shell {
   min-height: 0;
   display: grid;
   grid-template-columns: 224px 1fr;
-  gap: 0 16px;
-  padding: 16px;
+  /* the tile gap and the viewport-edge gap are tokens (--gap-tile/--gap-edge): paper's
+     16px, ohmarchy's Hyprland gaps (10px). OHMARCHY-TOKENS.md "New slots". */
+  gap: 0 var(--gap-tile);
+  padding: var(--gap-edge);
 }
 .deck > .rail {
   min-height: 0;
@@ -77,9 +79,11 @@ body.reading .shell {
 @media (min-width: 901px) {
   .view-reads .stream,
   .view-receipts .stream {
-    margin-top: -16px;
-    margin-bottom: -16px;
-    padding-top: 18px;
+    /* the deck frame is a token now (--gap-edge); the reclaim and the give-back move with it
+       (thread-column-shadow.test.ts pins all three sites to the same token) */
+    margin-top: calc(-1 * var(--gap-edge));
+    margin-bottom: calc(-1 * var(--gap-edge));
+    padding-top: calc(2px + var(--gap-edge));
   }
 }
 
@@ -238,7 +242,7 @@ body.reading .shell {
   margin: 24px auto;
   padding: 22px;
   background: var(--panel);
-  border-radius: 14px;
+  border-radius:var(--r-card);
   box-shadow: var(--lift-1);
 }
 
@@ -262,7 +266,7 @@ body.reading .shell {
   color: var(--ink);
   background: var(--canvas);
   border: 1px solid var(--hair);
-  border-radius: 9px;
+  border-radius:calc(var(--r-ctl) * 9 / 8);
 }
 
 /* The refusal sits ABOVE the list, so the list — and everything ticked in it — stays put. */
@@ -274,7 +278,7 @@ body.reading .shell {
   color: var(--ink);
   background: color-mix(in srgb, var(--danger, #c0392b) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--danger, #c0392b) 32%, transparent);
-  border-radius: 9px;
+  border-radius:calc(var(--r-ctl) * 9 / 8);
 }
 
 /* Bulk ticks, right-aligned above the list they act on so the pairing is obvious. */
@@ -292,7 +296,7 @@ body.reading .shell {
   overflow: auto;
   list-style: none;
   border: 1px solid var(--hair-soft);
-  border-radius: 10px;
+  border-radius:calc(var(--r-ctl) * 10 / 8);
 }
 
 .seed-row {
@@ -361,7 +365,7 @@ body.reading .shell {
   font-size: 11px;
   font-weight: 600;
   color: var(--accent-ink);
-  border-radius: 99px;
+  border-radius:var(--r-pill);
   padding: 1px 8px;
 }
 .demo-ribbon button:hover {
@@ -408,7 +412,7 @@ body.reading .shell {
 .sync-bar.stopped a {
   font-weight: 600;
   color: var(--on-accent);
-  border-radius: 99px;
+  border-radius:var(--r-pill);
   padding: 1px 9px;
   background: oklch(1 0 0 / 0.18);
 }
@@ -452,7 +456,7 @@ body.reading .shell {
   justify-content: flex-start;
   gap: 3px 8px;
   padding: 7px 14px;
-  border-radius: 15px;
+  border-radius:calc(var(--r-card) * 15 / 14);
   border: 1px solid var(--hair);
   color: var(--ink2);
   background: var(--panel);
@@ -480,7 +484,7 @@ body.reading .shell {
 .sync-bar a {
   font-weight: 600;
   color: inherit;
-  border-radius: 99px;
+  border-radius:var(--r-pill);
   padding: 1px 9px;
   text-decoration: none;
   background: oklch(1 0 0 / 0.5);
@@ -551,7 +555,7 @@ body.reading .shell {
   flex-direction: column;
   gap: 5px;
   padding: 9px 10px 10px;
-  border-radius: 12px;
+  border-radius:calc(var(--r-card) * 12 / 14);
   font-size: 11px;
   line-height: 1.35;
   color: var(--accent-ink);
@@ -572,7 +576,7 @@ body.reading .shell {
   margin: 0 0 6px;
   padding: 7px 10px;
   border: 0;
-  border-radius: 10px;
+  border-radius:calc(var(--r-ctl) * 10 / 8);
   font: inherit;
   font-size: 11.5px;
   font-weight: 550;
@@ -647,7 +651,7 @@ body.reading .shell {
   font-weight: 600;
   color: inherit;
   text-decoration: none;
-  border-radius: 99px;
+  border-radius:var(--r-pill);
   padding: 1px 9px;
   background: oklch(1 0 0 / 0.5);
 }
@@ -698,7 +702,7 @@ body.reading .shell {
   position: relative;
   display: block;
   height: 2px;
-  border-radius: 2px;
+  border-radius:calc(var(--r-ctl) * 2 / 8);
   overflow: hidden;
   background: var(--hair);
 }
@@ -706,7 +710,7 @@ body.reading .shell {
   position: absolute;
   inset: 0 auto 0 0;
   width: 38%;
-  border-radius: 2px;
+  border-radius:calc(var(--r-ctl) * 2 / 8);
   background: var(--accent);
   animation: rs-travel 1.5s var(--swift) infinite;
 }
@@ -758,7 +762,7 @@ body.reading .shell {
   border: 0;
   background: none;
   padding: 1px 4px;
-  border-radius: 6px;
+  border-radius:calc(var(--r-ctl) * 6 / 8);
   color: var(--ink3);
   cursor: pointer;
   font-size: 14px;
@@ -794,7 +798,7 @@ body.reading .shell {
   gap: 10px;
   margin: 12px 26px 0;
   padding: 7px 12px;
-  border-radius: 10px;
+  border-radius:calc(var(--r-ctl) * 10 / 8);
   font-size: 12px;
   color: var(--ink2);
   background: var(--accent-soft);
@@ -815,7 +819,7 @@ body.reading .shell {
   font-size: 11.5px;
   font-weight: 600;
   color: var(--accent-ink);
-  border-radius: 99px;
+  border-radius:var(--r-pill);
   padding: 2px 9px;
 }
 .pick-bar button.quiet {
@@ -851,7 +855,7 @@ body.reading .shell {
   font-size: 11.5px;
   font-weight: 600;
   color: var(--accent-ink);
-  border-radius: 99px;
+  border-radius:var(--r-pill);
   padding: 2px 9px;
 }
 .ohx-notice button:hover {
@@ -879,7 +883,7 @@ body.reading .shell {
   width: min(520px, calc(100% - 28px));
   padding: 18px 20px 16px;
   background: var(--float);
-  border-radius: 14px;
+  border-radius:var(--r-card);
   box-shadow: var(--lift-3);
 }
 .pfi-card h2 {
@@ -919,7 +923,7 @@ body.reading .shell {
   color: var(--ink);
   background: color-mix(in srgb, var(--danger, #c0392b) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--danger, #c0392b) 32%, transparent);
-  border-radius: 9px;
+  border-radius:calc(var(--r-ctl) * 9 / 8);
 }
 .pfi-card .pfi-actions {
   display: flex;
@@ -1011,7 +1015,7 @@ body.reading .shell {
   width: auto;
   min-width: 26px;
   padding: 0 7px;
-  border-radius: 99px;
+  border-radius:var(--r-pill);
 }
 
 /* ================= screener extras ================= */
@@ -1059,7 +1063,7 @@ body.reading .shell {
   font-size: 11px;
   padding: 3px 9px;
   border: 1px solid var(--line);
-  border-radius: 99px;
+  border-radius:var(--r-pill);
   background: none;
   color: var(--ink2);
   cursor: pointer;
@@ -1104,22 +1108,22 @@ body.reading .shell {
   width: 108px;
   height: 3px;
   border: 0;
-  border-radius: 99px;
+  border-radius:var(--r-pill);
   background: var(--line);
   flex: none;
 }
 .scn-prog::-webkit-progress-bar {
   background: var(--line);
-  border-radius: 99px;
+  border-radius:var(--r-pill);
 }
 .scn-prog::-webkit-progress-value {
   background: var(--accent);
-  border-radius: 99px;
+  border-radius:var(--r-pill);
   transition: width 0.25s var(--swift);
 }
 .scn-prog::-moz-progress-bar {
   background: var(--accent);
-  border-radius: 99px;
+  border-radius:var(--r-pill);
 }
 /* quick-adjust — the accept and the destination menu that ride each waiting row */
 .scn-act {
@@ -1128,7 +1132,7 @@ body.reading .shell {
   font-weight: 550;
   padding: 4px 9px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius:var(--r-ctl);
   background: none;
   color: var(--ink2);
   cursor: pointer;
@@ -1179,7 +1183,7 @@ body.reading .shell {
   min-width: 150px;
   padding: 4px;
   gap: 1px;
-  border-radius: 12px;
+  border-radius:calc(var(--r-card) * 12 / 14);
   border: 1px solid var(--line);
   background: var(--float);
   box-shadow: var(--lift-2);
@@ -1196,7 +1200,7 @@ body.reading .shell {
   gap: 12px;
   padding: 5px 8px;
   border: 0;
-  border-radius: 7px;
+  border-radius:calc(var(--r-ctl) * 7 / 8);
   background: none;
   color: var(--ink);
   cursor: pointer;
@@ -1228,7 +1232,7 @@ body.reading .shell {
   gap: 4px;
   padding: 4px 9px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius:var(--r-ctl);
   background: none;
   color: var(--ink2);
   cursor: pointer;
@@ -1273,7 +1277,7 @@ body.reading .shell {
   gap: 2px;
   padding: 2px;
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius:calc(var(--r-ctl) * 7 / 8);
 }
 .scn-sg-size {
   font: inherit;
@@ -1281,7 +1285,7 @@ body.reading .shell {
   font-variant-numeric: tabular-nums;
   padding: 2.5px 9px;
   border: 0;
-  border-radius: 5px;
+  border-radius:calc(var(--r-ctl) * 5 / 8);
   background: none;
   color: var(--ink2);
   cursor: pointer;
@@ -1377,7 +1381,7 @@ body.reading .shell {
   min-height: 88px;
   padding: 10px 12px;
   border: 1px solid var(--hair-soft);
-  border-radius: 10px;
+  border-radius:calc(var(--r-ctl) * 10 / 8);
   /* `--float`, not the undefined `--surface`: that token is declared nowhere in the app, so
      `var(--surface, #fff)` resolved to the white fallback in BOTH themes — a glaring white
      field, with light ink on it, in dark mode. `--float` is the theme-aware raised-surface
@@ -1474,7 +1478,7 @@ body.reading .shell {
   color: var(--ink);
   background: var(--float);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius:calc(var(--r-ctl) * 10 / 8);
   padding: 7px 10px;
 }
 .scn-junk-search input:focus {
@@ -1487,7 +1491,7 @@ body.reading .shell {
   margin: 6px 14px 12px;
   padding: 12px 14px;
   background: var(--float);
-  border-radius: 14px;
+  border-radius:var(--r-card);
   box-shadow: var(--lift-1);
   font-size: 12.5px;
   color: var(--ink2);
@@ -1505,7 +1509,7 @@ body.reading .shell {
 }
 .hmail {
   background: var(--float);
-  border-radius: 20px;
+  border-radius:var(--r-overlay);
   box-shadow: var(--lift-1);
   padding: 20px 26px 22px;
   margin-bottom: 16px;
@@ -1694,7 +1698,7 @@ body.reading .shell {
   color: inherit;
   cursor: pointer;
   font-variant-numeric: tabular-nums;
-  border-radius: 4px;
+  border-radius:calc(var(--r-ctl) * 4 / 8);
   white-space: nowrap;
 }
 .stamp-toggle:hover {
@@ -1782,7 +1786,7 @@ body.reading .shell {
   padding: 10px 28px 20px;
   width: calc(100% - 60px);
   background: var(--panel);
-  border-radius: 20px;
+  border-radius:var(--r-overlay);
   box-shadow: var(--lift-1);
   display: flex;
   flex-direction: column;
@@ -1945,7 +1949,7 @@ textarea.c-input:read-only {
   line-height: 1.55;
   color: var(--ink);
   background: var(--accent-soft);
-  border-radius: 10px;
+  border-radius:calc(var(--r-ctl) * 10 / 8);
   padding: 7px 11px;
   margin: 8px 0 0;
 }
@@ -1966,7 +1970,7 @@ textarea.c-input:read-only {
   font-size: 11.5px;
   color: var(--ink3);
   cursor: pointer;
-  border-radius: 6px;
+  border-radius:calc(var(--r-ctl) * 6 / 8);
 }
 .c-ccbcc-toggle:hover {
   color: var(--ink);
@@ -1992,7 +1996,7 @@ textarea.c-input:read-only {
   letter-spacing: 0;
 }
 .draft-card {
-  border-radius: 20px;
+  border-radius:var(--r-overlay);
   background: var(--accent-soft);
   padding: 20px 22px;
   margin: 20px 0 18px;
@@ -2054,7 +2058,7 @@ textarea.c-input:read-only {
 .compose-editor {
   width: 100%;
   border: 1px solid var(--hair); /* input field — kept */
-  border-radius: 18px;
+  border-radius:calc(var(--r-overlay) * 18 / 20);
   background: var(--canvas);
   margin-top: 4px;
   /* THE DOMINANT SURFACE. `.rte` is already a flex column, so this takes the panel's slack and
@@ -2167,7 +2171,7 @@ textarea.c-input:read-only {
 .compose-attach-level select:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
-  border-radius: 4px;
+  border-radius:calc(var(--r-ctl) * 4 / 8);
 }
 .compose-attach-level::after {
   content: "";
@@ -2191,7 +2195,7 @@ textarea.c-input:read-only {
   align-items: center;
   gap: 8px;
   padding: 5px 8px;
-  border-radius: 8px;
+  border-radius:var(--r-ctl);
   background: var(--tint);
   font-size: 12px;
 }
@@ -2219,7 +2223,7 @@ textarea.c-input:read-only {
   height: 24px;
   padding: 0;
   border: 0;
-  border-radius: 6px;
+  border-radius:calc(var(--r-ctl) * 6 / 8);
   background: none;
   color: var(--ink2);
   cursor: pointer;
@@ -2265,7 +2269,7 @@ textarea.c-input:read-only {
   line-height: 1.55;
   color: var(--ink);
   background: var(--accent-soft);
-  border-radius: 10px;
+  border-radius:calc(var(--r-ctl) * 10 / 8);
   padding: 7px 11px;
 }
 /* `.btn[aria-disabled="true"]` USED TO BE HERE, and it is gone with its only consumer.
@@ -2336,7 +2340,7 @@ textarea.c-input:read-only {
   align-items: center;
   width: 100%;
   padding: 7px 12px;
-  border-radius: 10px;
+  border-radius:calc(var(--r-ctl) * 10 / 8);
   font-size: 12.5px;
   font-weight: 450;
   color: var(--ink2);
@@ -2379,7 +2383,7 @@ textarea.c-input:read-only {
   margin: 0;
   padding: 5px;
   list-style: none;
-  border-radius: 14px;
+  border-radius:var(--r-card);
   background: var(--float);
   box-shadow: var(--lift-3);
   max-height: 232px;
@@ -2390,7 +2394,7 @@ textarea.c-input:read-only {
   align-items: baseline;
   gap: 8px;
   padding: 7px 10px;
-  border-radius: 9px;
+  border-radius:calc(var(--r-ctl) * 9 / 8);
   font-size: 12.5px;
   cursor: pointer;
 }
@@ -2446,7 +2450,7 @@ textarea.c-input:read-only {
   flex-wrap: wrap;
   align-items: center;
   gap: 4px 6px;
-  border-radius: 8px;
+  border-radius:var(--r-ctl);
 }
 /* A chip from another row is over this field — the drop target says so. The palette's tint,
    not an invented outline color: it is the same "this is where it lands" wash the suggestion
@@ -2465,7 +2469,7 @@ textarea.c-input:read-only {
   gap: 5px;
   max-width: 100%;
   padding: 2px 9px;
-  border-radius: 999px;
+  border-radius:calc(var(--r-pill) * 999 / 99);
   background: var(--tint);
   font-size: 12px;
   line-height: 1.5;
@@ -2573,7 +2577,7 @@ textarea.c-input:read-only {
   padding: 5px;
   margin: -5px;
   cursor: pointer;
-  border-radius: 7px;
+  border-radius:calc(var(--r-ctl) * 7 / 8);
   display: inline-flex;
   line-height: 0;
 }
@@ -2597,7 +2601,7 @@ textarea.c-input:read-only {
   background: none;
   padding: 5px;
   cursor: pointer;
-  border-radius: 999px;
+  border-radius:calc(var(--r-pill) * 999 / 99);
   display: inline-flex;
   line-height: 0;
   box-shadow: inset 0 0 0 1px transparent;
@@ -2614,7 +2618,7 @@ textarea.c-input:read-only {
   position: fixed;
   z-index: var(--z-pal);
   width: 240px;
-  border-radius: 18px;
+  border-radius:calc(var(--r-overlay) * 18 / 20);
   background: var(--float);
   box-shadow: var(--lift-3);
   overflow: hidden;
@@ -2644,7 +2648,7 @@ textarea.c-input:read-only {
   align-items: center;
   gap: 9px;
   padding: 8px 11px;
-  border-radius: 11px;
+  border-radius:calc(var(--r-card) * 11 / 14);
   font-size: 12.5px;
   cursor: pointer;
 }
@@ -2736,7 +2740,7 @@ textarea.c-input:read-only {
 .login-card {
   width: min(420px, 100%);
   background: var(--float);
-  border-radius: 26px;
+  border-radius:calc(var(--r-pill) * 26 / 99);
   box-shadow: var(--lift-2);
   padding: 34px 36px 30px;
   animation: rise 0.32s var(--spring);
@@ -2827,7 +2831,7 @@ textarea.c-input:read-only {
   font-size: 19px;
   font-variant-numeric: tabular-nums;
   border: 1px solid var(--hair); /* input field — kept */
-  border-radius: 12px;
+  border-radius:calc(var(--r-card) * 12 / 14);
   background: var(--canvas);
 }
 .totp-boxes input:focus {
@@ -2837,7 +2841,7 @@ textarea.c-input:read-only {
 }
 .login-beta {
   margin-top: 22px;
-  border-radius: 16px;
+  border-radius:calc(var(--r-card) * 16 / 14);
   background: var(--accent-soft);
   padding: 14px 16px;
   font-size: 12px;
@@ -2881,7 +2885,7 @@ textarea.c-input:read-only {
 }
 .join-rail-dot {
   height: 3px;
-  border-radius: 2px;
+  border-radius:calc(var(--r-ctl) * 2 / 8);
   background: var(--hair);
 }
 .join-rail li[data-state="done"] .join-rail-dot {
@@ -2917,7 +2921,7 @@ textarea.c-input:read-only {
   color: var(--ink);
   background: var(--canvas);
   border: 1px solid var(--hair); /* input field — kept */
-  border-radius: 12px;
+  border-radius:calc(var(--r-card) * 12 / 14);
 }
 .join-input:focus {
   outline: 1.5px solid var(--accent);
@@ -2955,7 +2959,7 @@ textarea.c-input:read-only {
 .join-invite-opt > summary:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
-  border-radius: 4px;
+  border-radius:calc(var(--r-ctl) * 4 / 8);
 }
 .join-hint,
 .join-note {
@@ -2967,7 +2971,7 @@ textarea.c-input:read-only {
 .join-note {
   margin-top: 12px;
   background: var(--accent-soft);
-  border-radius: 14px;
+  border-radius:var(--r-card);
   padding: 12px 14px;
   color: var(--ink2);
 }
@@ -2980,7 +2984,7 @@ textarea.c-input:read-only {
   line-height: 1.55;
   color: var(--ink);
   background: var(--accent-soft);
-  border-radius: 14px;
+  border-radius:var(--r-card);
   padding: 12px 14px;
   margin: 0 0 16px;
 }
@@ -3024,7 +3028,7 @@ textarea.c-input:read-only {
   margin: 16px 0 18px;
   padding: 14px 16px;
   background: var(--canvas);
-  border-radius: 14px;
+  border-radius:var(--r-card);
 }
 .join-codes code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -3051,7 +3055,7 @@ textarea.c-input:read-only {
   gap: 4px;
   margin: 0 0 10px;
   padding: 3px;
-  border-radius: 10px;
+  border-radius:calc(var(--r-ctl) * 10 / 8);
   background: var(--tint);
 }
 .join-interval .l-interval-btn {
@@ -3059,7 +3063,7 @@ textarea.c-input:read-only {
   border: 0;
   background: transparent;
   padding: 5px 13px;
-  border-radius: 8px;
+  border-radius:var(--r-ctl);
   font: inherit;
   font-size: 12.5px;
   font-weight: 600;
@@ -3083,7 +3087,7 @@ textarea.c-input:read-only {
   gap: 2px 12px;
   text-align: left;
   padding: 14px 16px;
-  border-radius: 16px;
+  border-radius:calc(var(--r-card) * 16 / 14);
   background: var(--float);
   box-shadow: var(--lift-1);
   transition: box-shadow 0.18s ease, transform 0.18s ease;
@@ -3168,7 +3172,7 @@ textarea.c-input:read-only {
   min-width: 0;
   text-align: left;
   padding: 11px 26px 10px 13px;
-  border-radius: 14px;
+  border-radius:var(--r-card);
   background: var(--float);
   box-shadow: var(--lift-0);
   cursor: pointer;
@@ -3231,7 +3235,7 @@ textarea.c-input:read-only {
 .pvp-note {
   margin-top: 12px;
   background: var(--accent-soft);
-  border-radius: 14px;
+  border-radius:var(--r-card);
   padding: 12px 14px;
   animation: rise 0.22s var(--spring);
 }
@@ -3311,7 +3315,7 @@ textarea.c-input:read-only {
     align-items: center;
     gap: 6px;
     padding: 6px 12px;
-    border-radius: 99px;
+    border-radius:var(--r-pill);
     font-size: 11.5px;
     color: var(--ink2);
     background: var(--panel);
@@ -3330,7 +3334,7 @@ textarea.c-input:read-only {
     transform: translateX(-104%);
     transition: transform 0.32s var(--spring);
     padding: 20px 16px 20px 22px;
-    border-radius: 0 20px 20px 0;
+    border-radius:0 var(--r-overlay) var(--r-overlay) 0;
   }
   .deck > .rail.open {
     transform: none;
@@ -3632,7 +3636,7 @@ textarea.c-input:read-only {
   color: var(--ink);
   line-height: 1.55;
   margin: 12px 0;
-  border-radius: 14px;
+  border-radius:var(--r-card);
   padding: 11px 13px;
   background: var(--accent-soft);
 }
@@ -3719,7 +3723,7 @@ textarea.c-input:read-only {
 /* A one-second sweep, not a throbber: it says "something is running" without asking to be
    watched. Honest about the worker's cadence — this can legitimately sit for a minute. */
 .mbx-spin {
-  width: 11px; height: 11px; border-radius: 99px;
+  width: 11px; height: 11px; border-radius:var(--r-pill);
   border: 1.5px solid var(--hair); border-top-color: var(--accent);
   animation: mbx-spin 1s linear infinite;
 }
@@ -3757,14 +3761,14 @@ textarea.c-input:read-only {
 .boot-sk-bar {
   display: block;
   height: 9px;
-  border-radius: 999px;
+  border-radius:calc(var(--r-pill) * 999 / 99);
   background: var(--tint2);
   animation: boot-sk-breathe 2s var(--swift) infinite;
 }
 .boot-sk-window {
   display: grid;
   grid-template-columns: 224px minmax(320px, 400px) 1fr;
-  gap: 0 16px;
+  gap: 0 var(--gap-tile); /* mirrors .deck — the skeleton must sit exactly where the shell will */
   /* NO own height or width: in the gate this sits absolutely at `inset:16px`
      (`.gate-boot > .boot-sk`), where the inset IS the box — an explicit dimension beside two
      definite offsets makes CSS drop the far inset and run 16px past the window (measured in
@@ -3780,7 +3784,7 @@ textarea.c-input:read-only {
   display: flex;
   flex-direction: column;
   padding: 18px 12px 18px 16px;
-  border-radius: 20px;
+  border-radius:var(--r-overlay);
   background: var(--panel);
   box-shadow: var(--lift-1);
 }
@@ -3791,7 +3795,7 @@ textarea.c-input:read-only {
   display: block;
   height: 34px;
   margin: 0 4px 16px 0;
-  border-radius: 99px;
+  border-radius:var(--r-pill);
   background: var(--tint);
   animation: boot-sk-breathe 2s var(--swift) infinite;
 }
@@ -3799,7 +3803,7 @@ textarea.c-input:read-only {
 .boot-sk-group { display: flex; flex-direction: column; gap: 1px; margin: 0 0 14px; }
 .boot-sk-label { height: 8px; margin: 4px 8px 6px; background: var(--tint); }
 .boot-sk-item { display: flex; align-items: center; gap: 9px; padding: 7px 8px; }
-.boot-sk-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--tint2); flex: none;
+.boot-sk-dot { width: 10px; height: 10px; border-radius:var(--r-avatar); background: var(--tint2); flex: none;
   animation: boot-sk-breathe 2s var(--swift) infinite; }
 /* The NARROW shell's topbar, as shape — `.topbar` at ≤900px: 12/16/8 padding, the wordmark
    left, one `.tb-btn` capsule right. Hidden wide, where no topbar exists (without
@@ -3811,7 +3815,7 @@ textarea.c-input:read-only {
 .boot-sk-pane {
   min-height: 0;
   overflow: hidden;
-  border-radius: 20px;
+  border-radius:var(--r-overlay);
   background: var(--panel);
   box-shadow: var(--lift-1);
 }
@@ -3822,9 +3826,9 @@ textarea.c-input:read-only {
 /* `.rows`' own gutter, then `.row`/`.srow` verbatim: 12×14 padding, radius 16, the 30px lead
    circle, and the three text lines at the row's own line rhythm. */
 .boot-sk-rows { padding: 0 16px; }
-.boot-sk-row { display: flex; align-items: flex-start; gap: 11px; padding: 12px 14px; border-radius: 16px; }
+.boot-sk-row { display: flex; align-items: flex-start; gap: 11px; padding: 12px 14px; border-radius:calc(var(--r-card) * 16 / 14); }
 .boot-sk-av {
-  width: 30px; height: 30px; border-radius: 50%; flex: none; margin-top: 1px;
+  width: 30px; height: 30px; border-radius:var(--r-avatar); flex: none; margin-top: 1px;
   background: var(--tint2);
   animation: boot-sk-breathe 2s var(--swift) infinite;
 }
@@ -3839,7 +3843,7 @@ textarea.c-input:read-only {
 .boot-sk-reader {
   min-width: 0;
   min-height: 0;
-  border-radius: 20px;
+  border-radius:var(--r-overlay);
   background: var(--panel);
   box-shadow: var(--lift-1);
 }
@@ -3865,7 +3869,7 @@ textarea.c-input:read-only {
   .boot-sk-rail, .boot-sk-reader { display: none; }
   .boot-sk-topbar { display: flex; align-items: center; gap: 10px; padding: 12px 16px 8px; flex: none; }
   .boot-sk-topbar .boot-sk-mark { width: 64px; margin: 0 auto 0 0; }
-  .boot-sk-tb-btn { width: 76px; height: 29px; border-radius: 99px; background: var(--tint); flex: none;
+  .boot-sk-tb-btn { width: 76px; height: 29px; border-radius:var(--r-pill); background: var(--tint); flex: none;
     animation: boot-sk-breathe 2s var(--swift) infinite; }
   .boot-sk-pane { margin: 0 10px 10px; flex: 1 1 auto; }
 }
@@ -3886,7 +3890,7 @@ textarea.c-input:read-only {
 .gate-boot { position: relative; }
 .gate-boot > .boot-sk {
   position: absolute;
-  inset: 16px;
+  inset: var(--gap-edge); /* mirrors .deck's padding — the skeleton sits where the shell will */
   opacity: 0.55;
   pointer-events: none;
 }
@@ -3929,7 +3933,7 @@ textarea.c-input:read-only {
   gap: 3px;
   padding: 13px 15px;
   border: 0;
-  border-radius: 14px;
+  border-radius:var(--r-card);
   background: var(--panel);
   box-shadow: var(--lift-1);
   cursor: pointer;
@@ -3969,7 +3973,7 @@ textarea.c-input:read-only {
   position: fixed;
   z-index: var(--z-pal);
   width: 252px;
-  border-radius: 18px;
+  border-radius:calc(var(--r-overlay) * 18 / 20);
   background: var(--float);
   box-shadow: var(--lift-3);
   overflow: hidden;
@@ -4015,7 +4019,7 @@ textarea.c-input:read-only {
   align-items: center;
   gap: 9px;
   padding: 8px 11px;
-  border-radius: 11px;
+  border-radius:calc(var(--r-card) * 11 / 14);
   font-size: 12.5px;
   cursor: pointer;
 }
@@ -4085,7 +4089,7 @@ textarea.c-input:read-only {
    `.msg-actions` in packages/ui message.css). A shadow-junction guard holds this rhythm. */
 .pm {
   background: var(--panel);
-  border-radius: 20px;
+  border-radius:var(--r-overlay);
   box-shadow: var(--lift-1);
   margin: 0 0 20px;
 }
@@ -4185,7 +4189,7 @@ textarea.c-input:read-only {
   display: grid;
   place-items: center;
   border: 0;
-  border-radius: 99px;
+  border-radius:var(--r-pill);
   background: none;
   padding: 0;
   color: var(--ink2);
@@ -4246,7 +4250,7 @@ textarea.c-input:read-only {
    alignment never depends on chip chrome. */
 .rcpt-chip {
   border: 0;
-  border-radius: 7px;
+  border-radius:calc(var(--r-ctl) * 7 / 8);
   background: none;
   padding: 1px 5px;
   font: inherit;
@@ -4279,7 +4283,7 @@ textarea.c-input:read-only {
   z-index: var(--z-pal);
   min-width: 200px;
   max-width: 252px;
-  border-radius: 14px;
+  border-radius:var(--r-card);
   background: var(--float);
   box-shadow: var(--lift-3);
   overflow: hidden;
@@ -4359,7 +4363,7 @@ textarea.c-input:read-only {
   height: 24px;
   display: grid;
   place-items: center;
-  border-radius: 99px;
+  border-radius:var(--r-pill);
   border: 0;
   background: none;
   color: var(--ink3);
@@ -4406,7 +4410,7 @@ textarea.c-input:read-only {
    sculpted where float-on-float meets in the dark theme. */
 .reply {
   margin-top: 22px;
-  border-radius: 20px;
+  border-radius:var(--r-overlay);
   background: var(--float);
   box-shadow: var(--lift-3), inset 0 0 0 1px var(--hair-soft);
   padding: 0 18px 14px;
@@ -4440,12 +4444,12 @@ textarea.c-input:read-only {
   place-items: center;
   cursor: row-resize;
   touch-action: none;
-  border-radius: 20px 20px 0 0;
+  border-radius:var(--r-overlay) var(--r-overlay) 0 0;
 }
 .reply-grip-bar {
   width: 44px;
   height: 4px;
-  border-radius: 99px;
+  border-radius:var(--r-pill);
   background: var(--hair);
 }
 .reply-grip:hover .reply-grip-bar,
@@ -4498,7 +4502,7 @@ textarea.c-input:read-only {
 .reply-head-btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 6px;
+  border-radius:calc(var(--r-ctl) * 6 / 8);
 }
 .reply-head-edit {
   flex: none;
@@ -4568,7 +4572,7 @@ textarea.c-input:read-only {
 .reply-editor {
   width: 100%;
   border: 0;
-  border-radius: 12px;
+  border-radius:calc(var(--r-card) * 12 / 14);
   background: var(--float);
   box-shadow: inset 0 0 0 1px var(--hair-soft);
   color: var(--ink);
@@ -4646,7 +4650,7 @@ textarea.c-input:read-only {
   height: 34px;
   padding: 0 7px;
   border: 0;
-  border-radius: 8px;
+  border-radius:var(--r-ctl);
   background: transparent;
   color: var(--ink2);
   font: inherit;
@@ -4706,7 +4710,7 @@ textarea.c-input:read-only {
   align-items: center;
   gap: 6px;
   padding: 9px;
-  border-radius: 12px;
+  border-radius:calc(var(--r-card) * 12 / 14);
   background: var(--float);
   box-shadow: var(--lift-3);
   animation: rise 0.2s var(--spring);
@@ -4716,7 +4720,7 @@ textarea.c-input:read-only {
   min-width: 0;
   padding: 6px 10px;
   border: 1px solid var(--hair);
-  border-radius: 8px;
+  border-radius:var(--r-ctl);
   background: var(--canvas);
   color: var(--ink);
   font: inherit;
@@ -4731,7 +4735,7 @@ textarea.c-input:read-only {
 .rte-linkpop-remove {
   padding: 6px 11px;
   border: 0;
-  border-radius: 8px;
+  border-radius:var(--r-ctl);
   font: inherit;
   font-size: 12.5px;
   cursor: pointer;
@@ -4835,7 +4839,7 @@ textarea.c-input:read-only {
   font-size: 0.92em;
   background: var(--tint2);
   padding: 0.1em 0.32em;
-  border-radius: 5px;
+  border-radius:calc(var(--r-ctl) * 5 / 8);
 }
 /* THE CODE BLOCK — the other half of the Code button, and it must not look like a row of the
    inline marks above. One shaded block with the lines inside it, so a snippet reads as a
@@ -4848,7 +4852,7 @@ textarea.c-input:read-only {
 .rte-surface pre {
   margin: 0 0 0.7em;
   padding: 0.62em 0.8em;
-  border-radius: 9px;
+  border-radius:calc(var(--r-ctl) * 9 / 8);
   background: var(--tint2);
   white-space: pre-wrap;
   overflow-wrap: break-word;
@@ -4876,7 +4880,7 @@ textarea.c-input:read-only {
 .fr-editor {
   width: 100%;
   border: 1px solid var(--hair); /* input field — kept */
-  border-radius: 16px;
+  border-radius:calc(var(--r-card) * 16 / 14);
   background: var(--canvas);
   box-sizing: border-box;
 }
@@ -4896,7 +4900,7 @@ textarea.c-input:read-only {
    context: what is being bought is text for THIS box. Styled as a quiet card rather than as a
    warning, because nothing here has gone wrong; it is a price and two buttons. */
 .dr-card {
-  border-radius: 12px;
+  border-radius:calc(var(--r-card) * 12 / 14);
   background: var(--tint);
   box-shadow: inset 0 0 0 1px var(--hair-soft);
   padding: 11px 13px 12px;
@@ -4957,7 +4961,7 @@ textarea.c-input:read-only {
   font-size: 11.5px;
   line-height: 1.55;
   margin: 10px 0 0;
-  border-radius: 12px;
+  border-radius:calc(var(--r-card) * 12 / 14);
   padding: 9px 12px;
   /* The line appears out of band, under a row the eye already left; the system's own
      entrance (`rise`, packages/ui base.css) is what every other appearing surface uses.
@@ -5010,7 +5014,7 @@ textarea.c-input:read-only {
   width: min(620px, calc(100vw - 32px));
   max-height: 74vh;
   overflow-y: auto;
-  border-radius: 22px;
+  border-radius:calc(var(--r-overlay) * 22 / 20);
   background: var(--float);
   box-shadow: var(--lift-3);
   padding: 20px 24px 18px;
@@ -5038,7 +5042,7 @@ textarea.c-input:read-only {
   height: 28px;
   display: grid;
   place-items: center;
-  border-radius: 99px;
+  border-radius:var(--r-pill);
   color: var(--ink3);
 }
 .ks-head .x:hover {
@@ -5141,7 +5145,7 @@ textarea.c-input:read-only {
   font: inherit;
   text-align: left;
   color: var(--ink);
-  border-radius: 12px;
+  border-radius:calc(var(--r-card) * 12 / 14);
   background: transparent;
   transition: background .15s var(--swift);
 }
@@ -5175,7 +5179,7 @@ textarea.c-input:read-only {
   font-size: 10px;
   font-weight: 650;
   padding: 1px 8px;
-  border-radius: 99px;
+  border-radius:var(--r-pill);
   color: var(--accent-ink);
   background: var(--accent-soft);
 }
@@ -5199,7 +5203,7 @@ textarea.c-input:read-only {
   color: var(--ink);
   background: var(--accent-soft);
   box-shadow: inset 0 0 0 1px var(--accent-hair);
-  border-radius: 9px;
+  border-radius:calc(var(--r-ctl) * 9 / 8);
   padding: 4px 9px;
 }
 .draft-discard {
@@ -5213,7 +5217,7 @@ textarea.c-input:read-only {
   font-size: 11.5px;
   font-weight: 550;
   color: var(--ink3);
-  border-radius: 99px;
+  border-radius:var(--r-pill);
   background: transparent;
   transition: background .15s var(--swift), color .15s var(--swift);
 }
@@ -5227,7 +5231,7 @@ textarea.c-input:read-only {
 .compose-confirm {
   min-width: 0;
   padding: 10px 12px 12px;
-  border-radius: 12px;
+  border-radius:calc(var(--r-card) * 12 / 14);
   background: var(--accent-soft);
 }
 /* The sentence sits directly above the two buttons; the settings variant's 12px bottom pad is
@@ -5244,7 +5248,7 @@ textarea.c-input:read-only {
   min-width: 0;
   margin-top: 14px;
   padding: 10px 12px 12px;
-  border-radius: 12px;
+  border-radius:calc(var(--r-card) * 12 / 14);
   background: var(--accent-soft);
 }
 .send-later .set-note-inline { padding: 0 0 9px; margin: 0; }
@@ -5265,7 +5269,7 @@ textarea.c-input:read-only {
   color: var(--ink);
   background: var(--panel);
   border: 1px solid var(--hair);
-  border-radius: 9px;
+  border-radius:calc(var(--r-ctl) * 9 / 8);
   padding: 5px 9px;
 }
 .send-later .send-note { display: block; margin-top: 8px; }
@@ -5309,7 +5313,7 @@ body.dnd-active * { cursor: grabbing !important; }
   max-width: 320px;
   padding: 6px 11px;
   background: var(--float);
-  border-radius: 9px;
+  border-radius:calc(var(--r-ctl) * 9 / 8);
   box-shadow: var(--lift-3);
   opacity: 0.95;
   pointer-events: none;
@@ -5322,7 +5326,7 @@ body.dnd-active * { cursor: grabbing !important; }
   min-width: 18px;
   height: 18px;
   padding: 0 5px;
-  border-radius: 9px;
+  border-radius:calc(var(--r-ctl) * 9 / 8);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -5385,7 +5389,7 @@ body.dnd-active * { cursor: grabbing !important; }
 .sig-block {
   margin-top: 10px;
   border: 1px solid var(--hair);
-  border-radius: 8px;
+  border-radius:var(--r-ctl);
   padding: 6px 8px;
 }
 .sig-head {
@@ -5410,7 +5414,7 @@ body.dnd-active * { cursor: grabbing !important; }
   line-height: 1;
   padding: 2px 4px;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius:calc(var(--r-ctl) * 4 / 8);
 }
 .sig-remove:hover:not(:disabled) {
   color: var(--ink);
@@ -5509,7 +5513,7 @@ body.dnd-active * { cursor: grabbing !important; }
 .sig-settings-preview {
   margin-top: 8px;
   border: 1px solid var(--hair);
-  border-radius: 8px;
+  border-radius:var(--r-ctl);
   padding: 6px 8px;
 }
 .sig-preview-text {
@@ -5524,4 +5528,34 @@ body.dnd-active * { cursor: grabbing !important; }
   display: flex;
   gap: 8px;
   margin-top: 8px;
+}
+
+/* ============ settings: the face row's scope line (shell/FaceRow.tsx) =================
+   One quiet sentence under the paper/ohmarchy control saying which scope governs this
+   device, with the account-wide apply as its one verb. Styled like the Ohbox notice's
+   verb (`.ohx-notice button`) because it is the same kind of affordance: a small action
+   beside a stated fact. Negative top margin tucks it against its row — `.set-row` keeps
+   its own 15px padding for the NEXT row's rhythm. */
+.face-scope {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  margin: -8px 2px 4px;
+  font-size: 12px;
+  color: var(--ink3);
+}
+.face-scope button {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--accent-ink);
+  border-radius:var(--r-pill);
+  padding: 2px 9px;
+}
+.face-scope button:hover {
+  background: var(--accent-soft);
+}
+.face-scope button:disabled {
+  opacity: 0.55;
+  cursor: default;
 }

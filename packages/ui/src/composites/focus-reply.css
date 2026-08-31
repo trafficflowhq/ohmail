@@ -1,15 +1,15 @@
 /* Reply Run — one message per screen over the scrim.
    The file keeps its historical name; the product copy says "Reply Run". */
 .fr-overlay{position:fixed;inset:0;z-index:var(--z-fr);display:grid;place-items:center;background:var(--scrim);padding:16px}
-.fr-card{width:min(560px,100%);border-radius:24px;background:var(--float);
+.fr-card{width:min(560px,100%);border-radius:calc(var(--r-pill) * 24 / 99);background:var(--float);
   box-shadow:var(--lift-3);padding:26px 30px;animation:rise .32s var(--spring)}
 .fr-prog{display:flex;align-items:center;gap:10px;font-size:11.5px;color:var(--ink3);font-variant-numeric:tabular-nums}
-.fr-bar{flex:1;height:1.5px;background:var(--hair);border-radius:2px;overflow:hidden}
+.fr-bar{flex:1;height:1.5px;background:var(--hair);border-radius:calc(var(--r-ctl) * 2 / 8);overflow:hidden}
 .fr-bar i{display:block;height:100%;background:var(--accent);transition:width .4s var(--spring)}
 .fr-card h3{font-size:16px;font-weight:650;margin:16px 0 2px;letter-spacing:-.015em}
 .fr-card .from{font-size:12px;color:var(--ink3)}
 .fr-card .prev{font-size:13px;color:var(--ink2);margin:10px 0 16px;line-height:1.55}
-.fr-card textarea{width:100%;min-height:100px;resize:vertical;border:1px solid var(--hair);border-radius:16px; /* input field — kept */
+.fr-card textarea{width:100%;min-height:100px;resize:vertical;border:1px solid var(--hair);border-radius:calc(var(--r-card) * 16 / 14); /* input field — kept */
   background:var(--canvas);padding:12px 14px;font-size:13px;line-height:1.6;font-family:inherit;color:inherit;box-sizing:border-box}
 .fr-card textarea:focus{outline:1.5px solid var(--accent);outline-offset:0;border-color:transparent}
 .fr-foot{display:flex;gap:8px;margin-top:16px;align-items:center}

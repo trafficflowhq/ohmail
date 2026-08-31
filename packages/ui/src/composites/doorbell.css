@@ -1,6 +1,6 @@
 /* screener doorbell — a knock, not a nag */
 .doorbell{
-  display:flex;align-items:center;gap:12px;margin:16px 26px 0;padding:9px 16px 9px 10px;border-radius:99px;border:0;cursor:pointer;
+  display:flex;align-items:center;gap:12px;margin:16px 26px 0;padding:9px 16px 9px 10px;border-radius:var(--r-pill);border:0;cursor:pointer;
   background:var(--accent-soft);width:calc(100% - 52px);text-align:left;overflow:hidden;
   font-family:inherit;font-size:inherit;color:inherit;line-height:1.5;
   /* THE DOORBELL MEASURES ITSELF, NOT THE VIEWPORT.

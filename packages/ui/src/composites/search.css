@@ -1,5 +1,5 @@
 /* search — the pill, results and facet rail */
-.search-box{display:flex;align-items:center;gap:11px;border-radius:99px;
+.search-box{display:flex;align-items:center;gap:11px;border-radius:var(--r-pill);
   background:var(--panel);padding:12px 20px;box-shadow:var(--lift-1);
   transition:box-shadow .2s var(--swift)}
 .search-box:focus-within{box-shadow:0 0 0 1.5px var(--accent-hair), var(--lift-2)}
@@ -9,7 +9,7 @@
 .search-box input::placeholder{color:var(--ink2)}
 .results-head{font-size:12px;color:var(--ink2);padding:16px 4px 10px;font-variant-numeric:tabular-nums}
 .results-head b{color:var(--ink)}
-.hit{display:block;width:100%;text-align:left;padding:14px 18px;border-radius:16px;margin-bottom:6px;border:0;cursor:pointer;
+.hit{display:block;width:100%;text-align:left;padding:14px 18px;border-radius:calc(var(--r-card) * 16 / 14);margin-bottom:6px;border:0;cursor:pointer;
   background:none;font:inherit;color:inherit;
   transition:background .16s var(--swift), box-shadow .2s var(--swift), transform .2s var(--swift)}
 .hit:hover{background:var(--float);box-shadow:var(--lift-2);transform:translateY(-1px)}
@@ -17,9 +17,9 @@
 .hit .who{font-weight:600;font-size:13px}
 .hit .where{margin-left:auto;font-size:11px;color:var(--ink3)}
 .hit .subj{font-size:13px;color:var(--ink);margin-top:2px}
-.hit mark{background:var(--accent-soft);color:var(--ink);border-radius:3px;padding:0 1px}
+.hit mark{background:var(--accent-soft);color:var(--ink);border-radius:calc(var(--r-ctl) * 3 / 8);padding:0 1px}
 .fuzzy{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;color:var(--accent-ink);
-  background:var(--accent-soft);border-radius:99px;padding:1px 8px;margin-left:8px;vertical-align:1px;font-weight:550}
+  background:var(--accent-soft);border-radius:var(--r-pill);padding:1px 8px;margin-left:8px;vertical-align:1px;font-weight:550}
 .facets h4{font-size:11px;font-weight:600;color:var(--ink3);margin:4px 0 6px}
 .facets ul{list-style:none;margin:0 0 18px;padding:0}
 .facets li{font-size:12.5px;color:var(--ink2);padding:3px 0;display:flex;gap:8px}

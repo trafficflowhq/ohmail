@@ -11,7 +11,7 @@
 /* search — the product's search pill, but inset rather than lifted: a raised pill inside a
    raised pane reads as a card in a card. */
 .rules-search{display:flex;align-items:center;gap:9px;flex:1 1 220px;min-width:0;
-  border-radius:99px;padding:8px 15px;background:var(--tint);
+  border-radius:var(--r-pill);padding:8px 15px;background:var(--tint);
   box-shadow:inset 0 0 0 1px var(--hair);transition:box-shadow .18s var(--swift)}
 .rules-search:focus-within{box-shadow:inset 0 0 0 1.5px var(--accent-hair)}
 .rules-search svg{color:var(--ink3);flex:none}
@@ -24,7 +24,7 @@
 
 /* facets — capsule filter buttons; the active one carries the accent tint */
 .rules-facets{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.rules-facets button{font-size:11.5px;font-weight:550;color:var(--ink2);border-radius:99px;
+.rules-facets button{font-size:11.5px;font-weight:550;color:var(--ink2);border-radius:var(--r-pill);
   padding:5px 12px;background:var(--tint);transition:background .16s var(--swift),color .16s var(--swift)}
 .rules-facets button:hover{color:var(--ink)}
 .rules-facets button.on{background:var(--accent-soft);color:var(--accent-ink)}
@@ -35,7 +35,7 @@
 /* the action region — a flat tinted well, not a lifted card. Holds one confirm at a time.
    The BULK confirm renders above the list (it is about the whole filtered set); a single
    revoke/retarget renders INSIDE the list, directly under its row — see RulesView. */
-.rules-confirm{display:grid;gap:9px;padding:14px 16px;margin:0 0 12px;border-radius:16px;
+.rules-confirm{display:grid;gap:9px;padding:14px 16px;margin:0 0 12px;border-radius:calc(var(--r-card) * 16 / 14);
   background:var(--accent-soft);animation:rise .18s var(--spring)}
 /* The confirm is where a rule is checked character by character before it is acted on, so the
    sentence WRAPS — never the row's ellipsis, which at 390 leaves ~140px of text. `anywhere`
@@ -58,7 +58,7 @@
   border-bottom:1px solid var(--hair-soft)}
 /* the row whose confirm is open — marked, so the tinted well below is visibly ABOUT this row.
    Background only: the height stays 64px, which the window's spacer arithmetic relies on. */
-.rules-item.editing{background:var(--accent-soft);border-radius:12px;
+.rules-item.editing{background:var(--accent-soft);border-radius:calc(var(--r-card) * 12 / 14);
   margin:0 -6px;padding:0 6px;border-bottom-color:transparent}
 .rules-item .body{display:flex;flex-direction:column;gap:2px;flex:1 1 auto;min-width:0}
 .rules-item .what{font-size:13px;font-weight:600;color:var(--ink);

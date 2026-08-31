@@ -1,6 +1,6 @@
 /* split button — one capsule, two decisions: file, or file + mark read.
    The attached ✓ half is its own button with its own handler. */
-.dbtn{display:inline-flex;background:var(--float);border-radius:99px;box-shadow:var(--lift-0);overflow:hidden;
+.dbtn{display:inline-flex;background:var(--float);border-radius:var(--r-pill);box-shadow:var(--lift-0);overflow:hidden;
   transition:box-shadow .2s var(--swift), transform .15s var(--swift)}
 .dbtn:hover{transform:translateY(-1px);box-shadow:var(--lift-2)}
 .dbtn button{padding:6.5px 13px;font-size:12px;font-weight:550;color:var(--ink);border:0;cursor:pointer;
@@ -19,7 +19,7 @@
    would otherwise be the loudest thing on the surface, and "the hint is for the second
    read, never the first". These caps sit in the same product one screen away, so they are
    the same object; a second, louder keycap here would read as a different kind of thing. */
-.dbtn kbd{font-size:9.5px;padding:0 4px;min-width:15px;border-radius:5px;line-height:1.6;
+.dbtn kbd{font-size:9.5px;padding:0 4px;min-width:15px;border-radius:calc(var(--r-ctl) * 5 / 8);line-height:1.6;
   background:transparent;border-color:var(--hair-soft);color:var(--ink3)}
 .dbtn .d-main{gap:7px}
 .dbtn.ai .d-main kbd{border-color:var(--accent-hair);color:inherit;opacity:.75}

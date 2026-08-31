@@ -15,13 +15,13 @@
    above plus a fixed box here, so a lead that wraps to two lines keeps the glyph beside the
    first one and the rows below it stay flush. */
 .infonote-i{flex:none;display:inline-flex;align-items:center;justify-content:center;
-  width:15px;height:15px;border-radius:50%;color:var(--ink3);opacity:.7;
+  width:15px;height:15px;border-radius:var(--r-avatar);color:var(--ink3);opacity:.7;
   transition:opacity .12s ease,color .12s ease;transform:translateY(2px)}
 .infonote-sum:hover .infonote-i,.infonote[open] .infonote-i{opacity:1;color:var(--ink2)}
 
 /* Keyboard focus lands on the summary, and the ring has to be visible on a control this small. */
 .infonote > .infonote-sum:focus-visible{outline:2px solid var(--focus,var(--ink2));
-  outline-offset:2px;border-radius:4px}
+  outline-offset:2px;border-radius:calc(var(--r-ctl) * 4 / 8)}
 
 .infonote-more{margin-top:5px;line-height:1.45;color:inherit;opacity:.92}
 

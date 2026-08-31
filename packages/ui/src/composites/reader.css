@@ -5,7 +5,7 @@
   padding:8vh 24px 12vh}
 .reader .msg{
   max-width:660px;padding:46px 52px 40px;animation:exhale .5s var(--spring);
-  background:var(--float);border-radius:28px;box-shadow:var(--lift-3);
+  background:var(--float);border-radius:calc(var(--r-pill) * 28 / 99);box-shadow:var(--lift-3);
 }
 /* THE SHEET'S BOTTOM EDGE IS NOT THE SCREEN'S. On a phone the overlay is the whole viewport, so
    a bar resting 12px off the bottom rests 12px into the home indicator's strip. `env(...,0px)`
@@ -67,7 +67,7 @@ body.reading .shell{opacity:.05;transform:scale(.994);pointer-events:none}
     display:inline-flex;align-items:center;justify-content:center;
     position:fixed;top:calc(10px + env(safe-area-inset-top,0px));
     left:calc(12px + env(safe-area-inset-left,0px));z-index:2;
-    width:38px;height:38px;border-radius:50%;border:0;padding:0;cursor:pointer;
+    width:38px;height:38px;border-radius:var(--r-avatar);border:0;padding:0;cursor:pointer;
     color:var(--ink);background:var(--float);box-shadow:var(--lift-2);
   }
   .reader-close:active{transform:scale(.94)}
@@ -125,7 +125,7 @@ body.reading .shell{opacity:.05;transform:scale(.994);pointer-events:none}
   font-weight: 550;
   color: var(--ink2);
   padding: 4px 10px;
-  border-radius: 99px;
+  border-radius:var(--r-pill);
   cursor: pointer;
   transition: background .15s var(--swift), color .15s var(--swift), transform .15s var(--swift);
 }
@@ -158,5 +158,5 @@ body.reading .shell{opacity:.05;transform:scale(.994);pointer-events:none}
 .subj-rule:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
-  border-radius: 4px;
+  border-radius:calc(var(--r-ctl) * 4 / 8);
 }

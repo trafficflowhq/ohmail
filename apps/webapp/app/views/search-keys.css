@@ -20,7 +20,7 @@
    as a halo. The button's bottom margin collapses out of this box, so the tint ends at the
    row rather than in the gap below it. */
 .hit-w {
-  border-radius: 16px;
+  border-radius:calc(var(--r-card) * 16 / 14);
   transition: background .15s var(--swift), box-shadow .15s var(--swift);
 }
 

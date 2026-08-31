@@ -8,13 +8,25 @@
  * `mo-canvas` class to get the ground styles.
  */
 import "@ohmail/tokens/tokens.css";
+/* faces.css adds the NEW slots' paper defaults; ohmarchy.css must come after tokens.css —
+   its base selectors tie tokens.css's on specificity and win by order (both files say so). */
+import "@ohmail/tokens/faces.css";
+import "@ohmail/tokens/ohmarchy.css";
 import "./base.css";
 
 /* theme */
-export { ThemeProvider, useTheme, useOptionalTheme, themeInitScript } from "./theme/ThemeProvider.js";
+export {
+  ThemeProvider,
+  useTheme,
+  useOptionalTheme,
+  themeInitScript,
+  linuxDesktopDevice,
+} from "./theme/ThemeProvider.js";
 export type {
   ThemePreference,
   ResolvedTheme,
+  FaceName,
+  LayoutName,
   ThemeContextValue,
   ThemeProviderProps,
 } from "./theme/ThemeProvider.js";

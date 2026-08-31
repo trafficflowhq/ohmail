@@ -1,5 +1,5 @@
 /* settings — panes on lift-1, rows separated by soft table rules */
-.set-pane{padding:10px 26px 22px;background:var(--panel);border-radius:20px;box-shadow:var(--lift-1)}
+.set-pane{padding:10px 26px 22px;background:var(--panel);border-radius:var(--r-overlay);box-shadow:var(--lift-1)}
 .set-row{display:flex;align-items:center;gap:12px;padding:15px 2px}
 .set-row + .set-row{border-top:1px solid var(--hair-soft)} /* settings table rule — scanability, same family as receipt rules */
 .set-row .btn{font-size:11.5px;padding:5px 12px}
@@ -13,13 +13,13 @@
 .set-note svg{flex:none;color:var(--accent-ink);margin-top:1px}
 /* vip capsules */
 .viplist{display:flex;gap:8px;flex-wrap:wrap;padding:12px 0 4px}
-.vip{display:inline-flex;align-items:center;gap:7px;border-radius:99px;
+.vip{display:inline-flex;align-items:center;gap:7px;border-radius:var(--r-pill);
   padding:6px 14px;font-size:12.5px;font-weight:550;background:var(--panel);box-shadow:var(--lift-0)}
-.vip .vdot{width:6px;height:6px;border-radius:50%;background:var(--accent);opacity:.85}
+.vip .vdot{width:6px;height:6px;border-radius:var(--r-avatar);background:var(--accent);opacity:.85}
 .vip.pulse{animation:pulse .8s var(--spring)}
 @keyframes pulse{0%{background:var(--accent-soft)}50%{background:var(--accent-soft)}100%{}}
 /* learned suggestion card */
-.learned{border-radius:20px;padding:17px 19px;margin:20px 0 8px;
+.learned{border-radius:var(--r-overlay);padding:17px 19px;margin:20px 0 8px;
   background:var(--accent-soft);transition:opacity .3s,transform .3s var(--spring)}
 .learned.gone{opacity:0;transform:translateY(-6px);pointer-events:none}
 .learned p{font-size:13px;margin:0 0 12px;line-height:1.5}

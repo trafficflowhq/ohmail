@@ -1,5 +1,5 @@
 /* protected OTP — a tinted pool of light, no frame */
-.protected{border-radius:20px;padding:22px 24px;margin:4px 0 8px;
+.protected{border-radius:var(--r-overlay);padding:22px 24px;margin:4px 0 8px;
   background:var(--accent-soft);max-width:460px}
 .lock-anim{color:var(--accent-ink)}
 .lock-anim .body-d{stroke-dasharray:60;stroke-dashoffset:60;animation:draw .8s .1s var(--spring) forwards}

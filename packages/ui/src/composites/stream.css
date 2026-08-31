@@ -6,7 +6,7 @@
 .stream-hints{max-width:620px;margin:0 auto;padding:10px 26px 14px;font-size:11px;color:var(--ink3);
   display:flex;gap:12px;align-items:center;flex-wrap:nowrap;overflow:hidden;white-space:nowrap}
 .stream-hints > *{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
-.scast{max-width:620px;margin:0 auto 20px;background:var(--float);border-radius:22px;
+.scast{max-width:620px;margin:0 auto 20px;background:var(--float);border-radius:calc(var(--r-overlay) * 22 / 20);
   box-shadow:var(--lift-1);position:relative;
   transition:box-shadow .3s var(--swift)}
 .scast.cur{box-shadow:var(--lift-2)}
@@ -34,7 +34,7 @@
 .sc-body + .sc-state{padding-top:0}
 .sc-state.warn{color:var(--accent)}
 .sc-art{margin:2px 26px 16px}
-.sc-art svg{display:block;width:100%;height:auto;border-radius:14px;color:var(--ink3)}
+.sc-art svg{display:block;width:100%;height:auto;border-radius:var(--r-card);color:var(--ink3)}
 .sc-art figcaption{font-size:11px;color:var(--ink3);margin-top:7px}
 .sc-fade{position:absolute;left:0;right:0;bottom:0;height:88px;pointer-events:none;
   /* the one functional gradient: a fade-out mask on clamped cards — decorative gradients stay banned */
@@ -48,7 +48,7 @@
    still sits inside the fade's band — that overlap is what makes a collapsed card read as one
    object — but from below it now, not on top of the text. */
 .sc-x{position:relative;z-index:1;display:flex;align-items:center;gap:6px;margin:2px auto 20px;border:0;cursor:pointer;
-  padding:5px 15px;border-radius:99px;font-size:11.5px;font-weight:600;color:var(--ink2);font-family:inherit;line-height:1.5;
+  padding:5px 15px;border-radius:var(--r-pill);font-size:11.5px;font-weight:600;color:var(--ink2);font-family:inherit;line-height:1.5;
   background:var(--float);box-shadow:var(--lift-0);
   transition:box-shadow .2s var(--swift), transform .15s var(--swift), color .15s}
 .sc-x:hover{color:var(--ink);transform:translateY(-1px);box-shadow:var(--lift-2)}

@@ -67,7 +67,7 @@
   max-width: 100%;
   margin-inline: auto;
   padding: 6px;
-  border-radius: 99px;
+  border-radius:var(--r-pill);
   background: var(--float);
   box-shadow: var(--lift-3);
 }
@@ -80,7 +80,7 @@
    uses — so a wrapped panel reads as a panel and not as a stretched capsule. */
 .msg-actions > .abar:has(> .abar-panel) {
   width: 100%;
-  border-radius: 22px;
+  border-radius:calc(var(--r-overlay) * 22 / 20);
 }
 
 /* ── THE SAME BAR OVER A SELECTION ─────────────────────────────────────────────────── 
@@ -171,7 +171,7 @@
   line-height: 1.5;
   color: var(--ink);
   white-space: nowrap;
-  border-radius: 99px;
+  border-radius:var(--r-pill);
   transition: background .15s var(--swift), color .15s var(--swift),
     box-shadow .2s var(--swift), transform .15s var(--swift);
 }
@@ -235,11 +235,11 @@
 .abar-seg {
   background: var(--panel);
   box-shadow: var(--lift-0);
-  border-radius: 99px;
+  border-radius:var(--r-pill);
 }
 .abar-seg .abar-b { border-radius: 0; }
-.abar-seg .abar-b:first-child { border-radius: 99px 0 0 99px; }
-.abar-seg .abar-b:last-child { border-radius: 0 99px 99px 0; }
+.abar-seg .abar-b:first-child { border-radius:var(--r-pill) 0 0 var(--r-pill); }
+.abar-seg .abar-b:last-child { border-radius:0 var(--r-pill) var(--r-pill) 0; }
 /* One hairline between segments — the join that makes three buttons read as one object. */
 .abar-seg .abar-b + .abar-b { box-shadow: inset 1px 0 0 var(--hair-soft); }
 
@@ -252,7 +252,7 @@
   font-size: 9.5px;
   padding: 0 4px;
   min-width: 15px;
-  border-radius: 5px;
+  border-radius:calc(var(--r-ctl) * 5 / 8);
   background: transparent;
   border-color: var(--hair-soft);
   color: var(--ink3);
@@ -268,7 +268,7 @@
 .abar-dot {
   width: 7px;
   height: 7px;
-  border-radius: 99px;
+  border-radius:var(--r-pill);
   flex: none;
   border: 1.5px solid var(--accent);
   background: var(--accent);
@@ -357,7 +357,7 @@
   padding: 5px;
   display: flex;
   flex-direction: column;
-  border-radius: 14px;
+  border-radius:var(--r-card);
   background: var(--float);
   box-shadow: var(--lift-3);
   animation: mmenu-rise .16s var(--swift);
@@ -383,7 +383,7 @@
   color: var(--ink);
   text-align: left;
   white-space: nowrap;
-  border-radius: 9px;
+  border-radius:calc(var(--r-ctl) * 9 / 8);
 }
 .mm-item:hover { background: var(--tint); }
 /* The roving focus is the menu's only cursor, so it has to be visible — a menu you can move

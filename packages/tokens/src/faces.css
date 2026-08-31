@@ -1,0 +1,48 @@
+/* =====================================================================
+   @ohmail/tokens — the NEW slots' paper defaults (OHMARCHY-PLAN.md §3a,
+   OHMARCHY-TOKENS.md "New slots").
+
+   These slots exist so the ohmarchy face can move radius, focus
+   loudness, tile gaps and type through tokens instead of forking a
+   component (the one-UI law). Under paper every value below IS today's
+   literal, so a component rewritten from `border-radius: 8px` to
+   `border-radius: var(--r-ctl)` computes byte-identically — that pin is
+   test/faces-paper-purity.test.ts, and it is why this file may declare
+   ONLY these slot names at :root, never an existing tokens.css slot.
+
+   Off-band literals (a 6px control, a 16px card) keep their exact paper
+   value through a ratio: `calc(var(--r-ctl) * 6 / 8)` is 6px under paper
+   and 0 under ohmarchy — never snap a literal to the slot value.
+
+   DELIBERATELY ABSENT — a named deviation from the spec's new-slot
+   table: `--danger`, `--focus`, `--accent-wash`. The app reads all three
+   through `var(…, fallback)` with UNEQUAL fallbacks per call site
+   (`--danger` falls back to #b3261e in some files and #c0392b in others;
+   `--focus` to var(--ink2)), so declaring them here would visibly change
+   the paper face. They are defined under [data-face="ohmarchy"] only
+   (src/ohmarchy.css), where defining them is the theme's whole point.
+
+   NOT generated: paper's values are pinned by hand against the shipping
+   CSS, exactly as tokens.css is pinned against the Blanc prototype.
+   ===================================================================== */
+:root{
+  /* radius ladder — the census's three bands + pill + avatar
+     (OHMARCHY-TOKENS.md: 4-10px → ctl · 12-16px → card · 18-22px →
+     overlay · 99/999px → pill · 50% avatars) */
+  --r-ctl: 8px;
+  --r-card: 14px;
+  --r-overlay: 20px;
+  --r-pill: 99px;
+  --r-avatar: 50%;
+  /* teaching intensity — `--teach` is the contract's ONE switch (0 calm / 1 loud,
+     OHMARCHY-CONTRACT.md); the focus pair carries the cursor's loudness */
+  --teach: 0;
+  --focus-w: 1.5px;
+  --focus-offset: 3px;
+  /* layout tile gaps — ohmarchy's Hyprland gaps (gaps_in 5 × 2 / gaps_out 10) */
+  --gap-tile: 16px;
+  --gap-edge: 16px;
+  /* UI type — on Omarchy 3c feeds these live from fc-match / shell.toml */
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+  --font-size-base: 14px;
+}

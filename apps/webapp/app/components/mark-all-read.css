@@ -11,7 +11,7 @@
    single unbroken token in the flex header. */
 .mark-all-read{
   appearance:none;border:0;background:transparent;font:inherit;font-size:12px;line-height:1;
-  color:var(--ink3);padding:4px 8px;border-radius:7px;cursor:pointer;white-space:nowrap;flex:none;
+  color:var(--ink3);padding:4px 8px;border-radius:calc(var(--r-ctl) * 7 / 8);cursor:pointer;white-space:nowrap;flex:none;
   transition:color .12s ease, background .12s ease;
 }
 .mark-all-read:hover{color:var(--accent);background:var(--accent-soft)}

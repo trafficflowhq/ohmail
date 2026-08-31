@@ -1,5 +1,5 @@
 /* one row language, everywhere (Ohbox · Reads · Receipts · Screener · Tag) */
-.row{display:block;width:100%;text-align:left;padding:12px 14px;border-radius:16px;border:0;cursor:pointer;
+.row{display:block;width:100%;text-align:left;padding:12px 14px;border-radius:calc(var(--r-card) * 16 / 14);border:0;cursor:pointer;
   background:none;font:inherit;color:inherit;
   transition:background .16s var(--swift), box-shadow .2s var(--swift), transform .2s var(--swift)}
 .row:hover{background:var(--tint)}
@@ -20,7 +20,7 @@
    ink, which is also when the `title` names the exact instant, so the two arrive together. */
 .row-top .t.tog{cursor:pointer}
 .row-top .t.tog:hover{color:var(--ink);text-decoration:underline dotted;text-underline-offset:2px}
-.dot-unread{width:5px;height:5px;border-radius:50%;background:var(--accent);flex:none;align-self:center;
+.dot-unread{width:5px;height:5px;border-radius:var(--r-avatar);background:var(--accent);flex:none;align-self:center;
   transition:opacity .7s var(--swift)}
 .justseen .dot-unread{opacity:0} /* rows AND stream cards */
 .row-mid{display:flex;align-items:baseline;gap:10px;margin-top:2px}

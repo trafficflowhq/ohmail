@@ -26,7 +26,7 @@
   gap: 1px;
   align-items: flex-start;
   padding: 6px 9px;
-  border-radius: 10px;
+  border-radius:calc(var(--r-ctl) * 10 / 8);
   font-size: 11.5px;
   font-weight: 550;
   color: var(--ink2);
@@ -78,7 +78,7 @@
   gap: 1px;
   align-items: flex-start;
   padding: 6px 9px;
-  border-radius: 10px;
+  border-radius:calc(var(--r-ctl) * 10 / 8);
   font-size: 11.5px;
   font-weight: 550;
   color: var(--ink2);
@@ -188,7 +188,7 @@
 .sm-confirm {
   margin: 0 9px 8px;
   padding: 10px 12px;
-  border-radius: 12px;
+  border-radius:calc(var(--r-card) * 12 / 14);
   background: var(--accent-soft);
 }
 .sm-confirm p {
@@ -223,7 +223,7 @@
 .sm-confirm-row button {
   font-size: 11.5px;
   font-weight: 600;
-  border-radius: 99px;
+  border-radius:var(--r-pill);
   padding: 4px 11px;
   color: var(--ink2);
 }
@@ -243,7 +243,7 @@
   width: calc(100% - 12px);
   margin: 0 6px 2px;
   padding: 7px 9px;
-  border-radius: 10px;
+  border-radius:calc(var(--r-ctl) * 10 / 8);
   font-size: 11.5px;
   font-weight: 600;
   color: var(--accent-ink);
@@ -272,7 +272,7 @@
   width: min(620px, calc(100vw - 32px));
   max-height: 76vh;
   overflow-y: auto;
-  border-radius: 22px;
+  border-radius:calc(var(--r-overlay) * 22 / 20);
   background: var(--float);
   box-shadow: var(--lift-3);
   padding: 20px 24px 20px;
@@ -298,7 +298,7 @@
   height: 28px;
   display: grid;
   place-items: center;
-  border-radius: 99px;
+  border-radius:var(--r-pill);
   color: var(--ink3);
 }
 .sa-head .x:hover {
@@ -341,7 +341,7 @@
   font-weight: 600;
   color: var(--accent-ink);
   background: var(--accent-soft);
-  border-radius: 99px;
+  border-radius:var(--r-pill);
   padding: 2px 9px;
 }
 .sa-meta {

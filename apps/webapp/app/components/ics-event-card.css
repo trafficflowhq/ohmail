@@ -28,7 +28,7 @@
   display: flex;
   gap: 13px;
   padding: 12px 13px;
-  border-radius: 13px;            /* the strip's object radius */
+  border-radius:calc(var(--r-card) * 13 / 14);            /* the strip's object radius */
   background: var(--panel);
   box-shadow: var(--lift-0);
   animation: rise .25s var(--spring);
@@ -46,7 +46,7 @@
   flex-direction: column;
   overflow: hidden;
   text-align: center;
-  border-radius: 10px;
+  border-radius:calc(var(--r-ctl) * 10 / 8);
   background: var(--tint);        /* the leaf's flip: figure recessed against the risen card */
 }
 .ics-date-mo {
