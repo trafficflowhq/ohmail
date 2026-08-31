@@ -37,9 +37,10 @@ import { privacy } from "./shared.js";
  *    `assertPublicHttpUrl` through an INJECTED resolver: userinfo, odd ports,
  *    `.onion`/`.local` and any host whose literal or RESOLVED address is
  *    loopback/private/link-local/CGNAT (and their IPv4-mapped forms) are refused
- *    before a socket opens. `redirect: "manual"` is the other half — a 3xx is a
- *    refusal, never a second request at an address nobody validated — plus a timeout
- *    and a streaming size cap.
+ *    before a socket opens. The manual-redirect port is the other half — it never
+ *    follows a `Location` itself, so a hop is only ever taken by `proxyImage` AFTER
+ *    that url has been through the same gate and pinned to its own addresses (capped
+ *    at three hops, under one whole-chain deadline) — plus a streaming size cap.
  *  · **The response**, {@link imageResponse} below. The service's SSRF gate says
  *    nothing about what comes BACK, and what comes back is bytes and a Content-Type
  *    chosen by the sender, served from the origin that holds the session cookie.
@@ -161,7 +162,18 @@ export const privacyRoutes: Route[] = [
         if (err instanceof ServiceError) {
           return errorResponse(err.code, err.httpStatus, err.message, err.details, err.retryable);
         }
-        return errorResponse("upstream_unavailable", 502, "the remote image could not be fetched");
+        /* ── WHAT REACHES HERE IS OUR OWN FAULT, AND IT MUST STAY A 5xx ──────────────────
+           Tempting to answer 424 here, since this slice moved every upstream refusal off the
+           5xx class. That would be wrong, and dangerously so: the `try` above encloses the
+           ownership check, the consent read, the grants read and a `tracker_events` insert, so
+           a database outage or a `TypeError` in our own code would take the same "somebody
+           else's dependency" label — and Vercel's 5xx alerting, which the 424 exists to keep
+           honest, would then ignore a real ohmail outage. That is this slice's own incident,
+           inverted.
+           Transport failures are named where they happen instead (`makeNodeRemoteFetch` wraps
+           DNS/TLS/reset/timeout as a 424 `ServiceError`), so anything still unknown at this
+           point is a bug in ours and says so. */
+        return errorResponse("internal_error", 500, "the image proxy failed unexpectedly");
       }
     },
   },
