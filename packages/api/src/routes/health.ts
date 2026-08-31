@@ -957,6 +957,14 @@ export const SCHEMA_INDEX_MARKERS: ReadonlyArray<string> = [
   // marker on every body of the mailbox, per cycle — no query is wrong, every test stays green,
   // and the only symptom is a worker cycle that stops finishing on a large mailbox.
   "message_bodies_withheld_idx",
+  // mail 0080_sessions_access_token_hash_idx. Listed for the same property as the four above,
+  // and it is the sharpest instance of it yet: `resolveSession` is the FIRST thing every
+  // authenticated request does, its predicate is `access_token_hash = $1`, and without this
+  // index that is a sequential scan of a table that grows monotonically (sessions are marked
+  // revoked, never reaped) and whose row count any caller with one account's credentials can
+  // raise at request rate. Absent, nothing raises and every test stays green; the only symptom
+  // is every user's every request paying for every session the deployment has ever minted.
+  "sessions_access_token_hash_idx",
 ];
 
 /**
@@ -1540,13 +1548,26 @@ export const MAIL_EXPECTED_MARKERS =
  *
  * `0079_erasure_fence` is probed as `accounts.erased_at` — the durable erasure marker every
  * settings writer reads FOR SHARE at the top of its transaction (`erasure-fence.ts`), so an API
- * ahead of it 42703s the whole consent-write surface. It is the newest entry, so it is the tag
+ * ahead of it 42703s the whole consent-write surface.
+ *
+ * `0080_sessions_access_token_hash_idx` is probed as `sessions_access_token_hash_idx` — in
+ * {@link SCHEMA_INDEX_MARKERS}, not here, because its whole content is an index and
+ * `information_schema.columns` is blind to those. It is the newest entry, so it is also the tag
  * below.
+ *
+ * **THE FIRST VERSION OF THIS BUMPED THE TAG AND ADDED NO MARKER, on the stated ground that "the
+ * census probes COLUMNS". That ground is false and the mistake is recorded rather than quietly
+ * corrected, because it is the exact failure `SCHEMA_INDEX_MARKERS` was created to prevent** —
+ * see its own docblock, which says a database missing an index-only migration was certified
+ * `schemaOk: true`. Advancing `through` to 0080 while probing nothing 0080 added would have made
+ * `/health` certify a 0079 database as being through 0080: a WORSE lie than the stale tag it was
+ * fixing, and one no test would have caught, because the expected count is derived from these
+ * lists and would have moved in step with the omission.
  */
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0079_erasure_fence";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0080_sessions_access_token_hash_idx";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */
