@@ -602,6 +602,42 @@ function closingParen(css: string, from: number): number {
   return -1;
 }
 
+/**
+ * WHERE AN `@import` ACTUALLY ENDS — the first `;` that CSS would read as one.
+ *
+ * `indexOf(";")` was not that. A semicolon inside the import's own quoted URL is STRING DATA, and
+ * cutting there did not merely truncate: the replacement removed the opening quote and left the
+ * remainder of the string as live CSS, so
+ * `@import url("https://evil.example/a;}.x{background:\75 rl(/api/x)}");` emitted a working
+ * `background:url(/api/x)` that had not existed in the message. A rewrite that MANUFACTURES a
+ * reference is worse than one that misses it, and it also broke the standing idempotency property
+ * — a second pass removed what the first had created.
+ *
+ * Strings and comments are skipped, for the same reason and by the same rules as everywhere else
+ * in this file. An at-rule with no terminator runs to EOF, which is what CSS Syntax §5.4.2 says
+ * and what the caller already assumed.
+ */
+function endOfAtRule(css: string, from: number): number {
+  for (let i = from; i < css.length; i++) {
+    const c = css[i];
+    if (c === "/" && css[i + 1] === "*") {
+      const close = css.indexOf("*/", i + 2);
+      if (close === -1) return -1;
+      i = close + 1;
+    } else if (c === '"' || c === "'") {
+      let j = i + 1;
+      while (j < css.length) {
+        const d = css[j];
+        if (d === "\\") { j += 2; continue; }
+        if (d === c || d === "\n" || d === "\r" || d === "\f") break;
+        j++;
+      }
+      i = j;
+    } else if (c === ";") return i;
+  }
+  return -1;
+}
+
 /** The body of a `url(` token and the index just past its `)`, or null when it never closes. */
 function readUrlToken(css: string, from: number): { raw: string; end: number } | null {
   let i = from;
@@ -923,7 +959,7 @@ export function neutraliseCss(
       // the end of the sheet — CSS Syntax §5.4.2 ends an at-rule at EOF — so cutting to EOS is
       // not a shortcut, it is the same span the browser would have consumed.
       if (continuesIdent(css.charCodeAt(CSS_TOKEN.lastIndex))) continue;
-      const semi = css.indexOf(";", CSS_TOKEN.lastIndex);
+      const semi = endOfAtRule(css, CSS_TOKEN.lastIndex);
       end = semi === -1 ? css.length : semi + 1;
       for (const url of remoteUrlsIn(css.slice(CSS_TOKEN.lastIndex, end))) onSheet(url);
       replacement = CUT;
