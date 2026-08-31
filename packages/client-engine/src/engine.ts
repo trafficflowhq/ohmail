@@ -3097,11 +3097,32 @@ export class OhmailEngine {
    * Apply locally NOW, fire the request, reconcile on the echo. Hard rejection
    * ⇒ overlay rolled back; retryable failure ⇒ mutation stays queued (and
    * visible — user-always-wins) for flushPending() with the SAME key.
+   *
+   * ── `opts.key` — A CALLER THAT ALREADY OWNS AN IDEMPOTENCY-KEY ───────────────────────────
+   *
+   * Normally the engine mints one and that is the whole story: the key is born with the verb,
+   * lives in the durable outbox beside it, and a replay after a restart is the same request the
+   * server may already have seen.
+   *
+   * One caller needs it the other way round, and it is the send. `useMailSend` persists the key
+   * with the send LANE the moment it is minted, ahead of this call, because a send's lock has to
+   * outlive the component holding it: a reload inside the queued window used to leave the restored
+   * editor free to press Send again, mint a SECOND key, and deliver the same mail twice — a second
+   * key is a different key, so neither `idempotency_keys` nor `outbound_sends UNIQUE (account_id,
+   * idempotency_key)` can collapse it. Resuming the stored key is what makes the server's own
+   * same-key branch (`SendService.resumeExisting`: `sent` ⇒ replay the stored result, `failed` ⇒
+   * report it, `pending` ⇒ in-flight or verify-by-Sent, NEVER a blind resend) the authority on
+   * whether that mail has already gone out.
+   *
+   * It is deliberately not restricted to `mail_send` in the signature — the rule it encodes is
+   * "the caller owns this verb's identity", and any surface that persists a key before expressing
+   * a verb is entitled to the same guarantee. What IS restricted is who may pass one: a key must
+   * be durable at the caller before it is handed over, or this is just a slower `uuid()`.
    */
-  async mutate(m: EngineMutation): Promise<MutationResult> {
+  async mutate(m: EngineMutation, opts: { key?: string } = {}): Promise<MutationResult> {
     const enriched = this.enrich(m);
     const id = this.uuid();
-    const key = this.uuid();
+    const key = opts.key ?? this.uuid();
 
     // THE EFFECTS ARE COMPUTED BEFORE SUPERSESSION, deliberately: they must be read over the
     // superseded verbs' overlays. A reversal is the case that breaks the other order — a

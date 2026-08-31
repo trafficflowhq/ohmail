@@ -55,12 +55,39 @@
  * in `settle`, so the scratch draft is cleared and the triage debt discharged either way, and
  * the surface is
  * closed only if it still happens to be the one on screen.
+ *
+ * ── THE LOCK IS DURABLE; THE REF IS ADVISORY ────────────────────────────────────────────
+ *
+ * Everything above was true within one session and false across a reload: `locked` is a `useRef`,
+ * and a lock whose lifetime is a component's cannot prevent the double it exists to prevent. The Idempotency-Key is now persisted with the
+ * send LANE at the moment it is minted (`shell/send-lock.ts`), synchronously and ahead of the
+ * verb, and a press on a lane that already holds a key RESUMES it rather than minting a second
+ * one. `locked` stays because it is the only check that is correct inside one tick; the durable
+ * key is the one that is correct across a process, and it is the authoritative half.
+ *
+ * ── THE RESIDUAL, STATED RATHER THAN LEFT TO BE FOUND ───────────────────────────────────
+ *
+ * There is deliberately no adoption pass at mount, and the reason is that every version of one
+ * introduced a worse failure than the one it removed. A restored outbox entry for a `mail_send` is
+ * replayed by the ENGINE's drive (`replayOutbox` takes every `restored` entry, owner-settled or
+ * not) and its result is routed to no surface, because the surface that owned it died. So a mount
+ * that adopted the lane as `queued` would lock a button whose settlement can never arrive through
+ * `flushPending` — a wedged Send on a mail client, which is worse than a stale composer.
+ *
+ * What is left is therefore this: after a reload that the boot replay has already settled, the
+ * composer still shows the message until the reader presses Send once more, and that press returns
+ * the server's stored outcome for the original send. **Nothing is delivered twice and nothing
+ * claims to be sent that was not** — the invariant holds — but the scratch draft is not bound to
+ * the send's durable record, so it outlives it. Closing that means binding the scratch buffer to
+ * the lane's durable claim and clearing it on the draft row's own `sent` transition (which `/sync`
+ * already emits); it is ledgered rather than smuggled in here.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import type { EngineMessage, MutationResult, OhmailEngine } from "@ohmail/client-engine";
 import type { ToastFn } from "@ohmail/ui";
 import { clearComposeDraft, type MailSend } from "./compose";
+import { claimSendLock, readSendLock, releaseSendLock, sendFingerprint } from "./send-lock";
 import { scheduleLabel } from "./format";
 import { EMPTY_RICH, parseRichValue, serializeRichValue, type RichValue } from "./rich-text";
 import type { SignatureState } from "./signature";
@@ -457,12 +484,21 @@ export function useMailSend(
         queued.current.set(res.key, key);
         inFlight.current.set(res.key, m);
         // STILL LOCKED: the intent is out there under this key and a second press would
-        // mint another one.
+        // mint another one. The DURABLE claim stands for the same reason and is what carries
+        // that sentence across a reload — see `shell/send-lock.ts`.
         locked.current.add(key);
       } else {
         queued.current.delete(res.key);
         inFlight.current.delete(res.key);
         locked.current.delete(key);
+        // TERMINAL — `confirmed`, `failed` or `unverified`. The key is spent: whatever it named
+        // on the server is now that key's permanent answer, and the next press is a NEW send that
+        // must get a new key. Resuming a spent one would replay the old outcome for ever, which
+        // is a wedged Send button rather than a duplicate mail — still wrong, and this is the line
+        // that stops it. `unverified` is included deliberately, matching `canSend`, which does not
+        // lock it: the server refuses every further send of that draft, so the user's next press
+        // has to be able to be a genuinely fresh one.
+        releaseSendLock(key);
       }
       // A confirmation is the only outcome that does anything beyond the phase, and `settle`
       // is where all of it lives — so a confirmation from a flush minutes later clears the
@@ -530,10 +566,34 @@ export function useMailSend(
       if (locked.current.has(key)) return;
       if (!canSend(states[key] ?? IDLE, m)) return;
 
+      /**
+       * ── THE DURABLE HALF, AND IT DOES NOT REFUSE THE PRESS ────────────────────────────────
+       *
+       * A stored key means this lane has an unsettled send. The press is allowed through and
+       * RESUMES that key, rather than being refused, and the difference matters: refusing would
+       * leave the reader holding a message the product will not send and cannot explain, with the
+       * only exit being a reload that produces the very second key this exists to prevent.
+       * Resuming makes the SERVER the authority instead — `SendService.resumeExisting` replays a
+       * `sent` row's stored result without re-sending, reports a `failed` one, answers `in_flight`
+       * while the first attempt may still be running, and never sends again under a key it has
+       * already reserved. One press, one delivery, decided where the delivery lives.
+       *
+       * The claim is written BEFORE `engine.mutate`, synchronously. A key persisted afterwards
+       * would leave the window this whole file is about: a process killed between the POST and
+       * the write comes back with the mail possibly sent and no record of the key it went under.
+       */
+      const now = Date.now();
+      const fp = sendFingerprint(m);
+      const resumed = readSendLock(key, fp, now);
+      const sendKey = resumed ?? crypto.randomUUID();
+      if (!resumed) {
+        claimSendLock({ v: 1, lane: key, key: sendKey, at: now, draftId: m.draftId ?? null, fp });
+      }
+
       locked.current.add(key);
       setPhase(key, { phase: "sending" });
       void engine
-        .mutate(m)
+        .mutate(m, { key: sendKey })
         .then((res) => {
           absorb(key, m, res);
           if (res.status === "queued") arm();
@@ -542,6 +602,11 @@ export function useMailSend(
           // `mutate` resolves rather than throws for every outcome it models; anything that
           // gets here is a bug in the engine, and swallowing it would leave the editor stuck
           // on "Sending…" with no way out.
+          //
+          // THE DURABLE CLAIM IS NOT RELEASED HERE, and that is the safe direction rather than an
+          // omission: an engine that threw may or may not have persisted and posted the verb, so
+          // the next press resuming this key is exactly right — the server decides whether it has
+          // seen it. Releasing would mint a fresh key over an outcome nobody can name.
           locked.current.delete(key);
           setPhase(key, { phase: "failed", reason: String(err) });
         });
