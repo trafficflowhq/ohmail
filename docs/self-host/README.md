@@ -129,6 +129,13 @@ For the local option, install Ollama and pull a model before you choose it:
 ollama pull llama3.2
 ```
 
+`llama3.2` is the default because it is the smallest model measured to do both
+jobs here. Something much smaller will screen senders and then fail to write a
+draft — very small models tend to repeat themselves instead of finishing, and
+what you get is a refusal saying the model did not finish rather than a draft.
+Ollama also has to be running when you press Save, or the test that runs then
+reports that nothing answered.
+
 Saving discards the previous test and runs a new one, so the pane tells you
 whether what you just saved actually works rather than leaving you to find out
 when the next message arrives. A model server that is running but does not have

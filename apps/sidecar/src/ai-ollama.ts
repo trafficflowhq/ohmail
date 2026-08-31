@@ -46,6 +46,30 @@ export const DEFAULT_OLLAMA = {
   draftModel: "llama3.2",
 } as const;
 
+/**
+ * HOW MANY TOKENS A LOCAL ANSWER MAY RUN TO, and why the absence of this was a hang.
+ *
+ * The two hosted providers bound their own answers (`max_tokens`: 512 for a routing or screening
+ * verdict, 2048 for a draft). This one sent no bound at all, and Ollama's default is to generate
+ * until the context window is exhausted — so the ceiling was the client deadline rather than a
+ * number anybody chose.
+ *
+ * That is not a theoretical gap. Measured against a real daemon: `qwen2.5:0.5b`, greedy-decoded
+ * under the drafting schema, fell into a repetition loop — `"Are you free Thursday? - Re: Are you
+ * free Thursday? - …"` — and never emitted a stopping token. Unbounded it ran past 45 s and past
+ * 300 s; bounded at 2048 it stopped in 21 s with `done_reason: "length"`. Small models drift this
+ * way far more readily than large ones, and this is the provider whose models are small by
+ * definition, on hardware whose owner is paying for the electricity.
+ *
+ * The numbers deliberately MATCH the hosted providers' rather than being tuned for local models:
+ * the same question deserves the same room to answer it, and a budget that differed per provider
+ * would be a second thing that makes one install answer differently from another.
+ */
+const OLLAMA_MAX_TOKENS = {
+  classify: 512,
+  draft: 2048,
+} as const;
+
 export interface OllamaTransportOptions {
   baseUrl: string;
   classifyModel: string;
@@ -78,6 +102,7 @@ export function ollamaTransport(opts: OllamaTransportOptions): AiTransport {
     payload: unknown,
     schema: unknown,
     what: string,
+    maxTokens: number,
   ): Promise<unknown> => {
     const res = await fetchWithDeadline(opts.fetchImpl, `${opts.baseUrl}/api/chat`, {
       method: "POST",
@@ -91,19 +116,39 @@ export function ollamaTransport(opts: OllamaTransportOptions): AiTransport {
           { role: "system", content: system },
           { role: "user", content: JSON.stringify(payload) },
         ],
-        // Deterministic on purpose: routing the same message twice must not produce two
-        // different folders, and a draft is reviewed before it is sent, so novelty buys nothing.
-        options: { temperature: 0 },
+        options: {
+          // Deterministic on purpose: routing the same message twice must not produce two
+          // different folders, and a draft is reviewed before it is sent, so novelty buys nothing.
+          temperature: 0,
+          // The ceiling. See OLLAMA_MAX_TOKENS — without it a model that never stops is bounded
+          // only by the client deadline, which is a hang rather than a refusal.
+          num_predict: maxTokens,
+        },
       }),
       redirect: "error",
     }, opts.timeoutMs);
     if (!res.ok) {
       throw new Error(`${what}: the local model server answered ${res.status}`);
     }
-    const body = (await res.json()) as { message?: { content?: unknown } };
+    const body = (await res.json()) as { message?: { content?: unknown }; done_reason?: unknown };
     const text = body.message?.content;
     if (typeof text !== "string") {
       throw new Error(`${what}: the local model server returned no message content`);
+    }
+    /**
+     * A TRUNCATED ANSWER IS NAMED, not left to fail as malformed JSON.
+     *
+     * Hitting the ceiling leaves the content cut mid-string, so `JSON.parse` below would throw and
+     * report "not valid JSON" — true, and the wrong diagnosis. It sends somebody looking for a
+     * broken model server when what actually happened is that their model would not stop talking,
+     * which is a different problem with a different fix (use a larger model). The distinction is
+     * only visible here, where `done_reason` is still in hand.
+     */
+    if (body.done_reason === "length") {
+      throw new Error(
+        `${what}: the model did not finish within ${maxTokens} tokens — it is probably too small `
+        + `for this task, or repeating itself`,
+      );
     }
     try {
       return JSON.parse(text) as unknown;
@@ -118,7 +163,7 @@ export function ollamaTransport(opts: OllamaTransportOptions): AiTransport {
       // every other provider — one sink, so there is one thing to get right.
       const userPayload = classifyUserPayload(input);
       return coerceClassifierResult(
-        await chat(opts.classifyModel, TAXONOMY_PREFIX, userPayload, CLASSIFY_RESULT_SCHEMA, "classifier"),
+        await chat(opts.classifyModel, TAXONOMY_PREFIX, userPayload, CLASSIFY_RESULT_SCHEMA, "classifier", OLLAMA_MAX_TOKENS.classify),
       );
     },
 
@@ -138,7 +183,7 @@ export function ollamaTransport(opts: OllamaTransportOptions): AiTransport {
     async screen(input: ClassifierInput): Promise<ClassifierResult> {
       const userPayload = classifyUserPayload(input);
       return coerceScreeningResult(
-        await chat(opts.classifyModel, SCREENING_PREFIX, userPayload, SCREENING_RESULT_SCHEMA, "screener"),
+        await chat(opts.classifyModel, SCREENING_PREFIX, userPayload, SCREENING_RESULT_SCHEMA, "screener", OLLAMA_MAX_TOKENS.classify),
       );
     },
 
@@ -146,7 +191,7 @@ export function ollamaTransport(opts: OllamaTransportOptions): AiTransport {
       // Asserts the redaction allow-list and THROWS before a payload exists. Also shared.
       const userPayload = draftUserPayload(input);
       return coerceDraftResult(
-        await chat(opts.draftModel, DRAFT_PREFIX, userPayload, DRAFT_RESULT_SCHEMA, "drafter"),
+        await chat(opts.draftModel, DRAFT_PREFIX, userPayload, DRAFT_RESULT_SCHEMA, "drafter", OLLAMA_MAX_TOKENS.draft),
       );
     },
 

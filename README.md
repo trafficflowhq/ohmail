@@ -113,7 +113,9 @@ model is yours to name:
 - **A model on this machine** — served by Ollama at
   `http://127.0.0.1:11434` by default, or any address you give it. Install
   Ollama and `ollama pull llama3.2` before choosing it. Nothing leaves the
-  machine if the server is on it.
+  machine if the server is on it. `llama3.2` is the default because it is the
+  smallest model measured to do both jobs; something much smaller will suggest
+  a door and then fail to write a draft, and says so rather than hanging.
 
 A key is sealed under a key held in your operating system's keystore, is never
 written down in the clear, is never read back, and is sent to no host but its
