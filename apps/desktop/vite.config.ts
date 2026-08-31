@@ -592,6 +592,16 @@ export default defineConfig({
     sourcemap: false,
     target: "es2022",
     assetsInlineLimit: 0,
+    /* THE PAIRED HALF of the window bundle's declared IIFE format (`output.format` below).
+       Vite emits a separate stylesheet only for the `es` and `cjs` output formats; for every
+       other format it folds the whole sheet into the chunk as a script-created <style>, which
+       would mean the window paints unstyled until 1.5 MB of JavaScript has parsed and run —
+       a white flash on a cold start, and a dark-theme one at that. With ONE chunk
+       (`inlineDynamicImports`) there is nothing to code-split anyway, so a single stylesheet is
+       the honest spelling of what this build already produces: `assets/style-<hash>.css`, whose
+       content is byte-identical to the `assets/index-<hash>.css` it replaces (same content
+       hash). The host arm keeps Vite's default. */
+    ...(HOST_CLIENT ? {} : { cssCodeSplit: false }),
     /* Emit ONE chunk, no dynamic-import split. The shared shell's only dynamic import is
        AttachmentPreview.tsx's `import("pdfjs-dist")` (here a no-op stub — the desktop opens
        attachments in the platform's viewer). Vite otherwise code-splits it and wraps the call in a preload helper
@@ -603,7 +613,43 @@ export default defineConfig({
       /* The host client enters through its own document; the window artifacts keep the implicit
          root `index.html`. `hostIndexName()` renames the emission — see the plugin. */
       ...(HOST_CLIENT ? { input: r("./host.html") } : {}),
-      output: { inlineDynamicImports: true },
+      output: {
+        inlineDynamicImports: true,
+        /* THE WINDOW BUNDLE IS A CLASSIC, SELF-CONTAINED SCRIPT — AND NOW IT IS DECLARED,
+           NOT INCIDENTAL. `scripts/smoke.mjs` drops the `type="module"` attribute and runs the
+           chunk in jsdom, which has no ESM loader; that substitution is a no-op only while the
+           chunk really carries no top-level `import`/`export`. Nothing DECLARED that, so one
+           new import took it away, and the failure is worth writing down because it is not
+           where anyone looks:
+
+             `packages/tokens/omarchy/mapping.js` is the palette law, pinned byte-identical to
+             the prototype spec by two tests, and its UMD body assigns `module.exports` at the
+             top level. Once it entered this graph the single chunk had NO ESM syntax left of
+             its own — while carrying that one CommonJS marker. Vite's `vite:esbuild-transpile`
+             runs esbuild over the whole rendered chunk with `format: "esm"`; esbuild therefore
+             read the chunk as CommonJS and CONVERTED it, emitting
+             `var m = __commonJS(…); … export default m();`. jsdom then died on the `export`
+             before React mounted: 33 of 43 checks, on all three platform jobs at once, with no
+             artifact to attach to a release.
+
+           Vite's CommonJS interop is NOT what did this — its `include` is `[/node_modules/]`
+           and it never sees this file. Measured, not inferred: excluding the file from
+           `commonjsOptions` changed the output not at one byte, and `esbuild.transform` of a
+           UMD body with `format: "esm"` reproduces the `__commonJS` + `export default` pair on
+           its own.
+
+           `format: "iife"` closes both halves by construction. Rollup wraps the chunk in a
+           function expression, so no CommonJS marker is top-level any more; and Vite maps no
+           esbuild format for `iife`, so esbuild is never asked to convert a format in the
+           first place. The output is `(function(){"use strict"; … })();` — zero `import`,
+           zero `export`, zero `import.meta` — which is what the smoke's comment always claimed
+           and can now rely on.
+
+           The HOST arm stays an ES module deliberately: it is served over HTTP to a real
+           browser, nothing loads it as a classic script, and `mapping.js` is not in its graph
+           (zero `OHMARCHY_MAP` in `dist-host`) — so it never had this defect to fix. */
+        ...(HOST_CLIENT ? {} : { format: "iife" as const }),
+      },
     },
   },
 

@@ -53,6 +53,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import vm from "node:vm";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { JSDOM, ResourceLoader } from "jsdom";
 
@@ -564,12 +565,83 @@ function installShellStub(window) {
 }
 
 /* jsdom has no ESM loader, and the bundle is a single self-contained chunk with
-   no import/export statements (vite.config.ts turns the modulepreload polyfill
-   off, which is what removes the last `fetch(` from the output). Dropping the
-   type attribute is therefore a no-op semantically and lets jsdom run it. */
+   no import/export statements — `vite.config.ts` DECLARES that by building the
+   window arm as an IIFE (`rollupOptions.output.format`, whose comment carries the
+   mechanism). Dropping the type attribute is therefore a no-op semantically and
+   lets jsdom run it.
+
+   This used to say the property came from `modulePreload: false`, and that was the
+   trouble: nothing declared it, so one new import could take it away, and it did.
+   A chunk whose only top-level module marker was a UMD `module.exports` got read as
+   CommonJS and converted to ESM, ending in `export default …`. jsdom died on the
+   `export` and TEN checks fell together under a `SyntaxError` that named none of
+   them. So the invariant is now asserted where it is relied upon, by name — and it
+   is read off the emitted chunk rather than off the config, because the config is
+   the intention and the chunk is the fact. */
 const html = fs.readFileSync(path.join(DIST, "index.html"), "utf8");
 const classic = html.replace(/<script\s+type="module"\s+/g, "<script ");
 check("index.html has a script to run", classic !== html || /<script /.test(classic));
+
+const entryScripts = [...classic.matchAll(/<script[^>]*\ssrc="([^"]+)"/g)]
+  .map((m) => m[1])
+  .filter((src) => !/^[a-z]+:/i.test(src));
+/* The loop below asserts nothing when the list is empty, and an empty list is
+   reachable — an inlined entry, a renamed emission — so say that out loud here.
+   Same rule as the missing-bundle exit above: a check that CANNOT LOOK must not
+   read as a check that found nothing wrong. */
+check("index.html names an entry script to inspect", entryScripts.length > 0);
+
+/* Runtime module-fetching, which a Script-goal parse does NOT catch: `import()`
+   is legal in a classic script, so a chunk carrying one parses cleanly and then
+   goes to the network for a module the artifact does not contain. Matched
+   anywhere rather than at a statement boundary, because there is no position
+   this may legally appear in. A string could in principle say `import(` and fail
+   this wrongly — that direction is loud and fixable; the other is a silent green. */
+const DYNAMIC_IMPORT = /\bimport\s*\(/;
+
+for (const src of entryScripts) {
+  const file = path.join(DIST, src.replace(/^\.?\//, ""));
+  if (!fs.existsSync(file)) {
+    check(`${src} is in the bundle`, false, "index.html names a script the dist does not hold");
+    continue;
+  }
+  const code = fs.readFileSync(file, "utf8");
+  /* ASK THE PARSER, DO NOT PATTERN-MATCH FOR IT. This started life as a regex over
+     the chunk and that regex was not a proof of its own claim: `export` and `import`
+     also occur inside the shell's own copy ("import them into this one?"), so it
+     matched only at a statement boundary — and `const url = import.meta.url` is at
+     no statement boundary, so the one construct most likely to reappear here would
+     have passed the check while jsdom died on it, which is the nameless failure the
+     check exists to replace. Compiling in the SCRIPT goal is the invariant itself
+     rather than a proxy for it: it is exactly what jsdom does below once the `type`
+     attribute is dropped, it accepts every construct a classic script may contain,
+     and it rejects `export`, a static `import`, `import.meta` and top-level `await`
+     wherever they sit — inside a comment-separated statement or not. It compiles
+     only; nothing here runs. */
+  let parseError = null;
+  try {
+    new vm.Script(code, { filename: file });
+  } catch (err) {
+    parseError = err;
+  }
+  check(
+    `${src} compiles as a classic script`,
+    parseError === null,
+    parseError === null
+      ? ""
+      : `${parseError.message} — the window arm must build as an IIFE ` +
+        "(vite.config.ts rollupOptions.output.format), which is what keeps module-only syntax out",
+  );
+  const dynamic = DYNAMIC_IMPORT.exec(code);
+  check(
+    `${src} pulls in no further module at runtime`,
+    dynamic === null,
+    dynamic === null
+      ? ""
+      : `dynamic import at offset ${dynamic.index}: ${JSON.stringify(code.slice(dynamic.index, dynamic.index + 48))}` +
+        " — the chunk is meant to be self-contained (build.rollupOptions.output.inlineDynamicImports)",
+  );
+}
 
 const consoleErrors = [];
 const uncaught = [];
