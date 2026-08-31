@@ -39,9 +39,16 @@
 .row .amt{margin-left:auto;flex:none;font-variant-numeric:tabular-nums;font-size:12.5px;font-weight:550;color:var(--ink)}
 .row.seen .amt{color:var(--ink2)}
 .row .prev{font-size:12px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
-.row .badges{display:inline-flex;gap:6px;flex:0 1 auto;min-width:0;overflow:hidden;margin-left:-3px;vertical-align:1px}
-.row .badges > *{min-width:0;overflow:hidden}
-.row .badges > .bdg-thread,.row .badges > .thread-circles{flex:none;overflow:visible}
+/* the strip's floor is its BOUNDED members: direct children (count, faces, clip, protected —
+   all intrinsically small) are flex:none, the unbounded tail (tags, place/state notes) lives
+   in `.bdg-tail`, which alone shrinks and clips. `min-width:min-content` then equals the
+   bounded members' width because a scroll container's min-content contribution is zero — so
+   the outer flex can never squeeze the count or the faces out of view (review-caught: a flat
+   strip with overflow:hidden clipped exactly the members it meant to keep). */
+.row .badges{display:inline-flex;gap:6px;flex:0 1 auto;min-width:min-content;margin-left:-3px;vertical-align:1px}
+.row .badges > *{flex:none}
+.row .badges > .bdg-tail{display:inline-flex;gap:6px;flex:0 1 auto;min-width:0;overflow:hidden}
+.row .badges > .bdg-tail > *{flex:none}
 
 /* THREAD PARTICIPANT CIRCLES — the conversation's faces in the subject line's badge strip,
    standing immediately after its `⤷ N` count. They are NOT the row's lead: the lead is one

@@ -256,11 +256,22 @@ export function MessageRow(props: MessageRowProps) {
     className,
   } = props;
 
-  const badges: ReactNode[] = [];
-  /* `bdg-thread` marks the one strip member that may never shrink — see row.css: under
-     width pressure the strip's tags and place badges give way; the count (bounded at
-     "⤷ NNN") and the faces (three fixed 18px circles) are the strip's point and hold. */
-  if (threadCount) badges.push(<Badge key="thread" className="bdg-thread">⤷ {threadCount}</Badge>);
+  /**
+   * TWO STRIP GROUPS, BY WHAT MAY GIVE WAY UNDER WIDTH PRESSURE.
+   *
+   * `keep` holds the members whose intrinsic width is BOUNDED — the thread count ("⤷ NNN"),
+   * the participant faces (three fixed 18px circles), the attachment clip (an icon) and the
+   * protected capsule (one word) — and they never shrink: they are the strip's point, and a
+   * row that hides its thread count reads as a single message. `tail` holds the UNBOUNDED
+   * members — tag chips, the place and state notes, whose text is user- or folder-named —
+   * and it alone shrinks and clips when the line runs out. The split is structural because
+   * no CSS floor can express "as wide as the bounded members": `min-width:min-content` on a
+   * flat strip pulls the chips' text width back in (measured), and a flat `overflow:hidden`
+   * clips the very members this exists to keep (review-caught).
+   */
+  const keep: ReactNode[] = [];
+  const tail: ReactNode[] = [];
+  if (threadCount) keep.push(<Badge key="thread" className="bdg-thread">⤷ {threadCount}</Badge>);
   /**
    * THE CONVERSATION'S FACES, DIRECTLY AFTER ITS COUNT — see
    * {@link MessageRowProps.participants} for why they stand here and not in the row's lead.
@@ -273,34 +284,34 @@ export function MessageRow(props: MessageRowProps) {
    */
   const circles = (participants ?? []).slice(0, THREAD_CIRCLES_MAX);
   if (circles.length > 1)
-    badges.push(
+    keep.push(
       <span className="thread-circles" key="circles" aria-hidden="true">
         {circles.map((p, i) => (
           <Avatar key={`${p.initials}-${i}`} initials={p.initials} hue={p.hue} size="s" />
         ))}
       </span>,
     );
-  if (hasAttachment) badges.push(<Badge key="attach" icon="clip" />);
+  if (hasAttachment) keep.push(<Badge key="attach" icon="clip" />);
   if (props.protected)
-    badges.push(
+    keep.push(
       <Badge key="protected" variant="shield" icon="shield">
         protected
       </Badge>,
     );
   for (const t of tags ?? [])
-    badges.push(
+    tail.push(
       <Chip key={`tag-${t.name}`} variant="tag" hue={t.hue}>
         {t.name}
       </Chip>,
     );
   if (place)
-    badges.push(
+    tail.push(
       <Badge key="place" variant="place">
         {place}
       </Badge>,
     );
   if (stateNote)
-    badges.push(
+    tail.push(
       <Badge key="state" variant="place">
         {stateNote}
       </Badge>,
@@ -374,11 +385,17 @@ export function MessageRow(props: MessageRowProps) {
           ran long: the thread's `⤷ N`, the participants, the tag chips, all silently cut by
           the ellipsis, at exactly the list widths the product actually renders (a 368px demo
           pane hid the fixture thread's count in the mono face). A thread count is information,
-          not decoration, so the subject is what yields: it keeps min-width:0 and truncates,
-          the strip is flex:none and always lands. */}
+          not decoration, so the subject is what yields first; inside the strip, the bounded
+          `keep` group never shrinks and the unbounded `tail` clips — see the split above and
+          the pressure order in row.css. */}
       <span className="row-mid">
         <span className="subj">{subject}</span>
-        {badges.length ? <span className="badges">{badges}</span> : null}
+        {keep.length || tail.length ? (
+          <span className="badges">
+            {keep}
+            {tail.length ? <span className="bdg-tail">{tail}</span> : null}
+          </span>
+        ) : null}
         {amount ? <span className="amt num">{amount}</span> : null}
       </span>
       {preview ? <span className="prev" style={{ display: "block" }}>{preview}</span> : null}
