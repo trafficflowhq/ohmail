@@ -11,6 +11,7 @@
  */
 import type { ComposeAttachment, EmailAddress, EngineMutation } from "@ohmail/client-engine";
 import type { SignatureState } from "./signature";
+import { readOwner } from "./owner-cookie";
 
 /** The compose form, verbatim as typed. `to` is TEXT; `plan()` is what turns it into addresses. */
 export interface ComposeFields {
@@ -132,8 +133,29 @@ export interface ComposePrefill {
   body: string;
 }
 
-/** `localStorage` key for the compose scratch buffer — one, because there is one compose. */
-export const COMPOSE_DRAFT_KEY = "ohmail.ui.compose";
+/**
+ * `localStorage` key for the compose scratch buffer — one per ACCOUNT, not one per browser.
+ *
+ * It used to be the bare constant below, and "one, because there is one compose" was true about
+ * the SURFACE and wrong about the STORAGE. `localStorage` is per-origin, not per-session, and
+ * nothing cleared this key on sign-out: `clearBootCaches()` removes the `ohmail.boot.` prefix
+ * only and `clearAllMirrors()` is IndexedDB. So an unfinished message — recipients, subject,
+ * body — written by one account survived into the next account to sign in on the same browser,
+ * where the composer restored it and autosave could persist it as THEIR server draft.
+ *
+ * The owner suffix is the same shape `searchSortKey` already uses, for the same reason and with
+ * the same `"local"` fallback: a device with no account (the standalone desktop, and any moment
+ * before sign-in) is a real situation rather than a missing value.
+ *
+ * The legacy key is drained rather than read. Reading it once "to migrate" is exactly the leak
+ * — the migrating reader has no way to know whose draft it is.
+ */
+export function composeDraftKey(owner: string | null = readOwner()): string {
+  return `ohmail.ui.compose.${owner ?? "local"}`;
+}
+
+/** The un-owned key this browser may still hold. Removed on clear, never read. */
+export const LEGACY_COMPOSE_DRAFT_KEY = "ohmail.ui.compose";
 
 /**
  * The scratch buffer, and what it is NOT.
@@ -151,7 +173,7 @@ export const COMPOSE_DRAFT_KEY = "ohmail.ui.compose";
  */
 export function readComposeDraft(): ComposeFields {
   try {
-    const raw = window.localStorage.getItem(COMPOSE_DRAFT_KEY);
+    const raw = window.localStorage.getItem(composeDraftKey());
     if (!raw) return EMPTY_COMPOSE;
     const parsed = JSON.parse(raw) as Partial<ComposeFields>;
     return {
@@ -212,14 +234,14 @@ export function writeComposeDraft(f: ComposeFields): void {
      * which is why it is the field that decides. Same rule as `isRichEmpty`.
      */
     if (f.to === "" && f.cc === "" && f.bcc === "" && f.subject === "" && f.body === "") {
-      window.localStorage.removeItem(COMPOSE_DRAFT_KEY);
+      window.localStorage.removeItem(composeDraftKey());
       return;
     }
     // STRIP THE ATTACHMENTS' BYTES. They are held in memory only (see `ComposeFields.attachments`):
     // a photo's worth of base64 would blow a storage quota, and a restored buffer must not claim a
     // paperclip pointing at bytes it no longer holds. Everything textual is persisted as before.
     const { attachments: _drop, ...persisted } = f;
-    window.localStorage.setItem(COMPOSE_DRAFT_KEY, JSON.stringify(persisted));
+    window.localStorage.setItem(composeDraftKey(), JSON.stringify(persisted));
   } catch {
     /* private mode refuses writes; the draft lives in React state only */
   }
@@ -227,7 +249,10 @@ export function writeComposeDraft(f: ComposeFields): void {
 
 export function clearComposeDraft(): void {
   try {
-    window.localStorage.removeItem(COMPOSE_DRAFT_KEY);
+    window.localStorage.removeItem(composeDraftKey());
+    // AND the un-owned key a browser upgraded from an earlier bundle may still hold. This is
+    // the only line that touches it: it is drained on the next clear and never read back.
+    window.localStorage.removeItem(LEGACY_COMPOSE_DRAFT_KEY);
   } catch {
     /* nothing was stored, so there is nothing to remove */
   }
