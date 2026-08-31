@@ -82,7 +82,21 @@ jobs:
     timeout-minutes: 20
 
     steps:
+      # CHECK OUT THE TAG BEING RELEASED, NOT THE REF THIS RUN WAS LAUNCHED ON.
+      #
+      # The version written into latest.json is read out of the CHECKED-OUT
+      # tauri.conf.json, while the binaries are downloaded from RELEASE_TAG. A bare
+      # checkout takes the launching ref, so the two agree only by luck: on a
+      # release event the target commitish is usually the tag, but a
+      # workflow_dispatch recovery against an older tag checks out the default
+      # branch and labels that tag's binaries with the CURRENT version. Clients
+      # would then be offered an update whose payload is the build they already
+      # have — an install loop, and a feed that says a fix is available when it is
+      # not. Pinning the ref makes the artifacts and the version come from one
+      # commit; the assertion below refuses the run if they still disagree.
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
 
       - uses: actions/setup-node@v7
         with:
@@ -115,6 +129,14 @@ jobs:
           # cannot drift from the binaries.
           VERSION="$(node -e 'process.stdout.write(require("./apps/desktop/src-tauri/tauri.conf.json").version)')"
           test -n "$VERSION" || { echo "could not read the version from tauri.conf.json" >&2; exit 1; }
+
+          # The tag names the binaries; the tree names the version. They are the same
+          # release or this run must not write a feed — see the checkout note above.
+          if [ "$RELEASE_TAG" != "v$VERSION" ]; then
+            echo "tag $RELEASE_TAG does not name version $VERSION (expected v$VERSION)." >&2
+            echo "The feed would label this tag's binaries with another release's version." >&2
+            exit 1
+          fi
           echo "release $RELEASE_TAG · version $VERSION"
 
           PUB_DATE_ISO="${RELEASE_PUBLISHED_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
