@@ -27,6 +27,17 @@ import { useTheme } from "@ohmail/ui";
  * Hydration: the provider resolves "paper" until it has adopted storage post-mount, so
  * the pressed state and the wink wait for `mounted` — same move as the Nav's theme icon.
  * The page's LOOK never flashes: the marketing boot script stamped `data-face` pre-paint.
+ *
+ * ── THE CONTROL IS THE PREVIEW (owner review, 2026-08-31) ──────────────────────────────
+ * With the hero split parked, this toggle carries the two-faces story alone, so it
+ * demonstrates rather than names: the LEFT half is drawn in the paper idiom (the paper
+ * stack's type, a soft pill edge, light falloff) and the RIGHT half in the ohmarchy idiom
+ * (mono, radius 0, a drawn ring) — whichever face the SITE currently wears. That is why
+ * the halves' styles are literal values and not tokens: tokens flip with `data-face`, and
+ * a preview that flipped with the thing it previews would show two copies of one face.
+ * The active side reads active in its own idiom — paper by lift, ohmarchy by the 2px
+ * accent ring the app's tiling face uses (`--lift-3` there). See `.l-face-tab` in
+ * landing.css.
  */
 export function FaceToggle() {
   const t = useTranslations("face");
@@ -71,7 +82,7 @@ export function FaceToggle() {
       <div className="l-face-tabs" role="group" aria-label={t("label")}>
         <button
           type="button"
-          className="l-face-tab"
+          className="l-face-tab is-paper"
           aria-pressed={active === "paper"}
           onClick={() => setFace("paper")}
         >
@@ -79,7 +90,7 @@ export function FaceToggle() {
         </button>
         <button
           type="button"
-          className="l-face-tab"
+          className="l-face-tab is-oh"
           aria-pressed={active === "ohmarchy"}
           onClick={() => setFace("ohmarchy")}
         >

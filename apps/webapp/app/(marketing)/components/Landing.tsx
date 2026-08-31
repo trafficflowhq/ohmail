@@ -13,7 +13,6 @@ import { DataOwnership } from "./DataOwnership";
 import { FolderShowcase } from "./FolderShowcase";
 import { LeaveAnytime } from "./LeaveAnytime";
 import { Providers } from "./Providers";
-import { Trial } from "./Trial";
 import { Pricing } from "./Pricing";
 import { Downloads } from "./Downloads";
 import { Faq } from "./Faq";
@@ -45,9 +44,9 @@ import { Footer } from "./Footer";
  *     (OHMARCHY-PLAN.md §5). It flips the WHOLE site — tokens, chrome, demo skin and
  *     screenshot set — while this composition stays identical in both faces: the one-UI
  *     law applies to the landing too, so the toggle changes presentation, never story.
- *  1. Hero — only consent-first mail in your Ohbox (the promise); HeroSplit — the same
- *     screen in both faces under one diagonal divider (the first visual, §5) — then the
- *     live demo as the promise's proof.
+ *  1. Hero — only consent-first mail in your Ohbox (the promise) — then the live demo as
+ *     the promise's proof AND the page's first visual. HeroSplit (the same screen in both
+ *     faces under one diagonal divider, §5) is PARKED, not deleted — see SHOW_HERO_SPLIT.
  *  2. Views — Ohbox / Reads / Receipts, the three-view model the promise lands in.
  *  3. Screener + AI — the mechanism: who gets in, and the gated help deciding.
  *  4. Providers — all your mailboxes: Gmail, Microsoft, iCloud, any IMAP.
@@ -63,6 +62,17 @@ import { Footer } from "./Footer";
  * The feat-shaped sections sit in `.l-features` blocks (the shared grid rhythm); the
  * wide sections stand between them. A story-order guard holds this sequence.
  */
+
+/**
+ * The hero split is HIDDEN, not deleted (owner review, 2026-08-31): with the split gone the
+ * live demo is the first thing under the headline, and the face story the split told is
+ * carried by the toggle itself — its two halves are rendered in the two faces' own idioms
+ * (see FaceToggle). The component, its gesture tests (`landing-faces.test.tsx`), its four
+ * captures and the pipeline that regenerates them all stay live, so flipping this back on
+ * is one word — which is the point of a gate over a deletion.
+ */
+const SHOW_HERO_SPLIT = false;
+
 export function Landing({ publicSignup }: { publicSignup: boolean }) {
   return (
     <>
@@ -70,7 +80,7 @@ export function Landing({ publicSignup }: { publicSignup: boolean }) {
       <main id="main">
         <FaceToggle />
         <Hero />
-        <HeroSplit />
+        {SHOW_HERO_SPLIT ? <HeroSplit /> : null}
         <DemoSection />
         <div className="l-features" id="product">
           <Views />
@@ -97,8 +107,11 @@ export function Landing({ publicSignup }: { publicSignup: boolean }) {
         {/* the four ways to run ohmail — self-run first, managed as the convenience;
             everything below this is the detail of the choices it lays out */}
         <GetOhmail />
-        {/* the trial stands before the price, not after it */}
-        <Trial />
+        {/* The trial band ("Fourteen days, free. No card.") is REMOVED from the flow (owner
+            review, 2026-08-31): the trial's terms live on the pricing section's managed panel
+            — `pricing.trialNote` under the tiers, `trialBadge` on each — and nowhere else at
+            section scale. The component and its catalogue keys stay for the pins that read
+            them (`trial-credits.test.ts`, landing-mailbox-truth §11). */}
         <Pricing publicSignup={publicSignup} />
         {/* the download follows the price: the free tier is the one you can act on
             immediately, and this is where acting on it happens */}

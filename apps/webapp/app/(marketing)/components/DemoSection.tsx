@@ -62,8 +62,12 @@ const useIsoLayoutEffect = typeof window === "undefined" ? useEffect : useLayout
    points at the right neighbourhood rather than at nothing.
 
    Sides are chosen by where the target lives: the two rail entries are
-   reachable from the left gutter in ~40px of leader, the two reading-pane
-   chips from the right in ~60px. Nothing has to cross the app.
+   reachable from the left gutter in ~40px of leader. The two right-side
+   cards (owner review 2026-08-31) point at the LIST's group labels — the
+   Ohbox model itself, "New" on top and "Earlier" under it — so their
+   leaders cross the reading pane as calm hairlines and land on the label
+   each claim is about; that length is the price of pointing at the true
+   anchor rather than at a nearer decoration.
 
    The whole layer — cards, leaders and rings together — retires on the
    visitor's first real interaction with the demo (see onFrameLoad). The
@@ -85,19 +89,21 @@ const ANNOS: Anno[] = [
   {
     id: "ohbox",
     side: "left",
-    // The rail entries carry `data-rail-id` (RailNav); the two reading-pane chips carry
-    // `data-chip` (the Chip primitive). Both are stable hooks on the SHIPPED UI, so the
+    // The rail entries carry `data-rail-id` (RailNav); the list's group labels carry
+    // `data-group` (ListGroupLabel). Both are stable hooks on the SHIPPED UI, so the
     // leaders anchor to the real elements rather than to a guessed spot.
     //
     // THE FOUR CARDS ARE THE PRODUCT'S FOUR CLAIMS, anchored to the part of the app each
     // is about: the Ohbox (only mail you said yes to — the hero's own lead, repeated
     // verbatim), the
     // Screener (one press decides; spam to the provider's native Junk, the sender rule
-    // remembers, the unsubscribe goes out where the list offers one click), the rationale
-    // chip (every mail says why, and that rule is stored IN the mailbox as open JSON — the
-    // leave-anytime half), and the tracker chip (nothing on faith: open source, a real
-    // desktop client, the blocked pixel as the visible proof). Each sentence is judged
-    // against the code by `landing-mailbox-truth.test.ts`.
+    // remembers, the unsubscribe goes out where the list offers one click), and the two
+    // group labels the Ohbox model stands on (owner review 2026-08-31 — the right-side
+    // pair must point at what the demo VISIBLY does): unread mail waits in one group at
+    // the top, and everything read files itself under "Earlier". Each sentence is judged
+    // against the code by `landing-mailbox-truth.test.ts` — the group claims against
+    // `client-engine/selectors.ts#ohboxView`, whose `newForYou`/`previouslySeen` split is
+    // exactly what the two labels render.
     sel: '.rail [data-rail-id="ohbox"]',
     fallback: [0.13, 0.2],
     title: "calloutOhboxTitle",
@@ -112,20 +118,20 @@ const ANNOS: Anno[] = [
     body: "calloutScreener",
   },
   {
-    id: "why",
+    id: "unread",
     side: "right",
-    sel: '.chip[data-chip="rationale"]',
-    fallback: [0.83, 0.32],
-    title: "calloutWhyTitle",
-    body: "calloutWhy",
+    sel: '.grouplabel[data-group="new"]',
+    fallback: [0.3, 0.18],
+    title: "calloutUnreadTitle",
+    body: "calloutUnread",
   },
   {
-    id: "tracker",
+    id: "earlier",
     side: "right",
-    sel: '.chip[data-chip="tracker"]',
-    fallback: [0.82, 0.41],
-    title: "calloutTrackerTitle",
-    body: "calloutTracker",
+    sel: '.grouplabel[data-group="earlier"]',
+    fallback: [0.3, 0.52],
+    title: "calloutEarlierTitle",
+    body: "calloutEarlier",
   },
 ];
 

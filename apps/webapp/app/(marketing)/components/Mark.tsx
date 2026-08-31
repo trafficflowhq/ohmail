@@ -5,9 +5,10 @@ import type { CSSProperties, ReactNode } from "react";
 /* ── the marker ───────────────────────────────────────────────────────
    The page's one typographic device: a terracotta band swept under a
    load-bearing phrase. It appears exactly twice — on the hero's promise
-   and on the trial offer — which is what keeps it a brand mark rather
-   than decoration. The material and the sweep live in landing.css under
-   `.l-mk`; this file is only the element and the tag map.
+   and on the self-hosted card's path line (it was the trial band's until
+   that section left the flow, 2026-08-31) — which is what keeps it a
+   brand mark rather than decoration. The material and the sweep live in
+   landing.css under `.l-mk`; this file is only the element and the tag map.
 
    <mark>, not <span>: the phrase keeps its "marked text" semantics and
    the sentence around it stays ONE sentence to a screen reader. Nothing

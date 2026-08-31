@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { Reveal } from "./Reveal";
+import { markTags } from "./Mark";
 import { useSignup, type SignupTier } from "./Signup";
 import { SELF_HOST_GUIDE_URL } from "./GetOhmail";
 
@@ -107,6 +108,13 @@ export function Pricing({ publicSignup = false }: { publicSignup?: boolean }) {
             <b className="num">{t("selfPrice")}</b>
             <span>{t("selfTerm")}</span>
           </p>
+          {/* THE PATH LINE (owner review 2026-08-31): what picking this card GETS you, where
+              "Free" invites the comparison to the desktop card beside it — ohmail from
+              everywhere as a web app, and the always-on organizer a desktop doesn't have to
+              stay awake to be. Marked with the page's one emphasis device so it lands at a
+              glance; `pricing-structure.test.ts` names it and holds the always-on/awake
+              contrast to the card that carries the awake qualifier. */}
+          <p className="l-price-why">{t.rich("selfWhy", markTags())}</p>
           <p className="l-price-claim">{t("selfClaim")}</p>
           {/* the terms first, then the three ways in — the last of which is the desktop
               card beside this one, so the two free cards read as one fact */}
