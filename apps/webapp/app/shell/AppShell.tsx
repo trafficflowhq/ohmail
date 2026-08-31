@@ -4804,13 +4804,26 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
    * not take the only visible copy of a message away. So the clear fires exactly when this
    * cycle turns a hidden column into a standing one; every other direction is left as a
    * window resize across the breakpoint leaves it.
+   *
+   * BOTH ANSWERS AT THE CURRENT WIDTH (review finding, round 3). What is remembered across
+   * cycles is the previous LAYOUT, never its answer: this effect only re-runs when the
+   * layout changes, so a remembered boolean describes the viewport as it was at the last
+   * cycle, and any resize since makes it a lie. The measured hole: mount classic at 1280
+   * (column standing → `false` remembered), resize to 800 where classic hides the column
+   * and a reader sheet legitimately opens, then press `w` — Zero at 800 stands both tiles,
+   * so the new answer is "standing", but the stale `false` reads the cycle as standing→
+   * standing and skips the clear, leaving the sheet fixed over the very column it
+   * duplicates. Asking `readColumnHiddenFor` for BOTH layouts here evaluates both against
+   * the width the visitor is actually at (the function matches its media query at call
+   * time), which makes the comparison a question about the layouts alone and removes the
+   * time dependency that produced the bug.
    */
-  const prevCycleNarrow = useRef<boolean | null>(null);
+  const prevCycleLayout = useRef<"classic" | "zero" | null>(null);
   useEffect(() => {
-    const narrowNow = readColumnHiddenFor(theme.layout);
-    const was = prevCycleNarrow.current;
-    prevCycleNarrow.current = narrowNow;
-    if (was === true && !narrowNow) {
+    const before = prevCycleLayout.current;
+    prevCycleLayout.current = theme.layout;
+    if (before === null || before === theme.layout) return;
+    if (readColumnHiddenFor(before) && !readColumnHiddenFor(theme.layout)) {
       setReaderFor(null);
       setScreenerFull(false);
     }
