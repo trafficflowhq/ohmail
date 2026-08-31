@@ -169,10 +169,16 @@ const THEME_BOOT =
      boundary with no escape character in it. */
   /* ONE-SHOT (review-caught): the fragment is consumed — pin written, hash stripped —
      or a reload would replay the link's choice OVER a newer one the visitor made with
-     the toggle, breaking "an explicit prior choice always wins". */
+     the toggle, breaking "an explicit prior choice always wins".
+     CONSUMED ONLY IF IT WAS KEPT (review round 2): when the jar is blocked or full the
+     setItem throws, and stripping the hash anyway destroys the only remaining record of
+     the visitor's choice — the next paint resolves from the account or detection and the
+     link can no longer be retried or shared onward. So the strip is gated on the write
+     having succeeded; a blocked jar keeps the fragment, and the face it asked for still
+     applies to THIS pageview through `f` below. */
   `var m=/[#&]face=(paper|ohmarchy)(?![a-z])/.exec(location.hash||"");var f=m?m[1]:null;` +
-  `if(f){try{localStorage.setItem("ohmail.face",f)}catch(e){}` +
-  `try{history.replaceState(null,"",location.pathname+location.search)}catch(e){}}` +
+  `if(f){var kept=0;try{localStorage.setItem("ohmail.face",f);kept=1}catch(e){}` +
+  `if(kept)try{history.replaceState(null,"",location.pathname+location.search)}catch(e){}}` +
   `if(f!=="paper"&&f!=="ohmarchy"){try{f=localStorage.getItem("ohmail.face")}catch(e){}}` +
   `if(f!=="paper"&&f!=="ohmarchy"){try{f=localStorage.getItem("ohmail.face.account")}catch(e){}}` +
   `if(f!=="paper"&&f!=="ohmarchy")f=(/Linux/.test(navigator.platform||"")&&!/Android|CrOS/.test(navigator.userAgent||""))?"ohmarchy":"paper";` +

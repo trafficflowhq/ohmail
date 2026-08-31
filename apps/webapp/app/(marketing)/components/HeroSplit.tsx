@@ -29,6 +29,24 @@ const CUT_DEFAULT = 56;
 const CUT_MIN = 12;
 const CUT_MAX = 88;
 
+/**
+ * How far a TOUCH has to travel before the gesture has declared itself (CSS px).
+ *
+ * `touch-action: pan-y` hands vertical panning to the browser, but the browser only
+ * decides a gesture IS a pan after the first few moves — `pointerdown` has already
+ * fired by then, and `pointercancel` arrives later still. So placing the cut on
+ * pointerdown moved the divider under a finger that was only ever scrolling past a
+ * figure which spans nearly the whole viewport at 390px — the narrowest width this
+ * site is built to stay usable at, and the one where the trap is worst.
+ *
+ * Nothing moves on a touch press now. A horizontal run past this distance starts the
+ * drag; a tap that never travels this far still places the cut on release, so the
+ * press-to-place affordance is kept rather than traded away; a vertical pan resolves to
+ * neither and the divider stays where it was. Mouse and pen keep the immediate
+ * press-to-place — neither of them can steal a scroll.
+ */
+const TOUCH_INTENT_PX = 8;
+
 const clamp = (v: number) => Math.min(CUT_MAX, Math.max(CUT_MIN, v));
 
 export function HeroSplit() {
@@ -36,6 +54,10 @@ export function HeroSplit() {
   const [cut, setCut] = useState(CUT_DEFAULT);
   const boxRef = useRef<HTMLDivElement>(null);
   const dragging = useRef(false);
+  /** A touch press whose gesture is not yet decided — see TOUCH_INTENT_PX. */
+  const pending = useRef<{ id: number; x: number; y: number; resolved: "drag" | "pan" | null } | null>(
+    null,
+  );
 
   const cutFromPointer = useCallback((clientX: number) => {
     const box = boxRef.current;
@@ -45,25 +67,65 @@ export function HeroSplit() {
     setCut(clamp(((clientX - r.left) / r.width) * 100));
   }, []);
 
-  /* Pointer capture on the figure itself: the first press places the cut, the drag
+  const beginDrag = useCallback(
+    (pointerId: number, clientX: number) => {
+      dragging.current = true;
+      boxRef.current?.setPointerCapture(pointerId);
+      cutFromPointer(clientX);
+    },
+    [cutFromPointer],
+  );
+
+  /* Pointer capture on the figure itself: a mouse/pen press places the cut and the drag
      rides it. Capture goes to the box so a fast drag that leaves the handle keeps
-     working, and release anywhere ends it. */
+     working, and release anywhere ends it. A TOUCH press only arms the gesture. */
   const onPointerDown = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
       if (e.button !== 0) return;
-      dragging.current = true;
-      boxRef.current?.setPointerCapture(e.pointerId);
-      cutFromPointer(e.clientX);
+      if (e.pointerType === "touch") {
+        pending.current = { id: e.pointerId, x: e.clientX, y: e.clientY, resolved: null };
+        return;
+      }
+      beginDrag(e.pointerId, e.clientX);
     },
-    [cutFromPointer],
+    [beginDrag],
   );
   const onPointerMove = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
-      if (dragging.current) cutFromPointer(e.clientX);
+      if (dragging.current) {
+        cutFromPointer(e.clientX);
+        return;
+      }
+      const p = pending.current;
+      if (!p || p.id !== e.pointerId || p.resolved !== null) return;
+      const dx = e.clientX - p.x;
+      const dy = e.clientY - p.y;
+      if (Math.abs(dx) >= TOUCH_INTENT_PX && Math.abs(dx) > Math.abs(dy)) {
+        p.resolved = "drag";
+        beginDrag(e.pointerId, e.clientX);
+      } else if (Math.abs(dy) >= TOUCH_INTENT_PX) {
+        /* the browser's scroll, not our drag — and never reconsidered for this press */
+        p.resolved = "pan";
+      }
+    },
+    [beginDrag, cutFromPointer],
+  );
+  const onPointerUp = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      const p = pending.current;
+      pending.current = null;
+      /* a touch that pressed and released without travelling is a TAP: place the cut,
+         decided on release because that is the first moment it is known to be one */
+      if (!dragging.current && p && p.id === e.pointerId && p.resolved === null) {
+        cutFromPointer(e.clientX);
+      }
+      dragging.current = false;
     },
     [cutFromPointer],
   );
-  const onPointerUp = useCallback(() => {
+  /* a cancelled gesture is not a tap — the browser took it (a pan, a system edge swipe) */
+  const onPointerCancel = useCallback(() => {
+    pending.current = null;
     dragging.current = false;
   }, []);
 
@@ -92,7 +154,7 @@ export function HeroSplit() {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
+        onPointerCancel={onPointerCancel}
       >
         {/* the paper ground — full frame, scheme-swapped */}
         <img
