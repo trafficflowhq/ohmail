@@ -46,6 +46,7 @@ export * from "./schema-cloud.js";
 export { schema } from "./schema.js";
 export {
   makeDb, closeDb, makeOwnedDb, makePooledDb, closePooledDbs, WORKER_TIMEOUTS, WORKER_POOL_MAX,
+  POOLED_TIMEOUTS, API_MAX_DURATION_MS,
   type OwnedDb,
 } from "./client.js";
 
