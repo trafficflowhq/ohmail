@@ -104,9 +104,24 @@ function statusFailure(status: number): ProbeFailure {
  *
  * So it catches the realistic mistake — somebody picking an embedding model out of the picker —
  * and lets an unrecognised name through to be judged by the endpoint itself.
+ *
+ * ── TWO SHAPES, BECAUSE A PREFIX ALONE IS NOT ENOUGH ────────────────────────────────────────
+ *
+ * Some of these families announce themselves at the START of the id (`text-embedding-3-small`,
+ * `dall-e-3`). Others are `gpt-`-prefixed and only reveal themselves at the END — `gpt-4o-transcribe`,
+ * `gpt-4o-mini-tts`, `gpt-4o-realtime-preview` — so a prefix-only rule let exactly the ids most
+ * likely to be confused with a chat model straight through. `computer-use-preview` is neither.
+ *
+ * `gpt-4o-audio-preview` is deliberately NOT here: it does serve chat completions.
  */
-export const NOT_CHAT_MODELS =
-  /^(?:text-)?(?:embedding|moderation|omni-moderation|whisper|tts|dall-e|gpt-image|sora|davinci|babbage)\b/i;
+export const NOT_CHAT_MODELS = new RegExp([
+  // Families named at the front of the id.
+  "^(?:text-)?(?:embedding|moderation|omni-moderation|whisper|tts|dall-e|gpt-image|sora|davinci|babbage)\\b",
+  // …and the endpoint-only capabilities named at the back of an otherwise chat-looking id.
+  "(?:-transcribe|-tts|-realtime(?:-preview)?)(?:-[0-9-]+)?$",
+  // Its own endpoint entirely.
+  "^computer-use\\b",
+].join("|"), "i");
 
 /**
  * The JSON text a chat completion carries.

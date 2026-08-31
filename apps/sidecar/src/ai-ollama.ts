@@ -136,23 +136,35 @@ export function ollamaTransport(opts: OllamaTransportOptions): AiTransport {
       throw new Error(`${what}: the local model server returned no message content`);
     }
     /**
-     * A TRUNCATED ANSWER IS NAMED, not left to fail as malformed JSON.
+     * PARSE FIRST — hitting the ceiling is not the same as failing.
      *
-     * Hitting the ceiling leaves the content cut mid-string, so `JSON.parse` below would throw and
-     * report "not valid JSON" — true, and the wrong diagnosis. It sends somebody looking for a
-     * broken model server when what actually happened is that their model would not stop talking,
-     * which is a different problem with a different fix (use a larger model). The distinction is
-     * only visible here, where `done_reason` is still in hand.
+     * `done_reason: "length"` means the model was still going when the budget ran out, and the
+     * intuitive reading of that ("the answer is truncated, refuse it") is wrong often enough to
+     * matter: when the last allowed token happens to close the object, the content is complete and
+     * schema-valid, and the model simply had not emitted its stop token yet. Refusing that would
+     * throw away a perfectly good verdict — and it would do it MORE often on the small models this
+     * provider exists for, where the budget is likeliest to be reached.
+     *
+     * So the ceiling is only ever a DIAGNOSIS for content that does not parse, never a verdict on
+     * content that does.
      */
-    if (body.done_reason === "length") {
-      throw new Error(
-        `${what}: the model did not finish within ${maxTokens} tokens — it is probably too small `
-        + `for this task, or repeating itself`,
-      );
-    }
     try {
       return JSON.parse(text) as unknown;
     } catch {
+      /**
+       * It did not parse — and now `done_reason` says WHICH failure this is.
+       *
+       * Both end in unusable content, and they need different fixes: a model that ran out of room
+       * wants a larger model, and a model that emitted nonsense wants investigating. Without this
+       * branch both surface as "not valid JSON", which is true and sends somebody to debug a model
+       * server that is working exactly as configured.
+       */
+      if (body.done_reason === "length") {
+        throw new Error(
+          `${what}: the model did not finish within ${maxTokens} tokens — it is probably too small `
+          + `for this task, or repeating itself`,
+        );
+      }
       throw new Error(`${what}: the model's response was not valid JSON`);
     }
   };

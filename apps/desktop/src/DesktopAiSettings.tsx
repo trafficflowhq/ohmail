@@ -306,8 +306,17 @@ export function DesktopAiSettings({
              *
              * So the field is cleared here, where the framing changes. A key is only ever submitted
              * for the vendor whose block was on screen when it was typed.
+             *
+             * ── ONLY ON AN ACTUAL CHANGE, WHICH IS NOT THE SAME AS ON EVERY CLICK ──────────────
+             *
+             * `SegmentedControl` fires `onChange` for any press, including the segment already
+             * selected. Clearing unconditionally therefore emptied the field when somebody pasted a
+             * key and then re-pressed the vendor they were already on — a natural thing to do, and
+             * it silently dropped the key, after which Save omitted it and kept whatever was stored.
+             * A guard that discards a credential nobody asked it to discard is its own defect.
              */
             onChange={(choice) => {
+              if (choice === draft.choice) return;
               setDraft({ ...draft, choice });
               setApiKey("");
             }}

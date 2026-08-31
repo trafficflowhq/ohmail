@@ -403,6 +403,44 @@ describe("the AI settings pane never sends a key to the vendor it was not typed 
       .toBeTruthy();
   });
 
+  /**
+   * CLEARING ON A VENDOR CHANGE MUST NOT MEAN CLEARING ON EVERY CLICK.
+   *
+   * `SegmentedControl` fires `onChange` for any press, the already-selected segment included. The
+   * first version of the guard above cleared unconditionally, so pasting a key and then re-pressing
+   * the vendor you were already on silently emptied the field — after which Save omitted the key
+   * and kept whatever was stored. A guard that discards a credential nobody asked it to discard is
+   * its own defect, so both halves are pinned: cleared across a change, kept across a re-press.
+   */
+  it("keeps a typed key when the already-selected vendor is pressed again", async () => {
+    const key = "this-is-not-a-real-api-key-0000";
+    const { el, asked } = await paneWith(UNSET);
+
+    const toAnthropic = segmentSaying(el, /Anthropic/);
+    await act(async () => { toAnthropic?.click(); });
+    const keyField = el.querySelector("#ai-key") as HTMLInputElement;
+    expect(keyField).toBeTruthy();
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(keyField, key);
+      keyField.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    // Press the SAME vendor again — a natural thing to do, and not a change of mind.
+    await act(async () => { segmentSaying(el, /Anthropic/)?.click(); });
+
+    asked.length = 0;
+    await act(async () => { buttonSaying(el, /^Save/)?.click(); });
+    for (let i = 0; i < 20; i++) await act(async () => { await new Promise((r) => setTimeout(r, 2)); });
+
+    const puts = asked.filter((a) => a.command === "engine_request" && a.method === "PUT");
+    expect(puts.length).toBeGreaterThan(0);
+    expect(
+      puts.some((p) => p.body.includes(key)),
+      "re-pressing the selected vendor silently dropped the key that was typed",
+    ).toBe(true);
+  });
+
   it("still offers Remove for a stored Anthropic key, and none when nothing is stored", async () => {
     const anthropicOnly: LocalAiStatus = {
       ...UNSET,
