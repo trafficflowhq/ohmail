@@ -6,6 +6,9 @@ import { IdempotencyRaceLost, ServiceError } from "./errors.js";
 import { materializeDraft } from "./dto/materialize.js";
 import type { DraftDTO } from "./dto/types.js";
 import { DRAFT_HTML_CAP_BYTES, htmlByteLength, prepareOutboundBody } from "./outbound-html.js";
+// The per-MESSAGE ceiling, imported rather than restated: two ceilings on one list that can
+// disagree is how the reply-all regression happened. See {@link DRAFT_MAX_RECIPIENTS}.
+import { SEND_MAX_RECIPIENTS } from "./send-service.js";
 
 /**
  * For `create`: claim the idempotency row INSIDE the transaction that writes the draft.
@@ -30,6 +33,109 @@ export interface DraftCreateIdempotency {
 }
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+
+/**
+ * HOW MANY ADDRESSES ONE RECIPIENT FIELD MAY NAME (`to`, `cc`, `bcc` each).
+ *
+ * ── THIS BOUNDS A STORED COLUMN. IT IS NOT THE SEND'S BOUND ──────────────────────────────
+ *
+ * Each of the three fields is a `jsonb` column written by an autosaving compose surface, and
+ * before this they were unbounded: `validAddresses` checked every entry's SHAPE and never its
+ * count. What this number says is that a single request naming more than 100 addresses in one
+ * field is not a compose gesture, and that is all it says.
+ *
+ * **The per-MESSAGE ceiling is `SEND_MAX_RECIPIENTS` (500), enforced in `SendService.reserve`**,
+ * because that is where the count stops being a column and becomes one `RCPT TO` command per
+ * address on a held SMTP socket. The two bounds are separate because they are about two different
+ * costs, and deriving this one from a per-message provider limit would be a rationale that does
+ * not match its enforcement: three fields at 100 is 300, which Outlook and iCloud deliver and
+ * Gmail does not — a per-field cap cannot express a per-message policy, so it does not try to.
+ *
+ * ── IT IS `SEND_MAX_RECIPIENTS`, AND THAT IS A CORRECTION ────────────────────────────────
+ *
+ * This was 100 per field, on the reading that 100 is *"far above what a person types into a
+ * field"*. A person, yes — but a person is not the only producer. **Reply All copies the
+ * received audience into `to` and `cc`** (`apps/webapp/app/shell/compose-from.ts`), and a message
+ * may legally arrive with more than 100 addresses in `To:` while still being under the 500 this
+ * product will SEND. So the tighter ceiling refused a draft the product itself had just composed,
+ * from a message it had just accepted — the fourth time in this slice a bound was written from a
+ * comment about human behaviour rather than from the code producing the value, and the one that
+ * reached furthest into the product before a review round caught it.
+ *
+ * Two ceilings on the same list must not disagree, so there is one number: a draft may hold what
+ * a send may carry. The per-field check stays per field because this function sees one field —
+ * a total computed here would have to guess at the two fields a partial update does not carry —
+ * and `SendService.reserve` still totals all three where they become RCPT TO commands. A field
+ * at the ceiling therefore passes here and the message may still be refused there, which is the
+ * honest order: the draft is storage, the send is the network.
+ */
+export const DRAFT_MAX_RECIPIENTS = SEND_MAX_RECIPIENTS;
+
+/**
+ * The longest ADDRESS one recipient entry may carry.
+ *
+ * **254, not 320, and the difference is the citation being read properly.** RFC 5321 §4.5.3.1
+ * gives 64 octets for the local part and 255 for the domain, which is where 320 comes from — but
+ * the same section caps the complete FORWARD PATH at 256 octets *including* the angle brackets,
+ * so a usable mailbox is at most 254 and the two component maxima cannot both be met. Anything
+ * longer is not an address a transport will deliver, so refusing it here is telling the truth
+ * earlier.
+ *
+ * Measured in UTF-16 code units (what `.length` returns) rather than octets, and for a non-ASCII
+ * SMTPUTF8 address that is LOOSER, not stricter: 200 two-byte characters are 200 to `.length` and
+ * about 400 octets, so such an address passes a guard the RFC would refuse. The direction is
+ * deliberate — being generous here costs a stored column and a bounce the transport was going to
+ * send anyway, while being strict on a count that is not the RFC's would refuse addresses on the
+ * wrong arithmetic. A proper octet validator belongs with address parsing, not with a bound whose
+ * job is to stop the unbounded case.
+ */
+export const RECIPIENT_ADDRESS_MAX_CHARS = 254;
+
+/**
+ * The longest SUBJECT a draft may carry — a PRODUCT ceiling, not an RFC one.
+ *
+ * ── WHY IT IS NOT 998 ────────────────────────────────────────────────────────────────────
+ *
+ * It was, on the reading that RFC 5322 §2.1.1 makes 998 octets the maximum length of a header
+ * line and a subject is one header. That is a LINE limit: a long subject is legally FOLDED
+ * across several lines, Nodemailer folds on the way out, and a received message may carry one
+ * far longer than 998. `replySubject` inherits a received subject verbatim, so the 998 version
+ * refused the first autosave of a reply to real mail — a bound that breaks replying to a message
+ * this product already accepted.
+ *
+ * 8 192 characters instead. Ours, deliberately generous, and its job is only to make the value
+ * BOUNDED: with the html cap, the recipient caps and this one, `POST /drafts` has a worst legal
+ * body that can be calculated, and `input-bounds-census.test.ts` calculates it against the
+ * request door. Before it, `subject` reached a stored column with no ceiling of any kind and the
+ * door's own derivation was fiction.
+ */
+export const DRAFT_SUBJECT_MAX_CHARS = 8192;
+
+/**
+ * The longest DISPLAY NAME one recipient entry may carry.
+ *
+ * The reason it exists at all is that {@link DRAFT_MAX_RECIPIENTS} bounds the COUNT and the
+ * entries were unbounded strings — so the request's SIZE was still the caller's to choose.
+ * Together the two make the recipient half of a draft body a computable maximum, which is what
+ * `input-bounds-census.test.ts` checks against the request door's own ceiling.
+ *
+ * **100, and it was 200 until the count ceiling moved.** Raising {@link DRAFT_MAX_RECIPIENTS}
+ * from 100 to 500 (so Reply All cannot compose a draft this service refuses) multiplied the worst
+ * legal body by five, and the census — which recomputes that product rather than trusting it —
+ * failed with the arithmetic: 5 732 016 bytes against a 3 MiB door. That is the census doing the
+ * job it exists for, on the very first change made after it was written.
+ *
+ * The resolution is the one the fleet's smallest door forces. The managed host is capped by the
+ * platform at 4.5 MB whatever we write, so the worst legal body has to clear THAT, not just our
+ * own number — a door we set above the platform's would certify a compatibility the deployment
+ * does not have. 3 × 500 × (254 + 100) × 6 + 262 144 + 49 152 ≈ 3.34 MB fits under both the
+ * 4 MiB door and the platform's ceiling, with headroom.
+ *
+ * 100 characters is a display NAME — a person's or an organisation's — so the shorter number
+ * refuses nothing anybody sends. The address keeps its RFC-derived 254; that one is not ours to
+ * trade against a body size.
+ */
+export const RECIPIENT_NAME_MAX_CHARS = 100;
 
 export interface CreateDraftBody {
   mailboxId: string;
@@ -104,13 +210,14 @@ export class DraftsService {
     opts: { idempotency?: DraftCreateIdempotency } = {},
   ): Promise<DraftMutation> {
     const mailboxId = await this.validMailbox(ctx, body.mailboxId);
-    const subject = this.validString(body.subject, "subject");
+    const subject = this.validSubject(body.subject);
     const rich = this.richBody(body.html, body.body);
     const text = rich ? rich.text : this.validString(body.body, "body");
     const html = rich ? rich.html : null;
     const to = this.validAddresses(body.to, "to");
     const cc = this.validAddresses(body.cc, "cc");
     const bcc = this.validAddresses(body.bcc, "bcc");
+    this.boundRecipientTotal([to, cc, bcc]);
     const rationale = body.rationale ?? null;
     const now = ctx.now();
 
@@ -180,7 +287,7 @@ export class DraftsService {
     // to `sending` cannot have its identity rewritten between a read and a write here.
     const movesMailbox = patch.mailboxId !== undefined;
     if (movesMailbox) set.mailboxId = await this.validMailbox(ctx, patch.mailboxId);
-    if (patch.subject !== undefined) set.subject = this.validString(patch.subject, "subject");
+    if (patch.subject !== undefined) set.subject = this.validSubject(patch.subject);
     const rich = this.richBody(patch.html, patch.body);
     if (rich) {
       set.html = rich.html;
@@ -198,9 +305,11 @@ export class DraftsService {
         if (patch.html === undefined) await this.refuseIfRich(ctx, id);
       }
     }
-    if (patch.to !== undefined) set.to = this.validAddresses(patch.to, "to");
-    if (patch.cc !== undefined) set.cc = this.validAddresses(patch.cc, "cc");
-    if (patch.bcc !== undefined) set.bcc = this.validAddresses(patch.bcc, "bcc");
+    const patched: EmailAddress[][] = [];
+    if (patch.to !== undefined) { const v = this.validAddresses(patch.to, "to"); set.to = v; patched.push(v); }
+    if (patch.cc !== undefined) { const v = this.validAddresses(patch.cc, "cc"); set.cc = v; patched.push(v); }
+    if (patch.bcc !== undefined) { const v = this.validAddresses(patch.bcc, "bcc"); set.bcc = v; patched.push(v); }
+    this.boundRecipientTotal(patched);
     if (patch.threadId !== undefined) set.threadId = patch.threadId ?? null;
     if (patch.inReplyToMessageId !== undefined) set.inReplyToMessageId = patch.inReplyToMessageId ?? null;
 
@@ -463,12 +572,126 @@ export class DraftsService {
     return v;
   }
 
+  /**
+   * The SUBJECT, type-checked and bounded.
+   *
+   * ── WHY THIS IS ITS OWN VALIDATOR ────────────────────────────────────────────────────────
+   *
+   * The ceiling was briefly added inside {@link validString}, which is shared — and `body` goes
+   * through it too. So a plain-text draft with a 1 000-character body was refused with a message
+   * about a limit that has nothing to do with it, while a RICH draft of the same length was
+   * accepted because `richBody` is a different path. A bound that depends on the format the user
+   * happened to choose is not a bound; it is a bug with a number in it. Caught by a review round
+   * before it shipped, and the lesson is the obvious one: a per-field ceiling belongs in a
+   * per-field validator.
+   *
+   * The plain body's own ceiling is the request door and nothing else. It is stored on one column
+   * and later placed in an `OutboundMessage` the transport sends — a real sink, not a terminal
+   * one, and the input-bounds census records it that way rather than calling the column the end
+   * of the story. The rich body DOES have a ceiling of its own (`DRAFT_HTML_CAP_BYTES`), and the
+   * asymmetry is deliberate: the html is sanitized and measured because markup is where a
+   * megabyte hides, while plain text is what a person typed.
+   */
+  private validSubject(v: unknown): string {
+    const subject = this.validString(v, "subject");
+    if (subject.length > DRAFT_SUBJECT_MAX_CHARS) {
+      throw new ServiceError(
+        "validation_failed", 400,
+        `subject is ${subject.length} characters; the limit is ${DRAFT_SUBJECT_MAX_CHARS}`,
+      );
+    }
+    return subject;
+  }
+
+  /**
+   * One recipient list, validated for SHAPE and for LENGTH.
+   *
+   * The shape half is original; the length half was missing, and the sink is what made that
+   * matter: `SendService.reserve` hands `to`/`cc`/`bcc` to Nodemailer entry by entry, so the
+   * number of SMTP `RCPT TO` commands one send issues against the user's own mail server was
+   * whatever the request body contained. Three unbounded arrays in one draft, stored on a `PUT`
+   * that costs nothing and replayed by every send of that draft.
+   *
+   * {@link DRAFT_MAX_RECIPIENTS} is per FIELD because this function sees one field. The
+   * per-message total is `SEND_MAX_RECIPIENTS`, checked where all three are in hand and where
+   * they become network commands — a total computed here would have to guess at the two fields
+   * a partial update does not carry.
+   */
+  /**
+   * THE RECIPIENT CEILING IS A TOTAL OVER THE REQUEST, not three independent per-field ones.
+   *
+   * ── WHY THE PER-FIELD READING DOES NOT WORK, ARITHMETICALLY ──────────────────────────────
+   *
+   * {@link DRAFT_MAX_RECIPIENTS} is {@link SEND_MAX_RECIPIENTS}, so that Reply All cannot compose
+   * a draft this service refuses. Applied per FIELD that is 1 500 entries in one body, and the
+   * census computed what that costs: 4 832 016 wire bytes, against a request door the whole
+   * slice exists to keep small. No door both admits that and is worth having — 254 octets of
+   * address alone, at 1 500 entries and six wire bytes a character, is 2.3 MB before a display
+   * name or a byte of html.
+   *
+   * A total fixes it without giving anything up, because 500 is a ceiling on the MESSAGE and a
+   * message's recipients are its `to`, `cc` and `bcc` together — which is exactly how
+   * `SendService.reserve` counts them. Reply All produces one audience split across two fields,
+   * never 500 in each, so nothing the product composes is refused.
+   *
+   * ── WHAT IT DOES NOT CLOSE, said plainly ─────────────────────────────────────────────────
+   *
+   * It bounds the REQUEST, so a caller may still accumulate past 500 across several patches: this
+   * sees only the fields the patch carries, and reading the stored row to merge them would put a
+   * query in front of a validator. That is deliberate and it costs nothing real — the accumulated
+   * draft is storage, and `SendService.reserve` totals all three where they become RCPT TO
+   * commands and refuses it there. The door's question is how big one BODY may be, and this
+   * answers exactly that.
+   */
+  private boundRecipientTotal(fields: ReadonlyArray<EmailAddress[] | undefined>): void {
+    let total = 0;
+    for (const f of fields) total += f?.length ?? 0;
+    if (total > DRAFT_MAX_RECIPIENTS) {
+      throw new ServiceError(
+        "payload_too_large", 413,
+        `this request names ${total} recipients across to, cc and bcc; the limit is ${DRAFT_MAX_RECIPIENTS}`,
+      );
+    }
+  }
+
   private validAddresses(v: unknown, field: string): EmailAddress[] {
     if (v === undefined || v === null) return [];
     if (!Array.isArray(v)) throw new ServiceError("validation_failed", 400, `${field} must be an array`);
+    if (v.length > DRAFT_MAX_RECIPIENTS) {
+      // 413 with the number, matching the html cap's refusal one method up: a sentence a person
+      // can act on ("split this into two messages"), never a silently truncated recipient list.
+      throw new ServiceError(
+        "payload_too_large", 413,
+        `${field} names ${v.length} recipients; the limit is ${DRAFT_MAX_RECIPIENTS} per field`,
+      );
+    }
     for (const a of v) {
       if (typeof a !== "object" || a === null || typeof (a as EmailAddress).address !== "string") {
         throw new ServiceError("validation_failed", 400, `${field} entries must be { name?, address }`);
+      }
+      // ── AND EACH ENTRY IS BOUNDED, not just the list ──────────────────────────────────
+      //
+      // The COUNT was the obvious half; the entries were unbounded strings, so
+      // `DRAFT_MAX_RECIPIENTS` bounded how many megabytes a request could carry only in the sense
+      // that 100 of them is not 101. The address ceiling is not ours: RFC 5321 §4.5.3.1 caps the
+      // complete FORWARD PATH at 256 octets including the angle brackets, so a usable mailbox is
+      // 254 — the familiar 320 is the sum of the component maxima (64 local + 1 + 255 domain),
+      // which cannot all be met at once. Anything longer is not an address a transport will
+      // deliver, so refusing it here is telling the truth earlier. The display name is the
+      // product's own limit, generous enough for any real name and small enough that a hundred
+      // of them is a header, not a payload.
+      const entry = a as EmailAddress;
+      if (entry.address.length > RECIPIENT_ADDRESS_MAX_CHARS) {
+        throw new ServiceError(
+          "validation_failed", 400,
+          `a ${field} address is ${entry.address.length} characters; the limit is ${RECIPIENT_ADDRESS_MAX_CHARS}`,
+        );
+      }
+      if (typeof entry.name === "string" && entry.name.length > RECIPIENT_NAME_MAX_CHARS) {
+        throw new ServiceError(
+          "validation_failed", 400,
+          `a ${field} display name is ${entry.name.length} characters; the limit is ${RECIPIENT_NAME_MAX_CHARS}`,
+        );
       }
     }
     return v as EmailAddress[];

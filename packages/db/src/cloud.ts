@@ -282,7 +282,7 @@ export {
   attachmentStagingExpiry, ATTACHMENT_STAGING_TTL_MS,
   makeSupabaseStagingStorage, makeS3StagingStorage, s3StagingObjectUrl, stagingObjectPath,
   sweepExpiredStaging, drainExpiredStaging, sweepExpiredStagingFor,
-  AttachmentStagingStorageError,
+  StagedObjectTooLargeError, AttachmentStagingStorageError,
   STAGING_SWEEP_BATCH, STAGING_SWEEP_MAX_ROWS, STAGING_SWEEP_DEADLINE_MS,
   STAGING_MAX_OUTSTANDING_TICKETS, STAGING_MAX_OUTSTANDING_BYTES,
   STAGING_QUOTA_LOCK_CLASS, DEFAULT_STAGING_QUOTA, S3_UPLOAD_GRANT_TTL_SECONDS,

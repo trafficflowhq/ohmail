@@ -959,7 +959,17 @@ export type ProfileImportCandidateWire =
     producer: { kind: string; version: string };
     counts: ProfileImportCountsWire;
   }
-  | { state: "newer"; v: number };
+  | { state: "newer"; v: number }
+  /**
+   * The document holds more entries in one of its lists than the server will apply in a single
+   * transaction, so nothing is offered — the same answer `newer` gives, for a different reason.
+   *
+   * Declared so the wire contract is complete; the card reads it as NO OFFER through `asOffer`'s
+   * tolerant reader, which is already the correct behaviour — nothing is claimed and nothing is
+   * shown. A dedicated message naming the list and the limit would be better and is a separate
+   * change to the card, not to this type.
+   */
+  | { state: "too_large"; fingerprint: string; list: string; count: number; max: number };
 
 export interface ProfileImportAppliedWire {
   imported: ProfileImportCountsWire;

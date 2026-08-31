@@ -6,6 +6,56 @@ import {
 import type { Db, ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { clampPageLimit } from "./pagination.js";
+import { isUuid } from "./ids.js";
+
+/**
+ * The longest `?since=` cursor `/sync` will decode.
+ *
+ * A `change_log` seq is a `bigserial`, so its whole range is nineteen digits — 32 base64url
+ * characters covers that with room and leaves room for nothing else.
+ */
+export const SYNC_CURSOR_MAX_CHARS = 32;
+
+/**
+ * The longest `?cursor=` `/sync/snapshot` will decode.
+ *
+ * A base64url JSON object of six small fields: a version, a nineteen-digit seq, a millisecond
+ * date, a uuid, a count and a phase word. 512 characters is several times what that weighs.
+ */
+export const SNAPSHOT_CURSOR_MAX_CHARS = 512;
+
+/**
+ * THE RANGE THE COLUMN ACCEPTS, not the range `Date` can hold — see the same note in
+ * `pagination.ts`, where this was found first and then found again here.
+ *
+ * `Date#getTime()` spans ±8.64e15 ms; `timestamptz` spans 4713 BC to 294276 AD. The upper end of
+ * `Date`'s range is inside the column's, so the maximum is safe as written; the LOWER end is not,
+ * and a snapshot cursor carrying `"d": -8640000000000000` reached PostgreSQL as a timestamp
+ * before 4713 BC — a 500 for a caller-supplied cursor, on a route that otherwise answers 410 for
+ * exactly this. Two decoders repeated the same substitution of the producer's range for the
+ * sink's, independently, which is why both now name the sink.
+ */
+const MAX_EPOCH_MS = 8_640_000_000_000_000;
+/** PostgreSQL's `timestamptz` floor, 4713-01-01 BC, in milliseconds from the epoch. */
+const MIN_EPOCH_MS = -210_866_803_200_000;
+
+/**
+ * A signed `bigint`'s maximum — what a `bigserial` seq can actually reach.
+ *
+ * Nineteen DIGITS is not this: `9999999999999999999` is nineteen digits and larger than the
+ * column can hold, so it survives a digit count and raises 22003 at the comparison. The range is
+ * the bound; the digit count in front of it is what stops an unbounded `BigInt` parse.
+ */
+const MAX_BIGSERIAL = 9_223_372_036_854_775_807n;
+
+/**
+ * The largest `emitted` a snapshot cursor may claim.
+ *
+ * It counts rows this snapshot has already sent, so it cannot exceed what an account holds —
+ * and `1e308` is an integer to `Number.isInteger`'s eye only in the sense that it has no
+ * fractional part. Ten million is far beyond any real account and small enough to be a number.
+ */
+const MAX_EMITTED = 10_000_000;
 import {
   approvalRowToDTO, draftRowToDTO, folderRowToDTO, materialize, materializeApprovals,
   materializeDrafts, materializeMessages,
@@ -126,13 +176,34 @@ export class SyncService {
     return Buffer.from(seq.toString(10), "utf8").toString("base64url");
   }
 
-  /** Inverse of {@link encodeCursor}. A cursor we cannot parse is treated as
-   *  expired (410) — the client re-bootstraps with `since="0"`, which heals it. */
+  /**
+   * Inverse of {@link encodeCursor}. A cursor we cannot parse is treated as expired (410) — the
+   * client re-bootstraps with `since="0"`, which heals it.
+   *
+   * ── AND IT IS BOUNDED, BEFORE THE DECODE ────────────────────────────────────────────────
+   *
+   * `?since=` is caller-chosen and was bounded by nothing: an arbitrarily long base64 string was
+   * fully decoded, regex-scanned end to end and handed to `BigInt`, which is superlinear in its
+   * digit count. The census recorded it as an `identifier`, a disposition whose whole content is
+   * that the shape test is the bound — and the shape test ran after the work.
+   *
+   * {@link SYNC_CURSOR_MAX_CHARS} is generous against what this ever emits: a `change_log` seq is
+   * a `bigserial`, so nineteen digits covers everything it can reach and 32 base64url characters
+   * covers that with room. `.length` is O(1), so an absurd cursor costs nothing. Nineteen DIGITS
+   * is not the range, though — `9999999999999999999` has nineteen of them and is larger than the
+   * column holds — so the value is checked against {@link MAX_BIGSERIAL} as well.
+   */
   decodeCursor(cursor: string): bigint {
     try {
+      if (cursor.length > SYNC_CURSOR_MAX_CHARS) throw new Error("cursor too long");
       const dec = Buffer.from(cursor, "base64url").toString("utf8");
-      if (!/^\d+$/.test(dec)) throw new Error("non-numeric cursor");
-      return BigInt(dec);
+      if (!/^\d{1,19}$/.test(dec)) throw new Error("non-numeric cursor");
+      // The digit count bounds the PARSE and the RANGE bounds the value — nineteen digits reaches
+      // `9999999999999999999`, which is past what a `bigserial` holds. The same pair the snapshot
+      // cursor's `s` carries, and for the same reason.
+      const seq = BigInt(dec);
+      if (seq > MAX_BIGSERIAL) throw new Error("seq out of range");
+      return seq;
     } catch {
       throw new ServiceError("cursor_expired", 410, "sync cursor is malformed or expired; re-bootstrap with since=0");
     }
@@ -155,14 +226,36 @@ export class SyncService {
    */
   decodeSnapshotCursor(cursor: string): SnapshotCursor {
     try {
+      // The same ceiling, for the same reason and BEFORE the decode: this one is a base64 JSON
+      // object, so an unbounded cursor is an unbounded `JSON.parse` as well as an unbounded
+      // decode. Its six fields are a version, a seq, a date, a uuid, a count and a phase —
+      // comfortably inside {@link SNAPSHOT_CURSOR_MAX_CHARS}.
+      if (cursor.length > SNAPSHOT_CURSOR_MAX_CHARS) throw new Error("cursor too long");
       const raw: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
       if (typeof raw !== "object" || raw === null) throw new Error("not an object");
       const { v, s, d, i, n, p } = raw as Record<string, unknown>;
       if (v !== 1) throw new Error("unknown cursor version");
-      if (typeof s !== "string" || !/^\d+$/.test(s)) throw new Error("bad asOfSeq");
-      if (typeof i !== "string" || i === "") throw new Error("bad keyset id");
-      if (typeof n !== "number" || !Number.isInteger(n) || n < 0) throw new Error("bad emitted count");
-      if (d !== null && (typeof d !== "number" || !Number.isFinite(d))) throw new Error("bad keyset date");
+      // The digit count bounds the PARSE (`BigInt` accepts a three-hundred-digit string happily,
+      // which then reaches `Number(asOfSeq)` as `Infinity`) and the RANGE bounds the value — a
+      // `change_log` seq is a `bigserial`, and nineteen digits reaches past what one can hold.
+      // The other two numeric fields get the same treatment below: a cursor small enough to pass
+      // the wire ceiling can still carry values no clock or counter could produce.
+      if (typeof s !== "string" || !/^\d{1,19}$/.test(s) || BigInt(s) > MAX_BIGSERIAL) {
+        throw new Error("bad asOfSeq");
+      }
+      // A UUID, not merely a non-empty string: `i` is bound against `messages.id` (and its
+      // siblings) further down, so `{"i":"x"}` in a hand-built cursor reached Postgres as 22P02 —
+      // a 500 for a value this function had already claimed to validate. Every other field here
+      // is shape-checked; this one said "not empty" and meant it.
+      if (!isUuid(i)) throw new Error("bad keyset id");
+      if (typeof n !== "number" || !Number.isInteger(n) || n < 0 || n > MAX_EMITTED) {
+        throw new Error("bad emitted count");
+      }
+      // `Date`'s own range, not merely "finite": `1e308` is a finite number and not a date, and
+      // it reaches a `timestamptz` comparison as one.
+      if (d !== null && (typeof d !== "number" || !Number.isFinite(d) || d > MAX_EPOCH_MS || d < MIN_EPOCH_MS)) {
+        throw new Error("bad keyset date");
+      }
       if (p !== undefined && p !== "tail") throw new Error("bad phase");
       return {
         asOfSeq: BigInt(s), date: d as number | null, id: i, emitted: n,
@@ -305,7 +398,7 @@ export class SyncService {
     // through the SAME prefetch/materialize/bucket pipeline the plain page uses — the diet
     // changes which log rows are read, never what is said about them.
     //
-    // ── WHY FIRST-APPEARANCE ORDER, NOT LATEST-SEQ ORDER (review round 1) ───────────────
+    // ── WHY FIRST-APPEARANCE ORDER, NOT LATEST-SEQ ORDER ───────────────
     //
     // The desktop's relational mirror FK-guards its applies: a `message_state` whose message
     // is absent is SKIPPED, on the standing assumption that the parent's change carries a
@@ -690,7 +783,7 @@ export class SyncService {
 
       // THE SETTINGS DOORBELL — one row, always, on page 1 (never null for the caller's own
       // account: a missing row materializes as the default-shaped DTO). Live state like the
-      // tags above, and the row that closes the bootstrap race review round 1 named: a settings
+      // tags above, and the row that closes the bootstrap race named below: a settings
       // write landing between a fresh mirror's boot `GET /consent` and this snapshot's
       // `asOfSeq` is BELOW the cursor this page commits, so the delta would never deliver it —
       // the tab held stale consent until the next settings write, however far away that was.

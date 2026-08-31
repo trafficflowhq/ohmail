@@ -55,6 +55,7 @@ import { randomUUID } from "node:crypto";
 import {
   createStagingTicketWithinQuota, readStagingTickets, stagingObjectPath, stagingTicketId,
   DEFAULT_STAGING_QUOTA,
+  StagedObjectTooLargeError,
   type AttachmentStagingStorage, type StagingQuota, type StagingQuotaRefusal,
 } from "@trafficflow/db/cloud";
 import type { LedgerTx, Tx } from "@trafficflow/db";
@@ -96,7 +97,13 @@ export type StagedResolutionFailure =
   /** The object is missing or storage refused. */
   | { reason: "unavailable"; id: string }
   /** The bytes that arrive are larger than the ticket declared. */
-  | { reason: "size_mismatch"; id: string; declared: number; actual: number };
+  | {
+    reason: "size_mismatch"; id: string; declared: number;
+    /** Exact, unless {@link abandoned} — then it is a LOWER BOUND (the ceiling, plus one). */
+    actual: number;
+    /** The read was cut off at the ceiling, so `actual` is a floor rather than the size. */
+    abandoned?: true;
+  };
 
 /**
  * Turn staged references into bytes, or say exactly why not.
@@ -142,8 +149,41 @@ export async function resolveStagedAttachments(
     }
     let bytes: Uint8Array;
     try {
-      bytes = await storage.download(t.objectPath);
-    } catch {
+      /**
+       * ── THE TICKET'S DECLARED SIZE IS A CEILING ON THE READ, not a check afterwards ───────
+       *
+       * This was `storage.download(t.objectPath)` followed by the byteLength comparison below,
+       * which is a correct comparison made on bytes that are already the cost. And the gap it
+       * left is reachable: the presigned PUT signs only the content TYPE, so an authenticated
+       * caller can mint a ONE-BYTE ticket, upload an object of any size to the path it names,
+       * and then send that ticket — this process buffered the whole object and noticed the
+       * mismatch after paying for it. Authenticated remote memory exhaustion, repeatable.
+       *
+       * The ceiling is the ticket's own `sizeBytes`, which is the number the comparison below
+       * already uses; the port refuses the declared `Content-Length` before reading and abandons
+       * the stream at the ceiling when the response declares nothing or lies.
+       *
+       * The comparison below is KEPT rather than replaced. It is now unreachable through this
+       * port — but `AttachmentStagingStorage` is injectable, and a storage that ignores
+       * `maxBytes` (a fake, an older implementation) must still be refused rather than trusted.
+       */
+      bytes = await storage.download(t.objectPath, { maxBytes: t.sizeBytes });
+    } catch (err) {
+      const tooLarge = err instanceof StagedObjectTooLargeError ? err : null;
+      if (tooLarge) {
+        // `actual` is exact when the object declared its length and a LOWER BOUND when the read
+        // was abandoned mid-stream — `abandoned` says which. Diagnostic either way: the sentence
+        // the user gets names neither number.
+        return {
+          ok: false,
+          failure: {
+            reason: "size_mismatch", id,
+            declared: t.sizeBytes,
+            actual: tooLarge.declaredBytes ?? tooLarge.maxBytes + 1,
+            ...(tooLarge.declaredBytes === null ? { abandoned: true } : {}),
+          },
+        };
+      }
       return { ok: false, failure: { reason: "unavailable", id } };
     }
     if (bytes.byteLength > t.sizeBytes) {

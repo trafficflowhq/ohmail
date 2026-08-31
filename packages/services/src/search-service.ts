@@ -62,6 +62,58 @@ export function isSearchSort(v: unknown): v is SearchSort {
   return typeof v === "string" && (SEARCH_SORTS as readonly string[]).includes(v);
 }
 
+/**
+ * THE LONGEST SEARCH TERM THIS SERVICE ACCEPTS.
+ *
+ * `q` had no length bound anywhere, and it is not merely stored — it reaches three predicates
+ * whose cost is superlinear in its length and is paid ONCE PER CANDIDATE ROW:
+ *
+ *   · `websearch_to_tsquery('english', q)` parses it into a tsquery; a megabyte of text is a
+ *     megabyte of lexemes,
+ *   · `word_similarity(q, m.subject)` and `word_similarity(q, m.from_address)` are pg_trgm
+ *     trigram comparisons, i.e. O(len(q) × len(column)) per row, evaluated over the account's
+ *     whole message table by the fuzzy arm, and
+ *   · the offline degrade is `m.subject ilike '%' || q || '%'`, the same shape without an index.
+ *
+ * So one authenticated GET with a large `q` buys an arbitrary amount of CPU on a database every
+ * other account shares. This is the read-side twin of the bound `admin.ts#accountQueryOf`
+ * already applies for a smaller reason — *"so a megabyte of query string cannot become a
+ * megabyte of `normalize('NFD')`"* — and it takes the same number.
+ *
+ * 200 characters. Longer than any phrase a person types into a mail search (a full subject line
+ * is ~78 by RFC convention) and far shorter than anything whose trigram cost is interesting.
+ *
+ * **Over the limit is a 400, not a truncation and not an empty page.** Truncating would answer a
+ * different question than the one asked, silently; an empty page is indistinguishable from "no
+ * mail matches", which is the shape a caller cannot debug.
+ */
+export const SEARCH_QUERY_MAX_CHARS = 200;
+
+/**
+ * THE FACET FILTERS ARE DELIBERATELY UNBOUNDED, and this is the argument for that.
+ *
+ * `folder` and `sender` were briefly given a 512-character ceiling in the same slice that bounded
+ * `q`, on the reasoning that a bound costs nothing and removes the need to re-check the argument
+ * later. It was removed for a reason worth writing down, because it is the failure mode a bound
+ * can have: **it refused a facet this service itself had just emitted.**
+ *
+ * `messages.from_address` is a `text` column written from whatever `From:` the sending server
+ * delivered, scrubbed for case and NULs and bounded by nothing else. So `facets()` can legitimately
+ * return a sender longer than any ceiling, the client renders it as a clickable facet, and clicking
+ * it would have answered 400 — a refusal aimed at a value the product produced.
+ *
+ * And the cost these predicates carry does not need a bound. Both are EQUALITY comparisons
+ * (`folderExpr = $1`, `lower(from_address) = lower($1)`), where Postgres compares lengths before
+ * bytes, so a long value is one length check per row rather than work proportional to it. That is
+ * the difference from `q`, whose trigram and `ILIKE` predicates ARE proportional — see
+ * {@link SEARCH_QUERY_MAX_CHARS}, which is where the ceiling belongs.
+ *
+ * The remaining bound on these is whatever request-line limit the host in front imposes — they
+ * arrive in a URL, so `JSON_BODY_MAX_BYTES` (a BODY ceiling) is not it. That is the honest answer
+ * for a value whose cost is linear and paid once, and it is a different number on every
+ * deployment.
+ */
+
 export interface SearchOptions {
   q: string;
   filters?: SearchFilters;
@@ -135,8 +187,52 @@ export class SearchService {
   private readonly folderExpr = sql`coalesce(fs.desired_folder, m.native_locator->>'folder', 'INBOX')`;
 
   async search(ctx: ServiceContext, opts: SearchOptions): Promise<SearchResult> {
-    const q = (opts.q ?? "").trim();
+    // ── THE CEILING IS CONSULTED BEFORE ANYTHING SCANS THE STRING ─────────────────────────
+    //
+    // `.length` is O(1); `.trim()` is O(n) and would have scanned a ten-megabyte caller string
+    // before the ceiling below ever ran — and an all-whitespace one would then have paid for that
+    // scan and returned a silent empty result, which is the exact failure shape this class is
+    // named for. So the RAW length decides, and the refusal reports it because that is the number
+    // the caller has to bring down.
+    //
+    // It allows exactly ONE character over, which is one trailing space on a term at the ceiling
+    // — the only case the trim was ever for. Two spaces on such a term are refused, and that is
+    // the deliberate trade: the alternatives are trimming first, which is the unbounded scan, and
+    // slicing first, which silently ACCEPTED a truncated query. This comment twice said the
+    // ceiling is measured on the trimmed value; it is not, and the difference is a character.
+    const raw = opts.q ?? "";
+    /**
+     * THE RAW LENGTH DECIDES, and the version that sliced first was silently wrong.
+     *
+     * Slicing to the ceiling PLUS ONE and then trimming looks equivalent and is not: a term of
+     * exactly `MAX` characters followed by a space and more text slices to `MAX + 1`, trims the
+     * boundary space away, and passes as a `MAX`-character query — so the caller's search ran
+     * against a PREFIX of what they typed, with a 200 and no indication. That is the silent
+     * truncation this bound's own docstring refuses, produced by the bound.
+     *
+     * So the ceiling is consulted on the raw LENGTH first (`.length` is O(1), which was the whole
+     * reason for slicing at all), and it allows exactly ONE character over — which is exactly one
+     * trailing space on a term at the ceiling, the case the trim exists for. Two characters over
+     * cannot trim back to the ceiling without losing a non-space, so it is refused here; anything
+     * that survives to the check below is refused there. Neither path truncates.
+     */
+    if (raw.length > SEARCH_QUERY_MAX_CHARS + 1) {
+      throw new ServiceError(
+        "validation_failed", 400,
+        `q is ${raw.length} characters; the limit is ${SEARCH_QUERY_MAX_CHARS}`,
+      );
+    }
+    const q = raw.trim();
     if (!q) return emptyResult();
+    // BEFORE the tsquery, the trigram comparisons and the ILIKE degrade — see
+    // {@link SEARCH_QUERY_MAX_CHARS}. Refused, never truncated: a truncated term answers a
+    // question the caller did not ask, and does it silently.
+    if (q.length > SEARCH_QUERY_MAX_CHARS) {
+      throw new ServiceError(
+        "validation_failed", 400,
+        `q is ${raw.length} characters; the limit is ${SEARCH_QUERY_MAX_CHARS}`,
+      );
+    }
     const limit = clampLimit(opts.limit);
     // The DEFAULT BRANCH, stated once. An absent `sort` is `relevance` and takes the fused
     // query below with nothing changed — see the `hitQuery` ternary.

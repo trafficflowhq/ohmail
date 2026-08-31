@@ -1,5 +1,6 @@
 import {
-  ServiceError, effectiveAttachmentCap, SEND_STAGED_OBJECT_MAX_BYTES,
+  ServiceError, effectiveAttachmentCap, SEND_ATTACHMENT_FIELD_MAX_CHARS,
+  SEND_STAGED_OBJECT_MAX_BYTES,
 } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
@@ -125,8 +126,34 @@ export const attachmentStagingRoutes: Route[] = [
 
       const body = await readBody<MintBody>(req);
 
+      /**
+       * THE SAME CEILING THE INLINE ENTRANCE APPLIES, AT THE OTHER ENTRANCE.
+       *
+       * `routes/drafts.ts#decodeSendAttachments` holds an inline attachment's `filename` and
+       * `contentType` to {@link SEND_ATTACHMENT_FIELD_MAX_CHARS}, because both become MIME header
+       * parameters on the outgoing message. A STAGED attachment's are the same parameters,
+       * reaching the same builder by a different road, and nothing bounded them here.
+       *
+       * The failure is a fan-in the door cannot see: each mint is its own request, so the 3 MiB
+       * body ceiling bounds each filename INDEPENDENTLY, and a caller may hold
+       * `STAGING_MAX_OUTSTANDING_TICKETS` of them at once. One send referencing all of them asks
+       * this process to build a message whose headers are the SUM — hundreds of megabytes of
+       * caller-chosen text, from requests every one of which was individually legal. A per-request
+       * ceiling is not a bound on a value that persists and is later gathered.
+       *
+       * Applied to the trimmed value, so a filename that is only long because of whitespace is
+       * accepted rather than refused for a length it does not have.
+       */
       const filename = str(body.filename) || "attachment";
       const contentType = str(body.contentType) || "application/octet-stream";
+      for (const [field, v] of [["filename", filename], ["contentType", contentType]] as const) {
+        if (v.length > SEND_ATTACHMENT_FIELD_MAX_CHARS) {
+          throw new ServiceError(
+            "validation_failed", 400,
+            `${field} must be at most ${SEND_ATTACHMENT_FIELD_MAX_CHARS} characters`,
+          );
+        }
+      }
       const sizeBytes = typeof body.sizeBytes === "number" ? body.sizeBytes : Number.NaN;
       if (!Number.isFinite(sizeBytes) || sizeBytes <= 0 || !Number.isInteger(sizeBytes)) {
         throw new ServiceError("validation_failed", 400, "sizeBytes must be a positive integer");

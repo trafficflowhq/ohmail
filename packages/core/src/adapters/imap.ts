@@ -6,6 +6,67 @@ import nodemailer, { type Transporter } from "nodemailer";
 import MailComposer from "nodemailer/lib/mail-composer/index.js";
 import type Mail from "nodemailer/lib/mailer/index.js";
 import type SMTPTransport from "nodemailer/lib/smtp-transport/index.js";
+
+/**
+ * THE LONGEST SUBJECT INGEST WILL KEEP, and it CLAMPS rather than refuses.
+ *
+ * ── WHY THIS EXISTS AT ALL ───────────────────────────────────────────────────────────────
+ *
+ * A `Subject:` header is chosen by the SENDER and RFC 5322 puts no ceiling on it — §2.1.1's 998
+ * octets bound a LINE, and a header folds across as many lines as it likes. So this was a
+ * sender-chosen value reaching a column, a snippet, a search index and every list DTO with no
+ * ceiling anywhere: exactly the class, arriving by mail instead of by HTTP.
+ *
+ * ── WHY IT CLAMPS, WHEN EVERY OTHER BOUND IN THIS SLICE REFUSES ──────────────────────────
+ *
+ * Because the mailbox is the master and this is INBOUND. A refusal here would mean a delivered
+ * message this product declines to show — losing mail to defend a number, which is the one
+ * outcome no ceiling is worth. Outbound is the opposite: the caller composed the value, a 400
+ * tells them what to fix, and nothing is lost. So the asymmetry is deliberate and it is the
+ * general rule for this class — clamp what arrives, refuse what is authored.
+ *
+ * ── AND IT IS WHAT MAKES `DRAFT_SUBJECT_MAX_CHARS` SAFE ──────────────────────────────────
+ *
+ * A reply inherits the received subject with `Re: ` in front (`client-engine/src/mutations.ts`),
+ * and `DraftsService` refuses a subject over DRAFT_SUBJECT_MAX_CHARS (8 192). With no ingest
+ * ceiling, a sender could make one of their own messages unrepliable — a bound refusing a value
+ * the product itself produced, which is the mistake this slice made four separate times in its
+ * first attempts and the reason a review round caught it here. 2 000 leaves the draft ceiling
+ * four times the room it needs for the longest inherited subject plus its prefix.
+ *
+ * 2 000 is far above anything real (RFC 5322 §2.1.1 recommends 78 characters and requires no
+ * line over 998) and far below a cost: it is the point past which a subject is not a subject.
+ */
+export const INGEST_SUBJECT_MAX_CHARS = 2000;
+
+/** A received subject, clamped. See {@link INGEST_SUBJECT_MAX_CHARS}. */
+export function ingestSubject(v: string | null | undefined): string {
+  const s = v ?? "";
+  return s.length > INGEST_SUBJECT_MAX_CHARS ? s.slice(0, INGEST_SUBJECT_MAX_CHARS) : s;
+}
+
+/**
+ * THE LONGEST DISPLAY NAME INGEST WILL KEEP — the same rule as the subject, for the same reason,
+ * on the value that makes it worse.
+ *
+ * `RECIPIENT_NAME_MAX_CHARS` bounds a display name on the way OUT. A plain Reply copies the
+ * parent's `from` — name included — into the draft's recipient, so a sender who uses a display
+ * name longer than that ceiling makes their own message unrepliable through the ordinary UI: the
+ * draft is refused, and the refusal names a limit on a value the user never typed.
+ *
+ * That is the subject finding again, one field along, and the resolution is the same and belongs
+ * in the same place: clamp what arrives (the mailbox is the master; a delivered message must
+ * remain readable and repliable), refuse what is authored (the caller can fix it). The number is
+ * `RECIPIENT_NAME_MAX_CHARS`, restated here rather than imported because `packages/core` does not
+ * depend on `packages/services` — the census pins the two together so they cannot drift.
+ */
+export const INGEST_DISPLAY_NAME_MAX_CHARS = 100;
+
+/** A received display name, clamped. `null` stays `null` — absent is not the same as empty. */
+export function ingestDisplayName(v: string | null | undefined): string | null {
+  if (v === null || v === undefined) return null;
+  return v.length > INGEST_DISPLAY_NAME_MAX_CHARS ? v.slice(0, INGEST_DISPLAY_NAME_MAX_CHARS) : v;
+}
 // The connection class `SMTPTransport.verify()` drives internally. Imported directly for the one
 // thing `verify()` cannot do — see {@link verifySmtpLogin}.
 import SMTPConnection from "nodemailer/lib/smtp-connection/index.js";
@@ -1344,8 +1405,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         rows.push({
           uid: m.uid,
           seq: m.seq,
-          subject: m.envelope?.subject ?? "",
-          from: { name: from?.name ?? null, address: from?.address?.trim().toLowerCase() ?? "" },
+          subject: ingestSubject(m.envelope?.subject),
+          from: { name: ingestDisplayName(from?.name), address: from?.address?.trim().toLowerCase() ?? "" },
           date: date instanceof Date && Number.isFinite(date.getTime()) ? date.toISOString() : null,
           messageIdHeader: m.envelope?.messageId ?? null,
           seen: m.flags?.has("\\Seen") ?? false,
@@ -1413,8 +1474,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         rows.push({
           uid: m.uid,
           seq: m.seq,
-          subject: m.envelope?.subject ?? "",
-          from: { name: from?.name ?? null, address: from?.address?.trim().toLowerCase() ?? "" },
+          subject: ingestSubject(m.envelope?.subject),
+          from: { name: ingestDisplayName(from?.name), address: from?.address?.trim().toLowerCase() ?? "" },
           date: date instanceof Date && Number.isFinite(date.getTime()) ? date.toISOString() : null,
           messageIdHeader: m.envelope?.messageId ?? null,
           seen: m.flags?.has("\\Seen") ?? false,

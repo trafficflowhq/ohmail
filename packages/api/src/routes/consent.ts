@@ -5,7 +5,7 @@ import {
   setBlockTrackingPixels,
   setDormancyDays, setFoldersEnabled, setLocale, setMailboxFoldersEnabled, setMailboxSignature,
   unmovedReport,
-  DEFAULT_DORMANCY_DAYS, SUPPORTED_LOCALES, ServiceError,
+  DEFAULT_DORMANCY_DAYS, SEED_MAX_ADDRESSES, SUPPORTED_LOCALES, ServiceError,
 } from "@trafficflow/services/mail";
 import type { Tx } from "@trafficflow/db";
 import { serviceContext } from "../context.js";
@@ -15,6 +15,52 @@ import { readBody } from "./shared.js";
 
 /** The uuid shape `folderMailboxes` keys must have — `message-service.ts`'s spelling. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * HOW MANY MAILBOXES ONE `PATCH /consent/settings` MAY NAME.
+ *
+ * Both per-mailbox maps (`folderMailboxes`, `signatures`) are iterated inside ONE transaction,
+ * one write per entry, and each entry that names a foreign or absent id is a 404 that only
+ * happens after its own query. So an unbounded map is an unbounded number of statements in one
+ * transaction, chosen by the caller — and every one of them can be a miss, which makes the
+ * refusal itself the expensive part.
+ *
+ * **A BATCH SIZE, NOT A PLAN LIMIT — and that distinction is a correction.** It was briefly
+ * derived from the hosted pricing (`PLAN_LIMITS.pro.mailboxes` + `MAX_ADDON_QUANTITY` = 20, the
+ * most mailboxes a paying account can hold). That is wrong here for a structural reason:
+ * `consentRoutes` is mounted by `selfHostRoutes`, and a self-host deployment has NO mailbox count
+ * limit at all (`SELF_HOST_MAILBOX_ALLOWANCE`). An operator with 21 mailboxes would have been
+ * refused by a number that describes somebody else's price list.
+ *
+ * So it is 25: comfortably past the largest hosted account, and an operational ceiling on how
+ * much per-mailbox settings ONE request carries. A client with more mailboxes sends two requests,
+ * and nothing is lost by that — this route is a partial update, so two requests are two
+ * independent writes of two disjoint maps.
+ *
+ * **The upper end is set by the request door, not by taste, and it is TIGHT.** `signatures`
+ * values are capped at `MAILBOX_SIGNATURE_MAX_CHARS` (10 000) EACH, so this count MULTIPLIES into
+ * the request body — and the multiplier is SIX bytes per character, not four, because
+ * `JSON.stringify` escapes a control character as `\u00xx` and nothing here refuses one. At 25 the worst
+ * legal body is ~1.5 MB and at 40 it is ~2.4 MB, both inside today's `JSON_BODY_MAX_BYTES` (3
+ * MiB) — the door rose after this number was set, so 25 is now headroom rather than the edge, and
+ * saying otherwise would be a rationale that stopped being true. What keeps them related is not
+ * this comment: `input-bounds-census.test.ts` recomputes the product at six bytes per character
+ * against the door and fails if a future bump to either makes them collide.
+ *
+ * One number for both maps, because they are the same shape reaching the same loop.
+ */
+export const SETTINGS_MAX_MAILBOX_ENTRIES = 25;
+
+/**
+ * `SEED_MAX_ADDRESSES` is a coarse absolute ceiling, NOT the review's scan limit — that constant
+ * counts messages, and one message contributes every distinct recipient on it.
+ *
+ * The ENFORCING copy is `confirmSeed`'s, in the service, because
+ * the route is not guaranteed to be the only door (see the argument at that check, and
+ * `SearchService`'s date guard for the rule). The route reads the same constant so the refusal
+ * happens before the per-entry validation loop below rather than after it — a hostile list costs
+ * one length read on the way in, and the same 413 either way.
+ */
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
    ONBOARDING CONSENT — the five endpoints the seed, the cutline and the reset are reached by.
@@ -243,6 +289,15 @@ async function applyConsentSettings(
     if (entries.length === 0) {
       throw new ServiceError("validation_failed", 400, "folderMailboxes must name at least one mailbox");
     }
+    // The UPPER bound, beside the lower one — see {@link SETTINGS_MAX_MAILBOX_ENTRIES}. Refused
+    // here, before the per-entry validation below, so a hostile map costs one `Object.entries`
+    // rather than a uuid test and a transaction statement per key.
+    if (entries.length > SETTINGS_MAX_MAILBOX_ENTRIES) {
+      throw new ServiceError(
+        "payload_too_large", 413,
+        `folderMailboxes names ${entries.length} mailboxes; the limit is ${SETTINGS_MAX_MAILBOX_ENTRIES}`,
+      );
+    }
     for (const [k, v] of entries) {
       // The KEY is validated as strictly as the value (codex round 1): it binds a uuid column,
       // and a non-UUID key would otherwise surface as PostgreSQL 22P02 — a 500 wearing a
@@ -279,6 +334,14 @@ async function applyConsentSettings(
     const entries = Object.entries(m as Record<string, unknown>);
     if (entries.length === 0) {
       throw new ServiceError("validation_failed", 400, "signatures must name at least one mailbox");
+    }
+    // The same ceiling as `folderMailboxes` above, and the same reason: one write per entry
+    // inside one transaction, with the caller choosing how many.
+    if (entries.length > SETTINGS_MAX_MAILBOX_ENTRIES) {
+      throw new ServiceError(
+        "payload_too_large", 413,
+        `signatures names ${entries.length} mailboxes; the limit is ${SETTINGS_MAX_MAILBOX_ENTRIES}`,
+      );
     }
     for (const [k, v] of entries) {
       if (!UUID_RE.test(k)) {
@@ -378,6 +441,15 @@ async function applyConsentSettings(
 function seedAddresses(body: SeedConfirmBody): string[] {
   if (!Array.isArray(body.addresses)) {
     throw new ServiceError("validation_failed", 400, "addresses must be an array of strings");
+  }
+  // Before the per-entry loop, so an oversized list costs one length read — see
+  // Before the per-entry loop, so an oversized list costs one length read. `SEED_MAX_ADDRESSES` is
+  // a coarse absolute ceiling and deliberately NOT the review's scan limit — see its docstring.
+  if (body.addresses.length > SEED_MAX_ADDRESSES) {
+    throw new ServiceError(
+      "payload_too_large", 413,
+      `addresses names ${body.addresses.length} senders; at most ${SEED_MAX_ADDRESSES} may be confirmed at once`,
+    );
   }
   const out: string[] = [];
   for (const a of body.addresses) {

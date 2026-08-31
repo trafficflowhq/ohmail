@@ -12,7 +12,10 @@ import {
  * credits, staff grants) into the LOCAL ENGINE bundle this module is part of. The mail subpath
  * is the same surface minus `ai/*`; every name below lives outside it. */
 import { UNMETERED_STORAGE_CAP, normalizeMime, unhuskJunkFiledBody } from "@trafficflow/core/mail";
-import { ServiceError, foldersEnabled, type ServiceContext } from "@trafficflow/services/mail";
+import {
+  ServiceError, foldersEnabled, isUuid, requireImapUint32, requireUuid, IMAP_UINT32_MAX,
+  type ServiceContext,
+} from "@trafficflow/services/mail";
 import { openMailboxImap } from "./attachments-adapter.js";
 import type { ApiDeps } from "./deps.js";
 
@@ -173,18 +176,61 @@ export interface JunkPage {
 /** One mailbox's cursor entry: the UIDVALIDITY the watermark belongs to, and the seq below. */
 interface CursorEntry { v: string; s: number }
 
+/**
+ * How large a junk-window cursor may be on the wire.
+ *
+ * ── WHY BOTH, AND WHY THEY ARE HERE ─────────────────────────────────────────────────────────
+ *
+ * This cursor is not an id: it is a caller-supplied base64 JSON OBJECT, one entry per mailbox,
+ * and it was bounded by nothing. `parseCursor` decoded the whole value, `JSON.parse`d it and
+ * looped every entry — so `?cursor=` could carry any number of keys with any-length `v` strings,
+ * and the work was linear in a value the caller typed. The shared `decodeListCursor` never sees
+ * this one (it has its own decoder), and the input census recorded `routes/screener.ts#cursor`
+ * once for two different readers, so neither guard covered it. Each entry's key must now be a
+ * mailbox uuid and its epoch a uint32, which is what stops "any-length `v` strings".
+ *
+ * ── ONE CEILING, AND A RESIDUAL STATED RATHER THAN HIDDEN ────────────────────────────────
+ *
+ * This cursor's size IS the account's mailbox count — `listJunk` mints one entry per read lane —
+ * and the self-host imposes NO mailbox count limit (`SELF_HOST_MAILBOX_ALLOWANCE`). **So any
+ * entry ceiling here rejects a cursor this function itself minted, at some account size.** Two
+ * review rounds moved that threshold — 64 entries, then 1 024 — and moving it is not fixing it:
+ * the shape of the defect is unchanged, only the account it bites is larger. It is gone.
+ *
+ * What remains is ONE number, and it is the one this class is actually about: a WIRE ceiling,
+ * consulted BEFORE the decode, so an arbitrarily long cursor costs a `.length` rather than a
+ * base64 decode, a `JSON.parse` and a loop. It bounds the entry count too, because an entry
+ * cannot weigh less than its uuid key.
+ *
+ * **What it does NOT do, said plainly:** an account with roughly two thousand mailboxes would
+ * mint a cursor this refuses. That is not a number a parser can fix — it needs either a real
+ * product mailbox ceiling or a cursor whose size does not scale with the mailbox count — and it
+ * is a known gap of its own — the same one that carries the unbounded mailbox
+ * cardinality this rests on.
+ */
+export const JUNK_CURSOR_MAX_CHARS = 128 * 1024;
+
 /** The opaque cursor: base64url JSON of {mailboxId → {v, s}}. Malformed input is a 400. */
 function parseCursor(raw: string | undefined): Record<string, CursorEntry> {
   if (!raw) return {};
+  if (raw.length > JUNK_CURSOR_MAX_CHARS) {
+    throw new ServiceError("validation_failed", 400, "cursor is not a junk-window cursor");
+  }
   try {
     const parsed: unknown = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("shape");
+    const entries = Object.entries(parsed);
     const out: Record<string, CursorEntry> = {};
-    for (const [k, v] of Object.entries(parsed)) {
+    for (const [k, v] of entries) {
+      // The KEY is a mailbox id and the epoch is an IMAP UIDVALIDITY — both were untyped here,
+      // so a cursor could name any string as a mailbox and any decimal string as an epoch, and
+      // both are compared downstream against values from the user's own server.
+      if (!isUuid(k)) throw new Error("shape");
       const e = v as { v?: unknown; s?: unknown };
-      if (typeof e?.v !== "string" || typeof e?.s !== "number" || !Number.isInteger(e.s) || e.s <= 0) {
+      if (typeof e?.v !== "string" || !/^[1-9][0-9]{0,9}$/.test(e.v) || Number(e.v) > IMAP_UINT32_MAX) {
         throw new Error("shape");
       }
+      if (typeof e?.s !== "number" || !Number.isInteger(e.s) || e.s <= 0) throw new Error("shape");
       out[k] = { v: e.v, s: e.s };
     }
     return out;
@@ -218,6 +264,11 @@ async function junkMailboxesOf(
   // `disabled` is the stood-down/lease state — another organizer's mailbox. `error` stays in:
   // a transiently erroring mailbox is still Cloud's to read, and the read itself will state
   // `unreachable` honestly when the dial fails.
+  // SHAPE before the predicate: `mailboxes.id` is a uuid column and `?mailboxId=` is caller-
+  // chosen, so a malformed one reached Postgres as 22P02 — a 500 for a bad query string. Here
+  // rather than in the routes, so every present and future caller of this function gets it, which
+  // is the argument `requireRealEpoch` makes about its own placement one function up.
+  if (mailboxId !== undefined) requireUuid(mailboxId, "mailboxId");
   const scoped = and(eq(mailboxes.accountId, accountId), ne(mailboxes.status, "disabled"));
   const rows = await deps.db
     .select({ id: mailboxes.id, address: mailboxes.address, junkFolder: mailboxes.junkFolder })
@@ -577,8 +628,19 @@ export async function searchJunk(
  * such a value would not match anything and would fail somewhere less honest than here.
  */
 function requireRealEpoch(uidValidity: string): void {
-  if (!/^[1-9][0-9]*$/.test(uidValidity)) {
-    throw new ServiceError("validation_failed", 400, "uidValidity must be the row's epoch, a positive integer");
+  // ── AND IT IS BOUNDED, because the protocol bounds it ──────────────────────────────────
+  //
+  // `^[1-9][0-9]*$` accepted a decimal string of ANY length. RFC 3501 §2.3.1.1 makes UIDVALIDITY
+  // an unsigned 32-bit integer, so a five-hundred-digit "epoch" is not one — and it survived to
+  // be compared against the server's answer, which is a value the caller chose reaching a socket
+  // conversation with somebody else's mail server. The digit ceiling is checked before the range
+  // so an absurd string costs a `.length` rather than a `Number()`.
+  if (!/^[1-9][0-9]*$/.test(uidValidity) || uidValidity.length > 10
+    || Number(uidValidity) > IMAP_UINT32_MAX) {
+    throw new ServiceError(
+      "validation_failed", 400,
+      `uidValidity must be the row's epoch — an integer between 1 and ${IMAP_UINT32_MAX}`,
+    );
   }
 }
 
@@ -587,6 +649,10 @@ export async function junkBody(
   args: { mailboxId: string; uid: number; uidValidity: string },
 ): Promise<{ subject: string; text: string }> {
   requireRealEpoch(args.uidValidity);
+  // The UID has the same protocol ceiling as its epoch and had none: `?uid=1e100` is an integer
+  // to JavaScript, survived the route's own check, and was written into a FETCH command. See
+  // `requireImapUint32`.
+  requireImapUint32(args.uid, "uid");
   await requireFolders(deps, accountId);
   const [box] = await junkMailboxesOf(deps, accountId, args.mailboxId);
   if (!box || box.junkFolder === null) {
@@ -713,12 +779,18 @@ export async function rescueJunk(
   args: { mailboxId: string; uid: number; uidValidity: string; allow?: { sender: string } },
 ): Promise<{ status: "rescued"; allowed?: AllowSenderOutcome }> {
   const accountId = ctx.accountId;
+  // BOTH protocol values, and BEFORE any write. `junkBody` got this guard and this seam did not —
+  // the second door onto the same FETCH/MOVE, which is the shape a per-route check produces. The
+  // ORDER matters as much as the presence: `allowSender` below COMMITS a rule change, so a
+  // malformed UID checked after it would leave the user's screening changed by a request that
+  // then failed. Every refusal on this path belongs above the first write.
+  requireImapUint32(args.uid, "uid");
+  requireRealEpoch(args.uidValidity);
   await requireFolders(deps, accountId);
   const [box] = await junkMailboxesOf(deps, accountId, args.mailboxId);
   if (!box || box.junkFolder === null) {
     throw new ServiceError("no_junk_folder", 404, "this mailbox has no Junk folder");
   }
-  requireRealEpoch(args.uidValidity);
   const ref = makeRef(args.uidValidity, args.uid);
   const allowed = args.allow !== undefined ? await allowSender(deps, ctx, args.allow.sender) : undefined;
 
@@ -726,8 +798,8 @@ export async function rescueJunk(
    * EVERYTHING AFTER THE ALLOW SPEAKS THE PARTIAL-OUTCOME LANGUAGE. The move's own catch below
    * translates its two failures; this boundary covers the steps BEFORE it — the husk lookup and
    * the dial itself (a busy mailbox, an unreadable credential, a refused LOGIN) — which used to
-   * rethrow raw and read as "nothing happened" while the sender's rules had already changed
-   * (review round 2 on the client). An inner ServiceError passes through untouched.
+   * rethrow raw and read as "nothing happened" while the sender's rules had already changed.
+   * An inner ServiceError passes through untouched.
    */
   try {
 
@@ -799,7 +871,7 @@ export async function rescueJunk(
       // A move that failed for any OTHER reason (a timeout, a provider refusal) after the allow
       // committed is a PARTIAL outcome, and the client must be able to report it as one: the
       // message is still in Junk, but the sender's rules changed. A bare rethrow would read as
-      // "nothing happened" (review round on the client).
+      // "nothing happened".
       throw new ServiceError(
         "junk_rescue_move_failed", 502,
         "the move could not be made just now — the sender is allowed from now on regardless",
@@ -854,7 +926,7 @@ export async function rescueJunk(
     // Only the rescue's OWN answers pass through: `junk_message_gone` (which already carries the
     // allow) and an inner `junk_rescue_move_failed`. Every other failure — a typed dial refusal
     // (`mailbox_busy`, unreadable credentials) as much as a raw transport throw — happened AFTER
-    // the allow committed, and must say so (review round 5: the blanket ServiceError passthrough
+    // the allow committed, and must say so (the blanket ServiceError passthrough
     // hid the partial outcome behind the dial's own vocabulary).
     const rescueOwn = err instanceof ServiceError
       && (err.code === "junk_message_gone" || err.code === "junk_rescue_move_failed");

@@ -32,7 +32,7 @@ import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { fenceErasedAccount } from "./erasure-fence.js";
 import { getScreeningPreference } from "./screening-preference.js";
 import { LearningService } from "./learning-service.js";
-import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
+import { clampLimit, decodeKeysetCursor, encodeListCursor } from "./pagination.js";
 import type { Folder, Page, ScreenerItem } from "./dto/types.js";
 
 /** Where unknown first-contact senders are held (core routing, `source:"screener"`). */
@@ -557,14 +557,10 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  * one place the cursor is read.
  */
 function decodeScreenerCursor(cursor: string): { time: number; messageId: string } {
-  const raw = decodeListCursor(cursor);
-  const i = raw.indexOf(":");
-  const time = Number(raw.slice(0, i));
-  const messageId = raw.slice(i + 1);
-  if (i < 0 || !Number.isFinite(time) || !UUID_RE.test(messageId)) {
-    throw new ServiceError("validation_failed", 400, "cursor is not a valid screener cursor");
-  }
-  return { time, messageId };
+  // The shape checks this used to make itself now live in `decodeKeysetCursor`, which every
+  // (date, id) family shares — including the epoch RANGE, which none of them checked.
+  const { millis, id } = decodeKeysetCursor(cursor);
+  return { time: millis, messageId: id };
 }
 
 /**

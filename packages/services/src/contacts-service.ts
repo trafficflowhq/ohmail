@@ -5,6 +5,29 @@ import { ServiceError } from "./errors.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
 import type { ContactDTO, NoteDTO, Page } from "./dto/types.js";
 
+/**
+ * THE LONGEST `?q=` THE CONTACT LIST ACCEPTS.
+ *
+ * `q` becomes the ILIKE pattern `'%' || q || '%'`, which is an unanchored substring match run
+ * against every contact row the account owns — the pattern length is a per-row cost and the
+ * caller chose it, with no bound at all.
+ *
+ * **320, and the number is a deliberate over-cap rather than a derivation.** Pasting a complete
+ * address into the contact search is the obvious thing to do with this field, so the ceiling has
+ * to clear the longest address a row can hold. RFC 5321 §4.5.3.1 makes a usable mailbox 254
+ * octets (the forward path is capped at 256 including the brackets, so the 64 + 1 + 255 component
+ * maxima cannot all be met at once) — but `contacts.address` is a `text` column written from
+ * whatever arrived, with no such validator, so the deliverable maximum is not the storable one.
+ * 320 clears both with room, and being generous here costs one bounded ILIKE pattern.
+ *
+ * Deliberately NOT `SEARCH_QUERY_MAX_CHARS` (200), which bounds free-text prose against a trigram
+ * index and has no reason to accommodate an address.
+ *
+ * A 400, never a truncation: a shortened pattern silently matches MORE rows than the caller
+ * asked about, which on a contact list is the wrong direction to be silently wrong in.
+ */
+export const CONTACTS_QUERY_MAX_CHARS = 320;
+
 export interface ListContactsOptions {
   q?: string;
   cursor?: string;
@@ -50,8 +73,21 @@ export class ContactsService {
   async list(ctx: ServiceContext, opts: ListContactsOptions = {}): Promise<Page<ContactDTO>> {
     const limit = clampLimit(opts.limit);
     const filters = [eq(contacts.accountId, ctx.accountId)];
-    // `q` matches the address or the (nullable) name, case-insensitively.
-    if (opts.q) filters.push(ilike(contacts.address, `%${opts.q}%`));
+    // `q` matches the ADDRESS, case-insensitively — not the display name, which this used to
+    // claim. Adding `or ilike(contacts.name, …)` is a behaviour change with its own product
+    // question (a name match on a list keyed by address changes what "no results" means), so the
+    // comment is corrected to what the predicate does rather than the predicate widened inside a
+    // slice about bounds. Bounded BEFORE it becomes the pattern — see
+    // {@link CONTACTS_QUERY_MAX_CHARS}.
+    if (opts.q) {
+      if (opts.q.length > CONTACTS_QUERY_MAX_CHARS) {
+        throw new ServiceError(
+          "validation_failed", 400,
+          `q is ${opts.q.length} characters; the limit is ${CONTACTS_QUERY_MAX_CHARS}`,
+        );
+      }
+      filters.push(ilike(contacts.address, `%${opts.q}%`));
+    }
     if (opts.cursor) filters.push(gt(contacts.id, decodeListCursor(opts.cursor)));
 
     const rows = await ctx.db.select().from(contacts)

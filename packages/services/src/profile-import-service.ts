@@ -101,7 +101,21 @@ export type ProfileImportCandidateDTO =
     counts: ProfileImportCounts;
   }
   /** Written by a later ohmail. Nothing is offered — a partial import would be a silent loss. */
-  | { state: "newer"; v: number };
+  | { state: "newer"; v: number }
+  /**
+   * Too large to apply in one transaction. Nothing is offered, for the same reason `newer` offers
+   * nothing: a partial import is a settings restore that silently omits some of them.
+   *
+   * It carries the offending list and both numbers, and the document's `fingerprint` so the
+   * content-keyed `decline` can be recorded against it — without that a client could never stop
+   * being asked, and every poll would re-dial the mailbox.
+   *
+   * **What it does NOT yet get is a card.** The shared reader (`ProfileImportCard#asOffer`) treats
+   * any unrecognised state as no offer, which is the safe behaviour and a silent one: the person
+   * is not told why their settings are not being offered. Stated here rather than implied — the
+   * wire half is done and the surface half is not.
+   */
+  | { state: "too_large"; fingerprint: string; list: string; count: number; max: number };
 
 export interface ProfileImportApplied {
   imported: ProfileImportCounts;
@@ -210,6 +224,86 @@ const ruleKey = (r: { kind: string; match: string; subjectContains: string | nul
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
+/**
+ * HOW LARGE A DOCUMENT `apply` WILL IMPORT, PER LIST.
+ *
+ * ── WHY THIS NEEDED A BOUND AT ALL ────────────────────────────────────────────────────────
+ *
+ * `apply` walks `doc.screener`, `doc.rules`, `doc.notifyRules` and `doc.tagNames` one entry at a
+ * time inside ONE transaction, holding an account-scoped advisory lock, issuing an upsert or an
+ * update per entry and appending a change-log row for each rule it writes. None of those lists
+ * had a ceiling, and the counts do not come from the request: they come from a JSON document in
+ * the `ohmail/_meta` folder of an IMAP server the user chose and we do not run. So the size of
+ * the transaction, the length of the lock and the number of change rows were all decided by the
+ * mail server, and the confirmation the user gives is a fingerprint of the content — it proves
+ * they saw the same document, not that the document is a reasonable size.
+ *
+ * (The READ side of the same document — its bytes and message count coming off the wire — is
+ * the unbounded-read and adapter-door gaps, which belong to the peek and the adapter.
+ * This is the WRITE side, and it needs its own bound whatever the read grows: a document that
+ * arrives legitimately can still be too large to apply in one transaction.)
+ *
+ * ── THE NUMBERS ──────────────────────────────────────────────────────────────────────────
+ *
+ * ── THE FAILURE MODE OF A TIGHT BOUND HERE IS SEVERE AND PERMANENT ─────────────────────────
+ *
+ * `serializeOrganizerProfile` exports EVERY contact, rule, notify rule and tag an account holds,
+ * and none of the write services impose an account-wide total — so an account can legitimately
+ * create more of any of them than a felt ceiling allows, export all of them, and then be unable
+ * to restore its own settings. A review round caught exactly that shape at a `tagNames` cap of
+ * 500 against an account that could hold 501.
+ *
+ * So each number is set far above what any real account holds rather than at a comfortable
+ * round figure, and the residual — an account already past one of them — is recorded as a known
+ * limit rather than argued away. `screener` is an address book and gets the largest, 20 000 —
+ * four times `SEED_SCAN_LIMIT` and chosen AGAINST it as a rough scale rather than derived from
+ * it, because that constant counts MESSAGES and one message contributes every distinct recipient
+ * on it. The document bounded here is an address book another install wrote, not a review, so the
+ * two are only loosely related and this is a product ceiling.
+ *
+ * REFUSED, not truncated. A partial import is a settings restore that silently omits some of the
+ * user's rules, and they would have no way to see which — the counts on the confirm screen said
+ * one thing and the account holds another.
+ *
+ * AND REFUSED IN `candidate()` TOO, which is the half that makes the refusal honest: the confirm
+ * screen is built from `candidate()`, so a ceiling only `apply()` knew about would OFFER an
+ * import and then refuse the press. `candidate()` answers `too_large` with the counts, the limits
+ * and the fingerprint, exactly as it answers `newer` for a document this build cannot read — and
+ * the shared card, whose reader treats an unrecognised state as no offer, therefore shows
+ * nothing rather than something wrong. Explaining it on the surface is a separate change.
+ */
+export const PROFILE_IMPORT_MAX = {
+  screener: 20_000,
+  rules: 5_000,
+  notifyRules: 2_000,
+  tagNames: 2_000,
+} as const;
+
+/** The first list that is over its ceiling, or null. One answer, used by both entry points. */
+function oversizedList(doc: OrganizerProfileDoc): { list: string; count: number; max: number } | null {
+  for (const key of ["screener", "rules", "notifyRules", "tagNames"] as const) {
+    const n = doc[key].length;
+    const max = PROFILE_IMPORT_MAX[key];
+    if (n > max) return { list: key, count: n, max };
+  }
+  return null;
+}
+
+/**
+ * Refuse a document whose lists are larger than one transaction should carry. Called BEFORE
+ * `apply` opens its transaction, which is the whole point — inside it, the lock is already held.
+ */
+function refuseOversizedProfile(doc: OrganizerProfileDoc): void {
+  const over = oversizedList(doc);
+  if (over) {
+    throw new ServiceError(
+      "payload_too_large", 413,
+      `these saved settings hold ${over.count} ${over.list} entries, over the ${over.max} this ` +
+        "import can apply in one go. Nothing was changed.",
+    );
+  }
+}
+
 /** Counts of a document, in the confirm screen's units. */
 function countsOf(doc: OrganizerProfileDoc): ProfileImportCounts {
   return {
@@ -267,12 +361,57 @@ export class ProfileImportService {
     if (fresh.state === "newer") return { state: "newer", v: fresh.v };
     if (fresh.state !== "found") return { state: "none" };
 
+    /**
+     * THE SIZE REFUSAL COMES BEFORE THE FINGERPRINT, and the fingerprint before the lookup.
+     *
+     * `profileFingerprint` copies and locale-sorts all four arrays and serializes the whole
+     * canonical document to hash it. Refusing after it would bound the TRANSACTION and nothing
+     * else, while the sort and the whole-document buffer the ceiling exists to prevent had
+     * already run — the same "the ceiling is applied to the result and not to the read" shape
+     * this slice is named for, one layer up.
+     *
+     * The cost of putting it first is that a `too_large` answer carries a fingerprint computed
+     * for an oversized document — which it must, because that fingerprint is what makes the
+     * answer DISMISSIBLE. So the order is: refuse on COUNTS (free), then canonicalize once for
+     * the id, then ask whether this exact content has already been answered about.
+     */
+    const over = oversizedList(fresh.doc);
     const fingerprint = profileFingerprint(fresh.doc);
-    // The CURRENT document may differ from the detected one; the answer is keyed to what is
-    // offered now. Already answered for this exact content ⇒ nothing to ask.
+
+    /**
+     * THE RESOLUTION LOOKUP COMES BEFORE THE SIZE ANSWER, and the order is a correction.
+     *
+     * `too_large` used to be answered BEFORE this, which quietly broke the dismissal it carries a
+     * fingerprint for: with a stale marker (A) over a changed, oversized document (B),
+     * `candidate` answered `too_large(B)`, a client recorded `decline(B)`, and the next poll —
+     * which only checks the MARKER's fingerprint above — re-dialled IMAP and answered
+     * `too_large(B)` again, forever. The answer was durable and the question was not.
+     *
+     * Asking about the FRESH fingerprint here settles that for every state at once: a document
+     * the user has already answered about is `none`, whether the answer was "keep local" or an
+     * import, and whether or not it is one this build would offer.
+     */
     if (await profileImportResolutionExists(db, { accountId: ctx.accountId, mailboxId, fingerprint })) {
       return { state: "none" };
     }
+
+    /**
+     * A document `apply` would refuse is not OFFERED. Before this the ceiling lived only in
+     * `apply`, so the confirm screen showed counts and a button that was going to 413 — see
+     * {@link PROFILE_IMPORT_MAX}. Answered like `newer`: nothing is offered.
+     *
+     * IT CARRIES THE FINGERPRINT, and that is what makes the state actionable rather than a
+     * dead end. `decline` is content-keyed, so a client holding the fingerprint can record a
+     * durable "keep local" for this exact document and stop being asked. The shared card
+     * currently reads any state it does not recognise as NO OFFER, so today this is silent
+     * rather than explained; the fingerprint is what a card that explains it will need.
+     */
+    if (over) {
+      return { state: "too_large", fingerprint, list: over.list, count: over.count, max: over.max };
+    }
+    // (The "already answered for this exact content" check that used to live here has moved ABOVE
+    // the size refusal — see the note there. It is the same question and the same query; only its
+    // position changed, so that a `too_large` answer can be dismissed like any other.)
     // Already what the local store says ⇒ nothing an import would change, so nothing is asked.
     // (The organizer releases its own hold by this same comparison — one serializer, one answer.)
     const local = await serializeOrganizerProfile(db, ctx.accountId);
@@ -312,6 +451,11 @@ export class ProfileImportService {
         "These settings were saved by a newer version of ohmail — update ohmail to import them.",
       );
     }
+    // BEFORE the fingerprint, not after it. `profileFingerprint` copies and locale-sorts all four
+    // arrays and serializes the whole canonical document to hash it — so a ceiling that fires
+    // afterwards is a ceiling on the transaction and on nothing else, while the sort and the
+    // buffer it was meant to prevent have already happened. A review round caught it there.
+    if (fresh.state === "found") refuseOversizedProfile(fresh.doc);
     if (fresh.state !== "found" || profileFingerprint(fresh.doc) !== fingerprint) {
       throw new ServiceError(
         "profile_changed", 409,

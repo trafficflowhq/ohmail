@@ -42,6 +42,22 @@ const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
  */
 export const SEED_SCAN_LIMIT = 5000;
 
+/**
+ * HOW MANY ADDRESSES ONE CONFIRMATION MAY NAME.
+ *
+ * A COARSE ceiling, and coarse on purpose. Its job is to stop an unbounded list being lowercased
+ * and folded into a Set before the intersection bounds the writes — nothing more. It is
+ * deliberately NOT derived from {@link SEED_SCAN_LIMIT}: that is a count of MESSAGES, and one
+ * sent message contributes every distinct recipient on it, so a review this product built can
+ * legitimately offer more addresses than it scanned messages. A ceiling derived that way refuses
+ * the product's own review.
+ *
+ * 50 000 is ten recipients per scanned message — well past any real address book, and four
+ * orders of magnitude below what a script can put in a request. The number that actually decides
+ * what gets written is the review's own candidate list, which this endpoint intersects against.
+ */
+export const SEED_MAX_ADDRESSES = 50_000;
+
 export type SeedExclusionReason =
   /** The recipient address is a machine: bounces, daemons, no-reply, calendar servers. */
   | "robot-recipient"
@@ -403,14 +419,34 @@ async function decidedSenders(
   db: ServiceContext["db"] | Tx, accountId: string, addresses: string[],
 ): Promise<Set<string>> {
   if (addresses.length === 0) return new Set();
-  const rows = await db.select({ match: rules.match }).from(rules)
-    .where(and(
-      eq(rules.accountId, accountId),
-      eq(rules.kind, "sender"),
-      eq(rules.enabled, true),
-      inArray(sql`lower(${rules.match})`, addresses),
-    ));
-  return new Set(rows.map((r) => r.match.trim().toLowerCase()));
+  /**
+   * ── CHUNKED, for the reason the WRITES a few lines down already are ──────────────────────
+   *
+   * This put the WHOLE address set into one `IN`, and the set is not bounded by anything anybody
+   * assumed it was: the review is built from at most `SEED_SCAN_LIMIT` MESSAGES, and one sent
+   * message contributes every distinct `To`/`Cc` recipient on it. A mailbox whose sent mail
+   * carries large recipient lists therefore produces a candidate list far larger than the scan,
+   * and past Postgres's 65 535 bind parameters the statement is refused — a 500 on
+   * `GET /consent/seed` for an account that is merely large.
+   *
+   * The same false premise — that the scan limit bounds the ADDRESSES — was corrected twice
+   * elsewhere in this file before it was noticed here, which is the argument for chunking rather
+   * than for another ceiling: {@link WRITE_CHUNK} already exists for exactly this arithmetic and
+   * its docstring already carries the parameter-limit reasoning. Reusing it means there is one
+   * place where "how many values fit in a statement" is decided.
+   */
+  const out = new Set<string>();
+  for (const part of chunked(addresses, WRITE_CHUNK)) {
+    const rows = await db.select({ match: rules.match }).from(rules)
+      .where(and(
+        eq(rules.accountId, accountId),
+        eq(rules.kind, "sender"),
+        eq(rules.enabled, true),
+        inArray(sql`lower(${rules.match})`, part),
+      ));
+    for (const r of rows) out.add(r.match.trim().toLowerCase());
+  }
+  return out;
 }
 
 /**
@@ -477,6 +513,42 @@ function chunked<T>(items: readonly T[], size: number): T[][] {
 export async function confirmSeed(
   ctx: ServiceContext, addresses: readonly string[],
 ): Promise<SeedConfirmResult> {
+  /**
+   * THE LIST IS BOUNDED BEFORE ANYTHING IS DONE WITH IT.
+   *
+   * The WRITE set has always been bounded — the loop below intersects what the caller names with
+   * what the review actually offered, and the review is built from at most {@link
+   * SEED_SCAN_LIMIT} MESSAGES. (Not candidates: one sent message contributes every distinct
+   * recipient on it, so the candidate list can be larger than the scan — which is the whole
+   * reason the ceiling below is not derived from that constant.) What was unbounded is the list
+   * on the way IN: every entry is trimmed, lowercased and folded into a Set before that
+   * intersection, so the caller chose how much work happened before the bound applied.
+   *
+   * ── AND THE CEILING IS NOT `SEED_SCAN_LIMIT`, WHICH IS A MESSAGE COUNT ──────────────────
+   *
+   * It briefly was, on the reasoning that a review cannot offer more candidates than it scanned
+   * messages. That is false: one sent message contributes every distinct recipient on it, so a
+   * review can legitimately offer several times {@link SEED_SCAN_LIMIT} addresses — and confirming
+   * a review this product produced would then have been a 413. A bound that refuses the product's
+   * own output is worse than the unbounded fold it replaces.
+   *
+   * So the ceiling is {@link SEED_MAX_ADDRESSES}: a coarse absolute limit whose only job is to
+   * stop the UNBOUNDED case, deliberately far above any review's fan-out. The precise bound on
+   * what is WRITTEN stays where it always was and needs no number — the intersection below keeps
+   * only addresses the review actually offered.
+   *
+   * IN THE SERVICE, not in `routes/consent.ts`, for the reason `SearchService`'s date guard
+   * gives about its own placement: *"the route is not the only door… a check living in the route
+   * would guard the hosted door and not the desktop one — the shape this repository treats as a
+   * finding in its own right"*. Nothing but the route calls this today; that is a fact about
+   * today's callers, not a property of the function.
+   */
+  if (addresses.length > SEED_MAX_ADDRESSES) {
+    throw new ServiceError(
+      "payload_too_large", 413,
+      `addresses names ${addresses.length} senders; at most ${SEED_MAX_ADDRESSES} may be confirmed at once`,
+    );
+  }
   const review = await buildSeedReview(ctx);
   const own = await ownAddresses(ctx);
   const offered = new Map(review.candidates.map((c) => [c.address, c]));
@@ -600,6 +672,7 @@ export async function consentSettings(
   blockAutoUnsubscribeAt: string | null;
   foldersEnabledAt: string | null;
   locale: string | null;
+  themeFace: string | null;
 }> {
   const [row] = await ctx.db.select().from(accountSettings)
     .where(eq(accountSettings.accountId, ctx.accountId)).limit(1);
@@ -652,6 +725,12 @@ export async function consentSettings(
     // client cannot load into the boot path. Refusing it here is the read-side half of the same
     // closed set the constraint enforces on the write side.
     locale: SUPPORTED_LOCALES.includes(row?.locale ?? "") ? row!.locale : null,
+    // NULL, an absent row and an UNSUPPORTED value all answer null — `locale`'s spelling, for
+    // `locale`'s reason: the CHECK closes the set, so an unsupported string is unreachable
+    // through any writer, and if one arrives anyway (a hand-run UPDATE, a pre-constraint
+    // restore) sending it on would stamp a face nothing renders onto every boot. Null means
+    // "no account-wide choice" and each device resolves its own default (consent-state.ts).
+    themeFace: SUPPORTED_THEME_FACES.includes(row?.themeFace ?? "") ? row!.themeFace : null,
   };
 }
 
@@ -1325,6 +1404,56 @@ export async function setLocale(
     await recordSettingsChange(tx, ctx.accountId); // AFTER the settings row — the global lock order above
   });
   return { locale: stored };
+}
+
+/**
+ * The closed set of appearance faces — mirrored by the migration's CHECK (mail 0082), the wire
+ * validation in `PATCH /consent/settings`, and the Settings control.
+ */
+export const SUPPORTED_THEME_FACES: readonly string[] = ["paper", "ohmarchy"];
+
+/**
+ * SET THE ACCOUNT-WIDE APPEARANCE FACE — `locale`'s twin on `account_settings`, with ONE
+ * deliberate inversion: **the default is stored.**
+ *
+ * `setLocale` maps a request for English back to NULL because "asked for the default" and
+ * "never chose" resolve identically on every device. The face cannot collapse the two: a LINUX
+ * device with no choice anywhere defaults to the ohmarchy face for that device only (Option B,
+ * OHMARCHY-PLAN.md §3a), so an explicit account-wide `'paper'` is a real instruction — it is
+ * exactly what overrides that detection — and storing NULL for it would make the instruction
+ * unsayable on the one class of device it targets. `null` remains sendable and stores NULL:
+ * "drop the account-wide choice, let each device resolve its own default".
+ *
+ * WHAT THIS WRITE AUTHORISES: NOTHING. It spends nothing, moves no mail, files nothing
+ * differently — it changes which colors the interface is drawn in. The route's `cost: "work"`
+ * is inherited from the auto-suggest neighbour, not earned here (setLocale's paragraph).
+ *
+ * The upsert is column-scoped for the same one-primary-key race the other knobs share; the
+ * erasure fence and the `settings` change row bracket it in the same lock order. Returns the
+ * STORED value so the caller echoes the database, never the argument.
+ */
+export async function setThemeFace(
+  ctx: ServiceContext, themeFace: string | null,
+): Promise<{ themeFace: string | null }> {
+  if (themeFace !== null && !SUPPORTED_THEME_FACES.includes(themeFace)) {
+    throw new ServiceError(
+      "validation_failed", 400,
+      `themeFace must be one of ${SUPPORTED_THEME_FACES.join(", ")}, or null`,
+    );
+  }
+  await (ctx.db as unknown as Tx).transaction(async (tx) => {
+    // Erasure fence FIRST — the single lock chain (accounts → settings → sequence row) that
+    // every settings writer keeps; `erasure-fence.ts` carries the two-sided argument.
+    await fenceErasedAccount(tx, ctx.accountId);
+    await tx.insert(accountSettings)
+      .values({ accountId: ctx.accountId, themeFace, updatedAt: ctx.now() })
+      .onConflictDoUpdate({
+        target: accountSettings.accountId,
+        set: { themeFace, updatedAt: ctx.now() },
+      });
+    await recordSettingsChange(tx, ctx.accountId); // AFTER the settings row — the global lock order
+  });
+  return { themeFace };
 }
 
 /* `assertNotConfirmed` used to live here: a helper that turned a non-null `seed_confirmed_at`

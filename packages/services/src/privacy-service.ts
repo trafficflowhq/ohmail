@@ -4,7 +4,7 @@ import { hostOf, isKnownTracker, isBeaconUrl } from "@trafficflow/core/mail";
 import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { requireUuid } from "./ids.js";
-import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
+import { clampLimit, decodeKeysetCursor, encodeListCursor } from "./pagination.js";
 import { assertPublicHttpUrl, type HostResolver } from "./ssrf-guard.js";
 import { pinnedHttpRequest } from "./pinned-fetch.js";
 import type { Page, TrackerEventDTO } from "./dto/types.js";
@@ -656,9 +656,8 @@ function encodeCursor(detectedAt: Date, id: string): string {
   return encodeListCursor(`${detectedAt.getTime()}:${id}`);
 }
 function decodeCursor(cursor: string): { detectedAt: Date; id: string } {
-  const raw = decodeListCursor(cursor);
-  const i = raw.indexOf(":");
-  return { detectedAt: new Date(Number(raw.slice(0, i))), id: raw.slice(i + 1) };
+  const { millis, id } = decodeKeysetCursor(cursor);
+  return { detectedAt: new Date(millis), id };
 }
 
 const KIND_MAP: Record<string, TrackerEventDTO["kind"]> = {

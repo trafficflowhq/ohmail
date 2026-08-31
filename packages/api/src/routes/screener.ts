@@ -90,9 +90,16 @@ export const screenerRoutes: Route[] = [
    * dial a mail server. All three are gated on the folders foundation flag inside the module
    * (409 `folders_disabled` with the flag off — no shipped flag-off client calls them, §16.7).
    *
-   * The window NEVER writes `messages`/mirror rows — `GET` twice over, and the rescue writes
-   * exactly one thing on OUR side: the `sync_requested_at` doorbell. `junk-window.ts` carries
-   * the argument; `junk-window.test.ts` counts the tables.
+   * The window NEVER writes `messages`/mirror rows — `GET` twice over — and a PLAIN rescue writes
+   * exactly one thing on OUR side: the `sync_requested_at` doorbell. `junk-window.ts` carries the
+   * argument; `junk-window.test.ts` counts the tables.
+   *
+   * **The `allow` variant is not that, and this used to say it was.** `POST /screener/junk/rescue`
+   * with `{ allow: { sender } }` runs `allowSender` BEFORE the move: it can disable a block rule,
+   * insert an allow rule and a contact, and append the change-log rows for them, in its own
+   * transaction. That is a real write to the user's screening, and it is why every refusal on that
+   * path — the folders gate, the epoch, the UID's protocol range — belongs ABOVE it. A request
+   * refused after `allowSender` would leave the user's screening changed by a call that failed.
    *
    * Static-beats-param (the `/messages/bodies` proof): `/screener/junk` outranks
    * `/screener/:id` at two segments; the three-segment routes contend with nothing.

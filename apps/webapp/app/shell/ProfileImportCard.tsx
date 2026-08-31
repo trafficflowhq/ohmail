@@ -46,8 +46,16 @@ import { displayAddress } from "./idn";
 /** How often an unanswered mailbox is re-asked, at most. The connect case rides the first beat. */
 export const PROFILE_IMPORT_RECHECK_MS = 5 * 60 * 1000;
 
-/** The two shapes worth a card. `none` never leaves the hook. */
-type OfferCandidate = Exclude<ProfileImportCandidateWire, { state: "none" }>;
+/**
+ * The two shapes worth a card.
+ *
+ * `none` never leaves the hook. `too_large` is excluded for the same reason and by the same
+ * mechanism: `asOffer` is a tolerant reader that returns `null` for any state it does not
+ * recognise, so a document the server will not apply is simply not offered — which is already
+ * the right behaviour. Excluding it from this type is what keeps that true at compile time
+ * rather than by the reader happening to fall through.
+ */
+type OfferCandidate = Exclude<ProfileImportCandidateWire, { state: "none" } | { state: "too_large" }>;
 
 export interface ProfileImportOffer {
   mailboxId: string;

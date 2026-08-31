@@ -584,14 +584,83 @@ export class AttachmentStagingStorageError extends Error {
   }
 }
 
+/**
+ * A staged object that is bigger than the ticket said it would be, refused DURING the read.
+ *
+ * `declaredBytes` is the object's own `Content-Length` when the response carried one — the read
+ * was then refused before it started, and the number is exact. When it is `null` the response
+ * declared no length (or a false one) and the transfer was abandoned mid-stream, so all that is
+ * known is that the object is over `maxBytes`.
+ */
+export class StagedObjectTooLargeError extends Error {
+  constructor(readonly maxBytes: number, readonly declaredBytes: number | null) {
+    super(`staged object exceeds ${maxBytes} bytes`);
+    this.name = "StagedObjectTooLargeError";
+  }
+}
+
+/**
+ * Read a fetch Response body under a byte ceiling, counting as it arrives.
+ *
+ * The same shape as the API door's `readBodyWithin`, and for the same reason: a check after
+ * `res.arrayBuffer()` is a check on bytes that are already the cost being refused. The declared
+ * length is consulted first — that refuses an honest oversized object for nothing — and the
+ * stream is then counted before each chunk is retained, so the peak is one chunk over the ceiling.
+ */
+async function readObjectWithin(res: Response, maxBytes: number): Promise<Uint8Array> {
+  const declared = Number(res.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await res.body?.cancel().catch(() => { /* already gone */ });
+    throw new StagedObjectTooLargeError(maxBytes, declared);
+  }
+  const body = res.body;
+  if (!body) return new Uint8Array(0);
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > maxBytes) throw new StagedObjectTooLargeError(maxBytes, null);
+      chunks.push(value);
+    }
+  } finally {
+    await reader.cancel().catch(() => { /* already closed, or already errored */ });
+  }
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const c of chunks) { out.set(c, at); at += c.byteLength; }
+  return out;
+}
+
 /** The three storage calls, as an injectable port so tests can drive the whole path with no network. */
 export interface AttachmentStagingStorage {
   /** Mint a signed, single-object upload grant. */
   signUpload(objectPath: string, contentType: string): Promise<{
     uploadUrl: string; uploadMethod: string; uploadHeaders: Record<string, string>;
   }>;
-  /** Read an object's bytes with the service credential. */
-  download(objectPath: string): Promise<Uint8Array>;
+  /**
+   * Read an object's bytes with the service credential.
+   *
+   * `opts.maxBytes` is a CEILING ON THE READ, not on its result: the declared `Content-Length` is
+   * refused before a byte is pulled, and a response that declares nothing (or lies) is counted as
+   * it streams and abandoned the moment it crosses. Over it, this rejects with
+   * {@link StagedObjectTooLargeError}.
+   *
+   * It exists because the caller's ceiling used to be applied AFTERWARDS. `resolveStagedAttachments`
+   * compared `bytes.byteLength` against the ticket's declared size — a correct comparison on bytes
+   * that were already in the heap. The presigned PUT signs only the content TYPE, so a caller
+   * could mint a one-byte ticket, upload an object of any size to the path it named, and send the
+   * ticket: this process then buffered the whole object and noticed the mismatch afterwards.
+   *
+   * Optional so every existing fake storage in a test keeps compiling; every production caller
+   * passes it.
+   */
+  download(objectPath: string, opts?: { maxBytes?: number }): Promise<Uint8Array>;
   /** Remove objects. Best-effort by contract: a path that is already gone is not an error. */
   remove(objectPaths: readonly string[]): Promise<void>;
 }
@@ -650,7 +719,7 @@ export function makeSupabaseStagingStorage(
       };
     },
 
-    async download(objectPath) {
+    async download(objectPath, opts) {
       const res = await fetchImpl(
         `${base}/object/${encodeURIComponent(cfg.bucket)}/${enc(objectPath)}`,
         { method: "GET", headers: auth },
@@ -658,7 +727,9 @@ export function makeSupabaseStagingStorage(
       if (!res.ok) {
         throw new AttachmentStagingStorageError("download", res.status, await res.text().catch(() => ""));
       }
-      return new Uint8Array(await res.arrayBuffer());
+      return opts?.maxBytes === undefined
+        ? new Uint8Array(await res.arrayBuffer())
+        : await readObjectWithin(res as unknown as Response, opts.maxBytes);
     },
 
     async remove(objectPaths) {
@@ -833,13 +904,15 @@ export function makeS3StagingStorage(
       };
     },
 
-    async download(objectPath) {
+    async download(objectPath, opts) {
       const req = await client.sign(urlFor(objectPath), { method: "GET" });
       const res = await fetchImpl(req);
       if (!res.ok) {
         throw new AttachmentStagingStorageError("download", res.status, await res.text().catch(() => ""));
       }
-      return new Uint8Array(await res.arrayBuffer());
+      return opts?.maxBytes === undefined
+        ? new Uint8Array(await res.arrayBuffer())
+        : await readObjectWithin(res as unknown as Response, opts.maxBytes);
     },
 
     async remove(objectPaths) {

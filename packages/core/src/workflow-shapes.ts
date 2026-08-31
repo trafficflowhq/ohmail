@@ -29,6 +29,28 @@ export type ToolName = "file_message" | "draft_reply" | "add_kb_entry";
 export const ALLOWED_TOOLS: readonly ToolName[] = ["file_message", "draft_reply", "add_kb_entry"];
 
 /**
+ * HOW MANY STEPS ONE WORKFLOW MAY DECLARE.
+ *
+ * `validateSteps` checked each step's tool against {@link ALLOWED_TOOLS} and its `args` shape,
+ * and never looked at `steps.length` — so `POST /workflows` would store an array of any size and
+ * one `POST /workflows/:id/run` made the SHARED worker execute every element of it to
+ * completion. The tool allowlist bounded what a step may DO; nothing bounded how many.
+ *
+ * 25. A workflow is a hand-authored automation over a mail rule — file it, draft a reply, write
+ * a KB note — and three tools do not compose into a long program. The number is set an order of
+ * magnitude above the largest plausible hand-written one so that no real workflow meets it, and
+ * two orders below what would make one run's execution time interesting to a caller.
+ *
+ * **Refused at WRITE time, which is the earlier of the two places it could be.** A cap enforced
+ * by the runner would leave an oversized workflow stored and refused once per run, discovered
+ * from the worker's logs; refused here, the request that names 10 000 steps is the one that
+ * learns the limit. This is the CEILING half only — the per-run step
+ * budget and wall-clock deadline that row also asks for belong to the worker's own scheduling
+ * and are not this constant.
+ */
+export const MAX_WORKFLOW_STEPS = 25;
+
+/**
  * The UNDO payload stored with each executed step, replayed to reverse a run.
  *
  * One variant per allowed tool, and that correspondence is the point: an inverse exists for
@@ -96,6 +118,14 @@ export type ValidationResult = { ok: true } | { ok: false; error: string };
  */
 export function validateSteps(steps: unknown): ValidationResult {
   if (!Array.isArray(steps)) return { ok: false, error: "steps must be an array" };
+  // LENGTH, before the per-step loop — this validator checked every step's tool and shape and
+  // never looked at how many there were. See {@link MAX_WORKFLOW_STEPS}.
+  if (steps.length > MAX_WORKFLOW_STEPS) {
+    return {
+      ok: false,
+      error: `steps names ${steps.length} steps; a workflow may declare at most ${MAX_WORKFLOW_STEPS}`,
+    };
+  }
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i] as { tool?: unknown; args?: unknown } | null;
     if (typeof step !== "object" || step === null) return { ok: false, error: `step ${i} must be an object` };

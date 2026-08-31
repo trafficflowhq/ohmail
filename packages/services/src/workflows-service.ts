@@ -4,7 +4,7 @@ import {
   folderState, drafts, kbEntries, auditLog, messages, recordChange, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import {
-  validateSteps, validateTrigger,
+  validateSteps, validateTrigger, MAX_WORKFLOW_STEPS,
   type WorkflowStep, type WorkflowTrigger, type NativeLocator,
 } from "@trafficflow/core/mail";
 // TYPE-ONLY. `WorkflowInverse` is declared with the workflow execution module in
@@ -13,7 +13,8 @@ import {
 import type { WorkflowInverse } from "@trafficflow/core/mail";
 import type { ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
-import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
+import { clampLimit, decodeKeysetCursor, encodeListCursor } from "./pagination.js";
+import { requireUuid } from "./ids.js";
 import type { Page, WorkflowDTO, WorkflowRunDTO } from "./dto/types.js";
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
@@ -236,7 +237,9 @@ export class WorkflowsService {
     const limit = clampLimit(opts.limit);
     const filters = [eq(workflowRuns.accountId, ctx.accountId)];
     if (opts.status) filters.push(eq(workflowRuns.status, opts.status));
-    if (opts.workflowId) filters.push(eq(workflowRuns.workflowId, opts.workflowId));
+    // SHAPE first: `workflow_runs.workflow_id` is a uuid column, and a malformed `?workflowId=`
+    // reached it as 22P02 — a 500 for a bad query string. See `ids.ts`.
+    if (opts.workflowId) filters.push(eq(workflowRuns.workflowId, requireUuid(opts.workflowId, "workflowId")));
     if (opts.cursor) {
       const c = decodeRunCursor(opts.cursor);
       // Keyset for `created_at desc, id desc`: strictly "older" rows than the cursor tuple.
@@ -400,9 +403,37 @@ export class WorkflowsService {
    * drafter". Only an explicit `false` refuses, so no existing caller changes behaviour.
    */
   private assertRunnable(steps: unknown, drafterConfigured?: boolean): void {
+    /**
+     * ── THE STEP CEILING IS RE-CHECKED HERE, AND THE WORD "STORED" IS WHY ────────────────────
+     *
+     * `validateSteps` refuses an over-long `steps` array at the WRITE, which closes the door for
+     * every workflow created after it shipped and closes nothing for a row that already exists.
+     * A workflow stored before the ceiling — or written by any future path that reaches the
+     * column without going through `create`/`update` — is still runnable, and one
+     * `POST /workflows/:id/run` makes the SHARED worker execute every element of it: the runner
+     * flattens the whole array and then loops over `steps.length`.
+     *
+     * So the stored value is treated as an input in its own right, because it is one. Refused at
+     * ENQUEUE rather than in the runner, on the same reasoning `validateSteps` gives for the
+     * write: the request that asks for the run is the one that learns why it cannot happen, and a
+     * refusal discovered from the worker's logs is a refusal nobody sees.
+     *
+     * A 409, not a 400: nothing about THIS request is wrong. The stored workflow is the problem,
+     * and the fix is to edit it — which the same account can do, through a `PATCH` that
+     * `validateSteps` will hold to the same ceiling.
+     */
+    const stored = (steps as WorkflowStep[] | null) ?? [];
+    if (stored.length > MAX_WORKFLOW_STEPS) {
+      throw new ServiceError(
+        "workflow_too_many_steps", 409,
+        `this workflow declares ${stored.length} steps; at most ${MAX_WORKFLOW_STEPS} may run — ` +
+          "edit it before running it",
+      );
+    }
+
     if (drafterConfigured !== false) return;
-    // The `validateSteps` gate guarantees the stored shape, so no re-validation is needed here.
-    const declared = (steps as WorkflowStep[] | null) ?? [];
+    // The `validateSteps` gate guarantees the stored SHAPE, so no re-validation is needed here.
+    const declared = stored;
     if (!declared.some((s) => s?.tool === "draft_reply")) return;
     // 503, not a 4xx: nothing about the REQUEST is wrong. The identical call succeeds on a
     // configured host, and on this host the moment the key is wired, with no change by the
@@ -459,9 +490,8 @@ function encodeRunCursor(createdAt: Date, id: string): string {
   return encodeListCursor(`${createdAt.getTime()}:${id}`);
 }
 function decodeRunCursor(cursor: string): { createdAt: Date; id: string } {
-  const raw = decodeListCursor(cursor);
-  const i = raw.indexOf(":");
-  return { createdAt: new Date(Number(raw.slice(0, i))), id: raw.slice(i + 1) };
+  const { millis, id } = decodeKeysetCursor(cursor);
+  return { createdAt: new Date(millis), id };
 }
 
 export const workflowsService = new WorkflowsService();

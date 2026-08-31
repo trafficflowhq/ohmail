@@ -12,6 +12,17 @@ import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { DraftsService, type DraftCreateIdempotency } from "./drafts-service.js";
 import { KbService } from "./kb-service.js";
+import { SEARCH_QUERY_MAX_CHARS } from "./search-service.js";
+
+/**
+ * How much of the message's SNIPPET the KB retrieval hint may carry.
+ *
+ * The snippet is cut to 200 characters at ingest, and the hint's whole budget is
+ * `SEARCH_QUERY_MAX_CHARS` (200) — so giving the snippet all of it would leave the subject
+ * nothing. 120 leaves 79 for the subject after the joining space, which is a whole subject line
+ * for most mail and enough of a long one to be the topic.
+ */
+const KB_HINT_SNIPPET_CHARS = 120;
 
 /** How many KB entries and thread messages to retrieve as grounding context. */
 const DEFAULT_KB_K = 5;
@@ -107,7 +118,28 @@ export class DraftingService {
     //    retrieval fault billed the customer an AI action for a request in which zero model
     //    calls occurred — a charge the ledger could never explain. Nothing here spends a token,
     //    so nothing here needs to be paid for first.
-    const query = `${target.subject} ${target.snippet}`.trim();
+    /**
+     * THE RETRIEVAL HINT IS BUDGETED, because one half of it is sender-chosen and unbounded.
+     *
+     * `target.snippet` is cut to 200 characters at ingest; `target.subject` is whatever `Subject:`
+     * header the sending server delivered and is capped nowhere. Concatenated and then truncated
+     * downstream, a long subject consumed the WHOLE retained prefix and silently discarded the
+     * snippet — so a stranger's header decided which half of the grounding survived, which is a
+     * different answer rather than a narrower one.
+     *
+     * Each half therefore gets its own share, and the shares have to SUM to the downstream
+     * ceiling or the backstop still decides which half survives — the first version gave the
+     * subject half of `SEARCH_QUERY_MAX_CHARS` and left the snippet's own 200 characters beside
+     * it, so a 100-character subject plus a full snippet was 301 and `KbService.retrieve` sliced
+     * the tail off anyway. The budget is stated as a subtraction for that reason: whatever the
+     * snippet is allowed, the subject gets the rest, and the total is the ceiling exactly.
+     */
+    const snippet = target.snippet.slice(0, KB_HINT_SNIPPET_CHARS);
+    // The joining space is only spent when there IS a snippet — subtracting it unconditionally
+    // took a character off the subject of a message with no snippet at all, for a separator the
+    // `trim()` below then removed.
+    const subjectRoom = SEARCH_QUERY_MAX_CHARS - snippet.length - (snippet.length > 0 ? 1 : 0);
+    const query = `${target.subject.slice(0, Math.max(0, subjectRoom))} ${snippet}`.trim();
     const kbHits = await this.kb.retrieve(ctx, query, deps.k ?? DEFAULT_KB_K);
     const threadMessages = target.threadId
       ? await this.retrieveThreadContext(ctx, target.threadId, target.id)

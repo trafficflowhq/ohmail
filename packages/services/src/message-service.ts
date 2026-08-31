@@ -9,7 +9,10 @@ import type { Db, ServiceContext } from "./context.js";
 import { foldersEnabled, userFolderById } from "./folders.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { materializeMessage } from "./dto/materialize.js";
-import { clampLimit, clampPageLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
+import {
+  clampLimit, clampPageLimit, decodeKeysetCursor, decodeListCursor, encodeListCursor,
+} from "./pagination.js";
+import { requireUuid } from "./ids.js";
 import type { Folder, MessageBodyBatchItem, MessageBodyDTO, MessageDTO, Page, WithheldMarker } from "./dto/types.js";
 
 /**
@@ -159,9 +162,12 @@ function encodeMsgCursor(date: Date | null, id: string): string {
   return encodeListCursor(`${date ? date.getTime() : 0}:${id}`);
 }
 function decodeMsgCursor(cursor: string): { date: Date; id: string } {
-  const raw = decodeListCursor(cursor);
-  const i = raw.indexOf(":");
-  return { date: new Date(Number(raw.slice(0, i))), id: raw.slice(i + 1) };
+  // The KEYSET decoder, not the bare-id one: this family orders by (date, id). Using the shared
+  // `decodeListCursor` for both made each shape valid on the other's routes, so a tuple sent to
+  // `/contacts` bound `"1712…:<uuid>"` against a uuid column — the 22P02 the validator exists to
+  // stop, reintroduced by the validator being too generous.
+  const { millis, id } = decodeKeysetCursor(cursor);
+  return { date: new Date(millis), id };
 }
 
 export interface GetBodiesOptions {
@@ -236,6 +242,9 @@ export class MessageService {
       if (typeof opts.folderId !== "string" || opts.folderId === "") {
         throw new ServiceError("validation_failed", 400, "view=folder requires folderId");
       }
+      // SHAPE, before it reaches `mailbox_folders.id`. Without it a malformed `?folderId=` is
+      // 22P02 from Postgres and a 500 to the caller — see `ids.ts`.
+      requireUuid(opts.folderId, "folderId");
       if (!(await foldersEnabled(ctx.db, ctx.accountId))) return { items: [], nextCursor: null };
       const uf = await userFolderById(ctx.db, ctx.accountId, opts.folderId);
       if (uf === null) return { items: [], nextCursor: null };

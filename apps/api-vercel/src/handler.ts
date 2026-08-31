@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { createApp, apiRoutes } from "@trafficflow/api";
+import { createApp, apiRoutes, BodyOverCeilingError } from "@trafficflow/api";
 import { hostState } from "./config.js";
 import { buildDeps } from "./deps.js";
 import { MalformedPathError, normalizeRequest } from "./prefix.js";
@@ -39,6 +39,16 @@ export async function handleApiRequest(req: Request): Promise<Response> {
       // `decodeURIComponent` throws `URIError` from above the error envelope, so `/messages/%ZZ`
       // was a logged 500 rather than the 400 it plainly is.
       return json(400, { error: { code: "malformed_path", message: "malformed percent-encoding in path" } }, requestId);
+    }
+    // The route's own body ceiling, refused at the door before the bytes are in the heap.
+    // Distinct from the platform's own 4.5 MB cap, which fires above this function.
+    if (err instanceof BodyOverCeilingError) {
+      return json(413, {
+        error: {
+          code: "payload_too_large",
+          message: `request body exceeds this route's limit of ${err.maxBytes} bytes`,
+        },
+      }, requestId);
     }
     return internal(requestId, req, err);
   }

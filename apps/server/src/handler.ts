@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { createApp } from "@trafficflow/api";
+import { createApp, bodyCeilingFor, readBodyWithin, BodyOverCeilingError } from "@trafficflow/api";
 import { selfHostRoutes } from "@trafficflow/api/self-host";
 import { buildDeps, type ServerRuntime } from "./deps.js";
+import { BODY_MAX_BYTES } from "./config.js";
 
 /**
  * THE dispatch pipeline — `src/http.ts` hands a fetch Request in, this hands a Response back.
@@ -96,26 +97,89 @@ export function normalizePathname(pathname: string): string {
 
 /**
  * Rebuild `req` on its canonical path. The body is BUFFERED here, for the managed host's two
- * reasons: every mutation on this API is JSON (`withRequestGuard` refuses any other media type,
- * and the adapter's byte cap bounds what can arrive), and an EMPTY body must be DROPPED rather
- * than forwarded — undici gives a Request constructed with an empty body a non-null `body`, and
- * `withRequestGuard` then demands a Content-Type from a legitimately body-less `POST
- * /auth/logout`. The adapter's streaming Request (point 1) is the transport in; this is where
- * the pipeline decides the whole body is wanted.
+ * reasons: every mutation on this API is JSON (`withRequestGuard` refuses any other media type),
+ * and an EMPTY body must be DROPPED rather than forwarded — undici gives a Request constructed
+ * with an empty body a non-null `body`, and `withRequestGuard` then demands a Content-Type from
+ * a legitimately body-less `POST /auth/logout`. The adapter's streaming Request (point 1) is the
+ * transport in; this is where the pipeline decides the whole body is wanted.
+ *
+ * ── AND HOW MUCH OF IT IS WANTED IS DECIDED BY THE ROUTE, NOT BY THE ADAPTER ─────────────
+ *
+ * This used to read `await req.arrayBuffer()` under a comment saying *"the adapter's byte cap
+ * bounds what can arrive"*. It does — at {@link BODY_MAX_BYTES}, 50 MiB, which is the ceiling
+ * the ONE route that carries attachment bytes needs. Applying it here applied it to every
+ * request, including requests that name no route this host serves and carry no credential: an
+ * anonymous client could make this long-running process allocate 50 MiB per connection and hold
+ * it for the transfer, and be answered 404 for it. `bodyCeilingFor` matches the route from the
+ * canonical path FIRST (which costs no body at all) and returns that route's own ceiling — zero
+ * for a path this table does not serve, so nothing is read and `app.handle` answers the same
+ * 404/405 it always did.
  */
 export async function normalizeRequest(req: Request): Promise<Request> {
   const url = new URL(req.url);
   url.pathname = normalizePathname(url.pathname);
 
-  const method = req.method.toUpperCase();
-  const buffered = method === "GET" || method === "HEAD" ? undefined : await req.arrayBuffer();
-  const body = buffered && buffered.byteLength > 0 ? buffered : undefined;
+  // HEAD is dispatched as GET below, and `bodyCeilingFor` answers 0 for both — so the ceiling is
+  // read on the method as it ARRIVED, which is the method whose body is on the socket.
+  const ceiling = bodyCeilingFor(selfHostRoutes, req.method, url.pathname, BODY_MAX_BYTES);
+  const body = await readBodyWithin(req, ceiling);
 
   return new Request(url, {
     method: req.method,
     headers: req.headers,
     ...(body === undefined ? {} : { body }),
   });
+}
+
+/**
+ * Does this request carry a body? Asked of the REQUEST OBJECT, never of its headers.
+ *
+ * The header form (`Content-Length` or `Transfer-Encoding`, RFC 9112 §6) is what the adapter's own
+ * `hasBody` asks of the `IncomingMessage`, and it is WRONG at this layer: `toWebRequest` strips
+ * `transfer-encoding` from the Headers it builds, because undici refuses to construct a Request
+ * carrying a connection-level header. So a CHUNKED request — which declares no length — arrives
+ * here looking body-less, and a chunked `POST` to a path the table does not serve would have been
+ * answered without `Connection: close` and stalled the connection exactly as the measured control
+ * does. A review round caught that; the real-socket chunked case below is the guard.
+ *
+ * `req.body !== null` is the honest question and it is decided by the same adapter: it attaches a
+ * body iff its own `hasBody` was true, for both framings.
+ */
+function carriesBody(req: Request): boolean {
+  return req.body !== null;
+}
+
+/**
+ * DID THIS REQUEST ARRIVE WITH BYTES THIS PIPELINE IS NOT GOING TO READ?
+ *
+ * ── WHY THE ANSWER HAS TO REACH THE RESPONSE ────────────────────────────────────────────────
+ *
+ * The adapter builds the web body as `Readable.toWeb(req.pipe(cap))`, so cancelling the web
+ * stream destroys the counting transform and UNPIPES the `IncomingMessage` — it does not destroy
+ * or drain it. `pipe` has already set node's `_consuming` flag, and node's own end-of-response
+ * fallback (`req._dump()`) only drains a request whose `_consuming` is false. So on a keep-alive
+ * HTTP/1.1 connection the refused bytes stay on the socket, and the NEXT request on that
+ * connection is parsed starting inside them: a stalled connection until the request timeout.
+ *
+ * That is a regression this slice would otherwise have introduced. `await req.arrayBuffer()`
+ * drained every byte, which is exactly the cost being refused — so the fix cannot be to read
+ * them, and it cannot be to pretend cancelling drains them.
+ *
+ * `Connection: close` is the fix HTTP already has for this: node ends the connection after the
+ * response instead of reusing it, so the unread bytes go with the socket. It costs one TCP
+ * connection per refused request, which is the correct party to charge — a request that named no
+ * route, or one that broke the route's own ceiling.
+ */
+export function undrained(req: Request, pathname: string): boolean {
+  if (!carriesBody(req)) return false;
+  return bodyCeilingFor(selfHostRoutes, req.method, pathname, BODY_MAX_BYTES) === 0;
+}
+
+/** The same response, told to end the connection. See {@link undrained}. */
+function closing(res: Response): Response {
+  const headers = new Headers(res.headers);
+  headers.set("Connection", "close");
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
 }
 
 const app = createApp(selfHostRoutes);
@@ -127,10 +191,30 @@ export async function handleServerRequest(req: Request, rt: ServerRuntime): Prom
   try {
     normalized = await normalizeRequest(req);
   } catch (err) {
+    // EVERY pre-router exit closes the connection when the request brought a body, not just the
+    // ceiling breach. `normalizeEscapes` throws BEFORE `readBodyWithin` runs at all, so a
+    // malformed path with a large body was answered 400 on a socket whose body had been piped
+    // into the counting transform and never drained — the same stall, reached anonymously by a
+    // different door. See {@link undrained}.
+    const hadBody = carriesBody(req);
+    const exit = (res: Response): Response => (hadBody ? closing(res) : res);
     if (err instanceof MalformedPathError) {
-      return json(400, { error: { code: "malformed_path", message: "malformed percent-encoding in path" } }, requestId);
+      return exit(json(400, { error: { code: "malformed_path", message: "malformed percent-encoding in path" } }, requestId));
     }
-    return internal(requestId, req, err, rt);
+    // The route's own body ceiling, refused at the door. The adapter's 413 is the same envelope
+    // and the same code — this is the narrower one, reached when the request DOES name a route
+    // and is simply too big for it.
+    if (err instanceof BodyOverCeilingError) {
+      // `Connection: close` for {@link undrained}'s reason: the refusal stopped mid-body, so the
+      // rest of it is still on the socket and this connection cannot be reused.
+      return exit(json(413, {
+        error: {
+          code: "payload_too_large",
+          message: `request body exceeds this route's limit of ${err.maxBytes} bytes`,
+        },
+      }, requestId));
+    }
+    return exit(internal(requestId, req, err, rt));
   }
 
   // HEAD dispatched as GET, body stripped on the way out — the router stays strict (a table
@@ -141,15 +225,22 @@ export async function handleServerRequest(req: Request, rt: ServerRuntime): Prom
     ? new Request(normalized.url, { method: "GET", headers: normalized.headers })
     : normalized;
 
+  // ONE decision, made once and applied to every exit below — the 404/405 the router gives, and
+  // the 500 a broken composition gives. See {@link undrained}.
+  const skipped = undrained(req, new URL(normalized.url).pathname);
+  const exit = (r: Response): Response => (skipped ? closing(r) : r);
+
   try {
     const deps = buildDeps(forRouter, rt);
     deps.requestId = requestId;
-    const res = noStore(await app.handle(forRouter, deps), requestId);
+    // The ANSWER is unchanged (`app.handle` matches the same table and gives the same 404/405 it
+    // always did); only the connection's fate differs.
+    const res = exit(noStore(await app.handle(forRouter, deps), requestId));
     if (!isHead) return res;
     await res.body?.cancel().catch(() => { /* nothing to release */ });
     return new Response(null, { status: res.status, statusText: res.statusText, headers: res.headers });
   } catch (err) {
-    return internal(requestId, forRouter, err, rt);
+    return exit(internal(requestId, forRouter, err, rt));
   }
 }
 

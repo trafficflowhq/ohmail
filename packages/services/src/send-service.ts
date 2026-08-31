@@ -262,6 +262,61 @@ export const FORWARD_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
 export const SEND_MAX_ATTACHMENT_PARTS = 100;
 
 /**
+ * HOW MANY ADDRESSES ONE SENT MESSAGE MAY REACH — `to` + `cc` + `bcc`, together.
+ *
+ * This is the per-MESSAGE ceiling, and it belongs here rather than beside `DRAFT_MAX_RECIPIENTS`
+ * because here is where the count stops being three stored columns and becomes network: the
+ * transport issues one `RCPT TO` command per address on a socket THIS process holds open, and
+ * the recipient headers it writes grow with them.
+ *
+ * 500, which is the LARGEST of the per-message recipient ceilings among the providers whose
+ * mailboxes this product connects to — Outlook/Microsoft 365 and iCloud both allow 500, Gmail
+ * allows 100 — and that choice is a correction. It was briefly 100, "the tightest, so above it
+ * the provider refuses anyway". The premise is false for two of the three: an Outlook or iCloud
+ * user sending to 300 people is doing something their provider will deliver, and a ceiling
+ * derived from Gmail's number would have refused it on Gmail's behalf.
+ *
+ * The bound's job here is to stop the UNBOUNDED case, not to enforce each provider's policy —
+ * a provider stricter than this still answers with its own refusal, which is its to make. A
+ * per-mailbox ceiling learned from the SMTP probe (as `smtp_max_size_bytes` already is for bytes)
+ * would be better than one number and is the obvious next step; it is not this slice.
+ *
+ * Checked INSIDE the reserve transaction, beside the attachment cap and for its stated reason:
+ * throwing there rolls the reservation back, so nothing is reserved and the draft never leaves
+ * `draft`.
+ *
+ * ── WHAT IT ACTUALLY CATCHES, stated rather than implied ─────────────────────────────────
+ *
+ * `DRAFT_MAX_RECIPIENTS` is 100 per field and there are three fields, so a draft assembled
+ * through `DraftsService` can hold at most 300 — under this ceiling by construction. **So this
+ * bound is a guard on the STORED ROW, not on the compose path**: a draft written before either
+ * ceiling existed, or by any later writer that reaches the column without going through
+ * `validAddresses`, is still what the transport is handed. That is the same reasoning
+ * `assertRunnable` applies to a stored `steps` array, and the same reason a write-time bound is
+ * not enough on its own: the row outlives the validator that wrote it.
+ *
+ * The two numbers are deliberately not made to meet. Raising the per-field cap to make them
+ * interact would loosen the compose path to justify a test, and lowering this one to 300 would
+ * refuse an Outlook or iCloud send those providers would deliver.
+ */
+export const SEND_MAX_RECIPIENTS = 500;
+
+/**
+ * The longest `filename` and `contentType` one attachment entry may carry.
+ *
+ * `SEND_MAX_ATTACHMENT_PARTS` bounds how MANY entries a send names and
+ * `SEND_ATTACHMENT_MAX_TOTAL_BYTES` bounds their CONTENT — and each entry's two strings were
+ * bounded by neither. They are not content: they become MIME header parameters on the outgoing
+ * message and a stored column on the staged ticket, so a hundred entries carrying a megabyte
+ * filename each is a megabyte-per-header message the transport has to build.
+ *
+ * 255 is the practical filename ceiling every mainstream filesystem shares, and a content type is
+ * far shorter than that — one number for both, because a caller who exceeds either has not sent a
+ * filename or a media type.
+ */
+export const SEND_ATTACHMENT_FIELD_MAX_CHARS = 255;
+
+/**
  * THE STAGED LIST, WITH EACH TICKET NAMED ONCE — first occurrence wins, order preserved.
  *
  * ── A REPEAT IS A SKIP, NOT A REFUSAL ───────────────────────────────────────────────────────
@@ -899,6 +954,33 @@ export class SendService {
       // transaction back, the INSERT above included, so a NEW reservation refuses exactly as it
       // would have and no `outbound_sends` row survives.
       if (stagedFault) throw stagedFault;
+
+      // ── THE RECIPIENT CAP, with the other NEW-RESERVATION preconditions ─────────────────
+      //
+      // The three lists are on the row this transaction has already locked, so the total costs
+      // nothing extra to compute — and this is the first moment all three exist together: a
+      // partial update names one field and cannot know the other two. See
+      // {@link SEND_MAX_RECIPIENTS} for why the per-message total lives here and the per-field
+      // one lives at the draft write.
+      //
+      // BELOW THE INSERT, for the reason the two checks above it give in full: the CONFLICT
+      // branch returns before reaching here, and that branch is idempotent REPLAY. Placed above,
+      // this would answer 413 to a client retrying its key after a send that SUCCEEDED — a draft
+      // written before this ceiling existed would have its stored `sent` result replaced by a
+      // refusal, which is the no-lie contract broken by the guard meant to protect it. A review
+      // round caught it there; the position is now the same as the disabled-mailbox check's, and
+      // costs nothing, since a throw anywhere in this callback rolls the INSERT back too.
+      const recipientCount = ((d.to as EmailAddress[] | null) ?? []).length
+        + ((d.cc as EmailAddress[] | null) ?? []).length
+        + ((d.bcc as EmailAddress[] | null) ?? []).length;
+      if (recipientCount > SEND_MAX_RECIPIENTS) {
+        throw new ServiceError(
+          "payload_too_large", 413,
+          `this message names ${recipientCount} recipients across To, Cc and Bcc; ` +
+            `the limit is ${SEND_MAX_RECIPIENTS} — send it in batches`,
+        );
+      }
+
 
       if (mb?.status === "disabled") {
         throw new ServiceError(

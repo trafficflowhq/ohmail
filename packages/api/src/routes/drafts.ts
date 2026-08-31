@@ -1,5 +1,6 @@
 import {
-  ServiceError, SEND_MAX_ATTACHMENT_PARTS, dedupeStagedIds,
+  ServiceError, SEND_ATTACHMENT_FIELD_MAX_CHARS, SEND_MAX_ATTACHMENT_PARTS, dedupeStagedIds,
+  requireUuid,
   type CreateDraftBody, type PatchDraftBody,
 } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
@@ -119,6 +120,12 @@ function readStagedIds(raw: unknown): string[] | undefined {
   const ids = dedupeStagedIds(
     raw.filter((v): v is string => typeof v === "string" && v.length > 0),
   );
+  // SHAPE, before the list becomes an `inArray` against `attachment_staging.id`. The count
+  // ceiling above bounds how MANY references a request may name and says nothing about what they
+  // are, so `{"stagedAttachmentIds":["x"]}` reached a uuid column, PostgreSQL answered 22P02, and
+  // an authenticated caller got a 500 for a plainly bad body. The `identifier` disposition in the
+  // input census means "the shape test is the bound"; here there was no shape test.
+  for (const id of ids) requireUuid(id, "stagedAttachmentIds");
   return ids.length > 0 ? ids : undefined;
 }
 
@@ -132,16 +139,39 @@ function readStagedIds(raw: unknown): string[] | undefined {
  * attachment's bytes on the send path to undo something the compose form already did on the
  * bytes it had in hand.
  */
+/**
+ * One attachment's `filename` or `contentType`: a non-empty string inside the field ceiling, or
+ * `null` for an absent one (the caller gets this route's own fallback).
+ *
+ * A 400 rather than a truncation: a filename cut in half is a file the recipient cannot identify,
+ * and a truncated media type is one their client will not render.
+ */
+function shortField(v: unknown, name: string): string | null {
+  if (typeof v !== "string" || v.length === 0) return null;
+  if (v.length > SEND_ATTACHMENT_FIELD_MAX_CHARS) {
+    throw new ServiceError(
+      "validation_failed", 400,
+      `an attachment ${name} is ${v.length} characters; the limit is ${SEND_ATTACHMENT_FIELD_MAX_CHARS}`,
+    );
+  }
+  return v;
+}
+
 function decodeSendAttachments(
   items: SendAttachmentWire[] | undefined,
 ): Array<{ filename: string; contentType: string; content: Buffer }> | undefined {
   if (!Array.isArray(items) || items.length === 0) return undefined;
   refuseOverLongList("attachments", items.length);
   return items.map((a) => ({
-    filename: typeof a.filename === "string" && a.filename.length > 0 ? a.filename : "attachment",
-    contentType: typeof a.contentType === "string" && a.contentType.length > 0
-      ? a.contentType
-      : "application/octet-stream",
+    // ── THE TWO STRINGS ARE BOUNDED TOO, and only the COUNT and the BYTES were ────────────
+    //
+    // `SEND_MAX_ATTACHMENT_PARTS` bounds how many entries there are and
+    // `SEND_ATTACHMENT_MAX_TOTAL_BYTES` bounds their content; these two were bounded by neither,
+    // and they are not content — they become MIME header parameters on the outgoing message. A
+    // hundred entries carrying a megabyte filename each is a message whose HEADERS are a hundred
+    // megabytes, built by this process. See {@link SEND_ATTACHMENT_FIELD_MAX_CHARS}.
+    filename: shortField(a.filename, "filename") ?? "attachment",
+    contentType: shortField(a.contentType, "contentType") ?? "application/octet-stream",
     content: Buffer.from(typeof a.contentBase64 === "string" ? a.contentBase64 : "", "base64"),
   }));
 }

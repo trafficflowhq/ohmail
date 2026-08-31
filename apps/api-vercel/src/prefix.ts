@@ -1,3 +1,5 @@
+import { apiRoutes, bodyCeilingFor, readBodyWithin } from "@trafficflow/api";
+
 /**
  * PATH NORMALIZATION — the one and only place this host rewrites a request URL.
  *
@@ -33,6 +35,19 @@
 
 /** The prefix the webapp's `/api/:path*` rewrite may leave on the path. */
 export const API_PREFIX = "/api";
+
+/**
+ * The door's ceiling for the ONE route that carries attachment bytes inline
+ * (`POST /drafts/:id/send`; see `LARGE_BODY_ROUTES`).
+ *
+ * 4.5 MB, because that is the platform's own request-body cap on this host — writing a larger
+ * number here would be a ceiling that never fires, and writing a smaller one would refuse a send
+ * the platform was willing to deliver. The bytes themselves are bounded far more tightly one
+ * layer in, by `SEND_ATTACHMENT_MAX_TOTAL_BYTES` (3 MiB raw) inside `SendService.reserve`; this
+ * is only the door's permission for that one request to be big at all, and every OTHER route on
+ * this host is now held to `JSON_BODY_MAX_BYTES` instead.
+ */
+export const HOSTED_LARGE_BODY_MAX_BYTES = 4_500_000;
 
 /**
  * Thrown for a pathname whose percent-encoding is not decodable. The host answers **400**;
@@ -141,14 +156,25 @@ export function normalizePathname(pathname: string): string {
  * `body`, and `withRequestGuard` treats "a body is present" as "a JSON `Content-Type` is
  * mandatory". Forwarding `new ArrayBuffer(0)` would therefore make a legitimately
  * body-less `POST /auth/logout` answer **415** on this host while passing every test.
+ *
+ * ── HOW MUCH IS BUFFERED IS THE ROUTE'S DECISION ─────────────────────────────────────────
+ *
+ * The buffer used to be unconditional — `await req.arrayBuffer()` for every non-GET, before
+ * route matching and before any credential is looked at. The platform's own 4.5 MB request cap
+ * is what bounded it, so an anonymous request naming a path this API does not serve still cost
+ * a multi-megabyte allocation in a warm instance shared with real traffic. `bodyCeilingFor`
+ * decides from the CANONICAL path (already computed above, and free) which route this is and
+ * therefore what it may weigh: zero for a path the table does not serve, {@link
+ * HOSTED_LARGE_BODY_MAX_BYTES} for the one send route that carries inline attachment bytes,
+ * and `JSON_BODY_MAX_BYTES` for everything else. A path with no route reads nothing and reaches
+ * `app.handle` body-less, which answers the identical 404/405 — its handler never ran.
  */
 export async function normalizeRequest(req: Request): Promise<Request> {
   const url = new URL(req.url);
   url.pathname = normalizePathname(url.pathname);
 
-  const method = req.method.toUpperCase();
-  const buffered = method === "GET" || method === "HEAD" ? undefined : await req.arrayBuffer();
-  const body = buffered && buffered.byteLength > 0 ? buffered : undefined;
+  const ceiling = bodyCeilingFor(apiRoutes, req.method, url.pathname, HOSTED_LARGE_BODY_MAX_BYTES);
+  const body = await readBodyWithin(req, ceiling);
 
   return new Request(url, {
     method: req.method,

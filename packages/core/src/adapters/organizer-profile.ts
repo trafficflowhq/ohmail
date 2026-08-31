@@ -638,6 +638,40 @@ export type ProfileReadResult =
  * newer producer's document sits beside it — that is how a downgrade quietly becomes a data
  * loss.
  */
+/**
+ * THE LARGEST PROFILE MESSAGE THIS BUILD WILL PARSE.
+ *
+ * The document is the message BODY, fetched as a full source, and `parseProfileMessage` hands it
+ * to `JSON.parse`. Nothing bounded that: a mailbox is a medium anybody with the credentials can
+ * write to, and a 500 MB message in `ohmail/_meta` was a 500 MB string, a parse of it, and then
+ * a canonical sort and re-serialization of the result — all inside one `GET
+ * /mailboxes/:id/profile-import`. The per-list COUNT ceilings (`PROFILE_IMPORT_MAX`) run after
+ * the parse and so bound the transaction and not the read, which is this slice's own shape one
+ * layer up: the ceiling is applied to the RESULT and not to the READ.
+ *
+ * ── WHY IT IS GENEROUS AND NOT TIGHT ─────────────────────────────────────────────────────
+ *
+ * ohmail writes this message itself. A ceiling under what the product emits would turn a heavy
+ * user's own saved settings into `unreadable` — the mistake this slice made four separate times
+ * in its first attempts, always by writing the bound from a comment instead of from the code
+ * that produces the value. So the number is not an estimate of a typical profile; it is a
+ * multiple of the largest document the import would ever ACCEPT, which is what
+ * `PROFILE_IMPORT_MAX` describes — its four per-list ceilings, at a generous 512 bytes an entry,
+ * come to roughly 15 MB in total, and a document larger than the import's own ceiling is one
+ * `apply` refuses anyway.
+ *
+ * 64 MiB is therefore >4x the largest useful document and still FINITE, which is the whole
+ * property being bought. It is not a claim that 64 MiB is reasonable to hold — it is the
+ * statement that an unbounded read is not, and per-entry string ceilings (which would let this
+ * be tight rather than generous) are still owed by the unbounded-read work this does not close.
+ */
+export const PROFILE_DOC_MAX_BYTES = 64 * 1024 * 1024;
+
+/** A `MalformedProfile`, with `ref` omitted rather than set to `undefined` (the parser's rule). */
+function malformedProfile(reason: string, ref: unknown): MalformedProfile {
+  return ref === undefined ? { malformed: true, reason } : { malformed: true, reason, ref };
+}
+
 export async function readOrganizerProfile(io: ProfileIo): Promise<ProfileReadResult> {
   let messages: RawProfileMessage[];
   try {
@@ -649,7 +683,18 @@ export async function readOrganizerProfile(io: ProfileIo): Promise<ProfileReadRe
     );
   }
   const records = messages
-    .map((m) => parseProfileMessage(m.raw, m.ref))
+    .map((m) => (
+      // BEFORE the parse — see {@link PROFILE_DOC_MAX_BYTES}. An oversized message is reported
+      // as MALFORMED rather than ignored, for the reason that state already exists: a message
+      // carrying `X-Ohmail-Profile: 1` is a copy of our own bookkeeping, and one this build
+      // cannot read is worth saying so about. `Buffer.byteLength` is the wire size; `.length` is
+      // UTF-16 units and would let a multi-byte document past a byte ceiling.
+      Buffer.byteLength(m.raw, "utf8") > PROFILE_DOC_MAX_BYTES
+        ? malformedProfile(
+          `the saved settings message is larger than ${PROFILE_DOC_MAX_BYTES} bytes`, m.ref,
+        )
+        : parseProfileMessage(m.raw, m.ref)
+    ))
     .filter((r): r is ProfileRecord => r !== null);
 
   if (records.length === 0) return { state: "none" };

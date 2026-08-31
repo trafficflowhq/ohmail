@@ -21,6 +21,7 @@ import type { ServiceContext } from "../context.js";
 import { ServiceError } from "../errors.js";
 import { consumeInvite, inviteError, normalizeInviteCode } from "../invites.js";
 import { reserveIpSlot } from "../ip-throttle.js";
+import { clampPageLimit } from "../pagination.js";
 // The ONE definition of "a valid address" — see {@link requireEmail} for why registration
 // borrows the mailer's predicate instead of growing a second one.
 import { normalizeRecipient } from "../mail/port.js";
@@ -146,6 +147,17 @@ function challengeOfAssertion(credential: unknown): string | null {
  */
 export const PASSWORD_MIN_LENGTH = 12;
 export const PASSWORD_MAX_LENGTH = 256;
+
+/**
+ * The longest `state` `GET /oauth/authorize` will echo into its redirect.
+ *
+ * RFC 6749 sets no maximum — `state` is opaque to us, and that is the point of it — so this is a
+ * practical ceiling rather than a derived one: 2 048 characters is what a whole URL has been
+ * expected to fit in for two decades, and the value is going into a `Location` header. Unbounded
+ * it was a caller-chosen header value, which the proxy in front answers with a 431 or a 502 for
+ * what is plainly a bad request.
+ */
+export const OAUTH_STATE_MAX_CHARS = 2048;
 
 function requirePassword(v: unknown): string {
   const password = requireField(v, "password");
@@ -1027,7 +1039,31 @@ export class AuthService extends SessionLifecycle {
   async login(ctx: ServiceContext, b: { email: string; password: string }): Promise<LoginResult> {
     const db = asTx(ctx);
     const email = requireField(b.email, "email").trim().toLowerCase();
-    requireField(b.password, "password");
+    /**
+     * ── THE CEILING APPLIES HERE TOO, AND IT DID NOT ─────────────────────────────────────
+     *
+     * {@link PASSWORD_MAX_LENGTH}'s own rationale is about THIS path's cost: *"`scrypt` is
+     * deliberately ~100 ms, it is run before the transaction opens, and `register` is public:
+     * without a ceiling a caller can post a multi-megabyte password and spend the host's CPU at
+     * will."* Every word of that is true of `login`, which is equally public and reached far more
+     * often — and `login` called `requireField` alone, so the guard whose docstring names the
+     * attack was applied on the one route that is not the usual way in.
+     *
+     * Only the MAXIMUM, not `requirePassword`'s minimum: a stored password shorter than today's
+     * policy must still be able to sign in, and refusing it here would lock out anybody who
+     * registered before the minimum was raised. Nothing about the length of a SUBMITTED guess is
+     * a fact about the account.
+     *
+     * Before the throttle reservation, so a malformed request burns no attempt — it is not a
+     * guess — and before scrypt, which is the cost being refused.
+     */
+    const password = requireField(b.password, "password");
+    if ([...password].length > PASSWORD_MAX_LENGTH) {
+      throw new ServiceError(
+        "validation_failed", 400,
+        `password must be at most ${PASSWORD_MAX_LENGTH} characters`,
+      );
+    }
 
     // THE ATTEMPT IS RESERVED ON THE EMAIL KEY FIRST — before the user lookup, so both
     // branches below are already behind the same gate. Checking only
@@ -2064,6 +2100,33 @@ export class AuthService extends SessionLifecycle {
     if (q.code_challenge_method !== "S256" || !q.code_challenge) {
       throw new ServiceError("validation_failed", 400, "PKCE S256 code_challenge required");
     }
+    /**
+     * ── THE TWO OPAQUE VALUES ARE BOUNDED, and neither was ────────────────────────────────
+     *
+     * `client_id` and `redirect_uri` are checked above by EQUALITY against a registered value, so
+     * their size costs one comparison. These two are not:
+     *
+     *  · `code_challenge` is STORED on the authorization code row, and its shape is not a matter
+     *    of taste — RFC 7636 §4.2 makes an S256 challenge the base64url of a SHA-256 digest,
+     *    which is exactly 43 characters. Anything else is not a challenge this method can
+     *    verify, so accepting it stores a value that can never succeed.
+     *  · `state` is ECHOED into the `Location` header of the redirect below. Unbounded, it is a
+     *    caller-chosen header value — the proxy in front answers 431 or 502 for what is plainly a
+     *    bad request, on a route reachable with an ordinary session. RFC 6749 sets no maximum;
+     *    {@link OAUTH_STATE_MAX_CHARS} is the practical one every URL shares.
+     */
+    if (!/^[A-Za-z0-9_-]{43}$/.test(q.code_challenge)) {
+      throw new ServiceError(
+        "validation_failed", 400,
+        "code_challenge must be the base64url SHA-256 digest an S256 challenge is",
+      );
+    }
+    if (q.state.length > OAUTH_STATE_MAX_CHARS) {
+      throw new ServiceError(
+        "validation_failed", 400,
+        `state is ${q.state.length} characters; the limit is ${OAUTH_STATE_MAX_CHARS}`,
+      );
+    }
     const db = asTx(ctx);
     // The authorizing session's REAL factor time, carried to the session this code will
     // establish. NULL when there is no session row to read — which the route's gate makes
@@ -2152,7 +2215,13 @@ export class AuthService extends SessionLifecycle {
   ): Promise<{ items: AuthAuditEvent[]; nextCursor: string | null }> {
     const userId = this.requireUser(ctx);
     const db = asTx(ctx);
-    const limit = Math.min(Math.max(1, opts.limit ?? 50), 200);
+    // THE TOTAL CLAMP, not the arithmetic. `Math.min(Math.max(1, x), 200)` is correct for every
+    // number and wrong for the two values that are not numbers in the arithmetic sense: `NaN`
+    // survives it and drizzle then OMITS the limit clause entirely, and a fraction survives it and
+    // reaches `bigint` as `invalid input syntax`. This route reads `Number(url.searchParams
+    // .get("limit"))`, so the caller picks the double — it is the exemplar's own defect, on the
+    // one page-limit path the sweep's first pass did not convert. See `clampPageLimit`.
+    const limit = clampPageLimit(opts.limit, 50, 200);
     const rows = await db.select().from(authEvents)
       .where(eq(authEvents.userId, userId))
       .orderBy(desc(authEvents.at)).limit(limit);

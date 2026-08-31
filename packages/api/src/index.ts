@@ -77,6 +77,14 @@ export {
   type Route, type RouteOptions, type RouteParams, type Handler, type MatchResult,
 } from "./router.js";
 
+// THE REQUEST DOOR'S BODY CEILING — decided from the route, before a byte is buffered. Both
+// long-running/serverless hosts call this from their `normalizeRequest`; see `body-ceiling.ts`
+// for why the buffer used to be allocated before route matching and what that cost.
+export {
+  bodyCeilingFor, readBodyWithin, BodyOverCeilingError,
+  JSON_BODY_MAX_BYTES, LARGE_BODY_ROUTES,
+} from "./body-ceiling.js";
+
 // Responses.
 export { jsonResponse, errorResponse, type JsonResponseInit } from "./responses.js";
 

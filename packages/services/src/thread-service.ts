@@ -7,6 +7,29 @@ import type { ThreadDTO } from "./dto/types.js";
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
+/** A thread id's shape, checked before it can reach a `uuid` column as 22P02. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * HOW MANY THREADS ONE `POST /threads/merge` MAY COMBINE.
+ *
+ * 50. The gesture behind this route is a person selecting rows in a list and pressing Merge, so
+ * the bound only has to be far above what a hand does and far below what a script can ask for.
+ *
+ * The number is set by what one id COSTS rather than by taste. Every id in the list takes a
+ * `FOR UPDATE` lock on its `threads` row that is held until the transaction commits, and the
+ * transaction then rewrites every message, note and draft pointing at it and appends a
+ * change-log row per message moved. So the lock set, the write volume and the transaction's
+ * lifetime are all linear in a number the caller types — on the exact lock order this method's
+ * comment describes as shared with ingest and with the worker's thread-join heal, which means
+ * an oversized merge does not merely cost itself: it holds threads that two other writers take
+ * in the same order.
+ *
+ * 50 is a quarter of {@link MARK_SEEN_MAX_IDS} (200), deliberately, because a merged id is
+ * several statements where a marked id is one.
+ */
+export const THREAD_MERGE_MAX_IDS = 50;
+
 export interface ThreadPatchBody {
   muted?: boolean;
 }
@@ -66,6 +89,25 @@ export class ThreadService {
     const threadIds = body.threadIds;
     if (!Array.isArray(threadIds) || threadIds.length < 2) {
       throw new ServiceError("validation_failed", 400, "threadIds must contain at least two thread ids");
+    }
+    // THE UPPER BOUND, which this validation had only the lower half of. Every id costs a
+    // `FOR UPDATE` lock held to commit, three UPDATEs, a DELETE and one change-log row per
+    // message moved — all inside ONE transaction on the lock order this method's own comment
+    // documents. An unbounded list is therefore an unbounded lock set on the account's threads,
+    // taken by a caller who chose its size; see {@link THREAD_MERGE_MAX_IDS}.
+    if (threadIds.length > THREAD_MERGE_MAX_IDS) {
+      throw new ServiceError(
+        "payload_too_large", 413,
+        `threadIds names ${threadIds.length} threads; at most ${THREAD_MERGE_MAX_IDS} may be merged at once`,
+      );
+    }
+    // Shape before the query, for the reason `MessageService.getBodies` gives about its own ids:
+    // a malformed id reaches Postgres as 22P02 and surfaces as a 500 for a plainly bad request,
+    // and whether a string is a uuid is decidable without the database.
+    for (const t of threadIds) {
+      if (typeof t !== "string" || !UUID_RE.test(t)) {
+        throw new ServiceError("validation_failed", 400, "threadIds must be thread ids");
+      }
     }
     if (body.subject !== undefined && typeof body.subject !== "string") {
       throw new ServiceError("validation_failed", 400, "subject must be a string");

@@ -3,10 +3,22 @@ import { kbEntries } from "@trafficflow/db";
 import type { ServiceContext, Db } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
+import { MAX_TAG_NAME_CHARS } from "./tags-service.js";
+import { SEARCH_QUERY_MAX_CHARS } from "./search-service.js";
 import type { Page, KbEntryDTO } from "./dto/types.js";
 
 /** Default number of KB entries a retrieval returns (RAG top-k). */
 const DEFAULT_K = 5;
+
+/**
+ * HOW MANY TAGS ONE KB ENTRY MAY CARRY.
+ *
+ * 32. Tags on a knowledge-base entry are a filing aid a person types, and thirty-two of them on
+ * one note is already past the point where they help. The list is stored whole as `jsonb` and
+ * echoed in every DTO the retrieval path returns, so the bound is on both the write and every
+ * read that follows it.
+ */
+export const KB_MAX_TAGS = 32;
 
 export interface KbEntryBody {
   title: string;
@@ -127,7 +139,37 @@ export class KbService {
    * blank query yields nothing (no meaningful predicate). accountId-scoped.
    */
   async retrieve(ctx: ServiceContext, query: string, k = DEFAULT_K): Promise<KbEntryDTO[]> {
-    const q = (query ?? "").trim();
+    /**
+     * ── THE RETRIEVAL TERM IS SENDER-CHOSEN, AND IT REACHES A PER-ROW TRIGRAM COMPARISON ────
+     *
+     * The one production caller is `DraftingService.draftReply`, which builds
+     * `` `${target.subject} ${target.snippet}` `` — the snippet is capped at 200 characters when
+     * it is cut (`pipeline.ts`, `husk-restore.ts`), and the SUBJECT is not capped anywhere: it
+     * is whatever header the sending server delivered. So a stranger who sends one message with
+     * a 100 KB `Subject:` decides the length of the string this method hands to
+     * `websearch_to_tsquery` and to `word_similarity(q, title|content)`, the latter evaluated
+     * once per KB row.
+     *
+     * TRUNCATED rather than refused, which is the opposite of `SearchService.search`'s answer to
+     * the same shape, and the difference is who is asking. There, a person typed a query and an
+     * answer to a shortened version of it would be a silently different answer. Here the string
+     * is a RELEVANCE HINT assembled by our own code, and refusing would fail a legitimate AI
+     * draft because of a header its recipient did not write.
+     *
+     * **Truncation is a relevance TRADEOFF, not a guarantee, and this used to over-claim it.**
+     * Dropping later terms can change the ranking or select a different entry — it does not
+     * merely narrow the grounding. What makes that acceptable is that the caller no longer lets
+     * one half of the hint eat the other: `DraftingService` budgets the subject and the snippet
+     * separately before they get here, so in production this slice is a backstop that does not
+     * fire rather than the thing deciding what the model sees.
+     *
+     * SLICED BEFORE TRIMMED, not after: `.trim()` scans the whole string, so trimming first would
+     * pay an unbounded cost on a sender-chosen header in order to bound it.
+     *
+     * {@link SEARCH_QUERY_MAX_CHARS} rather than a number of its own — one answer to "how much
+     * text is a search term", used by both retrieval paths.
+     */
+    const q = (query ?? "").slice(0, SEARCH_QUERY_MAX_CHARS).trim();
     if (!q) return [];
     const limit = Math.max(1, Math.min(k, 50));
 
@@ -170,10 +212,36 @@ export class KbService {
     return v;
   }
 
+  /**
+   * A KB entry's tag list — shape, COUNT and per-tag length.
+   *
+   * The count and the length were both missing: the array is stored whole as a `jsonb` column
+   * and read back into every retrieval's DTO, so an unbounded list is unbounded rows in every
+   * later response as well as in the write. Bounded here rather than at the column, because a
+   * `CHECK` on a jsonb array cannot say which entry was wrong.
+   *
+   * {@link MAX_TAG_NAME_CHARS} is deliberately the SAME 40 the first-class tags surface uses
+   * (`tags-service.ts`), imported rather than restated — a KB tag and a message tag are the same
+   * kind of word to the person typing it, and two limits would be two answers to one question.
+   */
   private validTags(v: unknown): string[] {
     if (v === undefined || v === null) return [];
     if (!Array.isArray(v) || v.some((t) => typeof t !== "string")) {
       throw new ServiceError("validation_failed", 400, "tags must be an array of strings");
+    }
+    if (v.length > KB_MAX_TAGS) {
+      throw new ServiceError(
+        "validation_failed", 400,
+        `tags names ${v.length} tags; the limit is ${KB_MAX_TAGS}`,
+      );
+    }
+    for (const t of v as string[]) {
+      if (t.length > MAX_TAG_NAME_CHARS) {
+        throw new ServiceError(
+          "validation_failed", 400,
+          `each tag must be ${MAX_TAG_NAME_CHARS} characters or fewer`,
+        );
+      }
     }
     return v as string[];
   }

@@ -52,9 +52,31 @@ export interface AttachmentAdapter {
   /**
    * `opts.maxBytes` abandons the transfer mid-stream once the ceiling is crossed and rejects with
    * an `AttachmentTooLargeError` (code `EATTACHTOOLARGE`). Doing so POISONS THE CONNECTION — the
-   * parser is left mid-literal — so only a caller that owns this adapter for one fetch and closes
-   * it afterwards may pass it. {@link AttachmentsService.fetchBytes} does; `downloadAll` must not,
-   * because it fetches every part of a mailbox down one socket.
+   * parser is left mid-literal — so a caller that passes it must treat the breach as TERMINAL for
+   * that socket.
+   *
+   * Both callers do, in the two ways that are available to them. {@link
+   * AttachmentsService.fetchBytes} owns its adapter for one fetch and closes it in a `finally`.
+   * `downloadAll` shares one socket across a mailbox's whole group, so it abandons the REST OF
+   * THAT GROUP on a breach and names each skipped part in the archive's `_errors.txt` — this
+   * used to say `downloadAll` must not pass it at all, which left the one caller that reads a
+   * hostile server's bytes as the one caller with no ceiling on how many of them it buffers.
+   *
+   * ── THE POISONING IS REAL, AND THE ADAPTER SAYS SO IN ITS OWN WORDS ──────────────────────
+   *
+   * A review round argued the opposite — that imapflow fetches complete partial ranges, so an
+   * abort lands on a chunk boundary and the connection stays usable, making the group-abandon
+   * unnecessarily lossy. That is true of `fetchRaw` and NOT of `fetchPart`, and the difference is
+   * written down at both: `fetchPart` (`imap.ts`) counts bytes and `throw`s out of its own
+   * `for await (const chunk of dl.content)`, abandoning the stream wherever it happens to be;
+   * `fetchRaw`'s docstring next to it states the consequence — *"`fetchPart` throws out of its
+   * own `for await`, which destroys the stream while the driver may be halfway through reading a
+   * FETCH literal — the connection is dead afterwards"* — and hands `maxBytes` to `download`
+   * instead precisely to avoid it, because ITS caller holds a long-lived per-mailbox connection.
+   *
+   * Giving `fetchPart` the same driver-level ceiling would make the breach non-terminal and let
+   * `downloadAll` continue with the group's remaining parts. That is a real improvement and it is
+   * a change to `fetchBytes`' proven behaviour, so it is parked rather than folded in here.
    *
    * Optional third parameter so every existing fake/GreenMail adapter keeps compiling.
    */
@@ -81,6 +103,31 @@ export interface DownloadAllResult { zip: Uint8Array; filename: string }
 
 /** The default "Big Files" threshold (1 MiB) when `type=big` carries no explicit minSizeBytes. */
 export const BIG_FILE_DEFAULT_BYTES = 1024 * 1024;
+
+/**
+ * `minSizeBytes` as a value a `bigint` column can take, or a 400.
+ *
+ * It is declared `number` in `FilesFilter` and arrives from `JSON.parse`, so the type says
+ * nothing at runtime: `{"filter":{"minSizeBytes":"x"}}` reached the `gte` predicate as a string
+ * and `1e30` reached it as a value `attachments.size_bytes` — an `integer` column — cannot take.
+ * Both are 22P02/22003 from Postgres, surfacing as a 500 for a plainly bad request. That is the
+ * `clampLimit` shape exactly: a caller-chosen number reaching a query with the guard assuming it
+ * had been checked.
+ *
+ * Bounded above by the largest attachment this product will ever move rather than by the column:
+ * `DOWNLOAD_ALL_MAX_BYTES` (64 MiB) is well inside `int4`, so a floor above it selects nothing
+ * and asking for it is a mistake worth naming.
+ */
+function validMinSize(v: unknown): number | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > DOWNLOAD_ALL_MAX_BYTES) {
+    throw new ServiceError(
+      "validation_failed", 400,
+      `minSizeBytes must be an integer between 0 and ${DOWNLOAD_ALL_MAX_BYTES}`,
+    );
+  }
+  return v;
+}
 
 /**
  * CEILINGS on `download-all` (the serverless memory/connection bound).
@@ -125,6 +172,15 @@ export const DOWNLOAD_ALL_MAX_BYTES = 64 * 1024 * 1024;   // 64 MiB of attachmen
  * stream, because the metadata is the sender's claim and can be wrong.
  */
 export const ATTACHMENT_MAX_FETCH_BYTES = 32 * 1024 * 1024;
+
+/**
+ * An attachment id's shape, checked before it reaches a `uuid` column.
+ *
+ * A malformed id would otherwise be handed to Postgres and raise 22P02 — a 500 for a plainly
+ * bad request. Decidable without the database, so it leaks nothing: the same guard, and the same
+ * argument, as `MessageService.getBodies` applies to its `ids`.
+ */
+const ATTACHMENT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** The mid-stream ceiling breach an `AttachmentAdapter` rejects with (core's `AttachmentTooLargeError`). */
 const TOO_LARGE_CODE = "EATTACHTOOLARGE";
@@ -329,6 +385,17 @@ export class AttachmentsService {
    * wrong, so the running total of ACTUAL bytes is enforced too: once the cap is reached the
    * remaining parts are skipped and named in `_errors.txt`, which is the one place truncation
    * is the lesser evil — the alternative is an OOM kill mid-archive with no message at all.
+   *
+   * The part-count check below is now a BACKSTOP rather than the enforcement: `resolveTargets`
+   * bounds the caller's `fileIds` before they reach a SQL `IN`, and `partsWhere` bounds the READ
+   * itself at the ceiling plus one, so no current branch can hand this function an oversized
+   * array. It is kept because a fourth resolution branch that did not go through `partsWhere`
+   * would otherwise arrive here unbounded.
+   *
+   * And the METADATA IS THE SENDER'S CLAIM, so the per-part read carries the archive's remaining
+   * byte budget as its own mid-stream ceiling — see the block comment at the fetch. Without it,
+   * one part that declares 1 KiB and streams 4 GiB was buffered whole, because the running total
+   * is only consulted between parts.
    */
   async downloadAll(ctx: ServiceContext, input: DownloadAllInput, deps: FetchDeps): Promise<DownloadAllResult> {
     const parts = await this.resolveTargets(ctx, input);
@@ -380,18 +447,69 @@ export class AttachmentsService {
         continue;
       }
       try {
+        // `poisoned` is what makes the per-part ceiling usable down a SHARED socket — see the
+        // block comment on the fetch below.
+        let poisoned = false;
         for (const part of group) {
           const name = this.uniqueName(part, used);
           if (fetchedBytes >= DOWNLOAD_ALL_MAX_BYTES) {
             errors.push(`${name}: skipped — the archive reached its ${Math.round(DOWNLOAD_ALL_MAX_BYTES / 1048576)} MiB limit`);
             continue;
           }
+          if (poisoned) {
+            errors.push(`${name}: skipped — an earlier part on this mailbox overran its size and the connection was dropped`);
+            continue;
+          }
           try {
-            const fetched = await adapter.fetchPart(part.locator, part.partId);
+            /**
+             * ── THE BUDGET IS ENFORCED DURING THE READ, NOT AFTER IT ──────────────────────
+             *
+             * This was `fetchPart(locator, partId)` with no ceiling at all, and the two guards
+             * around it are both checks on the sender's CLAIM: `DOWNLOAD_ALL_MAX_BYTES` above
+             * is compared against bytes already fetched, and the pre-flight in `downloadAll`
+             * sums `sizeBytes` from the stored metadata. The metadata is what the sending
+             * server said the part weighs. A hostile or broken mailbox that declares 1 KiB and
+             * streams 4 GiB was buffered in full — the running total is only consulted between
+             * parts, so ONE part is unbounded however small it claims to be.
+             *
+             * The ceiling is the archive's REMAINING budget, so the transfer is abandoned at
+             * the first byte that could not have fitted anyway.
+             *
+             * ── WHY THIS IS SAFE HERE, WHEN THE ADAPTER'S OWN DOCSTRING SAYS IT IS NOT ────
+             *
+             * Passing `maxBytes` POISONS THE CONNECTION — `imap.ts#fetchPart` throws out of its
+             * own `for await` over the download stream, abandoning the driver mid-literal, and
+             * `fetchRaw`'s docstring beside it states the consequence in the adapter's own words:
+             * *"the connection is dead afterwards"*. The interface used to forbid `downloadAll`
+             * from passing it at all for that reason; it now describes the obligation instead,
+             * because the breach being TERMINAL is a thing a caller can honour and an unbounded
+             * read is not. That is what `poisoned` is for, rather than a reason to leave the read
+             * unbounded: the
+             * breach is TERMINAL for this mailbox's group. Every remaining part of that group
+             * is named in `_errors.txt` and the socket is closed by the `finally` below, so no
+             * further read is attempted through a parser that is mid-literal. Other mailboxes'
+             * groups are untouched — they get their own connection.
+             *
+             * Aborting the group rather than reconnecting is deliberate: a reconnect per breach
+             * is a loop whose length the hostile server chooses, which is the same defect one
+             * layer up. And an honest mailbox never reaches this line, because the declared-size
+             * pre-flight has already refused it with a 413 that names the limit.
+             */
+            const fetched = await adapter.fetchPart(part.locator, part.partId, {
+              maxBytes: DOWNLOAD_ALL_MAX_BYTES - fetchedBytes,
+            });
             fetchedBytes += fetched.body.byteLength;
             zip.file(name, fetched.body);
-          } catch {
-            errors.push(`${name}: could not be fetched from the mail server`);
+          } catch (err) {
+            if (isTooLarge(err)) {
+              poisoned = true;
+              errors.push(
+                `${name}: skipped — the mail server sent more than this archive had room for ` +
+                  `(the whole archive may hold ${Math.round(DOWNLOAD_ALL_MAX_BYTES / 1048576)} MiB)`,
+              );
+            } else {
+              errors.push(`${name}: could not be fetched from the mail server`);
+            }
           }
         }
       } finally {
@@ -412,7 +530,8 @@ export class AttachmentsService {
    */
   async listFiles(ctx: ServiceContext, opts: ListFilesOptions = {}): Promise<Page<FileDTO>> {
     const limit = clampLimit(opts.limit);
-    const minSize = opts.minSizeBytes ?? (opts.type === "big" ? BIG_FILE_DEFAULT_BYTES : undefined);
+    const minSize = validMinSize(opts.minSizeBytes)
+      ?? (opts.type === "big" ? BIG_FILE_DEFAULT_BYTES : undefined);
 
     const filters = [eq(attachments.accountId, ctx.accountId), eq(attachments.inline, false)];
     if (minSize != null) filters.push(gte(attachments.sizeBytes, minSize));
@@ -444,7 +563,30 @@ export class AttachmentsService {
 
   // ── internals ────────────────────────────────────────────────────────────
 
-  /** Resolve the download-all target set into fetch-ready parts (account-scoped). */
+  /**
+   * Resolve the download-all target set into fetch-ready parts (account-scoped).
+   *
+   * ── THE CEILING IS APPLIED TO THE READ, NOT TO ITS RESULT ────────────────────────────────
+   *
+   * {@link DOWNLOAD_ALL_MAX_PARTS} used to be checked in `downloadAll`, on the array this
+   * function had already built — which is one statement too late in both of its branches:
+   *
+   *  · the `fileIds` branch put the caller's array STRAIGHT into a SQL `IN`, so a request
+   *    naming 100 000 file ids sent 100 000 bind parameters at a driver whose protocol limit is
+   *    65 535, and the 200-part ceiling that was supposed to refuse it was evaluated on rows
+   *    that could never come back. `fileIds` is now bounded and SHAPE-CHECKED here, before the
+   *    predicate is built: a non-uuid would otherwise reach Postgres as 22P02, a 500 for a
+   *    plainly bad request — the guard `MessageService.getBodies` already applies to its ids.
+   *  · the FILTER branch names no ids at all, so `POST /files/download-all` with
+   *    `{"filter":{}}` selected the account's ENTIRE attachment history, materialized every row
+   *    in the process, and only then counted them and answered 413. The refusal was correct and
+   *    the work behind it was unbounded. The read now stops at the ceiling PLUS ONE, which is
+   *    exactly enough to know the ceiling was crossed and nothing more.
+   *
+   * The `messageId` branch needs no bound of its own beyond the same limit: one message's
+   * attachment count is bounded by what a sender could put in one MIME tree, and it now shares
+   * the same ceiling rather than resting on that argument.
+   */
   private async resolveTargets(ctx: ServiceContext, input: DownloadAllInput): Promise<ResolvedPart[]> {
     if (input.messageId) {
       await this.assertMessage(ctx, input.messageId);
@@ -454,14 +596,48 @@ export class AttachmentsService {
         eq(attachments.inline, false),
       ));
     }
-    if (input.fileIds && input.fileIds.length > 0) {
-      return this.partsWhere(ctx, and(
-        eq(attachments.accountId, ctx.accountId),
-        inArray(attachments.id, input.fileIds),
-      ));
+    if (input.fileIds !== undefined && input.fileIds !== null) {
+      if (!Array.isArray(input.fileIds)) {
+        throw new ServiceError("validation_failed", 400, "fileIds must be an array of file ids");
+      }
+      if (input.fileIds.length > DOWNLOAD_ALL_MAX_PARTS) {
+        // 413 with the number, before the query — the same refusal `downloadAll` gives for a
+        // resolved set that is too large, moved to where it costs nothing.
+        throw new ServiceError(
+          "payload_too_large", 413,
+          `too many attachments to archive at once: ${input.fileIds.length} > ` +
+            `${DOWNLOAD_ALL_MAX_PARTS} — narrow the selection`,
+        );
+      }
+      for (const id of input.fileIds) {
+        if (typeof id !== "string" || !ATTACHMENT_ID_RE.test(id)) {
+          throw new ServiceError("validation_failed", 400, "invalid attachment id");
+        }
+      }
+      /**
+       * A PRESENT `fileIds` IS THE SELECTION MODE, EVEN WHEN IT IS EMPTY.
+       *
+       * `[]` used to fall through to the library branch below, so `{"fileIds": []}` — a client
+       * asking to archive nothing — downloaded the account's ENTIRE non-inline attachment
+       * history, or answered 413 about a limit the request had not gone near. A caller-chosen
+       * selection of zero became "everything", which is the same shape as the `NaN` limit that
+       * named this class: a value the guard could not read, read as "no ceiling".
+       *
+       * `GET /messages/bodies` already made this exact ruling one route over, and its words
+       * apply verbatim: *"A present-but-empty `ids=` is still the ids MODE (an empty answer),
+       * never a silent fall-through to the keyset page, which would send a client asking for
+       * nothing the account's first fifty bodies."*
+       */
+      return input.fileIds.length === 0
+        ? []
+        : this.partsWhere(ctx, and(
+          eq(attachments.accountId, ctx.accountId),
+          inArray(attachments.id, input.fileIds),
+        ));
     }
     // A filtered slice of the library (All Files / Big Files).
-    const minSize = input.filter?.minSizeBytes ?? (input.filter?.type === "big" ? BIG_FILE_DEFAULT_BYTES : undefined);
+    const minSize = validMinSize(input.filter?.minSizeBytes)
+      ?? (input.filter?.type === "big" ? BIG_FILE_DEFAULT_BYTES : undefined);
     const filters = [eq(attachments.accountId, ctx.accountId), eq(attachments.inline, false)];
     if (minSize != null) filters.push(gte(attachments.sizeBytes, minSize));
     return this.partsWhere(ctx, and(...filters));
@@ -479,7 +655,26 @@ export class AttachmentsService {
     }).from(attachments)
       .innerJoin(messages, eq(messages.id, attachments.messageId))
       .where(where)
-      .orderBy(asc(attachments.id));
+      .orderBy(asc(attachments.id))
+      // PLUS ONE, so the ceiling can be DETECTED without being exceeded. Without it the
+      // unfiltered library branch read every attachment row the account owns purely in order to
+      // refuse the request.
+      .limit(DOWNLOAD_ALL_MAX_PARTS + 1);
+
+    // Refused HERE, on the ROW count, and that is the load-bearing detail. The loop below drops
+    // rows with no native locator, so a selection of `MAX + 1` rows could resolve to `MAX` parts
+    // and slip past a check made afterwards — a SILENTLY TRUNCATED archive, which is exactly
+    // what `DOWNLOAD_ALL_MAX_PARTS`' own docstring refuses ("an archive missing files the user
+    // asked for and did not notice is worse than a refusal that names the limit"). The count is
+    // not named because the read deliberately stopped one past the limit rather than counting
+    // the whole selection; the limit is named, which is the actionable half.
+    if (rows.length > DOWNLOAD_ALL_MAX_PARTS) {
+      throw new ServiceError(
+        "payload_too_large", 413,
+        `too many attachments to archive at once: more than ${DOWNLOAD_ALL_MAX_PARTS} — narrow the selection`,
+      );
+    }
+
     const out: ResolvedPart[] = [];
     for (const r of rows) {
       const locator = r.nativeLocator as NativeLocator | null;

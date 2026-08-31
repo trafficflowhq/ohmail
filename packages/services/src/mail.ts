@@ -57,9 +57,11 @@ export {
   materializeRoutingDecision, materializeApproval, materializeRule, materializeDraft,
 } from "./dto/materialize.js";
 export {
-  clampLimit, encodeListCursor, decodeListCursor,
+  clampLimit, encodeListCursor, decodeListCursor, decodeKeysetCursor,
   DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT,
 } from "./pagination.js";
+// Identifier shapes, checked before a value reaches a `uuid` column or an IMAP command.
+export { isUuid, requireUuid, requireImapUint32, IMAP_UINT32_MAX } from "./ids.js";
 export {
   ScreenerService, makeScreenerService, SCREENER_FOLDER,
   type ScreenerDeps, type ScreenBody, type ScreenDecisionResult, type ScreenIdempotency,
@@ -79,7 +81,7 @@ export {
 
 // Consent: the sent-mail seed, the dormancy cutline, and putting an account back to unscreened.
 export {
-  SEED_SCAN_LIMIT, SUPPORTED_LOCALES,
+  SEED_MAX_ADDRESSES, SEED_SCAN_LIMIT, SUPPORTED_LOCALES,
   buildSeedReview, confirmSeed, consentSettings, setAutoSuggest, setBlockAutoUnsubscribe,
   setBlockRemoteImages, setBlockTrackingPixels, setDormancyDays, setFoldersEnabled,
   setLocale, setMailboxFoldersEnabled, setMailboxSignature,
@@ -149,15 +151,17 @@ export {
   type MoveBody, type MoveIdempotency, type MoveResult, type PatchResult,
 } from "./message-service.js";
 export {
-  ThreadService, threadService,
+  ThreadService, threadService, THREAD_MERGE_MAX_IDS,
   type ThreadPatchBody, type ThreadRenameBody, type ThreadMergeBody,
 } from "./thread-service.js";
 export {
   SearchService, searchService, SEARCH_SORTS, isSearchSort,
+  SEARCH_QUERY_MAX_CHARS,
   type SearchOptions, type SearchFilters, type SearchResult, type Facets, type SearchSort,
 } from "./search-service.js";
 export {
   PrivacyService, makePrivacyService, nodeRemoteFetch, makeNodeRemoteFetch,
+  PROXY_URL_MAX_CHARS,
   type RemoteFetch, type PrivacyServiceDeps, type ProxyImageInput, type ProxyImageResult,
 } from "./privacy-service.js";
 export {
@@ -172,7 +176,7 @@ export {
   type UnsubscribeSweep,
 } from "./unsubscribe-service.js";
 export {
-  ContactsService, contactsService,
+  ContactsService, contactsService, CONTACTS_QUERY_MAX_CHARS,
   type ListContactsOptions, type ListNotesOptions,
 } from "./contacts-service.js";
 export {
@@ -188,18 +192,19 @@ export {
   type AwayResponderBody,
 } from "./away-responder-service.js";
 export {
-  ProfileImportService, profileImportService,
+  ProfileImportService, profileImportService, PROFILE_IMPORT_MAX,
   type ProfileImportCandidateDTO, type ProfileImportApplied, type ProfileImportCounts,
   type ProfileReader,
 } from "./profile-import-service.js";
 export {
   AttachmentsService, attachmentsService, BIG_FILE_DEFAULT_BYTES,
+  DOWNLOAD_ALL_MAX_PARTS, DOWNLOAD_ALL_MAX_BYTES, ATTACHMENT_MAX_FETCH_BYTES,
   type AttachmentDTO, type FileDTO, type FetchedBytes, type AttachmentAdapter,
   type OpenAdapter, type FetchDeps, type FilesFilter, type ListFilesOptions,
   type DownloadAllInput, type DownloadAllResult,
 } from "./attachments-service.js";
 export {
-  KbService, kbService,
+  KbService, kbService, KB_MAX_TAGS,
   type KbEntryBody, type ListKbOptions,
 } from "./kb-service.js";
 export {
@@ -211,7 +216,8 @@ export {
   type FolderCreateBody, type FolderRenameBody, type FolderScopeSummary,
 } from "./folder-ops-service.js";
 export {
-  DraftsService, draftsService,
+  DraftsService, draftsService, DRAFT_MAX_RECIPIENTS,
+  DRAFT_SUBJECT_MAX_CHARS, RECIPIENT_ADDRESS_MAX_CHARS, RECIPIENT_NAME_MAX_CHARS,
   type CreateDraftBody, type PatchDraftBody, type DraftMutation,
 } from "./drafts-service.js";
 export {
@@ -227,7 +233,8 @@ export {
 } from "./schedule-send-pass.js";
 export {
   SendService, sendService, SEND_STALE_AFTER_MS,
-  SEND_ATTACHMENT_MAX_TOTAL_BYTES, SEND_MAX_ATTACHMENT_PARTS, dedupeStagedIds,
+  SEND_ATTACHMENT_MAX_TOTAL_BYTES, SEND_ATTACHMENT_FIELD_MAX_CHARS,
+  SEND_MAX_ATTACHMENT_PARTS, SEND_MAX_RECIPIENTS, dedupeStagedIds,
   SEND_MIME_ENVELOPE_BYTES, SEND_STAGED_OBJECT_MAX_BYTES, attachmentBudgetFor,
   effectiveAttachmentCap, sendSurfaceFor,
   type SendDeps, type SendResult, type SendAttachment, type SendInput,
