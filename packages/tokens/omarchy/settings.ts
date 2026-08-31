@@ -68,14 +68,22 @@ const MAX_BORDER_PX = 32;
  *  (comment-openers and hanging brackets can eat the entire rule); quoted, `'Mono/Code'`
  *  would be legal CSS, but teaching the fence quote-awareness widens the one boundary that
  *  must stay simple. Refusing HERE keeps the degradation per-ingredient: this family drops,
- *  the rest of the stack and every other slot survive. */
+ *  the rest of the stack and every other slot survive. Parens are the one exception, matching
+ *  the fence exactly: BALANCED parens pass (real families carry qualifiers like `Mono (TTF)`,
+ *  and a balanced pair cannot restructure a rule), a hanging one refuses the family. */
 function familyName(raw: string): string | null {
   const name = raw
     .replace(/["'\\]/g, "")
     .replace(/[\u0000-\u001f\u007f]/g, "")
     .replace(/\s+/g, " ")
     .trim();
-  if (/[{}<>;@/[\]()]/.test(name)) return null;
+  if (/[{}<>;@/[\]]/.test(name)) return null;
+  let depth = 0;
+  for (const ch of name) {
+    if (ch === "(") depth += 1;
+    else if (ch === ")" && --depth < 0) return null;
+  }
+  if (depth !== 0) return null;
   return name.length > 0 && name.length <= 64 ? name : null;
 }
 
