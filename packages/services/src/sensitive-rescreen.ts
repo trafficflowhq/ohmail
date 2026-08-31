@@ -862,20 +862,31 @@ async function moveDestinations(
  *    overrode the gate, so a NULL category means this message reached the Ohbox on its own merits
  *    and was never touched by the defect. It bounds the pass to the damage.
  *
- * ── AND THE FIVE THINGS THAT TAKE A MESSAGE BACK OUT OF IT ─────────────────────────────────
+ * ── AND THE SIX THINGS THAT TAKE A MESSAGE BACK OUT OF IT ──────────────────────────────────
  *
  * The rule, stated once: **a message the user has expressed an intent about is not ours to
  * move.** Two of the predicates are copied from `listScreenerBacklog` because they are the same
- * rule in the other direction; three are this pass's own, because it is the first pass that can
- * take mail AWAY from a user rather than hand it to them.
+ * rule in the other direction; the rest are this pass's own, because it is the first pass that can
+ * take mail AWAY from a user rather than hand it to them. (It said FIVE until the decided-approval
+ * arm below was added and the heading was not counted again — the numbered list has always had
+ * six entries, `4b` included.)
  *
  *  1. `folder_state.last_set_by = 'us'` — a row set `external` is a placement the USER performed
  *     in their own mail client, and the folder reconciler already refuses to revert those.
  *  2. no enabled `rules` row for the sender or its domain — `POST /screener/:id` writes one per
- *     decide, so a sender carrying one has been ruled on and is not ours to re-route. (Note the
- *     asymmetry with the re-evaluation above: a rule ALSO wins inside `evaluateRules`, so this
- *     predicate is redundant for correctness and kept for cost — it keeps the ruled-on senders
- *     out of the page entirely.)
+ *     decide, so a sender carrying one has been ruled on and is not ours to re-route.
+ *
+ *     **THIS IS NOT REDUNDANT AND THE COMMENT USED TO SAY IT WAS.** The claim was that a rule
+ *     also wins inside `evaluateRules`, so the SQL only saved the read. That held while a sender
+ *     rule meant "all mail from this sender"; it stopped holding when rules gained
+ *     `subject_contains` and `body_contains` (mail 0050, 0052). A rule NARROWED to `invoice` now
+ *     takes every OTHER message from that sender out of the candidate set here, in SQL, before
+ *     the evaluator can answer `screener` for it — so a stranger's verification code from a
+ *     sender the user wrote one narrow rule about stays misrouted, permanently, and the
+ *     completion marker covers it. Found by review; ledgered rather than changed in the slice
+ *     that found it, because widening this predicate changes WHICH MAIL A PASS MOVES in
+ *     somebody's mailbox and that needs its own proof, not a one-line edit at the end of another
+ *     slice.
  *  3. no `message_states` row in a state other than `none` — reply-later, set-aside, bubbled-up
  *     and muted are the four ways the product lets someone TRIAGE a message, and yanking one out
  *     of a pile they built is the failure this predicate exists to prevent.
