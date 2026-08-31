@@ -1187,6 +1187,15 @@ export interface ConsentStateWire {
    * away from asking for a catalogue that does not exist.
    */
   locale?: string | null;
+  /**
+   * THE ACCOUNT'S APPEARANCE FACE — `'paper' | 'ohmarchy'`, or `null` for "no account-wide
+   * choice". Optional with `locale`'s collapse: an API too old to carry the field and an
+   * account that never chose leave the reader in the same place — the DEVICE resolves its own
+   * default (its pin, then the Linux detection, then paper; `ThemeProvider` owns the order).
+   * Unlike locale, `'paper'` is a real stored value, because on a Linux device it is the
+   * instruction that overrides the detection (mail 0082's header).
+   */
+  themeFace?: string | null;
   counts: {
     decidedSenders: number;
     activeUndecidedSenders: number;
@@ -1344,6 +1353,17 @@ export const consent = {
       method: "PATCH",
       body: { locale },
     }).then((r) => r.locale),
+  /**
+   * SET THE ACCOUNT-WIDE APPEARANCE FACE — "apply for all devices", the same route and the
+   * same echo rule as {@link setLocale}. `'paper'` stores and echoes `'paper'` (never
+   * collapsed to null — it is what overrides a Linux device's ohmarchy detection); `null`
+   * drops the account-wide choice and every device resolves its own default again.
+   */
+  setThemeFace: (themeFace: string | null) =>
+    api<{ themeFace: string | null }>("/consent/settings", {
+      method: "PATCH",
+      body: { themeFace },
+    }).then((r) => r.themeFace),
   /** The review list. Reads, and writes nothing — the list is an offer. */
   seedReview: () => api<SeedReviewWire>("/consent/seed"),
   /**

@@ -1,0 +1,41 @@
+-- THE APPEARANCE FACE, AS ACCOUNT STATE — one column on `account_settings` (OHMARCHY-PLAN.md §3a).
+--
+-- `theme_face` is the paper/ohmarchy axis of the appearance dimension (the light/dark axis stays
+-- device-local and never touches the server — it always has). It lands on `account_settings` for
+-- `locale`'s reasons, stated in 0053's header: per-account, no history, no delete semantics, no
+-- actor, and this table is the schema's nominated home for exactly that shape. The write surface
+-- is `PATCH /consent/settings`, the read is `GET /consent`, and every write appends the `settings`
+-- change row so other signed-in surfaces re-ask — the travelling-profile machinery, untouched.
+--
+-- ══ NULL IS "NOBODY CHOSE" — AND HERE, UNLIKE `locale`, THE DEFAULT **IS** STORED ═════════════
+--
+-- 0053 stores NULL for a request for the default, because for a language "asked for English" and
+-- "never chose" resolve identically on every device. The face CANNOT collapse the two, because a
+-- device's default is not a constant: a LINUX device with no choice anywhere defaults to the
+-- ohmarchy face, for that device only (with an inline offer to go account-wide). So:
+--
+--   · NULL       ⇒ "no account-wide choice" ⇒ each device resolves its own default
+--                  (Linux ⇒ ohmarchy, everything else ⇒ paper).
+--   · 'paper'    ⇒ an explicit account-wide choice of the calm face — which is exactly what
+--                  overrides a Linux device's detection. Storing it is the whole point.
+--   · 'ohmarchy' ⇒ the explicit account-wide tiling face.
+--
+-- Collapsing 'paper' to NULL here would make "apply paper for all devices" unsayable on the one
+-- class of device the detection targets — the request would store nothing and the Linux default
+-- would immediately reassert itself.
+--
+-- ══ THE CHECK IS THE CLOSED SET ═══════════════════════════════════════════════════════════════
+--
+-- Closed in the same four places as `locale`'s: this constraint, `SUPPORTED_THEME_FACES` in
+-- `consent-seed.ts`, the wire validation in `PATCH /consent/settings`, and the Settings control.
+-- The constraint is the only unbypassable one, and the failure it prevents is 0053's: a stored
+-- face nothing renders is a setting that silently does not work. Not a Postgres enum, for 0053's
+-- reason (`ALTER TYPE … ADD VALUE` cannot run in the transaction that first uses the value; a
+-- CHECK drops and recreates in one statement). `IS NULL OR` is explicit because "unknown is
+-- allowed" is the semantic asserted, not a three-valued accident.
+ALTER TABLE "account_settings" ADD COLUMN IF NOT EXISTS "theme_face" text;
+--> statement-breakpoint
+ALTER TABLE "account_settings" DROP CONSTRAINT IF EXISTS "account_settings_theme_face_supported";
+--> statement-breakpoint
+ALTER TABLE "account_settings" ADD CONSTRAINT "account_settings_theme_face_supported"
+  CHECK ("theme_face" IS NULL OR "theme_face" IN ('paper', 'ohmarchy'));

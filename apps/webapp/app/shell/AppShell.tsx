@@ -112,6 +112,8 @@ import { useFolderVerbs } from "./folder-verbs";
 import { folderTailVerdict, folderUnreadCounts } from "./folders";
 import { AwayResponderRow, type AwayTransport } from "./AwayResponderRow";
 import { AwayNotice, useAwayNotice } from "./AwayNotice";
+import { OhmarchyOffer, useOhmarchyOffer } from "./OhmarchyOffer";
+import type { ApplyFaceAllDevices } from "./FaceRow";
 import { ProfileImportCard, useProfileImport, type ProfileImportTransport } from "./ProfileImportCard";
 import {
   COMPOSE_SEND_KEY, inlineForwardKey, useMailSend, readReplyDraft, writeReplyDraft,
@@ -1225,6 +1227,41 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
     if (!adoptLocale || accountLocale === null || accountLocale === activeLocale) return;
     void adoptLocale(accountLocale);
   }, [adoptLocale, accountLocale, activeLocale]);
+  /**
+   * THE ACCOUNT'S FACE, ADOPTED THE SAME WAY — riding the same `GET /consent` read, into the
+   * ThemeProvider's `adoptAccountFace` (which also mirrors it to storage so the NEXT boot's
+   * init script stamps it pre-paint).
+   *
+   * `adoptAccountFace`, never a write: the value came FROM the account; PATCHing it back on
+   * every boot is the loop `adoptLocale`'s docstring warns about. TWO differences from the
+   * locale effect above, both deliberate:
+   *
+   *  · null IS adopted once the answer is known. For locale, null means "leave the device
+   *    alone" and adopting it would be a no-op with an else-arm smell. For the face, adoption
+   *    of null clears the device's MIRROR of a previous account answer — without it, an
+   *    account whose choice went away would keep re-skinning this device from a stale copy.
+   *  · the device's own explicit pin still outranks what is adopted here — the provider's
+   *    resolution order, which is what the "only this device" scope promised.
+   */
+  const adoptAccountFace = theme.adoptAccountFace;
+  const accountThemeFace = consent.themeFace;
+  const consentKnown = consent.known;
+  useEffect(() => {
+    if (!consentKnown) return;
+    adoptAccountFace(accountThemeFace);
+  }, [adoptAccountFace, accountThemeFace, consentKnown]);
+  /**
+   * "APPLY FOR ALL DEVICES" — the face's account write, folded to ONE nullable callback for
+   * both consumers (the Settings row's scope line and the Option B offer). Null on the demo
+   * (no session), before the first consent answer (a press racing the boot read would write
+   * over an account whose stance is not yet known), and on transports without the knob (the
+   * desktop's hosted door) — each null withholds the affordance structurally.
+   */
+  const applyFaceAllDevices: ApplyFaceAllDevices | null =
+    !demo && consentKnown && consent.setThemeFace !== null ? consent.setThemeFace : null;
+  /* The Option B offer's gates (Linux default active, nothing chosen, dismissal) live in the
+     hook — see OhmarchyOffer.tsx. */
+  const faceOffer = useOhmarchyOffer(applyFaceAllDevices);
   /**
    * THE SEED REVIEW, OFFERED ONCE THE SERVER SAYS IT IS OWED — and dismissible.
    *
@@ -5650,9 +5687,19 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
                    `awayNotice.on` resting false means the fail-shape is a missing courtesy
                    line, never a false claim that replies are going out. */
                 noticeSection={
-                  demo || !awaySupported || !awayNotice.on
-                    ? undefined
-                    : <AwayNotice audience={awayNotice.audience} />
+                  (() => {
+                    /* Two possible lines share the slot: the Option B ohmarchy offer (above,
+                       so a fresh Linux sign-in sees it first) and the away-responder notice.
+                       Each keeps its own gate; the slot is undefined only when both are
+                       absent, so OhboxView's spacing never reserves an empty band. */
+                    const away = demo || !awaySupported || !awayNotice.on
+                      ? null
+                      : <AwayNotice audience={awayNotice.audience} />;
+                    const offer = faceOffer.eligible && applyFaceAllDevices !== null
+                      ? <OhmarchyOffer apply={applyFaceAllDevices} onDone={faceOffer.dismiss} />
+                      : null;
+                    return offer === null && away === null ? undefined : <>{offer}{away}</>;
+                  })()
                 }
                 resurfaced={ohbox.resurfaced}
                 newForYou={ohbox.newForYou}
@@ -6043,6 +6090,7 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
 
             {effectiveView === "settings" ? (
               <SettingsView
+                applyFaceAllDevices={applyFaceAllDevices}
                 notifications={notifications}
                 tags={tags}
                 tagCounts={Object.fromEntries(

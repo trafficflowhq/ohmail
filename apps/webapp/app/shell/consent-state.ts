@@ -82,6 +82,14 @@ export interface ConsentTransport {
   setMailboxSignature: (
     mailboxId: string, signature: string | null,
   ) => Promise<{ signatures: Record<string, string> }>;
+  /**
+   * The account-wide appearance face (mail 0082) — OPTIONAL, unlike every method above, because
+   * the desktop's hosted-door transport predates it and must keep compiling; a host that does
+   * not supply it simply withholds the "apply for all devices" affordance (the device-local
+   * pin still works there — it never touches this wire). `'paper'` stores as itself, never
+   * collapsed to null; see the api-client note.
+   */
+  setThemeFace?: (themeFace: string | null) => Promise<{ themeFace: string | null }>;
 }
 
 /** The hosted transport — the browser talking to the API this app was written against. */
@@ -97,6 +105,8 @@ const CLOUD_CONSENT: ConsentTransport = {
     consentApi.setMailboxFoldersEnabled(mailboxId, enabled),
   setMailboxSignature: (mailboxId, signature) =>
     consentApi.setMailboxSignature(mailboxId, signature),
+  setThemeFace: (themeFace) =>
+    consentApi.setThemeFace(themeFace).then((stored) => ({ themeFace: stored })),
 };
 
 export interface ConsentState {
@@ -245,6 +255,15 @@ export interface ConsentState {
    * is an interface in the language the reader last picked on this machine.
    */
   locale: AppLocale | null;
+  /**
+   * THE ACCOUNT'S APPEARANCE FACE, or `null` for "no account-wide choice" — `locale`'s twin,
+   * with `locale`'s deferral semantics: null is the ABSENCE of a position, and it leaves the
+   * device to resolve its own default (its pin, then the Linux detection — `ThemeProvider`
+   * owns that order, this hook only reports what the account said). Resting null, failed
+   * fetch null, elderly API null, standalone null: all four mean "nothing from an account",
+   * and the worst case of not knowing is the face this device already wears.
+   */
+  themeFace: "paper" | "ohmarchy" | null;
   /** False until the first answer lands — an onboarding step must not flash before then. */
   known: boolean;
   /**
@@ -351,6 +370,9 @@ const RESTING: ConsentState = {
   // *position* — it is the absence of one, and it leaves the language this device remembered in
   // charge. See {@link ConsentState.locale}.
   locale: null,
+  // NOTHING FROM AN ACCOUNT — `locale`'s reasoning verbatim: null is the absence of a position
+  // and leaves the device's own resolution in charge.
+  themeFace: null,
   known: false,
   standalone: false,
   cloudClient: false,
@@ -441,6 +463,13 @@ export function useConsentState(
    */
   settingsStamp?: string | null,
 ): ConsentState & {
+  /**
+   * "Apply for all devices" — store the account-wide face and keep the local answer in step
+   * with the stored echo. NULL when the transport predates the knob (the desktop's hosted
+   * door): the settings row withholds the affordance structurally rather than drawing a
+   * control that cannot control. Rethrows on refusal, like every sibling.
+   */
+  setThemeFace: ((themeFace: "paper" | "ohmarchy" | null) => Promise<"paper" | "ohmarchy" | null>) | null;
   /**
    * Flip auto-suggest and keep the local answer in step with the stored one.
    *
@@ -636,6 +665,11 @@ export function useConsentState(
           // does not exist. `normalizeLocale` answers null for anything it does not recognise,
           // which lands on exactly the same branch as "this account has no preference".
           locale: normalizeLocale(wire.locale),
+          // NORMALISED, not trusted — `locale`'s rule: the CHECK and the read-side filter close
+          // the set on the server, and anything else collapses to "no account-wide choice".
+          themeFace: wire.themeFace === "paper" || wire.themeFace === "ohmarchy"
+            ? wire.themeFace
+            : null,
           known: true,
           // Both of these are DERIVED on the way out (see the return) and are written here only
           // because the state object carries them. Nothing may read them off `state`.
@@ -761,6 +795,37 @@ export function useConsentState(
     },
     [],
   );
+
+  /**
+   * "APPLY FOR ALL DEVICES" — the account-wide face write. `null` when the transport predates
+   * the knob (the desktop's hosted door), so the settings row can withhold the affordance
+   * structurally instead of drawing a control that cannot control. Echo-not-the-argument and
+   * the era rule, exactly as every sibling below.
+   */
+  const writeThemeFace = useCallback(
+    async (themeFace: "paper" | "ohmarchy" | null): Promise<"paper" | "ohmarchy" | null> => {
+      // Read off `link` AT CALL TIME, like every sibling — the ref is refreshed each render, so
+      // a host that swaps transports (the desktop's door switch) is never written through a
+      // stale wire. A call reaching here without the method is a caller that ignored the
+      // null gate below; refusing beats silently "succeeding".
+      const write = link.current.setThemeFace;
+      if (!write) throw new Error("this transport cannot store an account-wide face");
+      // The user's act outranks every read in flight — see `writeEpoch`. Bumped BEFORE the
+      // request, so a re-ask racing this write is discarded whatever it answers.
+      writeEpoch.current += 1;
+      const at = era.current;
+      const res = await write(themeFace);
+      const stored = res.themeFace === "paper" || res.themeFace === "ohmarchy" ? res.themeFace : null;
+      applyEcho(at, (prev) => ({ ...prev, themeFace: stored }));
+      return stored;
+    },
+    [applyEcho],
+  );
+  // Null when the transport predates the knob (the desktop's hosted door), so the settings row
+  // withholds the "apply for all devices" affordance structurally — a control that cannot
+  // control is the built-and-unreachable shape the injected-node seam exists to avoid.
+  const setThemeFace =
+    typeof (transport ?? CLOUD_CONSENT).setThemeFace === "function" ? writeThemeFace : null;
 
   const setAutoSuggest = useCallback(async (enabled: boolean): Promise<boolean> => {
     // The user's act outranks every read in flight — see `writeEpoch`. Bumped BEFORE the
@@ -904,6 +969,7 @@ export function useConsentState(
     ...presented,
     standalone: active && !reachable,
     cloudClient: apiConfigured(),
+    setThemeFace,
     setAutoSuggest,
     setDormancyDays,
     setBlockRemoteImages,

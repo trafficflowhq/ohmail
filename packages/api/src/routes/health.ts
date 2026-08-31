@@ -694,6 +694,14 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // rule read the right way round: a timestamp closes no set, but this column DOES close one, and
   // it closes it over free text. See `account_settings_locale_supported` below.
   ["account_settings", "locale"],
+  // mail 0082_theme_face — the account-wide appearance face. One additive nullable text column
+  // on `account_settings`, and it earns a marker on 0053's whole-row-select argument verbatim:
+  // `consentSettings` does `select().from(accountSettings)`, so an API deployed ahead of the
+  // migration 42703s `GET /consent` AND `PATCH /consent/settings` — the whole consent surface,
+  // not merely the face. No worker half: nothing in the sync worker reads or writes it.
+  // Deploy order: migration → API. A CHECK marker as well, 0053's reason: the column closes a
+  // set over free text. See `account_settings_theme_face_supported` below.
+  ["account_settings", "theme_face"],
   // mail 0054_auto_unsubscribe_optout — the switch for auto-unsubscribe on screen-out, stored as
   // the opt-out. The fifth `account_settings` marker, on the whole-row-select argument every one
   // above it makes: `consentSettings` does `select().from(accountSettings)`, so an API deployed
@@ -1067,6 +1075,14 @@ export const SCHEMA_CHECK_MARKERS: ReadonlyArray<string> = [
   //
   // It was the newest entry here until mail 0063's probe-code set landed below it.
   "account_settings_locale_supported",
+  // mail 0082_theme_face — the closed set behind `account_settings.theme_face`. Listed on
+  // 0027's rule (the column and the CHECK fail DIFFERENTLY, and only one is loud), with
+  // 0053's silent-degradation shape exactly: a stored face outside the set renders as paper
+  // everywhere — `consentSettings` filters it to null on the read side, the client normalises
+  // it to null, the Settings row shows the device's own answer — so a setting that "does not
+  // work" leaves no error in any log. The service validates the same set with a 400, but that
+  // is code and can regress; the CHECK holds for a hand-run UPDATE and any importer.
+  "account_settings_theme_face_supported",
   // mail 0063_smtp_size_probe_stamp — the closed set behind `mailboxes.smtp_size_probe_code`.
   // Listed on 0027's rule (the column and the CHECK fail DIFFERENTLY, and only one of them is
   // loud), and its origin is the sharpest on this list: the value stored there is derived from an
@@ -1580,7 +1596,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0081_sensitive_rescreen_cursor";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0082_theme_face";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */

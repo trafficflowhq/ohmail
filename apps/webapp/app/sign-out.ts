@@ -122,6 +122,16 @@ export async function forgetThisBrowser(owner?: string): Promise<{
     // never account-scoped in the first place. They hold the reply body.
     REPLY_DRAFT_PREFIX,
     REPLY_META_PREFIX,
+    // The FACE's account-derived pair (OHMARCHY-PLAN.md §3a). `ohmail.face.account` is the
+    // DEVICE'S MIRROR OF THE ACCOUNT'S ANSWER — cached so the next boot's pre-paint stamp can
+    // wear it before `GET /consent` lands — which makes it account data in the only sense this
+    // sweep cares about: left behind, it re-skins the NEXT account's first paint from the
+    // departed account's preference. `ohmail.faceOffer` is the Option B offer's dismissal,
+    // answered in the context of the signed-in account; the next account on this device gets
+    // its own offer. The device's own pins (`ohmail.face`, `ohmail.layout`) SURVIVE beside
+    // `ohmail.theme` — a browser's look, not account data (the census names them).
+    "ohmail.face.account",
+    "ohmail.faceOffer",
   ]);
   survivors.push(...durable.survivors);
   // The mirror-name registry is swept BY `clearAllMirrors` itself (it removes the names it proved

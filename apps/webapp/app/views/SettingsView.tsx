@@ -47,6 +47,7 @@ import {
 } from "@ohmail/ui";
 import { hueOf } from "../shell/format";
 import { LanguageRow } from "../shell/LanguageRow";
+import { FaceRow, type ApplyFaceAllDevices } from "../shell/FaceRow";
 import { ImageQualityRow } from "../shell/ImageQualityRow";
 import { PANE_IDS, type PaneId } from "../shell/routing";
 import { useZoneNav } from "../shell/zone-nav";
@@ -397,6 +398,7 @@ export function SettingsView({
   desktopSection,
   devicesSection,
   defaultMailSection,
+  applyFaceAllDevices = null,
   initialPane,
   pane: routePane,
   onSelectPane,
@@ -703,6 +705,12 @@ export function SettingsView({
    * somebody STARTS, not where they are pinned. Clicking another pane must work, and a watched
    * prop would drag them back.
    */
+  /**
+   * "Apply for all devices" for the FACE row — `useConsentState().setThemeFace` where the
+   * host's transport carries the knob, null everywhere else (demo, standalone, a hosted door
+   * that predates it). Null withholds the scope affordance; the device-local control stays.
+   */
+  applyFaceAllDevices?: ApplyFaceAllDevices | null;
   initialPane?: PaneId;
   /**
    * THE ROUTE'S PANE — `#/settings/<pane>` resolved by the shell, or absent for the bare hash.
@@ -924,6 +932,11 @@ export function SettingsView({
                   />
                 }
               />
+              {/* THE FACE — paper/ohmarchy, the second appearance axis, beside the first
+                  because they are the same class of decision. Drawn by the shared file like
+                  the language above (both surfaces have a face); only the account-wide scope
+                  affordance is host-dependent, and it arrives as a nullable callback. */}
+              <FaceRow applyAllDevices={applyFaceAllDevices} />
               {/* WHAT LEAVES THIS BROWSER WHEN A PICTURE IS ATTACHED. Drawn by the shared file
                   rather than injected, like the language above and unlike everything below: the
                   level is kept in this browser and no host has to supply anything, so a standalone

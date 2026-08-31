@@ -672,6 +672,7 @@ export async function consentSettings(
   blockAutoUnsubscribeAt: string | null;
   foldersEnabledAt: string | null;
   locale: string | null;
+  themeFace: string | null;
 }> {
   const [row] = await ctx.db.select().from(accountSettings)
     .where(eq(accountSettings.accountId, ctx.accountId)).limit(1);
@@ -724,6 +725,12 @@ export async function consentSettings(
     // client cannot load into the boot path. Refusing it here is the read-side half of the same
     // closed set the constraint enforces on the write side.
     locale: SUPPORTED_LOCALES.includes(row?.locale ?? "") ? row!.locale : null,
+    // NULL, an absent row and an UNSUPPORTED value all answer null — `locale`'s spelling, for
+    // `locale`'s reason: the CHECK closes the set, so an unsupported string is unreachable
+    // through any writer, and if one arrives anyway (a hand-run UPDATE, a pre-constraint
+    // restore) sending it on would stamp a face nothing renders onto every boot. Null means
+    // "no account-wide choice" and each device resolves its own default (consent-state.ts).
+    themeFace: SUPPORTED_THEME_FACES.includes(row?.themeFace ?? "") ? row!.themeFace : null,
   };
 }
 
@@ -1397,6 +1404,56 @@ export async function setLocale(
     await recordSettingsChange(tx, ctx.accountId); // AFTER the settings row — the global lock order above
   });
   return { locale: stored };
+}
+
+/**
+ * The closed set of appearance faces — mirrored by the migration's CHECK (mail 0082), the wire
+ * validation in `PATCH /consent/settings`, and the Settings control.
+ */
+export const SUPPORTED_THEME_FACES: readonly string[] = ["paper", "ohmarchy"];
+
+/**
+ * SET THE ACCOUNT-WIDE APPEARANCE FACE — `locale`'s twin on `account_settings`, with ONE
+ * deliberate inversion: **the default is stored.**
+ *
+ * `setLocale` maps a request for English back to NULL because "asked for the default" and
+ * "never chose" resolve identically on every device. The face cannot collapse the two: a LINUX
+ * device with no choice anywhere defaults to the ohmarchy face for that device only (Option B,
+ * OHMARCHY-PLAN.md §3a), so an explicit account-wide `'paper'` is a real instruction — it is
+ * exactly what overrides that detection — and storing NULL for it would make the instruction
+ * unsayable on the one class of device it targets. `null` remains sendable and stores NULL:
+ * "drop the account-wide choice, let each device resolve its own default".
+ *
+ * WHAT THIS WRITE AUTHORISES: NOTHING. It spends nothing, moves no mail, files nothing
+ * differently — it changes which colors the interface is drawn in. The route's `cost: "work"`
+ * is inherited from the auto-suggest neighbour, not earned here (setLocale's paragraph).
+ *
+ * The upsert is column-scoped for the same one-primary-key race the other knobs share; the
+ * erasure fence and the `settings` change row bracket it in the same lock order. Returns the
+ * STORED value so the caller echoes the database, never the argument.
+ */
+export async function setThemeFace(
+  ctx: ServiceContext, themeFace: string | null,
+): Promise<{ themeFace: string | null }> {
+  if (themeFace !== null && !SUPPORTED_THEME_FACES.includes(themeFace)) {
+    throw new ServiceError(
+      "validation_failed", 400,
+      `themeFace must be one of ${SUPPORTED_THEME_FACES.join(", ")}, or null`,
+    );
+  }
+  await (ctx.db as unknown as Tx).transaction(async (tx) => {
+    // Erasure fence FIRST — the single lock chain (accounts → settings → sequence row) that
+    // every settings writer keeps; `erasure-fence.ts` carries the two-sided argument.
+    await fenceErasedAccount(tx, ctx.accountId);
+    await tx.insert(accountSettings)
+      .values({ accountId: ctx.accountId, themeFace, updatedAt: ctx.now() })
+      .onConflictDoUpdate({
+        target: accountSettings.accountId,
+        set: { themeFace, updatedAt: ctx.now() },
+      });
+    await recordSettingsChange(tx, ctx.accountId); // AFTER the settings row — the global lock order
+  });
+  return { themeFace };
 }
 
 /* `assertNotConfirmed` used to live here: a helper that turned a non-null `seed_confirmed_at`

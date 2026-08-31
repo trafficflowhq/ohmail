@@ -2352,6 +2352,24 @@ export const accountSettings = pgTable("account_settings", {
    * device's own remembered choice is a better guess than the product default.
    */
   locale: text("locale"),
+  /**
+   * THE APPEARANCE FACE — `'paper' | 'ohmarchy'`, or NULL for "nobody has chosen" (mail 0082).
+   * The CHECK (enum, closed) lives in the migration. The paper/ohmarchy axis of appearance;
+   * light/dark stays device-local and never reaches this table.
+   *
+   * Reads and writes exactly as {@link locale} does — `GET /consent` sends it, the client adopts
+   * it, `PATCH /consent/settings` writes it — with ONE deliberate inversion: **the default IS
+   * stored.** `setThemeFace('paper')` persists `'paper'`, because NULL and "asked for paper" are
+   * different states on a LINUX device, which defaults to ohmarchy when nobody has chosen
+   * anywhere (Option B, OHMARCHY-PLAN.md §3a). An explicit account-wide 'paper' is what
+   * overrides that detection; collapsing it to NULL would make the request unsayable on the one
+   * class of device it targets. The migration's header carries the full argument.
+   *
+   * Scope note: this column is the "apply for all devices" half. "Only this device" never
+   * reaches the server — it is the device's `localStorage` pin, which outranks this column on
+   * that device (that is what the scope option promised when it was chosen).
+   */
+  themeFace: text("theme_face"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });

@@ -4,8 +4,10 @@ import {
   resetScreeningState, setAutoSuggest, setBlockAutoUnsubscribe, setBlockRemoteImages,
   setBlockTrackingPixels,
   setDormancyDays, setFoldersEnabled, setLocale, setMailboxFoldersEnabled, setMailboxSignature,
+  setThemeFace,
   unmovedReport,
-  DEFAULT_DORMANCY_DAYS, SEED_MAX_ADDRESSES, SUPPORTED_LOCALES, ServiceError,
+  DEFAULT_DORMANCY_DAYS, SEED_MAX_ADDRESSES, SUPPORTED_LOCALES, SUPPORTED_THEME_FACES,
+  ServiceError,
 } from "@trafficflow/services/mail";
 import type { Tx } from "@trafficflow/db";
 import { serviceContext } from "../context.js";
@@ -118,6 +120,9 @@ interface SeedConfirmBody {
  *                      them load along with the pictures (false). Mail 0072.
  *   locale             'en' | 'de' | null — the interface language, or `null` for the default
  *                      (which is also what `'en'` stores; see {@link setLocale}).
+ *   themeFace          'paper' | 'ohmarchy' | null — the account-wide appearance face, or `null`
+ *                      to drop the account-wide choice (unlike locale, 'paper' IS stored — see
+ *                      {@link setThemeFace}).
  */
 interface ConsentSettingsBody {
   autoSuggest?: unknown;
@@ -140,6 +145,7 @@ interface ConsentSettingsBody {
    */
   signatures?: unknown;
   locale?: unknown;
+  themeFace?: unknown;
 }
 
 /**
@@ -176,7 +182,7 @@ async function applyConsentSettings(
   loadTrackingPixelsAt?: string | null;
   blockAutoUnsubscribeAt?: string | null; foldersEnabledAt?: string | null;
   folderMailboxesOff?: Record<string, string>; signatures?: Record<string, string>;
-  locale?: string | null;
+  locale?: string | null; themeFace?: string | null;
 }> {
   const hasAuto = "autoSuggest" in body;
   const hasDormancy = "dormancyDays" in body;
@@ -187,12 +193,14 @@ async function applyConsentSettings(
   const hasFolderMailboxes = "folderMailboxes" in body;
   const hasSignatures = "signatures" in body;
   const hasLocale = "locale" in body;
+  const hasThemeFace = "themeFace" in body;
   if (!hasAuto && !hasDormancy && !hasImages && !hasPixels && !hasAutoUnsub && !hasFolders
-      && !hasFolderMailboxes && !hasSignatures && !hasLocale) {
+      && !hasFolderMailboxes && !hasSignatures && !hasLocale && !hasThemeFace) {
     throw new ServiceError(
       "validation_failed", 400,
       "at least one of autoSuggest, dormancyDays, blockRemoteImages, blockTrackingPixels, " +
-      "blockAutoUnsubscribe, foldersEnabled, folderMailboxes, signatures or locale is required",
+      "blockAutoUnsubscribe, foldersEnabled, folderMailboxes, signatures, locale or themeFace " +
+      "is required",
     );
   }
 
@@ -381,12 +389,30 @@ async function applyConsentSettings(
     locale = l;
   }
 
+  /**
+   * The face rides `locale`'s wire discipline exactly — nothing coerces, the set is the
+   * service's constant, `null` is sendable ("drop the account-wide choice"). The one semantic
+   * difference ('paper' is stored, never collapsed to NULL) lives in {@link setThemeFace},
+   * where the value is stored, not here.
+   */
+  let themeFace: string | null | undefined;
+  if (hasThemeFace) {
+    const f = body.themeFace;
+    if (f !== null && (typeof f !== "string" || !SUPPORTED_THEME_FACES.includes(f))) {
+      throw new ServiceError(
+        "validation_failed", 400,
+        `themeFace must be one of ${SUPPORTED_THEME_FACES.join(", ")}, or null`,
+      );
+    }
+    themeFace = f;
+  }
+
   const out: {
     autoSuggestAt?: string | null; dormancyDays?: number; blockRemoteImagesAt?: string | null;
     loadTrackingPixelsAt?: string | null;
     blockAutoUnsubscribeAt?: string | null; foldersEnabledAt?: string | null;
     folderMailboxesOff?: Record<string, string>; signatures?: Record<string, string>;
-    locale?: string | null;
+    locale?: string | null; themeFace?: string | null;
   } = {};
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
     const txCtx = { ...ctx, db: tx as unknown as typeof ctx.db };
@@ -433,6 +459,9 @@ async function applyConsentSettings(
     }
     if (hasLocale) {
       out.locale = (await setLocale(txCtx, locale as string | null)).locale;
+    }
+    if (hasThemeFace) {
+      out.themeFace = (await setThemeFace(txCtx, themeFace as string | null)).themeFace;
     }
   });
   return out;
@@ -565,6 +594,11 @@ export const consentRoutes: Route[] = [
         // it may one day need to act on). This is the ONE field on this route whose null is not a
         // switch position but a deferral to the client, so it must not be filled in here.
         locale: settings.locale,
+        // THE APPEARANCE FACE — `'paper' | 'ohmarchy'`, or `null` for "no account-wide choice".
+        // Sent as `null` rather than omitted for `locale`'s reason, with the face's own twist:
+        // null defers to the DEVICE, whose default is not a constant (a Linux device resolves
+        // it to ohmarchy — the Option B detection the client owns).
+        themeFace: settings.themeFace,
         counts,
       });
     },

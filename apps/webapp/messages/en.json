@@ -1013,6 +1013,15 @@
     "themeSystem": "System",
     "themeDark": "Dark",
     "themeAria": "Theme",
+    "face": "Look",
+    "faceHint": "ohmarchy — a tiling, keyboard-first look inspired by Omarchy.",
+    "faceAria": "Look",
+    "facePaper": "paper",
+    "faceOhmarchy": "ohmarchy",
+    "faceScopeAll": "Applies on all your devices.",
+    "faceScopeDevice": "Applies on this device only.",
+    "faceApplyAll": "Apply on all devices",
+    "faceFailed": "Couldn't save that — try again.",
     "imageQuality": "Picture quality",
     "imageQualityHint": "JPEG and PNG attachments are compressed in this browser before they're sent, which drops the camera data in them — including location. Lower quality means smaller files. A picture that wouldn't get smaller is sent as it was, and Original never re-encodes.",
     "imageQualityAria": "Picture quality",
@@ -2519,5 +2528,13 @@
     "title": "This page doesn't exist.",
     "note": "The address may be mistyped, or the page has moved.",
     "home": "Back to ohmail."
+  },
+  "ohmarchy": {
+    "offerLead": "This device runs Linux, so ohmail is wearing its ohmarchy look here.",
+    "offerAction": "Go full Ohmarchy Theme on all your devices",
+    "offerNote": "This can always be changed under Settings.",
+    "offerFailed": "Couldn't save that — try again.",
+    "offerDismiss": "Dismiss the ohmarchy offer",
+    "offerDismissShort": "Not now"
   }
 }
