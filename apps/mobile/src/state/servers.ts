@@ -177,9 +177,27 @@ export class ServerProfileStore {
     this.newId = opts.newId ?? mintId;
   }
 
+  /**
+   * Was the index there but UNREADABLE? `readIndex` answers an empty index for both "absent" and
+   * "corrupt", which is right for every ordinary reader — a lost list costs one scan each — and
+   * catastrophic for {@link purgeAll}, where "there is nothing to purge" and "I cannot tell what
+   * to purge" have opposite correct actions, and the second one leaves live credentials behind a
+   * verdict that says they are gone.
+   */
+  private async indexUnreadable(): Promise<boolean> {
+    const raw = await this.kv.get(PREFIX);
+    if (raw === null) return false;
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      return typeof parsed !== "object" || parsed === null;
+    } catch {
+      return true;
+    }
+  }
+
   private async readIndex(): Promise<Index> {
     const raw = await this.kv.get(PREFIX);
-    if (raw === null) return { active: null, ids: [] };
+    if (raw === null) return { active: null, ids: [], wipes: [] };
     try {
       const parsed = JSON.parse(raw) as Partial<Index>;
       return {
@@ -304,6 +322,13 @@ export class ServerProfileStore {
         active: profile.id,
         ids: existing ? idx.ids : [...idx.ids, profile.id],
       });
+      // AND THE ORDER IS ONLY WORTH ANYTHING IF THE FIRST WRITE LANDED. A `set` that resolved
+      // without storing puts us straight back in the state the reordering exists to prevent: the
+      // credential written next under a key no list names, invisible to the purge that walks the
+      // list. Read it back BEFORE the secret is written, not after.
+      if (!(await this.readIndex()).ids.includes(profile.id)) {
+        throw new Error(`this phone could not record the pairing "${profile.id}" before storing it`);
+      }
       await this.writeProfile(profile);
       return profile;
     });
@@ -420,6 +445,15 @@ export class ServerProfileStore {
       const owed = idx.wipes ?? [];
       if (!owed.some((w) => w.owner === ownerKey)) return;
       await this.writeIndex({ ...idx, wipes: owed.filter((w) => w.owner !== ownerKey) });
+      // READ BACK, for the same reason the mark does — and the failure here is the nastier of
+      // the two. A clear that resolved without storing leaves a STALE debt against an owner key
+      // whose mirror is already gone: the forget reports success, the person re-pairs the same
+      // server, and the next launch's drain collects the old debt against the NEW mirror and
+      // deletes the mailbox they just re-authorized. The debt outliving its purpose is worse
+      // than the debt never being written.
+      if ((await this.readIndex()).wipes?.some((w) => w.owner === ownerKey) === true) {
+        throw new Error(`this phone still records a deletion owed for "${ownerKey}"`);
+      }
     });
   }
 
@@ -459,6 +493,12 @@ export class ServerProfileStore {
       if (owed.some((d) => d.subscriptionId === subscriptionId)) return;
       if (owed.length >= MAX_PENDING_WAKE_DROPS) throw new Error(WAKE_QUEUE_FULL);
       await this.kv.set(WAKE_DROPS_KEY, JSON.stringify([...owed, { profileId, subscriptionId }]));
+      // READ BACK, for {@link Index.wipes}'s reason one queue over: a keystore `set` that
+      // resolved without storing would leave the caller free to fire a delete whose only
+      // retryable record does not exist.
+      if (!(await this.pendingWakeDrops()).some((d) => d.subscriptionId === subscriptionId)) {
+        throw new Error(`this phone could not record that wake registration "${subscriptionId}" is owed a removal`);
+      }
     });
   }
 
@@ -470,6 +510,12 @@ export class ServerProfileStore {
       if (left.length === owed.length) return;
       if (left.length === 0) await this.kv.remove(WAKE_DROPS_KEY);
       else await this.kv.set(WAKE_DROPS_KEY, JSON.stringify(left));
+      // Read back, on `clearPendingWipe`'s rule: a stale debt is retried against a server that
+      // no longer owes anything, and on a re-registered endpoint that is a live row being taken
+      // down under the profile now using it.
+      if ((await this.pendingWakeDrops()).some((d) => d.subscriptionId === subscriptionId)) {
+        throw new Error(`this phone still records a wake removal owed for "${subscriptionId}"`);
+      }
     });
   }
 
@@ -492,6 +538,14 @@ export class ServerProfileStore {
    */
   purgeAll(): Promise<void> {
     return this.enqueue(async () => {
+      // AN UNREADABLE INDEX IS NOT AN EMPTY ONE, and here the difference is the whole verdict.
+      // `readIndex` answers empty for a corrupt value — correct for readers, who lose a list —
+      // but this walk would then find nothing to remove, report a completed purge, and leave
+      // every indexed credential in the keystore under keys it never asked about. The caller
+      // turns this into `purge-refused`, which retries at every launch.
+      if (await this.indexUnreadable()) {
+        throw new Error("this phone's pairing index could not be read, so it cannot be purged");
+      }
       const idx = await this.readIndex();
       const survivors: string[] = [];
       for (const id of idx.ids) {

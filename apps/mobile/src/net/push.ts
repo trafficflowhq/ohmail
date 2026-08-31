@@ -311,9 +311,10 @@ export async function dropWakeRow(session: ConnectedSession, id: string | null):
   return { ok: false, reason: res.status === 401 || res.status === 403 ? "refused" : "server_unavailable" };
 }
 
-/** The one thing {@link dropWakeRowOrOwe} needs from the profile store. */
+/** What {@link dropWakeRowOrOwe} needs from the profile store — write the debt, and clear it. */
 export interface WakeDebtStore {
   markPendingWakeDrop(profileId: string, subscriptionId: string): Promise<void>;
+  clearPendingWakeDrop(subscriptionId: string): Promise<void>;
 }
 
 /**
@@ -336,13 +337,27 @@ export interface WakeDebtStore {
 export async function dropWakeRowOrOwe(
   session: ConnectedSession, id: string, profiles: WakeDebtStore,
 ): Promise<WakeDrop> {
-  const dropped = await dropWakeRow(session, id);
-  if (dropped.ok) return dropped;
+  /**
+   * ── THE DEBT IS WRITTEN BEFORE THE ATTEMPT, NOT AFTER IT ─────────────────────────────────
+   *
+   * Recording it afterwards made the durability conditional on the very thing that was failing.
+   * The callers discard the in-memory id the moment they call this, so a kill between the DELETE
+   * going out and the debt landing — or a keystore write that resolved without storing — left
+   * NOTHING holding the only id that can remove the row, and the launch found nothing to retry.
+   * That is the durability class's own rule, which this file was already meant to be following:
+   * persist the intent first, execute second.
+   *
+   * A debt that cannot be recorded is REFUSED rather than attempted, and the caller is told, for
+   * the same reason: a delete that might fail and might not be retryable must not be dressed as
+   * a completed one. Clearing happens only on a confirmed 2xx or 404.
+   */
   try {
     await profiles.markPendingWakeDrop(session.profile.id, id);
-  } catch {
-    /* the queue is full — see the note above */
+  } catch (err) {
+    return { ok: false, reason: `could_not_record_debt: ${String(err)}` };
   }
+  const dropped = await dropWakeRow(session, id);
+  if (dropped.ok) await profiles.clearPendingWakeDrop(id).catch(() => undefined);
   return dropped;
 }
 
@@ -361,8 +376,15 @@ export async function dropWakeRowOrOwe(
  */
 export async function forgetWake(
   session: ConnectedSession, distributor: UnifiedPushDistributor, id: string | null,
+  /**
+   * REQUIRED, so a caller cannot take a row down without the debt behind it. Turning wakes off
+   * explicitly went through this function and NOT through the debt queue, so a refused delete
+   * was remembered only by the live provider — one restart and the id was gone, while the pane
+   * said "nothing wakes this app between visits" over a row the server was still dialling.
+   */
+  profiles: WakeDebtStore,
 ): Promise<WakeDrop> {
-  const dropped = await dropWakeRow(session, id);
+  const dropped = id === null ? { ok: true } as WakeDrop : await dropWakeRowOrOwe(session, id, profiles);
   try {
     await distributor.unregister();
   } catch {

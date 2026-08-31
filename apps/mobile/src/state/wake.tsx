@@ -367,7 +367,10 @@ export function WakeProvider({ children }: { children: ReactNode }) {
     // used to render a removal over a 401, a 500 or a dead network alike.
     if (session) {
       void serialize(async () => {
-        const dropped = await forgetWake(session, unifiedPushDistributor(), id);
+        // Through the SAME durable path as every other row removal: this used to be the one
+        // that was not, so a refused delete lived only in this provider and one restart lost the
+        // id — while the pane then said nothing wakes this app, over a row still being dialled.
+        const dropped = await forgetWake(session, unifiedPushDistributor(), id, nativeServerProfiles());
         if (!dropped.ok && liveSession.current === session) setState({ k: "off", reason: "row_remains" });
       });
     } else {

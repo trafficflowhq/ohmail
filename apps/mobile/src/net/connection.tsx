@@ -307,9 +307,10 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         //    that boots the surviving credential, which is precisely the no-ceremony reinstall
         //    the marker is for: the take-back would have failed AND opened the mailbox. So
         //    nothing below runs, and the gate routes this sentence to the Servers screen.
-        //    `unknown` deliberately does NOT stop here — see `install-marker.ts` for why a
-        //    store that could not be READ must leave the pairings alone rather than act on a
-        //    guess in either direction.
+        //    `unknown` stops here TOO, and the arm below says why. What it does not do is
+        //    DELETE — see `install-marker.ts` for why a store that could not be read must leave
+        //    the pairings alone rather than act on a guess. Not using them and not destroying
+        //    them are different acts, and only the first is safe to take on a maybe.
         if (install.kind === "purge-refused") {
           if (stillCurrent()) setState({ k: "refused", reason: Copy.serversPurgeRefused(install.reason) });
           return;

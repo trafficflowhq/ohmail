@@ -245,14 +245,25 @@ export class BearerManagerRN {
     // on the hosted tier, takes this device's wake registration down with it. Reporting a forget
     // over a logout that never landed leaves both alive with nothing left to retry them.
     //
-    // 401 counts as told: the session this would revoke is already gone, which is the outcome
-    // being asked for. Anything else — a 500, a 503, a dead network — did not land.
+    // ── 401 COUNTS AS TOLD ONLY WHEN THE FAMILY WAS ACTUALLY JUDGED ───────────────────────
+    //
+    // A bare 401 is not evidence on its own. `fetch` answers the ORIGINAL 401 when its one
+    // recovery could not run — a `/auth/refresh` that 500s, or a dead network — and the refresh
+    // token is then still live, the hosted session still open, its push row still dialling. So
+    // this read a transient refresh outage as a completed revocation and let a forget report
+    // both take-backs done.
+    //
+    // What separates them is what the manager DID: a refusal is an authentication judgment and
+    // clears the credential (`rotate` → `die`), while a transient failure clears nothing. So a
+    // 401 with no credential left is "already gone"; a 401 with the credential still held is a
+    // logout that did not land. Anything else — a 500, a 503, a dead network — did not land.
     let told = true;
     if (this.access !== null || this.refresh !== null) {
       told = false;
       try {
         const res = await this.fetch(`${this.origin}/auth/logout`, { method: "POST" });
-        told = (res.status >= 200 && res.status < 300) || res.status === 401;
+        const judged = this.refresh === null;
+        told = (res.status >= 200 && res.status < 300) || (res.status === 401 && judged);
       } catch {
         /* unreachable server — the server-side session ages out; this device is out now */
       }

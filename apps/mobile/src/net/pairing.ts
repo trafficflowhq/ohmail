@@ -418,6 +418,10 @@ export async function pairWithServer(
   if ((await env.profiles.pendingWipes()).some((w) => w.owner === ownerKey)) {
     try {
       await forgetMirror(env.engineDeps, ownerKey);
+      // The CLEAR is inside the refusal too, and its read-back is what makes that matter: a
+      // debt that survives being cleared would be collected by a later launch against the
+      // mirror this pairing is about to create, deleting the mailbox the person just
+      // re-authorized. Refusing the pairing is the only safe answer to that.
       await env.profiles.clearPendingWipe(ownerKey);
     } catch (err) {
       return {
@@ -483,7 +487,18 @@ export async function pairWithServer(
  * caller must not report a forget over it. See {@link forgetProfile}.
  */
 export async function revokeProfile(env: PairingEnv, profile: ServerProfile): Promise<boolean> {
-  if (profile.refreshToken === null) return true; // already judged dead — nothing live to revoke
+  /**
+   * A CLEARED TOKEN IS NOT A COMPLETED REVOCATION, and this answered `true` for it.
+   *
+   * The token is null because the server REFUSED the family — a reuse judgment, a device revoke.
+   * That kills the sessions and nothing else: the push row is stamped with the device and is
+   * pruned only by `AuthService.logout` or a Devices-pane revoke, neither of which ran. So the
+   * registration stays live on a shared distributor endpoint the phone is still answering, and
+   * this profile no longer holds anything that could take it down. Saying "told" here reported a
+   * complete forget over exactly that. `false` shows the Devices-list remedy, which is the only
+   * one left.
+   */
+  if (profile.refreshToken === null) return false;
   const bearer = new BearerManagerRN({
     origin: profile.origin,
     accessToken: null,
@@ -494,8 +509,11 @@ export async function revokeProfile(env: PairingEnv, profile: ServerProfile): Pr
   });
   try {
     const res = await bearer.fetch(`${profile.origin}/auth/logout`, { method: "POST" });
-    // 401 counts as told: the session this would revoke is already gone.
-    return (res.status >= 200 && res.status < 300) || res.status === 401;
+    // 401 counts as told only when the family was actually JUDGED — the manager clears its
+    // credential on a refusal and clears nothing on a transient one, so a 401 with the token
+    // still held means the recovery could not run and the session is still open. See
+    // `BearerManagerRN.logout` for the same rule and the reason it is not obvious.
+    return (res.status >= 200 && res.status < 300) || (res.status === 401 && !bearer.paired());
   } catch {
     /* unreachable server — the server-side session ages out; the phone forgot it already */
     return false;
@@ -588,17 +606,6 @@ export async function forgetProfile(
     }
   }
 
-  try {
-    await env.profiles.remove(profileId);
-  } catch (err) {
-    return {
-      kind: "partial",
-      reason:
-        `This phone would not let go of the pairing (${String(err)}). ` +
-        `Revoke this device from the server's Devices list, which ends the session wherever it is held.`,
-    };
-  }
-
   // ── THE SERVER HALF IS AWAITED, AND ITS ANSWER SHAPES THE RESULT ─────────────────────────
   //
   // This was fire-and-forget on the reasoning that an unreachable server must not hold a local
@@ -618,10 +625,35 @@ export async function forgetProfile(
     : row !== null ? await revokeProfile(env, row)
     : true;
 
+  // ── AND IT RUNS BEFORE THE CREDENTIAL IS DESTROYED, WHICH IS THE ORDER THAT SURVIVES A KILL ──
+  //
+  // This used to remove the keystore row first. A kill in the window that opened — after the
+  // credential was gone and before the logout landed — stranded the server session and its push
+  // row PERMANENTLY: the launch drain finds the profile already absent, so it has no token to
+  // revoke with, and it clears the debt on the local halves alone. Revoking first means a kill
+  // before it leaves the profile standing and OWED, which the launch drain can still spend (see
+  // {@link drainPendingWipes}) — and the profile is non-bootable meanwhile, because
+  // `buildSession` refuses anything the queue names.
+  try {
+    await env.profiles.remove(profileId);
+  } catch (err) {
+    return {
+      kind: "partial",
+      reason:
+        `This phone would not let go of the pairing (${String(err)}). ` +
+        `Revoke this device from the server's Devices list, which ends the session wherever it is held.`,
+    };
+  }
+
   if (ownerKey === null) return told ? { kind: "forgotten" } : { kind: "partial", reason: NOT_TOLD };
   try {
     await (opts.closed ?? Promise.resolve());
     await forgetMirror(env.engineDeps, ownerKey);
+    // INSIDE the try, because its read-back can refuse. A debt that survives being cleared is
+    // collected by a later launch against whatever mirror that owner key names THEN — which,
+    // after a re-pair, is the mailbox the person just re-authorized. Reporting a completed
+    // forget over a debt that is still recorded would arm exactly that.
+    await env.profiles.clearPendingWipe(ownerKey);
   } catch (err) {
     // HONEST. The pairing and its credential are gone — that half is done, and it is the half
     // that could still open the mailbox — but the mail is still here and the wipe is still owed.
@@ -632,7 +664,6 @@ export async function forgetProfile(
         `(${String(err)}). ohmail will try again the next time it starts.`,
     };
   }
-  await env.profiles.clearPendingWipe(ownerKey);
   return told ? { kind: "forgotten" } : { kind: "partial", reason: NOT_TOLD };
 }
 
@@ -660,12 +691,22 @@ const NOT_TOLD =
  */
 export async function drainPendingWipes(env: PairingEnv): Promise<string[]> {
   const stillOwed: string[] = [];
+  const rows = await env.profiles.list();
   for (const owed of await env.profiles.pendingWipes()) {
     try {
+      // THE SERVER HALF FIRST, while the credential to do it with still exists. A debt whose
+      // profile row survives is a forget that died before its logout, and this is the only
+      // moment anything can still spend that token — after the removal below there is nothing
+      // left to revoke with, for ever. Best-effort: an unreachable server must not hold the
+      // local deletion hostage, and the row ages out.
+      const stillHere = owed.id === "" ? undefined : rows.find((p) => p.id === owed.id);
+      if (stillHere) await revokeProfile(env, stillHere).catch(() => false);
       // Idempotent: `remove` on a row that is already gone touches nothing and its read-back
       // passes, so a debt whose credential half landed before the kill costs one no-op.
       if (owed.id !== "") await env.profiles.remove(owed.id);
       await forgetMirror(env.engineDeps, owed.owner);
+      // Its read-back can refuse, and a debt that survives being cleared stays owed rather than
+      // being reported paid — the next launch tries again.
       await env.profiles.clearPendingWipe(owed.owner);
     } catch {
       stillOwed.push(owed.owner);
@@ -684,9 +725,11 @@ export async function drainPendingWipes(env: PairingEnv): Promise<string[]> {
  * syncs, and because the distributor endpoint is SHARED and still live, the server never got
  * the 404/410 it prunes on.
  *
- * Ridden through a throwaway manager, exactly as {@link revokeProfile} is and for the same
- * reason: a stored profile holds only a refresh token, so the first attempt 401s and the
- * manager's one recovery spends it into an access token and replays. A profile that is gone or
+ * Ridden through a manager on the profile's OWN vault — not a throwaway one, unlike
+ * {@link revokeProfile}, and the difference is load-bearing (see the vault's own note): a
+ * stored profile holds only a refresh token, so the first attempt 401s and the manager's one
+ * recovery spends it into an access token and replays, and the rotation that comes back has to
+ * be kept, because this launch is about to boot that same profile. A profile that is gone or
  * whose credential was refused can never pay its debt, so its entry is DROPPED rather than
  * retried for ever — the row will lapse with the pairing it belonged to.
  *
@@ -705,8 +748,19 @@ export async function drainPendingWakeDrops(env: PairingEnv): Promise<string[]> 
       origin: profile.origin,
       accessToken: null,
       refreshToken: profile.refreshToken,
-      // A throwaway vault: a rotation spent here must not overwrite the live session's token.
-      vault: { save: async () => undefined, clear: async () => undefined },
+      /**
+       * ── THE PROFILE'S REAL VAULT, AND THE THROWAWAY ONE HERE WAS A PAIRING-KILLER ─────────
+       *
+       * `revokeProfile` uses a throwaway vault correctly: the profile it spends is being
+       * forgotten, so nothing should persist into it. This drain is the opposite case — the
+       * profile it pays a debt for is about to be BOOTED, moments later, by the same launch.
+       * A cold manager holds no access token, so the DELETE 401s, the recovery spends the
+       * stored refresh token, and the server rotates it. Discarding the replacement leaves the
+       * CONSUMED token in the keystore, and presenting a consumed token is the reuse signal
+       * that revokes the whole family: paying an ancillary "stop waking me" debt would have
+       * ended a perfectly good pairing and sent the reader back to the QR code.
+       */
+      vault: vaultFor(env.profiles, profile.id),
       ...(env.fetchImpl ? { fetchImpl: env.fetchImpl } : {}),
     });
     const dropped = await dropWakeRow(
