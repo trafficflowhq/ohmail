@@ -16,6 +16,131 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.12.2] — 2026-08-31
+
+A correctness patch. The Ohbox stopped calling other people's mail your own,
+so your real correspondence is back at the top where it belongs; a resurfaced
+message now reads unread on every screen at once; decisions are written to disk
+the moment you make them rather than seconds later; and signing out takes
+everything with it and tells you if something was left behind.
+
+### Your Ohbox shows your correspondence again
+
+The Ohbox groups mail you sent yourself separately from mail you received, and
+it decided which was which by asking "is this message outside the six views
+ohmail organises?" That was true when the app only ever saw those six folders.
+Once it began mirroring your mailbox's whole folder tree, every message in every
+other folder — Promotions, archives, anything your provider or an old client
+made — was counted as mail you had written. On a large mailbox that is most of
+the "Me → …" rows in Earlier, each one sorted by its own date instead of by when
+you read it, which pushes real conversations below the fold. Sent mail is now
+recognised by the Sent folder itself rather than by "not one of ours". One
+residual, and it is bounded where the old rule was not: a Sent folder named in a
+language the two name lists do not carry is not recognised, and that account's
+sent mail is missing from Earlier until the folder the server advertises is
+recorded per mailbox.
+
+### One answer per screen
+
+Open on a desktop and in a browser at the same time and the two could disagree.
+
+- **A resurfaced message reads unread everywhere.** A message you asked to see
+  again now presents as unread on the rows, in the reading pane, in tag and
+  folder views, and on the phone, and it does so by derivation — nothing writes a
+  read mark to your mail server to make it look that way, so no background pass
+  can argue with it and no `\Seen` flag is changed behind your back. Glancing at
+  it lands your read without clearing the pin, so the row does not change under
+  you while you are looking at it; replying, marking it done, or otherwise
+  dealing with the row clears it, and your genuine read state applies from that
+  instant.
+- **The new-mail badge counts the mailbox, not the scroll position.** The number
+  beside a stream used to count everything above your device's last-visited
+  line, so a pile the mail server considered entirely read could still show a
+  count — a different one per device. It now counts what is both new to you and
+  actually unread. Where your last visit ended is still per-device and still
+  does not move under you while you read.
+- The phone was computing its own third answer for the same badge and now reads
+  the same one.
+
+### What you decide is on disk before it is done
+
+The mirror and its decision journals were writing after the fact, which left
+narrow windows where a crash or a closed lid could lose work the app had already
+told you was applied. Each item below is about where the record is written and
+when. One limit applies to all of them: where the browser refuses local storage
+outright — a private window, storage switched off, a full quota — the record is
+still only as durable as the tab, and the app does not yet tell you that.
+
+- A screening decision is recorded from the press, not up to eight seconds later.
+- The key that makes a send at-most-once is written to disk at the moment it is
+  minted, before the send is dispatched, instead of being held only in memory. A
+  further press on the same compose resumes that key rather than minting a second
+  one, and the server refuses to deliver one key twice.
+- The mirror's cursor advances only once the page it covers is actually stored, so
+  an interrupted sync resumes where the data ends instead of past it.
+- Clearing data in one window fences the others rather than letting an abandoned
+  bootstrap leave a half-built mirror behind. The fence is kept inside the local
+  database it guards, so a second tab whose write was already in flight when you
+  cleared can still recreate it; closing your other tabs first is still the
+  reliable way.
+- A re-screen keeps its place on disk, says which of three ways it stopped, and
+  claims completion only when it holds it; a mailbox that has been deleted is
+  treated as gone rather than as finished.
+- An attachment upload is keyed by the request that asked for it, so a retry after
+  a lost response finds the ticket it already made instead of minting a second
+  one — the file is stored once and counted against your storage once.
+
+### Signing out takes everything, and says so honestly
+
+Signing out cleared the mail mirror but left the local decision journals in
+place. It now clears those too, releases that device's wake registration along
+with the credential, and reports what it could not remove instead of always
+claiming success — a refused credential deletion is no longer reported as a
+completed sign-out. On installs without a browser cookie, stored data is scoped
+per account, so signing in as someone else cannot read what the previous account
+left.
+
+### The permanent warning at the rail is gone
+
+The rail carried an amber warning whenever this device held fewer messages than
+the account has, in every view, for as long as the two numbers differed. It could
+not tell a mirror resting between syncs from one that had stopped, and it pointed
+at a settings page where every mailbox read "Up to date". The device's holdings
+are now a plain line in Settings → Mailboxes. The warning mark is reserved for
+actual faults — stopped, failing, blocked, a mailbox error.
+
+### Message styling cannot reach the network
+
+A stylesheet in a received message may name only schemes that fetch nothing. The
+check now runs after character escapes are unescaped and after CSS variables are
+substituted, so a URL assembled out of either cannot slip past it.
+
+### Smaller things
+
+- The composer's unsent scratch text belongs to the account you wrote it in, not
+  to the browser profile, so it cannot surface under a different account.
+- Every IMAP command that acts on a stored message reference now checks the
+  folder's validity marker first, instead of only some of them doing so — a
+  folder your server rebuilds no longer redirects a filing or a read onto a
+  different message. One case is still open: a server that reports a validity
+  marker of zero cannot yet be told apart from one that reports none, and that
+  is the value the check reads as "unknown".
+- A search whose date bound cannot be read at all answers "bad request" instead
+  of failing; a bound that is merely impossible — the 31st of February, a time
+  with no timezone — is still normalised rather than refused. A page limit that
+  is not a number is a page, not the whole table.
+- The standalone organizer's mirror and the hosted one now share one drain
+  policy instead of two implementations that had drifted.
+
+### The phone is a separate release
+
+The Android app is released on its own schedule and is **not** part of this
+build. Its next release carries the phone half of the work above — one read
+state and one badge across your screens — along with Send later on the phone, a
+pairing screen that takes the server address from inside the app rather than
+from a link, and a "forget this server" that deletes the mail and checks that it
+did.
+
 ## [0.12.1] — 2026-08-30
 
 Everything the desktop apps accumulated since 0.12.0, in one patch: the window
@@ -2481,7 +2606,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.12.1...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.12.2...HEAD
+[0.12.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.12.2
 [0.12.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.12.1
 [0.12.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.12.0
 [0.11.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.11.1
