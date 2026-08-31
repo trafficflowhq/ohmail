@@ -45,56 +45,6 @@ export function readColumnHidden(): boolean {
 }
 
 /**
- * The same answer for an EXPLICIT layout — the layout-cycle reconcile's question. `w` flips
- * the provider's state and the attribute lands in the PROVIDER's effect, which runs after
- * the shell's (child effects first), so a caller reacting to the new layout would read the
- * old stamp through {@link readColumnHidden}. Passing the value asks about the world the
- * change is creating, not the one it is leaving.
- */
-export function readColumnHiddenFor(layout: "classic" | "zero"): boolean {
-  const q = layout === "zero" ? ZERO_NARROW : CLASSIC_NARROW;
-  return typeof window !== "undefined" && window.matchMedia?.(q).matches === true;
-}
-
-/**
- * The Zero ladder's PUSH tier — ribbon + one tile, the reader re-housed into the tile slot
- * (392–721, the CSS band zero-layout.css draws). The one JS consumer is the Reader's ARIA
- * claim: at this tier the sheet stands beside LIVE chrome and must not tell assistive tech
- * it is modal; under 392 the same sheet is the full-screen classic model and stays modal.
- */
-export function zeroPushTier(): boolean {
-  return (
-    typeof document !== "undefined" &&
-    document.documentElement.dataset.layout === "zero" &&
-    window.matchMedia?.("(min-width: 392px) and (max-width: 721px)").matches === true
-  );
-}
-
-/**
- * {@link zeroPushTier}, SUBSCRIBED — a render-time read goes stale the moment `w` restamps
- * the layout or a resize crosses the band with the sheet still standing (review finding,
- * round 2), and nothing re-renders for either. Same sources as {@link watchNarrow}: the
- * band's media query and the `data-layout` attribute.
- */
-export function watchZeroPushTier(onChange: (push: boolean) => void): () => void {
-  if (typeof window === "undefined" || !window.matchMedia) return () => {};
-  const emit = (): void => onChange(zeroPushTier());
-  const mq = window.matchMedia("(min-width: 392px) and (max-width: 721px)");
-  mq.addEventListener?.("change", emit);
-  const mo =
-    typeof MutationObserver !== "undefined"
-      ? new MutationObserver((muts) => {
-          if (muts.some((m) => m.attributeName === "data-layout")) emit();
-        })
-      : null;
-  mo?.observe(document.documentElement, { attributes: true, attributeFilter: ["data-layout"] });
-  return () => {
-    mq.removeEventListener?.("change", emit);
-    mo?.disconnect();
-  };
-}
-
-/**
  * SUBSCRIBED, not sampled — the Screener's need: a rotation or resize reveals `.scn-read`
  * without touching any other dependency, and a sampled value left the newly visible
  * preview idle (its own header). Subscribes BOTH breakpoints plus the `data-layout`
