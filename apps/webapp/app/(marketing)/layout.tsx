@@ -4,6 +4,8 @@ import { setRequestLocale } from "next-intl/server";
 import { DEFAULT_LOCALE } from "../shell/locale";
 import { MARKETING_VIEWPORT, MarketingRoot, marketingMetadata } from "./marketing-root";
 import "./landing.css";
+/* the face layer AFTER the base sheet: its rules override on order where specificity ties */
+import "./landing-face.css";
 
 /*
  * ONE OF THE THREE ROOT LAYOUTS of the single-origin app — the ENGLISH marketing tree.

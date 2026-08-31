@@ -12,8 +12,41 @@ import {
 import { useTranslations } from "next-intl";
 import { Kbd, useTheme } from "@ohmail/ui";
 import { Reveal } from "./Reveal";
+import { OMARCHY_DEMO_THEMES } from "./omarchy-demo-themes";
 
 const DEMO_SRC = "/demo";
+
+/* ── the theme explorer's feed ────────────────────────────────────────
+   The demo's ohmarchy face can wear any Omarchy theme (OHMARCHY-PLAN.md
+   §2-3d): picking one injects that theme's mapped token values into the
+   iframe's own document as ONE rule scoped to `:root[data-face="ohmarchy"]`
+   — the same shape as the desktop's live theme feed (apps/desktop/src/
+   omarchy.ts), for the same reasons: scoped, the rule is inert the moment
+   the face comes off, so it can never restyle the paper face by side
+   effect. `!important` per declaration is that module's cascade argument,
+   which holds identically here: the demo document's system-dark token
+   block is a (0,3,0) selector and would silently outrank this rule's
+   (0,2,0) on every slot both define. The values are the committed,
+   law-derived set (omarchy-demo-themes.ts is generated from mapping.js
+   over the fixtures and pinned by test), so no fence is needed — nothing
+   user-authored ever reaches this rule. */
+const DEMO_THEME_STYLE_ID = "ohmail-omarchy-demo";
+
+function applyDemoTheme(doc: Document, tokens: Record<string, string> | null): void {
+  const prev = doc.getElementById(DEMO_THEME_STYLE_ID);
+  if (tokens === null) {
+    prev?.remove();
+    return;
+  }
+  let style = prev as HTMLStyleElement | null;
+  if (!style) {
+    style = doc.createElement("style");
+    style.id = DEMO_THEME_STYLE_ID;
+    doc.head.appendChild(style);
+  }
+  const lines = Object.entries(tokens).map(([name, value]) => `  ${name}: ${value} !important;`);
+  style.textContent = `:root[data-face="ohmarchy"] {\n${lines.join("\n")}\n}`;
+}
 
 /** Layout effects are a client-only concern; on the server they would only
     warn. The component still server-renders — just without the geometry. */
@@ -185,7 +218,11 @@ type Phase = "sketch" | "pending" | "assembling" | "settled" | "live";
  */
 export function DemoSection() {
   const t = useTranslations("demo");
-  const { resolved } = useTheme();
+  const tf = useTranslations("face");
+  const { resolved, face } = useTheme();
+  /* the explorer's pick: an Omarchy theme slug, or null for ohmail's own pairing
+     (the static tokyo-night / flexoki-light defaults, following the scheme) */
+  const [demoTheme, setDemoTheme] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false); //   iframe in the DOM
   const [loaded, setLoaded] = useState(false); //     iframe fired load
   const [phase, setPhase] = useState<Phase>("sketch");
@@ -521,6 +558,36 @@ export function DemoSection() {
     }
   }, [resolved, loaded]);
 
+  /* …and the page's FACE, the same way: the demo is the site's proof, so it wears the
+     face the site wears. The demo document mostly agrees on its own (same origin, same
+     storage keys, same boot resolution), but an in-session flip of the toggle must reach
+     an already-loaded frame — this is that reach. Paper is absence, per the contract. */
+  useEffect(() => {
+    const doc = docOf(frameRef.current);
+    if (!doc || !loaded) return;
+    try {
+      if (face === "ohmarchy") doc.documentElement.dataset.face = "ohmarchy";
+      else delete doc.documentElement.dataset.face;
+    } catch {
+      /* cross-origin: the demo keeps its own face */
+    }
+  }, [face, loaded]);
+
+  /* the explorer's pick reaches the frame whenever either changes */
+  useEffect(() => {
+    const doc = docOf(frameRef.current);
+    if (!doc || !loaded) return;
+    const picked =
+      demoTheme === null
+        ? null
+        : (OMARCHY_DEMO_THEMES.find((th) => th.slug === demoTheme)?.tokens ?? null);
+    try {
+      applyDemoTheme(doc, picked);
+    } catch {
+      /* a document that refuses a style element keeps the static defaults */
+    }
+  }, [demoTheme, loaded]);
+
   /* Re-measure once the demo's own layout exists, and retire the whole
      annotation layer — leaders, rings AND cards — the moment the visitor
      actually uses the app. A guide that stays drawn over a live interface
@@ -762,6 +829,54 @@ export function DemoSection() {
             })}
           </ul>
         </div>
+
+        {/* ── the theme explorer — the demo's ohmarchy face flips through every Omarchy
+            theme the fixtures carry. Appearance-scoped UI, not a fork: it renders under
+            the ohmarchy face only because it is a CONTROL over that face's theming (the
+            census row argues it as `setting`), and everything it changes is one injected
+            token rule in the frame. Buttons with aria-pressed rather than a radiogroup:
+            each swatch is independently tabbable, which for 23 targets beats a roving
+            tabindex nobody expects on a marketing page. */}
+        {face === "ohmarchy" ? (
+          <div className="l-oma-picker">
+            <span className="l-oma-lead" id="oma-picker-label">
+              {tf("explorerLead")}
+            </span>
+            <span className="l-oma-swatches" role="group" aria-labelledby="oma-picker-label">
+              <button
+                type="button"
+                className="l-oma-sw is-default"
+                aria-pressed={demoTheme === null}
+                title={tf("explorerDefault")}
+                aria-label={tf("explorerDefault")}
+                onClick={() => setDemoTheme(null)}
+              />
+              {OMARCHY_DEMO_THEMES.map((th) => (
+                <button
+                  key={th.slug}
+                  type="button"
+                  className="l-oma-sw"
+                  aria-pressed={demoTheme === th.slug}
+                  title={th.name}
+                  aria-label={th.name}
+                  style={
+                    {
+                      "--sw-bg": th.swatch.bg,
+                      "--sw-fg": th.swatch.fg,
+                      "--sw-ac": th.swatch.accent,
+                    } as CSSProperties
+                  }
+                  onClick={() => setDemoTheme(th.slug)}
+                />
+              ))}
+            </span>
+            <span className="l-oma-name" aria-live="polite">
+              {demoTheme === null
+                ? tf("explorerDefault")
+                : (OMARCHY_DEMO_THEMES.find((th) => th.slug === demoTheme)?.name ?? "")}
+            </span>
+          </div>
+        ) : null}
 
         {/* the keyboard hints live here rather than in a pointer callout:
             they are about the whole app, not about one region of it */}

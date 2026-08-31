@@ -1,0 +1,57 @@
+/* =====================================================================
+   ohmail landing — the FACE layer (OHMARCHY-PLAN.md §5).
+
+   The one marketing file where `[data-face]` selectors may live: the
+   one-UI census's ledger allowlists exactly this path (its
+   FACE_LAYOUT_CSS_HOMES set), so every face-conditional rule the
+   landing needs is HERE, reviewable on one page, and a face selector
+   appearing anywhere else in the marketing CSS is a red build.
+
+   What this file may do: swap the per-face SCREENSHOT SETS, and tune
+   presentation variables for the tiling idiom. What it may never do:
+   add, remove, or reorder content — the one-UI law binds the landing
+   exactly as it binds the app, and the face flip is tokens + these few
+   rules, never a second page.
+
+   Almost everything the ohmarchy face changes on the landing arrives
+   through the token stylesheets with no rule here at all: the palette
+   (tokyo-night dark / flexoki-light light), every radius collapsing to
+   0 through the r-slots, the lift ladder becoming drawn rings, and the
+   whole page's type turning mono through --font-ui — the same flip the
+   app makes, which is the point: the site wears the product's face.
+   ===================================================================== */
+
+/* ── the screenshot sets: hide the face that is not worn ──────────────
+   `!important` is the mechanism, not a shortcut: the SCHEME rules in
+   landing.css SHOW the matching capture at (0,3,0)+ specificity, and
+   this veto must beat every one of them in both directions — a capture
+   of the other face may never surface, whatever the scheme says. */
+:root:not([data-face="ohmarchy"]) .l-fimg.is-oh {
+  display: none !important;
+}
+:root[data-face="ohmarchy"] .l-fimg.is-paper {
+  display: none !important;
+}
+
+/* ── tiling-idiom tuning variables (paper defaults live inline at the
+   consuming rules in landing.css) ─────────────────────────────────── */
+:root[data-face="ohmarchy"] {
+  /* Mono display cuts run far wider than the paper stack's: the hero lockup's longer
+     line is 22 characters ≈ 13.2 times the font size in a 0.6-advance mono, so the
+     paper ceiling (4.75rem → 1003px) would kiss the 1016px measure with zero slack and
+     overflow on the first wider fallback. 3.3rem holds the two-line shape with the same
+     ~25% slack paper has. And negative display tracking is a proportional-face habit —
+     in mono it reads cramped and breaks the grid, so it opens to near-normal. */
+  --l-display-max: 3.3rem;
+  --l-display-track: -0.012em;
+  --l-h2-track: -0.012em;
+  --l-strap-track: -0.006em;
+}
+
+/* ── drawn chrome: the bar wears its edge at rest ─────────────────────
+   Tiling chrome is bordered, not lifted — the paper face reveals the
+   bar's edge only on scroll; the tiling face keeps it drawn, the same
+   crisp line the app's ohmarchy statusline stands on. */
+[data-face="ohmarchy"] .l-nav {
+  box-shadow: var(--bar-edge);
+}

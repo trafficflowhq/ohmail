@@ -7,6 +7,7 @@ import {
   MARKETING_VIEWPORT, MarketingRoot, marketingMetadata,
 } from "../(marketing)/marketing-root";
 import "../(marketing)/landing.css";
+import "../(marketing)/landing-face.css";
 
 /*
  * THE GERMAN MARKETING TREE — a root layout, a mount at `/de`, and deliberately nothing else.

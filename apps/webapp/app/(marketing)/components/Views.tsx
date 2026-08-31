@@ -21,10 +21,33 @@ import { Reveal } from "./Reveal";
    rule the wash tokens follow), so a `<picture>` media query, which cannot see the
    attribute, was not an option. The hidden capture is `loading="lazy"` and `display:
    none`, so a browser never fetches the theme it is not showing. */
+/* …and the same rule again for the FACE axis: each pile carries four captures — paper and
+   ohmarchy, light and dark — and `landing-face.css` hides the face that is not worn (the
+   `.l-fimg` mechanism), while the scheme rule keeps deciding within the worn face. The
+   ohmarchy captures come from the automated pipeline (apps/webapp/scripts/landing-shots.mjs),
+   the paper ones are the original set, untouched. */
 const PILES = [
-  { id: "ohbox", img: "/landing/pile-ohbox.webp", dark: "/landing/pile-ohbox-dark.webp" },
-  { id: "reads", img: "/landing/pile-reads.webp", dark: "/landing/pile-reads-dark.webp" },
-  { id: "receipts", img: "/landing/pile-receipts.webp", dark: "/landing/pile-receipts-dark.webp" },
+  {
+    id: "ohbox",
+    img: "/landing/pile-ohbox.webp",
+    dark: "/landing/pile-ohbox-dark.webp",
+    oh: "/landing/pile-ohbox-oh.webp",
+    ohDark: "/landing/pile-ohbox-oh-dark.webp",
+  },
+  {
+    id: "reads",
+    img: "/landing/pile-reads.webp",
+    dark: "/landing/pile-reads-dark.webp",
+    oh: "/landing/pile-reads-oh.webp",
+    ohDark: "/landing/pile-reads-oh-dark.webp",
+  },
+  {
+    id: "receipts",
+    img: "/landing/pile-receipts.webp",
+    dark: "/landing/pile-receipts-dark.webp",
+    oh: "/landing/pile-receipts-oh.webp",
+    ohDark: "/landing/pile-receipts-oh-dark.webp",
+  },
 ] as const;
 
 /* The captures' intrinsic size: list-pane crops at 2× device pixels (760×1120),
@@ -49,7 +72,7 @@ export function Views() {
           {PILES.map((p) => (
             <div className="l-views-item" key={p.id}>
               <img
-                className="l-views-still is-light"
+                className="l-views-still l-fimg is-paper is-light"
                 src={p.img}
                 width={PILE_STILL.width}
                 height={PILE_STILL.height}
@@ -58,8 +81,26 @@ export function Views() {
                 decoding="async"
               />
               <img
-                className="l-views-still is-dark"
+                className="l-views-still l-fimg is-paper is-dark"
                 src={p.dark}
+                width={PILE_STILL.width}
+                height={PILE_STILL.height}
+                alt={t(`${p.id}Alt`)}
+                loading="lazy"
+                decoding="async"
+              />
+              <img
+                className="l-views-still l-fimg is-oh is-light"
+                src={p.oh}
+                width={PILE_STILL.width}
+                height={PILE_STILL.height}
+                alt={t(`${p.id}Alt`)}
+                loading="lazy"
+                decoding="async"
+              />
+              <img
+                className="l-views-still l-fimg is-oh is-dark"
+                src={p.ohDark}
                 width={PILE_STILL.width}
                 height={PILE_STILL.height}
                 alt={t(`${p.id}Alt`)}

@@ -221,9 +221,14 @@ export function DarkMode() {
         </ul>
       </Reveal>
       <Reveal className="l-feat-vig" delay={120}>
+        {/* Both cards of the diptych are always visible — is-light/is-dark here are the
+            composition's ROLES (the original behind, the adaptation in front), not the
+            scheme swap. The FACE swaps the whole diptych: the ohmarchy pair (from the
+            automated pipeline) replaces the paper pair via the `.l-fimg` rule, so under
+            either face the section shows the app the visitor is actually looking at. */}
         <div className="l-duo">
           <img
-            className="l-duo-img is-light"
+            className="l-duo-img l-fimg is-paper is-light"
             src="/landing/mail-light.webp"
             width={572}
             height={466}
@@ -232,8 +237,26 @@ export function DarkMode() {
             decoding="async"
           />
           <img
-            className="l-duo-img is-dark"
+            className="l-duo-img l-fimg is-paper is-dark"
             src="/landing/mail-dark.webp"
+            width={688}
+            height={560}
+            alt={t("imgDarkAlt")}
+            loading="lazy"
+            decoding="async"
+          />
+          <img
+            className="l-duo-img l-fimg is-oh is-light"
+            src="/landing/mail-light-oh.webp"
+            width={572}
+            height={466}
+            alt={t("imgLightAlt")}
+            loading="lazy"
+            decoding="async"
+          />
+          <img
+            className="l-duo-img l-fimg is-oh is-dark"
+            src="/landing/mail-dark-oh.webp"
             width={688}
             height={560}
             alt={t("imgDarkAlt")}

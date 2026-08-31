@@ -24,12 +24,56 @@ source, AGPL-3.0, no account.
 [![Windows 10+](https://img.shields.io/badge/Windows-10%2B-111111)](#windows)
 [![Linux](https://img.shields.io/badge/Linux-AppImage%20%C2%B7%20deb-111111)](#linux)
 
+**One app, two faces:**
+[**`ohmarchy`**](#the-ohmarchy-face) · [**`paper`**](#the-paper-face)
+<br><sub>A README runs no JavaScript, so these tabs are honest anchor links.
+The real toggle is at [ohmail.app](https://ohmail.app/#face=ohmarchy).</sub>
+
 A star helps other people find this. If ohmail is your kind of mail client,
 leave one.
 
 </div>
 
 ---
+
+## The ohmarchy face
+
+ohmail ships one interface wearing two faces, and this is the loud one:
+**ohmarchy** — hard corners, drawn borders, mono type, tiled panes with real
+gaps, and a louder keyboard cursor. It is a homage to
+[Omarchy](https://omarchy.org)'s way of working, built for people who live in
+a tiling window manager, and it is a *face*, not a fork: same components, same
+features, same keyboard — different tokens. On a Linux machine ohmail wears it
+first; your own choice always wins and is one press away, in the app under
+**Settings → General → Look** and on the website as the paper/ohmarchy toggle
+above the headline.
+
+| light | dark |
+|---|---|
+| <img src="docs/assets/faces/hero-ohmarchy.webp" alt="The ohmail demo mailbox in the ohmarchy face, light: three tiled panes, mono type, drawn borders" width="100%"> | <img src="docs/assets/faces/hero-ohmarchy-dark.webp" alt="The same screen in the ohmarchy face, dark" width="100%"> |
+
+**Any Omarchy theme, throughout the app.** The face's palette is not
+hardcoded: a palette mapping derives the interface's color tokens from an
+Omarchy theme's own `colors.toml`, with contrast floors so a readable theme
+stays readable here — theme-agnostic by construction, custom themes included.
+On an Omarchy system the desktop app reads the active theme from
+`~/.local/state/omarchy/current/theme` and watches it, so `omarchy theme set`
+re-skins ohmail moments after it re-skins your desktop. Anywhere else the face
+keeps its static defaults: Tokyo Night in the dark, Flexoki in the light.
+
+Flip through every theme Omarchy ships on the live demo — no install, no
+signup: [**see it live →**](https://ohmail.app/#face=ohmarchy)
+
+## The paper face
+
+**paper** is the quiet one, and the default everywhere else: light,
+letter-like, sculpted by shadow rather than line — the look the rest of this
+README shows. Same interface, same features, same shortcuts; a face may change
+how the app looks, never what it is.
+
+| light | dark |
+|---|---|
+| <img src="docs/assets/faces/hero-paper.webp" alt="The ohmail demo mailbox in the paper face, light" width="100%"> | <img src="docs/assets/faces/hero-paper-dark.webp" alt="The same screen in the paper face, dark" width="100%"> |
 
 ## Only consent-first mail in your Ohbox
 

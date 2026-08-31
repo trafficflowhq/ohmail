@@ -1,5 +1,7 @@
 import { Nav } from "./Nav";
+import { FaceToggle } from "./FaceToggle";
 import { Hero } from "./Hero";
+import { HeroSplit } from "./HeroSplit";
 import { DemoSection } from "./DemoSection";
 import { Views } from "./Views";
 import { Screener, InPlace, Fast, DarkMode } from "./FeatureSections";
@@ -39,8 +41,13 @@ import { Footer } from "./Footer";
  *
  * promise → model → mechanism → compatibility → trust → speed → polish:
  *
- *  1. Hero — only consent-first mail in your Ohbox (the promise), then the live demo as
- *     its proof.
+ *  0. FaceToggle — paper / ohmarchy, directly above the headline, right after the menu
+ *     (OHMARCHY-PLAN.md §5). It flips the WHOLE site — tokens, chrome, demo skin and
+ *     screenshot set — while this composition stays identical in both faces: the one-UI
+ *     law applies to the landing too, so the toggle changes presentation, never story.
+ *  1. Hero — only consent-first mail in your Ohbox (the promise); HeroSplit — the same
+ *     screen in both faces under one diagonal divider (the first visual, §5) — then the
+ *     live demo as the promise's proof.
  *  2. Views — Ohbox / Reads / Receipts, the three-view model the promise lands in.
  *  3. Screener + AI — the mechanism: who gets in, and the gated help deciding.
  *  4. Providers — all your mailboxes: Gmail, Microsoft, iCloud, any IMAP.
@@ -61,7 +68,9 @@ export function Landing({ publicSignup }: { publicSignup: boolean }) {
     <>
       <Nav />
       <main id="main">
+        <FaceToggle />
         <Hero />
+        <HeroSplit />
         <DemoSection />
         <div className="l-features" id="product">
           <Views />

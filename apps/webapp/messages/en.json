@@ -1339,6 +1339,19 @@
     "hintRead": "read",
     "hintScreen": "screen a sender"
   },
+  "face": {
+    "label": "Pick the site's look",
+    "paper": "paper",
+    "ohmarchy": "ohmarchy",
+    "wink": "You're on Linux, so ohmail opened in its ohmarchy face. This one's for you — paper is one click away.",
+    "splitCaption": "One product, two faces. paper is the quiet default; ohmarchy is the tiling, keyboard-first look — drag the line between them.",
+    "splitAltPaper": "The ohmail app in its paper face",
+    "splitAltOhmarchy": "The same ohmail screen in its ohmarchy face",
+    "splitHandle": "Move the divider between the paper and ohmarchy faces",
+    "splitValue": "{paper}% paper, {ohmarchy}% ohmarchy",
+    "explorerLead": "Try the demo in every Omarchy theme",
+    "explorerDefault": "ohmail default"
+  },
   "views": {
     "title": "Three piles, not one inbox.",
     "sub": "The Ohbox is for people — mail you said yes to. Everything else lands where it belongs, already sorted.",

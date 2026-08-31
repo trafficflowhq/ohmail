@@ -145,9 +145,34 @@ export const MARKETING_VIEWPORT: Viewport = {
   ],
 };
 
-/* Stamp the persisted theme before first paint (same contract as
-   @ohmail/ui ThemeProvider: absent attribute = follow the system). */
-const THEME_BOOT = `(function(){try{var t=localStorage.getItem("ohmail.theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}})()`;
+/* Stamp the persisted theme AND the face before first paint (same contract as
+   @ohmail/ui ThemeProvider: absent attribute = follow the system / = paper).
+
+   The face half re-encodes the provider's resolution order — device pin (`ohmail.face`),
+   account mirror (`ohmail.face.account`), Linux-desktop detection (the §5 wedge; the
+   regexes must match `linuxDesktopDevice`) — with ONE marketing-only head in front of it:
+   a `#face=` fragment. That fragment is the landing's addressable face — the GitHub
+   README's "see it live" link opens `/#face=ohmarchy` — and it is treated as the
+   visitor's OWN choice arriving by URL, so it writes the device pin exactly as a toggle
+   press would (remembered, one click back, and the provider adopts the same pin
+   post-mount so hydration agrees). Detection, by contrast, never persists: an auto-flip
+   must stay revisable by a later account echo, and the wink depends on "nobody chose".
+
+   Every storage read sits in its own try — a blocked jar falls through to detection
+   rather than skipping it (themeInitScript's review-caught rule). The layout axis is
+   deliberately absent: nothing on the marketing document consumes `data-layout`. */
+const THEME_BOOT =
+  `(function(){try{var t=localStorage.getItem("ohmail.theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}` +
+  /* NO backslash escapes in this script, measured: the build chain re-parsed a `\b`
+     word boundary in this template literal into a literal backspace byte (0x08) in the
+     served HTML, which silently broke the whole regex. `(?![a-z])` is the same trailing
+     boundary with no escape character in it. */
+  `var m=/[#&]face=(paper|ohmarchy)(?![a-z])/.exec(location.hash||"");var f=m?m[1]:null;` +
+  `if(f){try{localStorage.setItem("ohmail.face",f)}catch(e){}}` +
+  `if(f!=="paper"&&f!=="ohmarchy"){try{f=localStorage.getItem("ohmail.face")}catch(e){}}` +
+  `if(f!=="paper"&&f!=="ohmarchy"){try{f=localStorage.getItem("ohmail.face.account")}catch(e){}}` +
+  `if(f!=="paper"&&f!=="ohmarchy")f=(/Linux/.test(navigator.platform||"")&&!/Android|CrOS/.test(navigator.userAgent||""))?"ohmarchy":"paper";` +
+  `if(f==="ohmarchy")try{document.documentElement.dataset.face="ohmarchy"}catch(e){}})()`;
 
 /**
  * The `<html>` of a marketing document.

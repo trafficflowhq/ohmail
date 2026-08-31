@@ -1339,6 +1339,19 @@
     "hintRead": "lesen",
     "hintScreen": "einen Absender screenen"
   },
+  "face": {
+    "label": "Look der Seite wählen",
+    "paper": "paper",
+    "ohmarchy": "ohmarchy",
+    "wink": "Du bist auf Linux, also öffnet ohmail im ohmarchy-Look. Der ist für dich — paper ist einen Klick entfernt.",
+    "splitCaption": "Ein Produkt, zwei Gesichter. paper ist der ruhige Standard; ohmarchy der Tiling-Look, tastaturzentriert — zieh an der Linie dazwischen.",
+    "splitAltPaper": "Die ohmail-App im paper-Look",
+    "splitAltOhmarchy": "Derselbe ohmail-Bildschirm im ohmarchy-Look",
+    "splitHandle": "Trennlinie zwischen paper und ohmarchy verschieben",
+    "splitValue": "{paper} % paper, {ohmarchy} % ohmarchy",
+    "explorerLead": "Die Demo in jedem Omarchy-Theme",
+    "explorerDefault": "ohmail-Standard"
+  },
   "views": {
     "title": "Drei Stapel statt eines Posteingangs.",
     "sub": "Die Ohbox ist für Menschen — Post, zu der du Ja gesagt hast. Alles andere landet da, wo es hingehört, schon sortiert.",
