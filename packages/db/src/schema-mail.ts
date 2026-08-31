@@ -374,9 +374,11 @@ export const mailboxes = pgTable("mailboxes", {
    * completion restores a stale Ohbox intent — and declines the marker, clearing this column so
    * the next run re-walks the prefix. It cannot see an exclusion being REMOVED (the user deletes
    * their own rule, or returns a triage state to `none`), because that touches no
-   * `folder_state` row. For that arm the supported remedy is to NULL **both** this column and
-   * `sensitive_rescreen_at`: clearing this one alone does nothing once the marker is stamped,
-   * because the marker is what stops the pass looking at the mailbox at all.
+   * `folder_state` row. For that arm the supported remedy is to NULL **all three** of this
+   * column, `sensitive_rescreen_started_at` and `sensitive_rescreen_at`: clearing this one alone
+   * does nothing once the marker is stamped, because the marker is what stops the pass looking at
+   * the mailbox at all — and leaving the epoch behind would date the next walk from the previous
+   * one, so its completion check would look back over a window that is not its own.
    */
   sensitiveRescreenCursor: uuid("sensitive_rescreen_cursor"),
   /**

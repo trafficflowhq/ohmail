@@ -225,29 +225,41 @@ async function run(db: Db, args: Args, dryRun: boolean): Promise<void> {
       // TWO REASONS, AND THEY TELL THE OPERATOR DIFFERENT THINGS ABOUT THE NEXT RUN. Collapsing
       // them into one "run it again to resume" line was a false statement in the second case:
       // a disturbed run DISCARDS its position on purpose, so the next run starts at the top.
-      const next = r.stoppedBecause === "disturbed"
-        ? "  A message behind the walk became a candidate again while the walk was past it —\n" +
-          "  most likely a folder move completing on the mail server. The resume point was\n" +
-          `  DISCARDED, so the next ${dryRun ? "plan" : "apply"} starts from the beginning of the mailbox.`
-        : dryRun
-          // A plan commits nothing, its cursor UPDATE included, so "run it again" resumes at
-          // the same place it started — saying "again to resume" without this would be the
-          // plan claiming an apply's progress.
-          ? "  A plan stores no position: the next plan starts where this one did."
-          // …and a `--force` run over an ALREADY stamped mailbox stores none either, by the same
-          // rule that keeps a finished mailbox from carrying a stale one. Saying "continues from
-          // this page" there would be wrong in the one mode an operator reaches deliberately.
-          : args.force
-            ? "  --force over a stamped mailbox stores no position: the next run starts from the\n" +
-              "  beginning. Clear the marker if you mean to re-run it as a repair."
-            : "  The resume point is stored, so the next apply continues from this page.";
-      console.warn(
-        (r.stoppedBecause === "disturbed"
+      // THREE STOP REASONS, AND THEY TELL THE OPERATOR DIFFERENT THINGS ABOUT THE NEXT RUN.
+      // Collapsing them into one "run it again to resume" line was a false statement in two of
+      // the three: a disturbed run DISCARDS its position on purpose, and a mailbox that was
+      // deleted has no next run at all.
+      //
+      // `mb.marker` and NOT `args.force`, and that distinction cost a wrong line: `--force`
+      // without `--mailbox` sweeps stamped AND unstamped mailboxes, and only a STAMPED one
+      // declines to store a position. Keying the message on the flag told an unstamped mailbox's
+      // page-cap stop that nothing had been stored when its position was on disk.
+      const wasStamped = mb.marker !== null;
+      const head = r.stoppedBecause === "mailbox_gone"
+        ? "  the mailbox was DELETED while the pass was walking it. Nothing was stamped.\n"
+        : r.stoppedBecause === "disturbed"
           ? "  the pass reached the end of the mailbox but did NOT finish it. The marker is\n" +
             "  NOT written.\n"
           : `  the pass stopped at the page cap (${SENSITIVE_RESCREEN_BATCH} rows/page). The marker\n` +
-            "  is NOT written.\n") + next,
-      );
+            "  is NOT written.\n";
+      const next = r.stoppedBecause === "mailbox_gone"
+        ? "  There is nothing to resume: the mailbox and its mail are gone."
+        : r.stoppedBecause === "disturbed"
+          ? "  A message behind the walk became a candidate again while the walk was past it —\n" +
+            "  most likely a folder move completing on the mail server. The resume point was\n" +
+            `  DISCARDED, so the next ${dryRun ? "plan" : "apply"} starts from the beginning of the mailbox.`
+          : dryRun
+            // A plan commits nothing, its cursor UPDATE included, so "run it again" resumes at
+            // the same place it started — saying "again to resume" without this would be the
+            // plan claiming an apply's progress.
+            ? "  A plan stores no position: the next plan starts where this one did."
+            // …and an ALREADY stamped mailbox stores none either, by the same rule that keeps a
+            // finished mailbox from carrying a stale one.
+            : wasStamped
+              ? "  A stamped mailbox stores no position: the next run starts from the beginning.\n" +
+                "  Clear the marker if you mean to re-run it as a repair."
+              : "  The resume point is stored, so the next apply continues from this page.";
+      console.warn(head + next);
     }
   }
 

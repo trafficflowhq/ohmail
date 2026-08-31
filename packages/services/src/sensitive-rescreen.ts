@@ -180,7 +180,13 @@ export interface SensitiveRescreenDeps {
    * pages — `afterId` and the totals are JS state, and the cursor is monotone in `messages.id`
    * rather than in candidacy, so a rolled-back row is behind the cursor and is never re-read.
    *
-   * The marker transaction is SKIPPED rather than rolled back — see {@link runSensitiveRescreen}.
+   * The COMPLETION TRANSACTION still runs for a plan, and must: it holds the mailbox row and
+   * asks the one question that decides whether an apply would stamp — has a candidate become
+   * eligible again behind the walk. A plan that skipped it would report a clean finish for a walk
+   * the apply refuses, which is the one disagreement a rehearsal may not have. What a plan skips
+   * inside that transaction is every DURABLE statement: the check's own cleanup, the completion
+   * audit row and the marker. Skipped rather than rolled back — see {@link runSensitiveRescreen}
+   * for why not reaching the marker at all is the only shape with no sentinel to get wrong.
    */
   dryRun?: boolean;
 }
@@ -207,10 +213,12 @@ export interface SensitiveRescreenResult {
    * NEXT one begins is that, or the beginning, and the CLI says which. `"disturbed"` is the new
    * one: the
    * walk reached the end but a candidate had become eligible again behind it, so the position
-   * was DISCARDED and the next run starts from the beginning. Telling an operator "resuming"
-   * in the second case would be a false statement about where their next run begins.
+   * was DISCARDED and the next run starts from the beginning. `"mailbox_gone"` is the third:
+   * the mailbox was deleted while the walk was running, so there was nothing left to stamp and
+   * nothing to resume. Telling an operator "resuming" in either of the last two would be a false
+   * statement about where their next run begins.
    */
-  stoppedBecause: "page_cap" | "disturbed" | null;
+  stoppedBecause: "page_cap" | "disturbed" | "mailbox_gone" | null;
   /**
    * The durable continuation this run STARTED from, or null for a run that started at the
    * beginning — so `examined` is never read as "the whole mailbox" when it is "the rest of it".
@@ -746,7 +754,7 @@ export async function runSensitiveRescreen(
     });
     return {
       ran: true, examined, rescreened, kept, truncated: true, destinations, resumedFrom,
-      stoppedBecause: "page_cap",
+      stoppedBecause: "mailbox_gone",
     };
   }
   if (stamped !== null) {
