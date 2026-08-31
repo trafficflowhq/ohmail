@@ -128,6 +128,15 @@ export type UnsubscribeRefusal =
   | "not_actionable"
   /** The account's own provider reported an authentication failure for the claimed author. */
   | "author_failed_authentication"
+  /**
+   * The AUTOMATIC pass declined to act because the author's identity was not vouched for.
+   *
+   * Distinct from {@link UnsubscribeRefusal} `"author_failed_authentication"`, which is a
+   * provider saying "this is forged". This one is a provider we trust saying nothing conclusive,
+   * on the one path where nobody is looking at the message. See
+   * {@link UnsubscribeService.onScreenOut}.
+   */
+  | "sender_identity_unverified"
   /** No `List-Unsubscribe` at all. */
   | "no_header"
   /** An unsubscribe route exists but it is `mailto:` — refused, never used. */
@@ -223,12 +232,34 @@ function firstHeaderValue(headers: Readonly<Record<string, unknown>>, name: stri
   return typeof one === "string" && one.trim() !== "" ? one.trim() : null;
 }
 
+/** The domain half of an address, lowercased, no trailing dot. `""` when there is no `@`. */
+function authorDomain(fromAddress: string): string {
+  const at = fromAddress.lastIndexOf("@");
+  if (at < 0) return "";
+  return fromAddress.slice(at + 1).trim().toLowerCase().replace(/\.$/, "");
+}
+
 /**
- * ── THE IDEMPOTENCY KEY, AND THE TWO THINGS IT DELIBERATELY IS NOT ────────────────────────────
+ * Percent-escape the `|` this key joins on, so `d + "|" + l` is an INJECTIVE encoding of the pair.
+ *
+ * Not decoration. Without it the separator is forgeable: both halves are attacker-influenced
+ * strings, and `|` is legal `atext` in a domain as well as in a sender-authored `List-ID`, so a
+ * pair whose concatenation equals a DIFFERENT pair's concatenation re-opens exactly the collision
+ * the namespacing exists to close (`d="a.example|news"`, `l="x"` vs `d="a.example"`,
+ * `l="news|x"`). `%` is escaped FIRST or the escape itself becomes forgeable.
+ */
+const escapeKeyPart = (s: string): string => s.replace(/%/g, "%25").replace(/\|/g, "%7c");
+
+/**
+ * ── THE IDEMPOTENCY KEY, AND THE IDENTITY IT IS BOUND TO ──────────────────────────────────────
  *
  * The record table's uniqueness is `(mailbox_id, list_key)`, and everything the feature promises
  * — at most one request per list, per mailbox, ever — rests on this function returning the same
  * string for two messages that belong to the same subscription and different strings otherwise.
+ *
+ * **AND ON ONE MORE THING THIS FUNCTION USED TO GET WRONG: no sender may produce another
+ * sender's key.** An at-most-once key is a scarce resource, so whoever can name it can EXHAUST
+ * it. That half is written out below because it is the half that was missing.
  *
  * **NOT THE UNSUBSCRIBE URL.** It is the most specific thing available and it is not a key at
  * all: a one-click URL normally carries a per-message opaque token (`…/u?t=<random>`), so a
@@ -239,32 +270,76 @@ function firstHeaderValue(headers: Readonly<Record<string, unknown>>, name: stri
  * `no-reply-<opaque>@example.com`, a per-send address from a sender the user experiences as one
  * list. Keyed on `From`, every message would be a new list.
  *
- * **SO: RFC 2919 `List-ID` first.** It is the sender's OWN stable name for the list, which is
- * precisely the thing being left, and it is right in both directions — one address carrying
- * several lists yields several keys (genuinely several subscriptions), several addresses
- * carrying one list collapse to one (genuinely one subscription).
+ * **AND NOT RFC 2919 `List-ID` ALONE — WHICH IS WHAT IT WAS, AND WHICH WAS A DENIAL OF SERVICE
+ * ON A STRANGER'S UNSUBSCRIBE.** This function took `fromAddress` and, whenever a `List-ID`
+ * existed, ignored it. `List-ID` is a header the SENDER writes, so the key was a string the
+ * sender chose freely:
  *
- * `lower(from_address)` is the fallback and nothing more. A bulk sender that publishes
- * `List-Unsubscribe` and `List-Unsubscribe-Post` but no `List-ID` is unusual but permitted, and
- * refusing to act on one would let a sender defeat the whole feature by omitting a header — the
- * "absent evidence selects the acting branch" mistake pointed the other way.
+ *   1. An attacker sends ordinary mail from `evil.example`, a domain they legitimately own and
+ *      pass DKIM/DMARC for — **no forgery anywhere** — carrying `List-ID: <news.victim.example>`
+ *      and their own one-click URL.
+ *   2. One ordinary screen-out of that sender claims `(mailbox, list:news.victim.example)`.
+ *   3. A genuine message from the real `news.victim.example` is later screened out, derives the
+ *      same key, loses the `ON CONFLICT`, and is answered `already_recorded`.
+ *   4. **The real list's unsubscribe URL is never called, for the life of that mailbox.**
  *
- * The `list:` / `addr:` prefixes keep the two namespaces from ever colliding: without them a
- * sender could publish `List-ID: <news@sender.example>` and claim the key another sender's From
- * address would produce.
+ * The prefixes were not the defence they looked like: `list:`/`addr:` stop the two NAMESPACES
+ * colliding, which is a different question from whether one sender can occupy another's slot
+ * inside one namespace.
+ *
+ * **SO THE KEY IS NAMESPACED BY THE CLAIMED AUTHOR'S DOMAIN: `list:<from-domain>|<List-ID>`.**
+ * The `List-ID` still does the work it was chosen for — it is the sender's own stable name for
+ * the list, so one address carrying several lists yields several keys and several addresses
+ * carrying one list still collapse to one — but it can only ever name a slot inside the domain
+ * the message claims to come from. `evil.example` cannot reach `victim.example`'s slot, whatever
+ * it writes in its own headers.
+ *
+ * **WHY THE DOMAIN AND NOT THE VERIFIED SIGNING DOMAIN.** Because the signing domain is not
+ * knowable here for most mail, and pretending otherwise would ship a binding that is inert:
+ * `authVerdictFromHeaders` answers `"unavailable"` whenever the mailbox's provider has no trusted
+ * authserv-id, which measured against the production corpus is **every message** — 75 165
+ * `unavailable`, 11 112 unset, and not one `pass` or `fail`. A key derived from a cryptographic
+ * verdict would therefore have had exactly one value in production, which is no namespace at all.
+ * The claimed domain is what the product can bind to unconditionally; whether that claim is
+ * VERIFIED is a separate gate, and it lives at the automatic entry point rather than in the key
+ * (see {@link UnsubscribeService.onScreenOut}).
+ *
+ * **THE RESIDUAL, STATED.** A sender who FORGES `From: @victim.example` still derives the
+ * victim's namespace. That needs forgery plus a deployment whose provider vouches for nothing,
+ * and it is the same residual the `authVerdict === "fail"` gate already carries — it is not
+ * closed here and must not be read as closed. What IS closed is the no-forgery attack above,
+ * unconditionally and in every deployment.
+ *
+ * **THE COST OF CHANGING THE KEY, MEASURED.** Old `list:<id>` rows no longer match the key their
+ * list now derives — 58 rows across 5 mailboxes in production. Each may cost ONE further
+ * one-click POST the next time a message from that list is screened out; RFC 8058 requests are
+ * idempotent at the sender, and the alternative (a partial SQL rewrite of keys whose From domain
+ * is only reachable through a `message_id` that deliberately carries no foreign key) could
+ * collide under the unique index. Deliberately NOT reconciled, and deliberately no
+ * read-the-old-key-too compatibility check: **any key an attacker has already burned is released
+ * by this change**, which is the point.
+ *
+ * `lower(from_address)` remains the fallback for a sender that publishes `List-Unsubscribe` and
+ * `List-Unsubscribe-Post` but no `List-ID` — unusual but permitted, and refusing to act on one
+ * would let a sender defeat the whole feature by omitting a header. It needs no namespacing of
+ * its own: the full address already contains the domain, so it was already bound to the claimed
+ * author, and its bytes are unchanged so no existing `addr:` record is orphaned.
  */
 export function unsubscribeListKey(
   headers: Readonly<Record<string, unknown>>, fromAddress: string,
 ): string {
+  const author = authorDomain(fromAddress);
   const listId = firstHeaderValue(headers, LIST_ID_HEADER);
-  if (listId !== null) {
+  if (listId !== null && author !== "") {
     // `List-Id: Friendly Name <list.id.example.com>` — RFC 2919 §3 puts the identifier inside
     // the angle brackets and everything before it is a human-readable phrase the sender may
     // change at will. Keying on the phrase would make a renamed list a new list.
     const bracketed = /<([^>]+)>/.exec(listId);
-    const identity = (bracketed?.[1] ?? listId).trim().toLowerCase();
-    if (identity !== "") return `list:${identity}`;
+    const identity = (bracketed?.[1] ?? listId).trim().toLowerCase().replace(/\.$/, "");
+    if (identity !== "") return `list:${escapeKeyPart(author)}|${escapeKeyPart(identity)}`;
   }
+  // No `@` in the claimed author means no namespace to put a `list:` claim in, so the sender-
+  // chosen `List-ID` is dropped rather than trusted on its own — the branch it used to take.
   return `addr:${fromAddress.trim().toLowerCase()}`;
 }
 
@@ -293,14 +368,29 @@ export class UnsubscribeService {
    * authentication grounds leaves the evidence for it on the row rather than only in a log line.
    */
   async unsubscribe(ctx: ServiceContext, messageId: string): Promise<UnsubscribeResult> {
+    return this.run(ctx, messageId, "manual");
+  }
+
+  /**
+   * The shared body of both entry points, with the ONE thing that differs between them named.
+   *
+   * `mode` is a required parameter and not an optional flag defaulting to `"manual"`, because the
+   * default would be the ungated branch: a caller added later would get the permissive path by
+   * writing nothing, which is the shape this repository keeps finding in postmortems. Typing the
+   * word is the point.
+   */
+  private async run(
+    ctx: ServiceContext, messageId: string, mode: "manual" | "automatic",
+  ): Promise<UnsubscribeResult> {
     const row = await this.load(ctx, messageId);
 
-    const authVerdict = authVerdictFromHeaders(
-      row.headers, row.fromAddress,
-      // Per-mailbox trust, resolved for the mailbox that HOLDS this message — see
-      // {@link UnsubscribeDeps.trustedAuthservIdsFor}.
-      await this.deps.trustedAuthservIdsFor(asTx(ctx), row.mailboxId),
-    );
+    // Per-mailbox trust, resolved for the mailbox that HOLDS this message — see
+    // {@link UnsubscribeDeps.trustedAuthservIdsFor}. Held rather than inlined because its SIZE is
+    // a second, independent fact: it says whether an identity claim about this message is
+    // CHECKABLE at all, which the verdict alone cannot distinguish from "checked, inconclusive".
+    const trusted = await this.deps.trustedAuthservIdsFor(asTx(ctx), row.mailboxId);
+    const identityCheckable = trusted.size > 0;
+    const authVerdict = authVerdictFromHeaders(row.headers, row.fromAddress, trusted);
     await asTx(ctx).update(messages)
       .set({ authVerdict, updatedAt: ctx.now() })
       .where(and(eq(messages.id, messageId), eq(messages.accountId, ctx.accountId)));
@@ -332,6 +422,36 @@ export class UnsubscribeService {
     if (authVerdict === "fail") {
       refuse("author_failed_authentication", 409,
         "your provider reports that this message failed authentication for its claimed sender");
+    }
+
+    // ── THE AUTOMATIC PASS WANTS A VOUCHED-FOR AUTHOR, THE BUTTON DOES NOT ────────────────
+    //
+    // `unsubscribeListKey` namespaces a `list:` claim under the CLAIMED author domain, which
+    // stops one sender occupying another's slot without any forgery. The residual it cannot
+    // close is a FORGED `From`: a message claiming `@victim.example` derives the victim's
+    // namespace. This gate is that residual's other half, and it is deliberately narrow in two
+    // directions:
+    //
+    //  · **Automatic only.** `unsubscribe()` is the per-message button — a person looking at the
+    //    mail in front of them, who can see who it claims to be from. `onScreenOut` is a pass
+    //    nobody is watching, so it is the one that must be conservative. This mirrors the account
+    //    switch a few lines down, which gates the automatic pass and deliberately not the button.
+    //  · **Only where the claim is CHECKABLE.** `identityCheckable` is false whenever the
+    //    mailbox's provider has no trusted authserv-id, and refusing there would not be caution —
+    //    it would silently retire the feature. Measured against the production corpus,
+    //    `auth_verdict` is `unavailable` or unset for EVERY message (75 165 / 11 112; not one
+    //    `pass`, not one `fail`), so a gate that demanded a `pass` unconditionally would refuse
+    //    100% of real traffic while reading like hardening.
+    //
+    // **SO, STATED PLAINLY: THIS GATE IS INERT IN PRODUCTION TODAY.** It fires the day
+    // `authserv-ids.ts#providerAuthservIds` resolves a real authserv-id for a mailbox's IMAP
+    // host, and not before. It is written now because the alternative is writing it later, under
+    // the belief that the key's namespacing already covered forgery — which it does not. The
+    // tests inject a trusted set precisely so the branch is EXECUTED rather than shipped unrun.
+    if (mode === "automatic" && identityCheckable && authVerdict !== "pass") {
+      refuse("sender_identity_unverified", 409,
+        "your provider did not confirm who sent this, and ohmail only leaves lists " +
+        "automatically for senders it can confirm");
     }
 
     if (header === "no_header") refuse("no_header", 409, "this sender publishes no unsubscribe route");
@@ -447,7 +567,9 @@ export class UnsubscribeService {
     for (const id of messageIds) {
       sweep.considered += 1;
       try {
-        const result = await this.unsubscribe(ctx, id);
+        // `"automatic"`, which is what turns on the identity gate above. The button calls
+        // `unsubscribe()` and does not get it.
+        const result = await this.run(ctx, id, "automatic");
         if (result.posted) sweep.posted += 1;
         else sweep.skipped += 1;
       } catch (err) {
