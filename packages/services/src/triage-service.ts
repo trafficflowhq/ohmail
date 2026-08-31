@@ -297,7 +297,25 @@ export class TriageService {
     };
   }
 
-  /** Power Through — one-by-one over the "New" group (unread Ohbox / INBOX). */
+  /**
+   * Power Through — one-by-one over the "New" group (unread Ohbox / INBOX).
+   *
+   * TWO BOUNDED QUERIES, AND THE REASON IS THE PILE THIS FEATURE IS FOR.
+   *
+   * This used to be one query with NO `limit` at all: it ordered every unread INBOX id for the
+   * account, sent all N to the process, and then used exactly two things — `rows[0]` for the
+   * message on screen and `rows.length` for `remaining`. So the response is one message and a
+   * number, and the cost of producing it was the whole pile.
+   *
+   * The pile is the point. Power Through exists to clear a large inbox, so the user with the
+   * most unread mail — the one this feature is for — paid the most for every screen, and
+   * advancing repeated it: N ids, then N-1, then N-2, one full transfer per message dismissed.
+   * A big enough mailbox cannot open the feature at all.
+   *
+   * `remaining` is now a scalar `count(*)` over the same predicates, and the page query takes
+   * `limit(2)` — two rows, because "is there another after this one" is exactly what the cursor
+   * needs and one extra row answers it. Same three answers, same values, off the same index.
+   */
   async powerThrough(ctx: ServiceContext, opts: ListOptions = {}): Promise<PowerThroughView> {
     const filters = [
       eq(messages.accountId, ctx.accountId),
@@ -306,14 +324,21 @@ export class TriageService {
     ];
     if (opts.cursor) filters.push(gt(messages.id, decodeListCursor(opts.cursor)));
 
+    // `limit(2)`: the row on screen, plus the sentinel that decides whether a cursor is owed.
     const rows = await ctx.db.select({ id: messages.id }).from(messages)
       .innerJoin(folderState, eq(folderState.messageId, messages.id))
-      .where(and(...filters)).orderBy(asc(messages.id));
+      .where(and(...filters)).orderBy(asc(messages.id)).limit(2);
 
     if (rows.length === 0) return { current: null, remaining: 0, nextCursor: null };
+
+    // The count the caller is owed, as a scalar — never as the length of a materialized pile.
+    const [tally] = await ctx.db.select({ n: sql<number>`count(*)::int` }).from(messages)
+      .innerJoin(folderState, eq(folderState.messageId, messages.id))
+      .where(and(...filters));
+
     const current = await materializeMessage(ctx.db, ctx.accountId, rows[0]!.id);
     const nextCursor = rows.length > 1 ? encodeListCursor(rows[0]!.id) : null;
-    return { current, remaining: rows.length, nextCursor };
+    return { current, remaining: Number(tally?.n ?? rows.length), nextCursor };
   }
 }
 
