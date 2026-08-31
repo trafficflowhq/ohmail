@@ -1040,6 +1040,13 @@ pub struct Shell {
     host_spawn: Mutex<Option<crate::host::HostSpawn>>,
 }
 
+/// Marks a sign-out refusal taken BEFORE the engine was stopped or any file moved, so nothing
+/// about the install has changed. `engine_logout` reads it to decide whether host mode still has
+/// a listener to stand down beside — a refusal after the stop leaves the door gone, and leaving
+/// the tailnet registration pointing at a freed port is the hazard `host.rs` names in its own
+/// words. Stripped before the sentence reaches a person.
+pub const LOGOUT_UNCHANGED: &str = "\u{1}unchanged\u{1}";
+
 #[cfg(test)]
 impl Shell {
     /// An inert shell for tests one module over — no app, no keystore, nothing running. What the
@@ -1278,10 +1285,10 @@ impl Shell {
                     ));
                     if local_door {
                         return Err(format!(
-                            "The engine refused to clear the stored login (it answered {}), so \
-                             your mailbox password is still sealed on this computer and you have \
-                             NOT been signed out. Try again; if it keeps refusing, quit ohmail and \
-                             reopen it.",
+                            "{LOGOUT_UNCHANGED}The engine refused to clear the stored login (it \
+                             answered {}), so your mailbox password is still sealed on this \
+                             computer and you have NOT been signed out. Try again; if it keeps \
+                             refusing, quit ohmail and reopen it.",
                             res.status
                         ));
                     }
@@ -1305,16 +1312,21 @@ impl Shell {
                     ));
                     if local_door {
                         return Err(format!(
-                            "The engine could not be reached to clear the stored login ({reason}), \
-                             so your mailbox password is still sealed on this computer and you have \
-                             NOT been signed out. Try again; if it keeps failing, quit ohmail and \
-                             reopen it."
+                            "{LOGOUT_UNCHANGED}The engine could not be reached to clear the stored \
+                             login ({reason}), so your mailbox password is still sealed on this \
+                             computer and you have NOT been signed out. Try again; if it keeps \
+                             failing, quit ohmail and reopen it."
                         ));
                     }
                 }
             }
         }
 
+        // Everything above this line refuses WITHOUT having changed anything, and everything
+        // below has stopped the engine. `engine_logout` needs to tell those two apart — see
+        // [`LOGOUT_UNCHANGED`] — so the pre-stop refusals carry that prefix and this one does
+        // not need it.
+        //
         // The engine goes down before the files move: it holds the data directory, and removing a
         // file underneath a process that has it open is the kind of thing that works on one
         // platform and does not on another.
@@ -2952,7 +2964,7 @@ fn engine_configure<R: tauri::Runtime>(
 /// Forget the account on this install: clear the sealed credential, stop the engine, forget the
 /// door. The mirror and this install's key stay. See [`Shell::logout`].
 ///
-/// ── THE SIGN-OUT GOES FIRST, AND THE ORDER MOVED FOR A REASON ───────────────────────────────
+/// ── THE SIGN-OUT GOES FIRST, AND THE STAND-DOWN FOLLOWS THE ENGINE ─────────────────────────
 ///
 /// Host mode used to stand down BEFORE the sign-out, on `engine_configure`'s reasoning: a
 /// sign-out stops the engine and its host listener, and the tailnet registration must not
@@ -2965,9 +2977,12 @@ fn engine_configure<R: tauri::Runtime>(
 ///
 /// So the credential clear runs first. It refuses BEFORE the engine is stopped or any file is
 /// removed (see [`Shell::logout`]), so a refusal leaves the install exactly as it was, host mode
-/// included. The window this trades for is the reverse one and it is far smaller: between the
-/// engine stopping and the stand-down, in-process and without an await, the registration points
-/// at a listener that has just gone — which is the best-effort case
+/// included — and ONLY that refusal skips the stand-down, which is what [`LOGOUT_UNCHANGED`]
+/// marks. Every other outcome, success or a failure after the engine stopped, stands host mode
+/// down: the listener is gone either way, and a registration outliving it proxies whatever binds
+/// that port next. The window this trades for is the reverse one and it is far smaller: between
+/// the engine stopping and the stand-down, in-process and without an await, the registration
+/// points at a listener that has just gone — the best-effort case
 /// `stand_down_on_shell_transition` is already documented to accept.
 #[cfg(feature = "local-engine")]
 #[tauri::command(async)]
@@ -2976,13 +2991,25 @@ fn engine_logout<R: tauri::Runtime>(
     shell: tauri::State<'_, Arc<Shell>>,
     host: tauri::State<'_, Arc<crate::host::HostRuntime<R>>>,
 ) -> Result<serde_json::Value, String> {
-    let out = shell.logout()?;
-    crate::host::stand_down_on_shell_transition(
-        &app,
-        host.inner(),
-        "signing out stops the engine the tailnet was served from",
-    );
-    Ok(out)
+    let outcome = shell.logout();
+    // ── THE STAND-DOWN FOLLOWS THE ENGINE, NOT THE SUCCESS ──────────────────────────────────
+    //
+    // Only a PRE-STOP refusal leaves the install untouched, and only that one may skip the
+    // stand-down. Gating on `Ok` alone was a second split state waiting to happen: a sign-out
+    // that cleared the credential, stopped the engine and then failed to remove `config.json`
+    // returns `Err` with the host listener already gone — and host mode still armed, its tailnet
+    // registration pointing at a loopback port nothing is holding. That is the hazard `host.rs`
+    // names in its own words, reached from the other side.
+    let unchanged = matches!(&outcome, Err(reason) if reason.starts_with(LOGOUT_UNCHANGED));
+    if !unchanged {
+        crate::host::stand_down_on_shell_transition(
+            &app,
+            host.inner(),
+            "signing out stops the engine the tailnet was served from",
+        );
+    }
+    // The marker is machinery, not a sentence: it never reaches a person.
+    outcome.map_err(|reason| reason.replace(LOGOUT_UNCHANGED, ""))
 }
 
 /// One request, down the pipe and back.

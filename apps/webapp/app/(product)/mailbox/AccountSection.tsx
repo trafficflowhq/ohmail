@@ -163,35 +163,48 @@ export function AccountSection() {
      * somebody with no second tab a remedy that cannot work, so it names both and ends with the
      * one that always works.
      */
-    if (!outcome.cleared) {
+    /**
+     * ── THE UNVERIFIABLE CASE IS TESTED FIRST, BECAUSE IT IS A SUBSET OF THE OTHER ──────────
+     *
+     * `cleared` is false whenever the inventory is partial, so checking `!cleared` first made
+     * this branch unreachable: every browser that simply could not be asked what it holds was
+     * told another tab was holding its mail open, and the distinct remedy below was dead code.
+     * They are different facts with different remedies, and this one is the narrower.
+     *
+     * Nothing is holding a database open here — the browser will not say which local databases
+     * it has, and the registry it would otherwise fall back on has never been anchored on this
+     * origin. The deletes we could name went through; what cannot be claimed is that they were
+     * all of them.
+     */
+    if (!outcome.inventoryComplete) {
       if (alive.current) {
-        setSignOutBlocked(true);
+        setSignOutUnverified(true);
         setSigningOut(false);
       }
       return;
     }
     /**
-     * ── AND THE SERVER HALF IS A SECOND FACT, NOT THE SAME ONE ─────────────────────────────
+     * ── AND IF THE MAIL IS STILL HERE, THIS DOES NOT LEAVE ─────────────────────────────────
      *
-     * The header above argues correctly that a failed logout must not stop the local wipe. It
-     * does not license CLAIMING the session ended. `tf_session` is HttpOnly and server-set:
-     * nothing this page can do expires it, so a refused or unreachable logout leaves a live
-     * credential that the next reachable request authenticates with — while this control's own
-     * copy says "Ends this session". Leaving would have put the reader back into the mailbox on
-     * the machine they had just asked to be signed out of.
+     * An IndexedDB delete is BLOCKED — not failed — while any other connection holds the
+     * database open, and our own page yields its handle but a SECOND TAB on the mailbox does
+     * not. `signOut` used to resolve as though the wipe had worked and this navigated away, so
+     * signing out of tab A with tab B open said "signed out" and left every message on disk on
+     * exactly the borrowed machine this control exists for.
      *
-     * So the mail is gone, the pane stays, and the sentence says which half did not happen and
-     * what to do about it. Pressing again is safe and is the first remedy; the second — revoking
-     * this device — works from anywhere and does not need this browser at all.
+     * Staying put costs a dead shell behind an actionable sentence; leaving costs a silent
+     * false promise about somebody's mail. The session and cookie are already gone either way —
+     * so pressing again is safe and is the first thing the copy asks for.
+     *
+     * THE SENTENCE NAMES BOTH CAUSES, because this arm cannot tell them apart. A survivor here
+     * is either a blocked delete (another tab) or a refused one (the browser said no), and the
+     * verdict is a list of names, not a list of reasons. Saying only "another tab" would hand
+     * somebody with no second tab a remedy that cannot work, so it names both and ends with the
+     * one that always works.
      */
-    if (!outcome.inventoryComplete) {
-      // ITS OWN SENTENCE, not the blocked one. Nothing is holding a database open here — this
-      // browser simply will not say which local databases it has, and the registry it would
-      // otherwise fall back on is not writable either. The deletes we could name went through;
-      // what cannot be claimed is that they were all of them. "Close your other tabs" would be
-      // a false instruction, and the remedy is a different one.
+    if (!outcome.cleared) {
       if (alive.current) {
-        setSignOutUnverified(true);
+        setSignOutBlocked(true);
         setSigningOut(false);
       }
       return;

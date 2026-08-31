@@ -88,8 +88,18 @@ export function writeBootCache(scope: string, owner: string, value: unknown): vo
  * some earlier account left behind is exactly what must not survive the one act whose meaning
  * is leaving nothing behind.
  */
-export function clearBootCaches(): string[] {
+export function clearBootCaches(): LocalSweep {
   return dropLocalStorageKeys([PREFIX]);
+}
+
+/**
+ * What a prefix sweep can honestly say. `survivors` are the matched keys still present;
+ * `enumerated` is whether the jar could be walked AT ALL — a browser that refused proves
+ * nothing by naming no survivors.
+ */
+export interface LocalSweep {
+  survivors: string[];
+  enumerated: boolean;
 }
 
 /**
@@ -103,7 +113,7 @@ export function clearBootCaches(): string[] {
  *
  * ANSWERS THE KEYS THAT SURVIVED. See the read-back below for why `void` was not enough.
  */
-export function dropLocalStorageKeys(prefixes: readonly string[]): string[] {
+export function dropLocalStorageKeys(prefixes: readonly string[]): LocalSweep {
   try {
     const doomed: string[] = [];
     for (let i = 0; i < window.localStorage.length; i++) {
@@ -124,15 +134,27 @@ export function dropLocalStorageKeys(prefixes: readonly string[]): string[] {
     // indistinguishable from one that worked, and `signOut` earned its clean verdict over
     // message text still readable on a shared machine. A key that is still there after this
     // is named, and the caller decides what to say about it.
-    return doomed.filter((key) => {
+    const survivors = doomed.filter((key) => {
       try {
         return window.localStorage.getItem(key) !== null;
       } catch {
         return true; // cannot be checked ⇒ cannot be claimed gone
       }
     });
+    return { survivors, enumerated: true };
   } catch {
-    /* storage is entirely unavailable — nothing was ever cached there to clear */
-    return [];
+    /**
+     * ── AN UNREADABLE JAR IS NOT AN EMPTY ONE ────────────────────────────────────────────
+     *
+     * This returned `[]`, which the caller read as "nothing survived" — so a browser that
+     * refused to enumerate `localStorage` during a sign-out certified a clean browser while
+     * every draft, reply body and journalled decision sat there untouched, readable again the
+     * moment storage came back. The comment even said "nothing was ever cached there", which
+     * is a claim about a jar this call could not open.
+     *
+     * `enumerated: false` says what actually happened, and the caller refuses to call the
+     * browser clean on it.
+     */
+    return { survivors: [], enumerated: false };
   }
 }

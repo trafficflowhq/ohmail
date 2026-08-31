@@ -97,7 +97,8 @@ export async function forgetThisBrowser(owner?: string): Promise<{
   // remembered so the next boot can paint the partitioned piles before the server answers
   // (`shell/boot-cache.ts`). Cleared by prefix, not by owner — this browser forgets, including
   // whatever an earlier account left behind.
-  const survivors = [...clearBootCaches()];
+  const boot = clearBootCaches();
+  const survivors = [...boot.survivors];
   // THE DURABLE-DECISION STORES, which are mail and are NOT in the mirror.
   //
   // The durability slice moved three user decisions out of memory and onto disk so they survive
@@ -111,7 +112,7 @@ export async function forgetThisBrowser(owner?: string): Promise<{
   // scratch was already account-scoped for exactly this purpose and the sweep was simply never
   // told about it; the reply buffers are keyed by message id and lane, so they were never
   // account-scoped at all.
-  survivors.push(...dropLocalStorageKeys([
+  const durable = dropLocalStorageKeys([
     SEND_LOCKS_PREFIX,
     SCREENER_INTENTS_PREFIX,
     COMPOSE_DRAFT_PREFIX,
@@ -121,14 +122,17 @@ export async function forgetThisBrowser(owner?: string): Promise<{
     // never account-scoped in the first place. They hold the reply body.
     REPLY_DRAFT_PREFIX,
     REPLY_META_PREFIX,
-  ]));
+  ]);
+  survivors.push(...durable.survivors);
   // The mirror-name registry is swept BY `clearAllMirrors` itself (it removes the names it proved
   // gone and keeps the ones it did not), so it is deliberately NOT in the prefix sweep above —
   // dropping it there would throw away the only record of a mirror this browser could not delete.
   const wipe = await clearAllMirrors(owner);
   return {
     remaining: [...survivors, ...wipe.remaining].sort(),
-    inventoryComplete: wipe.inventory === "complete",
+    // EVERY store has to be answerable, not just the mirrors. A jar that could not be walked
+    // names no survivors and proves nothing by it — see `dropLocalStorageKeys`'s catch.
+    inventoryComplete: wipe.inventory === "complete" && boot.enumerated && durable.enumerated,
   };
 }
 
@@ -153,6 +157,11 @@ export async function signOut(owner?: string): Promise<SignOutResult> {
      *
      * The outcome being asked for is "this session no longer exists", and a 401 is the server
      * saying exactly that.
+     *
+     * 403 IS NOT, and it was in this set. This API answers 403 for a refusal that leaves the
+     * session perfectly alive — a step-up gate, an account suspension — so accepting it here
+     * would report a completed sign-out over a credential the next request still authenticates
+     * with, which is the precise failure the whole branch exists to prevent. Only 401.
      */
     // A STRUCTURAL READ OF `status`, not `err instanceof ApiError`, and the difference is not
     // style. Callers' tests mock `./api-client` — one of them supplies `{ auth }` and nothing
@@ -161,7 +170,7 @@ export async function signOut(owner?: string): Promise<SignOutResult> {
     // leave the name and the mail on the machine, which is the exact failure this file exists
     // to prevent. Reading the field cannot throw, and `ApiError` is the only thing that sets it.
     const status = (err as { status?: unknown } | null)?.status;
-    const alreadyGone = status === 401 || status === 403;
+    const alreadyGone = status === 401;
     serverRefused = alreadyGone ? null : err instanceof Error ? err.message : String(err);
   }
   {

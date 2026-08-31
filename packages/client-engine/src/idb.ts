@@ -181,6 +181,60 @@ export function purgeLegacyMirror(factory?: IDBFactory): Promise<void> {
 export const MIRROR_REGISTRY_PREFIX = "ohmail.mirror.";
 
 /**
+ * THE ANCHOR — set once, on an origin observed to hold NO mirror before the registry did.
+ *
+ * Enumeration is trusted for what it SHOWS and not for what it OMITS: a name the browser lists
+ * is there, a name it does not list is not evidence of absence. That asymmetry is already why
+ * the read-back may only ADD — and it means a successful `databases()` cannot, by itself, prove
+ * the inventory is COMPLETE. A database created before this build existed is exactly the one a
+ * partial listing would leave out, and it is exactly the one an earlier account left behind.
+ *
+ * So completeness rests on the registry instead, and the registry can only be authoritative if
+ * it has named every mirror this origin ever made. That is provable in one moment and only one:
+ * the first time a mirror is opened on an origin the browser then reports as holding no OTHER
+ * mirror. From there, every mirror is registry-named by construction.
+ *
+ * A browser that already held mirrors when this shipped never gets the anchor, and its wipes
+ * report `partial` — honestly, because on that browser they are. The cost falls exactly where
+ * the doubt is real.
+ */
+const REGISTRY_SINCE = `${MIRROR_REGISTRY_PREFIX}__since`;
+
+/**
+ * THE WIPE EPOCH — an origin-wide fence, because a per-database one has a hole.
+ *
+ * `versionchange` reaches CONNECTIONS. A store instance that exists but has not opened yet gets
+ * nothing: tab B constructs its engine, tab A signs out and deletes everything it can see, and
+ * then tab B's first `open()` — a moment later, after the final read-back — CREATES the database
+ * again and starts writing mail into it, while tab A has already been told the browser is clean
+ * and navigated away. Ordinary second-tab timing, and no amount of care inside the delete can
+ * see it, because at delete time there is nothing to send an event to.
+ *
+ * So the fence is a value on the ORIGIN, not a property of a connection. Every store captures it
+ * when it is CONSTRUCTED and refuses to open once it has moved: an instance that predates a wipe
+ * is fenced whether or not its database existed when the wipe ran. A store built afterwards
+ * captures the new value and works normally, which is what a fresh sign-in is.
+ */
+const WIPE_EPOCH = `${MIRROR_REGISTRY_PREFIX}__epoch`;
+
+function readEpoch(): string {
+  try {
+    return globalThis.localStorage?.getItem(WIPE_EPOCH) ?? "0";
+  } catch {
+    return "0";
+  }
+}
+
+function bumpEpoch(): void {
+  try {
+    const now = Number.parseInt(readEpoch(), 10);
+    globalThis.localStorage?.setItem(WIPE_EPOCH, String((Number.isFinite(now) ? now : 0) + 1));
+  } catch {
+    /* storage blocked: no origin-wide fence, and the verdict already says `partial` there */
+  }
+}
+
+/**
  * What a fenced store throws from every write path. Not a sentinel anyone branches on today —
  * it is a sentence a bug report can carry, and the reason a write does not vanish quietly.
  */
@@ -246,13 +300,36 @@ function registry(): string[] {
       const key = ls.key(i);
       if (key !== null && key.startsWith(MIRROR_REGISTRY_PREFIX)) {
         const name = key.slice(MIRROR_REGISTRY_PREFIX.length);
-        if (name !== "") out.push(name);
+        // `__`-prefixed members are the registry's own bookkeeping, not mirror names. Without
+        // this, {@link REGISTRY_SINCE} read as a database called `__since`: it joined the delete
+        // set, and — the half that mattered — the sweep at the end removed it, so the anchor
+        // could never survive the first wipe and no origin ever reached a `complete` verdict.
+        if (name !== "" && !name.startsWith("__")) out.push(name);
       }
     }
   } catch {
     /* storage blocked — `registryReadable()` is what turns that into an honest verdict */
   }
   return out;
+}
+
+/**
+ * Try to set {@link REGISTRY_SINCE}. Called from the store's open, fire-and-forget: it is an
+ * observation about the origin, not a step in opening anything, and a browser that refuses to
+ * answer simply leaves the anchor unset (which reads as `partial`, the safe direction).
+ */
+async function anchorRegistry(factory: IDBFactory, mine: string): Promise<void> {
+  try {
+    if (globalThis.localStorage?.getItem(REGISTRY_SINCE) !== null) return;
+    if (typeof factory.databases !== "function") return;
+    const present = (await factory.databases())
+      .map((i) => i.name)
+      .filter((n): n is string => !!n && n !== mine)
+      .filter((n) => n === LEGACY_MIRROR_DB || n.startsWith(MIRROR_DB_PREFIX));
+    if (present.length === 0) globalThis.localStorage?.setItem(REGISTRY_SINCE, "1");
+  } catch {
+    /* unanswerable: no anchor, and therefore no claim of completeness */
+  }
 }
 
 /** Record a mirror name so a browser without `databases()` can still be told to forget it. */
@@ -300,6 +377,10 @@ export async function clearAllMirrors(owner?: string, factory?: IDBFactory): Pro
   const f = factory ?? (typeof indexedDB !== "undefined" ? indexedDB : undefined);
   // No IndexedDB at all: nothing was ever written, so there is nothing to be unsure about.
   if (!f) return { remaining: [], inventory: "complete" };
+  // THE EPOCH MOVES FIRST, before anything is enumerated or deleted. Every store instance that
+  // existed a moment ago is now fenced, including ones that have not opened yet — which is the
+  // race a per-connection `versionchange` cannot reach. See {@link WIPE_EPOCH}.
+  bumpEpoch();
   const names = new Set<string>([LEGACY_MIRROR_DB, ...registry()]);
   if (owner) names.add(mirrorDbName(owner));
   const enumerable = typeof f.databases === "function";
@@ -328,7 +409,20 @@ export async function clearAllMirrors(owner?: string, factory?: IDBFactory): Pro
    * as a survival.
    */
   const stillHere = new Set(outcomes.filter(([, o]) => o !== "deleted").map(([n]) => n));
-  let inventory: WipeVerdict["inventory"] = enumerable || registryReadable() ? "complete" : "partial";
+  /**
+   * COMPLETENESS COMES FROM THE ANCHORED REGISTRY, NEVER FROM ENUMERATION.
+   *
+   * `enumerable` was standing in for it, and that was the same mistake one level up: a
+   * `databases()` call that resolves may still omit a database created before this build, which
+   * is precisely the earlier account's mirror this verdict exists to notice. Enumeration still
+   * ADDS below — it is the only way to see a name the registry never learned — but it cannot
+   * certify that there is nothing else. Only {@link REGISTRY_SINCE} can, and only because it is
+   * written at the one moment the origin was observed to hold no mirror at all.
+   */
+  let inventory: WipeVerdict["inventory"] =
+    registryReadable() && globalThis.localStorage?.getItem(REGISTRY_SINCE) !== null
+      ? "complete"
+      : "partial";
   if (enumerable) {
     try {
       const present = new Set((await f.databases()).map((i) => i.name).filter((n): n is string => !!n));
@@ -358,10 +452,8 @@ export async function clearAllMirrors(owner?: string, factory?: IDBFactory): Pro
       // there is there, whoever asked for it.
       for (const n of present) if (n === LEGACY_MIRROR_DB || n.startsWith(MIRROR_DB_PREFIX)) stillHere.add(n);
     } catch {
-      // The read-back is unavailable. The delete outcomes stand, and the inventory is no longer
-      // provably complete: an enumeration that refused cannot rule out a database it did not
-      // list, which is exactly the claim `cleared` rests on.
-      inventory = registryReadable() ? "complete" : "partial";
+      /* the read-back is unavailable: the delete outcomes stand, and `inventory` was never
+         resting on this call in the first place */
     }
   }
   const remaining = [...stillHere].sort();
@@ -399,6 +491,13 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
    */
   private fenced = false;
 
+  /**
+   * The origin's wipe epoch as it stood when this instance was constructed. See
+   * {@link WIPE_EPOCH}: a wipe that happened after this is a wipe this instance must honour,
+   * even though it was never open to be told about it.
+   */
+  private readonly bornEpoch = readEpoch();
+
   constructor(opts: IndexedDbMirrorStoreOptions = {}) {
     super();
     const owner = opts.owner?.trim();
@@ -427,6 +526,9 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
   }
 
   private async open(): Promise<IDBDatabase> {
+    // The origin-wide half of the fence, and the one that catches a FIRST open landing after a
+    // wipe — see {@link WIPE_EPOCH}. Latched, so the answer cannot flicker back.
+    if (readEpoch() !== this.bornEpoch) this.fenced = true;
     if (this.fenced) throw new Error(MIRROR_FENCED);
     if (this.db) return this.db;
     // WRITTEN DOWN BEFORE THE DATABASE EXISTS, not after. `open` with a version CREATES the
@@ -435,6 +537,9 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
     // could otherwise not see (see `rememberMirror`). A name for a database that was never
     // created costs one delete of nothing.
     rememberMirror(this.dbName);
+    // See {@link REGISTRY_SINCE}: the one moment an origin can be observed to hold no mirror
+    // other than the one about to exist. Not awaited — it decides nothing here.
+    void anchorRegistry(this.factory, this.dbName);
     const req = this.factory.open(this.dbName, 1);
     req.onupgradeneeded = () => {
       const db = req.result;
@@ -538,6 +643,7 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
   }
 
   async load(): Promise<void> {
+    if (readEpoch() !== this.bornEpoch) this.fenced = true;
     // A FENCED STORE READS AS EMPTY, and does not throw. A page that lingers after a wipe (ours
     // shows a confirmation before navigating) must not die on an `InvalidStateError`, and the
     // honest answer to "what does this browser hold" is: nothing.
