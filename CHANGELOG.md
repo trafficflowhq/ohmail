@@ -28,14 +28,16 @@ desktop the window follows the theme you set in the system.
 Settings → General → **Look** now offers two appearances: **paper**, which is what ohmail
 has always looked like, and **ohmarchy**, a denser, tiling, keyboard-first look.
 
-- **It is off by default, everywhere.** Nothing about your current install changes until you
-  choose it.
+- **Off by default on macOS, Windows and in the browser** — nothing about your install
+  changes there until you pick a look. **Linux is the exception**, below. A choice you have
+  already made, on this device or on your account, always wins over any default.
 - **You choose the scope.** Picking a look applies to the device you are on and nothing else.
   *Apply on all devices* stores the choice on your account, and every other device you use
   picks it up.
-- **On Linux, ohmail starts in the ohmarchy look** and says so, with one press to make it
-  account-wide and one to dismiss. Dismiss it and it stays dismissed. A choice you have
-  already made always wins over the offer.
+- **On Linux, ohmail starts in the ohmarchy look** — including an install you already have
+  that has never chosen one, which will therefore look different after this update — and says
+  so, with one press to make it account-wide and one to dismiss. Dismiss it and it stays
+  dismissed.
 - Both looks answer light, dark and system exactly as before, including where a message or a
   panel sets its own scheme inside the page.
 
@@ -111,8 +113,11 @@ read. This applies to the ohmarchy look only — in paper, ohmail keeps its own 
   0.12.x either. **If you want in-app updates on Linux, install the AppImage.** From a `.deb`,
   update by downloading the new `.deb` and installing it over the old one. The same applies to
   any distribution package built from the `.deb`.
-- **The phone is not on the look axis yet.** ohmarchy is the desktop and browser app; the
-  mobile app has its own theming and keeps it for now.
+- **The phone wears the look, but is not held to the same contract.** The Android app at
+  0.13.0 offers paper and ohmarchy in Settings, with the same per-device and account-wide
+  scope, built from the same palette set as the desktop so the two cannot drift apart. What it
+  does not have is the Zero layout — that is the desktop and the browser — and its theming is
+  its own machinery rather than the shared stylesheet the other surfaces are checked against.
 - **A fifth review pass on the mail-stylesheet reader is owed, not finished.** Four passes
   returned eight, seven, six and three findings, and each one landed on the previous pass's
   fix. The reading frame also still allows a consented image to be requested from any path on
