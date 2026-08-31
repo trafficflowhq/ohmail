@@ -1,4 +1,3 @@
-import { apiRoutes, bodyCeilingFor, readBodyWithin } from "@trafficflow/api";
 
 /**
  * PATH NORMALIZATION — the one and only place this host rewrites a request URL.
@@ -140,45 +139,23 @@ export function normalizePathname(pathname: string): string {
 }
 
 /**
- * Rebuild `req` on its canonical path. The method, headers, query string and body are
- * preserved exactly; only the pathname changes.
+ * `normalizeRequest` USED TO LIVE HERE AND NOW LIVES IN `normalize.ts`, and the reason is a
+ * deploy break rather than tidiness.
  *
- * The body is BUFFERED rather than streamed through. Two reasons, both load-bearing:
- *  • `new Request(url, req)` would hand undici a `ReadableStream` body, which requires
- *    `duplex: "half"` and is easy to get wrong; an `ArrayBuffer` body has no such
- *    contract. Every mutation on this API is JSON (`withRequestGuard` refuses any other
- *    media type), so buffering costs nothing — there is no upload route.
- *  • `withIdempotency` already reads the whole body (`req.clone().text()`) to hash it,
- *    so the bytes are materialised in one place either way.
+ * It grew a body door, which needs the route table — `import { apiRoutes, bodyCeilingFor, … }
+ * from "@trafficflow/api"`. The web app's own test suite imports {@link API_PREFIX} from HERE, so
+ * that the rewrite the browser sees and the prefix this host strips cannot drift apart; and that
+ * app typechecks its tests, so the new import became part of the WEB APP's TypeScript program.
+ * `@trafficflow/api` is not one of that app's dependencies, and its production build failed with
+ * *"Cannot find module '@trafficflow/api'"*.
  *
- * An EMPTY body is dropped rather than forwarded as a zero-length buffer. That is not a
- * micro-optimisation: undici gives a `Request` constructed with an empty body a non-null
- * `body`, and `withRequestGuard` treats "a body is present" as "a JSON `Content-Type` is
- * mandatory". Forwarding `new ArrayBuffer(0)` would therefore make a legitimately
- * body-less `POST /auth/logout` answer **415** on this host while passing every test.
+ * **It passed locally.** Building that app on a development machine was green, and so was its
+ * typecheck — measured, by putting the import back and running them again. In a workspace
+ * checkout the package resolves through the repository root whether or not the app declares it;
+ * a clean install scoped to one app is the only place the accident stops, and that only exists
+ * on the build server. A local build is necessary here and not sufficient: it cannot see a
+ * dependency that is present by accident.
  *
- * ── HOW MUCH IS BUFFERED IS THE ROUTE'S DECISION ─────────────────────────────────────────
- *
- * The buffer used to be unconditional — `await req.arrayBuffer()` for every non-GET, before
- * route matching and before any credential is looked at. The platform's own 4.5 MB request cap
- * is what bounded it, so an anonymous request naming a path this API does not serve still cost
- * a multi-megabyte allocation in a warm instance shared with real traffic. `bodyCeilingFor`
- * decides from the CANONICAL path (already computed above, and free) which route this is and
- * therefore what it may weigh: zero for a path the table does not serve, {@link
- * HOSTED_LARGE_BODY_MAX_BYTES} for the one send route that carries inline attachment bytes,
- * and `JSON_BODY_MAX_BYTES` for everything else. A path with no route reads nothing and reaches
- * `app.handle` body-less, which answers the identical 404/405 — its handler never ran.
+ * Keeping this module free of workspace imports is what makes it safe to import from another
+ * app's tests, which is what it is for. Path normalization only.
  */
-export async function normalizeRequest(req: Request): Promise<Request> {
-  const url = new URL(req.url);
-  url.pathname = normalizePathname(url.pathname);
-
-  const ceiling = bodyCeilingFor(apiRoutes, req.method, url.pathname, HOSTED_LARGE_BODY_MAX_BYTES);
-  const body = await readBodyWithin(req, ceiling);
-
-  return new Request(url, {
-    method: req.method,
-    headers: req.headers,
-    ...(body === undefined ? {} : { body }),
-  });
-}

@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { createApp, apiRoutes, BodyOverCeilingError } from "@trafficflow/api";
 import { hostState } from "./config.js";
 import { buildDeps } from "./deps.js";
-import { MalformedPathError, normalizeRequest } from "./prefix.js";
+import { MalformedPathError } from "./prefix.js";
+import { normalizeRequest } from "./normalize.js";
 
 /**
  * THE dispatch point. `app/[[...path]]/route.ts` is a thin shim over this; all of the
