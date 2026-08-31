@@ -107,6 +107,26 @@ try {
 } catch {
   /* storage blocked — tokens.css falls back to prefers-color-scheme */
 }
+/* …and the FACE/LAYOUT halves of the same contract (review-caught: the axis went opt-in and
+   the desktop is a host that DID wire the controls — the shared Settings Look row — and
+   carries the Omarchy live feed, whose CSS is scoped to [data-face="ohmarchy"]). The
+   provider re-resolves after mount; this stamp only kills the pre-paint flash. Each storage
+   read sits in its own try so a blocked jar still reaches the Linux detection. */
+{
+  let face: string | null = null;
+  try { face = localStorage.getItem("ohmail.face"); } catch { /* blocked — fall through */ }
+  if (face !== "paper" && face !== "ohmarchy") {
+    try { face = localStorage.getItem("ohmail.face.account"); } catch { /* fall through */ }
+  }
+  if (face !== "paper" && face !== "ohmarchy") {
+    face = /Linux/.test(navigator.platform ?? "") && !/Android|CrOS/.test(navigator.userAgent ?? "")
+      ? "ohmarchy" : "paper";
+  }
+  if (face === "ohmarchy") document.documentElement.dataset.face = "ohmarchy";
+  let layout: string | null = null;
+  try { layout = localStorage.getItem("ohmail.layout"); } catch { /* blocked */ }
+  if (layout === "zero") document.documentElement.dataset.layout = "zero";
+}
 
 const root = document.getElementById("root");
 if (!root) throw new Error("ohmail Desktop: #root is missing from index.html");
@@ -136,7 +156,7 @@ const paint = (bootFailure: string | null): void =>
           standalone install has no account — and it is read before the first paint, so a
           German window opens in German rather than flipping. */}
       <DesktopLocale>
-        <ThemeProvider storageKey="ohmail.theme">
+        <ThemeProvider storageKey="ohmail.theme" faces>
           <ToastHost>
             {/* THE BOUNDARY IS OUTSIDE THE GATE, and it has to be: a component cannot catch its
                 own render, and the throw this exists for comes from `DesktopGate` building the
