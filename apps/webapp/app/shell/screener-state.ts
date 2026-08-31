@@ -648,7 +648,19 @@ export function useScreenerState(
     quiet: entry.quiet,
     at: entry.at,
     derived: entry.sender.derived === true,
-    heldIds: heldMessageIds(entry.sender),
+    /**
+     * ONLY WHEN THEY ARE LOAD-BEARING — the same predicate `dispatchDecision` guards the
+     * `mark_seen` batch with (`derived && read`), so gating the list here changes no behaviour on
+     * either path and keeps the journal small.
+     *
+     * It is not micro-optimisation. `held` is EVERY held message of a sender, and a bulk over a
+     * busy queue is hundreds of senders; a demoting bulk (`applyAll` passes `read: false`, and
+     * `decide` clamps the demoting piles to false regardless) would otherwise put tens of
+     * thousands of message ids in `localStorage` for a flag none of them will be asked about —
+     * and a quota refusal there is swallowed, which would lose the whole journal silently. The
+     * one thing this file exists to prevent, reached through its own storage.
+     */
+    heldIds: entry.sender.derived === true && entry.read ? heldMessageIds(entry.sender) : [],
     from: { name: entry.sender.from.name ?? null, address: entry.sender.from.address },
   });
 

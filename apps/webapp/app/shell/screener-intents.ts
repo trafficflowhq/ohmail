@@ -152,9 +152,29 @@ function save(rows: ScreenerIntent[]): void {
  */
 export function armScreenerIntent(intent: ScreenerIntent): void {
   const rows = load().filter((r) => r.id !== intent.id);
-  rows.push(intent);
+  rows.push(
+    intent.heldIds.length <= INTENT_HELD_IDS_MAX
+      ? intent
+      : { ...intent, heldIds: intent.heldIds.slice(0, INTENT_HELD_IDS_MAX) },
+  );
   save(rows);
 }
+
+/**
+ * HOW MANY HELD IDS ONE SCHEDULED DECISION CARRIES, and what is given up past it.
+ *
+ * The ids exist only for the "&read" batch that rides a KEEP decision (`screener-state.ts` gates
+ * the list on `derived && read`, so a demoting decision carries none at all). A sender with more
+ * than this many held messages is a mailing list somebody is admitting, and the truncation costs
+ * exactly one thing on a RESTORED decision: the mail past the cap stays bold. That is the same
+ * residual the commit path already accepts in writing for this batch — visible where it happened,
+ * undone by reading it — and it is a far better trade than a quota refusal, which is swallowed and
+ * would take the whole journal, decision included, with it.
+ *
+ * The LIVE path is untouched: `commit` rebuilds the intent from the entry, so a decision whose
+ * timer fires normally marks the whole bag read exactly as before.
+ */
+export const INTENT_HELD_IDS_MAX = 500;
 
 /**
  * DISARM ONE — Undo, and the commit's own settle.
