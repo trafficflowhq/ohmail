@@ -112,22 +112,31 @@ export interface IndexedDbMirrorStoreOptions {
 }
 
 /**
- * Delete a mirror database. Resolves even when the delete is BLOCKED by another tab that
- * still holds the database open — the caller is doing hygiene, not enforcing an invariant,
- * and a hung promise would be worse than an un-deleted database.
+ * Delete a mirror database, and SAY WHICH OF THE THREE THINGS HAPPENED.
+ *
+ * This used to answer `Promise<void>` for all three, with the reasoning that "the caller is
+ * doing hygiene, not enforcing an invariant". One of its two callers is `signOut`, and there
+ * hygiene is exactly the invariant: `onblocked` fires when ANOTHER TAB still holds the mirror
+ * open, the delete then does not happen, and resolving quietly turned "your mail is off this
+ * browser" into a sentence nobody had checked. The promise still never hangs — a blocked
+ * delete settles immediately, it just settles as `blocked`.
  */
-function deleteDatabase(factory: IDBFactory, name: string): Promise<void> {
+type DeleteOutcome = "deleted" | "blocked" | "error";
+
+function deleteDatabase(factory: IDBFactory, name: string): Promise<DeleteOutcome> {
   return new Promise((resolve) => {
     let req: IDBOpenDBRequest;
     try {
       req = factory.deleteDatabase(name);
     } catch {
-      resolve();
+      resolve("error");
       return;
     }
-    req.onsuccess = () => resolve();
-    req.onerror = () => resolve();
-    req.onblocked = () => resolve();
+    req.onsuccess = () => resolve("deleted");
+    req.onerror = () => resolve("error");
+    // NOT a rejection and NOT a hang: another tab is holding the database open, the browser
+    // will complete the delete when it closes, and the caller has to be able to say so NOW.
+    req.onblocked = () => resolve("blocked");
   });
 }
 
@@ -143,23 +152,40 @@ function deleteDatabase(factory: IDBFactory, name: string): Promise<void> {
 export function purgeLegacyMirror(factory?: IDBFactory): Promise<void> {
   const f = factory ?? (typeof indexedDB !== "undefined" ? indexedDB : undefined);
   if (!f) return Promise.resolve();
-  return deleteDatabase(f, LEGACY_MIRROR_DB);
+  // Hygiene here really IS hygiene — a once-per-install cleanup with no promise attached to
+  // it — so the outcome is discarded on purpose. `clearAllMirrors` is the one that reports.
+  return deleteDatabase(f, LEGACY_MIRROR_DB).then(() => undefined);
 }
 
 /**
- * Delete EVERY mirror on this origin — the sign-out / "this is not my computer" path.
+ * Delete EVERY mirror on this origin — the sign-out / "this is not my computer" path — and
+ * ANSWER WITH THE NAMES THAT ARE STILL THERE.
  *
  * `IDBFactory.databases()` is the only way to enumerate, and it does not exist on every
  * engine (Firefox shipped it late; some privacy modes stub it). Where it is missing this
  * still deletes the legacy name and the caller's own mirror, which is the case that
  * matters: a sign-out knows who is signing out.
+ *
+ * ── THE RETURN VALUE IS THE POINT, AND IT USED TO BE `void` ─────────────────────────────
+ *
+ * An IndexedDB delete is BLOCKED — not failed, not queued: blocked — while any other
+ * connection holds the database open, and `deleteDatabase` resolved on `onblocked` as though
+ * it had worked. Our OWN page yields (the store's `onversionchange` closes its handle), but a
+ * SECOND TAB of this origin does not: sign out in tab A with tab B open on the mailbox, and
+ * the browser reported a clean sign-out while every message, thread and screener decision
+ * stayed on disk. On the shared or borrowed computer this whole path exists for, that is the
+ * one promise it must not break silently.
+ *
+ * An empty array is the only thing that means "this browser holds no mirror". Anything else
+ * is the caller's to say out loud.
  */
-export async function clearAllMirrors(owner?: string, factory?: IDBFactory): Promise<void> {
+export async function clearAllMirrors(owner?: string, factory?: IDBFactory): Promise<string[]> {
   const f = factory ?? (typeof indexedDB !== "undefined" ? indexedDB : undefined);
-  if (!f) return;
+  if (!f) return [];
   const names = new Set<string>([LEGACY_MIRROR_DB]);
   if (owner) names.add(mirrorDbName(owner));
-  if (typeof f.databases === "function") {
+  const enumerable = typeof f.databases === "function";
+  if (enumerable) {
     try {
       for (const info of await f.databases()) {
         if (info.name && info.name.startsWith(MIRROR_DB_PREFIX)) names.add(info.name);
@@ -168,7 +194,34 @@ export async function clearAllMirrors(owner?: string, factory?: IDBFactory): Pro
       /* enumeration refused — the two names above are still deleted */
     }
   }
-  await Promise.all([...names].map((n) => deleteDatabase(f, n)));
+  const outcomes = await Promise.all(
+    [...names].map(async (n) => [n, await deleteDatabase(f, n)] as const),
+  );
+
+  /**
+   * ── AND THEN READ BACK, because the delete's own answer is not the whole story ──────────
+   *
+   * `blocked` is the one this exists for: another tab of this origin still holds the mirror
+   * open, so the database is still on disk with the mail in it. But a `deleted` is worth
+   * re-checking too where the browser can be asked, because between the delete and this read
+   * the same other tab may have re-OPENED (and so recreated) the name. Where `databases()`
+   * does not exist (older Firefox, some privacy modes) the delete's own outcome is the best
+   * evidence available and is used as such — an unavailable enumeration must not be reported
+   * as a survival.
+   */
+  const stillHere = new Set(outcomes.filter(([, o]) => o !== "deleted").map(([n]) => n));
+  if (enumerable) {
+    try {
+      const present = new Set((await f.databases()).map((i) => i.name).filter((n): n is string => !!n));
+      for (const [n] of outcomes) {
+        if (present.has(n)) stillHere.add(n);
+        else stillHere.delete(n);
+      }
+    } catch {
+      /* the read-back is unavailable: the outcomes above stand */
+    }
+  }
+  return [...stillHere].sort();
 }
 
 /**

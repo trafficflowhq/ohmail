@@ -112,6 +112,8 @@ export function AccountSection() {
   const [result, setResult] = useState<ErasureResult | null>(null);
 
   const [signingOut, setSigningOut] = useState(false);
+  /** The wipe was blocked by another tab: the mail is still on this browser. See `doSignOut`. */
+  const [signOutBlocked, setSignOutBlocked] = useState(false);
 
   /** The pane can be navigated away from mid-ceremony; nothing may set state after that. */
   const alive = useRef(true);
@@ -134,10 +136,28 @@ export function AccountSection() {
    */
   const doSignOut = useCallback(async (owner: string) => {
     setSigningOut(true);
-    try {
-      await signOut(owner);
-    } catch {
-      /* the mirror is wiped regardless; leaving is still the right outcome */
+    setSignOutBlocked(false);
+    const outcome = await signOut(owner);
+    /**
+     * ── AND IF THE MAIL IS STILL HERE, THIS DOES NOT LEAVE ─────────────────────────────────
+     *
+     * An IndexedDB delete is BLOCKED — not failed — while any other connection holds the
+     * database open, and our own page yields its handle but a SECOND TAB on the mailbox does
+     * not. `signOut` used to resolve as though the wipe had worked and this navigated away, so
+     * signing out of tab A with tab B open said "signed out" and left every message on disk on
+     * exactly the borrowed machine this control exists for.
+     *
+     * Staying put costs a dead shell behind an actionable sentence; leaving costs a silent
+     * false promise about somebody's mail. The remedy is one gesture (close the other tab and
+     * press again), and the session and cookie are already gone either way — so pressing again
+     * is safe and is what the copy asks for.
+     */
+    if (!outcome.cleared) {
+      if (alive.current) {
+        setSignOutBlocked(true);
+        setSigningOut(false);
+      }
+      return;
     }
     window.location.assign("/");
   }, []);
@@ -391,6 +411,7 @@ export function AccountSection() {
         <div className="acct-signout">
           <div>
             <p className="acct-fine">{t("signOutBody")}</p>
+            {signOutBlocked ? <p className="acct-fine acct-warn" role="alert">{t("signOutBlocked")}</p> : null}
           </div>
           {/* `acct-signout-btn` is `flex:0 0 auto` and `white-space:nowrap`. Without it the
               button is an ordinary flex item beside a paragraph that wants the whole row, so

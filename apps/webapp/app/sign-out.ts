@@ -44,14 +44,45 @@ import { SEND_LOCKS_PREFIX } from "./shell/send-lock";
  * The order inside the `finally` does not matter — nothing renders between them — but the
  * pairing does, and it is why both live on this one line rather than at two call sites.
  *
- * There is no sign-out control in the UI yet. This exists so that when there is one, it is
- * wired to something that is already correct — the sign-out guard asserts that any
- * call to `auth.logout` in this app goes through here.
+ * ── AND IT REPORTS WHAT IT COULD NOT TAKE BACK ──────────────────────────────────────────
+ *
+ * This used to answer `void`, which made the header's claim above unfalsifiable: an IndexedDB
+ * delete is BLOCKED while any other connection holds the database open, `clearAllMirrors`
+ * resolved on that, and the pane navigated away. Our own page yields its handle; a SECOND TAB
+ * on the mailbox does not. So signing out of tab A with tab B open said "signed out" and left
+ * the whole mirror on disk — on exactly the borrowed machine this exists for. The result names
+ * what survived, and the pane says so instead of leaving.
+ *
+ * The server call, the cookie and the localStorage sweep are all unconditional and stay in the
+ * `finally`: those halves always land, and the user asked for them however the wipe went.
+ *
+ * The sign-out guard asserts that any call to `auth.logout` in this app goes through here.
  */
-export async function signOut(owner?: string): Promise<void> {
+export interface SignOutResult {
+  /** True only when this browser is verifiably holding no mirror any more. */
+  cleared: boolean;
+  /**
+   * The mirror databases still on this origin. Non-empty means another TAB of this origin is
+   * holding one open — an IndexedDB delete is blocked, not failed, while any connection lives
+   * — so the mail is still here and the caller must say so rather than navigating away.
+   */
+  remaining: string[];
+  /** The server refused or was unreachable. The local half ran anyway; the caller is told. */
+  serverRefused: string | null;
+}
+
+export async function signOut(owner?: string): Promise<SignOutResult> {
+  // NEVER THROWS, and the refusal rides the result instead. A `return` inside a `finally`
+  // would have silently swallowed this exception, which is the same shape of quiet loss the
+  // rest of this file exists to stop; and throwing would throw away `remaining`, which is the
+  // one thing the caller cannot find out any other way.
+  let serverRefused: string | null = null;
   try {
     await auth.logout();
-  } finally {
+  } catch (err) {
+    serverRefused = err instanceof Error ? err.message : String(err);
+  }
+  {
     forgetOwner();
     // The boot caches go in the same act, for the same reason the cookie does: they are the
     // account's dormancy window, screening baseline and own addresses, remembered so the next
@@ -89,6 +120,10 @@ export async function signOut(owner?: string): Promise<void> {
       REPLY_DRAFT_PREFIX,
       REPLY_META_PREFIX,
     ]);
-    await clearAllMirrors(owner);
+    // THE ONE THING THAT ANSWERS. `clearAllMirrors` reports the names still on disk, because
+    // an IndexedDB delete is BLOCKED (not failed) while another tab holds the database open,
+    // and this function used to resolve as though it had worked. See its own header.
+    const remaining = await clearAllMirrors(owner);
+    return { cleared: remaining.length === 0, remaining, serverRefused };
   }
 }

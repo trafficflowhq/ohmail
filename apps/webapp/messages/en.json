@@ -1801,6 +1801,7 @@
     "signOutBody": "Ends this session and removes the mail cached in this browser. Your mailbox and your account are untouched.",
     "signOut": "Sign out",
     "signOutBusy": "Signing out…",
+    "signOutBlocked": "Your session is ended, but the mail cached in this browser is still here: another ohmail tab is holding it open. Close ohmail's other tabs and press Sign out again.",
     "loading": "Checking this session…",
     "mail": "Your mail is on your own server, in the ohmail folders it is filed into. This deletes our copy; your mailbox stays exactly as organized as it is now.",
     "goneTitle": "Erased",
