@@ -36,6 +36,48 @@
  * person, and the cost of that is far worse than the cost of one dead suggestion. `no-reply`
  * and `donotreply` are the same word with punctuation, so punctuation is stripped before the
  * comparison rather than each spelling being listed.
+ *
+ * ── WHOSE NAME AN ADDRESS WEARS ─────────────────────────────────────────────────────────
+ *
+ * Reported against a real mailbox: a recipient chip read
+ *
+ *     Atelier Papierwerk GmbH - Nora Lindt   nora@atelier.invalid   ×
+ *
+ * — "this is not Nora". The address was right; the name was somebody else's idea of her. (The
+ * shape is the report's; the names are this repository's fixture cast, because the reported ones
+ * are a real correspondent's and this file is published.)
+ *
+ * The three sources above are not three sources of the same fact. A From header is the address
+ * OWNER saying what they are called. A To or Cc header is a THIRD PARTY's client saying what IT
+ * calls them — their own address book, exported into a header, harvested here under that
+ * person's address. And a sent draft's recipient label is whatever the user typed or accepted,
+ * which after this bug had run once was frequently the wrong name coming back round.
+ *
+ * The rule used to be "the longest name ever seen", which knows neither who said it nor when. A
+ * long company-shaped label from any of those sources therefore won permanently — over the name
+ * the person signs their own mail with, on every surface reading this book, and out onto the
+ * wire's To header, because accepting a suggestion writes `Name <address>` into the draft.
+ *
+ * So the choice is made in two steps, and the first one is a HARD tier:
+ *
+ *   1. SELF-DECLARED beats OBSERVED. A name seen on a From always wins over one seen on a
+ *      To, a Cc or a sent draft — however long, however recent. That is what closes the
+ *      feedback loop: a wrong name written into a draft is `observed`, so it cannot re-elect
+ *      itself over the sender's own signature.
+ *   2. WITHIN a tier, the MOST RECENT wins; an exact tie falls back to the longer name, and
+ *      then to the strings themselves, so the derivation is TOTAL and cannot flicker between
+ *      two candidates as unrelated mail arrives (the same requirement {@link byRank} states
+ *      for the ordering).
+ *
+ * An EMPTY name is never a candidate. `""` is the absence of a claim, not a claim that somebody
+ * is now called nothing — most automated mail carries no display name at all, and one bare
+ * message must not blank a correspondent everywhere.
+ *
+ * Nothing here is persisted: the book is recomputed from the mirror on every render, so this
+ * rule takes effect on already-stored mail with no migration and no data repair. What it cannot
+ * reach is a name a user ALREADY sent — that string is in a delivered message's headers and in
+ * the `drafts` row behind it, and rewriting either would be inventing history. Those rows are
+ * `observed`, so they stop influencing what is shown from here on.
  */
 import type { EntityReader } from "./store.js";
 import type { EmailAddress, EngineDraft, EngineMessage } from "./types.js";
@@ -44,11 +86,13 @@ export interface AddressBookEntry {
   /** Lower-cased — the identity. Two spellings of one address are one entry. */
   address: string;
   /**
-   * The best display name seen for this address, or `""`.
+   * The display name this address wears, or `""` when none was ever claimed for it.
    *
-   * "Best" is the LONGEST non-empty one, which is a proxy for the most complete: senders
-   * routinely appear as both "Lena" and "Lena Eichspan", and the fuller form is the one worth
-   * showing and the one more likely to match what the user starts typing.
+   * The name the ADDRESS OWNER last signed with — the most recent non-empty display name on a
+   * message whose `from` is this address. Only when they have never written does a label
+   * somebody else addressed them by stand in, and then the most recent of those. See the
+   * header: a third party's name for a person is not evidence about that person's name, and
+   * the previous longest-wins rule made one such label permanent.
    */
   name: string;
   /** How many messages and drafts this address appears on. */
@@ -80,10 +124,40 @@ export function isRobotAddress(address: string): boolean {
   return ROBOT_LOCALS.includes(local);
 }
 
+/*
+ * WHERE A CANDIDATE NAME CAME FROM. Ordered, and the order is the whole rule: a higher tier
+ * always wins, so no amount of length or recency can promote a stranger's label over the
+ * address owner's own. See the header.
+ */
+
+/** A To/Cc header, or a sent draft's recipient — somebody ELSE's label for this person. */
+const OBSERVED = 0;
+/** A From header — the address owner saying what they are called. */
+const SELF = 1;
+/** No name held. Below every real tier, so the first non-empty claim from ANY source takes it. */
+const NONE = -1;
+
+/**
+ * The map's value while the walk is running. `nameTier`/`nameAt` describe the name currently
+ * held — NOT the entry — which is why they cannot be folded into `lastAt`: `lastAt` is the
+ * newest appearance of the address by any route (it feeds {@link rankOf}), while `nameAt` is
+ * the date of the message the held NAME was read off. A bare-From message advances the first
+ * and must not touch the second.
+ *
+ * Internal, and deliberately not on {@link AddressBookEntry}: the two fields are the
+ * derivation's working state, and every caller constructs entries as `{address,name,count,
+ * lastAt}` literals. {@link addressBook} strips them on the way out.
+ */
+interface Acc extends AddressBookEntry {
+  nameTier: number;
+  nameAt: number;
+}
+
 function addTo(
-  into: Map<string, AddressBookEntry>,
+  into: Map<string, Acc>,
   who: EmailAddress | null | undefined,
   at: number,
+  tier: number,
 ): void {
   const raw = who?.address?.trim();
   if (!raw || !raw.includes("@")) return;
@@ -93,13 +167,36 @@ function addTo(
   const name = (who?.name ?? "").trim();
   const prev = into.get(address);
   if (!prev) {
-    into.set(address, { address, name, count: 1, lastAt: at });
+    // An empty name claims nothing, so it holds no tier either — see {@link NONE}.
+    into.set(address, {
+      address, name, count: 1, lastAt: at,
+      nameTier: name === "" ? NONE : tier,
+      nameAt: name === "" ? 0 : at,
+    });
     return;
   }
   prev.count += 1;
   if (at > prev.lastAt) prev.lastAt = at;
-  // The longest name seen — see `AddressBookEntry.name`.
-  if (name.length > prev.name.length) prev.name = name;
+  // `""` is the absence of a claim, never a claim that the name is now nothing.
+  if (name === "") return;
+  /* Tier first and absolutely; then recency; then length; then the strings themselves.
+     The last two comparisons are not decoration — without a rule for every case the winner
+     of a tie is whichever message the mirror happened to enumerate first, which is the same
+     unstable-order defect {@link byRank} states for the ordering. Length before lexical
+     because the fuller of two same-day spellings ("Lena" / "Lena Eichspan") is the one worth
+     showing; lexical only ever settles two DIFFERENT names of equal length written at the
+     same instant, where any answer is arbitrary and only stability matters. */
+  const better =
+    tier > prev.nameTier ||
+    (tier === prev.nameTier &&
+      (at > prev.nameAt ||
+        (at === prev.nameAt &&
+          (name.length > prev.name.length ||
+            (name.length === prev.name.length && name > prev.name)))));
+  if (!better) return;
+  prev.name = name;
+  prev.nameTier = tier;
+  prev.nameAt = at;
 }
 
 const stamp = (iso: string | null | undefined): number => {
@@ -119,13 +216,14 @@ export function addressBook(
   reader: EntityReader,
   opts: { exclude?: readonly string[] } = {},
 ): AddressBookEntry[] {
-  const into = new Map<string, AddressBookEntry>();
+  const into = new Map<string, Acc>();
 
   for (const m of reader.list<EngineMessage>("message")) {
     const at = stamp(m.date);
-    addTo(into, m.from, at);
-    for (const who of m.to ?? []) addTo(into, who, at);
-    for (const who of m.cc ?? []) addTo(into, who, at);
+    // The From is the only SELF-declared name in the whole walk — see the header.
+    addTo(into, m.from, at, SELF);
+    for (const who of m.to ?? []) addTo(into, who, at, OBSERVED);
+    for (const who of m.cc ?? []) addTo(into, who, at, OBSERVED);
   }
 
   for (const d of reader.list<EngineDraft>("draft")) {
@@ -133,13 +231,18 @@ export function addressBook(
     // write to yet, and an abandoned one names somebody they decided not to.
     if (d.status !== "sent") continue;
     const at = stamp(d.updatedAt ?? d.createdAt);
-    for (const who of d.to ?? []) addTo(into, who, at);
-    for (const who of d.cc ?? []) addTo(into, who, at);
+    // OBSERVED, and this is the tier that closes the loop: accepting a suggestion writes
+    // `Name <address>` into the draft, so a name chosen here comes back through this very
+    // list. At `SELF` it would re-elect itself for ever.
+    for (const who of d.to ?? []) addTo(into, who, at, OBSERVED);
+    for (const who of d.cc ?? []) addTo(into, who, at, OBSERVED);
   }
 
   const blocked = new Set((opts.exclude ?? []).map((a) => a.trim().toLowerCase()));
   return [...into.values()]
     .filter((e) => !blocked.has(e.address))
+    // The working fields go no further than this function — see {@link Acc}.
+    .map(({ nameTier: _t, nameAt: _a, ...entry }) => entry)
     .sort(byRank);
 }
 
@@ -214,7 +317,25 @@ export function matchAddresses(
   return out;
 }
 
-/** "Lena Eichspan <lena@example.com>", or the bare address when no name is known. */
+/**
+ * WHAT ACCEPTING A SUGGESTION WRITES — "Lena Eichspan <lena@example.com>", or the bare address.
+ *
+ * ── A NAME RIDES ALONG ONLY WHEN THE FIELD CAN READ IT BACK ─────────────────────────────
+ *
+ * The recipient field's value is ONE comma-separated string and the splitter that turns it into
+ * chips is blind to quoting. So "Lindt, Nora" — the Exchange/Outlook default, not an exotic
+ * shape — was written as `Lindt, Nora <nora@…>`, came back as TWO chips, and `Lindt` was
+ * reported as not an address. One invalid entry empties the whole envelope by design
+ * (`composePlan`), so picking a contact out of your own address book DISABLED SEND.
+ *
+ * Quoting the name would not save it: the splitter would still cut inside the quotes. So the
+ * name is dropped and the bare address kept, which is the decision `formatRecipientLine`
+ * (`apps/webapp/app/shell/compose-from.ts`) already made for the reply prefill, in the same
+ * words and against the same character class — the envelope is the address; the name is sugar.
+ * That rule now has one implementation instead of three: `RecipientField.formatFor` calls this,
+ * and `formatRecipientLine` states the shared reason.
+ */
 export function formatRecipient(entry: AddressBookEntry): string {
-  return entry.name === "" ? entry.address : `${entry.name} <${entry.address}>`;
+  if (entry.name === "" || /[<>,;"]/.test(entry.name)) return entry.address;
+  return `${entry.name} <${entry.address}>`;
 }

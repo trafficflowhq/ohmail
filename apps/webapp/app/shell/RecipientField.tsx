@@ -52,7 +52,7 @@
  */
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { matchAddresses, type AddressBookEntry } from "@ohmail/client-engine";
+import { formatRecipient, matchAddresses, type AddressBookEntry } from "@ohmail/client-engine";
 import { parseRecipients } from "./compose";
 import { displayAddress } from "./idn";
 
@@ -353,10 +353,19 @@ export function RecipientField({
     if (cursor >= suggestions.length) setCursor(0);
   }, [suggestions.length, cursor]);
 
-  /** Accepting writes a chip directly — the tail it completes is spent. */
+  /**
+   * Accepting writes a chip directly — the tail it completes is spent.
+   *
+   * `formatRecipient` and not a local copy of it. This file HAD a local copy, and it was the one
+   * without the guard `formatRecipientLine` already carried: a display name holding a separator
+   * ("Lindt, Nora" — the Exchange default) was written into the value, torn in half by
+   * {@link splitRecipients}, and the half without an `@` was reported as an entry that is not an
+   * address — which empties the envelope, so accepting a contact from the book disabled Send.
+   * One implementation of the rule, in `address-book.ts`, which states it.
+   */
   const accept = useCallback(
     (entry: AddressBookEntry) => {
-      onChange(joinRecipients([...chips, formatFor(entry)], ""));
+      onChange(joinRecipients([...chips, formatRecipient(entry)], ""));
       setOpen(false);
       setCursor(0);
       inputRef.current?.focus();
@@ -699,7 +708,3 @@ export function RecipientField({
   );
 }
 
-/** What accepting a suggestion writes. `parseRecipients` reads both forms. */
-function formatFor(entry: AddressBookEntry): string {
-  return entry.name === "" ? entry.address : `${entry.name} <${entry.address}>`;
-}

@@ -621,6 +621,11 @@ export function replyEnvelopeOnWire(
  * to quoting, so a name containing a separator or an angle bracket ("Doe, John") would come
  * back as two broken entries. Such a name is dropped and the bare address kept — the envelope
  * is the address; the name is sugar the parent's headers still hold.
+ *
+ * The SAME rule and the same character class as `formatRecipient` (`@ohmail/client-engine`),
+ * which is what accepting an address-book suggestion writes. That copy did not have the guard
+ * until a suggestion named "Lindt, Nora" was found to disable Send; the two are kept
+ * separate only because they take different inputs.
  */
 export function formatRecipientLine(list: readonly EmailAddress[]): string {
   return list
