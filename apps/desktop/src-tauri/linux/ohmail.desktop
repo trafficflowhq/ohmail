@@ -1,0 +1,27 @@
+# The Linux desktop entry, for the .deb and the AppImage alike — the AppImage bundler builds its
+# AppDir from the Debian package's data directory, so both read this one template.
+#
+# It is Tauri's default entry with ONE addition: `%U` on the Exec line. The entry claims
+# `x-scheme-handler/mailto`, which is what makes ohmail selectable as the system mail app; without
+# a `%u`/`%U` field code the desktop environment launches the command with no argument at all and
+# the address the person clicked is dropped on the floor. `%U` rather than `%u` because an
+# activation may carry more than one URL and the app answers each on its own.
+#
+# `StartupWMClass` is the binary name, which is what the app maps its window with: `ohmail` as the
+# Wayland app_id, and `ohmail` as the X11 WM_CLASS instance name (X11 also carries `Ohmail` as the
+# class — the desktop entry specification lets either one match). That is what lets a running
+# window be attributed to this entry instead of drawing an unlabelled second taskbar icon.
+[Desktop Entry]
+Categories={{categories}}
+{{#if comment}}
+Comment={{comment}}
+{{/if}}
+Exec={{exec}} %U
+StartupWMClass={{exec}}
+Icon={{icon}}
+Name={{name}}
+Terminal=false
+Type=Application
+{{#if mime_type}}
+MimeType={{mime_type}}
+{{/if}}

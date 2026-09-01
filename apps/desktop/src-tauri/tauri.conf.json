@@ -1,6 +1,6 @@
 {
   "productName": "ohmail",
-  "version": "0.13.3",
+  "version": "0.13.4",
   "identifier": "io.ohmail.desktop",
   "build": {
     "frontendDist": "../dist"
@@ -52,7 +52,8 @@
     },
     "linux": {
       "deb": {
-        "depends": []
+        "depends": [],
+        "desktopTemplate": "linux/ohmail.desktop"
       }
     },
     "windows": {

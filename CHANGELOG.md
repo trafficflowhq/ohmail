@@ -16,6 +16,70 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.13.4] — 2026-09-01
+
+Four fixes to the Linux packaging, one of them the difference between an app that
+draws and an app that does not. Nothing else changed; macOS and Windows are the
+0.13.3 build with a new version number.
+
+### The AppImage renders on distributions whose graphics stack is newer than Ubuntu's
+
+On some machines the AppImage started, mapped its window, and never drew
+anything. The log said
+
+```
+Could not create default EGL display: EGL_BAD_PARAMETER. Aborting...
+```
+
+and the web process aborted. It was not the machine: the same computer ran its
+own distribution's WebKitGTK fine.
+
+An AppImage carries its own copy of most libraries, but deliberately not the
+graphics drivers — those have to be the host's, because they are the ones that
+match the hardware and the kernel. The trouble is that the host's driver does not
+arrive alone: Mesa's EGL library links `libwayland-client`, and an AppImage puts
+its own libraries ahead of the system's for every process it starts. So the
+host's driver was being loaded against the AppImage's copy of that library
+instead of the one it was built against, and on a host whose Mesa is newer than
+the system this was built on, it could not load at all. Nothing said so; the only
+symptom was the EGL line above.
+
+`libwayland-client` is no longer bundled, so the host's driver gets the copy it
+expects. The AppImage project's own exclude list has recommended exactly this
+since 2024; the packaging tool in use here was built before that entry existed
+and did not know about it.
+
+If you hit anything like this again, `OHMAIL_SYSTEM_WEBKIT=1` now runs the app
+against your distribution's GTK and WebKitGTK instead of the bundled ones:
+
+```
+OHMAIL_SYSTEM_WEBKIT=1 ./ohmail-linux-x86_64.AppImage
+```
+
+### The window is no longer forced through XWayland
+
+The AppImage's launcher set `GDK_BACKEND=x11` unconditionally, which put every
+Wayland session on XWayland — where the window is scaled 1x and looks blurry on a
+HiDPI display — and did it even when you had asked for something else. It was a
+workaround for a crash reported against a much older build than this one. The
+launcher now leaves the choice alone: on a Wayland desktop the app is a Wayland
+app, and `GDK_BACKEND=x11` still works if you want it.
+
+### Clicking a mailto: link opens a message
+
+ohmail's desktop entry has always declared itself a handler for `mailto:`, which
+is what lets you pick it as your system mail app. It was missing the one field
+that passes the address along, so the app opened with nothing — the address you
+clicked went nowhere. The entry now hands it over, and the app opens a message to
+that person. This affects the `.deb` as well as the AppImage.
+
+### The arm64 build no longer looks for x86 directories
+
+The arm64 AppImage's launcher pointed its GTK module search path at
+`/usr/lib/x86_64-linux-gnu/gtk-3.0`, a directory no arm64 machine has. It now
+names the architecture it was actually built for. The build checks this on both
+architectures, out of the finished AppImage, so it cannot come back quietly.
+
 ## [0.13.3] — 2026-09-01
 
 ohmail now has an arm64 Linux build, connecting your own mail server tells you
@@ -2995,7 +3059,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.13.3...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.13.4...HEAD
+[0.13.4]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.4
 [0.13.3]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.3
 [0.13.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.2
 [0.13.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.1

@@ -739,6 +739,28 @@ jobs:
       - name: Vendor the Node runtime
         run: node scripts/vendor-node.mjs --platform linux
 
+      # ── THE APPIMAGE RECIPE BELONGS TO THIS REPOSITORY ────────────────────
+      #
+      # The Tauri bundler does not carry linuxdeploy's GTK plugin. It DOWNLOADS
+      # it, at bundle time, from a third-party `master` branch into its tools
+      # directory, and runs whatever it got — so the Linux artifacts' launcher
+      # was tracking a branch nobody here watches. It downloads only when the
+      # file is not already there, so writing ours first both pins the recipe
+      # and is how the fixes in `src-tauri/linux/linuxdeploy-plugin-gtk.sh`
+      # reach the artifact: the host-provided library that must not be shadowed,
+      # the backend the caller gets to choose, the architecture-correct module
+      # path, and the escape hatch. `Inspect what was produced` asserts all four
+      # out of the finished AppImage, so a bundler that stopped reading this
+      # path fails the build instead of quietly shipping the old recipe.
+      - name: Pin the AppImage's GTK plugin to this repository's copy
+        run: |
+          set -euo pipefail
+          TOOLS="${XDG_CACHE_HOME:-$HOME/.cache}/tauri"
+          mkdir -p "$TOOLS"
+          install -m 0755 apps/desktop/src-tauri/linux/linuxdeploy-plugin-gtk.sh \
+            "$TOOLS/linuxdeploy-plugin-gtk.sh"
+          ls -la "$TOOLS/linuxdeploy-plugin-gtk.sh"
+
       # The bundle is smoked inside this script, on this platform, before the app
       # is packaged — see the header.
       - name: Build the engine-bearing app, smoking its bundle
@@ -834,6 +856,100 @@ jobs:
           test -x squashfs-root/usr/lib/ohmail/runtime/node
           # It RUNS, which no file assertion can stand in for.
           squashfs-root/usr/lib/ohmail/runtime/node --version
+
+          # ── THE LAUNCHER, READ OUT OF THE ARTIFACT ────────────────────────
+          #
+          # The AppImage's launcher is written by a plugin the bundler would
+          # otherwise fetch from a branch outside this repository, so what it
+          # actually did is asserted here rather than inferred from the file
+          # installed for it. Each of these four was a fault on a real machine
+          # before it was a check.
+          TRIPLE=x86_64-linux-gnu
+          EXPECT_MACHINE="Advanced Micro Devices X86-64"
+          HOOK=squashfs-root/apprun-hooks/linuxdeploy-plugin-gtk.sh
+          test -f "$HOOK"
+          cat "$HOOK"
+
+          # 1. The GL driver is the HOST's, and Mesa's libEGL links
+          #    libwayland-client. An AppImage puts its own usr/lib ahead of the
+          #    system path for every process it starts, so a copy in here is
+          #    loaded instead of the one the host's driver was built against;
+          #    where the host's Mesa is newer, the driver fails to load and the
+          #    web process aborts with "Could not create default EGL display:
+          #    EGL_BAD_PARAMETER" — a window that maps and never draws.
+          #    Captured into a variable rather than piped into `grep -q`: a
+          #    producer killed by a closed pipe looks exactly like one that found
+          #    nothing, and this assertion must not be able to pass that way.
+          SHADOWED="$(find squashfs-root -name 'libwayland-client.so*' -print)"
+          if [ -n "$SHADOWED" ]; then
+            echo "the AppImage bundles a library the host must provide:" >&2
+            printf '%s\n' "$SHADOWED" >&2
+            exit 1
+          fi
+
+          # 2. GDK_BACKEND belongs to whoever launches the app. Forcing x11 put
+          #    every Wayland session on XWayland at 1x — blurry on a HiDPI
+          #    screen — and overrode a caller who had asked for something else.
+          FORCED="$(grep -a '^export GDK_BACKEND=' "$HOOK" || true)"
+          if [ -n "$FORCED" ]; then
+            echo "the launcher forces a display backend: $FORCED" >&2
+            exit 1
+          fi
+
+          # 3. Every library directory the launcher names is THIS
+          #    architecture's. The upstream plugin spells the x86_64 triple
+          #    literally, which put a directory no arm64 machine has into the
+          #    arm64 build's GTK_PATH.
+          TRIPLES="$(grep -aoE '[a-z0-9_]+-linux-gnu' "$HOOK" | sort -u || true)"
+          echo "library triples named by the launcher: $TRIPLES"
+          FOREIGN="$(printf '%s\n' "$TRIPLES" | grep -v "^$TRIPLE$" | grep -v '^$' || true)"
+          if [ -n "$FOREIGN" ]; then
+            echo "the launcher names another architecture's directories: $FOREIGN" >&2
+            exit 1
+          fi
+
+          # 4. The escape hatch: one variable to run against the host's GTK and
+          #    WebKitGTK, for a machine where the bundled stack cannot start.
+          grep -aq 'OHMAIL_SYSTEM_WEBKIT' "$HOOK" || {
+            echo "the launcher has no OHMAIL_SYSTEM_WEBKIT escape" >&2; exit 1; }
+
+          # ── THE DESKTOP ENTRY ─────────────────────────────────────────────
+          #
+          # The entry claims x-scheme-handler/mailto, which is what makes ohmail
+          # selectable as the system mail app. Without a field code on Exec the
+          # desktop environment launches it with no argument at all and the
+          # address the person clicked is dropped — the claim would be false.
+          ENTRY=squashfs-root/usr/share/applications/ohmail.desktop
+          test -f "$ENTRY"
+          cat "$ENTRY"
+          grep -aqx 'Exec=ohmail %U' "$ENTRY" || {
+            echo "the desktop entry does not hand the URL to the app" >&2; exit 1; }
+          grep -aq '^MimeType=.*x-scheme-handler/mailto' "$ENTRY" || {
+            echo "the desktop entry no longer claims mailto" >&2; exit 1; }
+          # The window maps under this name — the Wayland app_id, and the X11
+          # WM_CLASS instance name — which is what attributes a running window to
+          # this entry instead of drawing a second, unlabelled taskbar icon.
+          grep -aqx 'StartupWMClass=ohmail' "$ENTRY" || {
+            echo "the desktop entry cannot be matched to the window" >&2; exit 1; }
+
+          # ── EVERY BUNDLED LIBRARY IS THIS ARCHITECTURE'S ──────────────────
+          #
+          # The shipped binary's own ELF is asserted below; the ~150 libraries
+          # beside it were not, and nothing else here would notice one copied
+          # from the wrong place.
+          WRONG=""
+          while IFS= read -r so; do
+            m="$(readelf -h "$so" 2>/dev/null | sed -n 's/^ *Machine: *//p' || true)"
+            if [ -z "$m" ]; then continue; fi
+            if [ "$m" != "$EXPECT_MACHINE" ]; then WRONG="$WRONG  $so ($m)"$'\n'; fi
+          done < <(find squashfs-root -type f -name '*.so*')
+          if [ -n "$WRONG" ]; then
+            echo "libraries built for another architecture:" >&2
+            printf '%s' "$WRONG" >&2
+            exit 1
+          fi
+          echo "every bundled library is $EXPECT_MACHINE"
+
           rm -rf squashfs-root
 
           BIN=apps/desktop/src-tauri/target/release/ohmail
@@ -1093,6 +1209,19 @@ jobs:
       - name: Vendor the Node runtime
         run: node scripts/vendor-node.mjs --platform linux-arm64
 
+      # The same pin as the x86_64 job, and it matters more here: the plugin the
+      # bundler would otherwise download writes the x86_64 library triple into
+      # the launcher literally, so the arm64 build shipped a GTK module path no
+      # arm64 machine has. See the x86_64 job for the whole argument.
+      - name: Pin the AppImage's GTK plugin to this repository's copy
+        run: |
+          set -euo pipefail
+          TOOLS="${XDG_CACHE_HOME:-$HOME/.cache}/tauri"
+          mkdir -p "$TOOLS"
+          install -m 0755 apps/desktop/src-tauri/linux/linuxdeploy-plugin-gtk.sh \
+            "$TOOLS/linuxdeploy-plugin-gtk.sh"
+          ls -la "$TOOLS/linuxdeploy-plugin-gtk.sh"
+
       # The bundle is smoked inside this script, on this platform, before the app
       # is packaged — see the header.
       - name: Build the engine-bearing app, smoking its bundle
@@ -1171,6 +1300,67 @@ jobs:
           # job this line reads as routine; here it is the first execution of an
           # arm64 runtime this project has ever performed.
           squashfs-root/usr/lib/ohmail/runtime/node --version
+
+          # ── THE LAUNCHER, READ OUT OF THE ARTIFACT ────────────────────────
+          #
+          # The same four assertions as the x86_64 job, which argues each of
+          # them. Repeated rather than shared because they are an audit of a
+          # DIFFERENT artifact — assertion 3 in particular exists because this
+          # build, and only this build, was carrying the other architecture's
+          # library directory.
+          TRIPLE=aarch64-linux-gnu
+          EXPECT_MACHINE="AArch64"
+          HOOK=squashfs-root/apprun-hooks/linuxdeploy-plugin-gtk.sh
+          test -f "$HOOK"
+          cat "$HOOK"
+
+          SHADOWED="$(find squashfs-root -name 'libwayland-client.so*' -print)"
+          if [ -n "$SHADOWED" ]; then
+            echo "the AppImage bundles a library the host must provide:" >&2
+            printf '%s\n' "$SHADOWED" >&2
+            exit 1
+          fi
+
+          FORCED="$(grep -a '^export GDK_BACKEND=' "$HOOK" || true)"
+          if [ -n "$FORCED" ]; then
+            echo "the launcher forces a display backend: $FORCED" >&2
+            exit 1
+          fi
+
+          TRIPLES="$(grep -aoE '[a-z0-9_]+-linux-gnu' "$HOOK" | sort -u || true)"
+          echo "library triples named by the launcher: $TRIPLES"
+          FOREIGN="$(printf '%s\n' "$TRIPLES" | grep -v "^$TRIPLE$" | grep -v '^$' || true)"
+          if [ -n "$FOREIGN" ]; then
+            echo "the launcher names another architecture's directories: $FOREIGN" >&2
+            exit 1
+          fi
+
+          grep -aq 'OHMAIL_SYSTEM_WEBKIT' "$HOOK" || {
+            echo "the launcher has no OHMAIL_SYSTEM_WEBKIT escape" >&2; exit 1; }
+
+          ENTRY=squashfs-root/usr/share/applications/ohmail.desktop
+          test -f "$ENTRY"
+          cat "$ENTRY"
+          grep -aqx 'Exec=ohmail %U' "$ENTRY" || {
+            echo "the desktop entry does not hand the URL to the app" >&2; exit 1; }
+          grep -aq '^MimeType=.*x-scheme-handler/mailto' "$ENTRY" || {
+            echo "the desktop entry no longer claims mailto" >&2; exit 1; }
+          grep -aqx 'StartupWMClass=ohmail' "$ENTRY" || {
+            echo "the desktop entry cannot be matched to the window" >&2; exit 1; }
+
+          WRONG=""
+          while IFS= read -r so; do
+            m="$(readelf -h "$so" 2>/dev/null | sed -n 's/^ *Machine: *//p' || true)"
+            if [ -z "$m" ]; then continue; fi
+            if [ "$m" != "$EXPECT_MACHINE" ]; then WRONG="$WRONG  $so ($m)"$'\n'; fi
+          done < <(find squashfs-root -type f -name '*.so*')
+          if [ -n "$WRONG" ]; then
+            echo "libraries built for another architecture:" >&2
+            printf '%s' "$WRONG" >&2
+            exit 1
+          fi
+          echo "every bundled library is $EXPECT_MACHINE"
+
           rm -rf squashfs-root
 
           BIN=apps/desktop/src-tauri/target/release/ohmail

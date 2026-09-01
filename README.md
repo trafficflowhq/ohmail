@@ -18,7 +18,7 @@ source, AGPL-3.0, no account.
 
 [![build](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml/badge.svg)](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml)
 [![GitHub stars](https://img.shields.io/github/stars/trafficflowhq/ohmail?style=flat&label=%E2%98%85&color=a3461c)](https://github.com/trafficflowhq/ohmail/stargazers)
-[![latest release](https://img.shields.io/badge/download-v0.13.3-a3461c)](https://github.com/trafficflowhq/ohmail/releases/latest)
+[![latest release](https://img.shields.io/badge/download-v0.13.4-a3461c)](https://github.com/trafficflowhq/ohmail/releases/latest)
 [![licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-a3461c)](LICENSE)
 [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-111111)](#macos)
 [![Windows 10+](https://img.shields.io/badge/Windows-10%2B-111111)](#windows)
@@ -368,6 +368,19 @@ DMG does, because ELF has no equivalent of a universal binary.
 
 The `.deb` installs with `sudo apt install ./ohmail-linux-amd64.deb`
 (`./ohmail-linux-arm64.deb` on arm64) and pulls in WebKitGTK.
+
+> [!TIP]
+> **If the window opens and never draws anything**, run it against your own
+> distribution's GTK and WebKitGTK instead of the copies inside the AppImage:
+> ```bash
+> OHMAIL_SYSTEM_WEBKIT=1 ./ohmail-linux-x86_64.AppImage
+> ```
+> The AppImage carries most of its own libraries but takes the graphics drivers
+> from the machine it runs on, and the two have to agree. 0.13.4 fixed the case
+> that was known to break — the log line to look for is `Could not create default
+> EGL display` — and this is the way out if a distribution finds another one. It
+> needs `libwebkit2gtk-4.1` installed, which every desktop that ships a GTK
+> browser engine already has.
 
 > [!NOTE]
 > **What arm64 is and is not verified on.** The arm64 build is compiled, tested
