@@ -795,25 +795,40 @@ struct Shared {
     last_exit: Option<Exit>,
     /// Set by the frame reader when the stream stops being readable as frames. Unrecoverable.
     fault: Option<String>,
-    /// The FIRST line of this run's diagnostics that named an error, bounded — the child's own
-    /// account of why it is about to die.
+    /// The FIRST and the LATEST line of this run's diagnostics that named an error, bounded — the
+    /// child's own account of why it is about to die.
     ///
-    /// **It exists so the give-up message can stop guessing.** For its whole life that sentence
+    /// **They exist so the give-up message can stop guessing.** For its whole life that sentence
     /// asserted that another running copy of ohmail *was* the cause, which is a claim this file
     /// has never had evidence for and which was flatly wrong for the one failure that took the
     /// whole Windows platform down: the engine's stderr said
-    /// `Error: EISDIR: illegal operation on a directory, lstat 'C:'` on all four attempts, the
-    /// log file had it, and the sentence the user got named a second copy instead.
+    /// `Error: EISDIR: illegal operation on a directory, lstat 'C:'` on all four attempts, the log
+    /// file had it, and the sentence the user got named a second copy instead.
     ///
-    /// FIRST rather than last, because that is where the cause is. A runtime that dies on startup
-    /// prints its error and then a stack trace and then its own version banner; keeping the last
-    /// line would report `Node.js v22.23.2`.
+    /// ── WHY BOTH, RATHER THAN ONE SLOT AND A RULE ───────────────────────────────────────────
+    ///
+    /// Which one is the diagnosis depends on whether the run ever SERVED. A run that never started
+    /// is diagnosed by its first error — a runtime that cannot resolve its main module prints the
+    /// cause, then a stack trace, then its own version banner, and quoting the last line would
+    /// report `Node.js v22.23.2`. A run that served and later died is diagnosed by its latest —
+    /// an earlier `request_failed` is something the run SURVIVED, and reporting it as the cause of
+    /// a crash eight hours later is the same species of wrong diagnosis as blaming a second copy.
+    ///
+    /// The first draft chose between them HERE, by reading `ready` as each line arrived. That is a
+    /// race and a review caught it: `ready` is set by the frame reader off **stdout** while this
+    /// is written by the forwarder off **stderr**, two threads on two pipes, so which one wins is
+    /// the scheduler's answer rather than the child's emission order. An engine that announced
+    /// itself and then failed a request could have both lines classified as "still starting".
+    ///
+    /// So both are kept and NEITHER is interpreted here. The supervisor chooses after it has
+    /// joined both readers and knows what the run actually did.
     ///
     /// Per RUN, like `ready` and the host signals — an error belongs to the child that wrote it.
     /// Nothing new reaches a person that was not already going to this process's stderr and the
     /// log file verbatim; what changes is that one line of it is also put where the failure is
     /// read.
-    last_error: Option<String>,
+    first_error: Option<String>,
+    latest_error: Option<String>,
     /// The engine's own account of its host-mode listener, read off its diagnostic stream —
     /// `host_listening`, `host_listener_skipped`, `host_listen_failed`, `host_config_invalid`.
     /// Per RUN, like `ready`: cleared when a new child starts, because a signal belongs to the
@@ -861,7 +876,8 @@ fn new_shared(state: EngineState, finished: bool) -> Shared {
         boot_phase: None,
         last_exit: None,
         fault: None,
-        last_error: None,
+        first_error: None,
+        latest_error: None,
         host_signal: None,
         lan_signal: None,
         stop: false,
@@ -1542,11 +1558,37 @@ impl Inner {
     }
 }
 
+/// Which of a run's two error lines is its diagnosis, given what the run actually did.
+///
+/// A PURE FUNCTION OF `served`, AND THAT IS THE WHOLE POINT. The rule used to be applied inside the
+/// stderr forwarder by reading `ready`, which a review showed is a race: `ready` is written by the
+/// frame reader off stdout while the errors arrive on stderr, so an engine that announced itself
+/// and immediately logged a recoverable error could have that line classified as a startup failure
+/// and kept — reporting something the run survived as the thing that killed it. Here the only
+/// input is the run's settled outcome, and the four combinations are driven directly by
+/// `the_diagnosis_of_a_run_is_chosen_by_what_the_run_did` rather than by a thread schedule.
+///
+///  · **Did not serve** — a startup failure, diagnosed by its FIRST error. What follows is the
+///    consequence: stack frames, a version banner, a connection that closed because the first
+///    thing died.
+///  · **Served** — healthy and then not, diagnosed by its LATEST. An earlier `request_failed` is
+///    something the run came through.
+///
+/// Either side falls back to the other, because a run with exactly one error line has it in both
+/// slots and a run with none has it in neither.
+fn diagnosis(served: bool, first: Option<String>, latest: Option<String>) -> Option<String> {
+    if served {
+        latest.or(first)
+    } else {
+        first.or(latest)
+    }
+}
+
 fn supervise(inner: Arc<Inner>, launch: Launch) {
     let mut attempt: u32 = 1;
     // THE CRASH LOOP'S OWN DIAGNOSTIC, WHICH OUTLIVES THE RUN THAT PRODUCED IT.
     //
-    // `Shared::last_error` belongs to one child, because a status read between runs must not
+    // `Shared`'s two error slots belong to one child, because a status read between runs must not
     // report the previous child's error as this one's. The GIVE-UP message needs the opposite
     // lifetime: attempts do not have to fail identically, and a fourth attempt that dies without
     // saying anything would otherwise make the shell announce that the engine "wrote nothing that
@@ -1649,7 +1691,8 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
             // line: the give-up message must quote the attempt that actually just failed.
             s.host_signal = None;
             s.lan_signal = None;
-            s.last_error = None;
+            s.first_error = None;
+            s.latest_error = None;
             // THE DEADLINE BELONGS TO ONE RUN, AND CARRYING IT INTO THE NEXT KILLS THE NEXT.
             //
             // Found by the crash-loop tests rather than reasoned about: a run torn down for a
@@ -1679,7 +1722,7 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
         let _ = forwarder.join();
 
         let ran = started.elapsed();
-        let (served, fault, last_error) = {
+        let (served, fault, first_error, latest_error) = {
             let mut s = inner.shared.lock().expect("engine state");
             // THE SENDER GOES BEFORE THE JOIN, AND THE OTHER ORDER DEADLOCKS.
             //
@@ -1690,11 +1733,11 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
             // engine had died, which is precisely the failure the drain exists to prevent.
             s.stdin = None;
             s.pid = None;
-            // `last_error` is CLONED rather than taken: its documented lifetime is "cleared when a
-            // new child starts", and emptying it here would quietly make it "cleared when a run
-            // ends" — which reads the same until something asks about the engine between the two.
-            // The forwarder thread has already joined, so this is the whole of what it saw.
-            (s.ready.is_some(), s.fault.take(), s.last_error.clone())
+            // The two error slots are CLONED rather than taken: their documented lifetime is
+            // "cleared when a new child starts", and emptying them here would quietly make it
+            // "cleared when a run ends" — which reads the same until something asks about the
+            // engine between the two. The forwarder has already joined, so this is all it saw.
+            (s.ready.is_some(), s.fault.take(), s.first_error.clone(), s.latest_error.clone())
         };
         let _ = writer.join();
         // EVERY WAITER, FAILED, BEFORE ANYTHING ELSE IS DECIDED.
@@ -1725,11 +1768,16 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
         }
         log_exit(&exit, fault.as_deref());
 
+        // THE CHOICE IS MADE HERE, WHERE `served` IS FINAL. Both readers have joined, so this is
+        // the run's actual outcome rather than whatever `ready` happened to hold while a line was
+        // being read. See `Shared::first_error` for why it cannot be made as the lines arrive.
+        let run_error = diagnosis(served, first_error, latest_error);
+
         // AN ATTEMPT THAT SAID NOTHING DOES NOT ERASE ONE THAT DID. Replaced only by a later
         // attempt that also named an error, so the give-up message quotes the newest real account
         // of the failure rather than the last attempt's silence.
-        if last_error.is_some() {
-            across_attempts = last_error;
+        if run_error.is_some() {
+            across_attempts = run_error;
         }
 
         // A run that actually served, for long enough to have been useful, is not evidence of a
@@ -2374,23 +2422,17 @@ fn forward_diagnostics(mut stderr: ChildStderr, inner: &Arc<Inner>) {
                                     Some(signal);
                             }
                             if let Some(named) = error_line(line) {
+                                // BOTH ENDS RECORDED, NEITHER INTERPRETED. Which of them is the
+                                // diagnosis depends on whether the run served, and this thread
+                                // cannot answer that: `ready` arrives on the OTHER pipe, read by
+                                // another thread, so consulting it here would make the answer a
+                                // scheduling outcome. The supervisor decides once both readers
+                                // have joined. See `Shared::first_error`.
                                 let mut s = inner.shared.lock().expect("engine state");
-                                // FIRST WHILE STARTING, LATEST ONCE SERVING — and `ready` is what
-                                // tells them apart, which is a signal this file already keeps.
-                                //
-                                // A run that never announced itself failed to START, and a
-                                // startup failure's cause is its FIRST error: what follows is the
-                                // consequence — stack frames, a sign-off banner, the connection
-                                // that closed because the first thing died. A run that DID
-                                // announce itself was healthy and then stopped being healthy, so
-                                // the newest error is the one nearest whatever killed it and an
-                                // earlier `request_failed` or `sync_cycle_failed` is history the
-                                // run survived. Keeping the first line in that case would report
-                                // a recoverable error as the cause of a crash.
-                                let starting = s.ready.is_none();
-                                if !starting || s.last_error.is_none() {
-                                    s.last_error = Some(named);
+                                if s.first_error.is_none() {
+                                    s.first_error = Some(named.clone());
                                 }
+                                s.latest_error = Some(named);
                             }
                         }
                         carry.clear();

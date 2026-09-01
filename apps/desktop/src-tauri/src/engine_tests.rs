@@ -772,6 +772,31 @@ fn the_error_line_recogniser_picks_the_line_that_names_the_cause() {
     assert!(quoted.ends_with('…'));
 }
 
+/// THE RULE THAT PICKS THE LINE, DRIVEN DIRECTLY RATHER THAN RACED.
+///
+/// `a_run_that_served_is_diagnosed_by_its_last_error_not_its_first` exercises this through a real
+/// child, which can only reach the timings that child happens to produce. The race a review found
+/// — `ready` being read on the stderr thread while the frame reader was still setting it — is
+/// closed by the rule taking the run's SETTLED outcome as an argument, so all four combinations
+/// are reachable here with no scheduling involved.
+#[test]
+fn the_diagnosis_of_a_run_is_chosen_by_what_the_run_did() {
+    let first = || Some("Error: EISDIR, lstat 'C:'".to_string());
+    let latest = || Some("Error: ENOSPC, write".to_string());
+
+    // Never served: the startup failure's first error, and everything after it is consequence.
+    assert_eq!(diagnosis(false, first(), latest()), first());
+    // Served and then died: the newest, because the earlier one is something it came through.
+    assert_eq!(diagnosis(true, first(), latest()), latest());
+
+    // One line only — it sits in both slots in the real thing, and either side falls back anyway.
+    assert_eq!(diagnosis(false, None, latest()), latest());
+    assert_eq!(diagnosis(true, first(), None), first());
+    // Nothing said at all is what makes the give-up message admit it does not know.
+    assert_eq!(diagnosis(true, None, None), None);
+    assert_eq!(diagnosis(false, None, None), None);
+}
+
 /// The real probe, against a real file, in both directions. Everything above injects a filesystem;
 /// this is the one test that pins what the SHIPPED predicate actually answers — without it the
 /// injected tests would all be consistent with a `look` that was wrong.
