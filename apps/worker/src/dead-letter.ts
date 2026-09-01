@@ -249,6 +249,28 @@ export function classifyIngestFault(err: unknown): IngestFault {
 
   const code = codeOf(err);
   if (code) {
+    // ── A SERVER-CEILING BREACH IS THE HOST'S, NOT THE MESSAGE'S ─────────────────────────────
+    //
+    // `EIMAPBOUND` is the adapter's refusal when the mailbox's own IMAP server exceeds a ceiling
+    // on a value IT chose — folders in a LIST, UIDs in an enumeration, hits in a SEARCH, bytes
+    // past a declared `RFC822.SIZE`, or a wall clock. Nothing about it is evidence about a
+    // message: usually no message has been read at all, and the ones that were are fine.
+    //
+    // Without this arm it fell to the catch-all at the bottom — `domain: "message"`,
+    // `"unclassified"`, `deterministic: false`. That is retried twice and then WRITTEN OFF, so a
+    // server tripping a ceiling every cycle would earn up to {@link MAX_DEAD_LETTERS_PER_CYCLE}
+    // durable failure rows per cycle against messages that are still sitting on the server and
+    // still perfectly readable — the durable lie this module's own contract exists to prevent.
+    //
+    // The infrastructure domain is what that outcome should be, by this file's own definition: it
+    // "covers both sockets in play here — the customer's IMAP host and our own database — because
+    // neither is the message's fault", so the row is left exactly as it was and the cycle fails.
+    // Which is the correct answer: the MAILBOX is the unit of this failure, and the mailbox's
+    // ordinary quarantine cadence is what makes it visible.
+    //
+    // Duck-typed on the code rather than by importing the error class, which is why that class
+    // publishes one: this module has no business linking the IMAP adapter.
+    if (code === "EIMAPBOUND") return { domain: "infrastructure" };
     // Both sets, because on the ingest path the only socket is the database's.
     if (PG_DRIVER_CODES.has(code) || TRANSPORT_ERRNOS.has(code)) return { domain: "infrastructure" };
     const cls = sqlStateClass(code);
