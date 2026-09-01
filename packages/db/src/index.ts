@@ -44,6 +44,15 @@ export { junkSweepCandidateWhere, JUNK_SWEEP_SOURCE_PILE } from "./junk-sweep.js
 // runtime). Reaches `schema-mail.js` alone, so the closure rule above holds.
 export { upsertDesiredSeen } from "./flag-intent.js";
 
+// The ONE spelling of "a stand-down closes the appointments it can no longer keep" — same
+// argument as the line above, four call sites (the sidecar's lease gate and its launch catch-up,
+// the worker's gate, the reconcile cron), and the worker may not import services at runtime.
+// Reaches `schema-mail.js`, `change-log.js` and `mailbox-errors.js` alone.
+export {
+  closeStoodDownAppointments, STAND_DOWN_SEND_SENTENCES,
+  type StandDownSendsInput, type StandDownSendsResult,
+} from "./stand-down-sends.js";
+
 export {
   allocateSeq, allocateSeqRange, recordChange, recordChanges, minRetainedSeq, seqBounds,
   CHANGE_LOG_CHANNEL, changeWakePayload, parseChangeWake,

@@ -74,8 +74,18 @@ export interface TakeoverAuthorizationResult {
 }
 
 export interface AuthorizeTakeoverInput {
-  /** The mailbox address, as the install knows it. Matched case-insensitively. */
-  address: string;
+  /**
+   * WHICH MAILBOX — by address or by id, and exactly one of them.
+   *
+   * The CLI has only an address: it reads the same environment the engine does, and the mailbox
+   * is named once there. The Settings pane has only an id, because it is looking at a row it
+   * already fetched — and an address would be strictly worse there, since the pane folds two
+   * rows for one address (a live one and a superseded tombstone) and the address alone cannot
+   * say which of them the person pressed. The address arm keeps its ordering rule for the same
+   * reason; the id arm needs none.
+   */
+  address?: string;
+  mailboxId?: string;
   now: Date;
 }
 
@@ -94,6 +104,9 @@ export async function authorizeOrganizerTakeover(
   db: LocalDb,
   input: AuthorizeTakeoverInput,
 ): Promise<TakeoverAuthorizationResult> {
+  if (!input.address && !input.mailboxId) {
+    throw new Error("authorizeOrganizerTakeover: one of address or mailboxId is required");
+  }
   const [row] = await db
     .select({
       id: mailboxes.id,
@@ -101,7 +114,9 @@ export async function authorizeOrganizerTakeover(
       disabledReason: mailboxes.disabledReason,
     })
     .from(mailboxes)
-    .where(sql`lower(${mailboxes.address}) = ${input.address.toLowerCase()}`)
+    .where(input.mailboxId
+      ? eq(mailboxes.id, input.mailboxId)
+      : sql`lower(${mailboxes.address}) = ${input.address!.toLowerCase()}`)
     .orderBy(sql`(${mailboxes.status} <> 'disabled') desc`)
     .limit(1);
 

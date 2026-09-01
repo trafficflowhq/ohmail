@@ -13,7 +13,10 @@ import { DEFAULT_OHBOX_POLICY, providerAuthservIds, resolveOhboxPolicy } from "@
 // then the private half. `packages/core` → `@trafficflow/db` is a real edge (`pipeline.ts` imports
 // `classifyLedgerSource`, `drizzle-repo.ts` imports the tables), so this file should not be the
 // module that enters that graph.
-import { accountSettings, mailboxCredentials, mailboxes, type MailboxDisabledReason, type Tx } from "@trafficflow/db";
+import {
+  accountSettings, closeStoodDownAppointments, mailboxCredentials, mailboxes,
+  type MailboxDisabledReason, type Tx,
+} from "@trafficflow/db";
 import {
   attachmentsService, awayResponderService, contactsService, draftingService, draftsService,
   kbService, runScheduledSendPass, scheduleService, tagsService,
@@ -45,6 +48,10 @@ import { desktopHostRoutes } from "@trafficflow/api/desktop-host";
 // install model has to apply the identical rule and `apps/desktop` declares no `@trafficflow/*`
 // dependency — see the header of `credential-host.ts` for why one definition rather than two.
 import { credentialIsForeign, credentialIsForeignSmtp, sealedSmtpHost } from "./credential-host.js";
+// The exit from a stand-down, as a ceremony rather than a flag — the SAME function the
+// `organize-here` CLI runs. See its header for why status, reason and the one-shot stamp move
+// together, and this file's `handle` for why the desktop door needs a route onto it.
+import { authorizeOrganizerTakeover } from "./organize-here.js";
 import { hostPairRoutes } from "./host-pair-routes.js";
 // The static half of the host door — the built browser client the QR sends a phone to, served
 // beside the API out of one `handleHost`. The route table wins; this covers everything else.
@@ -1713,6 +1720,51 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     let takeoverAuthorized = world.takeoverAuthorizedAt !== null;
 
     /**
+     * CLOSE THE SEND-LATER APPOINTMENTS A STAND-DOWN ORPHANS — the local half of
+     * `closeStoodDownAppointments`, which holds the whole argument for why they are FAILED rather
+     * than handed over.
+     *
+     * Never throws: it is called from the stand-down path and from the launch below, and neither
+     * may be made contingent on it. A failure is logged and retried — the next launch of a
+     * still-stood-down install runs the catch-up again, and the row it would close is still
+     * exactly as it was.
+     */
+    const standDownAppointments = async (reason: MailboxDisabledReason): Promise<void> => {
+      try {
+        const r = await closeStoodDownAppointments(db as unknown as Tx, {
+          accountId: world.accountId, mailboxId: world.mailboxId, reason, now: now(),
+        });
+        // Only when something closed: an install with no appointments — the overwhelming case —
+        // stays silent on every stand-down and every launch, the rule every pass here follows.
+        if (r.closed > 0) log("scheduled_sends_stood_down", { closed: r.closed, disabledReason: reason });
+      } catch (err) {
+        log("scheduled_sends_stand_down_failed", {
+          err,
+          reason: "a scheduled send this install can no longer make was not closed with its " +
+            "sentence; the row still says it will send, and the next launch tries again",
+        });
+      }
+    };
+
+    /**
+     * THE LAUNCH CATCH-UP — a stood-down install closes its own appointments on every start.
+     *
+     * The stand-down hook above covers the transition. This covers the STATE, and it is needed
+     * for three cases the transition cannot reach: an install that stood down before this code
+     * existed (which is every orphan in the field today), one whose close failed, and one that
+     * has been relaunched since — because `mayOrganize` returns at `priorStandDown` without
+     * reaching the lease arm, so nothing on a later launch would ever run the close.
+     *
+     * It is HERE — in the assembly, on the row's own memory — rather than inside `start()`,
+     * because `start()` returns before the gate when no password is stored, and a stood-down
+     * install with a forgotten password is exactly one whose Drafts screen someone opens. The
+     * write is one indexed UPDATE that matches nothing on a settled install.
+     *
+     * Awaited, so the mirror is true before the bridge serves its first request.
+     */
+    if (priorStandDown) await standDownAppointments(priorStandDown as MailboxDisabledReason);
+
+    /**
      * THE PORTABLE ORGANIZER PROFILE — the LOCAL half, which is the same composition Cloud runs
      * (`@trafficflow/worker/profile`), handed this install's lease identity and this install's
      * store. One serialization of one store, or LOCAL and CLOUD would write documents that
@@ -1817,6 +1869,23 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           reason: "this install has stopped organizing regardless; the row could not record why",
         });
       }
+      // ── AND THE APPOINTMENTS THIS INSTALL CAN NO LONGER KEEP ARE CLOSED, HERE ──────────────
+      //
+      // `sendScheduled()` is inside `drain`, and `drain` is behind this gate — so from the line
+      // below, the scheduled-send pass will never run on this install again. Everything it owed
+      // is owed now or never: the appointment does not travel (the portable profile carries no
+      // drafts, deliberately), and `SCHEDULED_SEND_EXPIRY_MS` — the constant that exists so a
+      // late appointment is closed with a sentence rather than delivered quietly — is enforced
+      // INSIDE that unreachable pass. Without this call a pending scheduled send is never
+      // delivered, never reported as failed, and the Drafts screen goes on saying "Sends Tue
+      // 14:50" for a time that has gone, for ever. Measured; see `closeStoodDownAppointments`.
+      //
+      // NOT folded into the stand-down UPDATE above as one transaction, and that is deliberate:
+      // the two writes have different owners (the worker's twin is a FENCED lifecycle write) and
+      // different failure answers, and a stand-down must never be contingent on closing an
+      // appointment. A failed close is retried by the launch catch-up while the row still says
+      // stood down.
+      await standDownAppointments(outcome.reason);
       stopped = true;
       if (timer) clearTimeout(timer);
       try {
@@ -2454,18 +2523,37 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       world,
       sessionToken: session.token,
       handle: async (req) => {
-        // ── ONE ROUTE AHEAD OF THE TABLE, AND WHY IT IS NOT IN THE TABLE ────────────────────
+        // ── TWO ROUTES AHEAD OF THE TABLE, AND WHY THEY ARE NOT IN IT ──────────────────────
         //
         // `DELETE /local/stored-login` is a DESKTOP-ONLY action: forget the password sealed on
         // THIS machine. `packages/api`'s route table is shared with the hosted service, where the
         // idea has no meaning — there is no per-install key and no local store to forget from — so
         // adding it there would be hosted surface invented for a desktop lifecycle.
         //
-        // It carries the same gate every other request on this transport carries: the per-launch
+        // `POST /local/organizer/takeover` is the second, on the identical argument: it authorizes
+        // ONE becoming on THIS install's own mailbox row, which is a fact about a local store the
+        // hosted service does not have. The hosted equivalent is `POST /mailboxes/:id/takeover`
+        // on an account, and it is a different ceremony with a different authority — this one is
+        // the machine's own login, which is the boundary on this door.
+        //
+        // Both carry the same gate every other request on this transport carries: the per-launch
         // bearer, resolved by the same `resolveSession` the middleware chain runs. The bearer is
-        // added shell-side and never reaches the window, so a page cannot compose this call itself.
+        // added shell-side and never reaches the window, so a page cannot compose these calls
+        // itself. The Cloud door (`cloud-engine.ts`) is a different composition and serves
+        // neither, which is what keeps "organize from this machine" off a mirror this install
+        // does not own — structurally, rather than by a check.
+        //
+        // AND THEY ARE ON `handle` ALONE, NEVER `handleHost` OR `handleLan`. Those two serve a
+        // PAIRED DEVICE over the network, and both of these actions are statements about THIS
+        // COMPUTER — forget the password sealed on this disk; make this machine the organizer of
+        // a mailbox. A phone on the same network asserting either would be a remote device
+        // deciding something whose whole authority is that somebody is sitting at the machine.
+        // The separation is the route table's: `desktopHostRoutes` has never heard of these
+        // paths, so both doors fall through to their static handler.
         const url = new URL(req.url);
-        if (req.method === "DELETE" && url.pathname === "/local/stored-login") {
+        const localAction = (req.method === "DELETE" && url.pathname === "/local/stored-login")
+          || (req.method === "POST" && url.pathname === "/local/organizer/takeover");
+        if (localAction) {
           const header = req.headers.get("authorization");
           const token = header && /^Bearer\s+/i.test(header)
             ? header.replace(/^Bearer\s+/i, "").trim()
@@ -2477,11 +2565,66 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               { status: 401, headers: { "content-type": "application/json" } },
             );
           }
-          const cleared = await forgetStoredLogin();
-          return new Response(JSON.stringify({ cleared }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
+          if (req.method === "DELETE") {
+            const cleared = await forgetStoredLogin();
+            return new Response(JSON.stringify({ cleared }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            });
+          }
+          // ── "ORGANIZE FROM THIS MACHINE", THE ROUTE ──────────────────────────────────────
+          //
+          // The ceremony is `authorizeOrganizerTakeover`'s and is NOT re-implemented here: it
+          // writes status, reason and the one-shot stamp in ONE statement, and any two of the
+          // three without the third leave a row meaning something the user did not ask for (see
+          // that function's header). This handler is the transport and the outcome, nothing more.
+          //
+          // IT AUTHORIZES; IT DOES NOT SEIZE. The mailbox is still the authority — the next
+          // launch reads the lease first, and an organizer that is actively renewing its claim
+          // keeps the mailbox whatever was authorized here. That ordering is the reason this can
+          // be a button at all: it cannot produce two organizers, only a request to become one.
+          //
+          // AND IT DOES NOT RE-ARM THIS PROCESS. A stand-down set `stopped`, cleared the poll
+          // timer and closed the IMAP login; `priorStandDown` was read once at assembly. Undoing
+          // all of that from a request handler would mean re-opening a login and restarting the
+          // poll loop beside a `serialize` queue that has already been told this install
+          // organizes nothing — which is precisely the shape that produces two organizers on one
+          // mailbox. The stamp is durable, so the honest answer is the one the CLI has always
+          // given: authorized, and it takes effect on the next launch. The pane says so.
+          let body: { mailboxId?: unknown } = {};
+          try {
+            body = (await req.json()) as { mailboxId?: unknown };
+          } catch {
+            /* an absent or unparseable body is a missing mailboxId, answered below */
+          }
+          const mailboxId = typeof body.mailboxId === "string" ? body.mailboxId.trim() : "";
+          if (!mailboxId) {
+            return new Response(
+              JSON.stringify({ error: { code: "invalid_request", message: "mailboxId is required" } }),
+              { status: 400, headers: { "content-type": "application/json" } },
+            );
+          }
+          const result = await authorizeOrganizerTakeover(db, { mailboxId, now: now() });
+          log("organizer_takeover_authorized", {
+            // `verdict` and not `outcome`: `ALLOWED_FIELDS` carries the former, and a field the
+            // census drops is an instrumented line that says nothing in production.
+            verdict: result.outcome,
+            disabledReason: result.previousReason,
+            reason: "a person asked for this machine to organize this mailbox; the lease is " +
+              "still the authority and is read on the next launch",
           });
+          return new Response(
+            JSON.stringify({ outcome: result.outcome, previousReason: result.previousReason }),
+            {
+              // 200 for every outcome, including the three that write nothing: they are ANSWERS
+              // about the row, not refusals of the request, and the pane says a different
+              // sentence for each. A 409 here would make "this machine already organizes that
+              // mailbox" look like a failure to the person who pressed a button because they
+              // thought it did not.
+              status: 200,
+              headers: { "content-type": "application/json" },
+            },
+          );
         }
         return app.handle(req, depsFor());
       },

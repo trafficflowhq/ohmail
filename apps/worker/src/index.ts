@@ -1,7 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import {
   pruneIdempotencyKeys, noticeSinkFor, setNoticeSink, accountSettings, mailboxCredentials, mailboxes,
-  messages, folderState, junkSweepCandidateWhere,
+  messages, folderState, junkSweepCandidateWhere, closeStoodDownAppointments,
 } from "@trafficflow/db";
 import { makeOwnedDb, makeChangeWakeHub, type OwnedDb, type ChangeWakeFanout } from "@trafficflow/db/cloud";
 import {
@@ -102,7 +102,8 @@ import {
   classifyMailboxError, mailboxErrorDetail,
   stampMailboxSyncNow, stampInitialImportComplete, makeSyncWriteFence, type LeaderFence,
   accountsOf, loadServedAccounts, accountInShard,
-  type EnabledMailbox, type MailboxErrorPhase, type MailboxSyncBlockReason,
+  type EnabledMailbox, type MailboxDisabledReason, type MailboxErrorPhase,
+  type MailboxSyncBlockReason,
 } from "./mailboxes.js";
 import { OrganizerProfileSync } from "./profile.js";
 import {
@@ -1373,7 +1374,69 @@ export async function startWorkerWithLock(
             "not record why, so the UI will show an ordinary disabled mailbox",
         });
       }
+      // ── AND THE APPOINTMENTS THIS PROCESS CAN NO LONGER KEEP ARE CLOSED WITH A SENTENCE ────
+      //
+      // The mailbox leaves the roster from here (`loadEnabledMailboxes` excludes `disabled`), and
+      // a pending scheduled send does not travel — the portable profile carries configuration and
+      // deliberately no drafts. So the appointment is owed an ending now. See
+      // `closeStoodDownAppointments` for why FAILED rather than handed over: an adopted
+      // appointment is a window in which two organizers hold one send.
+      //
+      // Best-effort, like the write above it and for the same reason: standing down is a decision
+      // this process has already made and may not be made contingent on a second write. The
+      // hosted scheduled-send pass is the backstop — it refuses a `disabled` mailbox at due time
+      // and closes the row itself — so a fault here costs a worse sentence, never a silent send.
+      //
+      // ── DELIBERATELY NOT FENCED, AND THAT IS AN ARGUMENT RATHER THAN AN OMISSION ──────────
+      //
+      // Every lifecycle write on `mailboxes` carries {@link LeaderFence} because two CLOUD
+      // instances could otherwise both write one row across a shard handover. This write is
+      // justified by something else: the LEASE said another organizer holds this mailbox, and
+      // that is a fact about `ohmail/_meta` which any instance reading it reaches — a successor
+      // leader's own gate stands the same mailbox down on its own next pass. The fence arbitrates
+      // Cloud against Cloud; the lease arbitrates organizer against organizer, and the
+      // appointment is the organizer's.
+      //
+      // Fencing it would also break the ordinary case rather than an exotic one: `lifecycleWhere`
+      // refuses a mailbox that is ALREADY disabled, so `markMailboxStoodDown` returns false on
+      // every repeat stand-down — and a close gated on that answer would never run for the
+      // mailbox that has been stood down since before this code existed, which is precisely the
+      // population the fix is for.
+      await standDownAppointments(mb, outcome.reason);
       return false;
+    }
+
+    /**
+     * The stand-down's appointment close. Its own function rather than four inline statements in
+     * the gate, so the gate's stand-down arm still reads as one decision — and never throws, for
+     * the reason its call site gives. `toStandDown`'s post-loop detach is deliberately NOT a
+     * second call site: those runtimes are exactly the ones this gate already answered `false`
+     * for, so the close has already run for each of them.
+     */
+    async function standDownAppointments(
+      mb: { mailboxId: string; accountId: string }, reason: MailboxDisabledReason,
+    ): Promise<void> {
+      try {
+        const r = await closeStoodDownAppointments(db as unknown as Tx, {
+          accountId: mb.accountId, mailboxId: mb.mailboxId, reason, now: new Date(),
+        });
+        // Only when something closed: the overwhelming majority of stand-downs have no
+        // appointment to close and must stay silent.
+        if (r.closed > 0) {
+          log.warn("scheduled_sends_stood_down", {
+            mailboxId: mb.mailboxId, accountId: mb.accountId, closed: r.closed,
+            disabledReason: reason,
+            reason: "these scheduled sends were made by this organizer and cannot travel; each " +
+              "is now an ordinary draft carrying the sentence its Drafts row quotes",
+          });
+        }
+      } catch (err) {
+        log.error("scheduled_sends_stand_down_failed", {
+          mailboxId: mb.mailboxId, accountId: mb.accountId, err,
+          reason: "a scheduled send this process can no longer make was not closed with its " +
+            "sentence; the hosted pass refuses a disabled mailbox at due time and closes it there",
+        });
+      }
     }
 
     /**

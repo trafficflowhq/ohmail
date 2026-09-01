@@ -1,5 +1,5 @@
 import { makeOwnedDb, writeHeartbeat, clearHeartbeat } from "@trafficflow/db/cloud";
-import type { Tx } from "@trafficflow/db";
+import { closeStoodDownAppointments, type Tx } from "@trafficflow/db";
 import { providerAuthservIds, silentLogger, type Logger } from "@trafficflow/core";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
@@ -253,6 +253,40 @@ export async function runReconcileCron(
         log.error(cronEvent("reconcile", "stand_down_write_failed"), {
           mailboxId, accountId: row.accountId, err: writeErr,
           reason: "this sweep organizes nothing further regardless; the row could not record why",
+        });
+      }
+      // ── AND THE APPOINTMENTS THIS SWEEP CAN NO LONGER KEEP ARE CLOSED WITH A SENTENCE ──────
+      //
+      // The same call the always-on worker's gate makes, for the same reason: a pending scheduled
+      // send does not travel (the portable profile carries configuration and deliberately no
+      // drafts), and the mailbox leaves the roster from here. Reached from all FOUR of this
+      // function's callers because it is inside `standDown` — which is the whole argument for
+      // this function existing; see its header.
+      //
+      // Best-effort, like the write above it: standing down is already decided and may not be
+      // made contingent on a second write, and the hosted scheduled-send pass refuses a
+      // `disabled` mailbox at due time and closes the row itself. Unfenced for the reason the
+      // worker's twin gives in full: the fence arbitrates Cloud against Cloud, while this write
+      // is justified by the LEASE — a fact about `ohmail/_meta` every instance reads the same way
+      // — and a close gated on the fenced write would never run for a mailbox that is already
+      // `disabled`, which is the population that needs it most.
+      try {
+        const closed = await closeStoodDownAppointments(db as unknown as Tx, {
+          accountId: row.accountId, mailboxId, reason: err.reason, now: new Date(),
+        });
+        if (closed.closed > 0) {
+          log.warn(cronEvent("reconcile", "scheduled_sends_stood_down"), {
+            mailboxId, accountId: row.accountId, closed: closed.closed,
+            disabledReason: err.reason,
+            reason: "these scheduled sends were made by this organizer and cannot travel; each " +
+              "is now an ordinary draft carrying the sentence its Drafts row quotes",
+          });
+        }
+      } catch (closeErr) {
+        log.error(cronEvent("reconcile", "scheduled_sends_stand_down_failed"), {
+          mailboxId, accountId: row.accountId, err: closeErr,
+          reason: "a scheduled send this organizer can no longer make was not closed with its " +
+            "sentence; the hosted pass refuses a disabled mailbox at due time and closes it there",
         });
       }
       return { ran: false, reason: "stood-down" };

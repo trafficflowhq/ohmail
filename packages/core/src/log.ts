@@ -211,6 +211,21 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // the diff be the review. Contrast `causeClass`/`causeCode` below, which are derived from a
   // thrown value and therefore must NOT be spoofable by a payload.
   "syncBlockedReason", "op",
+  // ── `closed`: HOW MANY APPOINTMENTS A STAND-DOWN ENDED, added WITH the lines that emit it ──
+  //
+  // A mailbox changing organizer ends every pending send-later appointment on it — the pass that
+  // would have kept them is behind the gate that just said no, and the appointment does not
+  // travel. All three stand-down sites (the sidecar's lease gate, the worker's, the reconcile
+  // cron's) report the count, and the count is the ONLY thing they report about those messages:
+  // which message was scheduled, to whom and for when are facts about somebody's mail and stay in
+  // the database. Exactly the `flipped`/`merged`/`tripped` class one shelf up.
+  //
+  // Added here in the same change as the call sites, which is what the header of this list asks
+  // for and what the sidecar's census enforced in practice: the first run of that guard read
+  // `engine.ts → scheduled_sends_stood_down passes 'closed': expected 'dropped' to be 'keep'`,
+  // so without this entry the one line that records a person's send not happening would have been
+  // emitted with the number stripped out.
+  "closed",
   // ── counts and roster arithmetic (the worker's roster pass, kickstart, thread backfill) ──
   "accounts", "accountsAffected", "mailboxes", "maxMailboxes", "selected", "serving",
   "dropped", "unexplained", "examined", "resolved", "rerouted", "pruned", "count", "more",

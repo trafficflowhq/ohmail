@@ -288,6 +288,24 @@ export function foldByAddress<T extends { id: string; address: string; status: s
   });
 }
 
+/**
+ * The four answers `POST /local/organizer/takeover` can give, as the copy keys the pane owns.
+ *
+ * A narrowing function and not a bare template on the wire value, for `standDownToken`'s reason
+ * verbatim: an outcome this build does not know — an engine newer than this window, which the
+ * desktop's own update flow makes an ordinary state — would otherwise compose a key that does not
+ * exist and throw inside a render. `authorized` is the fallback because it is the outcome that
+ * changed something, and its sentence ("quit and reopen") is the one that is still useful when we
+ * cannot tell which of the four we were given.
+ */
+const TAKEOVER_OUTCOMES = ["authorized", "already_organizing", "removed", "no_mailbox"] as const;
+type TakeoverOutcome = (typeof TAKEOVER_OUTCOMES)[number];
+export function takeoverOutcome(wire: unknown): TakeoverOutcome {
+  return (TAKEOVER_OUTCOMES as readonly string[]).includes(wire as string)
+    ? (wire as TakeoverOutcome)
+    : "authorized";
+}
+
 export function DesktopMailboxes({ door }: { door?: string | null }) {
   const t = useTranslations("mailboxes");
   /* The SAME binding the sync line reads, and `refresh` is what its own comment offers this pane:
@@ -300,6 +318,16 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
   const [queued, setQueued] = useState<ReadonlySet<string>>(() => new Set());
   /** Mailboxes whose quiet-notice dismissal is in flight, so the button debounces (mail 0078). */
   const [dismissing, setDismissing] = useState<ReadonlySet<string>>(() => new Set());
+  /**
+   * The answer to "Organize from this machine", per mailbox — the outcome key the pane quotes
+   * back. Kept as the OUTCOME rather than a rendered sentence so the copy stays in the catalogue,
+   * and per mailbox rather than in the pane's one `problem` line because this one is not a
+   * failure: the sentence it needs is a durable instruction ("quit and reopen ohmail"), and a
+   * line that moves when some other row fails would take it away mid-read.
+   */
+  const [reclaimed, setReclaimed] = useState<ReadonlyMap<string, TakeoverOutcome>>(() => new Map());
+  /** Mailboxes whose takeover request is in flight, so the button debounces. */
+  const [reclaiming, setReclaiming] = useState<ReadonlySet<string>>(() => new Set());
   const cloud = door === "cloud";
   const heading = cloud ? t("modeCloud") : t("desktopModeLocal");
 
@@ -329,6 +357,59 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
       } catch (err) {
         setProblem(err instanceof Error ? err.message : String(err));
         setQueued((q) => {
+          const next = new Set(q);
+          next.delete(id);
+          return next;
+        });
+      }
+    })();
+  };
+
+  /**
+   * ASK FOR THIS MACHINE — the exit from a stand-down, and until it existed there was none.
+   *
+   * A desktop install that has stood down to another organizer had no way back at all. This pane
+   * rendered no control on a `disabled` row; the remedy this file used to name — "reconnect the
+   * address" — goes through the door chooser and is refused by the engine's own invariant that a
+   * disabled mailbox holds no credential ("This mailbox is disconnected. Reconnect it before
+   * setting new credentials."), which is the thing the person just did; and the authorized
+   * takeover existed on the Cloud webapp only. Measured on a released build against a claim whose
+   * last heartbeat was 25 minutes old: the install stood down with `verdict=available` and the
+   * only remaining cure was deleting a message from an IMAP folder by hand.
+   *
+   * `available` is correct and is not the defect: BECOMING an organizer always requires an
+   * explicit human action, which is exactly why a crashed machine's mailbox is not seized. The
+   * defect was that the product offered no such action on this door. This is it.
+   *
+   * IT AUTHORIZES, IT DOES NOT SEIZE — the engine reads the lease first on the next launch, and a
+   * holder that is still renewing keeps the mailbox. So this button cannot make two organizers;
+   * the worst it can do is ask and be told no, which the row then says.
+   *
+   * LOCAL DOOR ONLY. On the hosted door the mailbox belongs to an account, the takeover is the
+   * account's ceremony, and this install is looking at a mirror it does not own — the route
+   * simply is not served there. The pane's `cloud` test is the same one the header uses for every
+   * other asymmetry between the two doors.
+   */
+  const reclaim = (id: string): void => {
+    setProblem(null);
+    setReclaiming((q) => new Set(q).add(id));
+    void (async () => {
+      try {
+        const res = await bridgeFetch("/local/organizer/takeover", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ mailboxId: id }),
+        });
+        if (!res.ok) throw new Error(await reasonOf(res));
+        const body = (await res.json()) as { outcome?: unknown };
+        setReclaimed((m) => new Map(m).set(id, takeoverOutcome(body.outcome)));
+        // The row's own state moved (`disabled` → `connected` with the stamp), so the pane must
+        // re-read rather than keep rendering the stand-down it was showing.
+        refresh();
+      } catch (err) {
+        setProblem(err instanceof Error ? err.message : String(err));
+      } finally {
+        setReclaiming((q) => {
           const next = new Set(q);
           next.delete(id);
           return next;
@@ -404,9 +485,13 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
       {problem ? <p className="join-error">{problem}</p> : null}
 
       {/* ── ONE ROW PER ADDRESS, folded with the SAME key the rail and the browser pane use ──
-          A stood-down mailbox is reconnected by connecting the address again (this pane offers no
-          re-enable, and the partial unique index exists so that reconnect is possible), which
-          leaves the dead row behind for ever. Rendering `facts` raw put "Handed over to another
+          A stood-down mailbox is taken back with the row's own "Organize from this machine"
+          (`reclaim` above); connecting the address again mints a SECOND row, which is what the
+          partial unique index exists to permit and what leaves the dead row behind for ever.
+          This comment used to name that reconnect as the remedy, and it was wrong in a way that
+          cost a QA lane an afternoon: the door chooser's connect form refuses a disabled mailbox
+          with "Reconnect it before setting new credentials", so the instruction was circular and
+          the install had no exit at all. Rendering `facts` raw put "Handed over to another
           install" beside "Up to date" for one address — and once the rail began folding, the rail
           and this pane disagreed on the same screen, which is the defect the fold was for.
 
@@ -421,7 +506,22 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
             description={t("desktopLastChecked", { when: when(shown.lastSyncAt) })}
             value={stateOf(shown)}
             control={
-              /* Not offered on a DISCONNECTED mailbox: nothing is opening it, so a pass over it is
+              /* ── THE STOOD-DOWN ROW GETS THE ONE ACTION THAT ENDS A STAND-DOWN ────────────
+                 On the LOCAL door and only there, and only for a stand-down — `disabledReason`
+                 is the discriminator the whole product uses: `disabled` with a reason is a
+                 mailbox another organizer holds, `disabled` with none is a REMOVAL, and offering
+                 a takeover on a removal would resurrect a mailbox somebody deliberately took off
+                 this machine (`authorizeOrganizerTakeover` refuses it too, with `outcome:
+                 "removed"` — this is the surface half of the same rule). */
+              !cloud && shown.status === "disabled" && shown.disabledReason ? (
+                <Button
+                  className="mbx-btn"
+                  onClick={() => reclaim(shown.id)}
+                  disabled={reclaiming.has(shown.id) || reclaimed.has(shown.id)}
+                >
+                  {t("desktopOrganizeHere")}
+                </Button>
+              ) : /* Not offered on a DISCONNECTED mailbox: nothing is opening it, so a pass over it is
                  not a thing that can be asked for. The browser pane withholds it on the same test. */
               shown.status === "disabled" ? undefined : (
                 <Button
@@ -434,6 +534,14 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
               )
             }
           />
+          {/* WHAT THE ANSWER WAS, in its own note under the row it is about. `authorized` is the
+              only outcome that changed anything, and its sentence is an INSTRUCTION rather than a
+              confirmation: the stamp is durable and the engine reads the lease at launch, so the
+              mailbox moves on the next start and not on this press. The other three outcomes are
+              answers about the row, not failures, and each says its own true thing. */}
+          {reclaimed.has(shown.id) ? (
+            <SettingsNote>{t(`desktopOrganizeHere_${reclaimed.get(shown.id)!}`)}</SettingsNote>
+          ) : null}
           {superseded > 0 ? <SettingsNote>{t("superseded")}</SettingsNote> : null}
           {/* ── THE FORWARDING-DETECTION NOTICE (mail 0078), the browser pane's twin ─────────
               `showInboundQuiet` (shared shell, one rule for both surfaces) gates it: a standing
