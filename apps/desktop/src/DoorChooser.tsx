@@ -43,6 +43,7 @@ import {
   enterLocalDoor,
   signInToCloud,
   signInToCloudWithCode,
+  standingEngine,
   type DoorResult,
   type LocalDoorFields,
 } from "./doors.js";
@@ -193,7 +194,18 @@ export function DoorChooser({
             onBack={() => { setProblem(null); setStep("doors"); }}
             onCancel={onCancel}
             onSubmit={(fields) =>
-              attempt(() => enterLocalDoor(fields, providerById(fields.providerId)))
+              attempt(async () =>
+                /* THE STANDING ENGINE IS READ HERE, AT THE SUBMIT, AND THE ORDER OF THE DOOR
+                   DEPENDS ON IT. Reconfiguring an install that already holds a sealed password
+                   has to prove the NEW password before the shell is asked to commit the new
+                   settings — otherwise the replacement engine dials the new server with the old
+                   secret, and a refusal leaves the settings and the credential naming different
+                   hosts. `enterLocalDoor` cannot read this for itself: its own first act on the
+                   first-connect arm replaces the engine, which destroys the fact. Read at the
+                   submit rather than captured at render, because this form is opened over a
+                   running install from Settings and may sit on screen for minutes. */
+                enterLocalDoor(fields, providerById(fields.providerId), await standingEngine()),
+              )
             }
           />
         ) : (

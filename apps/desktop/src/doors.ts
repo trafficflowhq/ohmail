@@ -42,6 +42,7 @@ import {
   bridgeFetch,
   engineConfigure,
   engineStatus,
+  type EngineConfig,
   type EngineStatus,
 } from "./bridge-fetch.js";
 
@@ -488,14 +489,180 @@ export interface DoorResult {
 }
 
 /**
+ * The transport a door attempt is about, as one value.
+ *
+ * Named because {@link enterLocalDoor} hands the identical object to the shell (as settings) and
+ * to the engine (as the credential's transport), and those two must describe the same dial.
+ */
+interface LocalTransport {
+  host: string;
+  user: string;
+  port: number;
+  secure: boolean;
+}
+
+/**
+ * Two addresses, compared the way a mailbox row is looked up.
+ *
+ * `ensureLocalWorld` finds the mailbox by `lower(address)` (`apps/sidecar/src/identity.ts`), so
+ * that is the comparison that decides whether the engine will come back to the SAME row — and
+ * therefore whether the id in a status answer is still the id to seal a password onto. An absent
+ * address on either side is never a match: "the shell did not say" is not "they agree".
+ */
+function sameAddress(a: string | undefined, b: string): boolean {
+  const left = (a ?? "").trim().toLowerCase();
+  const right = b.trim().toLowerCase();
+  return left.length > 0 && left === right;
+}
+
+/**
+ * WHETHER THIS SUBMIT IS A RECONFIGURE OF THE MAILBOX ALREADY OPEN — the decision that picks the
+ * order the door takes, exported so a test can drive it without a shell.
+ *
+ * `standing` is what the shell said about the engine BEFORE this attempt touched anything.
+ * `enterLocalDoor` cannot read it for itself: its own first act on the other arm is
+ * `engine_configure`, which replaces the engine, so the fact this asks about is one the caller
+ * holds and the door destroys. A caller that passes nothing gets `false`, which is the answer
+ * that is correct when there is no engine standing — the first-connect order.
+ *
+ * Every clause is load-bearing, and each one is a case where sealing first would be wrong:
+ *
+ *  · `serving` WITH a `mailboxId` — there has to be a row to `PATCH`. A starting engine has none.
+ *  · `mode === "local"` — a hosted install's credential is a SESSION, and its mailbox row is a
+ *    mirror of somebody's account. Choosing the local door there is a door SWITCH, not a
+ *    reconfigure, and sealing a mail-server password onto the mirror's row would put a credential
+ *    on a mailbox this install is about to throw away.
+ *  · `credentialState === "ready"` — this is the precondition of the defect itself, not a
+ *    convenience. `ready` means the engine resolved a sealed password it can decrypt
+ *    (`engine.ts`: `credentialState: () => (await resolveLogin()).state`), which is exactly the
+ *    secret a relaunch against a new host would dial with. `absent` has nothing to leak and no
+ *    credential to diverge; `unreadable` means the keystore will not open the row, so the boot
+ *    dials with nothing and the install is already asking to be re-entered. Both take the
+ *    first-connect order, which is the one that works for them.
+ *  · the ADDRESS IS UNCHANGED — and this is the case that needed `ensureLocalWorld` read as
+ *    truth rather than assumed. It looks the mailbox up by `lower(address)` within the account
+ *    and INSERTS a fresh row when it finds none (`identity.ts`), so a changed address means the
+ *    engine that comes back will serve a DIFFERENT, newly minted mailbox id. Sealing onto the
+ *    standing id would put the new server's credential on a row that still names the old address
+ *    and that nothing will ever read. It also means the leak this reorder exists to stop cannot
+ *    happen there: the new row has no credential at all, so `resolveLogin()` answers `absent` and
+ *    the boot dials nothing. An address change therefore takes the first-connect order, and it is
+ *    safe on that arm rather than merely tolerated.
+ */
+export function reconfiguresLocalDoor(
+  standing: EngineStatus | null | undefined,
+  address: string,
+): standing is EngineStatus & { mailboxId: string } {
+  return (
+    !!standing &&
+    standing.state === "serving" &&
+    standing.mode === "local" &&
+    typeof standing.mailboxId === "string" &&
+    standing.mailboxId.length > 0 &&
+    standing.credentialState === "ready" &&
+    sameAddress(standing.address, address)
+  );
+}
+
+/**
+ * SEAL THE PASSWORD — the one request in this file that carries a secret, written once so the two
+ * orders below cannot disagree about what it sends.
+ *
+ * Returns null on success, or the sentence to show. The engine tries the password before it seals
+ * it, so a refusal here is the mail server's answer and not a stored credential that will fail
+ * quietly on the next launch.
+ *
+ * ── THE TRANSPORT GOES WITH IT, AND BOTH ORDERS DEPEND ON THAT ──────────────────────────────
+ *
+ * This body used to be the password alone, on the reasoning that the engine had just been
+ * configured with the transport and therefore already knew it. It knows it as a SETTINGS FILE;
+ * this route reads `mailbox_credentials`, and on a first connect there is no such row. The
+ * engine's boot inserts one only when a password arrives in its own config, which on this path it
+ * deliberately never does — the shell has no route for a secret. `ensureLocalWorld` inserts the
+ * `mailboxes` row and nothing else.
+ *
+ * So the service merged a pass-only patch over an absent stored meta, got a config with no host,
+ * and refused it: **"imap host is required"** — reported by the first external user against their
+ * own mail server (issue #5), who had in fact typed every field. The patch is a complete
+ * statement about the transport, which is what the merge is built to accept (patch wins field by
+ * field) and what `POST /mailboxes` has always sent.
+ *
+ * On the RECONFIGURE order it is that completeness that makes sealing-before-configuring possible
+ * at all: the mailbox service's `probedImapMeta` dials the MERGED PATCH, not whatever the running
+ * engine is configured for, so an engine still serving host A proves and seals the credential for
+ * host B. The stored `meta` then records the host that was actually DIALLED, and the service holds
+ * that invariant on its own account against a concurrent writer: it rebuilds the same merge under
+ * the mailbox row's lock and refuses with a 409 rather than store a combination no probe tried.
+ */
+async function sealLocalPassword(
+  mailboxId: string,
+  imap: LocalTransport,
+  password: string,
+): Promise<string | null> {
+  try {
+    const res = await bridgeFetch(`/mailboxes/${encodeURIComponent(mailboxId)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ imap: { ...imap, pass: password } }),
+    });
+    return res.ok ? null : await refusal(res);
+  } catch (err) {
+    return sentence(err);
+  }
+}
+
+/**
  * Door one: this machine opens the user's own mailbox.
  *
- * Settings over the command, password over the bridge, in that order and never the other way —
- * the shell has no route for a password and the engine has no route for a data directory.
+ * Settings over the command, password over the bridge, and never the other way — the shell has no
+ * route for a password and the engine has no route for a data directory.
+ *
+ * ── THE TWO ORDERS, AND WHY THERE ARE TWO ───────────────────────────────────────────────────
+ *
+ * `engine_configure` REPLACES the engine: it writes the settings and starts a new process against
+ * them. Which side of that the password goes on is not a style question, and one order is wrong
+ * on each arm of the same step.
+ *
+ * A FIRST CONNECT must configure first. There is no mailbox row to address a password to until
+ * the engine has made one, and no stored secret to leak — the boot resolves `absent` and dials
+ * nothing.
+ *
+ * A RECONFIGURE must seal first, and configuring first fails in both directions:
+ *
+ *  · ON SUCCESS the replacement engine boots with the NEW host and the PREVIOUSLY sealed password.
+ *    `resolveLogin()` has no opinion about which host a secret was sealed for, so the adapter
+ *    dials the new server with the old password BEFORE `settle()` returns — before the door has
+ *    even asked for the new one. Correcting a typo'd hostname costs nothing; moving a mailbox to
+ *    a server you do not control hands that server your previous password.
+ *  · ON REFUSAL — wrong password, unreachable host — the settings file already says the new host
+ *    and the credential correctly still says the old one. The door returns a sentence, the person
+ *    backs out, and nothing rolls the settings back: the next launch configures the new host with
+ *    the old password, and a mailbox that worked this morning does not connect.
+ *
+ * Sealing first ends both, because the seal is provable without changing anything: `PATCH
+ * /mailboxes/:id` dials what the BODY says, so the engine still running against the old host is
+ * what proves the credential for the new one. A refusal then returns with the install byte-for-
+ * byte as it was found, and a success leaves the settings and the credential naming one host.
+ *
+ * WHAT THIS DOES NOT CLOSE, said plainly. The reorder fixes the defect FROM THIS DOOR. Any other
+ * route that reconfigures an install still boots against whatever is sealed, and the general
+ * close is the boot contract — `resolveLogin()` refusing a password whose stored `meta.host`
+ * disagrees with the configured host. That needs a credential state to report it with, and every
+ * existing one would be a true sentence about the wrong thing (`unreadable` tells the user their
+ * keystore cannot open a credential it opens perfectly), so it is ledgered rather than half-done.
  */
 export async function enterLocalDoor(
   f: LocalDoorFields,
   preset: { imap: { host: string; port: number }; smtp: { host: string; port: number } },
+  /**
+   * What the shell said about the engine before this attempt — {@link standingEngine}.
+   *
+   * Defaulted rather than required so the meaning of the two-argument call does not change: no
+   * standing engine is the first-connect case, and the first-connect order is what it gets.
+   * `DoorChooser` reads it AT SUBMIT rather than at render, because a door opened from Settings
+   * may have been on screen for minutes and the order has to be chosen from what is true now.
+   */
+  standing: EngineStatus | null = null,
 ): Promise<DoorResult> {
   const problem = localProblem(f);
   if (problem) return { status: null, problem };
@@ -503,7 +670,8 @@ export async function enterLocalDoor(
   const imapPort = portOr(f.imapPort, preset.imap.port);
   const smtpHost = f.smtpHost.trim() || preset.smtp.host;
   const smtpPort = portOr(f.smtpPort, preset.smtp.port);
-  const user = f.user.trim() || f.address.trim();
+  const address = f.address.trim();
+  const user = f.user.trim() || address;
   /**
    * ONE transport, resolved ONCE, used by BOTH steps below.
    *
@@ -511,23 +679,45 @@ export async function enterLocalDoor(
    * two must describe the same dial. Deriving them separately is how they drift; a single value
    * is why they cannot. See the patch body for what depended on this.
    */
-  const imap = {
+  const imap: LocalTransport = {
     host: f.imapHost.trim() || preset.imap.host,
     user,
     port: imapPort,
     secure: implicitTls(imapPort),
   };
 
+  /** The settings, as ONE value for the same reason `imap` is one: two spellings would drift. */
+  const config: EngineConfig = {
+    mode: "local",
+    imap,
+    ...(smtpHost
+      ? { smtp: { host: smtpHost, port: smtpPort, secure: implicitTls(smtpPort) } }
+      : {}),
+    address,
+  };
+
+  if (reconfiguresLocalDoor(standing, address)) {
+    /* SEAL, THEN COMMIT. Nothing about this install has changed yet, so a refusal here returns
+       with the mailbox still on the configuration that was working. */
+    const refused = await sealLocalPassword(standing.mailboxId, imap, f.password);
+    if (refused !== null) return { status: standing, problem: refused };
+
+    /* ONE configure, not two. The first-connect order needs a second because it seals into an
+       engine that booted without a password; here the credential was in the store before this
+       process started, so the engine that comes up resolves it on its first read. */
+    try {
+      await engineConfigure(config);
+    } catch (err) {
+      return { status: standing, problem: sentence(err) };
+    }
+    const swapped = await settle();
+    if (swapped.state !== "serving") return { status: swapped, problem: stalled(swapped) };
+    return { status: await engineStatus(), problem: null };
+  }
+
   let status: EngineStatus;
   try {
-    status = await engineConfigure({
-      mode: "local",
-      imap,
-      ...(smtpHost
-        ? { smtp: { host: smtpHost, port: smtpPort, secure: implicitTls(smtpPort) } }
-        : {}),
-      address: f.address.trim(),
-    });
+    status = await engineConfigure(config);
   } catch (err) {
     return { status: null, problem: sentence(err) };
   }
@@ -537,34 +727,10 @@ export async function enterLocalDoor(
     return { status: settled, problem: stalled(settled) };
   }
 
-  /* THE PASSWORD, AND THE ONLY PLACE IT IS WRITTEN DOWN IS THE ENGINE'S OWN STORE.
-     The engine tries it before it seals it, so a rejection here is the mail server's answer and
-     not a stored credential that will fail quietly on the next launch.
-
-     ── THE TRANSPORT GOES WITH IT, AND A FIRST CONNECT IS IMPOSSIBLE WITHOUT THAT ──────────────
-
-     This body used to be the password alone, on the reasoning that the engine had just been
-     configured with the transport and therefore already knew it. It knows it as a SETTINGS FILE;
-     this route reads `mailbox_credentials`, and on a first connect there is no such row. The
-     engine's boot inserts one only when a password arrives in its own config, which on this path
-     it deliberately never does — the shell has no route for a secret. `ensureLocalWorld` inserts
-     the `mailboxes` row and nothing else.
-
-     So the service merged a pass-only patch over an absent stored meta, got a config with no
-     host, and refused it: **"imap host is required"** — reported by the first external user
-     against their own mail server (issue #5), who had in fact typed every field. The patch is a
-     complete statement about the transport, which is what the merge is built to accept (patch
-     wins field by field) and what `POST /mailboxes` has always sent. */
-  try {
-    const res = await bridgeFetch(`/mailboxes/${encodeURIComponent(settled.mailboxId)}`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ imap: { ...imap, pass: f.password } }),
-    });
-    if (!res.ok) return { status: settled, problem: await refusal(res) };
-  } catch (err) {
-    return { status: settled, problem: sentence(err) };
-  }
+  /* THE PASSWORD, AND THE ONLY PLACE IT IS WRITTEN DOWN IS THE ENGINE'S OWN STORE. See
+     {@link sealLocalPassword} for what the body carries and why it carries all of it. */
+  const refused = await sealLocalPassword(settled.mailboxId, imap, f.password);
+  if (refused !== null) return { status: settled, problem: refused };
 
   /**
    * ── AND NOW REPLACE THE ENGINE, BECAUSE THE ONE THAT IS RUNNING CANNOT USE THAT PASSWORD ────
@@ -585,12 +751,7 @@ export async function enterLocalDoor(
    * engine not coming back, and relaunching the app fixes it.
    */
   try {
-    await engineConfigure({
-      mode: "local",
-      imap,
-      ...(smtpHost ? { smtp: { host: smtpHost, port: smtpPort, secure: implicitTls(smtpPort) } } : {}),
-      address: f.address.trim(),
-    });
+    await engineConfigure(config);
   } catch (err) {
     return { status: settled, problem: sentence(err) };
   }
@@ -819,6 +980,21 @@ export async function signInToCloudWithCode(
     return { status: known ?? null, problem: sentence(err) };
   }
   return { status: await engineStatus(), problem: null };
+}
+
+/**
+ * WHAT THE ENGINE IS DOING RIGHT NOW, or null when nothing can say.
+ *
+ * The reading {@link reconfiguresLocalDoor} decides from, and the reason it is a function here
+ * rather than a prop threaded down from the window: a door opened over a running install may have
+ * been on screen for minutes, and the order the submit takes has to come from what is true at the
+ * moment of the submit. Null covers both "no shell" and "the shell would not answer", and both
+ * mean the same thing to the caller — there is no standing engine to reconfigure, so the attempt
+ * is a first connect.
+ */
+export async function standingEngine(): Promise<EngineStatus | null> {
+  const shell = await readShell();
+  return shell.kind === "status" ? shell.status : null;
 }
 
 /** Ask the shell what it is doing, and say honestly when there is no shell to ask. */
