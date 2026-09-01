@@ -141,25 +141,70 @@ export function externalTargetOf(href: string, base: string): string | null {
  * is what its output can never contain, and it becomes text in a compose form. It never
  * reaches {@link OPEN_EXTERNAL_COMMAND}, never reaches a process spawn, and the shell's own
  * gate (`external_url` in `engine.rs`) refuses it a second time if it ever did.
+ *
+ * ── THE SCHEME IS READ OFF THE BYTES, NOT OFF A `URL` — AND THAT IS THE WHOLE RULE ───────────
+ *
+ * `new URL(raw, base)` was the obvious spelling and it is the wrong one, for the reason
+ * `external_url` states on the other side of this file: **whatever decides must be the same
+ * bytes as whatever is handed on.** The WHATWG parser STRIPS ASCII tab and newline before it
+ * parses, so `"mail\nto:a@b.test"` parses as a `mailto:` URL — and this function would then
+ * have approved one string and returned a different one, whose scheme `parseMailto`'s own
+ * `/^mailto:/i` does not match. That divergence happened to be fail-closed (the parser returns
+ * null and the click quietly does nothing), which is exactly the kind of luck that stops being
+ * luck when a caller changes.
+ *
+ * So the test is on the string that travels, and it is the SAME test the parser applies. One
+ * rule, one place to mutate, and no dependency on a URL quirk. Nothing legitimate is turned
+ * away: a real `mailto:` link begins with its scheme, and a relative href never can.
  */
 export function mailtoTargetOf(href: string, base: string): string | null {
+  void base; // deliberately unused — a mailto is absolute or it is not a mailto. See the header.
   const raw = href.trim();
-  if (raw === "") return null;
-  let url: URL;
-  try {
-    url = new URL(raw, base);
-  } catch {
-    return null;
-  }
-  if (url.protocol !== "mailto:") return null;
-  // The href as written, not `url.href` — see the header.
+  // Case-insensitive because a scheme is, and on the RAW value so that the string this
+  // function approved is byte-for-byte the string its caller hands to `parseMailto`.
+  if (!/^mailto:/i.test(raw)) return null;
   return raw;
 }
 
-/** Whether this document's own origin is somewhere a link may go without leaving the app. */
-function sameOrigin(href: string, base: string): boolean {
+/**
+ * Whether this link is the CLIENT'S OWN NAVIGATION — its scheme and host, not its "origin".
+ *
+ * ── WHY NOT `.origin`, WHICH IS WHAT THIS WAS AND WHAT IT LOOKS LIKE IT SHOULD BE ────────────
+ *
+ * Because on macOS the app document is served from `tauri://localhost`, and `tauri:` is not a
+ * "special" scheme, so its WHATWG origin is OPAQUE and serialises to the literal string
+ * `"null"`. Every opaque origin serialises to that same string. So an `.origin === .origin`
+ * test on that platform does not ask "is this the app's own page", it asks "do these both
+ * happen to have no origin" — and it answers YES for `mailto:`, `cid:`, `javascript:`,
+ * `data:` and `file:`, every one of which also has an opaque origin. Measured, not reasoned:
+ * `new URL("javascript:alert(1)", "tauri://localhost/").origin === new URL("tauri://localhost/").origin`
+ * is `true`.
+ *
+ * The consequence was that on macOS this function returned early for those schemes and the
+ * click was LEFT TO THE WEBVIEW — the exact opposite of the "refuse everything else with
+ * nothing" rule the handler below is built on, and the reason the `mailto:` arm was dead on
+ * that platform while passing every test (jsdom's document has a real http origin, so the
+ * suite could not see it). It is the mirror image of the ordering bug this file already
+ * records: that one hid on macOS and bit on Windows and Linux; this one hides on Windows and
+ * Linux and bites on macOS.
+ *
+ * ── AND WHY NOT "REJECT OPAQUE ORIGINS", WHICH IS THE OBVIOUS REPAIR AND IS WRONG ────────────
+ *
+ * On macOS the app's OWN routes are opaque too — `new URL("/mailbox#/settings",
+ * "tauri://localhost/").origin` is `"null"`. Refusing opaque origins would therefore stop
+ * trusting the client's own navigation on macOS, and every in-app link would fall through to
+ * the final `preventDefault()`. The app would stop routing.
+ *
+ * Scheme AND host is the test that answers the real question on all three platforms:
+ * `tauri:`+`localhost` matches itself and nothing else; `mailto:` has no host; `javascript:`
+ * and `cid:` have neither the scheme nor the host. On Windows and Linux, where the document is
+ * `http://tauri.localhost`, it is exactly the origin comparison it replaces.
+ */
+export function isAppsOwnNavigation(href: string, base: string): boolean {
   try {
-    return new URL(href, base).origin === new URL(base).origin;
+    const target = new URL(href, base);
+    const here = new URL(base);
+    return target.protocol === here.protocol && target.host === here.host;
   } catch {
     return false;
   }
@@ -303,7 +348,12 @@ export function interceptLinkClicks(doc: Document, opts: InterceptOptions): () =
     // the check below. On Windows and Linux the window is served from `http://tauri.localhost`,
     // where every internal link in the app is same-origin http and would have left for the
     // browser. One ordering, two platforms, and only one of them could see it.
-    if (opts.trustSameOrigin && sameOrigin(href, base)) return;
+    //
+    // The test itself is scheme-and-host rather than origin equality, and that is not a detail:
+    // on macOS an origin comparison answered YES for `mailto:`, `cid:`, `javascript:` and
+    // `file:` as well, because every opaque origin serialises to the same `"null"`. See
+    // {@link isAppsOwnNavigation} — that is the mirror of the bug this comment describes.
+    if (opts.trustSameOrigin && isAppsOwnNavigation(href, base)) return;
 
     const target = externalTargetOf(href, base);
     if (target !== null) {

@@ -132,9 +132,97 @@ describe("what counts as a compose this window opens", () => {
       "/mailbox#/settings",
       "",
       "   ",
+      // A scheme that merely STARTS like one: the check is on `mailto:` including the colon.
+      "mailtox:a@b.test",
+      // The two shapes that made `new URL` the wrong instrument here. The WHATWG parser strips
+      // ASCII tab and newline before parsing, so both of these parse as `mailto:` URLs — and
+      // approving them would hand `parseMailto` a string whose scheme its own `/^mailto:/i`
+      // does not match, which is one value deciding and a different one travelling.
+      "mail\nto:a@b.test",
+      "mail\tto:a@b.test",
     ]) {
-      expect(mailtoTargetOf(href, BASE), `${href} was treated as a compose`).toBeNull();
+      expect(mailtoTargetOf(href, BASE), `${JSON.stringify(href)} was treated as a compose`).toBeNull();
     }
+  });
+
+  it("what it approves is what it hands on, byte for byte", async () => {
+    const { mailtoTargetOf } = await freshModule();
+    // The only edit is the surrounding whitespace a mail body wrapped around the value; the
+    // address itself is never re-encoded, because the parser downstream reads the bytes a link
+    // author wrote (`%26` inside a subject is an ampersand, not a new field).
+    for (const raw of [
+      "mailto:a@b.test?subject=100%25%20done&body=x%26y",
+      "mailto:tom+filter@example.org",
+      "mailto:a@b.test?subject=caf%C3%A9",
+    ]) {
+      expect(mailtoTargetOf(`  ${raw}  `, BASE)).toBe(raw);
+    }
+  });
+
+  /**
+   * THE PLATFORM CASE, and the one this file could not see until a reviewer named it.
+   *
+   * On macOS the app document is served from `tauri://localhost`. `tauri:` is not a "special"
+   * scheme, so its WHATWG origin is OPAQUE and serialises to the literal string `"null"` — and
+   * so does `mailto:`'s, and `cid:`'s, and `javascript:`'s, and `file:`'s. The handler's
+   * "is this the app's own navigation" test used to be `.origin === .origin`, which on that
+   * platform therefore answered YES for every one of them: the click returned early and was
+   * left to the webview, so the mailto arm was DEAD on macOS and `javascript:` was not inert.
+   *
+   * jsdom's document has a real http origin, so no test driven through a synthesised click on
+   * this suite's document can reach it. The rule is exported and driven directly for exactly
+   * that reason — the same reason `externalTargetOf` is.
+   *
+   * Restore `.origin === .origin` and the macOS rows go red. Reject opaque origins outright
+   * instead — the obvious repair — and the FIRST row goes red, because the app's own routes are
+   * opaque on macOS too and the app would stop routing.
+   */
+  it("the app's own navigation is scheme-and-host, on every platform's own origin", async () => {
+    const { isAppsOwnNavigation } = await freshModule();
+    const MAC = "tauri://localhost/";
+    const WIN_LINUX = "http://tauri.localhost/";
+
+    for (const base of [MAC, WIN_LINUX]) {
+      // The client's own routes ARE its own navigation and must stay untouched.
+      expect(isAppsOwnNavigation("/mailbox#/settings", base), `route under ${base}`).toBe(true);
+      expect(isAppsOwnNavigation("./drafts", base), `relative under ${base}`).toBe(true);
+
+      // None of these is the app's own page, and on macOS every one of them used to claim to be.
+      for (const href of [
+        "mailto:a@b.test",
+        "cid:part1@example.test",
+        "javascript:alert(1)",
+        "file:///etc/passwd",
+        "data:text/html,<script>alert(1)</script>",
+        "tel:+41000000000",
+        "https://example.test/",
+      ]) {
+        expect(isAppsOwnNavigation(href, base), `${href} claimed to be the app's own under ${base}`)
+          .toBe(false);
+      }
+    }
+
+    /* THE HOST HALF OF THE TEST, and it is here because a mutation caught its absence: dropping
+       `host` from the comparison and keeping only `protocol` left every case above GREEN. That
+       mutation is the serious one — with only the scheme compared, ANY http address would count
+       as the app's own navigation and be handed straight to the webview, which would navigate
+       the single-page window away to a host a message chose. Every row above differs from its
+       base in the SCHEME, so none of them could see it. These differ only in the HOST. */
+    expect(isAppsOwnNavigation("http://evil.test/", WIN_LINUX), "a foreign http host was trusted")
+      .toBe(false);
+    expect(isAppsOwnNavigation("http://tauri.localhost.evil.test/", WIN_LINUX), "a suffix host was trusted")
+      .toBe(false);
+    expect(isAppsOwnNavigation("tauri://evil/", MAC), "a foreign tauri host was trusted")
+      .toBe(false);
+  });
+
+  it("a mailto is answered even when the document has an opaque origin (macOS)", async () => {
+    const { mailtoTargetOf, isAppsOwnNavigation } = await freshModule();
+    const MAC = "tauri://localhost/";
+    // The two halves of the macOS failure, asserted together: the same-origin test must let it
+    // through, AND the classifier must claim it. Either one alone leaves the click doing nothing.
+    expect(isAppsOwnNavigation("mailto:a@b.test", MAC)).toBe(false);
+    expect(mailtoTargetOf("mailto:a@b.test", MAC)).toBe("mailto:a@b.test");
   });
 
   it("the two classifiers never claim the same href", async () => {
