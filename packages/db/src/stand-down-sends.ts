@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { drafts, mailboxes } from "./schema-mail.js";
-import { recordChanges, type Tx } from "./change-log.js";
+import { recordChanges, type LedgerTx, type Tx } from "./change-log.js";
 import { isMailboxDisabledReason, type MailboxDisabledReason } from "./mailbox-errors.js";
 
 /**
@@ -108,6 +108,29 @@ export const STAND_DOWN_SEND_SENTENCES: Record<MailboxDisabledReason, string> = 
     + "Schedule it again where the mailbox is organized now.",
 };
 
+/**
+ * WHAT A REMOVED MAILBOX'S DRAFTS ROW QUOTES. Same storage rule as the record above — server
+ * copy, written once, quoted verbatim by both clients inside their own frame — and a DIFFERENT
+ * sentence because the event is different in the one respect that matters to a reader.
+ *
+ * Three clauses, and each is load-bearing:
+ *
+ *  · THE CAUSE, past tense. "was removed" stays true however the mailbox is connected again
+ *    later, which a stored sentence has to survive; the stand-down record's header states the
+ *    same rule and this is the same discipline applied to a different occasion.
+ *  · WHAT WAS **NOT** DONE. A person who has just removed a mailbox is being told, by a draft
+ *    they wrote, that something did not happen — and the one thing they will wonder is whether
+ *    the message itself is gone from the server. It is not, and nothing about a removal ever
+ *    deletes mail from the mailbox. Saying so here is not reassurance nobody asked for; it is
+ *    the answer to the question the failure raises.
+ *  · THE ACTION, naming no destination. "Connect the mailbox again" is the only true one:
+ *    unlike a stand-down there is no other organizer to be sent to, and a sentence pointing at
+ *    one would be advice to go somewhere the mailbox is not.
+ */
+export const REMOVED_MAILBOX_SEND_SENTENCE =
+  "This mailbox was removed from ohmail, so the scheduled send was not made. "
+  + "Nothing was deleted from the mail server. Connect the mailbox again to schedule it.";
+
 export interface StandDownSendsInput {
   accountId: string;
   mailboxId: string;
@@ -121,6 +144,55 @@ export interface StandDownSendsResult {
   closed: number;
   /** The drafts that were closed — the log line's evidence, and nothing else reads it. */
   draftIds: string[];
+}
+
+/**
+ * THE UPDATE ITSELF, shared by the two events that end an organizer's right to keep an
+ * appointment — a stand-down and a REMOVAL. Private: the precondition is what distinguishes
+ * them, and a caller that could pick its own sentence could write one that is not true of
+ * either event.
+ *
+ * Everything the header says about what this touches applies here and is not repeated: only
+ * `status = 'scheduled'`, both halves of the bookkeeping cleared so neither claim arm can find
+ * the row again, and the change rows written in the same transaction so no mirror observes the
+ * closed row without the `draft` update that announces it.
+ *
+ * It takes a `tx` that ALREADY holds the mailbox row. Both callers read that row `FOR UPDATE`
+ * before calling, which is where the lock order (mailbox before draft) is kept — putting the
+ * read in here would hide the one ordering decision this module makes.
+ */
+async function closeAppointmentsWithSentence(
+  // `LedgerTx` and not `Tx`: `recordChanges` allocates change sequence numbers and needs a real
+  // transaction handle, not any query runner. Both callers already have one — they are inside
+  // `db.transaction` — so this is the type the shared core has always effectively required.
+  tx: LedgerTx,
+  input: { accountId: string; mailboxId: string; sentence: string; now: Date },
+): Promise<StandDownSendsResult> {
+  const closed = await tx.update(drafts)
+    .set({
+      status: "draft",
+      // The appointment is over: both halves of the bookkeeping go, which is also what makes
+      // the row unfindable by either claim arm (both require a standing `send_key`).
+      sendAt: null,
+      sendKey: null,
+      sendError: input.sentence,
+      updatedAt: input.now,
+    })
+    .where(and(
+      eq(drafts.accountId, input.accountId),
+      eq(drafts.mailboxId, input.mailboxId),
+      // ONLY a standing appointment. See the header for why 'draft', 'sending' and the
+      // terminal statuses are somebody else's rows.
+      eq(drafts.status, "scheduled"),
+    ))
+    .returning({ id: drafts.id });
+  if (closed.length > 0) {
+    await recordChanges(tx, closed.map((r) => ({
+      accountId: input.accountId, entityType: "draft" as const, entityId: r.id,
+      op: "update" as const, meta: null,
+    })));
+  }
+  return { closed: closed.length, draftIds: closed.map((r) => r.id) };
 }
 
 /**
@@ -199,36 +271,78 @@ export async function closeStoodDownAppointments(
     //
     // `disabledReason` as well as `status`, because `disabled` alone has two meanings: with a
     // reason it is a stand-down (the same mailbox, paused), with none it is a REMOVAL — and a
-    // removal's drafts belong to a row the user deleted, not to an organizer handover.
+    // removal's drafts belong to a row the user deleted, not to an organizer handover. The
+    // removal is not left unhandled by that split: it has its own function below, with its own
+    // sentence, because "schedule it again where the mailbox is organized now" is false about a
+    // mailbox nobody organizes.
     const [mb] = await tx.select({ status: mailboxes.status, reason: mailboxes.disabledReason })
       .from(mailboxes).where(eq(mailboxes.id, input.mailboxId)).for("update").limit(1);
     if (!mb || mb.status !== "disabled" || mb.reason === null) {
       return { closed: 0, draftIds: [] };
     }
-    const closed = await tx.update(drafts)
-      .set({
-        status: "draft",
-        // The appointment is over: both halves of the bookkeeping go, which is also what makes
-        // the row unfindable by either claim arm (both require a standing `send_key`).
-        sendAt: null,
-        sendKey: null,
-        sendError: STAND_DOWN_SEND_SENTENCES[reason],
-        updatedAt: input.now,
-      })
-      .where(and(
-        eq(drafts.accountId, input.accountId),
-        eq(drafts.mailboxId, input.mailboxId),
-        // ONLY a standing appointment. See the header for why 'draft', 'sending' and the
-        // terminal statuses are somebody else's rows.
-        eq(drafts.status, "scheduled"),
-      ))
-      .returning({ id: drafts.id });
-    if (closed.length > 0) {
-      await recordChanges(tx, closed.map((r) => ({
-        accountId: input.accountId, entityType: "draft" as const, entityId: r.id,
-        op: "update" as const, meta: null,
-      })));
+    return closeAppointmentsWithSentence(tx, {
+      accountId: input.accountId,
+      mailboxId: input.mailboxId,
+      sentence: STAND_DOWN_SEND_SENTENCES[reason],
+      now: input.now,
+    });
+  });
+}
+
+export interface RemovedMailboxSendsInput {
+  accountId: string;
+  mailboxId: string;
+  now: Date;
+}
+
+/**
+ * Close every pending appointment on a mailbox the USER HAS JUST REMOVED.
+ *
+ * ── WHY THIS IS NOT `closeStoodDownAppointments` WITH A FOURTH REASON ───────────────────────
+ *
+ * The two events differ in the only thing the stored sentence has to get right: WHERE the
+ * message can be sent from now. A stand-down hands the mailbox to another organizer, so
+ * "schedule it again where the mailbox is organized now" is both true and actionable. A removal
+ * hands it to NOBODY — the row is a tombstone, the credentials are gone, and there is no
+ * "where" to send the reader to. Storing a stand-down sentence on a removal would be the exact
+ * class of false statement `MailboxService.delete` already clears `disabled_reason` to avoid:
+ * telling somebody another install has claimed a mailbox they themselves disconnected.
+ *
+ * The PRECONDITION is the mirror image of the stand-down's and is the reason both live here:
+ * `disabled` with a reason is a stand-down, `disabled` with none is a removal, and that
+ * discriminator is the product's, not this module's (`identity.ts` resurrects a paused mailbox
+ * and never a retired one; the census in `packages/db/test` refuses a null-reason write as a
+ * stand-down site for the same reason). One module, one spelling of the UPDATE, two
+ * preconditions and two sentences — which is what keeps the two events from drifting into two
+ * answers about what the person is told.
+ *
+ * ── IT RUNS INSIDE THE CALLER'S TRANSACTION, AND THAT IS THE POINT ──────────────────────────
+ *
+ * `MailboxService.delete` already holds this mailbox row `FOR UPDATE` and is, in the same
+ * transaction, writing the tombstone and deleting the credentials. Closing the appointments
+ * anywhere else would leave a window in which the mailbox has no credentials and a live
+ * appointment still points at it. The row read below is therefore a re-read of a row this
+ * transaction already owns — free, and it is what makes the function total: it refuses to close
+ * anything on a mailbox that is not, at this instant, a removal.
+ */
+export async function closeRemovedMailboxAppointments(
+  db: Tx, input: RemovedMailboxSendsInput,
+): Promise<StandDownSendsResult> {
+  return db.transaction(async (tx) => {
+    // The stand-down's read, with the mirrored predicate. `FOR UPDATE` for the same reason and
+    // in the same order (mailbox before draft): the caller holds this row already, so this is a
+    // no-op re-entry there, and it keeps the function correct for any future caller that does
+    // not.
+    const [mb] = await tx.select({ status: mailboxes.status, reason: mailboxes.disabledReason })
+      .from(mailboxes).where(eq(mailboxes.id, input.mailboxId)).for("update").limit(1);
+    if (!mb || mb.status !== "disabled" || mb.reason !== null) {
+      return { closed: 0, draftIds: [] };
     }
-    return { closed: closed.length, draftIds: closed.map((r) => r.id) };
+    return closeAppointmentsWithSentence(tx, {
+      accountId: input.accountId,
+      mailboxId: input.mailboxId,
+      sentence: REMOVED_MAILBOX_SEND_SENTENCE,
+      now: input.now,
+    });
   });
 }

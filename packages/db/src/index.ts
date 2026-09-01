@@ -50,7 +50,13 @@ export { upsertDesiredSeen } from "./flag-intent.js";
 // Reaches `schema-mail.js`, `change-log.js` and `mailbox-errors.js` alone.
 export {
   closeStoodDownAppointments, STAND_DOWN_SEND_SENTENCES,
-  type StandDownSendsInput, type StandDownSendsResult,
+  // The REMOVAL arm of the same module. A user removing a mailbox orphans its appointments in
+  // exactly the way a stand-down does, and the close was refused for it by construction — the
+  // stand-down's precondition reads a null `disabled_reason` as "not my event" — so a removal
+  // left a pending appointment that would never be delivered and never reported as failed.
+  // Reached from `MailboxService.delete` alone; see that method for why it is in its transaction.
+  closeRemovedMailboxAppointments, REMOVED_MAILBOX_SEND_SENTENCE,
+  type StandDownSendsInput, type StandDownSendsResult, type RemovedMailboxSendsInput,
 } from "./stand-down-sends.js";
 
 export {

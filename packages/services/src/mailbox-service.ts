@@ -2,6 +2,7 @@ import { and, asc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import {
   mailboxes, mailboxCredentials, mailboxFolders, folderState, messages,
   isMailboxDisabledReason, isMailboxSyncBlockReason,
+  closeRemovedMailboxAppointments,
   type LedgerTx, type MailboxErrorCode, type Tx,
 } from "@trafficflow/db";
 import type { ServiceContext } from "./context.js";
@@ -1550,6 +1551,30 @@ export class MailboxService {
       })
         .where(and(eq(mailboxes.id, id), eq(mailboxes.accountId, ctx.accountId)));
       await tx.delete(mailboxCredentials).where(eq(mailboxCredentials.mailboxId, id));
+      // ── AND THE APPOINTMENTS THIS REMOVAL ORPHANS, IN THE SAME TRANSACTION ────────────
+      //
+      // A pending scheduled send belongs to the organizer that made it. A removal ends that
+      // organizer's right to make it — the credentials are deleted two lines above, so there is
+      // no longer a submission server to send through — and until now nothing closed the row:
+      // `send_at` stayed in the future, `send_error` stayed NULL, and the Drafts screen went on
+      // saying "Sends Tue 14:50" for a time that had gone. That is
+      // `QAO-SCHEDULED-SEND-ORPHANED-BY-MIGRATION` exactly, reached by a different door, and the
+      // stand-down's close could not cover it BY CONSTRUCTION: its precondition requires a
+      // `disabled_reason`, and the statement three lines up clears that column precisely because
+      // a removal is not a handover.
+      //
+      // AFTER the tombstone write, because the close reads the row and requires the removal to
+      // be visible to it; inside the same transaction, because between them there would be a
+      // window with no credentials and a live appointment still pointing at the mailbox. It is
+      // the same lock (this transaction already holds the row `FOR UPDATE` from `ownedRowOn`),
+      // so the re-read costs nothing and the mailbox-before-draft order is unchanged.
+      //
+      // THROWS, like every other statement here. A removal that half-happened — credentials
+      // gone, appointment still standing — is the one outcome worse than a removal that failed
+      // and can be retried, and the transaction is what makes "all of it or none of it" true.
+      await closeRemovedMailboxAppointments(tx, {
+        accountId: ctx.accountId, mailboxId: id, now: ctx.now(),
+      });
     });
   }
 
