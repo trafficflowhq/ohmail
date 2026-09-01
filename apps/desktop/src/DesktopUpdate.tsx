@@ -51,13 +51,17 @@ import {
 } from "./update.js";
 
 /**
- * Follow the update flow: ask once at mount, then listen.
+ * Follow the update flow: ask at mount, then listen — and let go on unmount.
  *
  * BOTH HALVES, for `mailto_claim`'s cold-start reason — the launch check runs before this bundle's
  * scripts do, so a pane that only listened would open blank after the one transition it cared
- * about had already happened. The listener is registered once per mount and cannot be taken back
- * (`update.ts` says why), so the setter is guarded by a mounted flag rather than by unsubscribing:
- * a stale listener that fires into a dead component would otherwise warn on every settings visit.
+ * about had already happened.
+ *
+ * THIS COMPONENT MOUNTS MANY TIMES. Settings → About is opened and closed as often as somebody
+ * likes, so the subscription has to be releasable; `update.ts` keeps the SHELL-side registration
+ * to one for the process's life and hands back an ordinary unsubscribe, which the cleanup calls.
+ * The `alive` flag stays beside it because the two guard different windows: unsubscribing closes
+ * the push, and `alive` covers the pull that may still be in flight when the pane closes.
  */
 function useUpdateReport(): { report: UpdateReport | null; press: () => Promise<void> } {
   const [report, setReport] = useState<UpdateReport | null>(null);
@@ -65,29 +69,48 @@ function useUpdateReport(): { report: UpdateReport | null; press: () => Promise<
 
   useEffect(() => {
     alive.current = true;
+    let off: (() => void) | null = null;
     void (async () => {
       // Listen FIRST, then ask: a transition between the two is then heard through the listener
       // instead of falling between them. `omarchy.ts` orders its own feed the same way.
-      await onUpdateState((next) => {
+      const release = await onUpdateState((next) => {
         if (alive.current) setReport(next);
       });
+      // Unmounted while the registration was in flight: release it immediately rather than
+      // leaving a subscriber nothing will ever remove.
+      if (!alive.current) release();
+      else off = release;
       const now = await updateState();
       if (alive.current && now !== null) setReport(now);
     })();
     return () => {
       alive.current = false;
+      off?.();
     };
   }, []);
 
-  /* A press that the shell refuses is swallowed. The outcome of a press is not this call's return
-     value — it arrives on the event — so there is nothing here to report and nothing a person
-     could do about a rejected invoke. The shell says every sentence this flow has out loud. */
+  /**
+   * Press, then RE-READ — and the re-read is the important half.
+   *
+   * A press's outcome normally arrives on the event, so this could have been fire-and-forget. It
+   * cannot, because there are two ways a press produces no event at all: the invoke REJECTS (an
+   * older shell, a grant that dropped the command), and the shell's own `Press::Nothing` — a press
+   * that raced the flow moving under it — which changes nothing and therefore announces nothing.
+   * In both cases the caller has already marked the button busy, and nothing would ever un-mark it:
+   * the control would sit on "Working…" until the pane was closed and reopened.
+   *
+   * Asking for the state afterwards answers every one of those, and it cannot go stale — it reads
+   * the flow as it is now rather than replaying a moment. The report it sets is a fresh object, so
+   * the effect that clears `busy` fires even when nothing about the flow changed.
+   */
   const press = useCallback(async () => {
     try {
       await updatePress();
     } catch {
-      /* deliberate */
+      /* The shell refused the press. The re-read below is what the person sees. */
     }
+    const now = await updateState();
+    if (alive.current && now !== null) setReport(now);
   }, []);
 
   return { report, press };

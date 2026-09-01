@@ -12,6 +12,8 @@ import de from "../../webapp/messages/de.json";
 import { DesktopUpdate } from "../src/DesktopUpdate.js";
 import {
   reportOfPayload,
+  resetUpdateFeedForTests,
+  subscriberCountForTests,
   updateButtonKey,
   updateSentenceKey,
   UPDATE_RESULTS,
@@ -103,12 +105,21 @@ const WIRE: Record<string, Wire> = {
 };
 
 let pressed = 0;
+let listens = 0;
 let listener: ((payload: unknown) => void) | null = null;
+/** What `update_state` answers next — swapped mid-test to model the shell moving on. */
+let answer: Wire | null = null;
+/** When true, `update_press` REJECTS, the way an older shell without the command would. */
+let refusePress = false;
 
 /** A shell that answers `state` and records presses. `null` = no shell at all (the preview). */
 function shell(state: Wire | null): void {
   pressed = 0;
+  listens = 0;
   listener = null;
+  refusePress = false;
+  answer = state;
+  resetUpdateFeedForTests();
   if (state === null) {
     delete globe.__TAURI_INTERNALS__;
     return;
@@ -117,13 +128,17 @@ function shell(state: Wire | null): void {
     invoke: (command, payload) => {
       switch (command) {
         case "update_state":
-          return Promise.resolve(state);
+          return Promise.resolve(answer);
         case "update_press":
           pressed += 1;
-          return Promise.resolve(undefined);
+          return refusePress
+            ? Promise.reject(new Error("no such command"))
+            : Promise.resolve(undefined);
         case "plugin:event|listen":
           // The runtime hands back a callback ID; the test keeps the callback itself so a push
-          // can be delivered the way the shell delivers one.
+          // can be delivered the way the shell delivers one — and COUNTS the registrations,
+          // which is the whole of the leak guard below.
+          listens += 1;
           void (payload as { event: string });
           return Promise.resolve(1);
         default:
@@ -144,6 +159,7 @@ afterEach(async () => {
   if (root) await act(async () => root.unmount());
   hostEl?.remove();
   delete globe.__TAURI_INTERNALS__;
+  resetUpdateFeedForTests();
   vi.useRealTimers();
 });
 
@@ -170,6 +186,18 @@ async function mount(locale: "en" | "de" = "en"): Promise<void> {
 }
 
 const button = (): HTMLButtonElement | null => hostEl.querySelector("button");
+
+const click = async (): Promise<void> => {
+  await act(async () => {
+    button()!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+  });
+  await settle();
+};
+
+async function unmount(): Promise<void> {
+  await act(async () => root.unmount());
+  hostEl.remove();
+}
 
 function capture(name: string): void {
   if (!CAPTURE_DIR) return;
@@ -273,27 +301,21 @@ describe("every state the update pane can be in renders, and says the true thing
 // ═══ WHAT PRESSING DOES, AND WHAT ARRIVES BACK ════════════════════════════════════════════════
 
 describe("the pane is the same flow as the menu item, not a second one", () => {
-  it("a press goes to the shell — once — and the pane waits for the shell to say what happened", async () => {
+  it("a press goes to the shell once, and the pane then shows what the shell says now", async () => {
     shell(WIRE.upToDate!);
     await mount();
-    await act(async () => {
-      button()!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    });
+    // The shell takes the press and moves; the pane re-reads and reports the new state.
+    answer = WIRE.checking!;
+    await click();
     expect(pressed).toBe(1);
-    // Busy until the shell answers: the pane does not guess an outcome it was not told.
+    expect(hostEl.textContent).toContain(copy.checking!);
     expect(button()!.disabled).toBe(true);
-    expect(button()!.textContent).toBe(copy.working!);
   });
 
   it("a pushed state replaces what the pane shows, and un-busies the button", async () => {
     shell(WIRE.upToDate!);
     await mount();
     expect(listener, "the pane never registered a listener").not.toBeNull();
-
-    await act(async () => {
-      button()!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    });
-    expect(button()!.disabled).toBe(true);
 
     // The shell announces the transition, in the envelope its event plugin wraps payloads in.
     await act(async () => listener!({ payload: WIRE.ready }));
@@ -307,10 +329,101 @@ describe("the pane is the same flow as the menu item, not a second one", () => {
     shell(WIRE.checking!);
     await mount();
     expect(button()!.disabled).toBe(true);
-    await act(async () => {
-      button()!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    });
+    await click();
     expect(pressed).toBe(0);
+  });
+
+  /**
+   * A PRESS THE SHELL REFUSES MUST NOT STRAND THE BUTTON.
+   *
+   * The click marks the control busy, and the outcome of a press normally arrives on the event —
+   * so an invoke that REJECTS (an older shell, a grant that dropped the command) produces no event
+   * at all, and a pane that only cleared `busy` on a state change would sit on "Working…" until it
+   * was closed and reopened. On the one surface whose job is to tell somebody whether their mail
+   * client is current, that is the control going dead. The press therefore always finishes by
+   * asking the shell where the flow is, which answers this case and the `Press::Nothing` race with
+   * one mechanism.
+   */
+  it("survives a press the shell refuses, and is pressable again afterwards", async () => {
+    shell(WIRE.upToDate!);
+    await mount();
+    refusePress = true;
+    await click();
+    expect(pressed).toBe(1);
+    expect(button()!.disabled, "the button is stuck busy after a refused press").toBe(false);
+    expect(button()!.textContent).toBe(copy.check!);
+    // …and it really is live: a second press reaches the shell.
+    refusePress = false;
+    await click();
+    expect(pressed).toBe(2);
+  });
+
+  /**
+   * …AND A PRESS THAT CHANGED NOTHING MUST NOT EITHER. `Flow::press` answers `Nothing` for a press
+   * that raced the flow moving under it: the shell takes the call, does nothing, and announces
+   * nothing. Modelled here by a shell that accepts the press and answers the same state.
+   */
+  it("survives a press that changed nothing", async () => {
+    shell(WIRE.upToDate!);
+    await mount();
+    await click();
+    expect(pressed).toBe(1);
+    expect(button()!.disabled).toBe(false);
+    expect(button()!.textContent).toBe(copy.check!);
+  });
+});
+
+/**
+ * ═══ THE PANE IS OPENED AND CLOSED AS OFTEN AS SOMEBODY LIKES ════════════════════════════════
+ *
+ * Settings → About is not a screen that mounts once. `plugin:event|listen` has no unlisten on this
+ * seam, so a registration per mount would hand the shell a new callback every visit and keep every
+ * previous mount's closure alive — each one called on every transition, for the life of the
+ * process. The registration is therefore the module's, made once; the component's subscription is
+ * an ordinary one it releases on unmount.
+ */
+describe("revisiting the pane does not accumulate listeners", () => {
+  it("registers with the shell exactly once, however many times the pane is opened", async () => {
+    shell(WIRE.upToDate!);
+    await mount();
+    expect(listens, "the pane never asked the shell to listen").toBe(1);
+
+    for (let visit = 0; visit < 3; visit++) {
+      await unmount();
+      await mount();
+    }
+    expect(listens, "the pane registers a new shell listener on every visit").toBe(1);
+  });
+
+  /**
+   * A CLOSED PANE LETS GO — asserted on the SUBSCRIBER COUNT and not on what is on screen.
+   *
+   * The rendered-markup version of this test is VACUOUS and was watched being so: a leaked
+   * subscriber from a closed pane still runs on every transition, and simply does nothing visible
+   * because the component guards its setter with a mounted flag. Removing the release left the
+   * DOM assertion green. The count is the fact the release is about.
+   */
+  it("a closed pane lets go of its subscription, and the open one keeps hearing", async () => {
+    shell(WIRE.upToDate!);
+    expect(subscriberCountForTests()).toBe(0);
+    await mount();
+    expect(subscriberCountForTests(), "the pane never subscribed").toBe(1);
+
+    await unmount();
+    expect(subscriberCountForTests(), "a closed pane is still subscribed").toBe(0);
+
+    for (let visit = 0; visit < 3; visit++) {
+      await mount();
+      await unmount();
+    }
+    expect(subscriberCountForTests(), "subscriptions accumulate across visits").toBe(0);
+
+    // …and the pane that IS open still hears the shell.
+    await mount();
+    await act(async () => listener!({ payload: WIRE.ready }));
+    await settle();
+    expect(hostEl.textContent).toContain(`ohmail ${NEXT} is ready`);
+    expect(subscriberCountForTests()).toBe(1);
   });
 });
 

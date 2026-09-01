@@ -175,29 +175,80 @@ export async function updatePress(): Promise<void> {
   await shell.invoke(PRESS_COMMAND);
 }
 
-/**
- * Run `show` whenever the flow moves.
+/* ── ONE REGISTRATION FOR THE PROCESS, MANY SUBSCRIBERS ────────────────────────────────────────
  *
- * Never rejects on a missing shell, `native.ts`'s rule: this bundle is also loaded outside the app,
- * and a shell that is not there is not a failure — there is simply nothing to listen to.
+ * `plugin:event|listen` HAS NO UNLISTEN on this seam. `native.ts` records that as a deliberate
+ * limitation and answers it with a rule — register once, from a component that mounts once — which
+ * is the right answer for the sign-in screen and the WRONG one here: Settings → About is opened and
+ * closed as often as somebody likes, and a registration per mount would hand the shell a new
+ * callback every visit, keep every previous mount's closure alive, and call all of them on every
+ * transition. So the registration is the MODULE's, made at most once and never taken back, and the
+ * component's subscription is an ordinary set membership it can leave.
  *
- * There is no way to unregister, which is the same deliberate limitation the sign-in screen's
- * listener carries: the caller must register ONCE, from a component that mounts once. A stale
- * listener would hold an unmounted pane's setter.
- */
-export async function onUpdateState(show: (report: UpdateReport) => void): Promise<void> {
+ * `listening` is the latch. It is a promise rather than a boolean so a second mount arriving while
+ * the first registration is still in flight waits for the same one instead of starting another, and
+ * `register` swallows its own failures so the latch can never become a rejected promise every later
+ * caller re-throws. */
+const subscribers = new Set<(report: UpdateReport) => void>();
+let listening: Promise<void> | null = null;
+
+async function register(): Promise<void> {
   const shell = internals();
   if (!shell) return;
   const handler = shell.transformCallback((payload: unknown) => {
     const report = reportOfPayload(payload);
-    if (report !== null) show(report);
+    if (report === null) return;
+    // A copy, so a subscriber that unsubscribes while being told does not disturb the walk.
+    for (const show of [...subscribers]) show(report);
   });
-  await shell.invoke("plugin:event|listen", {
-    event: UPDATE_STATE_EVENT,
-    // Every target: the shell emits to the app, and this window is the only one that listens.
-    target: { kind: "Any" },
-    handler,
-  });
+  try {
+    await shell.invoke("plugin:event|listen", {
+      event: UPDATE_STATE_EVENT,
+      // Every target: the shell emits to the app, and this window is the only one that listens.
+      target: { kind: "Any" },
+      handler,
+    });
+  } catch {
+    /* An older shell, or a grant that dropped the listen permission: no live updates. The pane
+       still pulls at mount and after every press, so it is stale rather than blank. */
+  }
+}
+
+/**
+ * Run `show` whenever the flow moves, and hand back the way to stop.
+ *
+ * Never rejects on a missing shell, `native.ts`'s rule: this bundle is also loaded outside the app,
+ * and a shell that is not there is not a failure — there is simply nothing to listen to. The
+ * returned function is safe to call in either case and safe to call twice.
+ */
+export async function onUpdateState(
+  show: (report: UpdateReport) => void,
+): Promise<() => void> {
+  subscribers.add(show);
+  listening ??= register();
+  await listening;
+  return () => {
+    subscribers.delete(show);
+  };
+}
+
+/** Tests only: forget the registration so each test drives a fresh one. `omarchy.ts`'s seam. */
+export function resetUpdateFeedForTests(): void {
+  subscribers.clear();
+  listening = null;
+}
+
+/**
+ * Tests only: how many subscribers are held.
+ *
+ * A SEAM RATHER THAN AN ASSERTION ABOUT WHAT IS ON SCREEN, and the difference is the whole reason
+ * it exists. A leaked subscriber from a closed pane still RUNS on every transition; it simply does
+ * nothing visible, because the component guards its setter with a mounted flag. So a test written
+ * against the rendered markup passes whether or not the subscription was released — it was, and it
+ * was watched passing against a version that never released one. The count is the fact.
+ */
+export function subscriberCountForTests(): number {
+  return subscribers.size;
 }
 
 /**
