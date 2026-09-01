@@ -131,8 +131,15 @@ export type CredentialState =
    */
   | "unreadable"
   /**
-   * A stored credential exists, this install's key opens it, and it was PROVED AGAINST A
-   * DIFFERENT SERVER than this launch is configured for. The password is withheld — see
+   * A stored credential exists and it was PROVED AGAINST A DIFFERENT SERVER than this launch is
+   * configured for.
+   *
+   * NOTE WHAT THIS DOES **NOT** SAY: that the row is readable. The comparison runs BEFORE the
+   * decrypt, so a row can be both foreign and unopenable and this state reports only the first —
+   * `foreign-host` takes PRECEDENCE over `unreadable` rather than excluding it. That precedence is
+   * the right way round (the server mismatch is the fact a person can act on, and re-entering a
+   * password into the wrong server is the failure being prevented), but it means no surface may
+   * claim the keystore opened anything. The password is withheld — see
    * {@link credentialIsForeign} — so the engine serves its mirror and dials nothing, on either
    * transport.
    *

@@ -76,12 +76,15 @@ function credentialLine(status: EngineStatus): { value: string; description: str
           "Something is stored, and this install's key does not open it. Entering it again " +
           "seals it afresh; no mail is affected.",
       };
-    /* THE BOOT CONTRACT, in words. The password is fine and the KEYSTORE is fine — what disagrees
-       is which server it was proved against and which one this install is set to use, so the
-       engine withheld it rather than offer one server's password to another. Saying "needs
-       re-entering" here would be true of the action and false about the cause, and it is the exact
-       sentence the credential-state seam exists to stop: a person re-typing a password that was
-       never wrong, into whichever of the two servers the install happens to be pointing at.
+    /* THE BOOT CONTRACT, in words. What disagrees is which server the password was proved against
+       and which one this install is set to use, so the engine withheld it rather than offer one
+       server's password to another. Saying "needs re-entering" here would be true of the action
+       and false about the cause, and it is the exact sentence the credential-state seam exists to
+       stop: a person re-typing a password into whichever of the two servers the install happens to
+       be pointing at.
+
+       It does NOT claim the keystore can open the row. The engine compares the servers before it
+       decrypts, so `foreign-host` takes precedence over `unreadable` rather than ruling it out.
 
        ── WHAT THIS SENTENCE MAY NOT SAY, AND WHY ─────────────────────────────────────────────
        It said "it has not been sent to either" and that was FALSE. Reaching this state by the

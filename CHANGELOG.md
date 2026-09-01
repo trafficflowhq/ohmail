@@ -42,11 +42,12 @@ for the same reason, instead of offering one server's password to another.
 
 **And it says so in words that are true.** Settings shows "Server changed", and
 explains that the password was set up for a different mail server and has not been
-sent to the server this computer is set to. It deliberately does not say your
-keychain will not open it — that message already exists, it means something else,
-and here it would be false. It is also careful about the other direction: getting
-into this state usually means the password was already proved against the server it
-was stored for, so the only honest claim is about the server it was withheld from.
+sent to the server this computer is set to. It deliberately does not show the
+"needs re-entering" message that means your keychain will not open the password:
+this check runs first, before the app tries to open anything, so the changed server
+is what you are told about. It is careful in the other direction too — getting into
+this state usually means the password was already proved against the server it was
+stored for, so the only honest claim is about the server it was withheld from.
 
 One limit worth stating: this check compares the incoming mail server. A change that
 moves only the outgoing server is not covered by it yet.

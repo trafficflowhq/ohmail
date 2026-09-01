@@ -260,10 +260,11 @@ describe("Settings → this install", () => {
    *  · the `default` arm — "The mail engine did not say… Nothing is wrong." That is what a window
    *    with no case for this state prints, because the Rust shell folds an unrecognised value into
    *    `Unknown`. "Nothing is wrong" over a mailbox that has stopped syncing.
-   *  · the `unreadable` arm — "this install's key does not open it". The key opens it perfectly.
-   *    That sentence sends somebody to re-enter a password that was never the problem, into
-   *    whichever of the two servers the install happens to be pointing at, which is the exact
-   *    failure mode the credential-state seam exists to end.
+   *  · the `unreadable` arm — "this install's key does not open it". That sentence sends somebody
+   *    to re-enter a password into whichever of the two servers the install happens to be pointing
+   *    at, which is the exact failure mode the credential-state seam exists to end. Note the
+   *    engine does not claim the row IS readable: it compares the servers before decrypting, so
+   *    `foreign-host` takes precedence over `unreadable` rather than excluding it.
    */
   it("says the SERVER changed, not that the password needs re-entering", async () => {
     await mount({ ...SERVING, credentialState: "foreign-host" });
