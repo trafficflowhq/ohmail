@@ -237,9 +237,26 @@ export function TriageView({
     })),
   ]);
 
+  /**
+   * OPENING A ROW MOVES THE CURSOR, ON BOTH LAYOUTS — and it used to move it on only one.
+   *
+   * `shown` falls back to `openable[0]` when `selectedId` is null, so on the
+   * NARROW layout — where opening a row raised the reader and set no cursor — the reader showed
+   * the row that was tapped while `shown` still pointed at the FIRST row of the pile. Every
+   * view-local verb reads `shown`, so pressing one acted on a message the reader was not showing:
+   * `⇧F` would have forwarded a different person's mail than the one on screen, and `a`/`e`/`b`
+   * would have filed the wrong row. `r` too. The keys are declared here precisely because the
+   * shell's own bindings cannot see this cursor, so there is no reader-aware binding underneath
+   * to fall through to — a view binding outranks the global one.
+   *
+   * The cursor is set FIRST and unconditionally, so `shown` is "the message this view is
+   * showing" on both layouts, which is what every one of those verbs already assumes it means.
+   * The wide path is unchanged (it only ever did this); the narrow path additionally raises the
+   * reader, exactly as before.
+   */
   const openRow = (m: EngineMessage) => {
+    setSelectedId(m.id);
     if (readColumnHidden()) onOpen(m);
-    else setSelectedId(m.id);
   };
 
   /**
