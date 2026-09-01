@@ -35,6 +35,7 @@ export * from "./rules.js";
 export * from "./authserv-ids.js";
 export * from "./ports.js";
 export * from "./dedup.js";
+export * from "./gone.js";
 export * from "./reconciler.js";
 export * from "./threading.js";
 export * from "./pipeline.js";
