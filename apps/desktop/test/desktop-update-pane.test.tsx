@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import * as React from "react";
+import { StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider } from "@ohmail/ui";
@@ -111,6 +112,22 @@ let listener: ((payload: unknown) => void) | null = null;
 let answer: Wire | null = null;
 /** When true, `update_press` REJECTS, the way an older shell without the command would. */
 let refusePress = false;
+/** When set, `update_state` parks here instead of answering — so a push can be delivered first. */
+let holdState: ((wire: Wire) => void) | null = null;
+let held: Promise<Wire> | null = null;
+
+/** Make the next `update_state` wait, and hand back the release. */
+function holdTheNextRead(): (wire: Wire) => void {
+  held = new Promise<Wire>((resolve) => {
+    holdState = resolve;
+  });
+  return (wire: Wire) => {
+    const go = holdState!;
+    holdState = null;
+    held = null;
+    go(wire);
+  };
+}
 
 /** A shell that answers `state` and records presses. `null` = no shell at all (the preview). */
 function shell(state: Wire | null): void {
@@ -118,6 +135,8 @@ function shell(state: Wire | null): void {
   listens = 0;
   listener = null;
   refusePress = false;
+  holdState = null;
+  held = null;
   answer = state;
   resetUpdateFeedForTests();
   if (state === null) {
@@ -128,7 +147,7 @@ function shell(state: Wire | null): void {
     invoke: (command, payload) => {
       switch (command) {
         case "update_state":
-          return Promise.resolve(answer);
+          return held ?? Promise.resolve(answer);
         case "update_press":
           pressed += 1;
           return refusePress
@@ -175,10 +194,18 @@ async function mount(locale: "en" | "de" = "en"): Promise<void> {
   root = createRoot(hostEl);
   await act(async () => {
     root.render(
+      // INSIDE StrictMode, because `src/main.tsx` mounts the app inside it — so the effects here
+      // are replayed exactly as they are in the build a developer is looking at. A harness that
+      // mounted plainly would be green over a subscription leak that only StrictMode produces,
+      // which is what happened.
       h(
-        NextIntlClientProvider,
-        { locale, messages: (locale === "en" ? en : de) as never, timeZone: "Europe/Zurich" },
-        h(ThemeProvider, null, h(DesktopUpdate)),
+        StrictMode,
+        null,
+        h(
+          NextIntlClientProvider,
+          { locale, messages: (locale === "en" ? en : de) as never, timeZone: "Europe/Zurich" },
+          h(ThemeProvider, null, h(DesktopUpdate)),
+        ),
       ),
     );
   });
@@ -393,6 +420,63 @@ describe("revisiting the pane does not accumulate listeners", () => {
       await mount();
     }
     expect(listens, "the pane registers a new shell listener on every visit").toBe(1);
+  });
+
+  /**
+   * …AND THE SAME RACE AT MOUNT, which is its own path and needs its own guard.
+   *
+   * The pane listens first and then asks. If the ask parks — a busy shell, a slow IPC round trip —
+   * and the flow moves in the meantime, the answer that eventually comes back describes a moment
+   * that has passed. Opening Settings while an update is downloading is exactly when this happens.
+   */
+  it("a mount read that comes back stale does not undo an event heard first", async () => {
+    shell(WIRE.upToDate!);
+    const answerTheRead = holdTheNextRead();
+    await mount();
+    // Nothing to draw yet: the read has not answered and no event has landed.
+    expect(button()).toBeNull();
+
+    await act(async () => listener!({ payload: WIRE.ready }));
+    await settle();
+    expect(hostEl.textContent).toContain(`ohmail ${NEXT} is ready`);
+
+    await act(async () => answerTheRead(WIRE.upToDate! as never));
+    await settle();
+    expect(hostEl.textContent, "the mount read overwrote a newer event")
+      .toContain(`ohmail ${NEXT} is ready`);
+    expect(button()!.textContent).toBe(copy.restart!);
+  });
+
+  /**
+   * THE PULL AND THE PUSH RACE, AND THE PUSH CAN WIN.
+   *
+   * `update_state` snapshots the flow when the command runs in the shell; a transition emitted a
+   * moment later can reach this window BEFORE the invoke's response does. Applying that response
+   * then puts a state the app has already left back on screen — and since the newer state was the
+   * last one the shell announced, nothing would ever correct it: the pane would sit on "checking",
+   * disabled, until it was closed and reopened.
+   *
+   * Driven by holding the read open, delivering the newer event, and only then answering the read
+   * with the older snapshot — which is exactly the order that produces the defect.
+   */
+  it("a read that comes back stale does not undo a newer event", async () => {
+    shell(WIRE.upToDate!);
+    await mount();
+
+    const answerTheRead = holdTheNextRead();
+    await click();                                   // the press issues a read that now parks
+    await act(async () => listener!({ payload: WIRE.ready }));   // …and the shell moves on
+    await settle();
+    expect(hostEl.textContent).toContain(`ohmail ${NEXT} is ready`);
+
+    // The parked read finally answers with what was true when it was asked.
+    await act(async () => answerTheRead(WIRE.checking! as never));
+    await settle();
+
+    expect(hostEl.textContent, "a stale read overwrote a newer event")
+      .toContain(`ohmail ${NEXT} is ready`);
+    expect(button()!.textContent).toBe(copy.restart!);
+    expect(button()!.disabled).toBe(false);
   });
 
   /**

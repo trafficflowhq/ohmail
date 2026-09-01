@@ -65,26 +65,57 @@ import {
  */
 function useUpdateReport(): { report: UpdateReport | null; press: () => Promise<void> } {
   const [report, setReport] = useState<UpdateReport | null>(null);
-  const alive = useRef(true);
+  /* Is this component still on screen? For the PRESS only — the subscription below tracks its own
+     cancellation per effect run, for the reason that comment gives. */
+  const mounted = useRef(true);
+  /* HOW MANY PUSHED REPORTS HAVE LANDED. The pull and the push race, and the push can win:
+     `update_state` snapshots the flow when the command runs in the shell, and a transition
+     emitted a moment later can be delivered to this window BEFORE the invoke's response comes
+     back. Applying that response then puts a state the app has already left back on screen — and
+     since the newer state was the last one announced, nothing would correct it. So a pull applies
+     only if no event arrived while it was in flight. A counter and not a timestamp: the question
+     is "did anything land", and clocks are not needed to answer it. */
+  const pushes = useRef(0);
 
   useEffect(() => {
-    alive.current = true;
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    /* CANCELLATION IS PER EFFECT RUN, and a shared ref will not do — this was a real defect
+       rather than a precaution. `StrictMode` (this app's root, `main.tsx`) replays the effect:
+       setup, cleanup, setup. With a shared "am I mounted" flag the SECOND setup sets it back to
+       true, so the FIRST setup's continuation — still awaiting its registration — believes it is
+       live, stores its release in a closure whose cleanup has already run, and leaves a
+       subscriber nothing will ever remove. One leaked setter per visit to Settings, in the exact
+       build a developer is looking at. A local `let` belongs to one run and cannot be revived by
+       the next. */
+    let cancelled = false;
     let off: (() => void) | null = null;
     void (async () => {
       // Listen FIRST, then ask: a transition between the two is then heard through the listener
       // instead of falling between them. `omarchy.ts` orders its own feed the same way.
       const release = await onUpdateState((next) => {
-        if (alive.current) setReport(next);
+        if (cancelled) return;
+        pushes.current += 1;
+        setReport(next);
       });
-      // Unmounted while the registration was in flight: release it immediately rather than
-      // leaving a subscriber nothing will ever remove.
-      if (!alive.current) release();
-      else off = release;
+      // Cancelled while the registration was in flight: release it here, because the cleanup that
+      // would have has already run.
+      if (cancelled) {
+        release();
+        return;
+      }
+      off = release;
+      const at = pushes.current;
       const now = await updateState();
-      if (alive.current && now !== null) setReport(now);
+      if (!cancelled && now !== null && pushes.current === at) setReport(now);
     })();
     return () => {
-      alive.current = false;
+      cancelled = true;
       off?.();
     };
   }, []);
@@ -104,13 +135,16 @@ function useUpdateReport(): { report: UpdateReport | null; press: () => Promise<
    * the effect that clears `busy` fires even when nothing about the flow changed.
    */
   const press = useCallback(async () => {
+    const at = pushes.current;
     try {
       await updatePress();
     } catch {
       /* The shell refused the press. The re-read below is what the person sees. */
     }
     const now = await updateState();
-    if (alive.current && now !== null) setReport(now);
+    // …unless the shell already announced something newer while the read was in flight, in which
+    // case what is on screen is ahead of what came back and must stay.
+    if (mounted.current && now !== null && pushes.current === at) setReport(now);
   }, []);
 
   return { report, press };
