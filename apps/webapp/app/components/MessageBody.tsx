@@ -3049,12 +3049,42 @@ const CSP_HOST_SOURCE = /^https?:\/\/[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::\d{1,5}
  * incomplete.
  *
  * Naming the PATH ends the family by construction rather than by enumeration. A CSP source
- * expression carries a path (CSP3 §6.6.2.6 — exact match when it does not end in `/`, query
- * and fragment ignored), so `https://ohmail.app/api/img` admits the proxy and refuses every
- * other url on this origin, including the next spelling of the next sanitizer defect, before
- * anybody finds it. **The acceptance test is that both prior fixes become redundant**: revert
- * either one and its payload still fetches nothing, because the policy — not the rewrite — is
- * what refuses it.
+ * expression carries a path (CSP3 §6.6.2.6), so `https://ohmail.app/api/img` admits the proxy
+ * and refuses every other url on this origin, including the next spelling of the next
+ * sanitizer defect, before anybody finds it. **The acceptance test is that both prior fixes
+ * become redundant**: revert either one and its payload still fetches nothing, because the
+ * policy — not the rewrite — is what refuses it.
+ *
+ * ── WHAT THE PATH ACTUALLY MATCHES, MEASURED IN CHROMIUM RATHER THAN READ ───────────────
+ *
+ * Against `img-src data: <origin>/api/img`, inside a sandboxed `srcdoc` frame, with the app's
+ * own policy in force — the exact shape this file builds:
+ *
+ *   `/api/img`, `/api/img?u=…`, `/api/img#f`   FETCHED — the match is exact and the query and
+ *                                              fragment are ignored, which is why no policy
+ *                                              can ever constrain the `u=` a sender chose
+ *   `/api/imgx`, `/api/img/sub`, `/other`      blocked — an exact path is a whole segment run,
+ *                                              not a prefix
+ *   `/API/IMG`                                 blocked — path matching is CASE-SENSITIVE, so
+ *                                              the source must be the spelling the app serves
+ *   `/api/%69mg`                               FETCHED — matched after percent-DECODING. Not a
+ *                                              widening (it is the same endpoint, which the
+ *                                              router decodes too) but it is a second spelling
+ *                                              of one source, which is why {@link
+ *                                              CSP_HOST_SOURCE} refuses `%` in the source it
+ *                                              writes rather than admitting both.
+ *   a source ending in `/`                     becomes a PREFIX and stops matching the bare
+ *                                              path — `/api/img/` admits `/api/img/sub` and
+ *                                              refuses `/api/img`. `URL.pathname` never adds
+ *                                              one here, and this is why it must not.
+ *
+ * **AND THE ONE HOLE, WHICH IS IN THE SPEC RATHER THAN IN THIS FILE: a path is not matched
+ * across a REDIRECT.** Measured the same way — a `302` from an admitted url to a path the
+ * policy does not name was followed and fetched. That is deliberate (matching there would leak
+ * cross-origin path information), and it means the single url this policy admits is the single
+ * place the narrowing could be walked around. It is closed where it can be: `GET /img` answers
+ * bytes or an error and never a `3xx`, pinned by a mutation-watched guard in
+ * the API's privacy suite, so a later editor cannot make it one by accident.
  *
  * ── IT IS MINTED BY THE PROXY, NOT WRITTEN BESIDE IT ────────────────────────────────────
  *
@@ -4026,16 +4056,41 @@ export function MessageBody({
   const remote = mail.blocked;
   const sheets = mail.sheets;
   const pixels = remote.filter((b) => b.pixel).length;
+  /**
+   * ── DID THE PICTURES ACTUALLY LOAD? NOT THE SAME QUESTION AS `remoteLoaded` ─────────────
+   *
+   * `remoteLoaded` is the READER's answer — the stored flag, this session's press, or the
+   * account's auto mode. Whether anything then loaded is a second fact, and the bar is about
+   * the second one: it is the surface that tells a reader what was withheld, so keying it on
+   * consent means a message can show blanked boxes while the bar says nothing at all.
+   *
+   * The two disagree in exactly the cases the sanitizer was ALSO given no proxy — a client
+   * with no image proxy (the demo, any build with no API), and the fail-closed branch where
+   * {@link proxyImgSource} cannot state a source the frame's policy would accept. In both, the
+   * pictures are counted in `mail.blocked` and must be reported as blocked. Reading `proxy`
+   * rather than re-deriving the terms is what keeps that impossible to get wrong: it is the
+   * same value the rewrite was performed with, so the sentence cannot disagree with the
+   * document it describes.
+   *
+   * The one measured case behind the second half: an app served from an IPv6 literal origin.
+   * `http://[::1]:3000` has no expressible CSP host-source — checked in Chromium, not assumed:
+   * `img-src http://[::1]:45365/api/img` refused BOTH a matching and a non-matching url, while
+   * `'self'` fetched both, so the source contributes nothing and the whole directive is a
+   * refusal. There is no spelling that would work (CSP3's `host-char` is ALPHA/DIGIT/"-"), so
+   * `null` is the only truthful answer and this term is what keeps its consequence visible
+   * instead of silent. Production is a domain; this is a development topology.
+   */
+  const remoteShown = proxy !== null;
   // UNDER THE LOADED MODES THE BEACONS ALONE WERE REFUSED — and that refusal is still said, in a
   // sentence of its own, because it is the one privacy fact this product is named for and the
   // "images by default" world would otherwise report nothing at all. Unless the reader turned the
   // pixel switch off too (`loadTrackingPixels`), in which case nothing was refused and nothing is
   // said. The manual-mode sentences below are untouched by this term.
-  const pixelsRefused = remoteLoaded && !loadTrackingPixels ? pixels : 0;
+  const pixelsRefused = remoteShown && !loadTrackingPixels ? pixels : 0;
   // A loaded remote image is no longer "blocked", so it contributes nothing to the bar — the
   // status line that used to say "Images loaded for this message." was pure noise and is gone.
   // Blocked stylesheets have no consent path, so they still count even when images loaded.
-  const hasBlocked = (remote.length > 0 && !remoteLoaded) || sheets.length > 0 || pixelsRefused > 0;
+  const hasBlocked = (remote.length > 0 && !remoteShown) || sheets.length > 0 || pixelsRefused > 0;
   // The bar also carries the dark-viewer toggle, so it appears in a dark theme even when there
   // is nothing blocked to report. The empty text span below still takes the flex space, which
   // is what pushes the toggle to the right whether or not the blocked-content sentence is there.
@@ -4144,7 +4199,7 @@ export function MessageBody({
           <span className="mb-bar-text">
             {remote.length === 0
               ? null
-              : remoteLoaded
+              : remoteShown
                 ? /* The pictures are on screen; only the refused beacons are left to report. */
                   pixelsRefused === 0
                   ? null
@@ -4156,7 +4211,7 @@ export function MessageBody({
                   : remote.length === 1
                     ? COPY.blockedOne
                     : COPY.blockedMany(remote.length)}
-            {!remoteLoaded && pixels > 0 && remote.length !== pixels ? (
+            {!remoteShown && pixels > 0 && remote.length !== pixels ? (
               <>
                 {" "}
                 <span className="mb-bar-hit">
