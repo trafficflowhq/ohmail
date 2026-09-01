@@ -1544,6 +1544,19 @@ impl Inner {
 
 fn supervise(inner: Arc<Inner>, launch: Launch) {
     let mut attempt: u32 = 1;
+    // THE CRASH LOOP'S OWN DIAGNOSTIC, WHICH OUTLIVES THE RUN THAT PRODUCED IT.
+    //
+    // `Shared::last_error` belongs to one child, because a status read between runs must not
+    // report the previous child's error as this one's. The GIVE-UP message needs the opposite
+    // lifetime: attempts do not have to fail identically, and a fourth attempt that dies without
+    // saying anything would otherwise make the shell announce that the engine "wrote nothing that
+    // named a cause" while three earlier attempts had named it precisely — the false diagnosis
+    // this whole change exists to remove, reintroduced one layer up.
+    //
+    // So the loop keeps the newest error any attempt gave it, replaced only by a later attempt
+    // that also spoke, and dropped when a run is healthy for long enough to reset the budget —
+    // at which point the loop that produced it is over.
+    let mut across_attempts: Option<String> = None;
     loop {
         if inner.stopping() {
             inner.set_state(EngineState::Stopped);
@@ -1712,10 +1725,19 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
         }
         log_exit(&exit, fault.as_deref());
 
+        // AN ATTEMPT THAT SAID NOTHING DOES NOT ERASE ONE THAT DID. Replaced only by a later
+        // attempt that also named an error, so the give-up message quotes the newest real account
+        // of the failure rather than the last attempt's silence.
+        if last_error.is_some() {
+            across_attempts = last_error;
+        }
+
         // A run that actually served, for long enough to have been useful, is not evidence of a
-        // crash loop. Reset the budget so an app left open for days can still recover.
+        // crash loop. Reset the budget so an app left open for days can still recover — and drop
+        // the loop's diagnostic with it, because the loop that produced it is over.
         if served && ran >= inner.timings.healthy_for {
             attempt = 0;
+            across_attempts = None;
         }
         attempt += 1;
         if attempt > MAX_STARTS {
@@ -1731,10 +1753,16 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
             //
             // So: quote the child when it named something, and when it named nothing, say that —
             // and demote the duplicate-copy guess to what it always was, one thing that does this.
-            let reason = match &last_error {
+            //
+            // "the last error it reported" and NOT "each time it said", which an earlier draft of
+            // this sentence claimed. The attempts do not have to fail identically, and this only
+            // ever holds ONE of their errors; asserting they agreed would be a second sentence
+            // making a claim nothing here checked.
+            let reason = match &across_attempts {
                 Some(said) => format!(
                     "the engine failed {MAX_STARTS} starts in a row, so the shell stopped restarting it. \
-                     Each time it said: {said} — quit ohmail and open it again once that is fixed."
+                     The last error it reported was: {said} — quit ohmail and open it again once \
+                     that is fixed."
                 ),
                 None => format!(
                     "the engine failed {MAX_STARTS} starts in a row, so the shell stopped restarting it, \
@@ -2347,7 +2375,20 @@ fn forward_diagnostics(mut stderr: ChildStderr, inner: &Arc<Inner>) {
                             }
                             if let Some(named) = error_line(line) {
                                 let mut s = inner.shared.lock().expect("engine state");
-                                if s.last_error.is_none() {
+                                // FIRST WHILE STARTING, LATEST ONCE SERVING — and `ready` is what
+                                // tells them apart, which is a signal this file already keeps.
+                                //
+                                // A run that never announced itself failed to START, and a
+                                // startup failure's cause is its FIRST error: what follows is the
+                                // consequence — stack frames, a sign-off banner, the connection
+                                // that closed because the first thing died. A run that DID
+                                // announce itself was healthy and then stopped being healthy, so
+                                // the newest error is the one nearest whatever killed it and an
+                                // earlier `request_failed` or `sync_cycle_failed` is history the
+                                // run survived. Keeping the first line in that case would report
+                                // a recoverable error as the cause of a crash.
+                                let starting = s.ready.is_none();
+                                if !starting || s.last_error.is_none() {
                                     s.last_error = Some(named);
                                 }
                             }

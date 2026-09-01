@@ -106,6 +106,21 @@ if (mode === "die-loudly") {
   process.exit(1);
 }
 
+// SPEAKS ON ITS FIRST START AND IS SILENT ON EVERY ONE AFTER. A permission problem on the mirror
+// looks exactly like this: the first process to reach the directory says why, and the ones behind
+// it die earlier and quieter. The give-up message must still be able to quote the one that spoke,
+// four attempts later. It counts its own previous starts out of the shared log rather than keeping
+// state, because each attempt is a new process.
+if (mode === "loud-once") {
+  const starts = log
+    ? fs.readFileSync(log, "utf8").split("\n").filter((l) => l.startsWith("start ")).length
+    : 0;
+  if (starts <= 1) {
+    fs.writeSync(2, "Error: EACCES: permission denied, open 'ohmail.db'\n");
+  }
+  process.exit(1);
+}
+
 // A boot that narrates itself, the way the real engine does while it opens its store: `phase`
 // frames strictly before `ready`. One malformed on purpose — the shell's reader must refuse it —
 // then a real one, then a beat before `ready` so a test can read the status of an engine that is
@@ -151,6 +166,18 @@ if (mode === "echo" || mode === "mute") {
 process.stdin.resume();
 
 if (mode === "serve-then-die") { setTimeout(() => process.exit(9), 60); }
+
+// A run that SERVED, logged something it survived, and then died of something else. The order is
+// the point: the recoverable line comes FIRST and must LOSE to the fatal one, which is the exact
+// reverse of the rule that applies before `ready`. Reported by review — without this, a mailbox
+// that failed one request at 09:00 and crashed at 17:00 would be diagnosed as the 09:00 request.
+if (mode === "serve-then-loud-die") {
+  setTimeout(() => {
+    fs.writeSync(2, JSON.stringify({ level: "error", event: "request_failed" }) + "\n");
+    fs.writeSync(2, "Error: ENOSPC: no space left on device, write\n");
+    process.exit(9);
+  }, 200);
+}
 if (mode === "noise") { setTimeout(() => process.stdout.write("a stray console.log\n"), 30); }
 setInterval(() => {}, 1000);
 "#;
@@ -1072,6 +1099,70 @@ fn giving_up_quotes_what_the_engine_actually_said() {
             assert!(!reason.contains("the connection closed"), "the first error, not the last: {reason}");
             assert!(!reason.contains("Node.js v22"), "not the sign-off banner: {reason}");
             assert!(!reason.contains("binding.lstat"), "not the source echo either: {reason}");
+        }
+        other => panic!("expected a failed state, got {other:?}"),
+    }
+    engine.stop();
+}
+
+/// ONCE THE ENGINE HAS SERVED, THE NEWEST ERROR IS THE ONE THAT MATTERS.
+///
+/// The rule above — quote the first error line — is right for a run that never started, where
+/// everything after the first error is its consequence. It is WRONG for a run that was healthy and
+/// then stopped being healthy: an engine that failed one request hours earlier and then died of a
+/// full disk would be reported as that request. `ready` is what tells the two apart.
+#[test]
+fn a_run_that_served_is_diagnosed_by_its_last_error_not_its_first() {
+    let fixture = Fixture::new("served-crashloop");
+    let engine = Engine::spawn_with(fixture.launch("serve-then-loud-die"), quick());
+
+    wait_for(
+        || matches!(engine.state(), EngineState::Failed { .. }),
+        Duration::from_secs(40),
+        "the restart budget to run out",
+    );
+
+    match engine.state() {
+        EngineState::Failed { reason, .. } => {
+            assert!(reason.contains("ENOSPC"), "the error it died of: {reason}");
+            assert!(
+                !reason.contains("request_failed"),
+                "not the one it survived hours earlier: {reason}"
+            );
+        }
+        other => panic!("expected a failed state, got {other:?}"),
+    }
+    engine.stop();
+}
+
+/// AN ATTEMPT THAT SAID NOTHING DOES NOT ERASE ONE THAT DID.
+///
+/// `Shared::last_error` is per RUN, so a status read between children cannot report the previous
+/// one's error as this one's. The give-up message needs the other lifetime: attempts do not have
+/// to fail identically, and here only the FIRST of four says why. Clearing the diagnostic with the
+/// child would make the shell announce that the engine "wrote nothing that named a cause" about a
+/// crash loop whose cause it had been told — the same false diagnosis this change removes, one
+/// layer up. Reported by review.
+#[test]
+fn a_later_silent_attempt_does_not_erase_the_reason_an_earlier_one_gave() {
+    let fixture = Fixture::new("loud-once-crashloop");
+    let engine = Engine::spawn_with(fixture.launch("loud-once"), quick());
+
+    wait_for(
+        || matches!(engine.state(), EngineState::Failed { .. }),
+        Duration::from_secs(30),
+        "the restart budget to run out",
+    );
+    assert_eq!(fixture.starts(), MAX_STARTS as usize, "{:?}", fixture.lines());
+
+    match engine.state() {
+        EngineState::Failed { reason, .. } => {
+            assert!(
+                reason.contains("EACCES: permission denied"),
+                "the first attempt's reason survives three silent ones: {reason}"
+            );
+            assert!(!reason.contains("wrote nothing"), "{reason}");
+            assert!(!reason.contains("another copy"), "{reason}");
         }
         other => panic!("expected a failed state, got {other:?}"),
     }
