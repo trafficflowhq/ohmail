@@ -1,5 +1,5 @@
 import { and, eq, inArray, isNotNull, lte, notInArray, sql } from "drizzle-orm";
-import { drafts, recordChange, type Tx } from "@trafficflow/db";
+import { drafts, outboundSends, recordChange, type Tx } from "@trafficflow/db";
 import { createLogger, type Logger, type OpenSendAdapter, type StorageCap } from "@trafficflow/core/mail";
 import type { Db, ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
@@ -208,33 +208,57 @@ export async function runScheduledSendPass(
     } catch (err) {
       if (err instanceof ServiceError) {
         // Deterministic refusal. When `reserve` itself threw, it rolled back and the row is an
-        // ordinary 'draft' — the close lands and the sentence goes in the Drafts row. When the
-        // refusal came AFTER the reservation committed (`makeSendAdapter` refusing over deleted
-        // credentials is the measured shape), the row is 'sending' and the close DECLINES by
-        // its own predicate: the reservation stands, the recovery arm replays the key once the
-        // row is stale, and verify-by-Sent ends it terminally — so that outcome is counted as
-        // DEFERRED, because "failed" would be this pass writing up an ending it cannot prove.
+        // ordinary 'draft' with the key standing — the close lands and the sentence goes in the
+        // Drafts row.
+        //
+        // When the refusal came AFTER the reservation committed, the close DECLINES, and WHICH
+        // decline it is decides the count — which is why the reservation is consulted rather
+        // than assumed. Two different states reach this line:
+        //
+        //   reservation `failed`   the pre-SMTP window already finalized it terminally and wrote
+        //                          the sentence itself (`SendService.finalizeFailed`), clearing
+        //                          `send_key` — which is precisely why the close cannot match.
+        //                          Nothing is owed and nothing will retry: count FAILED.
+        //   reservation `pending`  the fate is genuinely unknown — the envelope went to the
+        //                          server and the Sent probe threw on the way back. The row is
+        //                          'sending', the key stands, and the recovery arm replays it
+        //                          once the row is provably stale: count DEFERRED, because
+        //                          "failed" would be this pass writing up an ending it cannot
+        //                          prove.
+        //
+        // This used to read the first case as the second — the comment here asserted the row was
+        // still 'sending' with the key standing, which stopped being true when the window began
+        // finalizing. The count was `deferred` for an outcome that was already terminal, so an
+        // operator reading the counters saw a retry coming for a row whose `send_at` and
+        // `send_key` were both already NULL. Nothing would ever claim it again.
         const closed = await closeAppointment(db, ctx, row, err.message, log);
-        if (closed) result.failed += 1;
+        if (closed || await reservationFailed(db, ctx, row)) result.failed += 1;
         else result.deferred += 1;
         log.warn("scheduled_send_refused", { draftId: row.id, accountId: row.accountId, code: err.code });
       } else {
         // TRANSIENT — and where the fault landed decides who owns the retry. Re-arm, guarded
         // on the claim window (status still 'draft', the SAME key): that matches only a fault
-        // BEFORE the reservation existed, and the row simply comes due again next pass. A row
-        // `reserve` already moved to 'sending' matches nothing here ON PURPOSE — its
-        // reservation stands, so the recovery arm replays the key once the row is provably
-        // stale and verify-by-Sent gives it a terminal answer; meanwhile the drafts list's
-        // stale-`sending` copy is the user-visible truth. Either way this pass writes no
-        // failure it cannot prove.
+        // BEFORE the reservation existed, and the row simply comes due again next pass.
+        //
+        // A row the reservation already moved past matches nothing here ON PURPOSE, and there
+        // are now two such rows, distinguished by the reservation exactly as the typed branch
+        // above distinguishes them. A `failed` reservation is a definite non-delivery the
+        // pre-SMTP window already finalized and explained; re-arming it would resend a message
+        // whose refusal is recorded, and the guard on `send_key` is what stops that — the key is
+        // already NULL. A `pending` one is the unknown-fate case the recovery arm owns.
         await (db as unknown as Tx).update(drafts)
           .set({ status: "scheduled", updatedAt: now() })
           .where(and(
             eq(drafts.id, row.id), eq(drafts.status, "draft"),
             eq(drafts.sendKey, row.sendKey),
           ));
-        result.deferred += 1;
-        log.warn("scheduled_send_deferred", { draftId: row.id, accountId: row.accountId, err });
+        if (await reservationFailed(db, ctx, row)) {
+          result.failed += 1;
+          log.warn("scheduled_send_failed", { draftId: row.id, accountId: row.accountId, err });
+        } else {
+          result.deferred += 1;
+          log.warn("scheduled_send_deferred", { draftId: row.id, accountId: row.accountId, err });
+        }
       }
     }
   }
@@ -401,6 +425,35 @@ async function claimDue(
  * closed by a stale failure from the old one. Answers whether anything closed, so the caller's
  * counters can tell a settled failure from a row the predicate protected.
  */
+/**
+ * Did the reservation under this row's key end TERMINALLY as a definite non-delivery?
+ *
+ * The discriminator between "already finished and explained" and "fate unknown, recovery owns
+ * it" — the two states a post-reservation throw can leave behind, which are indistinguishable
+ * from the exception alone and were being conflated. Read from the reservation row because that
+ * is where the answer is authoritative: `SendService` writes it in the same transaction that
+ * clears the appointment, so there is no window in which the two disagree.
+ *
+ * Only on the failure path, and only when the close declined, so it costs one query per failure
+ * and none per delivery. A read failure answers `false`, which routes the row to DEFERRED — the
+ * conservative direction: it claims nothing this function could not establish, and the recovery
+ * arm re-examines the row rather than an operator being told an ending that was never proven.
+ */
+async function reservationFailed(db: Db, ctx: ServiceContext, row: ClaimedRow): Promise<boolean> {
+  try {
+    const found = await (db as unknown as Tx).select({ status: outboundSends.status })
+      .from(outboundSends)
+      .where(and(
+        eq(outboundSends.accountId, ctx.accountId),
+        eq(outboundSends.idempotencyKey, row.sendKey),
+      ))
+      .limit(1);
+    return found[0]?.status === "failed";
+  } catch {
+    return false;
+  }
+}
+
 async function closeAppointment(
   db: Db, ctx: ServiceContext, row: ClaimedRow, sentence: string, log: Logger,
   opts: { includeSending?: boolean } = {},

@@ -544,6 +544,22 @@ export function sendSurfaceFor(
 export const SEND_STALE_AFTER_MS = 10 * 60 * 1000;
 
 /**
+ * The Drafts-row sentence for a definite non-delivery whose cause has no sentence of its own.
+ *
+ * A `ServiceError` carries one already and it is quoted verbatim ({@link SendService.finalizeFailed});
+ * this is for everything else — a socket reset while logging in, a storage read that threw, any
+ * unexpected fault inside the pre-SMTP window. Those errors' messages are diagnostics, not
+ * sentences: they name hosts, ports and library internals, and they belong in the log this pass
+ * already writes, not in a row a person reads.
+ *
+ * It states the one fact that is certain and the one action that works. It deliberately does NOT
+ * say "check your Sent folder" — that sentence is reserved for `unverified`, where the fate really
+ * is unknown, and saying it here is the exact lie the pre-SMTP window was built to stop telling.
+ */
+export const SEND_FAILED_SENTENCE =
+  "This was not sent — the message never reached your mail server. Send it again.";
+
+/**
  * The outcome the route maps to an HTTP response:
  *  - `sent`       → 200 { status, providerMessageId } (+ X-Sync-Seq)
  *  - `unverified` → 200 { status } — ambiguous, surfaced ("check Sent before retrying")
@@ -652,7 +668,11 @@ export class SendService {
       await this.assemble(ctx, reservation, deps, input);
       adapter = await deps.openSendAdapter(mailboxId);
     } catch (err) {
-      await this.finalizeFailed(ctx, sendId, draftId);
+      // The sentence goes in with the terminal write, because on the scheduled path this row IS
+      // the only channel — see `finalizeFailed`. A typed refusal is written to be read; anything
+      // else is a diagnostic and gets the standing sentence instead.
+      await this.finalizeFailed(ctx, sendId, draftId,
+        err instanceof ServiceError ? err.message : SEND_FAILED_SENTENCE);
       throw err;
     }
 
@@ -1561,12 +1581,63 @@ export class SendService {
    * `sendAt`/`sendKey` are cleared on the terminal outcome — {@link finalizeSent}'s rule, and it
    * matters more here than there: an appointment that outlived a definite non-delivery would be
    * re-claimed by the scheduled-send sweep and replayed.
+   *
+   * ── AND IT CARRIES THE SENTENCE, BECAUSE ON A SCHEDULE THERE IS NOBODY TO THROW TO ─────────
+   *
+   * This write is the ONLY channel a scheduled send has. An interactive send reaches a person
+   * through the thrown error the route maps, so returning the draft to `draft` is enough there.
+   * A scheduled one is run by `schedule-send-pass.ts` on a timer: the throw is caught by a loop,
+   * and the only thing the reader ever sees is the Drafts row. `send_error` is that row's
+   * sentence.
+   *
+   * It did not used to be written here, and the seam that used to write it CANNOT any more:
+   * `closeAppointment` is guarded on `send_key`, and this transaction has just set that key to
+   * NULL — so the close matches nothing and the sentence was silently dropped. Measured, not
+   * argued: a factory refusal on the scheduled path left `status='draft'`, `send_at`/`send_key`
+   * NULL, the reservation `failed`, and **`send_error` NULL** — an appointment that vanished
+   * from "Sending…" back to an ordinary draft with no explanation anywhere. That is the same
+   * defect this whole window exists to close, one surface over: the state was recorded honestly
+   * and the person was told nothing.
+   *
+   * A `ServiceError`'s own message is the sentence (it is written to be read — `closeAppointment`
+   * has always quoted it). Anything else gets {@link SEND_FAILED_SENTENCE}: an unexpected throw's
+   * message is an internal detail, not a sentence, and may name a host or a socket.
+   *
+   * ── AND ONLY FOR A SEND THAT HAD AN APPOINTMENT. `send_error` IS SCHEDULE-ONLY ─────────────
+   *
+   * The write is gated on `send_at` still standing, read in this same statement, because
+   * `send_error` is not a generic "last send failed" field — it means "the appointment could not
+   * be kept", and both clients read it that way:
+   *
+   *   `apps/webapp/messages/en.json#scheduleFailedNote`  "This message wasn't sent at its
+   *                                                       SCHEDULED TIME: {reason}"
+   *   `apps/mobile/src/state/live.ts#liveScheduled`      lists every `draft` row with a non-empty
+   *                                                       `send_error` on the SCHEDULED screen,
+   *                                                       because that app has no Drafts screen
+   *
+   * So an unconditional write would put a failed interactive send onto the phone's Scheduled
+   * list and tell the reader on the web that a message they had just pressed Send on missed a
+   * scheduled time that never existed. The interactive path needs none of it: its caller gets
+   * the throw and the route maps it, which is the whole reason this field was schedule-only to
+   * begin with. `dto/types.ts#DraftDTO.sendError` states that contract.
+   *
+   * `send_at` is the honest discriminator rather than a flag threaded from the caller: a
+   * scheduled send keeps its appointment through the claim window and through `sending`, and
+   * only a terminal finalize clears it — so at this moment it is exactly "was this an
+   * appointment". Done as one statement so there is no read to race.
    */
-  private async finalizeFailed(ctx: ServiceContext, sendId: string, draftId: string): Promise<void> {
+  private async finalizeFailed(
+    ctx: ServiceContext, sendId: string, draftId: string, sentence: string,
+  ): Promise<void> {
     const now = ctx.now();
     await asTx(ctx).transaction(async (tx) => {
       await tx.update(outboundSends).set({ status: "failed" }).where(eq(outboundSends.id, sendId));
-      await tx.update(drafts).set({ status: "draft", sendAt: null, sendKey: null, updatedAt: now })
+      await tx.update(drafts)
+        .set({
+          status: "draft", sendAt: null, sendKey: null, updatedAt: now,
+          sendError: sql`case when ${drafts.sendAt} is not null then ${sentence}
+                              else ${drafts.sendError} end`,
+        })
         .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId)));
       await recordChange(tx, {
         accountId: ctx.accountId, entityType: "draft", entityId: draftId, op: "update", meta: null,
