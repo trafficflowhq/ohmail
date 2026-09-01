@@ -224,6 +224,25 @@ function mayRetry(
   // approximation and it is wrong twice: an EMPTY `Idempotency-Key` satisfies `has()` while
   // `withIdempotency` does `const key = …get("idempotency-key"); if (!key) return next(…)` and
   // skips, and a request with no resolved account is skipped at the next line for the same reason.
+  /**
+   * NOTHING RAN — and this is asked FIRST, before idempotency is consulted at all, because it is a
+   * different question with a different answer.
+   *
+   * On a PROTECTED route a resolved session is a precondition for the handler: without one
+   * `withSession` answers 401 and the handler never runs. So "protected, and no account was
+   * resolved" means the refusal happened while `withSession` was still resolving the token — the
+   * FIRST database query on every authenticated request, and therefore the likeliest one to be
+   * starved. Neither the handler nor `withIdempotency` can have run, so there is no effect to
+   * duplicate and a retry is safe **whatever the route's idempotency marking**.
+   *
+   * Ordering this after the idempotency gates was a real defect, not a nicety: `POST /tags` is
+   * protected and NOT `idempotent`-marked, so a starved session lookup on a queued `tag_create`
+   * fell straight through to `false` — and the engine answers `false` by rolling the overlay back
+   * and calling `dropOutbox`. The user's tag is deleted because the server was briefly busy.
+   */
+  if (protection.routeRequiresSession && !protection.hasAccount) return true;
+
+  // Past here the handler MAY have run, so only real deduplication makes a retry safe.
   if (!protection.routeIsIdempotent) return false;
   if ((req.headers.get("idempotency-key") ?? "") === "") return false;
   /**
@@ -241,11 +260,11 @@ function mayRetry(
    * possible states are safe:
    *   · the session DID resolve ⇒ `withIdempotency` ran and a replay is deduplicated;
    *   · the session did NOT resolve ⇒ neither it nor the handler ran, so nothing happened at all.
-   * The only genuinely unprotected shape is an `idempotent` route that resolves no session — for
-   * which `withIdempotency` short-circuits on its `accountId` guard — and that is exactly what
-   * this leaves at `false`.
+   * The only genuinely unprotected shape left is an `idempotent` route that resolves no session —
+   * a PUBLIC one, since the protected case returned above — for which `withIdempotency`
+   * short-circuits on its `accountId` guard. That is exactly what this leaves at `false`.
    */
-  return protection.hasAccount || protection.routeRequiresSession;
+  return protection.hasAccount;
 }
 
 /**
