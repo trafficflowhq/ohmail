@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import { getTranslations } from "next-intl/server";
 import { LocaleShell } from "./LocaleShell";
 import { Providers } from "./providers";
+import { SELF_HOST_BUILD } from "../self-host-marketing";
 import { DEFAULT_LOCALE, localeFromCookieHeader } from "../shell/locale";
 import { loadCatalog } from "../../i18n/catalog";
 import "../app.css";
@@ -43,47 +44,79 @@ const ICONS: Metadata["icons"] = {
   apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
 };
 
+/** The `t` these two need — `getTranslations`' return, narrowed to the one call shape used. */
+type Translate = (key: string) => string;
+
+/* Unfurl cards and search indexing are two different decisions, and this file used to make
+   only the second one. `noindex` keeps the app shell out of search results — and under one
+   origin that is now the only thing that does. `/` is a SINGLE URL serving the marketing page
+   to a crawler (which is never signed in, so it always gets `(marketing)`'s indexable
+   metadata) and this shell to a session; whichever one rendered is what the <head> describes.
+   It says nothing about what happens when somebody pastes https://ohmail.app into Slack,
+   iMessage or a mail thread — that paste is anonymous too, and gets the landing's 1200×630 card.
+
+   So: a `summary` card, not `summary_large_image`. The landing owns the 1200×630 og.png with
+   the headline in it, because the landing is the thing being sold. This is the app you already
+   decided to use — the honest card is the "oh." tile at icon size, the same mark that sits in
+   the dock and the browser tab, plus the name and one line of what it is. Anything wider would
+   be borrowing marketing weight the shell has not earned.
+
+   Lifted out of the return so the self-host arm can omit the pair WHOLE rather than blank each
+   field — see `generateMetadata`. The URLs stay relative; `metadataBase` resolves them, and on
+   the build that has no `metadataBase` there is nothing here to resolve. */
+const OPEN_GRAPH = (t: Translate): Metadata["openGraph"] => ({
+  title: t("title"),
+  description: t("description"),
+  url: "/",
+  siteName: "ohmail",
+  type: "website",
+  images: [{ url: "/icon-512.png", width: 512, height: 512, alt: t("ogAlt") }],
+});
+
+const TWITTER_CARD = (t: Translate): Metadata["twitter"] => ({
+  card: "summary",
+  title: t("title"),
+  description: t("description"),
+  images: ["/icon-512.png"],
+});
+
 export async function generateMetadata(): Promise<Metadata> {
   /* The app shell's head is English, as it has always been: `generateMetadata` runs
      independently of the layout body below, so it cannot use the cookie locale that body
      resolves, and an implicit lookup would fall through to the request config's `headers()`
      read for the same answer. Naming it makes today's behaviour the stated one. */
   const t = await getTranslations({ locale: DEFAULT_LOCALE, namespace: "meta" });
-  return {
+
+  /* A SELF-HOSTED INSTALL HAS NO UNFURL CARD, AND MUST NOT BORROW OURS.
+   *
+   * The `openGraph`/`twitter` URLs below are written RELATIVE — `/`, `/icon-512.png` — and
+   * `metadataBase` is what turns them absolute. Pinned to `https://ohmail.app`, an operator's
+   * own sign-in page therefore shipped `og:url` naming OUR address and `og:image` /
+   * `twitter:image` pointing at OUR server. Measured on a built self-host bundle.
+   *
+   * Two things wrong with that, and the second is the one that matters. The card claims the
+   * hosted service's address for a server somebody else runs; and every client that unfurls a
+   * link to their install fetches an image FROM US — a live dependency on our origin inside an
+   * install whose whole point is not having one, and a request that tells us the link was
+   * shared. `metadataBase` cannot simply be corrected here because the web container is not
+   * told its own public origin (the compose passes it only the API's in-network name).
+   *
+   * So the self-host build emits no card at all. Nothing is lost: this shell is already
+   * `noindex, nofollow`, a private mail server is not a page anyone means to preview, and a
+   * generic unfurl is the honest result for one. `metadataBase` goes with it — with no
+   * relative metadata URL left to resolve, it has nothing to do but name the wrong origin.
+   */
+  const card: Metadata = SELF_HOST_BUILD ? {} : {
     metadataBase: new URL("https://ohmail.app"),
+    openGraph: OPEN_GRAPH(t),
+    twitter: TWITTER_CARD(t),
+  };
+
+  return {
+    ...card,
     title: t("title"),
     description: t("description"),
     icons: ICONS,
-    /* Unfurl cards and search indexing are two different decisions, and this
-       file used to make only the second one. `noindex` keeps the app shell out
-       of search results — and under one origin that is now the only thing that
-       does. `/` is a SINGLE URL serving the marketing page to a crawler (which
-       is never signed in, so it always gets `(marketing)`'s indexable metadata)
-       and this shell to a session; whichever one rendered is what the <head>
-       describes. It says nothing about what happens when somebody pastes
-       https://ohmail.app into Slack, iMessage or a mail thread — that paste is
-       anonymous too, and gets the landing's 1200×630 card.
-
-       So: a `summary` card, not `summary_large_image`. The landing owns the
-       1200×630 og.png with the headline in it, because the landing is the thing
-       being sold. This is the app you already decided to use — the honest card
-       is the "oh." tile at icon size, the same mark that sits in the dock and
-       the browser tab, plus the name and one line of what it is. Anything wider
-       would be borrowing marketing weight the shell has not earned. */
-    openGraph: {
-      title: t("title"),
-      description: t("description"),
-      url: "/",
-      siteName: "ohmail",
-      type: "website",
-      images: [{ url: "/icon-512.png", width: 512, height: 512, alt: t("ogAlt") }],
-    },
-    twitter: {
-      card: "summary",
-      title: t("title"),
-      description: t("description"),
-      images: ["/icon-512.png"],
-    },
     robots: { index: false, follow: false },
   };
 }

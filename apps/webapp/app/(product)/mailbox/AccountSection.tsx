@@ -60,6 +60,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { Button, SettingsNote, SettingsSection } from "@ohmail/ui";
+import { SELF_HOST_BUILD } from "../../hello";
 // The ONE correct way out — revokes server-side and wipes the local mirror. The sign-out guard
 // asserts every `auth.logout` call in this app goes through it, so never call logout directly.
 import { forgetThisBrowser, signOut } from "../../sign-out";
@@ -545,9 +546,15 @@ export function AccountSection() {
             <li>{t("kept1")}</li>
             {plan ? <li>{t("keptSub", { plan })}</li> : null}
           </ul>
+          {/* The retention SENTENCE is true on every deployment and stays; only the pointer is
+              deployment-specific. `/privacy` describes the hosted service and is not served at
+              all on a self-host build (`app/self-host-marketing.ts`), so the link would be a
+              404 — and this is the deletion flow, the worst place to hand somebody a dead link
+              to the explanation of what survives their deletion. Backups on somebody's own
+              server are theirs to describe. */}
           <p className="acct-fine">
-            {t("backups")}{" "}
-            <Link href="/privacy">{t("backupsLink")}</Link>
+            {t("backups")}
+            {SELF_HOST_BUILD ? null : <> <Link href="/privacy">{t("backupsLink")}</Link></>}
           </p>
         </div>
       </div>

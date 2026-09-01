@@ -45,6 +45,7 @@ import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { SettingsSection } from "@ohmail/ui";
 import { apiConfigured, mailboxes as mailboxApi, messageOf, type MailboxDTO } from "../../api-client";
+import { SELF_HOST_BUILD } from "../../hello";
 
 /** Inlined by `next.config.mjs` from the commit sha — see `buildIdentity` there. */
 const BUILD = process.env.NEXT_PUBLIC_BUILD ?? "dev";
@@ -130,12 +131,25 @@ export function AboutSection() {
         <a href="mailto:support@ohmail.app">support@ohmail.app</a>
       </p>
 
-      <h3 className="acct-sub about-h">{t("yourMail")}</h3>
-      <p className="about-line about-links">
-        <Link href="/privacy">{tf("privacy")}</Link>
-        <Link href="/subprocessors">{tf("subprocessors")}</Link>
-        <Link href="/imprint">{tf("imprint")}</Link>
-      </p>
+      {/* WHERE TO READ WHAT WE DO WITH YOUR MAIL — on the deployment where that question has
+          an answer we can give. These three documents describe the HOSTED service: its
+          controller, its subprocessors, its imprint. A self-host build does not serve them at
+          all (`app/self-host-marketing.ts` — they would be false on an origin we neither run
+          nor can see), so linking them there would be three links to a 404 and, worse, an
+          offer to explain a policy that does not govern the install the reader is looking at.
+          What happens to mail on somebody's own server is between them and whoever runs it;
+          the honest thing for this pane to do about it is nothing. The heading goes with the
+          links — a section header over an empty block is its own small lie. */}
+      {SELF_HOST_BUILD ? null : (
+        <>
+          <h3 className="acct-sub about-h">{t("yourMail")}</h3>
+          <p className="about-line about-links">
+            <Link href="/privacy">{tf("privacy")}</Link>
+            <Link href="/subprocessors">{tf("subprocessors")}</Link>
+            <Link href="/imprint">{tf("imprint")}</Link>
+          </p>
+        </>
+      )}
     </SettingsSection>
   );
 }
