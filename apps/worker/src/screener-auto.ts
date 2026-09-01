@@ -123,6 +123,16 @@ export interface ScreenerAutoResult {
   sensitivityExcluded: number;
   /** True ⇒ the per-cycle write budget ran out; the rest is swept next cycle. */
   capped: boolean;
+  /**
+   * True ⇒ the account switched auto-apply OFF part-way through this walk and the remaining pages
+   * were NOT applied.
+   *
+   * Distinct from {@link capped} on purpose, because the two mean opposite things to the caller: a
+   * cap owes more work and should be re-kicked, a revoke owes none and must not be. Reported rather
+   * than left to look like a drained queue — a withdrawn decision that is acted on silently is the
+   * defect this field exists to make visible.
+   */
+  revoked: boolean;
 }
 
 /** One candidate, carrying everything the decision reads — all of it from disk. */
@@ -140,6 +150,7 @@ interface AutoRow {
 
 const EMPTY = (): ScreenerAutoResult => ({
   ran: false, examined: 0, moved: 0, kept: 0, destinations: {}, sensitivityExcluded: 0, capped: false,
+  revoked: false,
 });
 
 /** True ⇒ sensitivity-flagged (`sensitivity_category` set OR `no_ai`) — never auto-moved. */
@@ -189,6 +200,48 @@ export async function screenerAutoApplyPass(
     if (result.moved >= budget) { result.capped = true; break; }
 
     const outcome = await db.transaction(async (tx) => {
+      // ── THE OPT-IN IS RE-READ HERE, LOCKED, AND IT IS THE REVOKE CHECK ────────────────────────
+      //
+      // The probe above runs ONCE, before the first page. The pass then files up to
+      // SCREENER_AUTO_WRITES_PER_CYCLE messages across `maxPages` transactions, and an account that
+      // turns auto-apply OFF during that walk had the rest of the walk applied anyway: a completed
+      // opt-out followed by as many as a hundred automatic moves on their real mailbox, carried
+      // there by the reconciler, with nothing anywhere saying a withdrawn decision was acted on.
+      // The user's newer intent loses to a boolean this pass read minutes earlier.
+      //
+      // `ohbox-tidy.ts` already holds exactly this shape and says why in the same words — its
+      // settings row is its serialization point AND its revoke check. This is that, for the sibling
+      // pass, so the two opt-ins behave the same way when withdrawn.
+      //
+      // TWO SEPARATE PROPERTIES, AND ONLY ONE OF THEM IS THE REVOKE CHECK — worth stating because
+      // it was measured rather than assumed — `screener-auto-revoke.pg.test.ts` watches both under
+      // mutation, and the second of them is what established the split below:
+      //
+      //  · THE RE-READ is what catches a withdrawn opt-in. Under READ COMMITTED each page's read is
+      //    a fresh statement and sees the committed opt-out with or WITHOUT the lock. Dropping
+      //    `.for("update")` does not redden the revoke test, and this comment does not pretend it
+      //    does.
+      //  · THE LOCK buys the other thing: it serializes two drivers — a cycle tail and a second
+      //    worker mid-failover — so the loser wakes with the winner's committed state instead of
+      //    re-deciding the same page. That is the sibling passes' `FOR UPDATE` argument, unchanged.
+      //
+      // LOCK ORDER IS THE SAME ONE EVERY WRITER HERE USES: `account_settings` first, before
+      // `folder_state` (which `selectCandidates` takes FOR UPDATE OF) and before the
+      // `account_sync_state` counter `recordChange` locks. No path in this tree takes them the
+      // other way round, and taking them in a new order here is how this pass would deadlock
+      // against `ohbox-tidy` on the same account.
+      //
+      // The 30 s posture cache in `index.ts` is deliberately not trusted for this: that gates
+      // whether the pass STARTS. The authoritative, serialized read is here.
+      const [live] = await tx.select({ autoApplyAt: accountSettings.screenerAutoApplyAt })
+        .from(accountSettings).where(eq(accountSettings.accountId, accountId)).limit(1).for("update");
+      if (!live?.autoApplyAt) {
+        return {
+          revoked: true, rows: 0, moved: 0, kept: 0, sensitivityExcluded: 0,
+          lastId: null, capped: false, destinations: {} as Record<string, number>,
+        };
+      }
+
       const candidates = await selectCandidates(tx, { accountId, ownAddresses, limit: batch, afterId });
 
       let moved = 0;
@@ -232,8 +285,23 @@ export async function screenerAutoApplyPass(
         destinations[to] = (destinations[to] ?? 0) + 1;
       }
 
-      return { rows: candidates.length, moved, kept, sensitivityExcluded, lastId, capped, destinations };
+      return {
+        revoked: false, rows: candidates.length, moved, kept, sensitivityExcluded,
+        lastId, capped, destinations,
+      };
     });
+
+    // A REVOKE STOPS THE WALK, and it is reported rather than looking like a drained queue. The
+    // pages already committed stand — they were applied while the opt-in was live, and the account
+    // is owed the undo each one wrote to `audit_log`, not a silent reversal.
+    if (outcome.revoked) {
+      result.revoked = true;
+      log.info("screener_auto_apply_revoked", {
+        accountId, examined: result.examined, moved: result.moved,
+        reason: "auto-apply was switched off during this walk; the remaining pages were not applied",
+      });
+      break;
+    }
 
     result.examined += outcome.rows;
     result.moved += outcome.moved;
