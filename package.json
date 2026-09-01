@@ -1,6 +1,6 @@
 {
   "name": "ohmail-desktop",
-  "version": "0.13.2",
+  "version": "0.13.3",
   "private": true,
   "license": "AGPL-3.0-only",
   "workspaces": [

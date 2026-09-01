@@ -89,6 +89,9 @@ import type { EngineStatus } from "../src/bridge-fetch.js";
  *    on its hosted-install assertion.
  *  · stop passing `standingEngine()` in `DoorChooser` → the wiring case goes red, because the door
  *    takes the first-connect order over a running install.
+ *  · report the interrupted handoff with the bare shell error (`sentence(err)`) instead of
+ *    `handoffInterrupted(err)` → "says the password was stored when the settings write fails" goes
+ *    red. Added in the second round, after review of the first raised the window it covers.
  */
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -344,6 +347,47 @@ describe("reconfiguring a mailbox that is already connected", () => {
     });
     // The door still reports the engine that is serving, so the window does not fall to a notice.
     expect(result.status?.state).toBe("serving");
+  });
+
+  /**
+   * THE WINDOW THIS ORDERING OPENS, AND THE HALF OF IT THAT CAN BE SPOKEN TO.
+   *
+   * Between the seal and the configure, the credential names the new server and the settings still
+   * name the old one — the mirror image of the divergence the ordering exists to end. If the
+   * configure fails there, the shell's own error ("the settings file could not be written") is true
+   * and hides the half that matters, and somebody who reads it and quits has been told nothing
+   * about the state their install is in: the next launch would offer the new password to the old
+   * server.
+   *
+   * The state itself closes only in the engine, by refusing a password whose stored host disagrees
+   * with the configured one. What closes HERE is the not-telling.
+   */
+  it("says the password was stored when the settings write fails, not just the shell's error", async () => {
+    const install = runningInstall();
+    const standing = await standingEngine();
+    const inner = host.__TAURI_INTERNALS__!.invoke;
+    host.__TAURI_INTERNALS__!.invoke = async (command, payload) => {
+      if (command === "engine_configure") {
+        install.asked.push({ command, payload });
+        throw new Error("the settings file could not be written");
+      }
+      return inner(command, payload);
+    };
+
+    const result = await enterLocalDoor(fields(), providerById("imap"), standing);
+
+    // The shell's own words survive — they are the only thing that says WHY.
+    expect(result.problem).toContain("the settings file could not be written");
+    // …and the part the shell cannot know: what moved, what did not, and what to do.
+    expect(result.problem).toContain("password was stored");
+    expect(result.problem).toContain("still set up for the previous server");
+    expect(result.problem).toContain("Open this door again");
+
+    /* And the state the sentence describes is the state the install is really in — the assertion
+       that keeps the copy honest if the ordering ever changes underneath it. */
+    expect(install.sealed).toEqual({ host: NEW_HOST, pass: NEW_PASS });
+    expect(install.settingsHost).toBe(OLD_HOST);
+    expect(install.dials).toEqual([]);
   });
 
   it("says so and changes nothing when the engine cannot be reached at all", async () => {

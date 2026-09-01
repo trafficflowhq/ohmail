@@ -702,13 +702,44 @@ export async function enterLocalDoor(
     const refused = await sealLocalPassword(standing.mailboxId, imap, f.password);
     if (refused !== null) return { status: standing, problem: refused };
 
+    /**
+     * ── THE ONE WINDOW THIS ORDER OPENS, NAMED RATHER THAN LEFT TO BE FOUND ─────────────────
+     *
+     * From here until the configure below returns, the CREDENTIAL names host B and the SETTINGS
+     * still name host A. Both halves of that were raised by review of this change and both are
+     * real:
+     *
+     *  · IF THE CONFIGURE FAILS, OR THE APP EXITS HERE, the install is left in the mirror image
+     *    of the divergence this ordering exists to end, and the next launch would offer B's
+     *    password to A. The catch below says exactly that, in a sentence a person can act on —
+     *    which covers the half where there is somebody to tell. A crash has nobody to tell.
+     *  · A SEND RACING THIS INTERVAL authenticates to A with B's password: `openLocalSend`
+     *    resolves the credential afresh for every send while holding the SMTP coordinates it
+     *    booted with. Not reachable from this window — the door is a modal over the whole app —
+     *    but a scheduled send fires on the engine's own timer.
+     *
+     * Both close at the same single point, and neither closes here: the ENGINE has to refuse a
+     * password whose stored `meta.host` disagrees with the host it is configured for. That is
+     * deliberately not smuggled into this change, because the refusal needs a credential state
+     * to report itself with and every existing one would be a true sentence about the wrong
+     * thing. It is ledgered, and this ordering is what makes it load-bearing rather than
+     * merely desirable.
+     *
+     * WHY THIS IS STILL THE RIGHT TRADE, said plainly rather than assumed. Before this ordering
+     * the bad state was THE NORMAL PATH: every reconfigure to a new host dialled it with the old
+     * password, and every refused password left the two disagreeing until somebody noticed. After
+     * it, the bad state needs the process to die inside one `engine_configure` — a settings-file
+     * write and a process spawn. A much narrower window in the same class is progress. Calling it
+     * closure would not be, and nothing here or in the release notes says it is.
+     */
+
     /* ONE configure, not two. The first-connect order needs a second because it seals into an
        engine that booted without a password; here the credential was in the store before this
        process started, so the engine that comes up resolves it on its first read. */
     try {
       await engineConfigure(config);
     } catch (err) {
-      return { status: standing, problem: sentence(err) };
+      return { status: standing, problem: handoffInterrupted(err) };
     }
     const swapped = await settle();
     if (swapped.state !== "serving") return { status: swapped, problem: stalled(swapped) };
@@ -1005,6 +1036,27 @@ export async function readShell(): Promise<Shell> {
   } catch (err) {
     return { kind: "unreachable", reason: sentence(err) };
   }
+}
+
+/**
+ * WHAT TO SAY WHEN THE PASSWORD LANDED AND THE SETTINGS DID NOT.
+ *
+ * The one state the seal-first ordering can leave behind, and the only one in this file where
+ * telling the truth costs a longer sentence than the shell's own error. Saying only "the settings
+ * could not be written" would be true and would hide the half that matters: the stored password is
+ * now the NEW server's, while this install is still pointed at the old one. Somebody who reads the
+ * short version and quits has been told nothing about the state they are in.
+ *
+ * Re-opening the door finishes it, and the retry is safe rather than merely allowed: the credential
+ * is still `ready` and the address has not moved, so the attempt takes this same arm, re-proves the
+ * password against the new server and commits the settings. Nothing has to be undone first.
+ */
+function handoffInterrupted(err: unknown): string {
+  return (
+    "Your new mailbox password was stored, but this computer's mail settings were not changed, " +
+    "so it is still set up for the previous server. Open this door again to finish. " +
+    `(${sentence(err)})`
+  );
 }
 
 /** What to say about an engine that was reconfigured and then did not come up. */
