@@ -105,6 +105,23 @@ export { apiBaseFor };
  * shape, and a person who typed `http://mail.lan` has typed a perfectly well-formed address that
  * this app will not use. Telling them it "does not look like an address" would be false.
  */
+/**
+ * THE SENTENCE FOR AN ADDRESS NO CERTIFICATE AUTHORITY CAN VOUCH FOR — a numeric one on a network.
+ *
+ * Named once because it is now given from TWO places, and the second is the point: an address that
+ * would need a pin gets this whether it was typed as `https://` (refused outright) or as `http://`
+ * (where the obvious remedy, "use https", leads straight back to this refusal). One sentence, so
+ * the two paths cannot drift into telling somebody different things about one address.
+ *
+ * `originNeedsPin` is the engine's own predicate rather than an IP test written here, for the
+ * reason the parse is imported rather than restated: one rule about which addresses need a pin, so
+ * the door cannot come to disagree with the seam (`admitOrigin`) that enforces it.
+ */
+const NEEDS_THE_CODE =
+  "That is a numeric address on a network, and no certificate authority can vouch for one — " +
+  "so ohmail can only trust it through the code your computer shows. Open Settings → " +
+  "Devices there and scan that instead.";
+
 export function addressProblem(typed: string): string | null {
   const trimmed = typed.trim();
   if (trimmed === "") return "Your server's address is missing.";
@@ -129,13 +146,7 @@ export function addressProblem(typed: string): string | null {
      * reason the parse is imported rather than restated: one rule about which addresses need a pin,
      * and the door cannot come to disagree with the seam that enforces it.
      */
-    if (originNeedsPin(origin)) {
-      return (
-        "That is a numeric address on a network, and no certificate authority can vouch for one — " +
-        "so ohmail can only trust it through the code your computer shows. Open Settings → " +
-        "Devices there and scan that instead."
-      );
-    }
+    if (originNeedsPin(origin)) return NEEDS_THE_CODE;
     return null;
   }
   /**
@@ -153,7 +164,24 @@ export function addressProblem(typed: string): string | null {
    * nothing to do with the scheme, and the shape sentence is the honest one. No clause of the
    * acceptance rule is restated to make that judgment, which is the property the census holds.
    */
-  if (/^http:\/\//i.test(trimmed) && parseServerAddress(trimmed.replace(/^http:/i, "https:")) !== null) {
+  const httpsSpelling = /^http:\/\//i.test(trimmed)
+    ? parseServerAddress(trimmed.replace(/^http:/i, "https:"))
+    : null;
+  if (httpsSpelling !== null) {
+    /**
+     * …AND THE REMEDY HAS TO SURVIVE BEING TAKEN — review round 4's fifth finding.
+     *
+     * "Give the https address" is the right advice for `http://mail.example.com` and useless for
+     * `http://192.168.1.20`: the https spelling of a numeric address parses, so this branch used to
+     * offer it, and typing exactly what it asked for hit `originNeedsPin` and was refused again. A
+     * remedy that leads to a second refusal is worse than no remedy, because the person has now
+     * done what they were told.
+     *
+     * So the SAME predicate that will judge the https spelling is asked here, about that spelling,
+     * before it is recommended — and where it would be refused, the sentence that actually leads
+     * somewhere is the one given.
+     */
+    if (originNeedsPin(httpsSpelling)) return NEEDS_THE_CODE;
     return (
       "That is a plain, unencrypted address, and ohmail will not send your mail over one. " +
       "Give the https address you open ohmail at in a browser."
@@ -192,8 +220,21 @@ export const PROBE_DEADLINE_MS = 8000;
 /** What one bounded probe concluded. Thrown instead when nothing was concluded at all. */
 type ProbeAnswer = "api" | "not-api";
 
-/** Thrown by {@link probeCandidate} when the server accepted and did not finish answering. */
-class ProbeTimeout extends Error {}
+/**
+ * Thrown by {@link probeCandidate} when the deadline fired.
+ *
+ * `afterHeaders` is not a detail — it is the difference between two sentences that are each false
+ * of the other's case. Headers that arrived and a body that never finished IS a server that
+ * accepted the connection and began answering. A deadline that fires with no headers at all may be
+ * DNS, a TCP connect or a TLS negotiation hanging silently, and claiming acceptance there would
+ * point an operator at their proxy for what is a connectivity problem (review round 4).
+ */
+class ProbeTimeout extends Error {
+  constructor(message: string, readonly afterHeaders: boolean) {
+    super(message);
+    this.name = "ProbeTimeout";
+  }
+}
 
 /**
  * ONE PROBE, BOUNDED END TO END — the fetch AND the body read under a single deadline.
@@ -224,10 +265,22 @@ async function probeCandidate(
   const controller = typeof AbortController === "function" ? new AbortController() : null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let settled = false;
+  /** The deadline fired. Read in the catch — see the error-type note there. */
+  let expired = false;
+  /** The response whose HEADERS arrived, or null. Decides {@link ProbeTimeout.afterHeaders}. */
+  let headed: Response | null = null;
   const timedOut = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
+      expired = true;
+      /* REJECT BEFORE ABORTING, and the order is review round 4's second finding rather than a
+         style choice: `abort()` can SYNCHRONOUSLY reject the in-flight fetch with an `AbortError`,
+         and whichever rejection reaches the race first decides which error the caller sees. With
+         the abort first, a server that simply withheld its answer produced an `AbortError`, which
+         the loop recorded as a TRANSPORT failure — so the deadline's own sentence was bypassed and
+         the person was told the server could not be reached. The `expired` flag below makes the
+         outcome independent of the ordering anyway; this just stops relying on it. */
+      reject(new ProbeTimeout(`no answer from ${requested} within ${deadlineMs}ms`, headed !== null));
       controller?.abort();
-      reject(new ProbeTimeout(`no answer from ${requested} within ${deadlineMs}ms`));
     }, deadlineMs);
   });
 
@@ -248,9 +301,48 @@ async function probeCandidate(
 
   try {
     const res = await Promise.race([inFlight, timedOut]);
-    /* The body read is INSIDE the race too — round 3's first finding. `answeredByApi` reads it, so
-       the race is around the classification rather than around the fetch. */
-    return (await Promise.race([answeredByApi(res, requested), timedOut])) ? "api" : "not-api";
+    headed = res;
+    try {
+      /* The body read is INSIDE the race too — round 3's first finding. `answeredByApi` reads it,
+         so the race is around the classification rather than around the fetch. */
+      return (await Promise.race([answeredByApi(res, requested), timedOut])) ? "api" : "not-api";
+    } catch (err) {
+      /**
+       * THE BODY READ LOST TO THE DEADLINE, AND THIS RESPONSE IS ORPHANED — round 4's first
+       * finding. The `settled` handler on `inFlight` cannot cover it: that promise resolved while
+       * `settled` was still false, so its callback did nothing.
+       *
+       * ── AND `letGo` IS THE BELT, NOT THE FIX. THE ABORT IS THE FIX. ─────────────────────────
+       *
+       * Writing this line as the answer was wrong, and a test caught it: `res.json()` has LOCKED
+       * the body by the time the deadline fires, and `cancel()` on a locked stream throws — which
+       * `letGo` swallows, so the call is a no-op in exactly the case it was added for. Believing it
+       * worked would have left a comment claiming a release that never happened.
+       *
+       * What actually frees a stalled body is the `abort()` the timer already fired, and it fires
+       * BEFORE this runs: an honoured signal terminates the body stream and makes the pending
+       * `res.json()` reject. A platform that ignores the signal leaks the stream until collection —
+       * the same residual the abandoned-fetch case has, and the honest size of it.
+       *
+       * The call stays because the other rejection paths reach `letGo` before anything is locked,
+       * and one release function for all of them is worth more than an arm that has to remember
+       * which state it is in.
+       */
+      letGo(res);
+      throw err;
+    }
+  } catch (err) {
+    /* THE DEADLINE'S OWN ERROR, WHATEVER SURFACED — round 4's second finding. An abort that beat
+       the timer's own rejection would otherwise arrive as an `AbortError` and be classified as a
+       transport failure, which is the one shape that produces a false "could not reach" sentence
+       about a server that answered nothing but was perfectly reachable. */
+    if (expired) {
+      throw new ProbeTimeout(
+        `no answer from ${requested} within ${deadlineMs}ms`,
+        headed !== null,
+      );
+    }
+    throw err;
   } finally {
     settled = true;
     clearTimeout(timer);
@@ -469,6 +561,13 @@ export async function resolveApiBase(
    * sentence, and it is the one that names what to look at.
    */
   let stalled = false;
+  /**
+   * Did a stall happen AFTER headers arrived? See {@link ProbeTimeout.afterHeaders}: only then is
+   * "that server accepted the connection and began answering" a true sentence. A deadline that
+   * fires with nothing received may be DNS, a connect or a TLS negotiation hanging, and pointing an
+   * operator at their proxy for that is the same class of misdirection as the reachability one.
+   */
+  let stalledAfterHeaders = false;
   for (const candidate of [bare, prefixed]) {
     let answer: ProbeAnswer;
     try {
@@ -476,6 +575,14 @@ export async function resolveApiBase(
     } catch (err) {
       if (err instanceof ProbeTimeout) {
         stalled = true;
+        if (err.afterHeaders) {
+          /* HEADERS ARRIVED, SO THE SERVER WAS REACHED — round 4's third finding. Without this a
+             candidate that answered its headers and then stalled left `reached` false, and a
+             transport failure on the OTHER candidate then produced "could not reach that server"
+             about a server whose headers this app had in hand. */
+          reached = true;
+          stalledAfterHeaders = true;
+        }
         continue;
       }
       /**
@@ -521,9 +628,11 @@ export async function resolveApiBase(
   if (stalled) {
     return {
       kind: "refused",
-      reason:
-        "That server accepted the connection and then did not answer, so ohmail stopped waiting. " +
-        "If you run it, check that its proxy is passing requests through to the ohmail API.",
+      reason: stalledAfterHeaders
+        ? "That server started answering and then stopped, so ohmail stopped waiting. If you run " +
+          "it, check that its proxy is passing requests through to the ohmail API."
+        : "That server did not answer in time, so ohmail stopped waiting. That may be the network " +
+          "between this phone and it, or a route on the server that never replies.",
     };
   }
 
