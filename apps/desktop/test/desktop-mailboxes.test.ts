@@ -121,6 +121,14 @@ const MAILBOX: MailboxFacts = {
 let root: Root | null = null;
 let mountPoint: HTMLElement | null = null;
 
+/** Mailbox rows only. `.set-row` is also used by the pane's own notes, so counting it raw is one
+ *  too many — measured, and the reason this helper exists rather than a bare selector. */
+function addressRows(el: HTMLElement): HTMLElement[] {
+  return [...el.querySelectorAll(".set-row")].filter(
+    (r) => (r.querySelector(".lab b")?.textContent ?? "").includes("@"),
+  ) as HTMLElement[];
+}
+
 async function render(door: string | null): Promise<HTMLElement> {
   /* Imported inside, so the module graph is built after `vi.mock` is registered. */
   const { DesktopMailboxes } = await import("../src/DesktopMailboxes.js");
@@ -478,5 +486,57 @@ describe("the holdings line — a windowed copy stated plainly, on the pane, wit
     MIRRORED = 5_107;
     const text = (await render("cloud")).textContent ?? "";
     expect(text).toContain("Your mail lives on your mail server.");
+  });
+
+  /* ── ONE ROW PER ADDRESS ON THIS PANE TOO ───────────────────────────────────────────────
+   *
+   * A stood-down mailbox is reconnected by connecting the same address again — this pane offers no
+   * re-enable, and the unique index is partial precisely so that reconnect works — which leaves
+   * the dead row on the account for ever. Rendering the facts raw put "Handed over to another
+   * install" beside "Up to date" for ONE address.
+   *
+   * It became urgent when the sync rail started folding: the rail then said the mailbox was fine
+   * while this pane still showed its stand-down, which is the two-contradictory-sentences defect
+   * the fold was introduced to end, moved onto the desktop. Both fold with `addressKey` now.
+   *
+   * Mutation-checked: replace `foldByAddress(facts)` with `facts.map(...)` and the first case
+   * reds on the row count; drop the `superseded` note and the second reds. */
+  it("a reconnected address is ONE row, not the dead one beside the live one", async () => {
+    FACTS = [
+      { ...MAILBOX, id: "mbx-dead", address: "Someone@Example.TEST", status: "disabled",
+        disabledReason: "organized_elsewhere:local" },
+      { ...MAILBOX, id: "mbx-live", address: "someone@example.test", status: "connected" },
+    ];
+    const el = await render("cloud");
+    expect(addressRows(el).length,
+      "the tombstone rendered as a peer of the row that replaced it").toBe(1);
+    const text = el.textContent ?? "";
+    expect(text, "the dead row's address won over the live one").toContain("someone@example.test");
+    expect(text, "the earlier entry is not accounted for at all")
+      .toContain("An earlier entry for this address is no longer in use.");
+  });
+
+  it("but a stand-down with NO live row keeps its own row and its reason", async () => {
+    /* The half the fold must not swallow: an account whose only mailbox was stood down has to see
+     * it. Collapsing this to a footnote would be the same defect from the other side. */
+    FACTS = [
+      { ...MAILBOX, id: "mbx-dead", address: "someone@example.test", status: "disabled",
+        disabledReason: "organized_elsewhere:local" },
+    ];
+    const el = await render("cloud");
+    expect(addressRows(el).length).toBe(1);
+    expect(el.textContent ?? "", "a lone stood-down mailbox lost its own row")
+      .toContain("someone@example.test");
+  });
+
+  it("and whitespace does NOT fold — the index keeps that row active, so the pane keeps it too", async () => {
+    FACTS = [
+      { ...MAILBOX, id: "mbx-a", address: "  someone@example.test  ", status: "disabled",
+        disabledReason: "organized_elsewhere:local" },
+      { ...MAILBOX, id: "mbx-b", address: "someone@example.test", status: "connected" },
+    ];
+    const el = await render("cloud");
+    expect(addressRows(el).length,
+      "a trimmed fold hid a mailbox the database is willing to keep active").toBe(2);
   });
 });

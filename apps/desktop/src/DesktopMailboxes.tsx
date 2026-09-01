@@ -81,6 +81,7 @@ import { Button, SettingsNote, SettingsRow, SettingsSection } from "@ohmail/ui";
 import {
   deviceHoldings, holdingsSpeak, showInboundQuiet, type MailboxFacts,
 } from "../../webapp/app/shell/mail-state";
+import { addressKey } from "../../webapp/app/shell/address-key";
 import { agoStamp } from "../../webapp/app/shell/format";
 import { useMailState } from "../../webapp/app/shell/MailStateProvider";
 import { bridgeFetch } from "./bridge-fetch.js";
@@ -257,6 +258,36 @@ function when(iso: string | null | undefined): string {
  * servers"; on the standalone door there are none), so the keys are the desktop's own; what
  * changed is that they are keys.
  */
+/**
+ * ONE ROW PER ADDRESS — the desktop half of the rule `app/shell/address-key.ts` sets out.
+ *
+ * Deliberately NOT an import of the browser pane's `groupByAddress`: that one is typed to
+ * `MailboxDTO` and lives inside a route component this app must not pull in. What must be shared
+ * is the KEY, and it is — everything below is the same three lines of bookkeeping the browser pane
+ * does, over this pane's own fact shape.
+ *
+ * `shown` is the live row when there is one and the first otherwise; `superseded` counts the rest.
+ * A group of only-disabled rows therefore keeps a real row with its own state, which is the case
+ * the whole fold must not swallow.
+ */
+export function foldByAddress<T extends { id: string; address: string; status: string }>(
+  items: readonly T[],
+): { shown: T; superseded: number }[] {
+  const order: string[] = [];
+  const byKey = new Map<string, T[]>();
+  for (const m of items) {
+    const key = addressKey(m.address);
+    const bucket = byKey.get(key);
+    if (bucket) bucket.push(m);
+    else { byKey.set(key, [m]); order.push(key); }
+  }
+  return order.map((key) => {
+    const rows = byKey.get(key)!;
+    const live = rows.find((m) => m.status !== "disabled");
+    return { shown: live ?? rows[0]!, superseded: rows.length - 1 };
+  });
+}
+
 export function DesktopMailboxes({ door }: { door?: string | null }) {
   const t = useTranslations("mailboxes");
   /* The SAME binding the sync line reads, and `refresh` is what its own comment offers this pane:
@@ -372,26 +403,38 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
           failure changes is harder to find than one that does not. */}
       {problem ? <p className="join-error">{problem}</p> : null}
 
-      {facts.map((m) => (
-        <Fragment key={m.id}>
+      {/* ── ONE ROW PER ADDRESS, folded with the SAME key the rail and the browser pane use ──
+          A stood-down mailbox is reconnected by connecting the address again (this pane offers no
+          re-enable, and the partial unique index exists so that reconnect is possible), which
+          leaves the dead row behind for ever. Rendering `facts` raw put "Handed over to another
+          install" beside "Up to date" for one address — and once the rail began folding, the rail
+          and this pane disagreed on the same screen, which is the defect the fold was for.
+
+          Live row wins; a group with no live row keeps its own row and its reason, because an
+          account whose only mailbox was stood down must still see it. `addressKey` and not a local
+          copy: the browser pane and the rail fold with that function, and a third rule here would
+          be the same divergence wearing different clothes. */}
+      {foldByAddress(facts).map(({ shown, superseded }) => (
+        <Fragment key={shown.id}>
           <SettingsRow
-            label={m.address}
-            description={t("desktopLastChecked", { when: when(m.lastSyncAt) })}
-            value={stateOf(m)}
+            label={shown.address}
+            description={t("desktopLastChecked", { when: when(shown.lastSyncAt) })}
+            value={stateOf(shown)}
             control={
               /* Not offered on a DISCONNECTED mailbox: nothing is opening it, so a pass over it is
                  not a thing that can be asked for. The browser pane withholds it on the same test. */
-              m.status === "disabled" ? undefined : (
+              shown.status === "disabled" ? undefined : (
                 <Button
                   className="mbx-btn"
-                  onClick={() => resync(m.id)}
-                  disabled={queued.has(m.id)}
+                  onClick={() => resync(shown.id)}
+                  disabled={queued.has(shown.id)}
                 >
-                  {queued.has(m.id) ? t("syncQueued") : t("syncNow")}
+                  {queued.has(shown.id) ? t("syncQueued") : t("syncNow")}
                 </Button>
               )
             }
           />
+          {superseded > 0 ? <SettingsNote>{t("superseded")}</SettingsNote> : null}
           {/* ── THE FORWARDING-DETECTION NOTICE (mail 0078), the browser pane's twin ─────────
               `showInboundQuiet` (shared shell, one rule for both surfaces) gates it: a standing
               quiet episode on a HEALTHY row, not dismissed since this episode's evidence. Its
@@ -399,17 +442,17 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
               stamp and a notice folded into it would vanish with the next tick. Two keys —
               "the last mail came {when}" is false for a mailbox that never received any, and
               the pass stamps `createdAt` there, told apart by identity. */}
-          {showInboundQuiet(m, Date.now()) ? (
+          {showInboundQuiet(shown, Date.now()) ? (
             <SettingsRow
               label=""
-              description={m.inboundQuietSince === m.createdAt
+              description={shown.inboundQuietSince === shown.createdAt
                 ? t("inboundQuietNever")
-                : t("inboundQuiet", { when: agoStamp(m.inboundQuietSince!, Date.now()).rel })}
+                : t("inboundQuiet", { when: agoStamp(shown.inboundQuietSince!, Date.now()).rel })}
               control={
                 <Button
                   className="mbx-btn"
-                  onClick={() => dismissQuiet(m.id)}
-                  disabled={dismissing.has(m.id)}
+                  onClick={() => dismissQuiet(shown.id)}
+                  disabled={dismissing.has(shown.id)}
                 >
                   {t("inboundQuietDismiss")}
                 </Button>
