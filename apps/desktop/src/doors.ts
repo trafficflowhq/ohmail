@@ -609,9 +609,12 @@ async function sealLocalPassword(
    * offerable to a server nobody had named, and the engine had nothing to compare against to
    * notice. This is that missing half.
    *
-   * `""` when the form and the preset name no outgoing server, which is a statement rather than a
-   * silence: it retracts a witness a previous save may have left, so a later change of outgoing
-   * server cannot be checked against a host this install no longer uses.
+   * `""` when the form and the preset name no outgoing server, and that is a STATEMENT rather than
+   * a silence: it records that this password was saved for a pair with nothing on the outgoing
+   * side. The engine reads it that way — a submission server that appears afterwards without the
+   * password being saved for it is refused, exactly as a changed one is. An absent value means
+   * something different and weaker ("this row says nothing"), which is what every credential
+   * sealed before this key existed carries, so the two must not be spelled the same.
    */
   smtpHost: string,
 ): Promise<string | null> {

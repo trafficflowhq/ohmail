@@ -137,9 +137,13 @@ export interface TransportInput {
    * and a witness there would be the same fact written twice.
    *
    * Absent means "this caller says nothing about it", which leaves whatever is stored alone —
-   * so a deployment that never sends it stores nothing new and behaves exactly as before. The
-   * EMPTY STRING is a statement, not an absence: it records that no outgoing server is
-   * configured, which is how a caller retracts a witness it previously set.
+   * so a deployment that never sends it stores nothing new and behaves exactly as before.
+   *
+   * THE EMPTY STRING IS A DIFFERENT AND STRONGER STATEMENT: it records that the credential was
+   * saved for a pair with NO outgoing server. A reader of this field must treat that as "none
+   * authorized", not as "unknown" — the two are the difference between a fresh statement and a
+   * credential written before the field existed, and collapsing them lets an install acquire a
+   * submission server the password was never saved for.
    */
   smtpHost?: string;
 }
@@ -713,8 +717,9 @@ function mergedTransportMeta(
    * one.
    *
    * `undefined` is left alone (the stored value survives, as every unrestated key does); `""` is
-   * written through, because a caller with no outgoing server configured is making a statement and
-   * a stale witness is worse than none.
+   * written through, because a caller with no outgoing server configured is stating that the
+   * credential is authorized for none — see {@link TransportInput.smtpHost} for why that is not
+   * the same as leaving the key out.
    */
   if (transport === "imap" && patch?.smtpHost !== undefined) merged.smtpHost = patch.smtpHost;
   if (proven) {

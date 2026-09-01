@@ -125,9 +125,14 @@ export function credentialIsForeign(meta: unknown, configuredHost: string | unde
  * one-sided default below is built on. So the credential state the shell renders stays the boot
  * contract's, and this is consulted where the transport is actually opened.
  *
- * The one-sided default is identical, for identical reasons: `false` unless BOTH sides name a host
- * and the two differ. A credential sealed before anything recorded a submission host carries none,
- * and every such install would otherwise lose the ability to send the moment it upgraded.
+ * The one-sided default is identical, for identical reasons: `false` unless the row SAYS SOMETHING
+ * and the configured host differs from it. A credential sealed before anything recorded a
+ * submission host says nothing, and every such install would otherwise lose the ability to send
+ * the moment it upgraded.
+ *
+ * "Says something" includes SAYING NONE — see {@link sealedSmtpHost}'s three answers. A row that
+ * records the empty string was saved for a pair with no outgoing server, and offering it to one
+ * that appeared afterwards is the same defect by another route.
  */
 export function credentialIsForeignSmtp(
   meta: unknown, configuredSmtpHost: string | undefined | null,
@@ -136,25 +141,49 @@ export function credentialIsForeignSmtp(
 }
 
 /**
- * The submission host a stored credential was sealed for, or `null` when the row does not say.
+ * The submission host a stored credential was sealed for.
  *
- * `null` is the ANSWER FOR EVERY ROW SEALED BEFORE THIS KEY EXISTED, which is why the comparison
- * that uses it has to treat it as "cannot compare" rather than "no host authorized".
+ * THREE ANSWERS, NOT TWO, AND THE THIRD IS THE ONE A REVIEW ROUND FOUND MISSING:
+ *
+ *  · `null` — THE ROW SAYS NOTHING. The key is absent, or holds something that is not a string.
+ *    This is the answer for every credential sealed before the key existed, which is why the
+ *    comparison must read it as "cannot compare" rather than as "no host authorized".
+ *  · `""` — THE ROW SAYS NO OUTGOING SERVER IS AUTHORIZED. A door submit that names none writes
+ *    the empty string deliberately, and that is a STATEMENT: this password was saved for a pair
+ *    with nothing on the outgoing side. It disagrees with every real host, which is the point —
+ *    otherwise an install could acquire a submission server without the password ever being
+ *    saved for it and the credential would be offered to it, which is the whole defect this
+ *    predicate exists to stop, reached by a different route.
+ *  · a hostname — the ordinary case.
+ *
+ * The difference between the first two is exactly the difference between "we do not know" and "we
+ * know it is none", and collapsing them was the defect. It matters because {@link normalizeHost}
+ * makes both of them empty-ish strings, so the temptation to fold them is real and silent.
+ *
+ * NOTE THE INCOMING SIBLING DOES NOT DRAW THIS LINE, and that is not an inconsistency:
+ * `meta.host` is written by whatever the probe DIALLED, so an empty value there is a row written
+ * by a path that never dialled — an absence, not a statement. Only the outgoing key has a writer
+ * that can mean "none".
  */
 export function sealedSmtpHost(meta: unknown): string | null {
   if (typeof meta !== "object" || meta === null) return null;
   const host = (meta as { smtpHost?: unknown }).smtpHost;
   if (typeof host !== "string") return null;
-  const normalized = normalizeHost(host);
-  return normalized.length > 0 ? normalized : null;
+  return normalizeHost(host);
 }
 
 /**
  * The comparison both arms make, written once so they cannot drift apart.
  *
- * `sealed` has already been through {@link normalizeHost}; `configured` is normalised here. Both
- * "cannot compare" cases resolve to `false` — see the two docblocks above for why that direction
- * is the only defensible one for a predicate that decides whether to withhold a working password.
+ * `sealed` has already been through {@link normalizeHost} and is `null` only when the row SAYS
+ * NOTHING; `configured` is normalised here. Both "cannot compare" cases resolve to `false` — see
+ * the two docblocks above for why that direction is the only defensible one for a predicate that
+ * decides whether to withhold a working password.
+ *
+ * A `sealed` of `""` is therefore compared rather than excused, and the plain `!==` at the end is
+ * what makes "no outgoing server was authorized" disagree with every real host. That is deliberate
+ * and it is the whole of the fix a review round asked for: the two callers differ only in which
+ * key they read and in whether an empty stored value can mean anything.
  */
 function disagrees(sealed: string | null, configuredHost: string | undefined | null): boolean {
   if (sealed === null) return false;

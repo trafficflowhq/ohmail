@@ -237,6 +237,40 @@ describe("the local door", () => {
   });
 
   /**
+   * SAYING "NONE" IS SAYING SOMETHING, and this is the case that makes the engine's stronger rule
+   * reachable rather than theoretical.
+   *
+   * The manual preset carries no outgoing host, so a submit that leaves the field empty names none
+   * at all — and the body still states it, as the empty string. The engine reads that as "this
+   * password was saved for a pair with nothing on the outgoing side" and refuses a submission
+   * server that appears afterwards without the password being saved for it. An OMITTED field would
+   * mean something weaker ("this row says nothing"), which is what every credential sealed before
+   * the field existed carries, so the door must not fall silent here.
+   */
+  it("states the outgoing server as EMPTY when there is none, rather than omitting it", async () => {
+    const asked = shellThatWorks();
+    await enterLocalDoor(
+      { ...EMPTY_LOCAL, providerId: "imap", address: "me@example.invalid", password: "pw",
+        imapHost: "mail.example.invalid", imapPort: "993", smtpHost: "  ", smtpPort: "" },
+      providerById("imap"),
+    );
+
+    const config = asked.find((a) => a.command === "engine_configure")!.payload!.config as
+      { smtp?: unknown };
+    // Nothing to configure, so the settings carry no outgoing block at all…
+    expect(config.smtp).toBeUndefined();
+
+    const patch = JSON.parse(
+      new TextDecoder().decode(
+        Uint8Array.from(asked.find((a) => a.command === "engine_request")!.payload!.body as number[]),
+      ),
+    ) as { imap: Record<string, unknown> };
+    // …and the credential says so, in a value the engine can tell apart from silence.
+    expect(Object.hasOwn(patch.imap, "smtpHost")).toBe(true);
+    expect(patch.imap.smtpHost).toBe("");
+  });
+
+  /**
    * REPRODUCTION — "imap host is required" on a first local connect (public issue #5).
    *
    * The reporter runs their own mail server, typed every field, and was told the IMAP host was

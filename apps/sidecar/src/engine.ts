@@ -149,6 +149,11 @@ export type CredentialState =
    *    and this value never reaches the shell for it. Anything that renders a stopped mailbox from
    *    this state is rendering the first bullet.
    *
+   * ONE STATE, TWO CAUSES — so a surface that puts words to it has to know WHICH, or it will name
+   * the wrong server. The send path is given that (`resolveLogin`'s `foreign` field) and picks a
+   * sentence per arm; the shell is not, because there the state can only ever be the first bullet.
+   * A reader adding a third consumer needs to decide which of those two it is.
+   *
    * NOTE WHAT NEITHER OF THEM SAYS: that the row is readable. Both comparisons run BEFORE the
    * decrypt, so a row can be both foreign and unopenable and this state reports only the first —
    * `foreign-host` takes PRECEDENCE over `unreadable` rather than excluding it. That precedence is
@@ -1326,17 +1331,31 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      */
     const resolveLogin = async (
       opts?: { smtpHost?: string },
-    ): Promise<{ state: CredentialState; pass: string | null }> => {
+    ): Promise<{ state: CredentialState; pass: string | null; foreign?: "incoming" | "outgoing" }> => {
       const envPass = config.imap.auth.pass;
       const row = await storedLogin();
       if (!row) return envPass ? { state: "ready", pass: envPass } : { state: "absent", pass: null };
+      /**
+       * WHICH COMPARISON FAILED RIDES OUT WITH THE STATE, and that is a review finding rather than
+       * a convenience. `foreign-host` is one state with two causes, and the send path has to say
+       * which in words a person can act on: told the OUTGOING server is wrong when the incoming one
+       * moved, they would go and change a setting that was already right, and following the
+       * instruction cannot recover the install. A true sentence about the wrong server is the exact
+       * failure this whole seam exists to end, so it must not be reintroduced by the fence that
+       * closes it.
+       *
+       * The shell is not given this. It renders the state, and the state's meaning there is the
+       * boot's — see {@link CredentialState}.
+       */
       if (credentialIsForeign(row.meta, config.imap.host)) {
-        return { state: "foreign-host", pass: null };
+        return { state: "foreign-host", pass: null, foreign: "incoming" };
       }
       // Before the decrypt for the same reason the line above is: a credential this engine has no
       // business offering to this server is never brought into memory as plaintext at all.
+      // INCOMING FIRST, so the incoming fault wins when both disagree: it stops the whole launch,
+      // and settling it is what makes the outgoing question meaningful.
       if (opts !== undefined && credentialIsForeignSmtp(row.meta, opts.smtpHost)) {
-        return { state: "foreign-host", pass: null };
+        return { state: "foreign-host", pass: null, foreign: "outgoing" };
       }
       try {
         const secret = await keyProvider.decrypt(row.secretEnc, row.keyVersion);
@@ -1396,29 +1415,39 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       // only this path can ask: is this the outgoing server the credential was sealed for? A launch
       // that has no password anywhere serves its mirror and refuses to send, rather than dialling
       // SMTP with an empty secret — the same posture `start()` takes toward IMAP.
-      const { state, pass } = await resolveLogin({ smtpHost: smtp.host });
+      const { state, pass, foreign } = await resolveLogin({ smtpHost: smtp.host });
       /**
-       * ── THE OUTGOING HALF OF THE BOOT CONTRACT, AND ITS OWN SENTENCE ──────────────────────────
+       * ── THE BOOT CONTRACT ON THE SEND PATH, WITH A SENTENCE PER ARM ───────────────────────────
        *
        * Refused BEFORE the transport is constructed and before the credential is decrypted, so
        * nothing is dialled and the password is never plaintext in this process.
        *
-       * It needs a sentence of its own because the one below would be a true statement about the
-       * wrong thing: the password IS available, it opens, and telling somebody to re-enter it sends
-       * them to type a secret into whichever submission server the configuration currently names —
-       * which is the server the refusal exists to keep it away from. What is wrong is which pair of
-       * servers this install is pointed at, and that is what this says.
+       * IT NEEDS ITS OWN SENTENCES because the one below would be a true statement about the wrong
+       * thing: the password IS available and it opens, and telling somebody to re-enter it sends
+       * them to type a secret into whichever server the configuration currently names — which is
+       * the server the refusal exists to keep it away from. What is wrong is which pair of servers
+       * this install is pointed at.
        *
-       * NO RE-ENTRY IS NEEDED TO RECOVER, and the sentence does not ask for any: pointing the
-       * outgoing server back at the one the password was stored for makes the next send work with
-       * the credential exactly as it stands. Nothing here rewrites or deletes the row.
+       * AND IT NEEDS TWO OF THEM, which a review round had to point out. One state, two causes: a
+       * send made while the INCOMING server disagrees reaches here too, and naming the outgoing
+       * server there would send somebody to change a setting that was already correct. So the arm
+       * is carried out of the resolution and each one says which half moved.
+       *
+       * NEITHER ASKS FOR A RE-ENTRY IT DOES NOT NEED. Putting the server back makes the next send
+       * work with the credential exactly as it stands — nothing here rewrites or deletes the row —
+       * and saving the password for the new server is the other way out, which is what makes it a
+       * choice rather than an instruction.
        */
       if (state === "foreign-host") {
         throw new ServiceError(
           "upstream_unavailable", 502,
-          "the stored mailbox password was saved for a different outgoing (SMTP) server than " +
-            "this install is now configured for, so it was not offered and nothing was sent. " +
-            "Point the outgoing server back, or re-enter the password for the new one.",
+          foreign === "outgoing"
+            ? "the stored mailbox password was saved for a different outgoing (SMTP) server than " +
+              "this install is now configured for, so it was not offered and nothing was sent. " +
+              "Point the outgoing server back, or re-enter the password for the new one."
+            : "the stored mailbox password was proved against a different incoming (IMAP) server " +
+              "than this install is now configured for, so it was not offered and nothing was " +
+              "sent. Finishing or undoing the change of server resolves it.",
         );
       }
       if (state !== "ready" || !pass) {
@@ -1501,10 +1530,19 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            * its coordinates from the running configuration, which can be changed without touching
            * the credential at all.
            *
-           * OMITTED, NOT EMPTY, when this launch has no submission server configured. A key that
-           * never appears keeps its established meaning of "this row says nothing", which is the
-           * reading every credential sealed before it existed depends on — the same rule the
-           * consent marker on this row follows.
+           * OMITTED, NOT EMPTY, when this launch has no submission server configured — and this
+           * is the ONE place that differs from the door, deliberately, so the difference is stated
+           * rather than left to look like an oversight.
+           *
+           * An empty value is a STATEMENT that no outgoing server is authorized, and the door can
+           * make it because a door submit is a complete statement about a pair that the person can
+           * make again. This seal is a BOOTSTRAP from an environment: it runs only when a password
+           * arrives in this process's own configuration, which is the self-hosted path, and there
+           * the outgoing server is a variable an operator may legitimately add later with no door
+           * to re-save through. Writing "none authorized" here would refuse every send after that
+           * addition, with the recovery being a request this operator has no surface for. So the
+           * key is simply absent, which means "this row says nothing" — the same tolerance every
+           * credential sealed before the key existed relies on.
            */
           ...(config.imap.smtp?.host ? { smtpHost: config.imap.smtp.host } : {}),
         },
