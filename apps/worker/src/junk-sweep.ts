@@ -45,6 +45,19 @@ import { completeFiling, SPAM_PILE, type SpecialFolderMap } from "./junk-filing.
  * that licenses the cycle to retire the command over a non-empty pile.
  */
 export interface SweepScanState {
+  /**
+   * WHICH PRESS this state describes — the observed `junk_sweep_requested_at` token, or null
+   * before any press has been seen.
+   *
+   * The cursor, the moved-since-top flag and the deferral allowance are all progress through ONE
+   * command, and keyed to nothing they outlived it: review found that a command which spent its
+   * allowance and retired left the counter at its ceiling on a live mailbox attachment, so the
+   * person's NEXT press inherited a spent allowance and its first barren scan retired it on the
+   * spot — a fresh command that never got the retries it was entitled to. A re-stamp mid-scan
+   * inherited the previous press's cursor for the same reason. {@link sweepStateForPress} is the
+   * reset, and it is a named function rather than an `if` at the call site so it can be tested.
+   */
+  command: string | null;
   /** The last examined id, or null for "the next window starts at the top". */
   after: string | null;
   /** Whether the scan IN PROGRESS (since the last top) has moved anything. */
@@ -76,6 +89,25 @@ export interface SweepScanState {
    * then stops. That is the same shape, and the same argument, as the bounded re-walks the
    * sensitivity repair uses before it certifies an incomplete pass: give the self-healing path a
    * real chance, then stop spending somebody's mail server on it and say so.
+   *
+   * ── WHAT THIS BOUND IS AND IS NOT, BECAUSE THE FIRST VERSION OVERSTATED IT ──────────────────
+   *
+   * It is **PROCESS-LOCAL**. This counter lives in the mailbox attachment, so a worker restart, a
+   * reconnect, or a roster pass that drops and re-adds the mailbox all put it back to zero — after
+   * which the exemption is granted again from scratch. Review named that and it is true: the bound
+   * limits how long ONE attachment will hold a press open, not how long the press can live.
+   *
+   * That is a real residual and it is recorded rather than papered over. It is also a much smaller
+   * one than the unbounded version: without any bound a single attachment re-kicks the mailbox
+   * every cycle for ever, which is a hot loop; with it, the worst case is a slow loop paced by
+   * however often the worker restarts. Closing it properly means a durable per-press counter —
+   * a column beside `junk_sweep_requested_at` — which is a migration and belongs to its own slice.
+   *
+   * The second half review noted is deliberate rather than residual: **any scan that MOVES
+   * something resets the counter.** That is correct — a pile that is draining has not stalled, and
+   * the press is being served. It does mean a mailbox receiving a steady trickle of new spam can
+   * keep one permanently-stale row's press alive; the press is doing useful work in that case, so
+   * the trade is the right way round.
    */
   deferredScans: number;
 }
@@ -89,6 +121,37 @@ export interface SweepScanState {
  * long enough to be evidence that the deferral is not going to clear.
  */
 export const SWEEP_MAX_DEFERRED_SCANS = 3;
+
+/** A scan that has seen no press yet — the value a fresh mailbox attachment starts from. */
+export const SWEEP_SCAN_START: SweepScanState = {
+  command: null, after: null, movedSinceTop: false, deferredSinceTop: false, deferredScans: 0,
+};
+
+/**
+ * The scan state to run THIS press with — unchanged when the press is the one already in progress,
+ * and a clean start otherwise. See {@link SweepScanState.command} for what went wrong without it.
+ *
+ * Deliberately total rather than a conditional at the call site: "is this still the same command"
+ * is a decision, and a decision spelled inline in a 2000-line composition root is one nothing can
+ * assert. The whole state is replaced rather than patched field by field, so a field added later
+ * cannot be forgotten here — the compiler names it.
+ */
+export function sweepStateForPress(state: SweepScanState, command: string): SweepScanState {
+  return state.command === command ? state : { ...SWEEP_SCAN_START, command };
+}
+
+/**
+ * WHY A MEMBER WAS SKIPPED WHEN ITS SOURCE LOCATOR WAS STALE — one sentence, used by both arms.
+ *
+ * It read "(sync adopts it)", which asserts an adoption that may never come: `MessageGoneError`
+ * covers a message that was permanently DELETED just as much as one that moved, and for that one
+ * nothing re-finds it. Review was right to call that an over-claim — it is the same mistake as a
+ * user-facing sentence promising a refresh will fix a deleted file, one layer down, where an
+ * operator reads it. Conditional now, and a single constant so the two arms cannot drift into
+ * saying different things about one condition.
+ */
+export const SWEEP_GONE_REASON =
+  "not at the locator ohmail/Quarantine recorded — the next scan re-finds it if it still exists";
 
 export function adoptSweepWindow(
   state: SweepScanState,
@@ -127,8 +190,8 @@ export function adoptSweepWindow(
     : completedBarrenDeferral ? state.deferredScans + 1 : state.deferredScans;
   const exhaustedDeferrals = deferredScans >= SWEEP_MAX_DEFERRED_SCANS;
   const next: SweepScanState = ranOffTheEnd
-    ? { after: null, movedSinceTop: false, deferredSinceTop: false, deferredScans }
-    : { after: window.lastId, movedSinceTop, deferredSinceTop, deferredScans };
+    ? { command: state.command, after: null, movedSinceTop: false, deferredSinceTop: false, deferredScans }
+    : { command: state.command, after: window.lastId, movedSinceTop, deferredSinceTop, deferredScans };
   return {
     state: next, examinedAll, deferredSinceTop, exhaustedDeferrals,
     deferralsHold: deferredSinceTop && !exhaustedDeferrals,
@@ -337,7 +400,7 @@ export async function junkSweepPass(opts: {
           // A UID the batch did not return is the batch's own `MessageGoneError` — the source no
           // longer holds it. DEFERRED, not refused: the next scan re-finds it by Message-ID.
           result.deferred++;
-          result.skipped.push({ messageId: p.messageId, reason: "gone from ohmail/Quarantine (sync adopts it)" });
+          result.skipped.push({ messageId: p.messageId, reason: SWEEP_GONE_REASON });
           continue;
         }
         await complete(p, newLoc);
@@ -359,7 +422,7 @@ export async function junkSweepPass(opts: {
           // later sweep window moves it. Counted as DEFERRED so the cycle does not read a
           // recycled folder as a pile the server refuses — see {@link JunkSweepResult.deferred}.
           result.deferred++;
-          result.skipped.push({ messageId: p.messageId, reason: "gone from ohmail/Quarantine (sync adopts it)" });
+          result.skipped.push({ messageId: p.messageId, reason: SWEEP_GONE_REASON });
           continue;
         }
         result.skipped.push({

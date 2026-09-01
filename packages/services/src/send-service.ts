@@ -1359,9 +1359,12 @@ export class SendService {
    * 2. *What went wrong*, in terms of the mailbox rather than of this code — the message being
    *    forwarded moved, so its attachments could not be read. Not "MessageGoneError", not "the
    *    mail server is having trouble" (it is not), and not a UIDVALIDITY lecture.
-   * 3. *What makes it work* — press Send again after the mailbox has caught up. That is a real
-   *    recovery and not a hopeful one: the next scan re-finds the message by Message-ID and
-   *    repoints the locator this send reads.
+   * 3. *What makes it work, CONDITIONALLY* — press Send again once the mailbox has caught up. The
+   *    condition is not decoration and review was right to require it: `MessageGoneError` also
+   *    covers a message that was permanently DELETED, and for that one no amount of waiting will
+   *    ever make the forward work. The sentence first read "Try again once your mailbox has caught
+   *    up" flatly, which promised a recovery in exactly the case where the reader needs to be told
+   *    the original is gone. It now offers the retry for the move case and names the other.
    *
    * 409 rather than 410: the state we held conflicts with the server's, which is exactly what 409
    * means, and 410 would assert a permanence that is usually false — the message has almost always
@@ -1373,7 +1376,8 @@ export class SendService {
     return new ServiceError(
       "forward_source_moved", 409,
       "Nothing was sent. The message you're forwarding is no longer where your mail server said "
-        + "it was, so its attachments couldn't be read. Try again once your mailbox has caught up.",
+        + "it was, so its attachments couldn't be read. If it has moved, trying again once your "
+        + "mailbox has caught up will work; it may also have been deleted.",
     );
   }
 

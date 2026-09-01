@@ -248,6 +248,18 @@ export interface JunkSweepCommandPort {
   run(hooks: {
     guard: () => Promise<void>;
     write: <T>(fn: (repo: WorkerRepo) => Promise<T>) => Promise<T>;
+    /**
+     * THE OBSERVED PRESS TOKEN — the same text `requested()` answered.
+     *
+     * Passed in because the scan state that crosses cycles (cursor, moved-since-top, and the
+     * deferral allowance) belongs to ONE press and the implementation had no way to tell one press
+     * from the next. Review found the consequence: a command that exhausted its deferral allowance
+     * and retired left the counter at its ceiling on a still-live mailbox attachment, so the
+     * person's NEXT press inherited a spent allowance and its very first barren scan retired it
+     * immediately — a fresh command that never got the retries it was entitled to. A re-stamp
+     * mid-scan inherited the old cursor for the same reason.
+     */
+    command: string;
   }): Promise<{
     moved: string[];
     skipped: ReadonlyArray<unknown>;
@@ -660,6 +672,10 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
         const res = await deps.junkSweep.run({
           guard: () => fenceImapMutation(deps),
           write: (fn) => fencedGroup(deps, fn),
+          // The press this slice belongs to — see the port's own note. The same token the clear
+          // below compares, so a press that lands mid-sweep is served by the next cycle with its
+          // own fresh scan state rather than inheriting this one's.
+          command: observed,
         });
         const left = await deps.junkSweep.remaining();
         const drained = left === 0;
@@ -687,12 +703,26 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
           deferred: res.deferred,
           junkFolder: res.junkFolder, remaining: left,
           retired: drained || stuck,
+          // ── THE RETIRED-WHILE-NONEMPTY LINE MUST NOT NAME A CAUSE IT DID NOT OBSERVE ────────
+          //
+          // There are TWO ways to reach `stuck` and they have opposite diagnoses, so one sentence
+          // for both is a sentence that is wrong half the time. A pile the server refuses is a
+          // provider problem; a pile whose members are simply not at the locators the mirror holds
+          // is our bookkeeping, and the exemption for it has just run out. This line said "the
+          // server refused every member" for both — review found it, and an operator reading it on
+          // the second case would go and interrogate a mail server that had refused nothing.
+          //
+          // `res.deferred > 0` is the discriminator and it is the honest one: the per-window count
+          // is still reported truthfully even on the scan where the exemption stops holding the
+          // press open, which is exactly why the count and the gate were split into two fields.
           reason: drained
             ? "the account's user pressed the one-time Quarantine→Junk offer; the pile is drained and the command retired"
             : stuck
-              ? "a full scan moved nothing — the server refused every member — so the command is retired rather than retried every cycle; the offer returns with what is left"
+              ? res.deferred > 0
+                ? "a full scan moved nothing and its members were not at the locators the mirror holds; the deferral allowance is spent, so the command is retired rather than re-kicking for ever; the offer returns with what is left"
+                : "a full scan moved nothing — the server refused every member — so the command is retired rather than retried every cycle; the offer returns with what is left"
               : res.deferralsHold
-                ? "some members are no longer at the locator the mirror holds; the command stands and the mailbox is re-kicked, so the next window sweeps them once adoption has repointed them"
+                ? "some members are no longer at the locator the mirror holds; the command stands and the mailbox is re-kicked, so the next window sweeps them if the next scan re-finds them"
                 : "one bounded window ran; the command stands and the mailbox is re-kicked for the next window",
         });
       }

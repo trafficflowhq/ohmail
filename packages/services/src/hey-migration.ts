@@ -43,6 +43,15 @@ export interface MigrateSummary {
    * moved; dropping it would report a mailbox as fully migrated while rows are still queued.
    */
   deferred: number;
+  /**
+   * Messages the re-route DECLINED to touch because their destination had changed since this pass
+   * read the account — somebody's newer decision, which wins.
+   *
+   * Reported rather than silent for the reason `rerouted` is: three different outcomes, three
+   * numbers. A superseded row folded into either of the others would claim this pass acted on a
+   * message it deliberately left alone.
+   */
+  superseded: number;
 }
 
 /**
@@ -152,11 +161,12 @@ export class HeyMigrationService {
     // ── Opt-in re-route via the reconciler write-path, OUTSIDE the tx (idempotent) ──
     let rerouted = 0;
     let deferred = 0;
+    let superseded = 0;
     if (opts.reroute) {
-      ({ moved: rerouted, deferred } = await this.rerouteToMatchRules(ctx, deduped));
+      ({ moved: rerouted, deferred, superseded } = await this.rerouteToMatchRules(ctx, deduped));
     }
 
-    return { created, unchanged, ruleIds, rerouted, deferred };
+    return { created, unchanged, ruleIds, rerouted, deferred, superseded };
   }
 
   /** Remove ONLY `provenance:'migrated'` rules; emit a `change_log` `rule` `delete` per row. */
@@ -206,9 +216,9 @@ export class HeyMigrationService {
   private async rerouteToMatchRules(
     ctx: ServiceContext,
     observations: MigrationObservation[],
-  ): Promise<{ moved: number; deferred: number }> {
+  ): Promise<{ moved: number; deferred: number; superseded: number }> {
     const adapter = this.deps.adapter;
-    if (!adapter) return { moved: 0, deferred: 0 };
+    if (!adapter) return { moved: 0, deferred: 0, superseded: 0 };
 
     // Build sender/domain → destination lookups (sender wins over domain).
     const bySender = new Map<string, Destination>();
@@ -229,6 +239,7 @@ export class HeyMigrationService {
     const repo = makeDrizzleRepo(ctx.db as unknown as Tx);
     let moved = 0;
     let deferred = 0;
+    let superseded = 0;
     for (const r of rows) {
       const from = r.fromAddress.toLowerCase();
       const dest = bySender.get(from) ?? byDomain.get(domainOf(from));
@@ -265,9 +276,39 @@ export class HeyMigrationService {
       // rather than an intent nobody recorded; and because nothing is written after the round
       // trip, there is no pre-I/O value left to overwrite a post-I/O one with. `observedFolder`
       // stays what we last saw, which is what makes the row unconverged and therefore queued.
-      await repo.upsertFolderState(r.messageId, {
-        desiredFolder: dest, observedFolder: r.observedFolder, lastSetBy: "us",
-      });
+      // ── AND IT IS CONDITIONAL ON THE SNAPSHOT STILL BEING TRUE ──────────────────────────────
+      //
+      // The `rows` read above is ONE bulk snapshot of the whole account, and this loop then spends
+      // an IMAP round trip per out-of-place message. Over a large mailbox that is a long time, and
+      // review found what an unconditional write did with it: a decision committed on another
+      // device for a message this loop has not reached yet is overwritten by the snapshot's older
+      // value when the loop gets there. Moving the write earlier fixed the post-I/O race and
+      // opened a snapshot-age one in its place, which is not progress.
+      //
+      // `DO UPDATE … WHERE desired_folder = <what the snapshot saw>` is the whole guard, and it is
+      // the construction `screener-service.ts` already uses for the same reason: re-route only the
+      // rows that are STILL where this pass believed they were. A row that has moved on keeps
+      // where it went — "user always wins", the rule the reconciler runs on. `.returning()` is
+      // what makes the skip observable, so a row the guard declined is not counted as re-routed
+      // and never reaches the adapter.
+      // `asTx` and not `ctx.db` directly: this file's other writers go through the same cast, and
+      // it is what gives the upsert its `returning` typing. Not inside a transaction — this pass
+      // runs outside one deliberately, and the guard is a single statement.
+      const [claimed] = await asTx(ctx).insert(folderState).values({
+        messageId: r.messageId, desiredFolder: dest, observedFolder: r.observedFolder,
+        lastSetBy: "us", reconcileStatus: "pending", conflict: false,
+      }).onConflictDoUpdate({
+        target: folderState.messageId,
+        set: {
+          desiredFolder: dest, lastSetBy: "us", reconcileStatus: "pending", conflict: false,
+          updatedAt: ctx.now(),
+        },
+        setWhere: eq(folderState.desiredFolder, r.desiredFolder),
+      }).returning({ messageId: folderState.messageId });
+      if (!claimed) {
+        superseded++;
+        continue;
+      }
       const applied = await applyReconcileAction(
         // mailboxId is unused by the move path (it goes through adapter.move + repo),
         // matching the established ScreenerService/ApprovalService call sites.
@@ -278,7 +319,7 @@ export class HeyMigrationService {
       if (applied.deferred) deferred++;
       else moved++;
     }
-    return { moved, deferred };
+    return { moved, deferred, superseded };
   }
 }
 

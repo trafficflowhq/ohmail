@@ -56,7 +56,10 @@ import {
 import { acquireLeaderLock, leaderLockKeyFor, LockLostError, type LeaderLock } from "./leader-lock.js";
 import { startApiCron, type ApiCronHandle, type ApiCronTargetHealth } from "./api-cron.js";
 import { runSyncCycle, LeaderFencedError, type SyncDeps } from "./sync.js";
-import { adoptSweepWindow, junkSweepPass, type SweepScanState } from "./junk-sweep.js";
+import {
+  adoptSweepWindow, junkSweepPass, sweepStateForPress, SWEEP_SCAN_START,
+  type SweepScanState,
+} from "./junk-sweep.js";
 
 /**
  * How many Quarantine members one cycle's sweep slice may move — the filing budget's argument
@@ -1814,9 +1817,7 @@ export async function startWorkerWithLock(
         // and TypeScript does not carry a `let`'s narrowing into a callback that runs later.
         const attachedAdapter: MailboxAdapter = adapter;
         /** The sweep's scan state for THIS attachment — see the `junkSweep.run` note below. */
-        let sweepScan: SweepScanState = {
-          after: null, movedSinceTop: false, deferredSinceTop: false, deferredScans: 0,
-        };
+        let sweepScan: SweepScanState = SWEEP_SCAN_START;
         const deps: SyncDeps = {
           repo, adapter, accountId: mb.accountId, mailboxId: mb.mailboxId,
           // ── THE LEADER FENCE OVER THIS MAILBOX'S MAIL-BEARING WRITES ─────────────────────
@@ -1917,6 +1918,10 @@ export async function startWorkerWithLock(
               return row.at;
             },
             run: async (hooks) => {
+              // ONE PRESS, ONE SCAN STATE — the reset is a named decision in `junk-sweep.ts`
+              // rather than a conditional here, because a decision spelled inline in this file is
+              // one nothing can assert. See `SweepScanState.command`.
+              sweepScan = sweepStateForPress(sweepScan, hooks.command);
               const fencedRepo = new Proxy(repo, {
                 get: (target, key, receiver) =>
                   key === "transaction" ? hooks.write : Reflect.get(target, key, receiver),
