@@ -39,10 +39,17 @@ export function jsonResponse(body: unknown, init: JsonResponseInit = {}): Respon
  */
 export function errorResponse(
   code: string, status: number, message: string, details?: unknown, retryable?: boolean,
+  /**
+   * Extra response headers. Added for `Retry-After` on the 503 a starved connection pool
+   * raises: `retryable: true` tells a client it MAY retry, and only a header tells it WHEN —
+   * without one a mutation queue's own backoff is the only thing between a congested instance
+   * and every refused caller returning at once.
+   */
+  headers?: Record<string, string>,
 ): Response {
   const error: { code: string; message: string; details?: unknown; retryable?: boolean } =
     { code, message };
   if (details !== undefined) error.details = details;
   if (retryable !== undefined) error.retryable = retryable;
-  return jsonResponse({ error }, { status });
+  return jsonResponse({ error }, { status, headers });
 }

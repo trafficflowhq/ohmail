@@ -163,11 +163,76 @@ export const withRequestId: Middleware = (next) => async (req, deps, params) => 
  * designed — a 404 or a 403 is not an incident — but a 5xx a service raised deliberately
  * still needs to be visible.
  */
+/**
+ * How long a refused caller is told to wait. Long enough that a retry does not land back inside
+ * the same congestion window it was just refused in — the failure this answers lasted twenty
+ * minutes, and a one-second retry would have been indistinguishable from a client-side denial of
+ * service against the instance it was queued on — and short enough that a momentary blip costs
+ * one visible pause rather than a dead request.
+ */
+const DB_BUSY_RETRY_AFTER_SECONDS = 5;
+
+/**
+ * The error class name `@trafficflow/db`'s `DbAcquireTimeoutError` carries.
+ *
+ * SPELLED, not imported, and the reason is the closure rule at the top of
+ * `packages/db/src/index.ts`: the class lives in `client.ts`, which is reachable only from
+ * `@trafficflow/db/cloud`, and `client.ts` names the COMBINED schema. `packages/api` ships inside
+ * the desktop engine's import closure, so an import here would put every Cloud table into a
+ * shipped .app — the exact defect that rule was written for, and it would compile and pass every
+ * test on the way in.
+ *
+ * `test/db-busy.test.ts` imports the real class and asserts this string still names it, so a
+ * rename is a red test rather than a silent return to the 60 s gateway timeout.
+ */
+const DB_ACQUIRE_TIMEOUT_ERROR = "DbAcquireTimeoutError";
+
+/**
+ * The pooled handle gave up waiting for a connection — see `POOLED_ACQUIRE_TIMEOUT_MS`.
+ *
+ * Matched on `name` rather than `instanceof` for the import reason above, and matched at all
+ * because the alternative answer is a 500: this is not an unhandled fault, it is the API
+ * declining work it has no connection to do.
+ */
+function isDbBusy(err: unknown): boolean {
+  return typeof err === "object" && err !== null
+    && (err as { name?: unknown }).name === DB_ACQUIRE_TIMEOUT_ERROR;
+}
+
 export const withErrorEnvelope: Middleware = (next, route) => async (req, deps, params) => {
   try {
     return await next(req, deps, params);
   } catch (err) {
     const log = deps.logger ?? silentLogger;
+    /**
+     * 503, FAST, BEFORE THE `ServiceError` BRANCH AND BEFORE THE 500.
+     *
+     * The instance's database connection was busy with something else for the whole ceiling, so
+     * this statement never began. Without this branch the throw lands in the `internal` 500 below,
+     * which is worse than useless here: it reports a fault in the route to an operator whose
+     * actual problem is connection contention, and it names no cause anything can be alerted on.
+     *
+     * `retryable: true` is a claim about what the CLIENT should do, not about whether the
+     * statement reached the server — a pipelined statement may still run (see
+     * `DbAcquireTimeoutError`), exactly as one does today when the platform kills the invocation
+     * at 60 s instead. Retrying is right, and `Idempotency-Key` is what makes a mutation's retry
+     * safe; that was already true and this changes none of it. What changes is that the ambiguous
+     * window shrinks from 60 s to the ceiling, and carries a name.
+     *
+     * `warn`, not `error`. One refusal is this ceiling WORKING; the incident is the RATE of them,
+     * which is a threshold question rather than a per-request one.
+     */
+    if (isDbBusy(err)) {
+      log.warn("request_db_busy", {
+        method: req.method, route: route.pattern, status: 503, code: "db_busy",
+      });
+      return errorResponse(
+        "db_busy", 503,
+        "the server could not get a database connection in time; retry shortly",
+        undefined, true,
+        { "Retry-After": String(DB_BUSY_RETRY_AFTER_SECONDS) },
+      );
+    }
     if (err instanceof ServiceError) {
       if (err.httpStatus >= 500) {
         log.error("request_failed", {

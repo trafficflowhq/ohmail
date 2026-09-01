@@ -258,6 +258,246 @@ export const ROLE_DEFAULT_TIMEOUTS = {
   idle_in_transaction_session_timeout: 60_000,
 } as const;
 
+/**
+ * HOW LONG A REQUEST MAY WAIT FOR THE POOLED HANDLE'S ONE CONNECTION BEFORE IT IS TOLD NO.
+ *
+ * ── THE HOLE THIS FILLS, WHICH THIS FILE ALREADY NAMED AND DID NOT CLOSE ──────────────────────
+ *
+ * {@link POOLED_TIMEOUTS}' last paragraph has said, in these words, that `max: 1` means
+ * postgres.js QUEUES rather than errors when the connection is busy and that *"that client-side
+ * queue has no ceiling of its own. It is bounded only transitively — once no statement can run
+ * longer than 25 s, the queue in front of it drains."*
+ *
+ * **The transitive bound does not exist in a pooled deployment.** `POOLED_TIMEOUTS` is measured
+ * INERT through a transaction-mode pooler (the docblock above records the experiment), so the
+ * only statement ceiling production actually has is {@link ROLE_DEFAULT_TIMEOUTS}, whose
+ * `statement_timeout` is **55 s** — deliberately, because a role default is shared with the
+ * worker. 55 s of holder plus any wait at all is more than {@link API_MAX_DURATION_MS}. The
+ * queue is therefore bounded by a number LARGER than the platform's knife, which is the same as
+ * not being bounded.
+ *
+ * ── WHAT THAT COSTS, MEASURED ─────────────────────────────────────────────────────────────────
+ *
+ * 47 × `504 FUNCTION_INVOCATION_TIMEOUT` in twenty minutes on one production build, every one at
+ * the 60 s ceiling, across twelve unrelated routes at once, all on hot instances with
+ * `crashed=false`. The diagnostic row was `HEAD /health` at **60 012 ms** — a route whose whole
+ * database cost is one trivial `select`. A trivial read cannot take 60 s; it can only WAIT 60 s,
+ * and what it waited for is the single connection this factory hands out, shared by every
+ * concurrent invocation on that instance (`apps/api-vercel/src/deps.ts` builds one handle per
+ * warm instance, and the platform runs many invocations on one instance).
+ *
+ * ── WHY THE EXISTING CEILINGS COULD NOT SEE IT ────────────────────────────────────────────────
+ *
+ * Every ceiling shipped before this one bounds a statement that ALREADY HAS a connection.
+ * These requests never got one. Read the driver, not the intent:
+ *
+ *  · `postgres@3.4.9 src/connection.js` `execute(q)` — `query ? sent.push(q) : (query = q,
+ *    q.active = true)`, and `execute` keeps returning truthy while `sent.length < max_pipeline`.
+ *    `max_pipeline` defaults to **100** (`src/index.js`). So a busy `max: 1` connection does not
+ *    make callers queue in the POOL — it PIPELINES up to a hundred of them onto the one socket,
+ *    where Postgres runs them strictly in order. Everyone behind the head waits for the head.
+ *  · `src/connection.js` starts `connectTimer` only when a socket is being CREATED and cancels
+ *    it once the connection is ready. So `connect_timeout: 10` below bounds the DIAL and nothing
+ *    else; a query pipelined onto an already-open connection is never touched by it.
+ *
+ * **MEASURED, because the intuitive model of this is wrong.** Against the real driver on :5433,
+ * `max: 1`, warm: a `select pg_sleep(2)` followed 50 ms later by `select 1` — the trivial read
+ * had `state` SET and `active` FALSE the moment it was dispatched, and it resolved at **+2002 ms**,
+ * exactly when the sleep finished. It was never in a pool queue for a single millisecond. Reading
+ * the pool's queue as the mechanism would have produced a ceiling that never fires, and the
+ * ceiling below is written against `active` for that reason.
+ *
+ * Head-of-line blocking on one backend is the whole story, and the only thing bounding the head
+ * is {@link ROLE_DEFAULT_TIMEOUTS}' 55 s. That is why the platform's 60 s knife is what ends
+ * these requests, and why `HEAD /health` — one trivial select, pipelined behind a 55 s head —
+ * reported 60 012 ms with `crashed=false` on a hot instance.
+ *
+ * This also covers the two candidates the incident named beside ours: an upstream pooler that
+ * accepts the socket and then makes the client wait for a server backend is, from here, the same
+ * event — a statement that has not begun. (Pooler exhaustion that fails the DIAL is already
+ * bounded, by `connect_timeout`.)
+ *
+ * ── WHY 15 s ──────────────────────────────────────────────────────────────────────────────────
+ *
+ * Derived, not chosen for feel. It must be far enough under {@link API_MAX_DURATION_MS} that the
+ * route still has time to RETURN the refusal rather than race the knife for it — 15 s leaves
+ * 45 s — and comfortably above every healthy wait: production `/health` reports `dbLatencyMs` in
+ * the tens of milliseconds, and `ADMIN_READ_TIMEOUT_MS` (12 s) already budgets the heaviest read
+ * surface in the codebase end to end.
+ *
+ * ── WHAT IT TRADES, STATED ────────────────────────────────────────────────────────────────────
+ *
+ * A refusal here means more than fifteen seconds of database work sat ahead of this request on
+ * the instance's one connection. That is a real condition and not a healthy one, but a wide
+ * enough burst on a single instance can reach it without anything being broken, and those callers
+ * are now refused where they previously waited. That is the intended trade and the runbook's: a
+ * fast, attributable 503 carrying `Retry-After` beats a 60 s gateway timeout that carries nothing,
+ * cannot be alerted on, and is indistinguishable from the API being down.
+ *
+ * Raising `max` is the separate question and is deliberately still NOT taken here. It is also the
+ * one this measurement makes most interesting — `max: 1` plus `max_pipeline: 100` means one warm
+ * instance serialises every concurrent invocation's database work through a single backend — but
+ * the upstream pooler has its own connection budget, the burst that produced the incident was
+ * modest, and nothing measured yet says what the right number is. Guessing ceilings is what
+ * produced the two that could not bind.
+ */
+export const POOLED_ACQUIRE_TIMEOUT_MS = 15_000;
+
+/**
+ * Thrown when a query spent {@link POOLED_ACQUIRE_TIMEOUT_MS} on the pooled handle without the
+ * backend ever beginning to execute it.
+ *
+ * It means THIS statement had not started: the connection was occupied by whatever sat ahead of
+ * it. It does NOT mean the database is down, and it is not an unhandled fault — which is why it
+ * is its own class rather than a 500. The API answers it 503 with `Retry-After`.
+ *
+ * **What it deliberately does NOT claim: that nothing reached the server.** The bytes were
+ * written to the socket when the driver pipelined the query, so a statement refused here may
+ * still be executed by Postgres afterwards; {@link guardAcquire} cancels it, but that cancel
+ * races the server. Retry safety for a MUTATION therefore rests where it already rested — on
+ * `Idempotency-Key` and `withIdempotency` — and not on this ceiling. The ceiling's contribution
+ * is that the ambiguous window is now ~15 s with a named cause instead of 60 s with none: a
+ * function killed by the platform mid-flight leaves exactly the same statement running, which is
+ * what the paragraph on `maxDuration` in {@link POOLED_TIMEOUTS} is about.
+ */
+export class DbAcquireTimeoutError extends Error {
+  readonly code = "db_acquire_timeout";
+  constructor(readonly waitedMs: number) {
+    super(`the database connection did not begin this statement within ${waitedMs}ms`);
+    this.name = "DbAcquireTimeoutError";
+  }
+}
+
+/**
+ * STRUCTURAL, not `instanceof`, and that is the point.
+ *
+ * `packages/api` maps this to a 503. An `instanceof` there is a claim about MODULE IDENTITY —
+ * that the API and the driver resolved the same copy of this file — which a bundler, a duplicated
+ * workspace link or a `dist` build can each falsify silently, and the failure mode is the 60 s
+ * 504 coming back with nobody noticing. The `name` is pinned by a test that imports the real
+ * class, so a rename breaks the guard instead of quietly widening the hole.
+ */
+export function isDbAcquireTimeout(err: unknown): err is DbAcquireTimeoutError {
+  if (err instanceof DbAcquireTimeoutError) return true;
+  return typeof err === "object" && err !== null
+    && (err as { name?: unknown }).name === "DbAcquireTimeoutError";
+}
+
+/** The half of postgres.js' `Query` this ceiling reads. See {@link guardAcquire}. */
+interface PooledQuery {
+  /**
+   * TRUE for exactly one query per connection: the one at the head, which the backend is actually
+   * running. `postgres/src/connection.js` sets it in `execute` for the head
+   * (`query = q, query.active = true`) and again in the drain loop as each pipelined follower
+   * reaches the front (`while (sent.length && (query = sent.shift()) && (query.active = true …`).
+   *
+   * So `active === false` is the driver-level spelling of "this statement has not begun" — the
+   * precise condition the incident describes. **Note it is `active` and NOT `state`:** `state` is
+   * assigned to every pipelined query the instant it is written to the socket, so it is true of a
+   * query that will not run for another 55 s. Measured, not read — see the probe recorded in
+   * {@link POOLED_ACQUIRE_TIMEOUT_MS}.
+   */
+  active: boolean;
+  /**
+   * `postgres/src/index.js` `cancel`: a pipelined query that has not begun is flagged
+   * `query.cancelled`, and `connection.js` fires a CancelRequest at the backend the moment it
+   * reaches the head. Best effort by construction — the statement is already on the wire, so this
+   * races the server rather than preventing it — and worth doing anyway, because winning that race
+   * is what keeps a refused statement from running on after nobody is waiting for its answer.
+   */
+  cancel(): unknown;
+  then(onOk: (value: unknown) => void, onErr: (err: unknown) => void): unknown;
+}
+
+/**
+ * Put a ceiling on the WAIT TO BEGIN EXECUTING — never on the statement itself.
+ *
+ * The timer fires once and asks one question: is the backend running THIS query? If it is
+ * (`active`), the ceiling does nothing at all and the statement runs to whatever end the SERVER's
+ * ceilings give it. Only a statement that has not started is cancelled and refused.
+ *
+ * That split is the whole design, and it is what keeps this from being a second, tighter
+ * statement timeout wearing the wrong name. A statement legitimately allowed 55 s by
+ * {@link ROLE_DEFAULT_TIMEOUTS} keeps all 55 s of it. What no longer happens is eleven other
+ * requests silently inheriting that 55 s and dying on the platform's knife with no cause recorded.
+ *
+ * ── WHAT IT DOES NOT REACH, DELIBERATELY ──────────────────────────────────────────────────────
+ *
+ * **Transactions.** `postgres/src/index.js` `begin` opens with `sql.unsafe('begin …')` through the
+ * driver's OWN internal handle, not the one handed to drizzle, so a transaction's wait to start is
+ * not bounded here. It could only be bounded by racing the whole `sql.begin` promise, and that is
+ * the one outcome strictly worse than the 504 being fixed: a 503 returned to a caller whose write
+ * then commits anyway. Refusing that trade is deliberate. The measured burst was overwhelmingly
+ * reads — `/search`, `/mailboxes`, `/sync`, `/sync/snapshot`, `/messages/bodies` and the `/health`
+ * row that diagnosed it — and every one of those is bounded; a transaction benefits indirectly,
+ * because refused readers stop adding to the pipeline in front of it.
+ */
+function guardAcquire<Q extends object>(query: Q, ms: number): Q {
+  const q = query as unknown as PooledQuery;
+  let raced: Promise<unknown> | null = null;
+  const arm = (): Promise<unknown> => (raced ??= new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      // The backend is running THIS statement: the server-side ceilings own it from here, and
+      // killing work that is legitimately in progress is not this ceiling's job.
+      if (q.active === true) return;
+      try { q.cancel(); } catch { /* best effort — the rejection below is the contract */ }
+      reject(new DbAcquireTimeoutError(ms));
+    }, ms);
+    (timer as unknown as { unref?: () => void }).unref?.();
+    // Awaiting the driver's own Query is what DISPATCHES it (`Query#then` calls `handle()`), so
+    // this must stay the only place the underlying promise is consumed.
+    q.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (err) => { clearTimeout(timer); reject(err); },
+    );
+  }));
+
+  return new Proxy(query, {
+    get(target, prop, receiver) {
+      if (prop === "then") {
+        return (ok?: (v: unknown) => unknown, bad?: (e: unknown) => unknown) => arm().then(ok, bad);
+      }
+      if (prop === "catch") return (bad?: (e: unknown) => unknown) => arm().catch(bad);
+      if (prop === "finally") return (fn?: () => void) => arm().finally(fn);
+      const value = Reflect.get(target, prop);
+      if (typeof value !== "function") return value;
+      // `values()`, `raw()`, `execute()` and friends return `this` to chain. Hand back the PROXY
+      // so `client.unsafe(q, p).values()` — which is how drizzle reads every row set
+      // (`drizzle-orm/postgres-js/session.js`) — stays guarded instead of unwrapping itself.
+      return (...args: unknown[]) => {
+        const out = Reflect.apply(value as (...a: unknown[]) => unknown, target, args);
+        return out === target ? receiver : out;
+      };
+    },
+  });
+}
+
+/**
+ * The pooled client with {@link guardAcquire} on every query it issues.
+ *
+ * `unsafe` is the ONLY method overridden, and that is sufficient rather than lucky: drizzle's
+ * postgres-js session reaches the driver through exactly `client.unsafe(sql, params)`,
+ * `client.unsafe(sql, params).values()` and `client.begin(fn)`. Everything else — `options`
+ * (which drizzle MUTATES at construction to install its type parsers), `begin`, `end`, `listen` —
+ * passes through to the real client untouched, so this cannot drift as the driver grows methods.
+ */
+function withAcquireCeiling(
+  client: ReturnType<typeof postgres>, ms: number,
+): ReturnType<typeof postgres> {
+  const guarded = (...args: unknown[]) => guardAcquire(
+    (client as unknown as { unsafe: (...a: unknown[]) => object }).unsafe(...args), ms,
+  );
+  return new Proxy(client, {
+    get(target, prop) {
+      if (prop === "unsafe") return guarded;
+      const value = Reflect.get(target, prop);
+      return typeof value === "function"
+        ? (value as (...a: unknown[]) => unknown).bind(target)
+        : value;
+    },
+  }) as ReturnType<typeof postgres>;
+}
+
 // Serverless (Vercel) request-scoped Db. One pool per connection
 // string, module-cached so a WARM function instance reuses it across requests instead of
 // opening a new connection per invocation (which storms/exhausts the upstream pooler under
@@ -272,9 +512,24 @@ export const ROLE_DEFAULT_TIMEOUTS = {
 //     front of production — see POOLED_TIMEOUTS' own docblock. `connect_timeout` bounds only the
 //     dial in either case; the mechanism that reaches a pooled deployment is
 //     ROLE_DEFAULT_TIMEOUTS, a role-level server default applied by `setupProdDatabase`.
+//   • the WAIT FOR THIS ONE CONNECTION is bounded by POOLED_ACQUIRE_TIMEOUT_MS, client-side,
+//     because none of the above can be: every one of them bounds a statement that already has a
+//     connection, and `max: 1` means most of a busy instance's requests do not yet.
 const pools = new Map<string, ReturnType<typeof postgres>>();
 
-export function makePooledDb(url: string): PostgresJsDatabase<typeof schema> {
+export function makePooledDb(
+  url: string,
+  /**
+   * `acquireTimeoutMs` overrides {@link POOLED_ACQUIRE_TIMEOUT_MS} for this handle.
+   *
+   * A PARAMETER rather than a `process.env` read, for the reason `AdminConfig.readTimeoutMs`
+   * already gives one package over: a guard for this ceiling has to watch a caller actually be
+   * refused, and it cannot spend the production duration doing it. Production passes nothing.
+   * The ceiling is a property of the HANDLE, not of the pool, so two callers may hold different
+   * ones over the same module-cached connection.
+   */
+  opts: { acquireTimeoutMs?: number } = {},
+): PostgresJsDatabase<typeof schema> {
   let pooled = pools.get(url);
   if (!pooled) {
     pooled = postgres(url, {
@@ -283,7 +538,10 @@ export function makePooledDb(url: string): PostgresJsDatabase<typeof schema> {
     });
     pools.set(url, pooled);
   }
-  return drizzle(pooled, { schema });
+  return drizzle(
+    withAcquireCeiling(pooled, opts.acquireTimeoutMs ?? POOLED_ACQUIRE_TIMEOUT_MS),
+    { schema },
+  );
 }
 
 export async function closePooledDbs(): Promise<void> {
