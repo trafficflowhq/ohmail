@@ -335,7 +335,21 @@ export function DesktopDevices() {
    * back" is not that.
    */
   const armed = host?.enabled === true;
-  const pollHostState = armed || host === undefined;
+  /**
+   * Has the opening read finished? BOTH halves, because it has two and either can fail.
+   *
+   * The first version of this asked only about `host`, and review found the mirror image of the
+   * dead end it was written to close: `host_state` answers off, `tailscale_status` then rejects,
+   * `host` is set so the retry stops — and the off ladder renders "Checking…" for the probe for
+   * ever. A retry that covers one half of a two-part read just moves where the screen gets stuck.
+   *
+   * `probe === null` is deliberately NOT included: that is the shell answering unreadably, which
+   * the pane already renders as a sentence with a "Check again" button beside it. Only
+   * `undefined` — nothing came back at all — is an unfinished read.
+   */
+  const awaitingFirstAnswer =
+    host === undefined || (host !== null && !host.enabled && probe === undefined);
+  const pollHostState = armed || awaitingFirstAnswer;
 
   /**
    * KEEP THE OPEN PANE HONEST — re-read host state while this screen is on the display.
@@ -364,11 +378,11 @@ export function DesktopDevices() {
   useEffect(() => {
     if (!pollHostState) return undefined;
     const tick = setInterval(() => {
-      // NEVER HEARD BACK ⇒ redo the WHOLE first read, not just the host half. The ladder below
-      // needs the tailnet probe too, and a retry that filled in only `host` would leave the pane
-      // reporting off while still saying it was checking — a different half-answer in place of
-      // the first one.
-      if (host === undefined) {
+      // NEVER HEARD BACK ⇒ redo the WHOLE first read, not just the half that failed. The ladder
+      // below needs the tailnet probe too, and a retry that filled in only `host` would leave the
+      // pane reporting off while still saying it was checking — a different half-answer in place
+      // of the first one.
+      if (awaitingFirstAnswer) {
         void refresh().catch(() => undefined);
         return;
       }
@@ -383,7 +397,7 @@ export function DesktopDevices() {
       })();
     }, HOST_POLL_MS);
     return () => clearInterval(tick);
-  }, [pollHostState, host, refresh]);
+  }, [pollHostState, awaitingFirstAnswer, refresh]);
 
   /** The engine's enumeration of this machine's offerable addresses — read when the LAN option
    *  opens, because the choice must be OFFERED, never typed (a typo'd address is a socket that

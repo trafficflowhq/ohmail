@@ -607,6 +607,34 @@ describe("off-state problems are honored — the ladder is not only the probe's"
     expect(text()).not.toContain(enHost.checking!);
     expect(button(enHost.enable!)).toBeTruthy();
   }, 20_000);
+
+  it("a first read whose PROBE half fails is retried too — both halves, not one", async () => {
+    /**
+     * The mirror image of the case above, and the reason the retry condition is not simply
+     * "we have no host state": the opening read has two halves. If `host_state` answers off and
+     * `tailscale_status` then rejects, host state is set — so a retry gated on that alone stops —
+     * while the probe stays unresolved and the off ladder renders "Checking…" for ever.
+     */
+    let probes = 0;
+    globe.__TAURI_INTERNALS__ = {
+      invoke: (command) => {
+        if (command === "host_state") return Promise.resolve(OFF);
+        if (command === "tailscale_status") {
+          probes += 1;
+          if (probes === 1) return Promise.reject(new Error("probe blew up"));
+          return Promise.resolve(RUNNING);
+        }
+        return Promise.resolve(undefined);
+      },
+    };
+    await mount();
+    expect(text()).toContain(enHost.checking!);
+    await act(async () => {
+      await new Promise((done) => setTimeout(done, 6000));
+    });
+    expect(probes).toBeGreaterThan(1);
+    expect(text()).not.toContain(enHost.checking!);
+  }, 20_000);
 });
 
 describe("a live code stays revocable in every armed state", () => {
