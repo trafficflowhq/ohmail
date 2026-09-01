@@ -1384,7 +1384,7 @@
   "ai": {
     "title": "AI proposes. You decide.",
     "body": "Rules run first and do the bulk of the work with no AI at all — the design goal is that most of your mail is filed deterministically, by rules you can read and change. Where judgment actually helps, ohmail offers something: a door for a new sender, a draft in your voice, a nudge for a thread that went quiet. Every one of them waits for your yes, and nothing ever sends itself.",
-    "status": "The AI features are built and tested against the model port. A live model has run in production once — on 3 August 2026 it classified 183 messages from the founder's own mailbox, and every result is still waiting to be reviewed rather than applied. No other account's mail has been sent to it. The managed AI actions switch on with the beta, and the metering and spend limits that govern them are already in place.",
+    "status": "The AI features run against a live model in production: the Screener proposes a door for a waiting sender, with a confidence and a reason, and the composer writes a first draft when you ask it for one. Both are proposals — they wait for your yes, nothing files or sends itself, and a pattern only begins running on its own once you have confirmed it often enough to graduate into a rule. The metering and spend limits that govern managed AI actions are in place and enforced: when the budget runs out the rules carry on, and nothing else changes.",
     "toggleLead": "Try it both ways.",
     "toggleBody": "This is the same mail, twice. Flip the switch — nothing breaks, nothing goes missing. That is the point: ohmail is a complete mail client with the AI switched off, and a faster one with it on.",
     "toggleLabel": "AI assist",
