@@ -632,6 +632,94 @@ function metaOf(o: TransportInput): Record<string, unknown> {
 }
 
 /**
+ * THE CONFIG A PROBED CREDENTIAL ROTATION IS STORED WITH, as a PURE function of the three things
+ * that decide it: what is stored, what the patch says, and what the dial proved.
+ *
+ * It was inline in {@link MailboxService.probedImapMeta} and its SMTP sibling, and it is a
+ * function now for one reason: `update` has to compute it TWICE — once outside the transaction to
+ * decide what to dial, and once again INSIDE it, under the row lock, to check the answer is still
+ * about this mailbox. Two copies of this arithmetic would drift, and the whole check is worth
+ * nothing if the recomputation is not bit-for-bit the same arithmetic as the original.
+ *
+ * Patch WINS field by field, because the patch is the newer statement about the same mailbox; the
+ * PROVEN endpoint then wins over both, because it is the only one of the three that was tried.
+ */
+function mergedTransportMeta(
+  stored: Record<string, unknown> | null | undefined,
+  patch: TransportInput | undefined,
+  proven: ProvenEndpoint | undefined,
+  transport: ProbeTransport,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...(stored ?? {}), ...metaOf(patch ?? {}) };
+  if (proven) {
+    merged.port = proven.port;
+    merged.secure = proven.secure;
+    /**
+     * IMAP ONLY, and a STALE consent marker is REWRITTEN rather than deleted: `upsertCredOn`
+     * merges meta with jsonb `||` (right side wins PER KEY, absent keys survive), so deleting the
+     * key would leave yesterday's consent on a mailbox whose server now proves TLS — a consent
+     * that never expires on its own is the exact downgrade this rewrite exists to prevent. A
+     * mailbox that never carried the marker never gains the key, in either value. Plaintext SMTP
+     * authentication is not offered at all, so there is no marker on that side to keep honest.
+     */
+    if (transport === "imap") {
+      if (proven.insecure === true) merged.insecureConsent = true;
+      else if (merged.insecureConsent !== undefined) merged.insecureConsent = false;
+    }
+  }
+  return merged;
+}
+
+/**
+ * What a pre-transaction probe hands back to `update`: the config it dialled and the endpoint the
+ * dial proved. Both halves are needed to rebuild the merge under the row lock — the second because
+ * a proven port/TLS mode is part of what would be written, so a rebuild without it would compare
+ * two different things and pass for the wrong reason.
+ */
+interface ProbedMeta {
+  meta: Record<string, unknown>;
+  proven: ProvenEndpoint | undefined;
+}
+
+/**
+ * Key-order-independent JSON, so two `meta` objects that say the same thing compare equal.
+ *
+ * Written out rather than `JSON.stringify(a) === JSON.stringify(b)` because the two sides reach
+ * this from different places — one built by spreading a driver-parsed jsonb over a request body,
+ * the other by spreading a second driver-parsed jsonb — and insertion order is not part of what
+ * either of them means. RECURSIVE because `meta` is not always flat: an OAuth mailbox stores its
+ * submission coordinates as a nested `meta.smtp` object.
+ */
+function stableJson(v: unknown): string {
+  if (v === null || typeof v !== "object") return JSON.stringify(v) ?? "null";
+  if (Array.isArray(v)) return `[${v.map(stableJson).join(",")}]`;
+  const o = v as Record<string, unknown>;
+  return `{${Object.keys(o).sort().map((k) => `${JSON.stringify(k)}:${stableJson(o[k])}`).join(",")}}`;
+}
+
+/**
+ * A ROTATION WHOSE MERGE WENT STALE WHILE IT WAS BEING VERIFIED.
+ *
+ * 409 and not a silent skip, and not a 200: the caller asked for a password to be stored, and the
+ * only two honest answers are "stored" and "not stored". A skip would answer 200 to a client that
+ * then believes a secret is in place — the same reasoning {@link mailboxDisabled} is given.
+ *
+ * NOT flagged `retryable`. Retrying is exactly the right thing for a HUMAN to do and the sentence
+ * says so, but the flag in this codebase is read by transports that retry on their own
+ * (`HttpAdapter.rejectionOf`), and an automatic retry here would re-dial somebody's mail server
+ * without being asked — a connection cost, and a way to walk into a provider's lockout.
+ */
+const configMoved = (transport: ProbeTransport): ServiceError => new ServiceError(
+  "mailbox_config_changed", 409,
+  transport === "smtp"
+    ? "This mailbox's outgoing (SMTP) server settings changed while this password was being " +
+      "checked, so it was not stored. Try again."
+    : "This mailbox's server settings changed while this password was being checked, so it was " +
+      "not stored. Try again.",
+  { transport },
+);
+
+/**
  * Decrypt a stored `mailbox_credentials` secret back to its plaintext (the worker's
  * later use). Deliberately NOT wired to any DTO/route: credentials NEVER
  * leave the server. Exported so the worker can inject the same KeyProvider.
@@ -1276,13 +1364,48 @@ export class MailboxService {
         throw mailboxDisabled();
       }
 
+      /**
+       * ── AND THE MERGE IS RE-DERIVED UNDER THE LOCK BEFORE IT IS WRITTEN ───────────────────
+       *
+       * The probe above ran OUTSIDE this transaction, deliberately and for the two reasons
+       * `probedImapMeta` gives. What that costs is that its merge was computed from an UNLOCKED
+       * read, and the merge is what gets written — so a concurrent patch that commits in between
+       * is silently undone by every key the stale read carried:
+       *
+       *   stored    meta = { host: A, … }
+       *   Thread 1  PATCH { imap: { host: B, pass: p1 } }   reads A, merges → { host: B, … }
+       *   Thread 2  PATCH { imap: { pass: p2 } }            reads A, merges → { host: A, … }
+       *   Thread 1  commits B; Thread 2 commits A
+       *
+       * and the mailbox points at the host the user just moved off. Neither serial ordering does
+       * that — the second patch alone never mentions a host, and jsonb `||` preserves the keys a
+       * patch does not restate. The `FOR UPDATE` above does not cover it: the lost value is in
+       * `mailbox_credentials.meta`, not in the `mailboxes` row the lock protects.
+       *
+       * The check is a COMPARE-AND-SET, not a re-merge that overwrites: rebuild the merge against
+       * the meta as it stands NOW, and if the answer is not the one that was dialled, refuse.
+       * Re-merging and writing the new answer would be the tempting fix and it is the wrong one —
+       * it stores a combination no probe ever tried (the second patch's password against the
+       * first's host), which is the exact invariant the probe seam exists to hold.
+       *
+       * It is a REBUILD and not a "did the stored meta move" comparison, so two patches that
+       * AGREE (both re-pointing at the same new host) are not a false conflict: the meta moved
+       * under the second one, the rebuild lands on the same config it dialled, and it commits.
+       *
+       * Both writers take the `mailboxes` row lock above before reaching here, so this read is
+       * serialized against the other patch rather than racing it in turn.
+       */
+      if (merged) await this.assertMergeCurrent(tx, id, "imap", patch.imap, merged);
+      if (mergedSmtp) await this.assertMergeCurrent(tx, id, "smtp", patch.smtp, mergedSmtp);
+
       // `merged`, NOT `metaOf(patch.imap)` — what is stored must be exactly what was dialled.
       // Passing the patch alone would store a config the probe never tried (and, before the
       // `upsertCredOn` fix below, would also erase the stored port/user/secure while doing it).
-      if (patch.imap?.pass) await this.upsertCredOn(tx, ctx, kp, id, "imap", patch.imap.pass, merged ?? {});
+      if (patch.imap?.pass) await this.upsertCredOn(tx, ctx, kp, id, "imap", patch.imap.pass, merged?.meta ?? {});
       // PROBED when the host injects `smtpProbe`, like `create` — the same vanity-CNAME shape
       // reaches this door via the edit form. `mergedSmtp` was dialled before this transaction
-      // opened; where no prober is injected it is the plain merge, the pre-probe behaviour.
+      // opened; where no prober is injected it is the plain merge, the pre-probe behaviour — and
+      // that arm needs no staleness check, because it reads nothing to go stale.
       if (patch.smtp?.pass) await this.upsertCredOn(tx, ctx, kp, id, "smtp", patch.smtp.pass, mergedSmtp?.meta ?? metaOf(patch.smtp));
 
       const [row] = await tx.select().from(mailboxes)
@@ -1624,7 +1747,7 @@ export class MailboxService {
    */
   private async probedImapMeta(
     ctx: ServiceContext, id: string, patch: UpdateMailboxBody, opts?: UpdateMailboxOptions,
-  ): Promise<Record<string, unknown>> {
+  ): Promise<ProbedMeta> {
     // The guard the type cannot enforce in a package whose tests are not compiled. See
     // {@link UpdateMailboxOptions}: this throw is the half that runs.
     if (!opts?.probe) throw probeMissing();
@@ -1658,7 +1781,7 @@ export class MailboxService {
       .where(and(eq(mailboxCredentials.mailboxId, id), eq(mailboxCredentials.transport, "imap")))
       .limit(1))[0]?.meta as Record<string, unknown> | null | undefined;
 
-    const merged: Record<string, unknown> = { ...(stored ?? {}), ...metaOf(patch.imap ?? {}) };
+    const merged = mergedTransportMeta(stored, patch.imap, undefined, "imap");
 
     // Same refusal `create` owes and for the same reason: a configuration the adapter could never
     // use is rejected BEFORE the dial, rather than reported as a mail-server failure. Reachable
@@ -1683,20 +1806,15 @@ export class MailboxService {
     });
     if (verdict.verdict === "refuse") throw probeRefused(verdict.code, verdict.tls);
     /**
-     * The PROVEN combination overrides the merge, exactly as on create — and a STALE consent
-     * marker is REWRITTEN, not deleted: `upsertCredOn` merges meta with jsonb `||` (right side
-     * wins PER KEY, absent keys survive), so deleting the key would leave yesterday's consent on
-     * a mailbox whose server now proves TLS — a consent that never expires on its own is the
-     * exact downgrade this rewrite exists to prevent.
-     * A mailbox that never carried the marker never gains the key, in either value.
+     * The PROVEN combination overrides the merge, exactly as on create — see
+     * {@link mergedTransportMeta}, which is where that arithmetic lives now so the in-transaction
+     * recomputation can run the identical thing. Recomputed from the SAME `stored` snapshot, so
+     * this is the pre-dial merge plus the verdict and nothing else has moved.
      */
-    if (verdict.proven) {
-      merged.port = verdict.proven.port;
-      merged.secure = verdict.proven.secure;
-      if (verdict.proven.insecure === true) merged.insecureConsent = true;
-      else if (merged.insecureConsent !== undefined) merged.insecureConsent = false;
-    }
-    return merged;
+    // `proven` rides out so `update` can rebuild this exact merge against the meta it reads under
+    // the row lock: if that rebuild differs, the verdict above is about a configuration that is no
+    // longer this mailbox's, and writing it would restore whatever the other writer just changed.
+    return { meta: mergedTransportMeta(stored, patch.imap, verdict.proven, "imap"), proven: verdict.proven };
   }
 
   /**
@@ -1707,7 +1825,7 @@ export class MailboxService {
    */
   private async probedSmtpMeta(
     ctx: ServiceContext, id: string, patch: UpdateMailboxBody, smtpProbe: SmtpProbe,
-  ): Promise<{ meta: Record<string, unknown>; maxMessageBytes: number | null }> {
+  ): Promise<ProbedMeta & { maxMessageBytes: number | null }> {
     const current = await this.ownedRow(ctx, id); // 404 before anything is dialled
 
     const effectiveStatus = patch.status ?? current.status;
@@ -1718,7 +1836,7 @@ export class MailboxService {
       .where(and(eq(mailboxCredentials.mailboxId, id), eq(mailboxCredentials.transport, "smtp")))
       .limit(1))[0]?.meta as Record<string, unknown> | null | undefined;
 
-    const merged: Record<string, unknown> = { ...(stored ?? {}), ...metaOf(patch.smtp ?? {}) };
+    const merged = mergedTransportMeta(stored, patch.smtp, undefined, "smtp");
 
     const host = typeof merged.host === "string" ? merged.host : "";
     if (!host) {
@@ -1737,10 +1855,6 @@ export class MailboxService {
       },
     });
     if (verdict.verdict === "refuse") throw probeRefused(verdict.code, verdict.tls, "smtp");
-    if (verdict.proven) {
-      merged.port = verdict.proven.port;
-      merged.secure = verdict.proven.secure;
-    }
     /**
      * The `SIZE` announcement rides OUT OF THIS METHOD rather than into `merged`, and the split is
      * deliberate: `merged` becomes the credential row's `meta`, which is per-TRANSPORT config the
@@ -1753,7 +1867,41 @@ export class MailboxService {
      * different port, has not silently kept yesterday's. Falling back to the strict constant is the
      * safe direction; keeping a stale larger number is not.
      */
-    return { meta: merged, maxMessageBytes: verdict.proven?.maxMessageBytes ?? null };
+    return {
+      meta: mergedTransportMeta(stored, patch.smtp, verdict.proven, "smtp"),
+      proven: verdict.proven,
+      maxMessageBytes: verdict.proven?.maxMessageBytes ?? null,
+    };
+  }
+
+  /**
+   * COMPARE-AND-SET for a merge computed outside the transaction that is about to be written
+   * inside it. Throws {@link configMoved}; returns nothing, because the only legal continuation is
+   * "the merge is still the answer".
+   *
+   * MUST be called on `tx`, and only after `ownedRowOn(..., { forUpdate: true })`. On the ambient
+   * handle the read would be a fresh snapshot with no ordering against the other writer, which
+   * reads as protection and is not — the same trap `ownedRowOn`'s `forUpdate` note names.
+   *
+   * The rebuild runs {@link mergedTransportMeta}, the same function that produced `dialled`, with
+   * the same patch and the same proven endpoint. So the ONLY input that can differ is the stored
+   * meta, and the comparison answers exactly one question: would this patch, re-decided now,
+   * still store what it just verified?
+   */
+  private async assertMergeCurrent(
+    tx: Tx, mailboxId: string, transport: ProbeTransport,
+    patch: TransportInput | undefined, dialled: ProbedMeta,
+  ): Promise<void> {
+    const [row] = await tx.select({ meta: mailboxCredentials.meta })
+      .from(mailboxCredentials)
+      .where(and(
+        eq(mailboxCredentials.mailboxId, mailboxId),
+        eq(mailboxCredentials.transport, transport),
+      ))
+      .limit(1);
+    const fresh = row?.meta as Record<string, unknown> | null | undefined;
+    const rebuilt = mergedTransportMeta(fresh, patch, dialled.proven, transport);
+    if (stableJson(rebuilt) !== stableJson(dialled.meta)) throw configMoved(transport);
   }
 
   private async upsertCredOn(
