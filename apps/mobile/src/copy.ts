@@ -15,13 +15,148 @@ import { isPinFailure, PIN_CHANGED_SENTENCE } from "./net/host-pinning";
 export const Copy = {
   /* --------------------------------------------------------------- welcome */
 
-  welcomeTitle: "Connect your server",
+  welcomeTitle: "Which mailbox is this?",
   welcomeLead:
-    "This app is the phone client for an ohmail server — your own, or the ohmail desktop app on your computer. It shows nothing until it is connected: your mail stays on your server, and this phone mirrors it.",
+    "This app is the phone client for an ohmail server — ours, one you run, or the ohmail app on your own computer. It shows nothing until it is connected: your mail stays on your server, and this phone mirrors it.",
   welcomeHow:
-    "Your desktop's Devices screen and a self-hosted server's setup page both show a pairing QR. Scanning it is the whole ceremony — no password is typed here.",
-  welcomeScan: "Scan the pairing QR",
-  welcomeOther: "Other ways to connect",
+    "Whichever you pick, the phone joins by scanning a code that server shows you. No password is ever typed here.",
+  /*
+   * NO `welcomeScan` / `welcomeOther` ANY MORE. They were the two buttons this screen led with —
+   * "Scan the pairing QR" and "Other ways to connect" — and the second one is what the change is
+   * about: it filed two of the product's three doors under "other". The scan verb still exists
+   * where a scan is genuinely the next step (`scanTitle`, `stepScan`).
+   */
+
+  /* ------------------------------------------------------------------ doors */
+
+  /*
+   * ═══ THE THREE DOORS, IN THE PHONE'S IDIOM ═══════════════════════════════════════════════
+   *
+   * The desktop chooser asks one question with three answers — this computer, a server you run,
+   * or ours — and each names a DIFFERENT MACHINE as the thing that does the organizing. The
+   * phone asks the same question and its answers are NOT the same three, because a phone cannot
+   * be the organizer: there is no IMAP client here, no engine dialling a mail server, no
+   * "on this phone" door to offer. Every door below names somebody else's machine, and the
+   * phone's own half of each sentence is the same — it keeps a copy.
+   *
+   * ── THE ORDER IS DIFFERENT FROM THE DESKTOP'S, AND DELIBERATELY SO ──────────────────────
+   *
+   * The desktop orders by who holds it, nearest first, and puts the hosted service last: the
+   * first two are doors a person can verify for themselves. That argument does not transfer.
+   * On a phone the nearest door — a computer on the same network — is the one with the most
+   * conditions on it (a code that carries a key, a platform half that exists on Android and
+   * not yet on iOS), and leading with it would open the chooser on the answer most likely to
+   * end in a refusal. So the phone orders by how few conditions the door has, and the LAN door
+   * comes last with its conditions written on it.
+   *
+   * ── EVERY SENTENCE IS A CLAIM, AND THREE OF THEM WERE CHECKED AGAINST A LIVE SERVER ────
+   *
+   *  · **The Cloud door pairs, TODAY.** `GET /hello` on the hosted service (`MANAGED_ORIGIN`,
+   *    named once in `net/pairing.ts`) answers `features.pairing: true`, and `POST /pair/redeem`
+   *    there answers `pairing_invalid` to a junk token — the ceremony is mounted, and the code
+   *    comes from the Devices pane the web client shows when `/hello` announces it
+   *    (`CloudShell.tsx` injects `<DevicesSection/>` on exactly that condition). Measured
+   *    2026-09-01. The picker still negotiates rather than trusting this deck: if that server
+   *    ever answers `pairing: false`, the door says what the server said instead of what this
+   *    comment did.
+   *  · **The self-hosted door needs a certificate the PHONE already trusts**, and that is a
+   *    different sentence from the desktop's. See {@link doorSelfCert}.
+   *  · **The desktop door is Android-only for a computer on your own network.** `canPin()` is
+   *    false wherever the pinning module's native half is absent, which today is iOS, and the
+   *    seam REFUSES rather than connecting unpinned. The Tailscale address works on both.
+   */
+  doorsLead: "One question, three answers — which machine does the organizing?",
+
+  doorCloud: "ohmail Cloud",
+  doorCloudSay:
+    "Our hosted service does the organizing; this phone keeps a copy. Sign in on the web, open Settings → Devices, and scan the code it shows.",
+
+  doorOwnServer: "Your own server",
+  doorOwnServerSay:
+    "A server you run does the organizing; this phone keeps a copy. Give its address and this app will check what is there.",
+
+  doorDesktop: "Your own computer",
+  doorDesktopSay:
+    "The ohmail app on your computer does the organizing; this phone keeps a copy. Open Settings → Devices there and scan its code.",
+
+  /**
+   * THE TRAVEL SENTENCE, IN THE ONE FORM THAT IS TRUE FOR A PHONE.
+   *
+   * The desktop's is *"Your rules and settings live in your own mailbox and travel with you — the
+   * mailbox is always the master."* Both halves hold here, and a phone needs a third clause the
+   * desktop does not: the desktop MAY be the organizer, so "move between these" is something its
+   * own install does. A phone is never the organizer, so what moves is which server it mirrors —
+   * and nothing it holds travels, because everything it holds is a copy.
+   *
+   * The list is the catalogue's own (`leave.note`: screened senders, rules, notification choices,
+   * the away reply, tag names), shortened to the three a phone actually shows, and it does NOT say
+   * "settings" unqualified — the phone's Look setting is per-device on purpose
+   * (`faceScopeDevice`), and triage piles and Resurface timers stay with the install that made
+   * them. Claiming them would be claiming the payload does not carry.
+   */
+  doorsTravel:
+    "Move between these anytime. Your screened senders, rules and notification choices live in your own mailbox, so they are the same behind every door — the mailbox is always the master. This phone only ever keeps a copy of it.",
+
+  /* ------------------------------------------------- the self-hosted door */
+
+  doorSelfTitle: "Your own server",
+  doorSelfLead:
+    "Give the address you open ohmail at in a browser. This app will check that your server is there before anything else.",
+  doorSelfAddress: "Your server's address",
+  doorSelfAddressHint: "For example ohmail.example.com — nothing after the host.",
+  doorSelfGo: "Continue",
+  doorSelfChecking: "Checking your server…",
+  /**
+   * WHAT A PHONE CAN AND CANNOT DO ABOUT AN OPERATOR'S OWN CERTIFICATE AUTHORITY.
+   *
+   * ── THIS IS NOT THE DESKTOP'S ANSWER, AND SAYING IT WAS WOULD BE THE LIE ───────────────────
+   *
+   * The desktop tells an operator to drop their root certificate into a file in the app's data
+   * folder (`cloud-ca.pem`), because Node verifies against its own compiled-in roots and
+   * `NODE_EXTRA_CA_CERTS` is how you add one. There is no equivalent here and the copy must not
+   * imply there is.
+   *
+   * MEASURED, from this app's own build rather than from documentation:
+   *
+   *  · **Android.** React Native's fetch is OkHttp, which uses the platform trust manager, which
+   *    is configured by the app's network security config. This app declares NONE
+   *    (`apps/mobile/android/app/src/main/AndroidManifest.xml` carries no
+   *    `android:networkSecurityConfig`, and the release merged manifest has none either), so it
+   *    gets the platform default for `targetSdkVersion` 36 — which since API 24 trusts SYSTEM
+   *    certificate authorities and NOT the ones a person installs themselves. An operator who
+   *    installs their own root on the phone therefore changes nothing for this app, and the
+   *    handshake still fails. Opting in (`<certificates src="user"/>`) is deliberately NOT done:
+   *    it would widen what every connection this app makes will accept, including the hosted
+   *    one, to any authority anything on that device ever installed.
+   *  · **iOS.** URLSession honours a root the person installed AND enabled under
+   *    Settings → General → About → Certificate Trust Settings, so the same stack is reachable
+   *    there once that is done. NAMED rather than measured — there is no Mac or iPhone in the
+   *    environment this was built in, and the parity rule says to name an iOS half rather than
+   *    assert an untested one.
+   *
+   * So the honest sentence names the two remedies that work on BOTH platforms — a certificate
+   * from an authority the phone already trusts, or a Tailscale address, whose MagicDNS name has a
+   * real one — and states the platform split rather than hiding it. The word "Tailscale" is
+   * already in this app's copy (`admitOrigin`'s iOS refusal), so it introduces no new claim.
+   */
+  doorSelfCert:
+    "Your server needs an https certificate from an authority this phone already trusts. A stack "
+    + "on a public name gets one automatically; a stack on a private name like ohmail.test does "
+    + "not, and its own certificate will be refused — on Android a root you install on the phone "
+    + "yourself does not change that, because this app trusts only the system's authorities. Use a "
+    + "public name, or reach it over Tailscale.",
+  /** The address answered as an ohmail server. Named, so "we reached it" is not a guess. */
+  doorSelfReached: (origin: string, flavor: string) =>
+    `Reached ${origin} — an ohmail server (${flavor}).`,
+  /**
+   * THE PREFIX, SAID OUT LOUD when the measurement found one.
+   *
+   * A self-host stack serves its mail API under `/api` and everything else at the root, and this
+   * app now measures which. Naming it is not a technical aside: an operator debugging a phone that
+   * will not sync needs to know which address it settled on, and a silent derivation is the thing
+   * that made the previous failure unreadable.
+   */
+  doorSelfApiUnder: (base: string) => `Its mail API is at ${base}.`,
 
   /* --------------------------------------------------- servers & pairing */
 
@@ -66,12 +201,12 @@ export const Copy = {
     + `not let go of them (${detail}). ohmail will not open them. Revoke this device from your `
     + "server's Devices list, then restart the app.",
 
-  choiceManaged: "ohmail (managed)",
-  choiceManagedNote: "The hosted service at ohmail.app",
-  choiceSelf: "Your own server",
-  choiceSelfNote: "A standalone ohmail server you run",
-  choiceDesktop: "Your desktop",
-  choiceDesktopNote: "Scan the QR in Settings → Devices on your computer",
+  /*
+   * THE THREE CHOICES ARE THE THREE DOORS NOW — `door*` above, one deck for the first-run screen
+   * and the Servers screen alike. The old `choice*` keys said less and said one thing wrong: the
+   * managed card's note named the address (`ohmail.app`) where the door names the machine that
+   * does the organizing, which is the question the chooser actually asks.
+   */
 
   askAddress: "Server address",
   askAddressHint: "The https address the desktop app shows under Settings \u2192 Devices",
@@ -80,8 +215,19 @@ export const Copy = {
   stepScan: "Scan its QR",
   stepManual: "Enter a pairing token",
   stepPairOffered: (flavor: string) => `This is an ohmail server (${flavor}) and it pairs devices.`,
+  /**
+   * A MANAGED-FLAVOR SERVER THAT SAYS IT DOES NOT PAIR — and this line used to promise a release.
+   *
+   * It read *"ohmail.app does not offer device pairing yet — it arrives with a later update"*,
+   * which was true when it was written and is not now: measured 2026-09-01, `GET /hello` on the
+   * hosted service answers `features.pairing: true` and `POST /pair/redeem` there answers
+   * `pairing_invalid` to a junk token, so the picker offers the pair step and this
+   * sentence never renders against the live service. A dormant claim is still a claim, and a
+   * roadmap promise is the worst kind to leave lying in a copy deck — the descriptor is what
+   * decides, so the sentence now reports what the descriptor said and nothing about the future.
+   */
   managedDeferred:
-    "ohmail.app does not offer device pairing yet — it arrives with a later update. Nothing to do here today.",
+    "ohmail.app is not offering device pairing right now — its own descriptor says so. Nothing to do here today.",
   noPairing: "This server does not offer device pairing.",
   notOhmail: "That address answers, but not as an ohmail server.",
   unreachable: (detail: string) => `Could not reach that address. ${detail}`,
@@ -147,10 +293,29 @@ export const Copy = {
    * So a pin failure gets the pin sentence and everything else keeps the detail it always had.
    * `isPinFailure` matches by SHAPE (the wording differs across Android versions), and a missed
    * match degrades to the old line — wrong, but not misleading.
+   *
+   * ── AND IT ONLY MEANS "THIS COMPUTER'S KEY CHANGED" WHERE THERE IS A KEY TO CHANGE ─────────
+   *
+   * `PIN_CHANGED_SENTENCE` names a computer somebody paired with and tells them to mint a fresh
+   * code from its Devices pane. On a pairing that carries NO pin — the hosted service, or a
+   * self-hosted server on a real name — the same handshake shape means something else entirely:
+   * the certificate at that address is not one this phone's trust store accepts. Telling a
+   * self-hoster their computer's identity changed sends them to a screen that does not exist for
+   * them. So the pinned half is gated on the profile actually holding a pin, and the unpinned half
+   * gets its own sentence naming the certificate. Both are true statements about what stopped.
+   *
+   * `pinned` IS REQUIRED, with no default. A default would be a wrong sentence waiting for the
+   * next caller who did not know the question was being asked — and the two answers are not
+   * degradations of each other, they name different remedies on different screens. A required
+   * parameter makes every call site state which pairing it is talking about.
    */
-  connectSyncFailed: (detail: string) =>
+  connectSyncFailed: (detail: string, pinned: boolean) =>
     isPinFailure(detail)
-      ? `Sync stopped. ${PIN_CHANGED_SENTENCE}`
+      ? pinned
+        ? `Sync stopped. ${PIN_CHANGED_SENTENCE}`
+        : "Sync stopped. This phone would not accept the certificate at that address, so it did "
+          + "not send anything. The server needs an https certificate from an authority this phone "
+          + "already trusts — see the note on the “Your own server” door."
       : `Sync failed — the mirror keeps what it has. ${detail}`,
 
   /* ----------------------------------------------------------------- ohbox */

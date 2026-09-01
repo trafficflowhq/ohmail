@@ -57,6 +57,7 @@ import {
   type Negotiation,
   type PairingEnv,
 } from "./pairing";
+import { resolveApiBase, type BaseVerdict } from "./server-base.js";
 import { TransitionGate } from "./transitions";
 
 export type ConnectionState =
@@ -82,6 +83,19 @@ export interface Connection {
   activeId: string | null;
   /** The picker's /hello probe — negotiation lives in the seam, screens render the answer. */
   ask(origin: string): Promise<Negotiation>;
+  /**
+   * WHERE THAT SERVER'S `/sync` FAMILY ANSWERS — the origin, or `<origin>/api`.
+   *
+   * Behind this seam for {@link ask}'s reason, and the privacy census is what makes it a rule
+   * rather than a preference: a screen that reached for `globalThis.fetch` to run this itself
+   * would put a transport in a UI file, which is exactly what that scan forbids. The door screen
+   * renders the answer and dials nothing.
+   *
+   * The PAIRING seam measures again for itself — that is where the value is stored, and where a
+   * QR-driven pairing that never opened this screen gets it too. This call is what lets the door
+   * NAME the answer before a single-use code is spent.
+   */
+  probeBase(origin: string): Promise<BaseVerdict>;
   /** Redeem a scanned/typed pairing and go live on it. The reason is a showable sentence. */
   /**
    * `pin` is the desktop door's key fingerprint out of the pairing link, for an address no
@@ -388,6 +402,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       profiles,
       activeId,
       ask: (origin) => negotiate(globalThis.fetch.bind(globalThis) as FetchLike, origin),
+      probeBase: (origin) => resolveApiBase(globalThis.fetch.bind(globalThis) as FetchLike, origin),
       pair: (origin, token, pin) =>
         gate.run(async (stillCurrent) => {
           if (live.current.k === "live") teardown(live.current.session);

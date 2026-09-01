@@ -55,6 +55,29 @@ export interface ServerProfile {
   accountId: string;
   refreshToken: string | null;
   /**
+   * WHERE THE `/sync` FAMILY LIVES ON THIS SERVER — the origin itself, or `<origin>/api`.
+   *
+   * MEASURED at pairing time ({@link import('../net/server-base').resolveApiBase}) rather than
+   * derived from the door or the flavor, because the phone's credential arrives as a QR and a QR
+   * carries no door. A self-host stack serves ONE origin with the API behind `/api` (its
+   * Caddyfile routes `/hello`, `/pair/*` and `/auth/*` at the bare path and `/sync` NOT), so a
+   * pairing to one used to succeed and then mirror nothing for ever.
+   *
+   * `null` ⇒ THE ORIGIN, and it must stay that way. Every profile stored before this field
+   * existed is on a door whose API is at its root (the hosted service has its own hostname, a
+   * desktop host serves its table unproxied), so reading the absence as the origin is exactly
+   * what those installs have been doing successfully — the same one-sided default
+   * `credentialIsForeign` takes, for the same reason. A self-host pairing made by an earlier
+   * build never mirrored a single message, so there is no mail behind one to lose; re-pairing is
+   * one scan and it comes back with the base measured.
+   *
+   * NOT part of the profile's identity. `(origin, accountId)` names the mirror and this does not
+   * appear in it: the same account on the same server is the same mailbox whichever path its API
+   * answers on, and letting a re-measured base fork the mirror would mean a re-pair after a proxy
+   * change re-downloaded the mailbox.
+   */
+  apiBase: string | null;
+  /**
    * THE DOOR'S KEY, base64url `SHA-256(SubjectPublicKeyInfo)` — for a desktop host on the local
    * network, whose self-signed certificate no authority vouches for and whose trust therefore
    * came from the pairing ceremony. `null` for every origin the platform can verify on its own
@@ -268,6 +291,10 @@ export class ServerProfileStore {
         // needed one — the same `null`, and correctly so: the pairing seam decides whether an
         // origin REQUIRES a pin from the origin's own shape, not from whether a row carries one.
         pin: typeof p.pin === "string" ? p.pin : null,
+        // Absent in every row written before the base was measured, and an EMPTY string is read as
+        // absent too — a base of "" would compose `/sync` as a relative path and fetch would throw
+        // on it. See {@link ServerProfile.apiBase}: absent means the origin.
+        apiBase: typeof p.apiBase === "string" && p.apiBase.trim() !== "" ? p.apiBase.trim() : null,
       };
     } catch {
       return null;
@@ -308,6 +335,8 @@ export class ServerProfileStore {
     origin: string; flavor: string; accountId: string; refreshToken: string;
     /** See {@link ServerProfile.pin}. Omitted is `null` — an origin that needs no pin. */
     pin?: string | null;
+    /** See {@link ServerProfile.apiBase}. Omitted is `null` — the API is at the origin. */
+    apiBase?: string | null;
   }): Promise<ServerProfile> {
     return this.enqueue(async () => {
       if (input.origin !== input.origin.trim().replace(/\/+$/, "").toLowerCase()) {
@@ -328,6 +357,11 @@ export class ServerProfileStore {
         // story: a desktop that was reinstalled presents a new key, and the only way this phone
         // ever accepts it is the person scanning a fresh code from that machine.
         pin: input.pin ?? null,
+        // A RE-PAIR REPLACES THE BASE for the pin's reason one field down: the pairing seam has
+        // just MEASURED where this server's API answers, and that measurement is newer than
+        // whatever the standing row holds. An operator who moved their stack behind a proxy is
+        // the case, and one scan is the whole remedy.
+        apiBase: input.apiBase ?? null,
       };
       // ── THE INDEX LEARNS THE ID BEFORE THE CREDENTIAL EXISTS ─────────────────────────────
       //

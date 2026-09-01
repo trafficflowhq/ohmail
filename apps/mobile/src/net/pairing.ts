@@ -35,6 +35,16 @@
  * {@link admitOrigin} is where this module refuses everything that would paper over that:
  * cleartext to a network address, and an unverifiable address with no pin.
  *
+ * ── AND WHERE THE MAIL API IS, WHICH IS NOT ALWAYS THE ORIGIN ───────────────────────────────
+ *
+ * Every door this app could reach before the self-hosted one served its API at the root of the
+ * address the pairing named, so "the origin" and "the base" were one value and nothing had to say
+ * which. A one-origin self-host stack breaks that: its proxy routes `/hello`, `/pair/*` and
+ * `/auth/*` at the bare path and the `/sync` family only under `/api`. The ceremony below
+ * therefore MEASURES the base before it spends the token ({@link resolveApiBase}) and stores it on
+ * the profile, and `net/server-base.ts` carries the measurements and the reasoning. Without it a
+ * self-host pairing succeeded and mirrored nothing, for ever.
+ *
  * ── WHO NAMES THE ACCOUNT ───────────────────────────────────────────────────────────────────
  *
  * The mirror is named by (origin, accountId) and the `__owner` stamp CLAIMS it, so the id must
@@ -60,6 +70,7 @@ import {
   canPin, isPinFailure, pin as installPin, unpin, PIN_CHANGED_SENTENCE,
 } from "./host-pinning";
 import { dropWakeRow } from "./push.js";
+import { resolveApiBase } from "./server-base.js";
 
 /** The hosted service — the managed picker card negotiates against this and nothing else. */
 export const MANAGED_ORIGIN = "https://api.ohmail.app";
@@ -182,12 +193,22 @@ export function pendingPairOrigin(): string {
 /**
  * Ask the server whose session this is — the session read first, the server's own rows where
  * that route is not mounted (see the header). `null` = this door could name no account.
+ *
+ * TWO ADDRESSES, and they are the same string on two of the three doors. `/auth/session` is
+ * routed at the bare ORIGIN everywhere (the self-host Caddyfile names `/auth/*` explicitly), and
+ * the row reads are `/sync` family — which a one-origin self-host stack serves ONLY under `/api`.
+ * This read is the one place the fallback path is exercised on the door that needs the prefix, so
+ * getting it wrong here would leave the pairing naming no account and refusing itself out loud
+ * after the token was already burned. See `net/server-base.ts`.
  */
 export async function resolveAccountId(
   fetchImpl: FetchLike,
   origin: string,
   authHeaders: () => Record<string, string>,
+  /** Where the `/sync` family answers. Absent ⇒ the origin, which is right for two of three. */
+  apiBase?: string,
 ): Promise<{ accountId: string; via: "session" | "rows" } | null> {
+  const base = apiBase ?? origin;
   try {
     const res = await fetchImpl(`${origin}/auth/session`, { headers: authHeaders() });
     if (res.ok) {
@@ -203,7 +224,7 @@ export async function resolveAccountId(
     return typeof id === "string" && id !== "" ? id : null;
   };
   try {
-    const res = await fetchImpl(`${origin}/sync/snapshot?limit=1`, { headers: authHeaders() });
+    const res = await fetchImpl(`${base}/sync/snapshot?limit=1`, { headers: authHeaders() });
     if (res.ok) {
       const body = (await res.json()) as { changes?: Array<{ entity?: unknown }> };
       const id = fromEntity(body.changes?.[0]?.entity);
@@ -213,7 +234,7 @@ export async function resolveAccountId(
     /* snapshot unavailable — the delta read below is the last word */
   }
   try {
-    const res = await fetchImpl(`${origin}/sync?since=0&limit=1&types=message`, { headers: authHeaders() });
+    const res = await fetchImpl(`${base}/sync?since=0&limit=1&types=message`, { headers: authHeaders() });
     if (res.ok) {
       const body = (await res.json()) as { changes?: { creates?: Array<{ entity?: unknown }> } };
       const id = fromEntity(body.changes?.creates?.[0]?.entity);
@@ -413,10 +434,33 @@ export async function pairWithServer(
       kind: "refused",
       reason:
         step.kind === "managed-signin-later"
-          ? "ohmail.app does not offer device pairing yet — it arrives with a later update"
+          ? "ohmail.app is not offering device pairing right now — its own descriptor says so"
           : "this server does not offer device pairing",
     };
   }
+
+  // 1b — WHERE IS THIS SERVER'S MAIL API? BEFORE THE BURN, and that placing is the whole point.
+  //
+  // A one-origin self-host stack serves `/hello`, `/pair/*` and `/auth/*` at its root and the
+  // `/sync` family only under `/api`. Every request this ceremony makes up to here answers at the
+  // root, so the pairing SUCCEEDED against such a stack and then mirrored nothing, for ever, with
+  // an HTML 404 as the only clue — the defect `net/server-base.ts` documents and closes. Measured
+  // here rather than derived from the door or the flavor, for the reason stated there: a QR
+  // carries an origin and no door.
+  //
+  // Placed before the redeem so a server whose API cannot be found costs a sentence and not a
+  // spent code. Both probes are credential-free, which is what lets them run this early.
+  const resolved = await resolveApiBase(fetchImpl, origin);
+  if (resolved.kind === "refused") {
+    // A HANDSHAKE FAILURE HERE READS AS A PIN FAILURE too — the probe is a request to the same
+    // socket the negotiation used, so a key that changed between them is the same event and gets
+    // the same sentence rather than a second, vaguer one about a missing API.
+    if (pin !== null && isPinFailure(resolved.reason)) {
+      return { kind: "refused", reason: PIN_CHANGED_SENTENCE };
+    }
+    return { kind: "refused", reason: resolved.reason };
+  }
+  const apiBase = resolved.base;
 
   // 2 — spend the token: its one appearance, in the redeem body. `kind` is this phone's own
   // declaration (the server's whitelist now carries the mobile vocabulary), omitted only when
@@ -480,7 +524,7 @@ export async function pairWithServer(
 
   // 3 — whose mailbox did this open? The server's word, or no mirror at all.
   const authHeaders = () => ({ authorization: `Bearer ${tokens.accessToken as string}` });
-  const identity = await resolveAccountId(fetchImpl, origin, authHeaders);
+  const identity = await resolveAccountId(fetchImpl, origin, authHeaders, apiBase);
   if (identity === null) {
     // A door with no session read and zero rows (a fresh desktop engine) can name no account,
     // and the mirror's name, its __owner stamp and the drain-time guard all require the
@@ -543,6 +587,11 @@ export async function pairWithServer(
       // launch before the first request — a pin that lived only in this process would pair
       // perfectly and fail on the next cold start.
       pin,
+      // The MEASURED base, persisted for the pin's reason: every later launch composes its drains
+      // against it and must not pay for a probe to learn it. Stored even when it equals the origin
+      // — recording what was measured is not the same as recording nothing, and a later build that
+      // wanted to tell "measured, and it is the root" from "never measured" would have no way to.
+      apiBase,
     });
   } catch (err) {
     // THE COMPENSATION IS ONLY CLAIMED IF IT LANDED. The status was not read at all, so a 401,
@@ -967,6 +1016,11 @@ async function buildSession(
   }
   const boot = await bootEngine(env.engineDeps, {
     origin: profile.origin,
+    // WHERE THIS SERVER'S `/sync` FAMILY ANSWERS — measured at pairing time and stored on the
+    // profile, so no launch pays for a probe and the boot still touches no wire. Absent on every
+    // row written before it existed, which `bootEngine` reads as the origin: exactly what those
+    // rows have always used, and right for the two doors that serve their API at their root.
+    apiBase: profile.apiBase,
     accountId: profile.accountId,
     auth: { headers: () => bearer.headers(), fetch: bearer.fetch },
   });

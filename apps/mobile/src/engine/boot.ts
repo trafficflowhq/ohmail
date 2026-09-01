@@ -82,6 +82,24 @@ export interface ConnectConfig {
   /** `https://mail.example.org`, `http://192.168.1.20:8028`, … — no trailing slash needed. */
   origin: string;
   /**
+   * WHERE THE `/sync` FAMILY LIVES on that origin — absent means the origin itself.
+   *
+   * A SECOND FIELD rather than a replacement for {@link origin}, and the split is load-bearing in
+   * both directions:
+   *
+   *  · the MIRROR is named by the origin (`mirrorOwnerKey` below), so the base must not reach it.
+   *    A self-host stack whose API answers under `/api` is the same mailbox at the same address;
+   *    keying the mirror by the base would fork one account's copy in two and re-download it.
+   *  · the ADAPTER is composed against the base, because `/sync`, `/sync/snapshot` and the
+   *    mutation surface are the routes a one-origin self-host deployment does NOT serve at its
+   *    root (its Caddyfile routes `/api/*` there and `/sync` to the web container). See
+   *    `net/server-base.ts` for the measurement and why the phone measures rather than derives.
+   *
+   * `/auth/session` stays on the ORIGIN — it is routed at the bare path on every deployment, and
+   * moving a request that works would be churn on the identity probe for no measured gain.
+   */
+  apiBase?: string | null;
+  /**
    * A STATIC bearer (the tests' path, and nothing else's in-app).
    * When `auth` is present it wins — a static copy of a rotating token is stale by design.
    */
@@ -437,6 +455,22 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
   if (!/^https?:\/\/\S+$/.test(origin)) {
     return { kind: "refused", reason: `not a server origin: "${config.origin}"` };
   }
+  /**
+   * THE ADAPTER'S BASE — the measured one, or the origin. See {@link ConnectConfig.apiBase}.
+   *
+   * Normalized through the SAME function the origin is, so a base and an origin that name one
+   * server cannot differ by a trailing slash or by case. Validated with the same shape test and
+   * REFUSED rather than silently falling back to the origin: a stored base that is not an address
+   * means the profile is describing a server this app cannot compose a request for, and quietly
+   * dialling the origin instead would be this file guessing that the operator's proxy has moved
+   * back — the exact silent-wrong-answer class the refusal contract above exists to avoid.
+   */
+  const apiBase = config.apiBase == null || config.apiBase.trim() === ""
+    ? origin
+    : normalizeOrigin(config.apiBase);
+  if (!/^https?:\/\/\S+$/.test(apiBase)) {
+    return { kind: "refused", reason: `not a server API base: "${config.apiBase ?? ""}"` };
+  }
   const token = config.token?.trim() ?? "";
   const accountId = config.accountId.trim();
   if ((!token && !config.auth) || !accountId) {
@@ -497,7 +531,10 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
     // reach the store, whatever the door could or could not verify above.
     adapter: accountGuarded(
       new HttpAdapter({
-        baseUrl: origin,
+        // THE MEASURED BASE, not the origin — see {@link ConnectConfig.apiBase}. On the hosted
+        // service and on a desktop host these are the same string; on a one-origin self-host
+        // stack they are not, and the difference is whether this phone ever mirrors a message.
+        baseUrl: apiBase,
         // Bearer-only, both directions: the header seam carries the credential (the manager's
         // live copy — stamped per request, so a rotation mid-drain is picked up), and
         // the cookie read is pinned off — there is no document.cookie on Hermes and there must
