@@ -104,6 +104,11 @@
  * reason still produces the `blocked` state with generic copy (see {@link deriveMailState}),
  * because a server that grows a fourth reason must not be answered with silence.
  */
+/* The ONE mailbox-address grouping rule, shared with the Mailboxes pane. This module had no
+   imports at all before it; it has this one because the alternative is a second copy of a rule
+   that must never diverge from the pane's — see `address-key.ts`. */
+import { addressKey } from "./address-key";
+
 export const SYNC_BLOCK_REASONS = [
   "lease_unreadable",
   "awaiting_credentials",
@@ -1393,34 +1398,32 @@ function climb(input: MailStateInputs): MailState {
    * The Mailboxes pane already knows the rule and says it out loud ("An earlier entry for this
    * address is no longer in use"), so this is the ladder catching up with copy the product had.
    *
-   * ── THE COMPARISON IS `canonicalAddress`, AND IT IS DELIBERATELY NOT `lower()` ─────────
+   * ── THE COMPARISON IS `addressKey`, THE ONE THE MAILBOXES PANE ALREADY USES ────────────
    *
-   * The first version of this matched on `toLowerCase()`, reasoning that the unique index is on
-   * `lower(address)` so the tombstone and its replacement can differ in case and still be one
-   * mailbox. A review found that this is exactly the substitution `mailbox-service.ts:99-103`
-   * forbids, in as many words: "the index and the lease guard DIFFERENT things, and neither
-   * substitutes for the other. `lower(address)` is one account's own connect form, in one
-   * database. The lease is the physical mailbox."
+   * This took two wrong answers to reach, and both are worth the lines because each looked
+   * right from where it was written.
    *
-   * On a case-sensitive IMAP server `Alice@example.com` and `alice@example.com` are two
-   * mailboxes. The index still refuses to hold both ACTIVE, so "one stood down, the other
-   * connected" is a reachable, ordinary-ASCII state — and folding them would suppress a
-   * genuine organizer warning about a mailbox that really is unorganized. Silencing a true
-   * alarm is worse than the false one this arm was fixed to stop.
+   * The first fold was `toLowerCase()` reasoned from the unique index. A review objected that
+   * `mailbox-service.ts:99-103` forbids that inference — "`lower(address)` is one account's own
+   * connect form, in one database. The lease is the physical mailbox" — so I made it exact and
+   * case-preserving. That was WORSE, and the second review found why: the Mailboxes pane groups
+   * these same rows with `addressKey` (case folds, never trims) and labels the dead one
+   * superseded. A case-sensitive rail beside a case-folding pane puts an organizer-conflict
+   * banner on screen next to a row that shows nothing to act on — the SAME two-contradictory-
+   * sentences defect this arm exists to end, reintroduced from the other side.
    *
-   * So the test is the product's OWN canonical form, `canonicalAddress` — which is
-   * `raw.trim()`, case-preserving. Trim rather than nothing because rows predating that
-   * helper were never backfilled, so a legacy `" person@example.com "` and its reconnected
-   * replacement are the same mailbox and must fold. Not lower-casing also removes a second
-   * hazard the review measured: JavaScript's `toLowerCase()` and Postgres's `lower()` disagree
-   * on inputs like `İ`, so a lowercase comparison here could not have agreed with the index it
-   * was imitating anyway. */
-  const liveAddresses = new Set(live.map((m) => m.address.trim()));
+   * So the rule is not re-derived here at all: it is imported. Whether `lower()` is the right
+   * notion of mailbox identity is a real question, and it belongs to the INDEX and the pane that
+   * already inherit its caveat — not to this arm, which must not invent a third answer. The
+   * `trim()` I had added is gone with it: `address-key.ts` explains that trimming is WIDER than
+   * the constraint and would hide a row Postgres is willing to keep active. */
+  const liveAddresses = new Set(live.map((m) => addressKey(m.address)));
   const stoodDown = mailboxes.find(
     (m) => m.status === "disabled"
       && typeof m.disabledReason === "string"
-      && !liveAddresses.has(m.address.trim()),
+      && !liveAddresses.has(addressKey(m.address)),
   );
+
   if (stoodDown) {
     return {
       ...QUIET,

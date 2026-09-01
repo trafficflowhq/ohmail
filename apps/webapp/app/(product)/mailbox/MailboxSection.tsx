@@ -247,21 +247,23 @@ export function statusKey(m: Pick<MailboxDTO, "status" | "lastSyncAt">): string 
  * 'disabled'`) and this pane offers no re-enable, so connecting the address again is the only
  * move a Cloud customer has.
  *
- * ── `lower()` ONLY, AND NOT `trim()` ────────────────────────────────────────────────────
+ * ── THE KEY ITSELF MOVED, AND SO DID ITS REASONING ──────────────────────────────────────
  *
- * The key is exactly the index's, deliberately. `canonicalAddress` (`mailbox-service.ts`) trims
- * on the way IN, so a stored address has no surrounding space and the trim would be a no-op —
- * but if one ever did exist it would be a row Postgres considers DISTINCT, and folding it here
- * would hide a mailbox the database is willing to keep active. A presentation grouping may be
- * narrower than the constraint; it may never be wider.
+ * `addressKey` now lives at `app/shell/address-key.ts` — `lower()` only, never `trim()`, with the
+ * whole argument for that (a grouping may be narrower than the constraint; it may never be wider).
+ * It moved when a SECOND consumer arrived: `mail-state.ts`'s stand-down arm decides the same
+ * question — has this address come back? — and that rail and this pane render on ONE SCREEN. Two
+ * copies that agree today are how they come to disagree later, and on this pair disagreeing means
+ * two contradictory sentences about one mailbox, which is the defect both were written to end.
  *
- * `lower()` inherits the index's own documented caveat (collation-dependent, not RFC
- * canonicalization — `mailbox-service.ts` sets it out at length). Inheriting it is the point:
- * this grouping and that index answer the same question and must answer it the same way.
+ * Re-exported here because this pane was its only home for a long time and callers read better
+ * for it.
  */
-export function addressKey(address: string): string {
-  return address.toLowerCase();
-}
+/* IMPORTED as well as re-exported, and the difference is a caught defect rather than a style
+ * choice: `export { x } from "..."` re-exports without binding `x` in THIS module's scope, so the
+ * call below became `Cannot find name` — typecheck and 43 tests, immediately and loudly. */
+import { addressKey } from "../../shell/address-key";
+export { addressKey };
 
 /**
  * WHY THE CONNECT BUTTON IS NOT ALWAYS THERE.
