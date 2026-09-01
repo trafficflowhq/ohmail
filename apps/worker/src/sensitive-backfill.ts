@@ -242,6 +242,23 @@ const undecidedRefusals = new Map<string, Set<string>>();
 const blockedWalks = new Map<string, number>();
 
 /**
+ * The undecided ids the LAST blocked walk carried — what makes the bound per MESSAGE.
+ *
+ * Found by review of the bound itself. A count kept per mailbox says "this mailbox has been
+ * re-walked three times", which is not the claim that licenses the stamp: the claim is that EVERY
+ * undecided message has been re-attempted three times. Those come apart the moment the undecided
+ * set changes mid-bound — two walks blocked by an old row, then a restored husk becomes eligible,
+ * fails one fetch, and falls straight through to the marker on walk three having been tried ONCE.
+ * The marker is durable, so that message stays redacted for ever on the strength of a bound it
+ * never had.
+ *
+ * So a walk whose undecided set contains anything the previous blocked walk did not RESTARTS the
+ * count. Termination still holds: the set is finite, every restart is caused by a message that has
+ * not yet had its attempts, and a set that stops growing runs the bound out.
+ */
+const lastUndecided = new Map<string, ReadonlySet<string>>();
+
+/**
  * Completed walks that may end undecided before the pass certifies anyway.
  *
  * Three, and the unit is a WALK rather than a cycle: a walk is a full traversal of the mailbox's
@@ -272,6 +289,7 @@ export function resetSensitiveBackfillProgress(mailboxId: string): void {
   decidedRefusals.delete(mailboxId);
   undecidedRefusals.delete(mailboxId);
   blockedWalks.delete(mailboxId);
+  lastUndecided.delete(mailboxId);
 }
 
 /**
@@ -628,9 +646,15 @@ export async function sensitiveBackfillPass(
   // (singular) is allowlisted for a ROW-SCOPED line, and an unbounded list of uuids on one line is
   // a size problem the jsonb payload does not have.
   const undecidedIds = [...undecided];
-  const blocked = (blockedWalks.get(mailboxId) ?? 0);
+  // THE BOUND IS PER MESSAGE, NOT PER MAILBOX — see {@link lastUndecided}. A walk that turned up an
+  // undecided message the previous blocked walk had never seen starts the count again, because
+  // that message has not had its attempts and the marker would certify over it.
+  const previous = lastUndecided.get(mailboxId) ?? new Set<string>();
+  const anyFresh = undecidedIds.some((id) => !previous.has(id));
+  const blocked = anyFresh ? 0 : (blockedWalks.get(mailboxId) ?? 0);
   if (result.undecided > 0 && blocked + 1 < SENSITIVE_FP_MAX_BLOCKED_WALKS) {
     blockedWalks.set(mailboxId, blocked + 1);
+    lastUndecided.set(mailboxId, new Set(undecidedIds));
     result.blockedWalks = blocked + 1;
     undecided.clear();
     log.warn("sensitive_fp_backfill_undecided", {
@@ -678,6 +702,7 @@ export async function sensitiveBackfillPass(
   decidedRefusals.delete(mailboxId);
   undecidedRefusals.delete(mailboxId);
   blockedWalks.delete(mailboxId);
+  lastUndecided.delete(mailboxId);
 
   // ONE audit row for the pass, not one per message. The per-message record a client can act on
   // is the `change_log` delta each repair writes; this is the operator's account of a one-shot

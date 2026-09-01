@@ -1905,9 +1905,12 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       // `match` alone therefore let one narrow rule remove every OTHER message from that sender
       // from this backlog, which is a rule changing an outcome for mail it does not match. Those
       // messages now reach `evaluateRules`, the one implementation of what a rule matches; if the
-      // rule fires it wins there exactly as before. This site was found by sweeping every
-      // `kind = 'sender'` predicate in the tree after the same defect was fixed in
-      // `packages/services/src/sensitive-rescreen.ts` and `apps/worker/src/screener-auto.ts`.
+      // rule fires it wins there exactly as before — which is a claim about THIS method's
+      // CALLERS, and it is the whole licence for narrowing here: the backlog is handed to a pass
+      // that runs the evaluator. `apps/worker/src/screener-auto.ts` carries the identical
+      // predicate and is deliberately NOT narrowed, because it has no evaluator downstream; see
+      // its own comment. Found by sweeping every `kind = 'sender'` predicate in the tree after the
+      // defect was fixed in `packages/services/src/sensitive-rescreen.ts`.
       //
       // AND IT MOVES NO MAIL TODAY, which is stated rather than left to be assumed from the fix's
       // presence: this method's one caller was the connect-time Screener re-route, and that pass

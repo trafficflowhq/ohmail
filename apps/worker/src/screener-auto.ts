@@ -300,24 +300,37 @@ async function selectCandidates(
       select 1 from ${mailboxes} mb
        where mb.id = ${messages.mailboxId} and mb.status = 'disabled'
     )`,
-    // 1 — the user has ruled on this sender. UN-NARROWED RULES ONLY.
+    // 1 — the user has ruled on this sender. ANY enabled rule, narrowed or not.
     //
-    // `subject_contains`/`body_contains` (mail 0050, 0052) are CONJUNCTIONS — *from this address
-    // AND with this in the subject/text* — and their column comments state the invariant that a
-    // present term "can only make a rule fire LESS often than it did". A rule narrowed to
-    // `invoice` is therefore a statement about that sender's invoices, not about the sender, and
-    // excluding all their other mail here would let a rule change an outcome for mail it does not
-    // match. The narrowed sender's messages now reach `evaluateRules`, which is the one
-    // implementation of what a rule matches: if the rule fires the evaluator answers
-    // `source: "rule"` and this pass leaves the message alone, which is what the exclusion was
-    // always claiming to do. Fixed in the same commit at `sensitive-rescreen.ts` (where it was
-    // found) and `drizzle-repo.ts#listScreenerBacklog`.
+    // ── AND THIS PASS IS THE ONE THAT MUST NOT NARROW IT, WHICH IS NOT OBVIOUS ──────────────
+    //
+    // The identical predicate in `sensitive-rescreen.ts` and `drizzle-repo.ts#listScreenerBacklog`
+    // WAS narrowed to un-narrowed rules, because `subject_contains`/`body_contains` (mail 0050,
+    // 0052) are CONJUNCTIONS — *from this address AND with this term* — so a narrowed rule speaks
+    // only for the mail it matches. That reasoning is right, and it does not transfer here.
+    //
+    // The reason is one line of this file: {@link screenerAutoApplyPass} decides with
+    // `migrationBulkPlacement` and NEVER CALLS `evaluateRules`. There is no evaluator downstream
+    // to notice that the rule does not match, and {@link AutoRow} carries no body text to run one
+    // with. Narrowing the SQL here therefore does not hand the question to the router — it
+    // DISCARDS the question, and a held message that DOES match the user's narrowed rule gets
+    // auto-moved to Reads or Receipts over the destination they wrote — overriding a decision the
+    // user made, by the very change meant to stop that — and it is silent: this pass writes no
+    // rule and leaves nothing on screen to explain the move.
+    //
+    // So the conservative direction is the correct one here, and the two failure modes are not
+    // symmetric. Excluding too much leaves a message at the Screener gate, where the user can see
+    // it and act; excluding too little moves their mail somewhere they said it should not go. A
+    // narrowed sender's other mail waiting at the gate is a cost this pass is allowed to pay.
+    //
+    // Caught by review of the narrowing change, which had shipped with a comment in this file
+    // asserting that "the narrowed sender's messages now reach `evaluateRules`" — false of this
+    // pass, and false in the direction that loses. If auto-apply ever grows a real evaluator, this
+    // predicate can narrow with it, in the same commit and not before.
     sql`not exists (
       select 1 from ${rulesTbl} r
        where r.account_id = ${messages.accountId}
          and r.enabled = true
-         and r.subject_contains is null
-         and r.body_contains is null
          and (
            (r.kind = 'sender' and lower(r.match) = lower(${messages.fromAddress}))
            or (r.kind = 'domain' and lower(r.match) = split_part(lower(${messages.fromAddress}), '@', 2))

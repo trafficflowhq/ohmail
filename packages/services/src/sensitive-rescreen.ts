@@ -910,12 +910,23 @@ async function moveDestinations(
  *     second implementation of the matcher in a language that cannot run it, which is the thing
  *     the candidate query's own header refuses.
  *
- *     THE SWEEP, because the first list of affected sites was wrong in both directions. Every
- *     `kind = 'sender'` predicate in the repo was read. `apps/worker/src/screener-auto.ts` has the
- *     defect and is fixed in the same commit. `drizzle-repo.ts#listScreenerBacklog` has it too,
- *     was NOT in the row, and is fixed — but it moves no mail today: its one caller was the
- *     connect-time re-route, which is retired. `ohbox-tidy.ts` WAS named in the row and does not
- *     carry this predicate at all. `consent-cutline.ts` matches sender rules for a different
+ *     THE SWEEP, because the first list of affected sites was wrong in both directions, and the
+ *     fix does NOT transfer to all of them. Every `kind = 'sender'` predicate in the tree was read.
+ *
+ *     **`apps/worker/src/screener-auto.ts` carries the identical predicate and is DELIBERATELY NOT
+ *     narrowed** — the one place where copying this change breaks the thing it protects. That pass
+ *     decides with `migrationBulkPlacement` and never calls `evaluateRules`, and its candidate row
+ *     carries no body text to run one with. So narrowing there does not hand the question to the
+ *     router, it discards it: a held message that DOES match the user's narrowed rule gets
+ *     auto-moved to Reads or Receipts over the destination they wrote. The whole argument above
+ *     rests on the evaluator being downstream; where it is not, the conservative predicate is the
+ *     correct one. Its own comment carries the reasoning. (This was narrowed first and caught by
+ *     review — worth recording, because the two passes look identical at the SQL and are not.)
+ *
+ *     `drizzle-repo.ts#listScreenerBacklog` has it too, was NOT in the first list, and IS narrowed
+ *     — its consumers are expected to run the evaluator, and it has no caller at all today: the
+ *     connect-time re-route it fed is retired. `ohbox-tidy.ts` was named in the first list and does
+ *     not carry this predicate at all. `consent-cutline.ts` matches sender rules for a different
  *     question — "has this person engaged with this sender" for a consent COUNT — where a narrowed
  *     rule genuinely is evidence of engagement, so it is deliberately unchanged.
  *  3. no `message_states` row in a state other than `none` — reply-later, set-aside, bubbled-up

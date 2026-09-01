@@ -168,11 +168,11 @@ async function settle(
   p: PendingFolderState,
   physical: string,
   c: Omit<FolderCompletion, "expectDesiredFolder">,
-): Promise<void> {
+): Promise<boolean> {
   const applied = await r.completeFolderState(p.messageId, {
     ...c, expectDesiredFolder: p.desiredFolder,
   });
-  if (applied) return;
+  if (applied) return true;
   await r.recordAudit(
     accountId,
     "reconcile.move.superseded",
@@ -187,6 +187,7 @@ async function settle(
     },
     null,
   );
+  return false;
 }
 
 /**
@@ -220,6 +221,49 @@ export async function completeFiling(
     await settle(r, accountId, p, physical, { observedFolder: p.desiredFolder, lastSetBy: "us" });
     return false;
   }
+  // ══════════════════════════════════════════════════════════════════════════════════════════
+  //  A SUPERSEDED SPAM COMPLETION MAY NOT PARK — parking it is how the message gets TOMBSTONED
+  // ══════════════════════════════════════════════════════════════════════════════════════════
+  //
+  // Found by review of the conditional-write change itself, and it is the one place where
+  // "decline and leave the newer intent standing" is not enough.
+  //
+  // The park removes the message's last watched instance, which is correct for a filed spam
+  // verdict: the reaper (`tombstoneInstanceless`) exempts exactly that shape — `reconciled` WHILE
+  // `desired <> observed`, the signature only the `satisfiedBy` completion writes. A SUPERSEDED
+  // completion cannot write that signature, because it must not touch `desired_folder` at all. So
+  // parking it leaves a message with no instance, no tombstone (`deleted_at IS NULL`) and no
+  // exemption — precisely the reaper's victim predicate. The competing writer does not even have
+  // to be exotic: `ruleRetroPass` and friends store `desired === observed` with
+  // `reconcile_status = 'reconciled'`, and that row is both un-exempt AND absent from
+  // `listPendingFolderStates`, so nothing would ever move it back out of Junk either.
+  //
+  // Hence: CLAIM FIRST, PARK SECOND, on the spam path. A declined claim skips the park and the
+  // husk, so the instance row survives, the reaper's predicate is not met, and the message is
+  // still addressable — `messages.native_locator` names the Junk copy, which is exactly what the
+  // reconciler moves FROM when it carries the newer intent out. One cycle of an instance row
+  // pointing into an unwatched folder is a bounded, self-healing residual; a tombstone is not.
+  //
+  // THE DELETE PARK IS DIFFERENT AND KEEPS THE OLD ORDER, for a reason worth stating rather than
+  // leaving to be re-derived: the API has already tombstoned that row, and the reaper's first
+  // filter is `deleted_at IS NULL`, so a delete park is unreachable by it whatever this writes.
+  // The survivor branch below also needs `promoted` before it can say what to store, and
+  // inverting the order there would mean writing the row twice.
+  const spamPark = p.desiredFolder === SPAM_PILE && physical !== SPAM_PILE;
+  if (spamPark) {
+    const claimed = await settle(r, accountId, p, physical, {
+      observedFolder: physical, lastSetBy: "us", satisfiedBy: physical,
+    });
+    if (!claimed) return false;
+    await r.forgetInstanceAt(mailboxId, newLoc);
+    if (typeof r.huskBody === "function") {
+      // The verdict's mirror semantics: the durable artifact of a spam press is the SENDER RULE;
+      // the body's bytes live on in the provider's Junk, which is the master. Real headers stay.
+      await r.huskBody(accountId, p.messageId, "junk_filed");
+    }
+    return false;
+  }
+
   // The park — see the header. `forgetInstanceAt` on the locator just written removes the
   // instance we cannot ever verify and promotes a surviving watched copy exactly as an observed
   // expunge would.
@@ -273,15 +317,13 @@ export async function completeFiling(
     await settle(r, accountId, p, physical, { observedFolder: promoted.folder, lastSetBy: "us" });
     return true;
   }
+  // The delete park's converged write. Reachable only for a Trash desire now — the spam path
+  // returned above — so there is no husk here and no `satisfiedBy`: a delete writes the trash path
+  // verbatim, which makes desired and observed equal.
   await settle(r, accountId, p, physical, {
     observedFolder: physical,
     lastSetBy: "us",
     ...(p.desiredFolder === physical ? {} : { satisfiedBy: physical }),
   });
-  if (p.desiredFolder === SPAM_PILE && typeof r.huskBody === "function") {
-    // The verdict's mirror semantics: the durable artifact of a spam press is the SENDER RULE;
-    // the body's bytes live on in the provider's Junk, which is the master. Real headers stay.
-    await r.huskBody(accountId, p.messageId, "junk_filed");
-  }
   return false;
 }
