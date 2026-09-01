@@ -1299,7 +1299,19 @@ export class SendService {
           // second attempt.
           if (!fresh || sameLocator(fresh, locator)) throw this.forwardSourceGone(err);
           locator = fresh;
-          bytes = await adapter.fetchPart(locator, part.partId);
+          // THE RETRY IS TRANSLATED TOO. Without this arm a re-resolved locator that is ALSO
+          // stale — the mirror repointed, and the message moved again, or it was repointed to
+          // something the server has since renumbered — threw the raw adapter error straight out
+          // of here. The window handler above would still have recorded the send `failed`, so
+          // nothing would have been mis-sent; but the route maps `ServiceError` and turns
+          // everything else into a 500, so the reader would have got "something went wrong"
+          // instead of the sentence that tells them nothing was sent and what to do. The honest
+          // outcome must not depend on how many times the locator moved.
+          try {
+            bytes = await adapter.fetchPart(locator, part.partId);
+          } catch (retryErr) {
+            throw this.forwardSourceGone(retryErr);
+          }
         }
         total += bytes.body.byteLength;
         if (total > FORWARD_MAX_TOTAL_BYTES) {
