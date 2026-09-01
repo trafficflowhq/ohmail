@@ -153,11 +153,41 @@ interface Acc extends AddressBookEntry {
   nameAt: number;
 }
 
+/**
+ * A message's date, AS EVIDENCE OF RECENCY — `0` for anything dated in the future.
+ *
+ * `EngineMessage.date` is the `Date:` HEADER, which the sender writes and nobody checks; the
+ * mirror holds no arrival clock to use instead (`updatedAt` is the mirror row's own stamp and
+ * moves on a read-mark or a folder change, so keying a name off it would reshuffle names on
+ * unrelated activity). Under a most-recent-wins rule an unchecked timestamp is a lever: one
+ * message dated 2099 — a broken client, an import, or somebody who wanted the last word — would
+ * make its display name unbeatable by every correctly dated message that ever follows.
+ *
+ * A future date is not evidence that a claim is NEWER, so it stops being counted as any. `0` is
+ * the same value an undated message gets, which is the honest reading: the date says nothing.
+ * The name is still a candidate — it may be the only one this address has — it just cannot
+ * outrank a dated one.
+ *
+ * `SKEW` because a `Date:` a few minutes ahead of the reader's clock is ordinary mail, not a
+ * forgery, and a device with a slow clock must not have every fresh name demoted. A day is far
+ * wider than any real skew and still far narrower than any useful forgery.
+ *
+ * Deliberately scoped to the NAME. `lastAt` and {@link rankOf} keep taking the raw value: that is
+ * the ordering this file already had, a future date has always been able to float an entry to the
+ * top of the suggestions, and narrowing it here would be an unrelated behaviour change smuggled
+ * into a fix about names. Worth doing; not worth doing quietly.
+ */
+const SKEW = 86_400_000;
+function evidenceAt(at: number, now: number): number {
+  return at > now + SKEW ? 0 : at;
+}
+
 function addTo(
   into: Map<string, Acc>,
   who: EmailAddress | null | undefined,
   at: number,
   tier: number,
+  now: number,
 ): void {
   const raw = who?.address?.trim();
   if (!raw || !raw.includes("@")) return;
@@ -165,13 +195,14 @@ function addTo(
   if (isRobotAddress(address)) return;
 
   const name = (who?.name ?? "").trim();
+  const nameAt = evidenceAt(at, now);
   const prev = into.get(address);
   if (!prev) {
     // An empty name claims nothing, so it holds no tier either — see {@link NONE}.
     into.set(address, {
       address, name, count: 1, lastAt: at,
       nameTier: name === "" ? NONE : tier,
-      nameAt: name === "" ? 0 : at,
+      nameAt: name === "" ? 0 : nameAt,
     });
     return;
   }
@@ -189,14 +220,14 @@ function addTo(
   const better =
     tier > prev.nameTier ||
     (tier === prev.nameTier &&
-      (at > prev.nameAt ||
-        (at === prev.nameAt &&
+      (nameAt > prev.nameAt ||
+        (nameAt === prev.nameAt &&
           (name.length > prev.name.length ||
             (name.length === prev.name.length && name > prev.name)))));
   if (!better) return;
   prev.name = name;
   prev.nameTier = tier;
-  prev.nameAt = at;
+  prev.nameAt = nameAt;
 }
 
 const stamp = (iso: string | null | undefined): number => {
@@ -217,13 +248,17 @@ export function addressBook(
   opts: { exclude?: readonly string[] } = {},
 ): AddressBookEntry[] {
   const into = new Map<string, Acc>();
+  // Read ONCE, so every comparison in this walk is against the same instant. Sampling the clock
+  // per message would let a long derivation judge its first rows against a different horizon
+  // from its last, which is a result that depends on how long it took to compute.
+  const now = Date.now();
 
   for (const m of reader.list<EngineMessage>("message")) {
     const at = stamp(m.date);
     // The From is the only SELF-declared name in the whole walk — see the header.
-    addTo(into, m.from, at, SELF);
-    for (const who of m.to ?? []) addTo(into, who, at, OBSERVED);
-    for (const who of m.cc ?? []) addTo(into, who, at, OBSERVED);
+    addTo(into, m.from, at, SELF, now);
+    for (const who of m.to ?? []) addTo(into, who, at, OBSERVED, now);
+    for (const who of m.cc ?? []) addTo(into, who, at, OBSERVED, now);
   }
 
   for (const d of reader.list<EngineDraft>("draft")) {
@@ -234,8 +269,8 @@ export function addressBook(
     // OBSERVED, and this is the tier that closes the loop: accepting a suggestion writes
     // `Name <address>` into the draft, so a name chosen here comes back through this very
     // list. At `SELF` it would re-elect itself for ever.
-    for (const who of d.to ?? []) addTo(into, who, at, OBSERVED);
-    for (const who of d.cc ?? []) addTo(into, who, at, OBSERVED);
+    for (const who of d.to ?? []) addTo(into, who, at, OBSERVED, now);
+    for (const who of d.cc ?? []) addTo(into, who, at, OBSERVED, now);
   }
 
   const blocked = new Set((opts.exclude ?? []).map((a) => a.trim().toLowerCase()));
