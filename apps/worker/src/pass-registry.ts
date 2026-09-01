@@ -100,7 +100,14 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     cadence: "command-driven: a user press stamps mailboxes.junk_sweep_requested_at; the visit works it off",
     budget: "one bounded keyset window per cycle (JUNK_SWEEP_PER_CYCLE), scan state carried across cycles",
     owns: "the one-time Quarantine→native-Junk migration a mailbox's owner pressed for",
-    fence: "the visit's leased adapter + fenced writes; the CLI takes the mailbox's own lease",
+    // This line USED TO SAY the CLI takes the mailbox's own lease, and the CLI did not: it moved
+    // mail with no lease acquired or rechecked at all. A registry that answers the question wrongly
+    // is worse than one that leaves it open, because a reader stops looking. It is true now — the
+    // runner takes a `LeasePermit` under `--execute` and re-verifies it at every chunk boundary —
+    // and the two fences are named separately because they answer different questions: the leader
+    // fence is worker-to-worker, the organizer lease is install-to-install.
+    fence: "visit: the leased adapter + fenced writes + a fresh leader read per chunk; CLI: an "
+      + "organizer-lease permit, re-verified per chunk, and the same per-chunk desire re-read both get",
   },
   {
     name: "sensitive_fp_backfill",
@@ -343,7 +350,11 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     cadence: "operator-run, per mailbox",
     budget: "REDACTED_RESTORE_BATCH / _FETCHES_PER_CYCLE / _MAX_PAGES / _MAX_BYTES",
     owns: "historically over-redacted bodies are re-fetched and restored",
-    fence: "takes the mailbox's lease for its fetches",
+    // Also a line that was not true when written: the runner took no lease at all. The FETCHES
+    // never needed one — they read — but `ensureFolders()` on the way in CREATES the `ohmail/*`
+    // tree, and that is a write into somebody else's mailbox. One check before the one mutation.
+    fence: "an organizer-lease check before `ensureFolders()` (its only server write); the fetches "
+      + "and body writes are reads plus our own database, and the dry run never connects",
   },
   {
     name: "sender_name_backfill",

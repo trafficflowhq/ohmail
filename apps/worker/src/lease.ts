@@ -241,6 +241,180 @@ export async function releaseMailboxClaim(adapter: MailboxAdapter, installId: st
   return ours.length;
 }
 
+/**
+ * THIS ORGANIZER LOST THE MAILBOX WHILE IT WAS WRITING TO IT.
+ *
+ * Thrown by {@link LeasePermit.check}, and it is deliberately NOT the same class as
+ * {@link LeaseUnavailableError}: "somebody else holds this now" and "I could not look" must not be
+ * reachable from one another — the rule `ORGANIZER-LEASE-RESUME.md` §3.4 states for the gate, held
+ * here for the re-check, because a pass that treated an unreadable lease as a takeover would stand
+ * a mailbox down on a dropped connection.
+ *
+ * A pass that catches this and carries on has reopened the hole the permit exists to close. Every
+ * `guard`/`check` seam in this repository is documented as ABORTING its pass — see
+ * `junk-sweep.ts#junkSweepPass`'s `guard`, whose contract already reads "a throw here aborts the
+ * sweep — the members not yet moved are left exactly where they were" — so the honest stop was
+ * designed for before there was anything to throw.
+ */
+export class OrganizerStandDownError extends Error {
+  readonly reason: MailboxDisabledReason;
+  readonly state: LeaseOccupancyState;
+  readonly heldBy: string | null;
+  constructor(outcome: Extract<MailboxLeaseOutcome, { organize: false }>) {
+    super(
+      `this organizer no longer holds the mailbox (${outcome.reason}); ` +
+      `the pass stops here rather than writing to a mailbox somebody else organizes`,
+    );
+    this.name = "OrganizerStandDownError";
+    this.reason = outcome.reason;
+    this.state = outcome.state;
+    this.heldBy = outcome.by?.displayName ?? null;
+  }
+}
+
+/**
+ * HOW LONG A LEASE READ IS ALLOWED TO STAND FOR.
+ *
+ * The lease's own staleness window is ten minutes ({@link DEFAULT_STALE_AFTER_MS}) — how long a
+ * claim stays fresh WITHOUT A RENEW. This is a different and much shorter number, and conflating
+ * the two is the mistake: ten minutes is how long we believe somebody ELSE is still there, one
+ * minute is how long we are willing to keep writing on the strength of a look we already took.
+ *
+ * A minute against an IMAP move measured in tens of milliseconds means the re-read is amortized
+ * over a whole chunk of work rather than paid per message, and it bounds the overlap a takeover
+ * can produce to one minute of writes instead of a whole pass.
+ */
+export const DEFAULT_PERMIT_TTL_MS = 60 * 1000;
+
+/**
+ * THE SHORTEST A PERMIT MAY BE — and it is a CORRECTNESS floor, not a cost one.
+ *
+ * ── TWO GATE RUNS IN THE SAME MILLISECOND MAKE AN ORGANIZER STAND ITSELF DOWN ────────────────
+ *
+ * Measured here, 2026-09-01, while building this permit, and reproduced with `runLeaseGate`
+ * ALONE — no permit in the picture — by running the gate twice against one `ohmail/_meta` with the
+ * SAME `now` and the nonce threaded exactly as `index.ts` threads it. Roughly one run in three:
+ * the second call answers `stand_down` against a folder holding one claim, OUR OWN, bearing the
+ * very nonce we passed as `lastNonce` — and because a stand-down RELEASES our claims, the folder
+ * is left EMPTY. The organizer decides it is a clone of itself, stands down, and deletes the only
+ * evidence that anybody was organizing the mailbox.
+ *
+ * The trigger is the shared instant: a renew appends a claim whose `heartbeat` and `claimedAt`
+ * equal the one it replaces, so the two are separable only by nonce, and the outcome follows the
+ * random nonce's ordering — which is why it looks like flakiness rather than a defect. With the
+ * clock advanced thirty seconds between the two runs it did not reproduce once.
+ *
+ * NOTHING IN PRODUCTION REACHES IT TODAY: the worker runs the gate once per cycle, and
+ * `reconcile-cron` once per process. This permit is the first caller that could ever run it twice
+ * inside one millisecond, so the floor is here — the caller that would create the condition is the
+ * one that refuses to. It is deliberately NOT a fix to the engine: the engine's tie-break is a
+ * considered design (`compareStrength`'s total order exists because two clones once elected
+ * themselves in a coin toss), and changing it from this lane would be editing a load-bearing
+ * decision table to make a caller's test convenient. Filed as a sibling row instead.
+ *
+ * A caller asking for less gets this. A caller asking for zero — "check every time" — is asking
+ * for precisely the condition above, and gets this too.
+ */
+export const MIN_PERMIT_TTL_MS = 1000;
+
+/**
+ * A LEASE READ, WITH A DEADLINE ON IT — the thing a destructive pass carries instead of a boolean.
+ *
+ * ── WHY A PERMIT AND NOT A CHECK AT THE TOP ──────────────────────────────────────────────────
+ *
+ * Exactly one active organizer per mailbox is the invariant CLAUDE.md names load-bearing, and a
+ * pass that reads the lease once and then writes for minutes is not enforcing it — it is
+ * enforcing "exactly one organizer at the instant this pass began". The window between those two
+ * statements is where a takeover lands: the user moves the mailbox to their own machine, that
+ * install claims `ohmail/_meta`, and this process keeps moving their mail because nothing asked
+ * again.
+ *
+ * So the answer carries an expiry, and the pass asks it at every write boundary. Inside the TTL
+ * the ask is free (a comparison); past it, it is one `runLeaseGate` — which also RENEWS our claim,
+ * so a long pass keeps its own lease fresh instead of ageing into staleness while it works.
+ *
+ * ── THE NONCE IS CARRIED, NEVER RE-ARMED ─────────────────────────────────────────────────────
+ *
+ * `LeaseSelf.lastNonce` is the clone defence's memory: a claim bearing our install id whose nonce
+ * is not the one we wrote is a second live process wearing our identity. A permit that re-verified
+ * with `lastNonce: null` would tell the gate "fresh start, trust anything with my id" on every
+ * re-check — which is precisely the case the nonce exists to catch, disarmed once a minute. So the
+ * permit owns the nonce and threads each renew's into the next read.
+ */
+export interface LeasePermit {
+  /**
+   * MAY THIS PASS STILL WRITE TO THE MAILBOX? Returns on yes; throws on no.
+   *
+   * @throws {OrganizerStandDownError} another organizer holds the mailbox now.
+   * @throws {LeaseUnavailableError} the lease could not be read — NOT a stand-down.
+   */
+  check(): Promise<void>;
+  /** When the lease was last actually read. Test-visible so a TTL claim can be watched to fail. */
+  readonly verifiedAt: Date;
+  /** How many times the lease was re-read (as against served from inside the TTL). */
+  readonly reads: number;
+}
+
+export interface LeasePermitInput extends Omit<MailboxLeaseInput, "now"> {
+  /** The clock, injectable so a test can drive the TTL without sleeping. */
+  now?: () => Date;
+  /**
+   * See {@link DEFAULT_PERMIT_TTL_MS}. Clamped UP to {@link MIN_PERMIT_TTL_MS} — a shorter permit
+   * is not "more careful", it is the same-instant re-entry that arm's docblock measures.
+   */
+  ttlMs?: number;
+}
+
+/**
+ * TAKE THE LEASE, AND KEEP A DATED RECEIPT FOR IT.
+ *
+ * Throws {@link OrganizerStandDownError} when the mailbox is already somebody else's — so a caller
+ * that forgets to handle the refusal fails loudly rather than sweeping on, which is the direction
+ * an operator CLI's error handling should fail in.
+ */
+export async function acquireLeasePermit(input: LeasePermitInput): Promise<LeasePermit> {
+  const clock = input.now ?? ((): Date => new Date());
+  const ttlMs = Math.max(input.ttlMs ?? DEFAULT_PERMIT_TTL_MS, MIN_PERMIT_TTL_MS);
+  const base = { ...input };
+  delete (base as Partial<LeasePermitInput>).now;
+  delete (base as Partial<LeasePermitInput>).ttlMs;
+
+  // The nonce this permit has written, threaded into every later read — see the docblock.
+  let lastNonce: string | null = input.self.lastNonce;
+  let verifiedAt: Date;
+  let reads = 0;
+
+  const read = async (): Promise<void> => {
+    const at = clock();
+    reads++;
+    const outcome = await readMailboxLease({
+      ...base,
+      self: { ...input.self, lastNonce },
+      now: at,
+    } as MailboxLeaseInput);
+    if (!outcome.organize) throw new OrganizerStandDownError(outcome);
+    lastNonce = outcome.nonce;
+    verifiedAt = at;
+  };
+
+  await read();
+
+  return {
+    get verifiedAt(): Date { return verifiedAt; },
+    get reads(): number { return reads; },
+    async check(): Promise<void> {
+      // `>=` and not `>`: a permit is expired AT its deadline, not one tick after it. The
+      // difference is not academic on a host whose timer resolution is coarse — there, `>` means
+      // the deadline instant itself is served from the stale receipt, and a takeover that lands
+      // exactly on it is missed for another whole TTL. The boundary is where the answer changes,
+      // so the boundary is what the test pins: `lease-permit.test.ts` drives the clock to exactly
+      // `ttlMs` and asserts the lease is re-read, and it fails if this comparison is loosened
+      // to `>`.
+      if (clock().getTime() - verifiedAt.getTime() >= ttlMs) await read();
+    },
+  };
+}
+
 /** Re-exported so the worker's `catch` arms name one class, imported from one place. */
 export { LeaseUnavailableError, DEFAULT_STALE_AFTER_MS, META_FOLDER };
 export type { LeaseSelf, OrganizerClaim, LeaseOp };

@@ -17,6 +17,10 @@ import { keyProviderFromEnvOptional } from "@trafficflow/core";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { loadMailboxCreds } from "./mailboxes.js";
 import { redactedRestorePass } from "./redacted-restore.js";
+import {
+  CLOUD_DISPLAY_NAME, LeaseUnavailableError, OrganizerStandDownError, acquireLeasePermit,
+  cloudInstallId,
+} from "./lease.js";
 
 const argv = process.argv.slice(2);
 const flag = (n: string): boolean => argv.includes(`--${n}`);
@@ -68,6 +72,53 @@ const adapter = new ImapAdapter({
 let restored = 0, fetched = 0, mismatched = 0, unreadable = 0;
 try {
   await adapter.connect();
+
+  // ── THE ORGANIZER LEASE, BEFORE `ensureFolders()` — WHICH IS A WRITE ─────────────────────────
+  //
+  // The pass below only FETCHES bodies and writes to our own database, so it looks like a
+  // read-only tool. `ensureFolders()` is not: it CREATES the `ohmail/*` tree, in somebody else's
+  // mailbox. `reconcile-cron.ts` runs its gate at exactly this seam and says why in those words,
+  // and the pass registry ALREADY CLAIMED this runner "takes the mailbox's lease for its fetches"
+  // — it did not take one at all. The seam is the same one `run-junk-sweep.ts` had.
+  //
+  // No permit and no `guard` beyond this point, and that is not an omission: `ensureFolders()` is
+  // the only server MUTATION this process performs, so there is no later write boundary for a
+  // permit to be re-verified at. A single check immediately before the single write is the whole
+  // requirement here — which is precisely why the permit's expiry matters for the sweep and not
+  // for this. The dry-run path returns before `connect()` and so never reaches the lease, keeping
+  // its promise to write nothing anywhere, `ohmail/_meta` included.
+  try {
+    await acquireLeasePermit({
+      adapter,
+      self: {
+        installId: process.env.TF_ORGANIZER_INSTALL_ID
+          ?? cloudInstallId(process.env.TF_ENVIRONMENT ?? "production"),
+        kind: "cloud",
+        displayName: CLOUD_DISPLAY_NAME,
+        lastNonce: null,
+      },
+      // A takeover is a human decision recorded on the mailbox row; an operator invoking a repair
+      // has not made it.
+      takeover: "none",
+      log: (event, detail) => { console.log(`${event} ${JSON.stringify(detail)}`); },
+    });
+  } catch (err) {
+    if (err instanceof OrganizerStandDownError) {
+      console.error(
+        `refusing to restore: ${err.message}\n` +
+        `  held by: ${err.heldBy ?? "(unnamed)"} — ${err.state === "held" ? "still renewing" : "stopped, but not ours to take"}\n` +
+        `  reason:  ${err.reason}\n` +
+        `Nothing was created and nothing was fetched.`,
+      );
+      process.exitCode = 3;
+    } else if (err instanceof LeaseUnavailableError) {
+      // NOT a stand-down: our problem or the connection's, never evidence about who holds it.
+      console.error(`refusing to restore: the organizer lease could not be read — ${err.message}`);
+      process.exitCode = 4;
+    }
+    throw err;
+  }
+
   await adapter.ensureFolders();
   for (;;) {
     const r = await redactedRestorePass({
