@@ -211,6 +211,53 @@ export async function runReconcileCron(
     // sites: "somebody else holds this" and "I could not look" must not be reachable from one
     // another (`ORGANIZER-LEASE-RESUME.md` §3.4). A lease we cannot read means we do not organize
     // and the mailbox is NOT recorded as stood down — there is nothing to record.
+    /**
+     * THE STAND-DOWN, AS A FUNCTION — because it is reached from FOUR places, not one.
+     *
+     * It began as the body of the acquisition's `catch`, which was correct while the lease was read
+     * exactly once. It is not correct now: `permit.check()` re-runs the gate at three later write
+     * boundaries and throws {@link OrganizerStandDownError} from any of them, and the only catch
+     * downstream accepts `LeaderFencedError` and rethrows everything else. **A routine handover — a
+     * user moving their mailbox to their own machine mid-sweep — would have exited this cron with a
+     * thrown error instead of a recorded stand-down: no `markMailboxStoodDown`, no `"stood-down"`
+     * result, an operator paged for the mechanism working, and the takeover stamp possibly already
+     * cleared.** Found by the review round over the commit that introduced the later checks; the
+     * regression was created by the fix, which is the argument for reviewing a fix.
+     */
+    const standDown = async (
+      err: OrganizerStandDownError,
+    ): Promise<{ ran: boolean; reason: string }> => {
+      log.warn(cronEvent("reconcile", "organizer_stand_down"), {
+        mailboxId, accountId: row.accountId,
+        disabledReason: err.reason,
+        // WHETHER THE OTHER ORGANIZER IS STILL RENEWING — `held` is a live foreign claim,
+        // `stopped` is one nobody has renewed since. Same two incidents, same `disabled_reason`.
+        // `state` and not `organizerState`: `ALLOWED_FIELDS` carries the former.
+        state: err.state,
+        heldBy: err.heldBy,
+        reason: "another organizer holds this mailbox; this sweep stops here and mutates nothing " +
+          "further — exactly one active organizer per mailbox is the invariant this enforces",
+      });
+      // The durable half, through the SAME fenced lifecycle write the worker's stand-down uses.
+      // A fenced-out write still stands the mailbox down IN THIS PROCESS: the decision not to
+      // organize is ours and is not contingent on recording it.
+      try {
+        const written = await markMailboxStoodDown(db, mailboxId, err.reason, { fence });
+        if (!written) {
+          log.info(cronEvent("reconcile", "stand_down_write_fenced"), {
+            mailboxId, accountId: row.accountId,
+            reason: "the mailbox is already disabled or this process no longer leads the shard",
+          });
+        }
+      } catch (writeErr) {
+        log.error(cronEvent("reconcile", "stand_down_write_failed"), {
+          mailboxId, accountId: row.accountId, err: writeErr,
+          reason: "this sweep organizes nothing further regardless; the row could not record why",
+        });
+      }
+      return { ran: false, reason: "stood-down" };
+    };
+
     let permit: LeasePermit;
     try {
       permit = await acquireLeasePermit({
@@ -235,37 +282,7 @@ export async function runReconcileCron(
         log: (event, detail) => { log.info(event, { ...detail, mailboxId, accountId: row.accountId }); },
       });
     } catch (err) {
-      if (err instanceof OrganizerStandDownError) {
-        log.warn(cronEvent("reconcile", "organizer_stand_down"), {
-          mailboxId, accountId: row.accountId,
-          disabledReason: err.reason,
-          // WHETHER THE OTHER ORGANIZER IS STILL RENEWING — `held` is a live foreign claim,
-          // `stopped` is one nobody has renewed since. Same two incidents, same `disabled_reason`.
-          // `state` and not `organizerState`: `ALLOWED_FIELDS` carries the former.
-          state: err.state,
-          heldBy: err.heldBy,
-          reason: "another organizer holds this mailbox; this sweep writes nothing and mutates " +
-            "nothing — exactly one active organizer per mailbox is the invariant this enforces",
-        });
-        // The durable half, through the SAME fenced lifecycle write the worker's stand-down uses.
-        // A fenced-out write still stands the mailbox down IN THIS PROCESS: the decision not to
-        // organize is ours and is not contingent on recording it.
-        try {
-          const written = await markMailboxStoodDown(db, mailboxId, err.reason, { fence });
-          if (!written) {
-            log.info(cronEvent("reconcile", "stand_down_write_fenced"), {
-              mailboxId, accountId: row.accountId,
-              reason: "the mailbox is already disabled or this process no longer leads the shard",
-            });
-          }
-        } catch (writeErr) {
-          log.error(cronEvent("reconcile", "stand_down_write_failed"), {
-            mailboxId, accountId: row.accountId, err: writeErr,
-            reason: "this sweep has organized nothing regardless; the row could not record why",
-          });
-        }
-        return { ran: false, reason: "stood-down" };
-      }
+      if (err instanceof OrganizerStandDownError) return await standDown(err);
       if (!(err instanceof LeaseUnavailableError)) throw err;
       log.warn(cronEvent("reconcile", "lease_unreadable"), {
         mailboxId, accountId: row.accountId, err,
@@ -313,7 +330,15 @@ export async function runReconcileCron(
     // organizer lease through `SyncDeps` alongside the leader fence — the same seam the always-on
     // worker needs and does not have either. Ledgered as one row for both callers rather than fixed
     // halfway here.
-    await permit.check();
+    // This one needs its own arm: the two cycle checks below sit inside the `runSyncCycle` try,
+    // which now routes a stand-down to `standDown`, but this call is above it and would otherwise
+    // propagate — the same regression, one boundary earlier and just as invisible.
+    try {
+      await permit.check();
+    } catch (err) {
+      if (err instanceof OrganizerStandDownError) return await standDown(err);
+      throw err;
+    }
     await adapter.ensureFolders();
     // ── THE IMPORT HOLD, ARMED FROM THE MAILBOX ITSELF (TAKEOVER-RESCREEN, rounds 4 and 6) ────
     //
@@ -374,6 +399,12 @@ export async function runReconcileCron(
       await permit.check();
       await runSyncCycle({ ...deps, importDecisionOpen: await profileSync.importDecisionOpenNow() });
     } catch (err) {
+      // THE ORGANIZER handover, from any of the three `permit.check()` calls above. Same shape as
+      // the leader handover below and for the same reason — it is the mechanism working, not a
+      // fault — but a DIFFERENT question, so it is answered by the same `standDown` the acquisition
+      // uses rather than folded into the fence's arm. §3.4's rule, held at the re-check: "somebody
+      // else holds this" and "I lost my shard" must not be reachable from one another.
+      if (err instanceof OrganizerStandDownError) return await standDown(err);
       if (!(err instanceof LeaderFencedError)) throw err;
       // NOT A FAILURE — a handover. The fence keys on the shard, so one refusal means every later
       // write would be refused too, and the write group that was refused wrote nothing. Reported

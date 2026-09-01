@@ -83,6 +83,18 @@ export function hasLeaseIo(adapter: MailboxAdapter): adapter is MailboxAdapter &
 }
 
 /**
+ * An adapter that can hand out the lease's READ-ONLY IO.
+ *
+ * Separate from {@link LeaseCapableAdapter} because the two differ in exactly the way that matters
+ * to a reader: `leaseIo()` CREATEs `ohmail/_meta` (an organizer about to write a claim needs
+ * somewhere to put it) and `leasePeekIo()` never does, reporting an absent folder as zero claims.
+ * A caller that only wants to look must not be able to reach the writing one by accident.
+ */
+export interface LeasePeekCapableAdapter {
+  leasePeekIo(): { listClaims(): Promise<{ ref: unknown; raw: string }[]> };
+}
+
+/**
  * IS SOMEBODY ELSE STILL RENEWING, OR DID THEY STOP?
  *
  * `held` — a live foreign claim (the engine's `stand_down`).
@@ -405,18 +417,50 @@ export async function assertNoLiveTwin(input: {
 }): Promise<void> {
   const { adapter, installId, now } = input;
   const staleAfterMs = input.staleAfterMs ?? DEFAULT_STALE_AFTER_MS;
-  if (!hasLeaseIo(adapter)) {
-    // The same refusal `readMailboxLease` gives, for the same reason: a gate whose absent dependency
-    // selects the permissive branch is a gate that stops existing the first time somebody composes
-    // the worker differently.
+  // ── THE READ-ONLY IO, AND IT HAS TO BE THE READ-ONLY ONE ────────────────────────────────────
+  //
+  // This first used `leaseIo()`, the WRITE side, and that was wrong in the case these commands are
+  // most often run in. `makeLeaseIo.listClaims()` goes straight to `getMailboxLock(_meta)` with no
+  // ensure — the folder is created by `ensureMetaFolder`, which the gate calls and this does not —
+  // so on a mailbox nobody has ever organized it rejects before `acquireLeasePermit` gets the chance
+  // to create anything. **A legitimately unclaimed mailbox could not be repaired by either command,
+  // which is the exact situation an operator reaches for them in.**
+  //
+  // `makeLeasePeekIo` is the read side and its docblock states the semantics this wants: it does not
+  // create the folder, and an ABSENT folder is reported as zero claims — *"which is the truth:
+  // nobody has ever organized this mailbox"*. Zero claims means no twin, which is the right answer.
+  // Probed structurally, the way `hasLeaseIo` is, so an adapter without it degrades to a refusal
+  // rather than to a silent pass.
+  //
+  // **`hasLeaseIo` is deliberately NOT also required here.** It was, briefly, and it was checking a
+  // capability this function does not use — which is worse than not checking, because it reports
+  // "cannot reach the folder" for an adapter that can read it perfectly well. The WRITE side is the
+  // gate's precondition and `readMailboxLease` enforces it one statement later at both call sites,
+  // so nothing is lost by asking only for what this actually needs.
+  const peek = (adapter as Partial<LeasePeekCapableAdapter>).leasePeekIo;
+  if (typeof peek !== "function") {
     throw new LeaseUnavailableError(
-      `this mailbox's adapter cannot reach ${META_FOLDER}, so it cannot be checked for a live ` +
-      `organizer sharing this process's install id`,
+      `this mailbox's adapter cannot read ${META_FOLDER} without writing to it, so it cannot be ` +
+      `checked for a live organizer sharing this process's install id`,
       { op: "no_lease_io" },
     );
   }
 
-  const messages = await adapter.leaseIo().listClaims();
+  // WRAPPED, so a transport fault reaches the callers' `LeaseUnavailableError` arm and gets the exit
+  // code and the sentence that arm exists to print. Unwrapped, a dropped connection here surfaced as
+  // a raw IMAP error through a `catch` that classifies neither — reported as no known refusal at all,
+  // which is the one outcome §3.4 is written to prevent: "I could not look" must never be
+  // indistinguishable from anything else.
+  let messages;
+  try {
+    messages = await peek.call(adapter).listClaims();
+  } catch (err) {
+    throw new LeaseUnavailableError(
+      `${META_FOLDER} could not be read, so it is unknown whether another organizer sharing this ` +
+      `process's install id is live; nothing was written`,
+      { op: "list_claims", cause: err },
+    );
+  }
   const twin = messages
     .map((m) => parseClaim(m.raw, m.ref))
     .find((c): c is OrganizerClaim =>
