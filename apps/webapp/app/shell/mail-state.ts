@@ -1393,14 +1393,33 @@ function climb(input: MailStateInputs): MailState {
    * The Mailboxes pane already knows the rule and says it out loud ("An earlier entry for this
    * address is no longer in use"), so this is the ladder catching up with copy the product had.
    *
-   * `lower()` because the index is on `lower(address)`: the tombstone and its replacement can
-   * differ in case and still be one mailbox to the server, and a case-sensitive compare here
-   * would let exactly that pair through. */
-  const liveAddresses = new Set(live.map((m) => m.address.toLowerCase()));
+   * ── THE COMPARISON IS `canonicalAddress`, AND IT IS DELIBERATELY NOT `lower()` ─────────
+   *
+   * The first version of this matched on `toLowerCase()`, reasoning that the unique index is on
+   * `lower(address)` so the tombstone and its replacement can differ in case and still be one
+   * mailbox. A review found that this is exactly the substitution `mailbox-service.ts:99-103`
+   * forbids, in as many words: "the index and the lease guard DIFFERENT things, and neither
+   * substitutes for the other. `lower(address)` is one account's own connect form, in one
+   * database. The lease is the physical mailbox."
+   *
+   * On a case-sensitive IMAP server `Alice@example.com` and `alice@example.com` are two
+   * mailboxes. The index still refuses to hold both ACTIVE, so "one stood down, the other
+   * connected" is a reachable, ordinary-ASCII state — and folding them would suppress a
+   * genuine organizer warning about a mailbox that really is unorganized. Silencing a true
+   * alarm is worse than the false one this arm was fixed to stop.
+   *
+   * So the test is the product's OWN canonical form, `canonicalAddress` — which is
+   * `raw.trim()`, case-preserving. Trim rather than nothing because rows predating that
+   * helper were never backfilled, so a legacy `" person@example.com "` and its reconnected
+   * replacement are the same mailbox and must fold. Not lower-casing also removes a second
+   * hazard the review measured: JavaScript's `toLowerCase()` and Postgres's `lower()` disagree
+   * on inputs like `İ`, so a lowercase comparison here could not have agreed with the index it
+   * was imitating anyway. */
+  const liveAddresses = new Set(live.map((m) => m.address.trim()));
   const stoodDown = mailboxes.find(
     (m) => m.status === "disabled"
       && typeof m.disabledReason === "string"
-      && !liveAddresses.has(m.address.toLowerCase()),
+      && !liveAddresses.has(m.address.trim()),
   );
   if (stoodDown) {
     return {
