@@ -629,6 +629,21 @@ export function MailboxSection() {
    */
   const [deviceEnded, setDeviceEnded] = useState<null | "declined" | "expired">(null);
   /**
+   * The signed-in account, for ONE purpose: deciding whether a persisted device ceremony in this
+   * tab's storage belongs to whoever is looking at the screen now. Null until the session read
+   * lands, and a null NEVER restores anything — an unknown owner is not a match.
+   */
+  const [accountId, setAccountId] = useState<string | null>(null);
+  /**
+   * A device poll's own transient failure, kept SEPARATE from the pane-wide `error`.
+   *
+   * Sharing one field looked harmless and is not: a resync or a probe failure writes `error`, and
+   * the device flow's next successful poll — which happens every few seconds — would clear a
+   * message about an operation that never recovered. Found by review on the fix that started
+   * clearing `error` from the poll loop, which traded one wrong sentence for another.
+   */
+  const [devicePollError, setDevicePollError] = useState<string | null>(null);
+  /**
    * THE MICROSOFT TILE'S SECONDARY PATH, requested explicitly.
    *
    * When the Entra door is armed, picking the Microsoft tile connects by SIGN-IN — Continue enters
@@ -813,6 +828,8 @@ export function MailboxSection() {
         const { user, scope } = await auth.session();
         if (!alive.current || scope !== "full") return;
         setEmail(user.email);
+        // For the persisted-ceremony owner check only — see `StoredDevice.accountId`.
+        setAccountId(user.accountId);
         // `withSpendGate` refuses `POST /mailboxes` for an unproven address before the
         // allowance gate is reached; this is the same fact, one screen earlier.
         setEmailVerified(user.emailVerified);
@@ -844,10 +861,8 @@ export function MailboxSection() {
          * operator who unset the variable mid-ceremony should not be handed a code that can no
          * longer be completed.
          */
-        if (armed) {
-          const resumed = recallDevice(Date.now());
-          if (resumed) setDevice((cur) => cur ?? resumed);
-        }
+        /* The resume lives in its own effect below: it needs BOTH the armed flag and the account
+           id, and those two land from two independent reads whose order is not guaranteed. */
       } catch {
         /* unreadable ⇒ leave it hidden; a dead config read must not offer a button that 503s */
       }
@@ -1006,6 +1021,7 @@ export function MailboxSection() {
     setError(null);
     setNotice(null);
     setDeviceEnded(null);
+    setDevicePollError(null);
     setOauthBusy("starting");
     void (async () => {
       try {
@@ -1018,6 +1034,10 @@ export function MailboxSection() {
           userCode: started.userCode,
           verificationUri: started.verificationUri,
           expiresAt: Date.parse(started.expiresAt),
+          // Stamped with the account that started it, so a later tab-reuse cannot restore it. An
+          // empty string when the session read has not landed, which `recallDevice` treats as an
+          // unknown owner and refuses — the fail-closed direction.
+          accountId: accountId ?? "",
           // The FIRST poll goes out immediately. The server's own fence is what enforces the
           // cadence from there — `last_polled_at` has not been written yet, so this one is allowed,
           // and every later one is scheduled from what the server says it will accept.
@@ -1033,8 +1053,29 @@ export function MailboxSection() {
     })();
   };
 
+  /**
+   * PICK UP A CEREMONY THIS TAB WAS ALREADY RUNNING — once both facts are known.
+   *
+   * A reload inside the fifteen minutes somebody spends approving a code used to lose the handle
+   * and strand the grant. Two independent reads gate the restore and neither one's arrival order is
+   * guaranteed, which is why this is its own effect rather than a line inside one of them:
+   *
+   *  · the door must still be ARMED — an operator who unset the variable mid-ceremony should not be
+   *    handed a code that can no longer be completed;
+   *  · the ACCOUNT must be known and must match, or another account's code renders on this pane.
+   *
+   * `setDevice((cur) => cur ?? resumed)` so a ceremony started by hand in the meantime always wins.
+   */
+  useEffect(() => {
+    if (!deviceAvailable || !accountId) return;
+    const resumed = recallDevice(Date.now(), accountId);
+    if (resumed) setDevice((cur) => cur ?? resumed);
+  }, [deviceAvailable, accountId]);
+
   /** Put the pane back where it was before a ceremony, without touching the mailbox list. */
-  const clearDeviceFlow = (): void => { forgetDevice(); setDevice(null); setDeviceEnded(null); };
+  const clearDeviceFlow = (): void => {
+    forgetDevice(); setDevice(null); setDeviceEnded(null); setDevicePollError(null);
+  };
 
   /**
    * THE POLL LOOP — one timer, cadence from the SERVER, and it stops on the first terminal answer.
@@ -1066,15 +1107,22 @@ export function MailboxSection() {
         const r = await mailboxApi.deviceOAuthPoll({ state: device.state });
         if (stopped || !alive.current) return;
         /*
-         * A VALID ANSWER CLEARS A PREVIOUS TRANSIENT FAILURE. The catch below shows the server's
-         * "Microsoft could not be reached" sentence — correctly, because a silent pause reads as a
-         * hung screen — but nothing used to take it down again, so a ceremony that recovered and
-         * then succeeded rendered the red error beside the green "connected" notice. Cleared here
-         * rather than in each branch so no future status can forget to.
+         * A VALID ANSWER CLEARS THIS LOOP'S OWN PREVIOUS FAILURE — and only its own.
+         *
+         * The catch below shows the server's "Microsoft could not be reached" sentence, correctly,
+         * because a silent pause reads as a hung screen to somebody staring at a code. Nothing used
+         * to take it down again, so a ceremony that recovered rendered a red error beside the green
+         * "connected" notice.
+         *
+         * The first fix cleared the PANE-WIDE `error`, which was worse in a quieter way: a failed
+         * resync writes that field, and this poll runs every few seconds, so a message about an
+         * operation that never recovered would vanish within moments of appearing. A review caught
+         * it. The device flow now owns its own line and touches nobody else's.
          */
-        setError(null);
+        setDevicePollError(null);
         if (r.status === "granted") {
           forgetDevice();
+          setDevicePollError(null);
           setDevice(null);
           /*
            * THE SAME TWO SENTENCES the redirect ceremony's landing uses, with the address from the
@@ -1092,6 +1140,7 @@ export function MailboxSection() {
         }
         if (r.status === "declined" || r.status === "expired") {
           forgetDevice();
+          setDevicePollError(null);
           setDevice(null);
           setDeviceEnded(r.status);
           return;
@@ -1114,7 +1163,7 @@ export function MailboxSection() {
          * the row has reached a terminal verdict or been pruned, and re-polling it for fifteen
          * minutes would be asking a question that now has one permanent answer.
          */
-        setError(messageOf(err));
+        setDevicePollError(messageOf(err));
         if (codeOf(err) === "oauth_device_state_invalid" || codeOf(err) === "forbidden") {
           forgetDevice();
           setDevice(null);
@@ -1861,6 +1910,14 @@ export function MailboxSection() {
             {t("deviceExpiresIn", { minutes: Math.max(0, Math.ceil((device.expiresAt - now) / 60_000)) })}
           </p>
           <p className="acct-fine">{t("deviceWaiting")}</p>
+          {/* THE POLL'S OWN failure line, inside the ceremony block and not the pane-wide one.
+              It is `acct-warn` because something did go wrong, and `role="status"` rather than
+              `alert` because the ceremony is still alive — the server says so in as many words, the
+              grant's deadline is unchanged, and the loop is still running. An `alert` would
+              interrupt a screen reader every few seconds on a flaky connection. */}
+          {devicePollError ? (
+            <p className="acct-warn" role="status">{devicePollError}</p>
+          ) : null}
           <div className="acct-actions">
             {/* CANCEL is local, and says so by doing nothing else: it takes the code off this screen
                 and stops polling. The grant itself is Microsoft's and expires on its own schedule —
@@ -2435,6 +2492,19 @@ const DEVICE_STORE_KEY = "ohmail.deviceCeremony";
 interface StoredDevice {
   state: string; userCode: string; verificationUri: string;
   expiresAt: number; retryAfterMs: number;
+  /**
+   * WHOSE CEREMONY THIS IS, and the reason it is stored rather than assumed.
+   *
+   * A tab is not a session. Sign out, or erase the account, and sign in as somebody else within
+   * the fifteen minutes a grant lives, and the same tab's `sessionStorage` still holds the previous
+   * account's record — so a restore with no owner check paints THEIR code and URI on the new
+   * account's settings pane. The server would refuse the poll (403, account mismatch), but only
+   * after the values were already on screen, which is exactly one beat too late.
+   *
+   * Found by review on the fix that introduced the persistence. The account id is the whole guard;
+   * the sign-out sweep below is the tidy-up, and correctness does not depend on it running.
+   */
+  accountId: string;
 }
 
 function rememberDevice(d: StoredDevice): void {
@@ -2457,7 +2527,7 @@ function forgetDevice(): void {
  * The shape is validated field by field because this value survives a reload and a browser upgrade,
  * so "it is whatever we wrote last time" is not something to assume.
  */
-function recallDevice(now: number): StoredDevice | null {
+function recallDevice(now: number, accountId: string): StoredDevice | null {
   try {
     const raw = sessionStorage.getItem(DEVICE_STORE_KEY);
     if (!raw) return null;
@@ -2465,9 +2535,19 @@ function recallDevice(now: number): StoredDevice | null {
     if (typeof d.state !== "string" || !/^[A-Za-z0-9._~-]{1,512}$/.test(d.state)) return null;
     if (typeof d.userCode !== "string" || typeof d.verificationUri !== "string") return null;
     if (typeof d.expiresAt !== "number" || !Number.isFinite(d.expiresAt) || d.expiresAt <= now) return null;
+    /*
+     * THE OWNER CHECK, and it is a REFUSAL rather than a filter: a record belonging to anyone else —
+     * or one written before this field existed, which is the same unknown — is discarded outright,
+     * and the stale entry with it. Nothing is rendered from another account's ceremony, not even
+     * for the moment before the server would reject the poll.
+     */
+    if (typeof d.accountId !== "string" || d.accountId.length === 0 || d.accountId !== accountId) {
+      forgetDevice();
+      return null;
+    }
     return {
       state: d.state, userCode: d.userCode, verificationUri: d.verificationUri,
-      expiresAt: d.expiresAt,
+      expiresAt: d.expiresAt, accountId: d.accountId,
       // Zero, so the first poll after a reload goes out at once: the server's own fence is what
       // decides whether it is too soon, and it knows when the last poll actually was.
       retryAfterMs: 0,

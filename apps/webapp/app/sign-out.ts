@@ -137,12 +137,38 @@ export async function forgetThisBrowser(owner?: string): Promise<{
   // The mirror-name registry is swept BY `clearAllMirrors` itself (it removes the names it proved
   // gone and keeps the ones it did not), so it is deliberately NOT in the prefix sweep above —
   // dropping it there would throw away the only record of a mirror this browser could not delete.
+  /*
+   * ── THE FIRST `sessionStorage` ENTRY THIS SWEEP COVERS ──────────────────────────────────
+   *
+   * Every store above is `localStorage`. The in-flight Microsoft device-code ceremony keeps its
+   * HANDLE in `sessionStorage` instead — per tab, matching a fifteen-minute grant's lifetime far
+   * better than a store that outlives the browser — so none of the prefix sweeps reaches it, and a
+   * tab signed out and reused by another account within that window would still be holding the
+   * previous account's record.
+   *
+   * The record carries no credential: the `device_code` that redeems the grant never leaves the
+   * server, and this is a lookup handle whose every use is re-checked against the session's own
+   * account. The reader ALSO refuses a record whose stored account id is not the signed-in one, and
+   * that check — not this line — is what makes another account's code unrenderable. This is the
+   * tidy-up: the residue should not sit in a shared machine's tab until somebody opens the pane.
+   *
+   * Wrapped, like every other accessor here: a private window or a browser refusing site data can
+   * make the accessor itself throw, and a sign-out must not fail because a storage read did.
+   */
+  let deviceCeremonySwept = true;
+  try {
+    sessionStorage.removeItem("ohmail.deviceCeremony");
+  } catch {
+    deviceCeremonySwept = false;
+    survivors.push("ohmail.deviceCeremony");
+  }
   const wipe = await clearAllMirrors(owner);
   return {
     remaining: [...survivors, ...wipe.remaining].sort(),
     // EVERY store has to be answerable, not just the mirrors. A jar that could not be walked
     // names no survivors and proves nothing by it — see `dropLocalStorageKeys`'s catch.
-    inventoryComplete: wipe.inventory === "complete" && boot.enumerated && durable.enumerated,
+    inventoryComplete: wipe.inventory === "complete" && boot.enumerated && durable.enumerated
+      && deviceCeremonySwept,
   };
 }
 
