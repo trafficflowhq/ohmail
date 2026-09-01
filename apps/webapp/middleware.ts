@@ -2,7 +2,9 @@ import { NextResponse, type NextRequest } from "next/server";
 import { resolveApiOrigin, resolveInternalApiOrigin } from "./app/api-origin";
 import { canonicalRedirect } from "./app/canonical-host";
 import { newNonce, nonceCsp } from "./app/security-headers";
-import { APP_ROUTE, RESUME_COOKIE, RESUME_ROUTE, SESSION_COOKIE, resolveSurface } from "./app/session-gate";
+import {
+  APP_ROUTE, DOOR_ROUTE, RESUME_COOKIE, RESUME_ROUTE, SESSION_COOKIE, resolveSurface,
+} from "./app/session-gate";
 
 /**
  * ONE ORIGIN, TWO FRONT DOORS. The routing half; `app/session-gate.ts` is the
@@ -88,7 +90,8 @@ import { APP_ROUTE, RESUME_COOKIE, RESUME_ROUTE, SESSION_COOKIE, resolveSurface 
  * IS THIS THE SELF-HOST BUILD? Compiled, not read: `NEXT_PUBLIC_OHMAIL_FLAVOR` is inlined by the
  * build's flavor arm (`next.config.mjs`), so on the managed deployment this constant is `false`
  * in the emitted middleware and everything behind it — the internal-origin variable, the
- * first-run redirect — is unreachable no matter what the runtime environment says. That is the
+ * first-run redirect, the marketing diversion below — is unreachable no matter what the runtime
+ * environment says. That is the
  * property the TF_API_ORIGIN incident above demands: no ENVIRONMENT EDIT may repoint the gate's
  * fetch on the managed deployment. On an operator's own install the runtime variable
  * (`OHMAIL_INTERNAL_API_ORIGIN`, the api container's in-network name) is set by the operator in
@@ -270,6 +273,27 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     apiOrigin: API_ORIGIN,
     env: { NEXT_PUBLIC_DEMO: process.env.NEXT_PUBLIC_DEMO },
   });
+
+  // THERE IS NO MARKETING SITE ON A SELF-HOST INSTALL — self-host builds only
+  // (SELF_HOST_BUILD is compiled; this branch does not exist in the managed middleware).
+  // "Not signed in, nothing to resume" means a STRANGER on `ohmail.app`, and the landing is
+  // the right greeting for one. On an operator's own domain it means one of THEIR users, and
+  // our pitch on their address is the defect this closes: measured live at
+  // `https://ohmail.test/`, an anonymous GET answered 200 with the full landing — pricing
+  // section included — from a box we do not run. `DOOR_ROUTE` carries the reasoning for the
+  // redirect (and for why it can only ever be a 307).
+  //
+  // ONLY the marketing answer is diverted. "app" and "resume" are rewrites and stay rewrites;
+  // "demo" is an explicit `?demo=1` and is nobody's front door.
+  if (SELF_HOST_BUILD && surface === "marketing") {
+    const door = request.nextUrl.clone();
+    door.pathname = DOOR_ROUTE;
+    const response = NextResponse.redirect(door, 307);
+    // The answer depends on a cookie this request may not have carried. Nothing may cache it
+    // for the next visitor, who might be the one holding a live session.
+    response.headers.set("Cache-Control", "private, no-store");
+    return response;
+  }
 
   const target = surface === "resume" ? RESUME_ROUTE : APP_ROUTE;
   const response =

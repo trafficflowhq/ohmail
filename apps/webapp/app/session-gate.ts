@@ -87,6 +87,32 @@ export const APP_ROUTE = "/mailbox";
  */
 export const RESUME_ROUTE = "/resume";
 
+/**
+ * THE SELF-HOST FRONT DOOR — where `/` sends a visitor this gate answered `"marketing"` for
+ * when the build is the self-host flavor.
+ *
+ * On `ohmail.app` "not signed in and nothing to resume" means a stranger, and the landing is
+ * the right greeting. On an operator's own domain there are no strangers: everyone who reaches
+ * that origin is one of their users, and our pitch — our prices, our imprint — has no business
+ * being served from an address we do not own. Measured live before this existed: a self-hosted
+ * `https://ohmail.test/` answered 200 with the full landing, pricing section included.
+ *
+ * Unlike {@link APP_ROUTE} and {@link RESUME_ROUTE} this is a REAL public address, not an
+ * internal rewrite target, so middleware sends a visitor to it with a redirect rather than
+ * rewriting `/` onto it. Two reasons, and the second is the load-bearing one:
+ *
+ *  · the sign-in screen already gets the credential-page treatment (nonce CSP, `no-referrer`,
+ *    `no-store`) on its own path — a rewrite would have to re-apply all three by hand;
+ *  · `LoginScreen` finishes with `router.push("/")`. Rewritten, the browser is ALREADY at `/`
+ *    and that push is a navigation to the URL it is on — which is how a successful sign-in
+ *    leaves the user staring at the form they just submitted.
+ *
+ * The redirect is 307 and must never become 308: `/` on a self-host box is the mail client for
+ * a signed-in browser, and a permanent redirect cached by the browser would send that browser
+ * to the sign-in screen for ever.
+ */
+export const DOOR_ROUTE = "/login";
+
 /** The resume marker's cookie name. Must equal `RESUME_COOKIE` in `packages/api/src/cookies.ts`. */
 export const RESUME_COOKIE = "tf_resume";
 

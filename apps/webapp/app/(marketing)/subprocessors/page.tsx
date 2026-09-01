@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Wordmark } from "../components/Wordmark";
+import { refuseOnSelfHost } from "../../self-host-marketing";
 
 export const metadata: Metadata = {
   title: "Subprocessors — ohmail",
@@ -20,6 +21,10 @@ export const metadata: Metadata = {
  * day it is wired, not on the day someone remembers. Retention rows are defaults;
  * counsel confirms the wording of the transfer basis, not the numbers. */
 export default function SubprocessorsPage() {
+  /* NOT SERVED ON A SELF-HOST BUILD. This page is FACTS about who processes data for
+     ohmail.app — the vendors we contract with. An operator's install has its own hosting and
+     none of ours, so every row here would be a false statement about their processing. */
+  refuseOnSelfHost();
   return (
     <main className="l-legal l-legal-wide">
       <a className="l-legal-brand" href="/">

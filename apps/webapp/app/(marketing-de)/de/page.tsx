@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { setRequestLocale } from "next-intl/server";
 import { Landing } from "../../(marketing)/components/Landing";
 import { marketingAlternates } from "../../(marketing)/marketing-root";
+import { refuseOnSelfHost } from "../../self-host-marketing";
 import type { AppLocale } from "../../shell/locale";
 import { publicSignupEnabled } from "../../signup-mode";
 
@@ -26,6 +27,10 @@ const LOCALE = "de" satisfies AppLocale;
 export const metadata: Metadata = { alternates: marketingAlternates(LOCALE) };
 
 export default function GermanLandingPage() {
+  /* The German landing is the same composition `/` renders, so it carries the same pricing and
+     the same pitch and is refused on a self-host build for the same reason — and it needs its
+     OWN call: `/` is diverted by middleware, `/de` is a plain path nothing diverts. */
+  refuseOnSelfHost();
   setRequestLocale(LOCALE);
   return <Landing publicSignup={publicSignupEnabled()} />;
 }

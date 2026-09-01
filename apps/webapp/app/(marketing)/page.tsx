@@ -3,6 +3,7 @@ import { setRequestLocale } from "next-intl/server";
 import { Landing } from "./components/Landing";
 import { marketingAlternates } from "./marketing-root";
 import { DEFAULT_LOCALE } from "../shell/locale";
+import { refuseOnSelfHost } from "../self-host-marketing";
 import { publicSignupEnabled } from "../signup-mode";
 
 /**
@@ -21,6 +22,11 @@ import { publicSignupEnabled } from "../signup-mode";
 export const metadata: Metadata = { alternates: marketingAlternates(DEFAULT_LOCALE) };
 
 export default function Page() {
+  /* A self-host install has no landing — `middleware.ts` sends its `/` to the sign-in door
+     before this page is reached, and this is the backstop behind that (see
+     `app/self-host-marketing.ts`): if the diversion ever fails to run, `/` answers 404 rather
+     than serving our prices from somebody else's domain. */
+  refuseOnSelfHost();
   /* Belt to the layout's braces. next-intl's own guidance is to pin the locale in every layout
      AND page that renders through the request config; the layout above is what actually runs
      first, and this makes the page independent of that ordering. */

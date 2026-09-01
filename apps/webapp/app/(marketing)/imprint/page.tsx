@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Wordmark } from "../components/Wordmark";
+import { refuseOnSelfHost } from "../../self-host-marketing";
 
 export const metadata: Metadata = {
   title: "Imprint — ohmail",
@@ -12,6 +13,10 @@ export const metadata: Metadata = {
 /* Legal content is intentionally NOT routed through i18n — it is the binding
  * legal text of the Swiss operator and changes only deliberately. */
 export default function ImprintPage() {
+  /* NOT SERVED ON A SELF-HOST BUILD. The first heading below is "Operator of this website" and
+     the name under it is TrafficFlow GmbH — true on ohmail.app and false on every origin an
+     operator runs themselves. Measured serving 200 there before this guard existed. */
+  refuseOnSelfHost();
   return (
     <main className="l-legal">
       <a className="l-legal-brand" href="/">

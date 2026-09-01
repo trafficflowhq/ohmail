@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Wordmark } from "../components/Wordmark";
+import { refuseOnSelfHost } from "../../self-host-marketing";
 
 export const metadata: Metadata = {
   title: "Privacy — ohmail",
@@ -21,6 +22,11 @@ export const metadata: Metadata = {
  * keeping: a note-to-self in a comment is not a mechanism, and this page is the
  * one surface where a stale sentence is a legal claim rather than marketing. */
 export default function PrivacyPage() {
+  /* NOT SERVED ON A SELF-HOST BUILD. This is the binding policy of the Swiss operator of
+     ohmail.app, and on an install we neither run nor can see it names the wrong controller,
+     the wrong subprocessors and the wrong retention — a legal claim about somebody else's
+     data. `app/self-host-marketing.ts` carries the rest of the reasoning. */
+  refuseOnSelfHost();
   return (
     <main className="l-legal">
       <a className="l-legal-brand" href="/">

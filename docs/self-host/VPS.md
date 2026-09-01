@@ -184,6 +184,14 @@ account on the server has a second factor, including yours.
 The setup page only exists while the server has no accounts; once yours is
 created, the address serves the ordinary sign-in.
 
+**Your origin is yours.** A self-hosted install serves the application and
+nothing else — no ohmail marketing page, no pricing, and none of the
+ohmail.app legal pages. `/privacy`, `/imprint`, `/subprocessors` and `/de`
+answer 404 on your server, deliberately: those documents describe the Swiss
+company that operates ohmail.app, its hosting and its subprocessors, and none
+of that is true of a box you run. Your users see your sign-in page at your
+address, and the privacy notice your install owes them is yours to write.
+
 ## 7. Connect your first mailbox
 
 Sign in and add a mailbox: the address, the IMAP server, and the password.

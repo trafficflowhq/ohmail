@@ -63,6 +63,11 @@ Plainly, so you can decide with open eyes:
   it walks you through the second factor, recovery codes and the first
   mailbox. The one terminal command left is reading the token out of the
   log.
+- **Your origin serves the app, not our shop front.** After the first account
+  exists, your root address is the sign-in page. The ohmail marketing site,
+  its pricing, and the ohmail.app legal pages are not part of a self-hosted
+  install and answer 404 there — they describe a service somebody else
+  operates, and they have no business on your domain.
 
 ## The shape of the install
 
