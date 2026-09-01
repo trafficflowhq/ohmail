@@ -87,6 +87,15 @@ do in the same release as the fixes above — so it is stated here rather than
 quietly carried. Until it is fixed, change the password on the old server if you
 move a mailbox to a server you do not control.
 
+**And an attempt that fails partway can leave a mailbox that was working offline.**
+Same two steps, on the failing side: the server settings are written before the
+password is checked, so if the password is refused the app is left holding the new
+server and the old password. The attempt reports the failure and you back out, but
+the settings are not put back — and the mailbox that worked this morning does not
+connect at the next launch. Re-entering the correct server and password fixes it.
+Both of these are the same shape and will be fixed together, in a change to the
+step that stores the settings rather than to the screen.
+
 ## [0.13.0] — 2026-09-01
 
 A feature release. ohmail has a second look — **ohmarchy**, a tiling, keyboard-first
