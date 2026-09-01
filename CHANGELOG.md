@@ -27,10 +27,10 @@ proved against another.
 
 The engine now checks. When a stored password was set up for a different server
 than the one it is now configured for, it is not used — not to fetch mail, and not
-to send it either. Nothing is deleted: the stored password is still there and this
-computer can still read it. To get going again, open the mailbox settings, confirm
-the server you want and enter its password — the app asks for it because entering
-it is what proves it against whichever server you have chosen.
+to send it either. Nothing is deleted — the stored password is still where it was.
+To get going again, open the mailbox settings, confirm the server you want and
+enter its password; the app asks for it because entering it is what proves it
+against whichever server you have chosen.
 
 This matters most in the moment the 0.13.2 fix cannot reach. Storing the new
 password and writing the new settings are two steps, and an app that is closed or
