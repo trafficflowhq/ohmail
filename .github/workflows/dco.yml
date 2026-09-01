@@ -1,0 +1,69 @@
+name: dco
+
+# Every commit in a pull request must carry its author's `Signed-off-by` trailer — the
+# Developer Certificate of Origin 1.1, which CONTRIBUTING.md reproduces in full.
+#
+# There is no contributor licence agreement on this project and there is not going to be one:
+# contributors keep their copyright, and this is the whole of what is asked in return. The check
+# itself lives in .github/scripts/assert-dco.sh so that it can be read, and run, without a
+# GitHub Actions run to find out what it does.
+#
+# ── PULL REQUESTS ONLY, AND THAT IS NOT AN OVERSIGHT ─────────────────────────────────────────
+#
+# `push` is deliberately not a trigger. This repository's history is GENERATED — commits arrive
+# here in batches, replayed from the development repository with their original authors and
+# dates and with messages written for a public reader. Those messages carry no sign-off and
+# never will, so a push trigger would fail every publish while proving nothing about anybody's
+# contribution. What needs certifying is a patch arriving from outside, which is a pull request.
+#
+# `merge_group` is included so that a queued merge is checked against the same rule as the pull
+# request it came from, rather than being a way past it.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
+
+permissions:
+  contents: read
+
+jobs:
+  sign-off:
+    name: every commit is signed off
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The whole history: the check walks base..head, and a shallow clone has no merge
+          # base to walk from. assert-dco.sh refuses rather than passing when a ref is
+          # missing, so a shallow checkout would be a loud failure — but a loud failure on
+          # every pull request is not a check either.
+          fetch-depth: 0
+
+      - name: resolve the range this event is about
+        id: range
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          MG_BASE: ${{ github.event.merge_group.base_sha }}
+          MG_HEAD: ${{ github.event.merge_group.head_sha }}
+        run: |
+          set -euo pipefail
+          # One of the two pairs is populated, decided by the event. Both empty means the
+          # payload is not the shape this workflow was written against, and the honest answer
+          # to that is a failure rather than an empty range that passes — the same rule
+          # assert-dco.sh applies to the range itself.
+          if [ -n "$PR_BASE" ] && [ -n "$PR_HEAD" ]; then
+            base="$PR_BASE"; head="$PR_HEAD"
+          elif [ -n "$MG_BASE" ] && [ -n "$MG_HEAD" ]; then
+            base="$MG_BASE"; head="$MG_HEAD"
+          else
+            echo "dco: neither a pull_request nor a merge_group payload carried a base and head." >&2
+            echo "dco: refusing rather than checking nothing." >&2
+            exit 1
+          fi
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+
+      - name: every commit carries its author's sign-off
+        run: bash .github/scripts/assert-dco.sh "${{ steps.range.outputs.base }}" "${{ steps.range.outputs.head }}"
