@@ -21,10 +21,12 @@
 #                      runs against exactly that tag. Run-scoped so no concurrent or later
 #                      run can swap a checked layer for an unchecked one under the same name;
 #                      the `concurrency` group below serializes runs besides.
-#   2. gate-boot     — a FRESH CLONE of this repository boots the staged amd64 images through
+#   2. gate-boot     — a FRESH CLONE of this repository boots the staged images through
 #                      deploy/selfhost, exactly as the README tells a stranger to, and the
 #                      stack must answer: /hello through the proxy, the web app, a healthy
 #                      organizer. This is the claim's own test, before any public tag exists.
+#                      ONCE PER ARCHITECTURE, each on its own native hardware — an image that
+#                      only ever compiled is not an image anyone has run.
 #   3. gate-visibility — the packages must be ANONYMOUSLY pullable, checked against a staged
 #                      manifest. GHCR packages are born private and no workflow can flip
 #                      that; on a first release this gate is EXPECTED to fail, its message
@@ -39,9 +41,19 @@
 # exactly which images moved — re-running the job heals forward, because the run's staging
 # tags persist (they are the release's audit trail; prune them by hand if they bother you).
 #
-# Multi-arch: linux/amd64 + linux/arm64, each built NATIVELY — GitHub's hosted arm64 runners
-# (`ubuntu-24.04-arm`) are free for public repositories, which is both faster and less flaky
-# than emulating a Node toolchain under QEMU.
+# Multi-arch: linux/amd64 + linux/arm64, each built AND BOOTED NATIVELY — GitHub's hosted
+# arm64 runners (`ubuntu-24.04-arm`) are free for public repositories, which is both faster
+# and less flaky than emulating a Node toolchain under QEMU.
+#
+# EVERY OTHER IMAGE IN THE COMPOSE HAS AN arm64 VARIANT, which is what makes the arm64 boot
+# gate possible rather than aspirational: caddy, postgres, minio, minio/mc and mailpit all
+# publish linux/arm64 in their own manifest lists, and the base these three are built from
+# (`node:22-bookworm-slim`) publishes arm64/v8. Checked against the registries, not assumed.
+# `npm ci` picks the matching native halves off the committed lockfile — it records every
+# platform's optional package with its `cpu`/`os` fields, so `@next/swc-linux-arm64-gnu`,
+# `lightningcss-linux-arm64-gnu` and esbuild's arm64 binary install on the arm runner from
+# the same lockfile the amd64 runner installs the x64 ones from. No Dockerfile here
+# downloads a platform-specific binary by URL; there is nothing to keep in step by hand.
 
 name: ghcr-images
 
@@ -180,11 +192,32 @@ jobs:
   # values, `docker compose up -d`, and the stack answers. Runs BEFORE promotion, so a
   # release that cannot boot never moves a public tag. Pulls authenticate: whether a stranger
   # can pull is gate-visibility's question, not this one's.
+  #
+  # ONCE PER ARCHITECTURE, ON THAT ARCHITECTURE'S OWN HARDWARE. The images were multi-arch
+  # before this gate was, and for several releases the arm64 half was only ever COMPILED:
+  # every runtime claim behind "runs on arm64" rested on the amd64 boot. That is a claim
+  # about the wrong binary. A native runner costs nothing on a public repository, every
+  # image in the compose publishes arm64 (the header lists them), and the failures this
+  # catches are exactly the ones a cross-build cannot: a native module that resolved to the
+  # wrong platform half, a base layer with no arm64 variant, an entrypoint that starts and
+  # then dies. `matrix.arch` also selects the staging tag, so each run boots the pair of
+  # images this run staged for that architecture — never a promoted tag, which does not
+  # exist yet.
   gate-boot:
     if: github.repository == 'trafficflowhq/ohmail'
     needs: [version, build-push]
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    strategy:
+      # Both arches are reported. Stopping the arm64 boot because amd64 failed would hide
+      # which half is broken, and the promotion is blocked by either failing regardless.
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -208,7 +241,7 @@ jobs:
       - name: Configure from the template, exactly as the README says
         working-directory: mirror/deploy/selfhost
         env:
-          STAGE_TAG: stage-${{ needs.version.outputs.version }}-${{ github.run_id }}-amd64
+          STAGE_TAG: stage-${{ needs.version.outputs.version }}-${{ github.run_id }}-${{ matrix.arch }}
         run: |
           set -euo pipefail
           cp .env.example .env
@@ -222,11 +255,22 @@ jobs:
           } >> .env
           docker compose config -q
 
-      - name: Boot cold from the staged images
+      - name: Boot cold from the staged images (native ${{ matrix.arch }})
         working-directory: mirror/deploy/selfhost
+        env:
+          ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
           docker compose pull -q
+          # WHAT THIS GATE RAN IS ASSERTED, NOT INFERRED FROM THE RUNNER LABEL. A matrix
+          # whose tag suffix and runner drifted apart would boot one architecture twice and
+          # report two green arches — and on hardware with binfmt installed it would not
+          # even fail loudly. Ask the images themselves, before anything starts.
+          for IMG in ohmail-server ohmail-worker ohmail-web; do
+            REF=$(docker compose config --images | grep "/$IMG:")
+            GOT=$(docker image inspect --format '{{.Architecture}}' "$REF")
+            [ "$GOT" = "$ARCH" ] || { echo "$REF is $GOT, this gate is $ARCH"; exit 1; }
+          done
           docker compose up -d
           # /hello through the proxy is the stranger's first request; the api healthcheck
           # already gates the organizer's start. Poll rather than sleep.

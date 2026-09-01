@@ -13,6 +13,13 @@ It is not a multi-tenant hosting kit, and nothing in it meters or bills.
 
 - **A machine that stays on.** A small VPS, a home server, or a box in a
   closet. 2 GB of memory and 20 GB of disk are comfortable.
+- **An x86_64 or an arm64 machine.** Both are built and published, so a
+  Raspberry Pi 4 or 5, an Apple-silicon Mac running Asahi, an Ampere or
+  Graviton instance run the same stack as an Intel box, with the same
+  commands — `docker pull` picks your architecture out of the image itself
+  and there is nothing to configure. (`uname -m` prints `x86_64` or
+  `aarch64`; a 32-bit Pi OS is the one thing that will not work — reflash
+  the 64-bit one.)
 - **Docker**, with the compose plugin (`docker compose`, not the older
   `docker-compose`).
 - **A domain name pointed at that machine.** Mail credentials deserve TLS,
@@ -44,7 +51,16 @@ Plainly, so you can decide with open eyes:
   attachment staging, and a local mail sink. The stack runs prebuilt images
   from `ghcr.io/trafficflowhq` (`ohmail-server`, `ohmail-worker`,
   `ohmail-web`), built for amd64 and arm64 and pinnable with
-  `OHMAIL_IMAGE_TAG`. If a pull answers "not found", that tag's images have
+  `OHMAIL_IMAGE_TAG`. Each release builds every image twice, once on each
+  architecture's own hardware, and boots the whole stack twice — the same
+  proxy, web app, API, organizer, Postgres and staging store, on amd64 and
+  on arm64 — before any public tag moves. What that does **not** cover: no
+  release has been run on a Raspberry Pi, an Asahi Mac or an arm64 server
+  for a week of real mail, because there is no arm64 machine in this
+  project. The images are new on that side. If you run one,
+  [report how it went](https://github.com/trafficflowhq/ohmail/issues) —
+  hardware reports are the only thing that closes that gap.
+  If a pull answers "not found", that tag's images have
   not finished publishing — pin `OHMAIL_IMAGE_TAG` to the previous release,
   or build the three images from a clone and tag them with the names the
   compose file pulls, e.g.
