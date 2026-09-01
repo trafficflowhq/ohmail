@@ -97,17 +97,6 @@ export const OPERATOR_CA_FILE = "cloud-ca.pem";
  */
 export const MANAGED_CLOUD_BASE = "https://api.ohmail.app";
 
-/**
- * The base a mirror-owner record belongs to: what it says, or — when it says nothing — the one
- * server the build that wrote it could have been talking to. See {@link MANAGED_CLOUD_BASE}.
- *
- * `null` in, `MANAGED_CLOUD_BASE` out. The caller must only ask this of a record that EXISTS; a
- * missing record is a fresh directory with nothing to compare and is adopted, which is a different
- * question and deliberately not this function's.
- */
-export function recordedBaseOfExisting(base: string | null): string {
-  return base ?? MANAGED_CLOUD_BASE;
-}
 
 /**
  * ── THE `/api` SUFFIX IS NOT COSMETIC, AND IT IS THE ONE THING A SELF-HOST DOOR CANNOT GUESS ───
@@ -327,18 +316,70 @@ export function encodeMirrorRecord(address: string, base: string | null): string
  * is not JSON is the LEGACY shape and its whole trimmed content is the address, which is what makes
  * an install written before this parse correctly rather than as an owner of "".
  */
-export function decodeMirrorRecord(raw: string): { address: string; base: string | null } {
+export function decodeMirrorRecord(raw: string): MirrorRecord {
   const text = raw.trim();
   if (text.startsWith("{")) {
     try {
       const parsed = JSON.parse(text) as { address?: unknown; base?: unknown };
       const address = typeof parsed.address === "string" ? parsed.address.trim() : "";
       const base = typeof parsed.base === "string" && parsed.base.trim() !== "" ? parsed.base.trim() : null;
-      return { address, base };
+      return { address, base, legacy: false };
     } catch {
       /* A torn or truncated write. Falls through to the legacy read, which yields an address that
          matches nothing — the same answer an empty file gives, and the safe one. */
     }
   }
-  return { address: text, base: null };
+  return { address: text, base: null, legacy: true };
+}
+
+export interface MirrorRecord {
+  address: string;
+  /** The server, or null when the record does not establish one. */
+  base: string | null;
+  /**
+   * TRUE when this record is the ONE-ADDRESS SHAPE an earlier build wrote, and that distinction is
+   * load-bearing rather than informational.
+   *
+   * A `null` base means two completely different things depending on which shape it came from, and
+   * collapsing them is a credential leak in whichever direction you pick:
+   *
+   *  · LEGACY (not JSON). Written by a build that could dial exactly one address, so the absence is
+   *    knowable: it is {@link MANAGED_CLOUD_BASE}. Reading it as "unknown" and discarding would wipe
+   *    every existing hosted install on its first launch after an update.
+   *  · MODERN (JSON) WITH NO BASE. Written by a build that DOES record the server and could not
+   *    establish one that launch — so the server it belongs to could have been anything, a
+   *    self-hosted one included. Reading THAT as the managed service is the mirror image of the first leak: a
+   *    session sealed by somebody's own server would be activated against ours. Raised by the third
+   *    review round, against the fix for the first.
+   *
+   * So the two are told apart here, once, and {@link mirrorIsForeign} decides from the difference.
+   */
+  legacy: boolean;
+}
+
+/**
+ * MUST THE STATE IN THIS DIRECTORY BE THROWN AWAY BECAUSE IT BELONGS TO A DIFFERENT SERVER?
+ *
+ * The whole server-half decision in one place, because it has four inputs and every pair of them
+ * has been got wrong once. `holdsCloudState` is whether the directory contains a mirror, a cursor
+ * or a sealed session — i.e. whether there is anything here that could belong to anybody.
+ *
+ *  · NOTHING HERE. Never foreign: a fresh directory has no session to leak and no mail to mix.
+ *  · A LEGACY RECORD, or NO RECORD AT ALL. The state was written by a build that could dial only
+ *    the managed service, so that is what it is compared against.
+ *  · A MODERN RECORD NAMING A SERVER. Compared with it, which is the ordinary case.
+ *  · A MODERN RECORD NAMING NONE. FOREIGN, always — which server it belongs to cannot be
+ *    established, and there is state here that belongs to somebody. Discarding costs a re-sync of a mirror whose provenance
+ *    is unknown; keeping it risks handing one server's session to another, and an unknowable owner
+ *    is exactly the case where that risk cannot be reasoned away.
+ */
+export function mirrorIsForeign(
+  record: MirrorRecord | null,
+  holdsCloudState: boolean,
+  configuredBase: string,
+): boolean {
+  if (!holdsCloudState) return false;
+  if (record !== null && !record.legacy && record.base === null) return true;
+  const owner = record === null || record.legacy ? MANAGED_CLOUD_BASE : record.base;
+  return baseIsForeign(owner, configuredBase);
 }

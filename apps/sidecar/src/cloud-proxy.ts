@@ -50,7 +50,38 @@ export interface WriteThroughProxyConfig {
   log?: Diagnostic;
   /** Overridable for tests; production uses {@link DEFAULT_ECHO_DEADLINE_MS}. */
   echoDeadlineMs?: number;
+  /**
+   * TRUE when this install's server is NOT the one the browser hand-off page belongs to — i.e. a
+   * server the person runs themselves. See {@link HANDOFF_CLAIM_PATHS}.
+   */
+  handoffForeign?: boolean;
 }
+
+/**
+ * THE HOSTED SIGN-IN CEREMONY'S OWN ENDPOINTS, WHICH THIS PROXY MUST NOT RELAY TO A FOREIGN SERVER.
+ *
+ * This is a CATCH-ALL relay: everything the mirror cannot answer locally is forwarded to the
+ * configured base with the bearer. That is right for mail, and wrong for exactly these two, because
+ * the credential they carry is minted by the HOSTED service and is spendable there.
+ *
+ * The engine guards `/cloud/signin` and `/cloud/signin/challenge` — its own sign-in surface — and
+ * review found those guards bypassable straight through here: `POST /auth/desktop-claim` with a
+ * hosted hand-off code is neither of those paths, falls through the engine's route table, and is
+ * relayed verbatim to whatever server the door names. The operator receives a live code (and the
+ * verifier, if the caller has one) before their server has even answered.
+ *
+ * The lesson is the one the previous two rounds taught, arriving a third time: a guard placed at
+ * the ROUTE somebody is expected to use is not a guard on the PROPERTY. This one sits at the relay,
+ * so every caller of {@link WriteThroughProxy.forward} is covered rather than the one call site
+ * that was known about.
+ *
+ * DELIBERATELY NOT ALL OF `/auth/*`. Step-up, the audit log, e-mail verification and sign-out are
+ * ordinary Settings traffic that a self-hosted account must be able to perform against its OWN
+ * server — refusing those would break the door rather than protect it. These two are the whole of
+ * the hand-off surface, and nothing else in the API's `/auth` table carries a credential minted
+ * elsewhere.
+ */
+export const HANDOFF_CLAIM_PATHS = ["/auth/desktop-claim", "/auth/desktop-link"] as const;
 
 export interface WriteThroughProxy {
   /** Relay one request to Cloud (or 503 while offline), echo-awaiting a 2xx mutation. */
@@ -97,6 +128,24 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
     const url = new URL(req.url);
     const path = `${url.pathname}${url.search}`;
     const method = req.method.toUpperCase();
+
+    /* THE HAND-OFF CEREMONY IS NEVER RELAYED TO A SERVER THE PERSON RUNS. See
+       {@link HANDOFF_CLAIM_PATHS} — the credential these carry is the HOSTED service's, and this
+       relay would hand it to whoever runs the configured one. Matched on the PATHNAME, so a query
+       string cannot slip past it. */
+    if (cfg.handoffForeign === true && (HANDOFF_CLAIM_PATHS as readonly string[]).includes(url.pathname)) {
+      return new Response(
+        JSON.stringify({
+          error: {
+            code: "handoff_not_available",
+            message:
+              "Signing in through a browser only works with the hosted ohmail service. On your " +
+              "own server, sign in with your password and authenticator code.",
+          },
+        }),
+        { status: 409, headers: { "content-type": "application/json" } },
+      );
+    }
 
     const headers = new Headers(req.headers);
     for (const h of STRIP_HEADERS) headers.delete(h);

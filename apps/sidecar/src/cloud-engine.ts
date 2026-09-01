@@ -29,7 +29,7 @@ import {
   encodeMirrorRecord,
   normalizeBase,
   normalizeOrigin,
-  recordedBaseOfExisting,
+  mirrorIsForeign,
   MANAGED_CLOUD_BASE,
   OPERATOR_CA_FILE,
 } from "./cloud-origin.js";
@@ -375,7 +375,7 @@ export function enforceMirrorOwner(
    *
    *  · A RECORD THAT NAMES ONE — the ordinary case since this field existed.
    *  · A RECORD THAT NAMES NONE — a one-line marker from an earlier build, which could dial exactly
-   *    one address. `recordedBaseOfExisting` supplies it.
+   *    one address, and `mirrorIsForeign` compares against that.
    *  · NO RECORD AT ALL, BUT STATE ON DISK — and this is the case the first fix missed. The seal
    *    predates the marker in this repository's own history, so a Cloud profile with
    *    `cloud-tokens.seal` and `pgdata` and NO `mirror-owner` is a real upgrade state rather than a
@@ -389,13 +389,7 @@ export function enforceMirrorOwner(
   const holdsCloudState = ["pgdata", "cloud-cursor.json", "cloud-tokens.seal"].some((f) =>
     existsSync(join(dataDir, f)),
   );
-  const priorBase =
-    priorRecord !== null
-      ? recordedBaseOfExisting(priorRecord.base)
-      : holdsCloudState
-        ? MANAGED_CLOUD_BASE
-        : null;
-  const serverChanged = priorBase !== null && baseIsForeign(priorBase, cloudUrl);
+  const serverChanged = mirrorIsForeign(priorRecord, holdsCloudState, servedBase ?? cloudUrl.trim());
   const foreign = addressChanged || serverChanged;
   if (foreign) {
     // The database, its cursor and the previous account's sealed session are all stale. Remove
@@ -812,6 +806,10 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         auth,
         mirror,
         ...(log ? { log } : {}),
+        /* The catch-all relay must not carry the HOSTED sign-in ceremony to a server the person
+           runs — see `HANDOFF_CLAIM_PATHS`. Computed from the same comparison the two route guards
+           use, so all three agree by sharing a predicate rather than by three readings of it. */
+        handoffForeign: baseIsForeign(cloudBase, config.handoffBase ?? MANAGED_CLOUD_BASE),
       });
 
       /**
