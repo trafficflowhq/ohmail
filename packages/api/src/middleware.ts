@@ -219,11 +219,6 @@ function mayRetry(
   protection: { routeIsIdempotent: boolean; hasAccount: boolean; routeRequiresSession: boolean },
 ): boolean {
   if (SAFE_METHODS.has(req.method.toUpperCase())) return true;
-  // The SAME three conditions `withIdempotency` itself checks, in the same order, so this answers
-  // "will a replay actually be deduplicated" rather than approximating it. `has()` was the
-  // approximation and it is wrong twice: an EMPTY `Idempotency-Key` satisfies `has()` while
-  // `withIdempotency` does `const key = …get("idempotency-key"); if (!key) return next(…)` and
-  // skips, and a request with no resolved account is skipped at the next line for the same reason.
   /**
    * NOTHING RAN — and this is asked FIRST, before idempotency is consulted at all, because it is a
    * different question with a different answer.
@@ -242,7 +237,17 @@ function mayRetry(
    */
   if (protection.routeRequiresSession && !protection.hasAccount) return true;
 
-  // Past here the handler MAY have run, so only real deduplication makes a retry safe.
+  /**
+   * Past here the handler MAY have run, so only real deduplication makes a retry safe — and these
+   * are the SAME three conditions `withIdempotency` itself checks, in the same order, so this
+   * answers "will a replay actually be deduplicated" rather than approximating it.
+   *
+   * `req.headers.has("Idempotency-Key")` was that approximation and it was wrong twice: an EMPTY
+   * key satisfies `has()` while `withIdempotency` does `const key = get("idempotency-key"); if
+   * (!key) return next(...)` and skips it, and a request with no resolved account is skipped on
+   * the very next line for the same reason. A PUBLIC idempotent route with no session is the shape
+   * that survives to the last line and correctly answers false.
+   */
   if (!protection.routeIsIdempotent) return false;
   if ((req.headers.get("idempotency-key") ?? "") === "") return false;
   /**
