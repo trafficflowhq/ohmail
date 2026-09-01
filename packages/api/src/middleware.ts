@@ -211,20 +211,56 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
  * against a write that silently happens twice, and this repository has already decided that
  * direction wherever it has come up.
  */
-function mayRetry(req: Request, routeIsIdempotent: boolean): boolean {
+function mayRetry(
+  req: Request,
+  // RESOLVED booleans, not the optional-field interface: `dbBusyResponse` narrows the caller's
+  // partial knowledge to definite values first, so "absent" cannot reach here still meaning
+  // "unknown" and then be read as permissive by accident.
+  protection: { routeIsIdempotent: boolean; hasAccount: boolean },
+): boolean {
   if (SAFE_METHODS.has(req.method.toUpperCase())) return true;
-  return routeIsIdempotent && req.headers.has("Idempotency-Key");
+  // The SAME three conditions `withIdempotency` itself checks, in the same order, so this answers
+  // "will a replay actually be deduplicated" rather than approximating it. `has()` was the
+  // approximation and it is wrong twice: an EMPTY `Idempotency-Key` satisfies `has()` while
+  // `withIdempotency` does `const key = …get("idempotency-key"); if (!key) return next(…)` and
+  // skips, and a request with no resolved account is skipped at the next line for the same reason.
+  return protection.routeIsIdempotent
+    && (req.headers.get("idempotency-key") ?? "") !== ""
+    && protection.hasAccount;
+}
+
+/**
+ * What the caller knows about whether a replay of THIS request would actually be deduplicated.
+ * Both fields default to the pessimistic value; see {@link dbBusyResponse}.
+ */
+export interface IdempotencyProtection {
+  /** The matched route carries `options.idempotent`. */
+  routeIsIdempotent?: boolean;
+  /** A session was resolved — `withIdempotency` needs an `accountId` and skips without one. */
+  hasAccount?: boolean;
 }
 
 /**
  * The one construction of the busy answer, so every pipeline and host gives the same one.
  *
- * `routeIsIdempotent` defaults to FALSE because the caller that cannot supply it is the host's
- * backstop (`apps/api-vercel/src/handler.ts`), which catches throws that escaped the router and
- * therefore has no route in hand. Not knowing must mean "do not invite a retry" — the safe
- * direction — rather than the permissive one.
+ * Everything defaults to NOT PROTECTED, because the caller that can supply none of it is the
+ * host's backstop (`apps/api-vercel/src/handler.ts`), which catches throws that escaped the router
+ * and therefore has neither a route nor a resolved session in hand. Not knowing must mean "do not
+ * invite a retry" — the safe direction — rather than the permissive one.
  */
-export function dbBusyResponse(req: Request, routeIsIdempotent = false): Response {
+export function dbBusyResponse(
+  req: Request, protection: IdempotencyProtection = {},
+): Response {
+  const known = {
+    routeIsIdempotent: protection.routeIsIdempotent === true,
+    hasAccount: protection.hasAccount === true,
+  };
+  return dbBusyResponseFor(req, known);
+}
+
+function dbBusyResponseFor(
+  req: Request, protection: { routeIsIdempotent: boolean; hasAccount: boolean },
+): Response {
   return errorResponse(
     "db_busy", 503,
     // Says what happened, and says it accurately. NOT "could not get a connection": it had one —
@@ -232,7 +268,7 @@ export function dbBusyResponse(req: Request, routeIsIdempotent = false): Respons
     // the whole diagnosis, and a message that blurs it would send the next reader looking for a
     // connection leak.
     "the server's database connection was busy and this request could not be started; retry shortly",
-    undefined, mayRetry(req, routeIsIdempotent),
+    undefined, mayRetry(req, protection),
     { "Retry-After": String(DB_BUSY_RETRY_AFTER_SECONDS) },
   );
 }
@@ -295,7 +331,10 @@ export const withErrorEnvelope: Middleware = (next, route) => async (req, deps, 
       log.warn("request_db_busy", {
         method: req.method, route: route.pattern, status: 503, code: "db_busy",
       });
-      return dbBusyResponse(req, route.options?.idempotent === true);
+      return dbBusyResponse(req, {
+        routeIsIdempotent: route.options?.idempotent === true,
+        hasAccount: Boolean(deps.session?.accountId),
+      });
     }
     if (err instanceof ServiceError) {
       if (err.httpStatus >= 500) {
