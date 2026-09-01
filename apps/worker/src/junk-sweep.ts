@@ -23,9 +23,11 @@
  * for `changesSince` to adopt, and nothing is husked or marked that did not land in Junk.
  */
 
-import { and, eq, gt } from "drizzle-orm";
+import { and, eq, gt, inArray } from "drizzle-orm";
 import { folderState, junkSweepCandidateWhere, messages, type Tx } from "@trafficflow/db";
-import { FILING_BATCH_MAX, type MailboxAdapter, type MoveManyResult } from "@trafficflow/core/adapters/imap";
+import {
+  FILING_BATCH_MAX, MessageGoneError, type MailboxAdapter, type MoveManyResult,
+} from "@trafficflow/core/adapters/imap";
 import type { NativeLocator } from "@trafficflow/core";
 import type { WorkerRepo, PendingFolderState } from "@trafficflow/core/adapters/drizzle-repo";
 import { completeFiling, SPAM_PILE, type SpecialFolderMap } from "./junk-filing.js";
@@ -75,6 +77,27 @@ export interface JunkSweepResult {
   moved: string[];
   /** Members the source no longer held (adopted later by sync), or whose move failed. */
   skipped: Array<{ messageId: string; reason: string }>;
+  /**
+   * How many of {@link skipped} were skipped because the SOURCE LOCATOR WAS STALE — the message
+   * moved, or `ohmail/Quarantine` was recreated under a new UIDVALIDITY — as opposed to the server
+   * refusing the move.
+   *
+   * ── WHY THIS COUNT EXISTS RATHER THAN THE CALLER READING THE REASONS ────────────────────────
+   *
+   * The two are opposite facts wearing one shape. A REFUSED move is evidence about the pile: ask
+   * again next cycle and the server will refuse again. A stale locator is evidence about our
+   * bookkeeping and nothing else — the very next `changesSince` re-finds the message by Message-ID
+   * and repoints it, after which the same sweep moves it without complaint.
+   *
+   * `sync.ts` retires the user's one-time sweep command when a full scan moved NOTHING, on the
+   * reading that the server refuses every member. A folder recycled between the mirror's last scan
+   * and the sweep makes EVERY member skip at once, which is indistinguishable from that reading if
+   * you only count moves — so the press was consumed by a condition that would have cleared on its
+   * own, and the offer came back asking the user to press again for mail nothing was wrong with.
+   * This is the number that tells the two apart, and it is a count rather than a parse of English
+   * reason strings so that it cannot go quietly wrong when a sentence is reworded.
+   */
+  deferred: number;
   dryRun: boolean;
 }
 
@@ -132,7 +155,7 @@ export async function junkSweepPass(opts: {
     : { junkFolder: null, trashFolder: null, sentFolder: null };
 
   const result: JunkSweepResult = {
-    candidates, junkFolder: special.junkFolder, moved: [], skipped: [], dryRun: !execute,
+    candidates, junkFolder: special.junkFolder, moved: [], skipped: [], deferred: 0, dryRun: !execute,
   };
   if (!execute || special.junkFolder === null || candidates.length === 0) return result;
 
@@ -163,11 +186,58 @@ export async function junkSweepPass(opts: {
     result.moved.push(p.messageId);
   };
 
+  /**
+   * IS THIS STILL THE USER'S DECISION? — asked at the WRITE boundary, not at the read.
+   *
+   * The candidate set above is read ONCE and the moves that act on it run for as long as the pile
+   * takes. `desired_folder` has six writers that take no mailbox row (the API's move, the
+   * Screener's apply, `rule-retro`, `ohbox-tidy`, `screener-auto`, the one-time re-screen), so a
+   * user who restores a message out of the spam pile — or screens its sender in — while this pass
+   * is working commits a NEWER decision against a set this pass already made up its mind about.
+   *
+   * `completeFolderState`'s witness catches that, and catches it correctly: the completion
+   * declines and the newer intent stands. But it catches it AFTER the move, and this pass writes
+   * to somebody's real mail server — the message is physically in `\Junk` by then, and the row is
+   * left PENDING for the reconciler to carry back out. That self-heal needs a running worker and
+   * costs the user a round trip through their spam folder for mail they had just rescued.
+   *
+   * So the same predicate the candidates came from is asked again, for THIS CHUNK only, one
+   * indexed statement immediately before the network call. It does not close the window — nothing
+   * short of holding a transaction open across an IMAP round trip would, and that trade is worse —
+   * it narrows it from the whole pass to one chunk's latency, and the witness closes the rest.
+   * The two are complementary and neither is redundant: this one stops the SERVER write, the
+   * witness stops the DATABASE write.
+   *
+   * Deliberately NOT a re-read of `messages.native_locator`: a locator that moved is the
+   * `MessageGoneError`/absent-from-batch path below, which is already a deferral rather than a
+   * refusal. This asks only about the DESIRE.
+   */
+  const stillDesired = async (chunk: readonly PendingFolderState[]): Promise<Set<string>> => {
+    const ids = chunk.map((p) => p.messageId);
+    const live = await db.select({ messageId: messages.id }).from(messages)
+      .innerJoin(folderState, eq(folderState.messageId, messages.id))
+      .where(and(junkSweepCandidateWhere(accountId, mailboxId), inArray(messages.id, ids)));
+    return new Set(live.map((r) => r.messageId));
+  };
+
   for (let i = 0; i < pending.length; i += FILING_BATCH_MAX) {
-    const chunk = pending.slice(i, i + FILING_BATCH_MAX);
+    const wholeChunk = pending.slice(i, i + FILING_BATCH_MAX);
     // The leadership check before this chunk's IMAP writes — a refusal propagates, never caught
-    // into `skipped`: it is proof of lost leadership, not evidence about a message.
-    if (guard) await guard();
+    // into `skipped`: it is proof of lost leadership (or, from the operator CLI, of a lost
+    // ORGANIZER LEASE), not evidence about a message.
+    // …and the decision check, in the same breath and for the same reason: both ask "may this
+    // write still happen?", one about the mailbox, one about the message.
+    const desired = await stillDesired(wholeChunk);
+    const chunk = wholeChunk.filter((p) => desired.has(p.messageId));
+    for (const p of wholeChunk) {
+      if (!desired.has(p.messageId)) {
+        result.skipped.push({
+          messageId: p.messageId,
+          reason: "the spam verdict was withdrawn after this sweep began (newer intent stands)",
+        });
+      }
+    }
+    if (chunk.length === 0) continue;
     // The batched fast path when the adapter can prove it, per-message otherwise — the
     // reconciler's exact fallback shape, minus its deferral machinery: a sweep is one
     // invocation, so a refusal is reported and left rather than scheduled. ONLY the IMAP call
@@ -185,6 +255,9 @@ export async function junkSweepPass(opts: {
       for (const p of chunk) {
         const newLoc = batched.moved.get(p.nativeLocator!.ref);
         if (!newLoc) {
+          // A UID the batch did not return is the batch's own `MessageGoneError` — the source no
+          // longer holds it. DEFERRED, not refused: the next scan re-finds it by Message-ID.
+          result.deferred++;
           result.skipped.push({ messageId: p.messageId, reason: "gone from ohmail/Quarantine (sync adopts it)" });
           continue;
         }
@@ -200,6 +273,16 @@ export async function junkSweepPass(opts: {
       try {
         newLoc = await adapter.move(p.nativeLocator!, junk);
       } catch (err) {
+        if (err instanceof MessageGoneError) {
+          // The same fact the batched arm above reports by absence, and it gets the same reading
+          // and the same words: the source does not hold this message any more, so there is
+          // nothing to move and nothing is wrong. `changesSince` re-adopts it by Message-ID and a
+          // later sweep window moves it. Counted as DEFERRED so the cycle does not read a
+          // recycled folder as a pile the server refuses — see {@link JunkSweepResult.deferred}.
+          result.deferred++;
+          result.skipped.push({ messageId: p.messageId, reason: "gone from ohmail/Quarantine (sync adopts it)" });
+          continue;
+        }
         result.skipped.push({
           messageId: p.messageId,
           reason: err instanceof Error ? `${err.name}: ${err.message}` : String(err),

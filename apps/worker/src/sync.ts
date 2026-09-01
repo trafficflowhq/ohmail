@@ -253,6 +253,15 @@ export interface JunkSweepCommandPort {
     skipped: ReadonlyArray<unknown>;
     junkFolder: string | null;
     /**
+     * How many of `skipped` were skipped because the SOURCE LOCATOR WAS STALE rather than because
+     * the server refused the move — `JunkSweepResult.deferred`, which carries the full argument.
+     *
+     * The port names it because the RETIREMENT DECISION below is made here and not in the pass: a
+     * deferral is not evidence that the pile is unmovable, and reading it as such consumes the
+     * user's one-time press for a condition the next scan clears on its own.
+     */
+    deferred: number;
+    /**
      * TRUE only when this run looked at EVERY remaining candidate (a scan from the top that ran
      * off the end, or a mailbox with no Junk folder to move into). A run that moved nothing
      * WITHOUT this is an unfinished scan — the stamp stands and the mailbox is re-kicked.
@@ -639,7 +648,20 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
         });
         const left = await deps.junkSweep.remaining();
         const drained = left === 0;
-        const stuck = !drained && res.moved.length === 0 && res.examinedAll;
+        // `res.deferred === 0` IS PART OF "STUCK", and it is the difference between retiring a
+        // command and consuming it. The other three conjuncts together say "a full scan of a
+        // non-empty pile moved nothing", which is read as a server that refuses every member —
+        // the one reading that licenses throwing the user's press away. A member skipped because
+        // its SOURCE LOCATOR WAS STALE is not evidence for that reading and is close to evidence
+        // against it: the message is still there under a different UID, the next `changesSince`
+        // re-finds it by Message-ID, and the sweep then moves it. A folder recycled between the
+        // mirror's last scan and the sweep makes EVERY member skip at once, which is exactly the
+        // shape of a fully-refused pile and is not one — so without this clause the press was
+        // retired by a condition that would have cleared on its own, and the offer came back
+        // asking the person to press again for mail nothing was wrong with. A cycle with any
+        // deferral keeps the stamp and re-kicks instead, which terminates for the same reason
+        // every other convergence here does: the deferrals shrink as adoption repoints them.
+        const stuck = !drained && res.moved.length === 0 && res.deferred === 0 && res.examinedAll;
         if (drained || stuck) {
           await deps.junkSweep.clear(observed);
         } else {
@@ -647,13 +669,16 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
         }
         log?.info("junk_sweep_command_ran", {
           mailboxId, accountId, moved: res.moved.length, skipped: res.skipped.length,
+          deferred: res.deferred,
           junkFolder: res.junkFolder, remaining: left,
           retired: drained || stuck,
           reason: drained
             ? "the account's user pressed the one-time Quarantine→Junk offer; the pile is drained and the command retired"
             : stuck
               ? "a full scan moved nothing — the server refused every member — so the command is retired rather than retried every cycle; the offer returns with what is left"
-              : "one bounded window ran; the command stands and the mailbox is re-kicked for the next window",
+              : res.deferred > 0
+                ? "some members are no longer at the locator the mirror holds; the command stands and the mailbox is re-kicked, so the next window sweeps them once adoption has repointed them"
+                : "one bounded window ran; the command stands and the mailbox is re-kicked for the next window",
         });
       }
     } catch (err) {

@@ -1943,6 +1943,11 @@ export async function startWorkerWithLock(
               sweepScan = adopted.state;
               return {
                 moved: res.moved, skipped: res.skipped, junkFolder: res.junkFolder,
+                // Passed through UNCHANGED and deliberately not folded into `examinedAll`: they
+                // answer different questions. `examinedAll` is about how far the scan got;
+                // `deferred` is about whether the members it could not move said anything about
+                // the pile. `sync.ts` needs both to decide whether the user's press is spent.
+                deferred: res.deferred,
                 examinedAll: adopted.examinedAll,
               };
             },
