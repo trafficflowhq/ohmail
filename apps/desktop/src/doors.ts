@@ -1059,8 +1059,15 @@ function handoffInterrupted(err: unknown): string {
   );
 }
 
-/** What to say about an engine that was reconfigured and then did not come up. */
-function stalled(status: EngineStatus): string {
+/**
+ * What to say about an engine that was reconfigured and then did not come up.
+ *
+ * Exported for `self-host.ts`, which is a THIRD door taking the same two steps this file's cloud
+ * door takes and therefore has the same three things to say about them. Sharing the sentence is
+ * the point: a second wording for the same state is how two doors start describing one product
+ * differently.
+ */
+export function stalled(status: EngineStatus): string {
   if (status.reason) return status.reason;
   if (status.state === "starting" || status.state === "restarting") {
     return "The mail engine is still starting. Settings are saved; give it a moment and open ohmail again.";
@@ -1165,8 +1172,8 @@ export function probeTlsSentence(details: unknown): string | null {
     : `${opening} Check the ${protocol} host with your provider.`;
 }
 
-/** Whatever was thrown, as something a person can read. */
-function sentence(err: unknown): string {
+/** Whatever was thrown, as something a person can read. Shared with `self-host.ts`; see {@link stalled}. */
+export function sentence(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err);
   return message || "Something went wrong and said nothing about what.";
 }

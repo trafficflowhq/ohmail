@@ -22,6 +22,13 @@ import { createCloudMirror, CLOUD_SYNC_TYPES, type CloudMirror } from "./cloud-m
 import { startCloudWake, type CloudWake } from "./cloud-wake.js";
 import { matchReadRoute } from "./cloud-read.js";
 import { createWriteThroughProxy, type WriteThroughProxy } from "./cloud-proxy.js";
+import {
+  baseIsForeign,
+  decodeMirrorRecord,
+  encodeMirrorRecord,
+  normalizeBase,
+  OPERATOR_CA_FILE,
+} from "./cloud-origin.js";
 import type { Diagnostic } from "./log.js";
 
 /**
@@ -214,7 +221,15 @@ async function decorateHostedCounts(
   return json({ ...(body as object), items: decorated }, res.status);
 }
 
-/** The file recording which hosted address this cloud mirror was bootstrapped for. */
+/**
+ * The file recording which hosted account this cloud mirror was bootstrapped for: the ADDRESS on
+ * the first line and the SERVER's base URL on the second.
+ *
+ * It held the address alone until there was a third door. See `cloud-origin.ts` for why the server
+ * had to join it — in one sentence: the mirror directory is keyed by MODE, so `me@example.com` on
+ * the hosted service and `me@example.com` on an operator's own server were the same owner by this
+ * file's own comparison, and shared one database.
+ */
 export const MIRROR_OWNER_FILE = "mirror-owner";
 
 /**
@@ -239,9 +254,26 @@ const sameOwner = (v: string): string => v.trim().toLowerCase();
  * the one thing this whole mechanism exists to refuse.
  */
 export function readMirrorOwner(dataDir: string): string | null {
+  const raw = readMirrorRecordRaw(dataDir);
+  return raw === null ? null : decodeMirrorRecord(raw).address;
+}
+
+/**
+ * The SERVER this mirror was bootstrapped against, or null when the record does not name one.
+ *
+ * Null is a real and common answer rather than a defect, and it is the whole reason
+ * {@link baseIsForeign} defaults to "not foreign": every install written before this line existed
+ * has a one-line record, and there was only ever one server for it to have been written by.
+ */
+export function readMirrorBase(dataDir: string): string | null {
+  const raw = readMirrorRecordRaw(dataDir);
+  return raw === null ? null : decodeMirrorRecord(raw).base;
+}
+
+function readMirrorRecordRaw(dataDir: string): string | null {
   const ownerPath = join(dataDir, MIRROR_OWNER_FILE);
   if (!existsSync(ownerPath)) return null;
-  return readFileSync(ownerPath, "utf8").trim();
+  return readFileSync(ownerPath, "utf8");
 }
 
 /**
@@ -283,30 +315,265 @@ export function readMirrorOwner(dataDir: string): string | null {
  * case is that it already belongs to the address now being served; the guarantee this makes is
  * forward — no future owner change can mix two accounts.
  *
+ * ── AND THE OWNER IS AN ACCOUNT ON A SERVER, NOT AN ADDRESS ───────────────────────────────────
+ *
+ * `cloudUrl` is compared with the same force as the address, and for a reason the address alone
+ * cannot cover: with a self-hosted door, `me@example.com` on the hosted service and
+ * `me@example.com` on an operator's own machine are DIFFERENT ACCOUNTS spelled identically. The
+ * address check reads them as the same owner and keeps the mirror; the reads are then scoped by an
+ * `accountId` that belongs to neither in particular, and one server's mail renders under the
+ * other's session. It is the same defect this function was written for, reached by moving a
+ * different field.
+ *
+ * The discard is what closes the SESSION half too. `cloud-tokens.seal` holds a bearer minted by the
+ * server being left, and a launch that kept it would send it to the server being arrived at — our
+ * service's token to a machine somebody else runs, or an operator's to ours. It is already in the
+ * list of things removed, so widening what counts as foreign is the entire fix; there is no second
+ * place where a session has to be revoked, and deliberately no second enforcement point to keep in
+ * step. See `cloud-origin.ts` for the one-sided default that keeps every existing install running.
+ *
  * @returns whether a foreign mirror was discarded — for the log line and the test, nothing reads it.
  */
-export function enforceMirrorOwner(dataDir: string, address: string, log?: Diagnostic): boolean {
+export function enforceMirrorOwner(
+  dataDir: string,
+  address: string,
+  /** The base this launch is configured to dial — `CloudSidecarConfig.cloudUrl`. */
+  cloudUrl: string,
+  log?: Diagnostic,
+): boolean {
   const served = sameOwner(address);
+  const servedBase = normalizeBase(cloudUrl) ?? cloudUrl.trim();
   const ownerPath = join(dataDir, MIRROR_OWNER_FILE);
-  const priorRaw = readMirrorOwner(dataDir);
-  const prior = priorRaw === null ? null : sameOwner(priorRaw);
-  const foreign = prior !== null && prior !== served;
+  const priorRaw = readMirrorRecordRaw(dataDir);
+  const priorRecord = priorRaw === null ? null : decodeMirrorRecord(priorRaw);
+  const prior = priorRecord === null ? null : sameOwner(priorRecord.address);
+  const addressChanged = prior !== null && prior !== served;
+  const serverChanged = baseIsForeign(priorRecord?.base ?? null, cloudUrl);
+  const foreign = addressChanged || serverChanged;
   if (foreign) {
     // The database, its cursor and the previous account's sealed session are all stale. Remove
     // them so the new account bootstraps from empty rather than inheriting a stranger's mail.
     for (const stale of ["pgdata", "cloud-cursor.json", "cloud-tokens.seal"]) {
       rmSync(join(dataDir, stale), { recursive: true, force: true });
     }
-    // Never the addresses. Which mailbox was served before and which is served now are the exact
-    // identifying signal the sidecar log census exists to keep off the line — an operator needs to
-    // know a foreign mirror was discarded, not whose it was. The event NAME carries the WHAT; the
-    // one non-identifying fact worth a field is that a reset happened, and `prior`/`served` stay
-    // local to the decision above.
-    log?.("cloud_mirror_reset_on_owner_change", { changed: true });
+    // Never the addresses, and never the two SERVERS either. Which mailbox was served before and
+    // which is served now are the exact identifying signal the sidecar log census exists to keep
+    // off the line — and an operator's own hostname identifies them at least as sharply as their
+    // address does. An operator needs to know a foreign mirror was discarded, not whose it was.
+    //
+    // WHICH of the two comparisons demanded it does go on the line, because it tells "I switched
+    // accounts" from "I moved this install to another server" and an operator reading a wiped
+    // mirror needs to know which of those they did. It travels as `reason` — one of two FIXED
+    // sentences chosen here, never composed from either value — rather than as two new field
+    // names, so nothing about this widens `ALLOWED_FIELDS`. `prior`/`served` stay local.
+    log?.("cloud_mirror_reset_on_owner_change", {
+      changed: true,
+      reason: addressChanged
+        ? "the mailbox address this mirror was bootstrapped for is not the one being served"
+        : "this install has been pointed at a different server than the mirror was bootstrapped " +
+          "against, so the mirror and the session sealed for the previous server are discarded",
+    });
   }
   mkdirSync(dataDir, { recursive: true });
-  writeFileSync(ownerPath, served, { mode: 0o600 });
+  writeFileSync(ownerPath, encodeMirrorRecord(served, servedBase), { mode: 0o600 });
   return foreign;
+}
+
+/** How long the door waits for a server to say hello. Short: somebody is watching a spinner. */
+export const PROBE_DEADLINE_MS = 12_000;
+
+/**
+ * WHAT ANSWERED AT THE CONFIGURED ADDRESS — the self-hosted door's probe.
+ *
+ * Exported and pure-ish (the `fetch` is a parameter) so the classification below can be driven by
+ * a test without a server, which matters more here than almost anywhere else in this file: every
+ * branch is a SENTENCE somebody will read at the exact moment they are least able to guess.
+ *
+ * ── EVERY REFUSAL NAMES WHAT WAS TRIED ────────────────────────────────────────────────────────
+ *
+ * The base, in full, in every single message. An operator debugging their own server has to be
+ * able to see that the app dialled `https://ohmail.example.com/api/hello` and not something else —
+ * that one line answers "did it use the right port", "did it keep my scheme", "did it add the
+ * `/api`", and it is the difference between a bug report and a fixed typo. The value is the
+ * operator's OWN address, typed by them into this app, so there is nothing to withhold; the only
+ * reason it does not go into the log is that the LOG is read by us and this sentence is not.
+ *
+ * ── THE PRIVATE-CA BRANCH IS THE ONE THIS WHOLE ROUTE EXISTS FOR ──────────────────────────────
+ *
+ * A self-host stack on a private name issues its own certificates — the shipped compose stack does
+ * exactly that (`OHMAIL_TLS_INTERNAL=1` selects Caddy's local CA), and that is the RIGHT thing for
+ * a name no public authority can validate. Node does not read the operating system's trust store:
+ * it verifies against its own compiled-in root list, so a certificate from the operator's CA fails
+ * with `UNABLE_TO_GET_ISSUER_CERT_LOCALLY` — measured against the running stack, where a default
+ * `tls.connect` to `ohmail.test:443` threw exactly that and the same connection with
+ * `NODE_EXTRA_CA_CERTS` pointed at the stack's exported root came back `authorized`.
+ *
+ * So the honest answer is a FILE, and the sentence names it. It is not "we could not connect", and
+ * it is emphatically not an offer to skip verification: nothing in this app has a way to turn
+ * certificate checking off, and adding one would hand every self-hoster's mail to whatever answers
+ * on their network. Installing the CA is a step the operator performs once, on the machine, and
+ * the sentence tells them where to put it.
+ */
+export async function probeCloudServer(cloudUrl: string, fetchImpl: typeof fetch): Promise<Response> {
+  const base = cloudUrl.replace(/\/+$/, "");
+  const target = `${base}/hello`;
+  const refuse = (message: string, kind: string): Response =>
+    json({ error: { code: "cloud_probe_failed", message, details: { kind, target } } }, 502);
+
+  let res: Response;
+  try {
+    res = await fetchImpl(target, {
+      method: "GET",
+      headers: { accept: "application/json" },
+      signal: AbortSignal.timeout(PROBE_DEADLINE_MS),
+    });
+  } catch (err) {
+    return refuse(...describeProbeFailure(err, target));
+  }
+
+  if (!res.ok) {
+    return refuse(
+      `${target} answered ${res.status}. That address is reachable, but it is not answering as an ` +
+        "ohmail server — check that you gave the address you open ohmail at in a browser.",
+      "status",
+    );
+  }
+
+  let hello: { product?: unknown; flavor?: unknown; needsSetup?: unknown; auth?: unknown };
+  try {
+    hello = (await res.json()) as typeof hello;
+  } catch {
+    return refuse(
+      `Something answered at ${target}, but not with the greeting an ohmail server sends. Check ` +
+        "that you gave the address you open ohmail at in a browser.",
+      "not_ohmail",
+    );
+  }
+  /* THE PRODUCT NAME IS THE CHECK, and it is worth having: a 200 with a body is what a router's
+     admin page, a NAS, a parked domain and a default nginx all return. Without this the door would
+     accept them, configure the install against them, and fail at the sign-in with a sentence about
+     credentials — sending somebody to check a password when what is wrong is the address. */
+  if (hello.product !== "ohmail") {
+    return refuse(
+      `Something answered at ${target}, but it is not an ohmail server. Check that you gave the ` +
+        "address you open ohmail at in a browser.",
+      "not_ohmail",
+    );
+  }
+
+  /* Everything here is the SERVER's own answer about itself and none of it is secret — it is what
+     that address serves to anyone who asks. The door renders the flavor so somebody who typed our
+     address into the self-hosted field can see what they actually reached. */
+  return json({
+    ok: true,
+    target,
+    flavor: typeof hello.flavor === "string" ? hello.flavor : null,
+    needsSetup: hello.needsSetup === true,
+    auth: hello.auth ?? null,
+  });
+}
+
+/** Node's own TLS verification failures, as the codes it raises them with. */
+const TLS_FAILURE_CODES = new Set([
+  "UNABLE_TO_GET_ISSUER_CERT",
+  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "CERT_UNTRUSTED",
+  "CERT_HAS_EXPIRED",
+  "CERT_NOT_YET_VALID",
+  "ERR_TLS_CERT_ALTNAME_INVALID",
+]);
+
+/**
+ * A thrown probe, as the sentence to show and the kind to record — the classification, alone, so a
+ * test can drive every branch with a constructed error and no network.
+ *
+ * The code is read off the CAUSE as well as the error: `fetch` wraps transport failures in a
+ * `TypeError` whose `cause` is the real one, and reading only the outer error would classify every
+ * single failure — a wrong name, a refused port, an untrusted certificate — as the same shrug.
+ */
+export function describeProbeFailure(err: unknown, target: string): [message: string, kind: string] {
+  const code = errorCode(err);
+  if (code !== null && TLS_FAILURE_CODES.has(code)) {
+    if (code === "ERR_TLS_CERT_ALTNAME_INVALID") {
+      return [
+        `${target} answered, but its certificate is for a different name. Use the address the ` +
+          "certificate was issued for.",
+        "tls_name",
+      ];
+    }
+    if (code === "CERT_HAS_EXPIRED" || code === "CERT_NOT_YET_VALID") {
+      return [`${target} answered, but its certificate is not currently valid.`, "tls_validity"];
+    }
+    return [
+      `${target} answered, but its certificate is signed by an authority this computer does not ` +
+        "trust — which is what a server that issues its own certificates looks like from here. " +
+        `ohmail verifies certificates and will not skip that. Put your server's root certificate ` +
+        `in a file named ${OPERATOR_CA_FILE} in this app's data folder and open ohmail again, or ` +
+        "give the server a certificate from an authority this computer already trusts.",
+      "tls_trust",
+    ];
+  }
+  if (code === "ENOTFOUND" || code === "EAI_AGAIN") {
+    return [
+      `Nothing on this network knows the name in ${target}. Check the address, or that this ` +
+        "computer can look that name up.",
+      "dns",
+    ];
+  }
+  if (code === "ECONNREFUSED") {
+    return [`Nothing is answering at ${target}. Check the address and the port.`, "refused"];
+  }
+  if (code === "ETIMEDOUT" || code === "UND_ERR_CONNECT_TIMEOUT" || code === "TimeoutError") {
+    return [`${target} did not answer in time. Check the address, and that it is reachable from ` +
+      "this computer.", "timeout"];
+  }
+  const detail = err instanceof Error && err.message ? ` (${err.message})` : "";
+  return [`ohmail could not reach ${target}${detail}.`, "unreachable"];
+}
+
+/**
+ * The first transport code in a thrown value, down `cause` AND through `AggregateError.errors`.
+ *
+ * ── BOTH BRANCHES ARE LOAD-BEARING, AND THE SECOND ONE IS THE COMMON CASE ─────────────────────
+ *
+ * `fetch` never throws the real error. It throws `TypeError: fetch failed` and hangs the cause off
+ * it, so a reader of the outer error alone classifies every failure — a wrong name, a refused port,
+ * an untrusted certificate — as the same shrug. Measured against the running self-host stack with
+ * its CA withheld: `TypeError(fetch failed)` → `cause: Error(code:
+ * UNABLE_TO_GET_ISSUER_CERT_LOCALLY)`.
+ *
+ * And when a host resolves to more than one address — which is EVERY dual-stack server, so most of
+ * them — undici tries them in turn and reports the lot as an `AggregateError`. That has no `code`
+ * and no `cause`: the real errors are in `.errors`, and a walker that followed only `cause` would
+ * fall off the end and report "unreachable" for a certificate problem it was holding. The
+ * self-hosted door is exactly where that matters, because its whole value is saying WHICH thing
+ * went wrong.
+ *
+ * The first code found wins. A mixed aggregate — say IPv6 refused and IPv4 untrusted — is a
+ * judgement call either way; taking the first attempt's answer is at least the one the connection
+ * would have used, and no ordering here could be right for every mix.
+ */
+function errorCode(err: unknown): string | null {
+  const seen = new Set<unknown>();
+  const walk = (cur: unknown, depth: number): string | null => {
+    if (cur === null || cur === undefined || depth > 5 || seen.has(cur)) return null;
+    seen.add(cur);
+    const code = (cur as { code?: unknown }).code;
+    if (typeof code === "string") return code;
+    if ((cur as { name?: unknown }).name === "TimeoutError") return "TimeoutError";
+    const nested = (cur as { errors?: unknown }).errors;
+    if (Array.isArray(nested)) {
+      for (const one of nested) {
+        const found = walk(one, depth + 1);
+        if (found !== null) return found;
+      }
+    }
+    return walk((cur as { cause?: unknown }).cause, depth + 1);
+  };
+  return walk(err, 0);
 }
 
 export async function createCloudSidecar(config: CloudSidecarConfig): Promise<CloudSidecar> {
@@ -320,9 +587,9 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
   // mirror-owner check, and on a launch that DOES discard a foreign mirror it includes the delete.
   const tBoot = Date.now();
 
-  // The mirror belongs to exactly one hosted account; discard it whole if the served address has
+  // The mirror belongs to exactly one hosted account ON ONE SERVER; discard it whole if either has
   // changed. Must run before the database is opened — see {@link enforceMirrorOwner}.
-  enforceMirrorOwner(config.dataDir, config.address, log);
+  enforceMirrorOwner(config.dataDir, config.address, config.cloudUrl, log);
 
   const opened: OpenLocalDb = await openLocalDb(config.dataDir, {
     ...(log ? { log } : {}),
@@ -596,6 +863,41 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       // reason the sign-in itself is: there is nothing to hand off to an install that already
       // holds a session, and minting a commitment would leave a live code bound to a process
       // nobody is waiting on.
+      // ── IS THERE AN OHMAIL SERVER AT THE ADDRESS THIS ENGINE WAS POINTED AT? ───────────────
+      //
+      // The self-hosted door's question, and the only one in this file whose answer is a fact
+      // about somebody else's machine. The window cannot ask it — its CSP is `connect-src 'none'`
+      // and `offline-guard.ts` replaces every API that could leave the process — so it has to be
+      // asked here, by the process that already dials this server for everything else.
+      //
+      // ── IT PROBES `config.cloudUrl` AND NOTHING THE REQUEST SAYS, WHICH IS THE WHOLE POINT ──
+      //
+      // The body is not read and there is no URL parameter. A route that dialled an address out of
+      // the request would turn the one bridge the window is allowed into a general-purpose request
+      // forwarder running outside the webview's sandbox — every claim in `bridge-fetch.ts`'s
+      // header about the page having no way to address anything but this engine would stop being
+      // true. The door instead CONFIGURES the engine for the typed address (which is a settings
+      // write the shell owns and refuses secrets on) and then asks this route what the engine it
+      // just started can see. Same information, no new reach.
+      //
+      // ── `/hello` AND NOT `/health`, BECAUSE ONLY ONE OF THEM SAYS *WHAT* ANSWERED ───────────
+      //
+      // `/health` says a service is alive. `/hello` is the capability handshake and names the
+      // product, the flavor (`selfhost` / `managed`), whether the install still needs its
+      // first-run setup, and which sign-in methods it has. That difference is what lets the door
+      // tell "nothing is there" from "something is there and it is not ohmail" — the second being
+      // what an operator gets when they type the address of their router, their NAS, or the
+      // machine they MEANT to install this on. Measured on both deployments: `flavor:"selfhost"`
+      // from a stack at `https://ohmail.test`, `flavor:"managed"` from `https://api.ohmail.app`.
+      //
+      // BEHIND THE LAUNCH BEARER, like `/cloud/signin` and unlike `/health`. The bearer is minted
+      // per launch and added SHELL-SIDE (`bridge-fetch.ts` never sees it), so requiring it costs
+      // the door nothing — it is on the far end of the same pipe — and means nothing that is not
+      // this window can make this process dial anything.
+      if (req.method === "POST" && path === "/cloud/probe") {
+        return probeCloudServer(config.cloudUrl, config.fetchImpl ?? fetch);
+      }
+
       if (req.method === "POST" && path === "/cloud/signin/challenge") {
         if (authed) {
           return json(

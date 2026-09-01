@@ -136,6 +136,18 @@ impl Config {
 /// What the file is called inside the app's data directory.
 pub const CONFIG_FILE_NAME: &str = "config.json";
 
+/// The file an operator drops their own certificate authority's root into.
+///
+/// The same name the engine's refusal tells them to use and the same name the door's address step
+/// shows before they ever see that refusal — `apps/sidecar/src/cloud-origin.ts`'s
+/// `OPERATOR_CA_FILE`, which is the copy this one must never drift from. It is spelled here rather
+/// than shared because this process links no JavaScript;
+/// `the_operator_ca_file_is_spelled_the_same_way_in_the_engine` reads the TypeScript and fails if
+/// the two ever disagree.
+///
+/// See {@link env_for} for what it does and why it is a file rather than a switch.
+pub const OPERATOR_CA_FILE: &str = "cloud-ca.pem";
+
 /// Field names a configuration may never carry.
 ///
 /// Matched as SUBSTRINGS of the lower-cased key, at every depth, and the refusal is a hard error
@@ -309,6 +321,36 @@ pub fn env_for(config: &Config, root: &Path) -> Vec<(OsString, OsString)> {
         OsString::from(crate::engine::DATA_DIR_VAR),
         dir.into_os_string(),
     )];
+
+    // ── THE OPERATOR'S OWN CERTIFICATE AUTHORITY, IF THEY HAVE PUT ONE HERE ─────────────────
+    //
+    // A person running their own ohmail server on a private name — `ohmail.test`, `mail.lan`,
+    // anything only their DNS knows — issues their own certificates, because no public authority
+    // can validate such a name. That is correct, and the shipped compose stack does exactly it.
+    //
+    // The engine is a Node process, and Node does NOT read the operating system's trust store: it
+    // verifies against its own compiled-in roots. So a certificate from the operator's CA fails
+    // there no matter what they have installed on the machine, and the app cannot see their server
+    // at all. Measured against a real stack: a default handshake threw
+    // `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`, and the same handshake with this variable pointed at the
+    // stack's exported root came back authorized.
+    //
+    // `NODE_EXTRA_CA_CERTS` ADDS a root. It never replaces the built-in set and never relaxes
+    // verification, which is the whole reason this is the mechanism rather than an "allow
+    // self-signed" switch: there is no way, anywhere in this app, to turn certificate checking off.
+    //
+    // COMPOSED ONLY WHEN THE FILE IS THERE. Node prints a warning for a path that does not exist,
+    // on every launch, at every user — so the absent case must compose nothing. It is checked at
+    // spawn rather than cached, so an operator who drops the file in and reopens the app is
+    // covered, which is what the door's sentence tells them to do.
+    //
+    // BOTH DOORS, and that is not scope creep. An operator whose IMAP server presents a private
+    // CA has the identical problem with the identical fix, and a variable that helped one door and
+    // not the other would be a distinction nothing in the product can justify.
+    let ca = root.join(OPERATOR_CA_FILE);
+    if ca.is_file() {
+        env.push((OsString::from("NODE_EXTRA_CA_CERTS"), ca.into_os_string()));
+    }
     match config {
         Config::Local(l) => {
             // No `OHMAIL_MODE` at all: the engine's default branch IS the local organizer, and

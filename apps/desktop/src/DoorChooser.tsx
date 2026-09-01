@@ -47,6 +47,12 @@ import {
   type DoorResult,
   type LocalDoorFields,
 } from "./doors.js";
+import {
+  OPERATOR_CA_FILE,
+  configureSelfHostDoor,
+  selfHostBase,
+  signInToSelfHost,
+} from "./self-host.js";
 import { offLinkCode, onLinkCode, openWeb } from "./native.js";
 import { MACHINE_WORD } from "./platform.js";
 
@@ -54,8 +60,14 @@ import { MACHINE_WORD } from "./platform.js";
 const NO_BROWSER =
   `This ${MACHINE_WORD} would not open a browser. The page is at ohmail.app/link-desktop.`;
 
-/** Which of the three cards is on screen. `doors` is where a fresh install starts. */
-type Step = "doors" | "local" | "cloud";
+/**
+ * Which card is on screen. `doors` is where a fresh install starts.
+ *
+ * `server` is the self-hosted arm, and it is a step of its own rather than a flag on `cloud`
+ * because it asks a question `cloud` does not: which server. Everything after that question is the
+ * same engine, the same sign-in and the same mirror — see `self-host.ts`.
+ */
+type Step = "doors" | "local" | "server" | "cloud";
 
 export function DoorChooser({
   onEntered,
@@ -120,6 +132,22 @@ export function DoorChooser({
    * refusal with no way through.
    */
   const [mustSwitch, setMustSwitch] = useState(false);
+
+  /**
+   * THE SELF-HOSTED SERVER THIS INSTALL HAS BEEN POINTED AT AND PROVED, or null.
+   *
+   * The same kind of remembered fact as `handedOff`: it selects what the next submit IS. Null means
+   * the self-hosted card is still asking for an address, and its submit configures the engine and
+   * probes. Set means the engine is configured for that base and serving, and the submit is a
+   * sign-in — the identical request the hosted door makes, because from the engine's side there is
+   * no difference between the two.
+   *
+   * It holds the BASE rather than a flag for `handedOff`'s reason: what was proved is the thing to
+   * report and the thing to sign in against, and a boolean would let a later edit of the field
+   * quietly change which server the sentence on screen was describing. The field is read-only from
+   * the moment this is set, so the two can never disagree.
+   */
+  const [reachedServer, setReachedServer] = useState<string | null>(null);
 
   /* One attempt at a time, and the result travels up whole. A door attempt restarts the engine
      and can take tens of seconds on a first run, so a second press while the first is in flight
@@ -187,6 +215,38 @@ export function DoorChooser({
         </span>
         {step === "doors" ? (
           <Doors onPick={setStep} onCancel={onCancel} />
+        ) : step === "server" ? (
+          <ServerDoor
+            busy={busy}
+            problem={problem}
+            reached={reachedServer}
+            onBack={() => { setProblem(null); setReachedServer(null); setStep("doors"); }}
+            onCancel={onCancel}
+            /* THE ADDRESS STEP. Not routed through `attempt`, because it does not end in a
+               `DoorResult` and must not call `onEntered`: proving a server is reachable is not
+               being signed in to it, and a window that closed the door here would leave somebody
+               looking at a mail client with no session and nothing explaining why. */
+            onProve={(typedOrigin, address) => {
+              if (busy) return;
+              setBusy(true);
+              setProblem(null);
+              void configureSelfHostDoor(typedOrigin, address)
+                .then((step) => {
+                  if (step.problem !== null) {
+                    setProblem(step.problem);
+                    return;
+                  }
+                  /* The NORMALIZED base, never the raw typing. It is what the engine was actually
+                     configured with, and it is what the card then shows — so "Reached …" names the
+                     thing that answered rather than the characters somebody entered. */
+                  setReachedServer(selfHostBase(typedOrigin));
+                })
+                .finally(() => setBusy(false));
+            }}
+            onSubmit={(address, password, totp) =>
+              attempt(() => signInToSelfHost(address, password, totp))
+            }
+          />
         ) : step === "local" ? (
           <LocalDoor
             busy={busy}
@@ -243,36 +303,65 @@ export function DoorChooser({
 }
 
 /**
- * The two doors, as two things rather than as a dropdown.
+ * THE THREE DOORS, as three things rather than as a dropdown.
  *
- * They are not variants of one setup: one opens a mailbox that already exists on somebody's own
- * server, the other mirrors an account they hold with us. Rendered as tiles for the reason the
- * provider picker is — a choice between recognisable things, with the factual line under each
- * name saying what will actually happen.
+ * They are not variants of one setup. Each one names a DIFFERENT MACHINE as the thing that does the
+ * organizing — this computer, a server the person runs, or ours — and that is the only question
+ * this screen asks. Rendered as tiles for the reason the provider picker is: a choice between
+ * recognisable things, with a factual line under each name saying what will actually happen.
+ *
+ * ── THE ORDER IS THE ANSWER TO "WHO HOLDS IT", NEAREST FIRST ──────────────────────────────────
+ *
+ * This computer, then a server you run, then ours. It is not a ranking by how much we would like
+ * somebody to pick it, and putting the hosted service last is deliberate: the first two are the
+ * ones a person can verify for themselves, and a product whose whole claim is that you can leave
+ * should not lead with the door that is hardest to leave from.
+ *
+ * ── EVERY SENTENCE HERE IS A CLAIM, AND TWO OF THEM ARE LOAD-BEARING ──────────────────────────
+ *
+ *  · **"Nothing is sent anywhere."** on the local door. Structurally true rather than promised: the
+ *    window's CSP is `connect-src 'none'`, `offline-guard.ts` replaces every browser API that could
+ *    leave the process, and the engine on this door dials the user's own IMAP server and nothing
+ *    else — `engine.ts`'s graph reaches no hosted client at all. Pinned in
+ *    `desktop-door-chooser.test.tsx` against the fact that makes it true, so a change that made the
+ *    local door talk to anything reddens the sentence rather than leaving it standing.
+ *  · **The travel sentence** beneath all three. Also a fact about the code and not a promise about
+ *    intentions: the rules and settings are written to the MAILBOX (`ohmail/_meta`, the travelling
+ *    profile), which is what every door reads them back out of — `local-profile-import.ts` is the
+ *    surface that asks about them on arrival. That is the same sentence the product's own invariant
+ *    is written in: the IMAP mailbox is the master, never this app and never Cloud.
  */
 function Doors({ onPick, onCancel }: { onPick: (step: Step) => void; onCancel?: () => void }) {
   return (
     <>
       <h1>Which mailbox is this?</h1>
-      <p>
-        ohmail organizes a mailbox you already have. It never becomes the master copy — your mail
-        stays where it is, and you can leave at any time and take it with you.
-      </p>
-      <div className="pvp">
-        <div className="pvp-grid" role="group" aria-label="Where your mail lives">
-          <button type="button" className="pvp-tile" onClick={() => onPick("local")}>
-            <span className="pvp-name">On this {MACHINE_WORD}</span>
-            <span className="pvp-host">your own IMAP mailbox</span>
-          </button>
-          <button type="button" className="pvp-tile pvp-other" onClick={() => onPick("cloud")}>
-            <span className="pvp-name">ohmail Cloud</span>
-            <span className="pvp-host">a hosted ohmail account</span>
-          </button>
-        </div>
+      <div className="door-grid" role="group" aria-label="Which machine does the organizing">
+        {/* Focused on mount so a keyboard reaches the choice without tabbing through the chrome
+            above it. Native buttons: Tab moves between the three, Enter and Space open one, and
+            nothing here claims a chord the shared keymap has spoken for. */}
+        <button type="button" className="door-tile" autoFocus onClick={() => onPick("local")}>
+          <span className="door-name">On this {MACHINE_WORD}</span>
+          <span className="door-say">
+            Your own IMAP mailbox, organized right here. Nothing is sent anywhere.
+          </span>
+        </button>
+        <button type="button" className="door-tile" onClick={() => onPick("server")}>
+          <span className="door-name">Your own server</span>
+          <span className="door-say">
+            <em>Self-hosted ohmail Cloud.</em> A server you run does the organizing; this app keeps
+            a copy.
+          </span>
+        </button>
+        <button type="button" className="door-tile" onClick={() => onPick("cloud")}>
+          <span className="door-name">ohmail Cloud</span>
+          <span className="door-say">
+            Our hosted service does the organizing; this app keeps a copy.
+          </span>
+        </button>
       </div>
-      <p className="join-hint">
-        On this {MACHINE_WORD}, your mail is organized right here and nothing is sent to us. With
-        ohmail Cloud, a server does the organizing and this app keeps a copy of the result.
+      <p className="door-travel">
+        Move between these anytime. Your rules and settings live in your own mailbox and travel
+        with you — the mailbox is always the master.
       </p>
       {onCancel ? (
         <div className="join-actions">
@@ -429,7 +518,165 @@ function LocalDoor({
 }
 
 /**
- * Door two: a hosted ohmail account, mirrored onto this machine.
+ * DOOR TWO: a server the person runs, mirrored onto this machine.
+ *
+ * ── TWO PHASES IN ONE CARD, AND THE FIRST ONE IS NOT A FORMALITY ──────────────────────────────
+ *
+ * The address is asked for and PROVED before anything asks for a password. Everything that can go
+ * wrong with a self-hosted address goes wrong at that step — a typo, a machine that is not running
+ * ohmail, a certificate signed by an authority nobody outside that network has heard of — and every
+ * one of those becomes a sentence about the address rather than a sentence about credentials.
+ * Asking for all four fields at once and finding out at the end is how somebody concludes their
+ * password is wrong when their server is simply not at that name.
+ *
+ * The proof costs a real `engine_configure`; `configureSelfHostDoor` explains why that is not
+ * avoidable from a window that cannot dial, and what a refusal leaves behind.
+ *
+ * ── WHAT THIS ARM DOES NOT HAVE ───────────────────────────────────────────────────────────────
+ *
+ * No browser handoff. The shell resolves `link-desktop` to an address it owns, and all of them are
+ * ohmail.app's — see `self-host.ts`. The password-and-code form is the whole door here, and the
+ * screen says nothing about a handoff rather than offering one that would go to the wrong place.
+ */
+function ServerDoor({
+  busy,
+  problem,
+  reached,
+  onBack,
+  onCancel,
+  onProve,
+  onSubmit,
+}: {
+  busy: boolean;
+  problem: string | null;
+  /** The server the address step proved, or null while it has not been proved yet. */
+  reached: string | null;
+  onBack: () => void;
+  onCancel?: () => void;
+  onProve: (origin: string, address: string) => void;
+  onSubmit: (address: string, password: string, totp: string) => void;
+}) {
+  const [origin, setOrigin] = useState("");
+  const [address, setAddress] = useState("");
+  const [password, setPassword] = useState("");
+  const [totp, setTotp] = useState("");
+
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (reached === null) onProve(origin, address);
+        else onSubmit(address, password, totp);
+      }}
+    >
+      <h1>Your own server</h1>
+      <p>
+        {reached === null
+          ? "Give the address you open ohmail at in a browser. This app will check that your " +
+            "server is there before it asks for anything else."
+          : `Signing in happens in the mail engine on this ${MACHINE_WORD} — the password and the ` +
+            "code go straight there and are not kept anywhere else."}
+      </p>
+
+      {problem ? <p className="join-error">{problem}</p> : null}
+
+      <label className="join-label" htmlFor="server-origin">Your server's address</label>
+      {/* `type="text"` WITH `inputMode="url"`, and the pair is deliberate — this was `type="url"`
+          and that was wrong twice over. A url-typed field is constraint-validated by the browser,
+          which BLOCKS the submit and shows its own bubble ("Please enter a URL") in place of the
+          sentence this door wrote, on exactly the inputs the sentence was written for. And its
+          notion of a URL requires a scheme, so it refuses `ohmail.example.com` — the bare host this
+          door goes out of its way to accept and complete to `https://`. The mode gives the same
+          keyboard without either. Caught by the typo case below, which could not submit at all. */}
+      <input
+        id="server-origin"
+        className="join-input"
+        type="text"
+        inputMode="url"
+        spellCheck={false}
+        autoComplete="off"
+        placeholder="https://ohmail.example.com"
+        /* LOCKED once the server has answered. The engine is now configured for this address and
+           the sign-in below goes to it; a field that could still be edited would let somebody type
+           one server, prove it, then sign in believing they had reached another. Changing it is
+           "Use a different server", which starts the address step again. */
+        readOnly={reached !== null}
+        value={origin}
+        onChange={(e) => setOrigin(e.target.value)}
+      />
+
+      {reached === null ? (
+        <>
+          <label className="join-label" htmlFor="server-address">Your ohmail address on that server</label>
+          {/* Text, not `type="email"`, for the reason the address field above is text: this door's
+              own refusals are the ones worth reading, and a constraint-validated field preempts
+              them with a bubble. `inputMode` and `autoComplete` carry the keyboard and the
+              autofill, which is what the type was doing that was worth keeping. */}
+          <input
+            id="server-address"
+            className="join-input"
+            type="text"
+            inputMode="email"
+            autoComplete="username"
+            spellCheck={false}
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+          />
+          {/* SAID BEFORE THE REFUSAL, not only after it. A self-hoster on a private name is
+              GOING to hit this — their stack issues its own certificates, correctly — and a
+              person who has already read what to do recognises the refusal instead of
+              debugging it. The path is `cloud-origin.ts`'s constant, so the hint and the
+              engine's own sentence cannot name two different files. */}
+          <p className="join-hint">
+            If your server issues its own certificates, put its root certificate in a file named{" "}
+            <code>{OPERATOR_CA_FILE}</code> in this app's data folder first. ohmail verifies
+            certificates and has no way to skip that.
+          </p>
+        </>
+      ) : (
+        <>
+          <p className="join-hint">
+            Reached {reached}. Signing in as {address}.
+          </p>
+          <label className="join-label" htmlFor="server-password">Password</label>
+          <input
+            id="server-password"
+            className="join-input"
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+          <label className="join-label" htmlFor="server-totp">Code from your authenticator app</label>
+          <input
+            id="server-totp"
+            className="join-input join-code"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            maxLength={6}
+            value={totp}
+            onChange={(e) => setTotp(e.target.value)}
+          />
+        </>
+      )}
+
+      <div className="join-actions">
+        <Button variant="primary" type="submit" disabled={busy}>
+          {busy
+            ? reached === null ? "Checking your server…" : "Signing in…"
+            : reached === null ? "Continue" : "Sign in"}
+        </Button>
+        <Button variant="ghost" type="button" onClick={onBack} disabled={busy}>Back</Button>
+        {onCancel ? (
+          <Button variant="ghost" type="button" onClick={onCancel} disabled={busy}>Cancel</Button>
+        ) : null}
+      </div>
+    </form>
+  );
+}
+
+/**
+ * Door three: a hosted ohmail account, mirrored onto this machine.
  *
  * ── TWO WAYS IN, AND THE PASSWORD ONE IS STILL THE DEFAULT ──────────────────────────────────
  *

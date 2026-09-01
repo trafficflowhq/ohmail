@@ -416,3 +416,88 @@ fn the_host_setting_round_trips_and_everything_broken_reads_as_disabled() {
     }
     let _ = fs::remove_dir_all(&dir);
 }
+
+// ── The operator's own certificate authority ────────────────────────────────────────────────
+//
+// A person self-hosting on a private name issues their own certificates, and Node does not read
+// the operating system's trust store — so without this variable the engine cannot see their
+// server at all, whatever they have installed on the machine. See `env_for`.
+
+#[test]
+fn an_operator_ca_is_composed_for_both_doors_when_the_file_is_there() {
+    let dir = std::env::temp_dir().join(format!("ohmail-config-ca-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("mkdir");
+
+    // ABSENT: nothing is composed. Node prints a warning for a path that does not exist, on every
+    // launch, at every user — so the empty case has to compose nothing at all rather than a path.
+    for config in [local_door(), cloud_door()] {
+        let env = env_map(&env_for(&config, &dir));
+        assert!(
+            !env.contains_key("NODE_EXTRA_CA_CERTS"),
+            "a CA path was composed with no file there, for {config:?}"
+        );
+    }
+
+    let ca = dir.join(OPERATOR_CA_FILE);
+    fs::write(&ca, "-----BEGIN CERTIFICATE-----\n").expect("write");
+
+    // PRESENT: composed for BOTH doors. An operator whose IMAP server presents a private CA has
+    // the identical problem with the identical fix.
+    for config in [local_door(), cloud_door()] {
+        let env = env_map(&env_for(&config, &dir));
+        assert_eq!(
+            env.get("NODE_EXTRA_CA_CERTS").map(String::as_str),
+            Some(ca.to_string_lossy().as_ref()),
+            "the operator's CA did not reach the engine for {config:?}"
+        );
+    }
+
+    // A DIRECTORY of that name is not a certificate file, and must not be composed as one.
+    fs::remove_file(&ca).expect("rm");
+    fs::create_dir_all(&ca).expect("mkdir");
+    assert!(!env_map(&env_for(&cloud_door(), &dir)).contains_key("NODE_EXTRA_CA_CERTS"));
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn it_never_relaxes_verification_to_reach_a_private_server() {
+    // THE CLAIM THE DOOR MAKES OUT LOUD: ohmail verifies certificates and has no way to skip it.
+    // `NODE_EXTRA_CA_CERTS` only ADDS a root. `NODE_TLS_REJECT_UNAUTHORIZED=0` would turn checking
+    // off wholesale, and it is exactly the shortcut a future change reaches for when a self-hoster
+    // reports that their server is unreachable. This is the line that stops it landing quietly.
+    let dir = std::env::temp_dir().join(format!("ohmail-config-ca-strict-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("mkdir");
+    fs::write(dir.join(OPERATOR_CA_FILE), "-----BEGIN CERTIFICATE-----\n").expect("write");
+
+    for config in [local_door(), cloud_door()] {
+        let env = env_map(&env_for(&config, &dir));
+        assert!(!env.contains_key("NODE_TLS_REJECT_UNAUTHORIZED"), "for {config:?}");
+        // Nor smuggled in through the options variable, which would be invisible in a key scan.
+        let options = env.get("NODE_OPTIONS").cloned().unwrap_or_default();
+        assert!(!options.contains("insecure"), "NODE_OPTIONS carried {options:?}");
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_operator_ca_file_is_spelled_the_same_way_in_the_engine() {
+    // THREE PLACES NAME THIS FILE and they are in two languages: this process composes the path,
+    // the engine's probe tells an operator where to put it, and the door's address step tells them
+    // before they hit the refusal. A drift between them is a sentence that names a file the app
+    // does not read — the worst kind of instruction, because following it changes nothing.
+    //
+    // This process links no JavaScript, so the agreement is checked by reading the source that
+    // holds the other copy. Change either spelling alone and this fails.
+    let engine = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../sidecar/src/cloud-origin.ts");
+    let source = fs::read_to_string(&engine)
+        .unwrap_or_else(|e| panic!("could not read {}: {e}", engine.display()));
+    let needle = format!("export const OPERATOR_CA_FILE = \"{OPERATOR_CA_FILE}\";");
+    assert!(
+        source.contains(&needle),
+        "the engine does not declare {needle:?} — the shell composes a path to a file nothing names"
+    );
+}
