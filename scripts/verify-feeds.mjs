@@ -156,8 +156,39 @@ console.log(`\nlatest.json — version ${latest.version}`);
  * exercise on any machine it builds from. A `.deb` install updates through the package manager it
  * came from, which is what the README, the CHANGELOG and the AUR package all say. Adding a key
  * here to make a red go green would publish an untested install path; the refusal below is the
- * thing that stops that happening quietly. */
-const WANT = ["windows-x86_64", "linux-x86_64", "linux-aarch64", "darwin-aarch64", "darwin-x86_64"];
+ * thing that stops that happening quietly.
+ *
+ * ── AND WHY THE LIST DEPENDS ON THE VERSION ──────────────────────────────────────────────────
+ *
+ * This verifier is meant to be run by anyone against any download, including an OLD one, and the
+ * release workflow can be dispatched by hand against an old tag to rebuild a feed that went
+ * missing — the recovery path that exists so a stranded client is not stranded for ever. Releases
+ * before 0.13.3 published no arm64 artifact at all, so demanding `linux-aarch64` of them would
+ * report every one of those feeds as broken and refuse to regenerate any of them.
+ *
+ * The floor is therefore a version comparison rather than a fixed list, and it is asserted in BOTH
+ * directions: at or above the floor the key is required, below it the key must be ABSENT. A
+ * one-directional rule would let an old release quietly carry a key nothing built for it. */
+const ARM_LINUX_FROM = [0, 13, 3];
+
+/** `1.2.3` → `[1, 2, 3]`, and anything that is not three numbers is not a version. */
+function semver(v) {
+  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(String(v ?? ""));
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+function atLeast(a, b) {
+  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] > b[i];
+  return true;
+}
+
+const feedVersion = semver(latest.version);
+if (!feedVersion) { console.error(`latest.json version ${JSON.stringify(latest.version)} is not a semver`); process.exit(1); }
+const armLinux = atLeast(feedVersion, ARM_LINUX_FROM);
+console.log(`  (arm64 Linux ${armLinux ? "expected" : "not expected"} at ${latest.version} — the floor is ${ARM_LINUX_FROM.join(".")})`);
+
+const WANT = armLinux
+  ? ["windows-x86_64", "linux-x86_64", "linux-aarch64", "darwin-aarch64", "darwin-x86_64"]
+  : ["windows-x86_64", "linux-x86_64", "darwin-aarch64", "darwin-x86_64"];
 for (const k of WANT) {
   const entry = latest.platforms?.[k];
   if (!entry) { bad(`platforms.${k} is missing — those clients would never update again`); continue; }
@@ -184,26 +215,113 @@ for (const k of Object.keys(latest.platforms ?? {})) {
  * `*.AppImage` glob ending in `head -1` for as long as there was only one, and a second AppImage
  * turns that into an arbitrary pick between the two.
  *
- * The filename is the only statement of architecture anywhere in the feed, so the filename is what
- * is checked, by exact name. Restated here rather than derived from the manifest on purpose: a
- * check that reads the value it is checking proves the value equals itself. These are the names
- * `build.yml`'s header calls a contract, and this is the other party to it. */
+ * TWO CHECKS, BECAUSE THE FILENAME IS NOT EVIDENCE OF WHAT IS INSIDE IT.
+ *
+ *   1. The URL names the artifact this key's architecture is built as, by exact name. Restated
+ *      here rather than derived from the manifest on purpose — a check that reads the value it is
+ *      checking proves the value equals itself. These are the names `build.yml`'s header calls a
+ *      contract, and this is the other party to it. It catches a manifest pointed at the wrong
+ *      file, which is the mistake a glob makes.
+ *
+ *   2. The BYTES say the same thing. An AppImage is an ELF executable with a filesystem appended,
+ *      and that outer ELF is the AppImage runtime — compiled for the architecture the payload is
+ *      for. So the file itself carries the answer, in `e_machine` at offset 0x12 of its header,
+ *      and it can be read with no tools at all. This catches what (1) cannot: two correctly-named
+ *      files whose CONTENTS were swapped during a hand-assembled release, where every signature
+ *      still verifies because the signatures are made after the swap.
+ *
+ * (1) alone was what this check did when it was first written, and the comment claimed it
+ * established that an arm64 install gets bytes that run. It established that a NAME was right.
+ * Nothing here may claim more than the thing it reads. */
 const LINUX_PAYLOAD = {
-  "linux-x86_64": "ohmail-linux-x86_64.AppImage",
-  "linux-aarch64": "ohmail-linux-aarch64.AppImage",
+  "linux-x86_64": { asset: "ohmail-linux-x86_64.AppImage", machine: 0x3e, arch: "x86-64" },
+  "linux-aarch64": { asset: "ohmail-linux-aarch64.AppImage", machine: 0xb7, arch: "AArch64" },
 };
+/** `e_machine` out of an ELF header, or null if this is not a little-endian ELF at all. */
+function elfMachine(file) {
+  let fd;
+  try {
+    fd = fs.openSync(file, "r");
+    const head = Buffer.alloc(20);
+    if (fs.readSync(fd, head, 0, 20, 0) < 20) return null;
+    if (head.subarray(0, 4).toString("latin1") !== "\x7fELF") return null;
+    if (head[5] !== 1) return null; // EI_DATA: both architectures here are little-endian
+    return head.readUInt16LE(18);
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
 const seen = new Map();
 for (const [k, want] of Object.entries(LINUX_PAYLOAD)) {
   const url = latest.platforms?.[k]?.url;
   if (!url) continue; // already reported as missing above; not reported twice
   const got = path.basename(new URL(url).pathname);
-  if (got !== want) {
-    bad(`platforms.${k} points at ${got}, which is not ${want} — that architecture's installs `
+  if (got !== want.asset) {
+    bad(`platforms.${k} points at ${got}, which is not ${want.asset} — that architecture's installs `
       + "would be offered a payload that cannot run on them");
   }
   const first = seen.get(got);
   if (first) bad(`platforms.${first} and platforms.${k} both point at ${got}`);
   else seen.set(got, k);
+
+  const file = path.join(assetsDir, got);
+  if (!fs.existsSync(file)) continue; // already reported above
+  const machine = elfMachine(file);
+  if (machine === null) {
+    bad(`${k}: ${got} is not a little-endian ELF — an AppImage's own runtime is one, so this is `
+      + "not the artifact the feed says it is");
+  } else if (machine !== want.machine) {
+    const other = Object.values(LINUX_PAYLOAD).find((p) => p.machine === machine);
+    bad(`${k}: ${got} is built for ${other ? other.arch : `ELF machine 0x${machine.toString(16)}`}, `
+      + `not ${want.arch} — the filename and the signature are both right and the bytes are not`);
+  } else {
+    ok(`${k}: ${got} is ${want.arch} in its own ELF header`);
+  }
+}
+
+/* ── SHA256SUMS: THE CHECKSUMS THE DOWNLOAD PAGE PROMISES, CHECKED ───────────────────────────
+ *
+ * The releases publish a `SHA256SUMS` covering every binary asset, because the page that links
+ * the downloads offers "notes and checksums" beside the sentence saying the builds are unsigned —
+ * and for a long time the checksums did not exist. A file nobody verifies is decoration, and a
+ * decorative checksum file beside an unsigned binary is worse than none: it invites a reader to
+ * believe a check happened.
+ *
+ * So it is checked here, in the same run that checks the signatures, and against the same bytes.
+ * The two claims are different and both are wanted: a signature says the project produced these
+ * bytes, a checksum lets a reader confirm the bytes they hold are the ones the release names,
+ * without any key material at all.
+ *
+ * Absent rather than fatal, on purpose — releases before this one published none, and this
+ * verifier is meant to be runnable against an old download. What is NOT optional is the coverage:
+ * when the file is there, every payload a signature was verified over must appear in it, or the
+ * checksum file is quietly narrower than the release it claims to describe. */
+const sumsPath = path.join(assetsDir, "SHA256SUMS");
+if (!fs.existsSync(sumsPath)) {
+  console.log("\nSHA256SUMS — not attached to this release (published from 0.13.3 onward)");
+} else {
+  console.log("\nSHA256SUMS");
+  const listed = new Set();
+  for (const line of fs.readFileSync(sumsPath, "utf8").split("\n")) {
+    const m = /^([0-9a-f]{64})\s[\s*](.+)$/.exec(line.trimEnd());
+    if (!line.trim()) continue;
+    if (!m) { bad(`SHA256SUMS has a line that is not "<64 hex>  <name>": ${line.slice(0, 60)}`); continue; }
+    const [, want, name] = m;
+    listed.add(name);
+    const file = path.join(assetsDir, name);
+    if (!fs.existsSync(file)) { bad(`SHA256SUMS names ${name}, which is not in the asset set`); continue; }
+    const got = crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+    if (got === want) { ok(`${name} — sha256 ${want.slice(0, 16)}…`); verified++; }
+    else bad(`${name} — SHA256SUMS says ${want.slice(0, 16)}…, the file is ${got.slice(0, 16)}…`);
+  }
+  for (const k of WANT) {
+    const url = latest.platforms?.[k]?.url;
+    if (!url) continue;
+    const name = path.basename(new URL(url).pathname);
+    if (!listed.has(name)) bad(`${name} is a published payload and SHA256SUMS does not list it`);
+  }
 }
 
 // ── the Sparkle appcast: raw Ed25519 over the archive ────────────────────────────────────────

@@ -18,8 +18,43 @@ Signed installers — a real Apple Developer ID and an Authenticode certificate.
 
 ## [0.13.3] — 2026-09-01
 
-ohmail now has an arm64 Linux build, and the mail engine stops using a stored
+ohmail now has an arm64 Linux build, connecting your own mail server tells you
+which host its certificate is for, and the mail engine stops using a stored
 password with a server it was never proved against.
+
+### Connecting your own mail server says which host the certificate is for
+
+When you connect a mailbox, ohmail dials the server and checks its certificate
+before it sends your password anywhere. A common way for that check to fail is a
+name that looks right and is not: you type `mail.your-domain`, the server
+answering there presents a certificate for `your-domain`, and the connection is
+refused. That refusal is correct and nothing of yours is sent — but until now the
+desktop app only told you to "check the IMAP host with your provider", while it
+already had the right host in hand.
+
+It now says it: which name the certificate is for, which name you typed, and —
+where the certificate makes it unambiguous — the name to use instead. This is the
+wording the web app has been showing for a while, so the same refusal reads the
+same way wherever you meet it.
+
+Nothing about what is trusted changes. The suggested host is only ever shown to
+you; nothing connects to it until you enter it, and the next attempt verifies the
+certificate against that name as strictly as before. A refusal this does not fully
+recognise still shows the server's own sentence rather than a guess.
+
+### Checksums
+
+Every release now carries a `SHA256SUMS` listing every file on it, so you can
+check a download against what was published:
+
+```bash
+shasum -a 256 --check SHA256SUMS   # sha256sum --check on Linux
+```
+
+The download page has offered "notes and checksums" for a long time and the
+releases published none. The builds are unsigned, so this is one of the two checks
+actually available — the other being the signature on an update, which has always
+been verified before anything is installed.
 
 ### arm64 Linux
 

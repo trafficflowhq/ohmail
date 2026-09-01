@@ -298,8 +298,17 @@ them.
 
 **[Releases](https://github.com/trafficflowhq/ohmail/releases) has the
 installers** — no GitHub account needed, and each release names the CI run that
-built it. Every run's summary prints the SHA-256 of every artifact, so you can
-check what you downloaded against what the run made.
+built it. Every release carries a **`SHA256SUMS`** listing every file on it, and
+every run's summary prints the SHA-256 of the artifacts it made, so you can check
+what you downloaded against both:
+
+```bash
+shasum -a 256 --check SHA256SUMS   # sha256sum --check on Linux
+```
+
+Nothing is signed by an operating system's code-signing scheme (see below), so
+these are the checks that are actually available. `SHA256SUMS` is published from
+**0.13.3** onward; earlier releases have only the run summaries.
 
 | Platform | File | Requires |
 |---|---|---|

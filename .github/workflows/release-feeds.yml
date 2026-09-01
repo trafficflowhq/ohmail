@@ -159,6 +159,37 @@ jobs:
           fi
           echo "release $RELEASE_TAG · version $VERSION"
 
+          # ── ARM64 LINUX EXISTS FROM 0.13.3, AND NOT BEFORE ────────────────
+          #
+          # This workflow can be dispatched by hand against ANY published tag —
+          # the header's own example is `v0.5.0` — and that recovery path is the
+          # reason a client whose feed went missing is not stranded for ever.
+          # Releases before 0.13.3 attached no arm64 artifact at all, so a flat
+          # "there must be two AppImages" would refuse to regenerate a single one
+          # of those feeds. The requirement is therefore a FLOOR read off the
+          # release's own version, not a constant.
+          #
+          # Asserted in BOTH directions below: at or above the floor the arm64
+          # AppImage is required and the manifest carries five keys; under it the
+          # arm64 AppImage must be ABSENT and the manifest carries four. A
+          # one-directional rule would let an old release quietly grow a key that
+          # nothing was ever built for.
+          # The comparison is done in node rather than with `sort -V | head -1`.
+          # Two reasons, both concrete: this job runs on macOS, whose `sort` is
+          # BSD and whose `-V` cannot be relied on; and `head` closing the pipe
+          # is the SIGPIPE shape this repository has been bitten by, where the
+          # producer's death is read as its answer.
+          ARM_FROM=0.13.3
+          ARM_LINUX="$(ARM_FROM="$ARM_FROM" VERSION="$VERSION" node -e '
+            const p = (v) => String(v).split(".").map(Number);
+            const [a, b] = [p(process.env.VERSION), p(process.env.ARM_FROM)];
+            if (a.length !== 3 || a.some(Number.isNaN)) { process.stderr.write("bad version\n"); process.exit(1); }
+            for (let i = 0; i < 3; i++) if (a[i] !== b[i]) { process.stdout.write(a[i] > b[i] ? "1" : "0"); process.exit(0); }
+            process.stdout.write("1");
+          ')"
+          if [ "$ARM_LINUX" = 1 ]; then WANT_APPIMAGES=2; else WANT_APPIMAGES=1; fi
+          echo "arm64 Linux: $([ "$ARM_LINUX" = 1 ] && echo required || echo "not expected (below $ARM_FROM)")"
+
           PUB_DATE_ISO="${RELEASE_PUBLISHED_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
           NOTES="${RELEASE_BODY:-ohmail $VERSION}"
 
@@ -194,7 +225,14 @@ jobs:
           MAC_TGZ="$(pick '*.app.tar.gz')"
           test -n "$WIN_EXE"  || { echo "no NSIS -setup.exe attached to $RELEASE_TAG" >&2; exit 1; }
           test -s "$LIN_X64_APPIMAGE" || { echo "no ohmail-linux-x86_64.AppImage attached to $RELEASE_TAG" >&2; exit 1; }
-          test -s "$LIN_ARM_APPIMAGE" || { echo "no ohmail-linux-aarch64.AppImage attached to $RELEASE_TAG" >&2; exit 1; }
+          if [ "$ARM_LINUX" = 1 ]; then
+            test -s "$LIN_ARM_APPIMAGE" || { echo "no ohmail-linux-aarch64.AppImage attached to $RELEASE_TAG" >&2; exit 1; }
+          else
+            test ! -e "$LIN_ARM_APPIMAGE" || {
+              echo "$RELEASE_TAG is below $ARM_FROM but carries an arm64 AppImage — nothing built one for it" >&2
+              exit 1
+            }
+          fi
           test -n "$MAC_TGZ"  || { echo "no *.app.tar.gz attached to $RELEASE_TAG" >&2; exit 1; }
           # …and NOTHING ELSE ends in .AppImage. Naming the two files above stops
           # a third one being picked by accident; it does not stop a third one
@@ -206,12 +244,45 @@ jobs:
           # the pipeline reports the wrong thing.
           APPIMAGES="$(ls assets/*.AppImage 2>/dev/null || true)"
           APPIMAGE_COUNT="$(printf '%s\n' "$APPIMAGES" | grep -c . || true)"
-          if [ "$APPIMAGE_COUNT" != "2" ]; then
-            echo "expected exactly 2 AppImage assets (x86_64 and aarch64), found $APPIMAGE_COUNT:" >&2
+          if [ "$APPIMAGE_COUNT" != "$WANT_APPIMAGES" ]; then
+            echo "expected exactly $WANT_APPIMAGES AppImage asset(s) at $VERSION, found $APPIMAGE_COUNT:" >&2
             printf '%s\n' "$APPIMAGES" >&2
             echo "Every Linux artifact needs a platform key of its own in latest.json." >&2
             exit 1
           fi
+
+          # ══════════════════════════════════════════════════════════════════
+          # SHA256SUMS — the checksums the download page has been promising.
+          #
+          # The apps are unsigned, and the same page that says so links "All
+          # releases, notes and checksums". The releases published none: every
+          # CI run printed its own artifacts' hashes into a run summary, which
+          # is one platform's worth of hashes on a page most readers of a
+          # download never open. A claim the product makes is a claim the
+          # product has to honour, so the release now carries one file with all
+          # of them.
+          #
+          # COMPUTED HERE AND NOT IN THE BUILD, on purpose. Each build job sees
+          # only its own platform's output; this job is the one place the whole
+          # asset set exists at once, and — the half that matters — these are
+          # the bytes AS ATTACHED, downloaded back off the release. A sum
+          # computed beside a freshly built file attests to the file the runner
+          # had. This one attests to the file a reader will get.
+          #
+          # The feeds are deliberately not in it: they do not exist yet at this
+          # point, and a checksum file that listed the file it is uploaded
+          # beside would have to be written twice. Their integrity is the
+          # signatures, which is a stronger claim than a hash on the same page.
+          ( cd assets && shasum -a 256 -- * > ../SHA256SUMS )
+          echo "--- SHA256SUMS ---"; cat SHA256SUMS
+          # It covers every attached binary, asserted rather than assumed: a
+          # glob that silently matched nothing would produce an empty file and
+          # a release that still claims to publish checksums.
+          SUM_LINES="$(grep -c . SHA256SUMS || true)"
+          test "$SUM_LINES" -ge 5 || { echo "SHA256SUMS lists only $SUM_LINES file(s)" >&2; exit 1; }
+          # And it verifies where it was made. `--check` reads the names
+          # relative to the working directory, so it runs inside assets/.
+          ( cd assets && shasum -a 256 --check ../SHA256SUMS )
 
           # ════════════════════════════════════════════════════════════════════
           # latest.json — the Tauri updater manifest, all three platforms.
@@ -246,20 +317,22 @@ jobs:
           }
           WIN_SIG="$(sign_tauri "$WIN_EXE")"
           LIN_X64_SIG="$(sign_tauri "$LIN_X64_APPIMAGE")"
-          LIN_ARM_SIG="$(sign_tauri "$LIN_ARM_APPIMAGE")"
           MAC_SIG="$(sign_tauri "$MAC_TGZ")"
           test -n "$WIN_SIG"     || { echo "empty Windows signature" >&2; exit 1; }
           test -n "$LIN_X64_SIG" || { echo "empty Linux x86_64 signature" >&2; exit 1; }
-          test -n "$LIN_ARM_SIG" || { echo "empty Linux arm64 signature" >&2; exit 1; }
           test -n "$MAC_SIG"     || { echo "empty macOS signature" >&2; exit 1; }
-          # The two Linux signatures are over two different files, so they must
-          # differ. Identical ones mean both `sign_tauri` calls were handed the
-          # same path — the failure the by-name picks above exist to prevent,
-          # caught here as well because this is the last place before the bytes
-          # become a published feed.
-          if [ "$LIN_X64_SIG" = "$LIN_ARM_SIG" ]; then
-            echo "the two Linux AppImages produced the same signature — they are the same file" >&2
-            exit 1
+          if [ "$ARM_LINUX" = 1 ]; then
+            LIN_ARM_SIG="$(sign_tauri "$LIN_ARM_APPIMAGE")"
+            test -n "$LIN_ARM_SIG" || { echo "empty Linux arm64 signature" >&2; exit 1; }
+            # The two Linux signatures are over two different files, so they must
+            # differ. Identical ones mean both `sign_tauri` calls were handed the
+            # same path — the failure the by-name picks above exist to prevent,
+            # caught here as well because this is the last place before the bytes
+            # become a published feed.
+            if [ "$LIN_X64_SIG" = "$LIN_ARM_SIG" ]; then
+              echo "the two Linux AppImages produced the same signature — they are the same file" >&2
+              exit 1
+            fi
           fi
 
           jq -n \
@@ -270,8 +343,6 @@ jobs:
             --arg win_sig  "$WIN_SIG" \
             --arg lin_url  "$BASE/$(basename "$LIN_X64_APPIMAGE")" \
             --arg lin_sig  "$LIN_X64_SIG" \
-            --arg lin_arm_url "$BASE/$(basename "$LIN_ARM_APPIMAGE")" \
-            --arg lin_arm_sig "$LIN_ARM_SIG" \
             --arg mac_url  "$BASE/$(basename "$MAC_TGZ")" \
             --arg mac_sig  "$MAC_SIG" \
             '{
@@ -281,11 +352,18 @@ jobs:
                platforms: {
                  "windows-x86_64": { signature: $win_sig, url: $win_url },
                  "linux-x86_64":   { signature: $lin_sig, url: $lin_url },
-                 "linux-aarch64":  { signature: $lin_arm_sig, url: $lin_arm_url },
                  "darwin-aarch64": { signature: $mac_sig, url: $mac_url },
                  "darwin-x86_64":  { signature: $mac_sig, url: $mac_url }
                }
              }' > latest.json
+          # The arm64 entry is ADDED rather than written inline, so a release
+          # below the floor emits the four-key manifest it always did — byte for
+          # byte the shape those clients have been reading.
+          if [ "$ARM_LINUX" = 1 ]; then
+            jq --arg url "$BASE/$(basename "$LIN_ARM_APPIMAGE")" --arg sig "$LIN_ARM_SIG" \
+              '.platforms["linux-aarch64"] = { signature: $sig, url: $url }' \
+              latest.json > latest.json.tmp && mv latest.json.tmp latest.json
+          fi
           jq . latest.json > /dev/null   # it is valid JSON or the step fails here
           # EVERY PLATFORM THE PRODUCT SHIPS, ASSERTED. A manifest missing a key
           # is not an error to any client — it is a client that quietly never
@@ -293,16 +371,26 @@ jobs:
           # prevent and the one nobody reports.
           jq -e '.platforms
                   | has("windows-x86_64") and has("linux-x86_64")
-                    and has("linux-aarch64")
                     and has("darwin-aarch64") and has("darwin-x86_64")' \
             latest.json > /dev/null \
             || { echo "latest.json is missing a platform entry" >&2; exit 1; }
-          # The two Linux entries point at two different files. Asserted on the
-          # manifest rather than only on the variables above, because this is the
-          # object the clients read.
-          jq -e '.platforms["linux-x86_64"].url != .platforms["linux-aarch64"].url' \
-            latest.json > /dev/null \
-            || { echo "both Linux entries name one file — one architecture would be handed the other's payload" >&2; exit 1; }
+          # The arm64 key is asserted in BOTH directions against the floor, for
+          # the reason the floor's own comment gives: present at or above it,
+          # absent below it. An old release quietly growing a key nothing built
+          # for it is as wrong as a new one missing the key it needs.
+          if [ "$ARM_LINUX" = 1 ]; then
+            jq -e '.platforms | has("linux-aarch64")' latest.json > /dev/null \
+              || { echo "latest.json is missing linux-aarch64 at $VERSION" >&2; exit 1; }
+            # The two Linux entries point at two different files. Asserted on the
+            # manifest rather than only on the variables above, because this is
+            # the object the clients read.
+            jq -e '.platforms["linux-x86_64"].url != .platforms["linux-aarch64"].url' \
+              latest.json > /dev/null \
+              || { echo "both Linux entries name one file — one architecture would be handed the other's payload" >&2; exit 1; }
+          else
+            jq -e '.platforms | has("linux-aarch64") | not' latest.json > /dev/null \
+              || { echo "latest.json carries linux-aarch64 at $VERSION, which is below $ARM_FROM" >&2; exit 1; }
+          fi
           echo "--- latest.json ---"; cat latest.json
 
           # ════════════════════════════════════════════════════════════════════
@@ -431,8 +519,8 @@ jobs:
 
           # ── Attach both feeds to the release ───────────────────────────────
           gh release upload "$RELEASE_TAG" --repo "$REPO" --clobber \
-            latest.json appcast-macos.xml
-          echo "uploaded latest.json and appcast-macos.xml to $RELEASE_TAG"
+            latest.json appcast-macos.xml SHA256SUMS
+          echo "uploaded latest.json, appcast-macos.xml and SHA256SUMS to $RELEASE_TAG"
 
           # ── …and what was attached is what was verified ────────────────────
           # Fetched back and compared byte for byte rather than verified again:
@@ -441,10 +529,11 @@ jobs:
           # catches. A release is served for years; this costs two requests.
           rm -rf uploaded && mkdir uploaded
           gh release download "$RELEASE_TAG" --repo "$REPO" --dir uploaded --clobber \
-            --pattern latest.json --pattern appcast-macos.xml
+            --pattern latest.json --pattern appcast-macos.xml --pattern SHA256SUMS
           cmp latest.json uploaded/latest.json
           cmp appcast-macos.xml uploaded/appcast-macos.xml
-          echo "the attached feeds are byte-identical to the verified ones"
+          cmp SHA256SUMS uploaded/SHA256SUMS
+          echo "the attached feeds and checksums are byte-identical to the verified ones"
 
       - name: Run summary
         if: always()
@@ -456,6 +545,7 @@ jobs:
             echo '|---|---|'
             echo '| `latest.json` | Windows, Linux and macOS (Tauri, minisign) |'
             echo '| `appcast-macos.xml` | the handover for installed SwiftUI clients (Sparkle, EdDSA) |'
+            echo '| `SHA256SUMS` | the SHA-256 of every binary asset, as attached |'
             echo
             echo "Attached to \`$RELEASE_TAG\`; served from \`/releases/latest/download/\`."
             echo
@@ -465,6 +555,7 @@ jobs:
             echo
             echo '```'
             echo 'gh release download <tag> --dir assets'
+            echo 'cd assets && shasum -a 256 --check SHA256SUMS && cd ..'
             echo 'node scripts/verify-feeds.mjs . assets assets/latest.json assets/appcast-macos.xml'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
