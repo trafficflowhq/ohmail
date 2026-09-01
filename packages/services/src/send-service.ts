@@ -56,6 +56,17 @@ function escapeHtml(s: string): string {
  * place it is touched before the wire); a plain original is escaped into `<br>`-joined text so an
  * html recipient still sees it. The html half is folded into the outgoing message only when the
  * draft is itself rich — a plain forward carries the quote in text alone.
+ *
+ * ── THE BLOCK CARRIES NO SEPARATOR. {@link forwardJoin} OWNS THAT ───────────────────────────
+ *
+ * This used to return `\n\n` + the banner in text and `<br><br><hr>` + the banner in html — the
+ * gap between the author's note and the quote, baked into the quote. A forward may now be sent
+ * with NO note (the forwarded message is the content; the note is the optional part), and then
+ * there is nothing to separate FROM: the gap became the first thing in the mail — two blank lines
+ * above the banner in text/plain, and a rule floating over nothing in html.
+ *
+ * A separator between two things belongs to the join, not to either thing, so it moved there.
+ * The block returned here starts on the banner and can be sent as-is.
  */
 function forwardedQuote(
   orig: { from: string; date: Date | null; subject: string },
@@ -69,18 +80,34 @@ function forwardedQuote(
     ...(dateStr ? [`Date: ${dateStr}`] : []),
     `Subject: ${orig.subject}`,
   ];
-  const text = `\n\n${headerLines.join("\n")}\n\n${originalText}`;
+  const text = `${headerLines.join("\n")}\n\n${originalText}`;
   const bodyHtml = originalHtml
     ? sanitizeOutboundHtml(originalHtml)
     : escapeHtml(originalText).replace(/\n/g, "<br>");
   const html =
-    `<br><br><hr>` +
     `<div>---------- Forwarded message ----------</div>` +
     `<div>From: ${escapeHtml(orig.from)}</div>` +
     (dateStr ? `<div>Date: ${escapeHtml(dateStr)}</div>` : "") +
     `<div>Subject: ${escapeHtml(orig.subject)}</div>` +
     `<blockquote>${bodyHtml}</blockquote>`;
   return { text, html };
+}
+
+/**
+ * THE AUTHOR'S NOTE ABOVE A QUOTED ORIGINAL — with the separator only where there are two things.
+ *
+ * `note` is the draft's own body (or its sanitized html); `quote` is {@link forwardedQuote}'s
+ * separator-free block; `gap` is what stands between them in this part's syntax. A BLANK note —
+ * absent, empty, or nothing but whitespace — yields the quote alone, which is what a forward sent
+ * with no message of its own is: the forwarded mail, opening on its own banner.
+ *
+ * Blankness is judged on the PLAIN note in both arms (see the call site), so the two parts of a
+ * multipart forward cannot disagree about whether a note exists — and it is the same `trim()`
+ * emptiness the client's Send lock exempts (`mail-send.ts#canSend`), so a note the editor let
+ * through as "nothing" is not printed here as a gap.
+ */
+function forwardJoin(note: string, quote: string, gap: string, blankNote: boolean): string {
+  return blankNote ? quote : note + gap + quote;
 }
 
 /** Per-call send deps: the INJECTED adapter factory (prod = makeSendAdapter; tests = a fake/GreenMail spy). */
@@ -1181,6 +1208,16 @@ export class SendService {
         | undefined;
       let fwdText = "";
       let fwdHtml = "";
+      /**
+       * IS THERE A NOTE ABOVE THE QUOTE? — one answer, used by both parts.
+       *
+       * A forward may be sent with no message of its own, so this decides whether the outgoing
+       * mail has TWO things in it or one. Judged on the plain body in both arms deliberately: the
+       * html half of a rich draft is derived from this same text at write time
+       * (`DraftsService.richBody`), and asking the markup separately is how the text part and the
+       * html part come to disagree about whether the reader wrote anything.
+       */
+      const blankNote = d.body.trim().length === 0;
       if (input.forwardOf) {
         const [orig] = await tx.select({
           id: messages.id, mailboxId: messages.mailboxId, noForward: messages.noForward,
@@ -1247,11 +1284,16 @@ export class SendService {
         ...(cc.length ? { cc: cc.map((a) => a.address) } : {}),
         ...(bcc.length ? { bcc: bcc.map((a) => a.address) } : {}),
         subject: d.subject,
-        // The user's text, then the quoted original on a forward (`fwdText`/`fwdHtml` are "" for a
-        // normal send). The html half is appended ONLY when the draft is itself rich; a plain
-        // forward carries the quote in text alone.
-        text: d.body + fwdText,
-        ...(html ? { html: html + fwdHtml } : {}),
+        // The user's text, then the quoted original on a forward — with the separator between
+        // them, and ONLY where there are two things to separate (`forwardJoin`). `fwdText`/
+        // `fwdHtml` are "" for a normal send, and `forwardJoin` is then the identity on the body:
+        // a blank-bodied NON-forward joins "" to "" and is byte-identical to what it always was.
+        // The html half is appended ONLY when the draft is itself rich; a plain forward carries
+        // the quote in text alone.
+        text: fwdText ? forwardJoin(d.body, fwdText, "\n\n", blankNote) : d.body,
+        ...(html
+          ? { html: fwdHtml ? forwardJoin(html, fwdHtml, "<br><br><hr>", blankNote) : html }
+          : {}),
         messageId: mintedMessageId,
         ...(inReplyTo ? { inReplyTo, references } : {}),
         // ── ATTACHMENTS RIDE THE REQUEST, NOT THE ROW ──────────────────────────────────────

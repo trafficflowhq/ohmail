@@ -278,7 +278,7 @@ export function writeReplyMeta(lane: string, meta: ReplyEditorMeta): void {
  *   · `sending`/`queued` are locked because a second press mints a second Idempotency-Key,
  *     which is a second reservation, which is a second delivery to a real person.
  *   · an empty body is locked because the server accepts a blank one
- *     (`drafts-service.ts:167-171`) and would post it.
+ *     (`drafts-service.ts:167-171`) and would post it — EXCEPT ON A FORWARD, see below.
  *   · `unverified` and `failed` are NOT locked: both are terminal on the server for that
  *     draft, so the only way forward is a fresh send the user deliberately chooses.
  *   · a COMPOSE additionally needs a recipient and a mailbox to send from. Both are refused
@@ -292,10 +292,30 @@ export function writeReplyMeta(lane: string, meta: ReplyEditorMeta): void {
  * `composePlan`) and is refused here, at the one predicate every caller consults. Present-
  * but-empty and absent are different statements on purpose: absent means "enrich decides",
  * empty means "the user removed or mistyped every recipient", and only the second may block.
+ *
+ * ── A FORWARD IS EXEMPT FROM THE EMPTY-BODY REFUSAL, AND ONLY FROM THAT ONE ────────────────
+ *
+ * Reported from real use: *"forwarding a mail enforces a message, a fwd mail must also be able to
+ * be sent without a message."* The refusal above was written for the two shapes where `body` is
+ * the whole message — a reply and a compose — and on a forward it is not: the FORWARDED MESSAGE
+ * is the content (the server quotes it and streams its attachments from `forwardOf`, which is why
+ * the client sends only an id), and the note above it is the optional part. "Pass this along, no
+ * comment" is the ordinary case, and it was the one case the lock made unreachable.
+ *
+ * The discriminator is `forwardOf` itself — a NON-EMPTY string, so the `forwardOf: null` the wire
+ * type admits (`types.ts`: the field is `string | null`, exclusive with `inReplyTo`) still means
+ * "not a forward" and keeps the refusal. Reading the field rather than taking a flag is what keeps
+ * this one predicate: the mutation already carries the fact, and a caller-supplied "this is a
+ * forward" boolean would be a second place for the lock and the wire to disagree.
+ *
+ * Nothing else is relaxed. An empty forward with no recipient, or with no sending mailbox, or on a
+ * send already in flight is refused by the three checks below exactly as a written one is —
+ * `forward-send.test.ts` walks all three.
  */
 export function canSend(state: SendState, m: MailSend): boolean {
   if (state.phase === "sending" || state.phase === "queued") return false;
-  if (m.body.trim().length === 0) return false;
+  const isForward = typeof m.forwardOf === "string" && m.forwardOf.length > 0;
+  if (!isForward && m.body.trim().length === 0) return false;
   if (m.inReplyTo === null) {
     if (!m.mailboxId) return false;
     if (!m.to || m.to.length === 0) return false;
