@@ -19,6 +19,16 @@ Any small VPS from any provider. What matters:
 - Ports 80 and 443 reachable from the internet (the default on a VPS).
 - A recent Ubuntu or Debian is the well-trodden path; anything that runs
   Docker works.
+- **x86_64 or arm64, either one.** Every image in the stack is published for
+  both, so an Ampere or Graviton instance — usually the cheaper row on the
+  price list — runs the same commands with nothing to change; `docker pull`
+  reads your architecture out of the image itself. Same for a Raspberry Pi 4
+  or 5 or an Asahi Mac if the box in the closet is what you are using
+  (`uname -m` prints `x86_64` or `aarch64`; a 32-bit Pi OS is the one thing
+  that will not work). Read the arm64 note in
+  [README.md](./README.md#where-this-stands) first — those images are built
+  and booted on arm64 hardware every release, but no one has yet run one for
+  a week of real mail.
 
 ## 2. Point a domain at it
 

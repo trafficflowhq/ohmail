@@ -15,6 +15,14 @@ package defines it, and marks every step that is still arriving. When the
 app reaches a store, the whole thing below the "one thing to prepare"
 section should take under ten minutes.
 
+**Both architectures, one package.** Umbrel runs on x86_64 boxes and on
+arm64 ones — an Umbrel Home, a mini PC, a Raspberry Pi 4 or 5 — and each
+digest the package pins is a multi-arch index covering both, so the install
+is identical either way and there is nothing to pick. The arm64 images are
+built and booted on arm64 hardware in this repository's CI every release,
+but no one has yet run one on a Pi for a week of real mail; if you do,
+[say how it went](https://github.com/trafficflowhq/ohmail/issues).
+
 > **[screenshot placeholder: the ohmail tile in the Umbrel app store —
 > added with the store submission]**
 
