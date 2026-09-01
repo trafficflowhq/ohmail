@@ -138,7 +138,22 @@ export function addressProblem(typed: string): string | null {
     }
     return null;
   }
-  if (/^http:\/\//i.test(trimmed)) {
+  /**
+   * WAS THE SCHEME THE ACTUAL REASON? — and this arm used to answer that from the scheme alone,
+   * which made it lie.
+   *
+   * Review round 3's fifth finding. `http://localhost/path` is refused for its PATH: cleartext to
+   * loopback is explicitly allowed, so `http://localhost:8080` parses fine. Reading `http://` as
+   * the cause named the wrong clause, and its remedy — "give the https address" — is advice that
+   * does not fix the address and would not have been needed if it had.
+   *
+   * The discriminator is the imported parse ITSELF rather than a loopback test written here: swap
+   * the scheme and ask again. If the https spelling parses, the scheme was the only thing wrong and
+   * the safety sentence is true. If it still does not, the address has a shape problem that has
+   * nothing to do with the scheme, and the shape sentence is the honest one. No clause of the
+   * acceptance rule is restated to make that judgment, which is the property the census holds.
+   */
+  if (/^http:\/\//i.test(trimmed) && parseServerAddress(trimmed.replace(/^http:/i, "https:")) !== null) {
     return (
       "That is a plain, unencrypted address, and ohmail will not send your mail over one. " +
       "Give the https address you open ohmail at in a browser."
@@ -172,34 +187,72 @@ const PROBE_PATH = "/sync";
  * either, and that is pre-existing rather than addressed here. What this closes is the unbounded
  * await this slice would otherwise have ADDED.
  */
-const PROBE_DEADLINE_MS = 8000;
+export const PROBE_DEADLINE_MS = 8000;
+
+/** What one bounded probe concluded. Thrown instead when nothing was concluded at all. */
+type ProbeAnswer = "api" | "not-api";
+
+/** Thrown by {@link probeCandidate} when the server accepted and did not finish answering. */
+class ProbeTimeout extends Error {}
 
 /**
- * One probe, bounded. Cancels through `AbortSignal` where the platform honours it and falls back to
- * a race where it does not — belt and braces on purpose, because the two failure modes are
- * different: an honoured signal frees the socket, while the race only frees the CALLER. Rejects on
- * a timeout, so the loop treats it as a transport failure and tries the other candidate.
+ * ONE PROBE, BOUNDED END TO END — the fetch AND the body read under a single deadline.
+ *
+ * ── WHY THE CLASSIFICATION MOVED IN HERE ───────────────────────────────────────────────────────
+ *
+ * The first version of this bounded only the fetch, and review round 3 named the hole: a server
+ * that returns `401 application/json` HEADERS inside the deadline and then never finishes — or
+ * endlessly trickles — the BODY defeats it completely. The timer is already cleared and the
+ * controller already discarded by the time `res.json()` is awaited, so the pairing stalls exactly
+ * as it did before the deadline existed, one layer further in. A deadline that ends at the headers
+ * is not a deadline on the operation anybody cares about.
+ *
+ * So the whole question — "did an ohmail API answer this URL?" — is asked inside one controller and
+ * one timer. The abort now covers the body stream too, which is the part that can be made
+ * unbounded by a server that is otherwise perfectly responsive.
+ *
+ * Cancels through `AbortSignal` where the platform honours it and falls back to a race where it
+ * does not; the two are not redundant, because they free different things — an honoured signal
+ * frees the socket, a race frees only the CALLER. And where only the race fires, the abandoned
+ * fetch's response is still released rather than left holding a stream (round 3's third finding).
  */
-async function probeOnce(fetchImpl: FetchLike, url: string): Promise<Response> {
+async function probeCandidate(
+  fetchImpl: FetchLike,
+  requested: string,
+  deadlineMs: number,
+): Promise<ProbeAnswer> {
   const controller = typeof AbortController === "function" ? new AbortController() : null;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let settled = false;
   const timedOut = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       controller?.abort();
-      reject(new Error(`no answer from ${url} within ${PROBE_DEADLINE_MS}ms`));
-    }, PROBE_DEADLINE_MS);
+      reject(new ProbeTimeout(`no answer from ${requested} within ${deadlineMs}ms`));
+    }, deadlineMs);
   });
+
+  /* `redirect: "manual"` — see {@link answeredByApi}'s redirect note. Honoured where the platform
+     honours it; the guards there are what hold when it is not. */
+  const inFlight = fetchImpl(requested, {
+    redirect: "manual",
+    ...(controller ? { signal: controller.signal } : {}),
+  });
+  /* THE ABANDONED RESPONSE IS STILL LET GO. If the platform ignores the abort, this fetch outlives
+     the race it lost; when it eventually resolves, nothing was going to consume its body. Attached
+     here rather than in a `finally`, because the whole point is that it may land long after this
+     function has returned. */
+  void inFlight.then(
+    (res) => { if (settled) letGo(res); },
+    () => undefined,
+  );
+
   try {
-    /* `redirect: "manual"` — see {@link answeredByApi}'s redirect note. Honoured where the platform
-       honours it; the guards there are what hold when it is not. */
-    return await Promise.race([
-      fetchImpl(url, {
-        redirect: "manual",
-        ...(controller ? { signal: controller.signal } : {}),
-      }),
-      timedOut,
-    ]);
+    const res = await Promise.race([inFlight, timedOut]);
+    /* The body read is INSIDE the race too — round 3's first finding. `answeredByApi` reads it, so
+       the race is around the classification rather than around the fetch. */
+    return (await Promise.race([answeredByApi(res, requested), timedOut])) ? "api" : "not-api";
   } finally {
+    settled = true;
     clearTimeout(timer);
   }
 }
@@ -224,14 +277,29 @@ function letGo(res: Response): void {
 }
 
 /**
- * Same scheme, host and port — used to refuse an answer that came from somewhere else.
- * `null`/empty input answers `true`, because "no information" must not reject every response;
- * see the redirect note in {@link answeredByApi}.
+ * DID THIS ANSWER COME FROM THE EXACT URL THAT WAS ASKED?
+ *
+ * ── THE WHOLE URL, NOT THE ORIGIN, AND ROUND 3 IS WHY ──────────────────────────────────────────
+ *
+ * This compared ORIGINS, and review named the gap: a SAME-ORIGIN redirect passes an origin check.
+ * `<origin>/sync` answering `302 → <origin>/api/sync` would have validated the BARE candidate on
+ * the strength of the prefixed one's answer, and the bare base would then be stored — a base whose
+ * probe never succeeded directly. Later requests are the ones that pay for it: a proxy that
+ * redirects `/sync` need not redirect `/sync/snapshot`, and a 301/302 turns an authenticated POST
+ * into a GET, so the mutation surface would break in a way the pairing never showed.
+ *
+ * Comparing the whole URL is both tighter and simpler to justify: the probe asked one exact
+ * address and the answer must be from that address. Both sides go through `new URL`, so a
+ * platform that reports a normalized form (a default port written out, a case-folded host) still
+ * compares equal — the standard's own definition rather than a string match.
+ *
+ * An EMPTY final URL answers `true`, because "no information" must not reject every response; see
+ * the sized residual in {@link answeredByApi}.
  */
-function answeredFromCandidate(finalUrl: string, candidate: string): boolean {
+function answeredFromRequest(finalUrl: string, requested: string): boolean {
   if (finalUrl === "") return true;
   try {
-    return new URL(finalUrl).origin === new URL(candidate).origin;
+    return new URL(finalUrl).href === new URL(requested).href;
   } catch {
     return false;
   }
@@ -289,7 +357,9 @@ function answeredFromCandidate(finalUrl: string, candidate: string): boolean {
  *  2. `Response.redirected === true` — a platform that followed one and SAYS so is caught here even
  *     if it reports no final URL. Compared strictly, so a platform that does not set the field is
  *     not thereby refused;
- *  3. the response's final URL must still be on the candidate's origin.
+ *  3. the response's final URL must be the exact URL that was asked — see
+ *     {@link answeredFromRequest}, which compares the whole URL rather than the origin because a
+ *     SAME-ORIGIN redirect passes an origin check.
  *
  * ── AND THE RESIDUAL, WHICH REVIEW ROUND 2 CALLED THE FIX INCOMPLETE FOR, SIZED HONESTLY ───────
  *
@@ -309,7 +379,7 @@ function answeredFromCandidate(finalUrl: string, candidate: string): boolean {
  * because the engine's own transport follows redirects too. That is a pre-existing property of
  * `HttpAdapter`, named here so it is not mistaken for something this file introduced or fixed.
  */
-async function answeredByApi(res: Response, candidate: string): Promise<boolean> {
+async function answeredByApi(res: Response, requested: string): Promise<boolean> {
   /* Every rejection below lets the body go — see {@link letGo}. Only the arm that READS the body
      does not, because reading it is releasing it. */
   if (res.status !== 401) { letGo(res); return false; }
@@ -317,7 +387,7 @@ async function answeredByApi(res: Response, candidate: string): Promise<boolean>
      so is caught here even if it reports no final URL. Compared strictly to `true`, so a platform
      that does not set the field at all (RN, on some versions) is not thereby refused. */
   if ((res as { redirected?: boolean }).redirected === true) { letGo(res); return false; }
-  if (!answeredFromCandidate(res.url ?? "", candidate)) { letGo(res); return false; }
+  if (!answeredFromRequest(res.url ?? "", requested)) { letGo(res); return false; }
   if (!(res.headers.get("content-type") ?? "").toLowerCase().includes("application/json")) {
     letGo(res);
     return false;
@@ -351,7 +421,17 @@ export type BaseVerdict =
 export async function resolveApiBase(
   fetchImpl: FetchLike,
   origin: string,
+  /**
+   * Override the per-candidate deadline (tests). Absent, {@link PROBE_DEADLINE_MS}.
+   *
+   * The same seam `ConnectConfig.identityDeadlineMs` provides one module over, for the same reason:
+   * a deadline can only be proven by a server that never answers, and a suite that pays the real
+   * eight seconds twice per such case is a suite people stop running. A case still pins the DEFAULT,
+   * so the override cannot quietly become the shipped value.
+   */
+  opts: { deadlineMs?: number } = {},
 ): Promise<BaseVerdict> {
+  const deadlineMs = opts.deadlineMs ?? PROBE_DEADLINE_MS;
   const bare = origin.replace(/\/+$/, "");
   const prefixed = apiBaseFor(bare);
 
@@ -377,11 +457,27 @@ export async function resolveApiBase(
    * made about the whole loop.
    */
   let reached = false;
+  /**
+   * A CANDIDATE THAT TIMED OUT — the server accepted and did not finish answering.
+   *
+   * Round 3's fourth finding: a server that withholds headers on BOTH candidates leaves `reached`
+   * false, so the transport sentence fired and said "could not reach that server" about a server
+   * that had accepted two connections. That points somebody at their network, or — through
+   * `isPinFailure` — at a certificate, when the actual fault is a route that hangs.
+   *
+   * A timeout is therefore neither a transport failure nor a reach: it is its own fact, with its own
+   * sentence, and it is the one that names what to look at.
+   */
+  let stalled = false;
   for (const candidate of [bare, prefixed]) {
-    let res: Response;
+    let answer: ProbeAnswer;
     try {
-      res = await probeOnce(fetchImpl, `${candidate}${PROBE_PATH}`);
+      answer = await probeCandidate(fetchImpl, `${candidate}${PROBE_PATH}`, deadlineMs);
     } catch (err) {
+      if (err instanceof ProbeTimeout) {
+        stalled = true;
+        continue;
+      }
       /**
        * A TRANSPORT FAILURE ON ONE CANDIDATE NO LONGER ENDS THE SEARCH.
        *
@@ -400,7 +496,7 @@ export async function resolveApiBase(
       continue;
     }
     reached = true;
-    if (await answeredByApi(res, candidate)) {
+    if (answer === "api") {
       return { kind: "base", base: candidate, prefixed: candidate === prefixed };
     }
   }
@@ -415,6 +511,19 @@ export async function resolveApiBase(
     return {
       kind: "refused",
       reason: `could not reach that server to find its mail API — ${transportFailures[0]!}`,
+    };
+  }
+
+  /* A STALL IS ITS OWN ANSWER — see {@link stalled}. Below the transport arm because a run that had
+     both a hard failure and a stall was, at least once, genuinely unable to connect; above the
+     generic one because "something answered and was not the API" is false of a route that never
+     answered at all. */
+  if (stalled) {
+    return {
+      kind: "refused",
+      reason:
+        "That server accepted the connection and then did not answer, so ohmail stopped waiting. " +
+        "If you run it, check that its proxy is passing requests through to the ohmail API.",
     };
   }
 
