@@ -598,12 +598,28 @@ async function sealLocalPassword(
   mailboxId: string,
   imap: LocalTransport,
   password: string,
+  /**
+   * THE OUTGOING SERVER THIS PASSWORD IS BEING SAVED FOR — recorded with the credential, never
+   * dialled by this request.
+   *
+   * One password covers both transports here, so the person filling this form named two servers
+   * and authorized the secret for both. Only the incoming one was written down: the engine reads
+   * its outgoing coordinates from the settings file, which can be changed without the credential
+   * moving at all. So a change that touched only the outgoing server left the stored password
+   * offerable to a server nobody had named, and the engine had nothing to compare against to
+   * notice. This is that missing half.
+   *
+   * `""` when the form and the preset name no outgoing server, which is a statement rather than a
+   * silence: it retracts a witness a previous save may have left, so a later change of outgoing
+   * server cannot be checked against a host this install no longer uses.
+   */
+  smtpHost: string,
 ): Promise<string | null> {
   try {
     const res = await bridgeFetch(`/mailboxes/${encodeURIComponent(mailboxId)}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ imap: { ...imap, pass: password } }),
+      body: JSON.stringify({ imap: { ...imap, pass: password, smtpHost } }),
     });
     return res.ok ? null : await refusal(res);
   } catch (err) {
@@ -644,12 +660,13 @@ async function sealLocalPassword(
  * what proves the credential for the new one. A refusal then returns with the install byte-for-
  * byte as it was found, and a success leaves the settings and the credential naming one host.
  *
- * WHAT THIS DOES NOT CLOSE, said plainly. The reorder fixes the defect FROM THIS DOOR. Any other
- * route that reconfigures an install still boots against whatever is sealed, and the general
- * close is the boot contract — `resolveLogin()` refusing a password whose stored `meta.host`
- * disagrees with the configured host. That needs a credential state to report it with, and every
- * existing one would be a true sentence about the wrong thing (`unreadable` tells the user their
- * keystore cannot open a credential it opens perfectly), so it is ledgered rather than half-done.
+ * WHAT THIS ORDER DOES NOT DO, said plainly. It fixes the defect FROM THIS DOOR. Any other route
+ * that changes an install's servers — a settings file edited by hand, a future surface — still
+ * starts the engine against whatever is sealed, and the general close is the ENGINE's, not this
+ * one's: it refuses a password whose recorded server disagrees with the one it is configured for,
+ * on the incoming side at launch and on the outgoing side at each send. That is why this function
+ * now states BOTH servers when it saves a password: the credential records the pair it was saved
+ * for, which is what gives the engine something to compare.
  */
 export async function enterLocalDoor(
   f: LocalDoorFields,
@@ -678,6 +695,10 @@ export async function enterLocalDoor(
    * The shell is configured with it and the credential is probed and stored with it, and those
    * two must describe the same dial. Deriving them separately is how they drift; a single value
    * is why they cannot. See the patch body for what depended on this.
+   *
+   * `smtpHost` above is the same discipline on the outgoing side, and it matters MORE there: the
+   * settings and the credential each get that one value, and the engine later refuses to send when
+   * the two disagree. Two spellings of it would produce an install that refuses its own sends.
    */
   const imap: LocalTransport = {
     host: f.imapHost.trim() || preset.imap.host,
@@ -699,7 +720,7 @@ export async function enterLocalDoor(
   if (reconfiguresLocalDoor(standing, address)) {
     /* SEAL, THEN COMMIT. Nothing about this install has changed yet, so a refusal here returns
        with the mailbox still on the configuration that was working. */
-    const refused = await sealLocalPassword(standing.mailboxId, imap, f.password);
+    const refused = await sealLocalPassword(standing.mailboxId, imap, f.password, smtpHost);
     if (refused !== null) return { status: standing, problem: refused };
 
     /**
@@ -718,12 +739,12 @@ export async function enterLocalDoor(
      *    booted with. Not reachable from this window — the door is a modal over the whole app —
      *    but a scheduled send fires on the engine's own timer.
      *
-     * Both close at the same single point, and neither closes here: the ENGINE has to refuse a
-     * password whose stored `meta.host` disagrees with the host it is configured for. That is
-     * deliberately not smuggled into this change, because the refusal needs a credential state
-     * to report itself with and every existing one would be a true sentence about the wrong
-     * thing. It is ledgered, and this ordering is what makes it load-bearing rather than
-     * merely desirable.
+     * Both close at the same single point and neither closes here — the ENGINE refuses a password
+     * whose recorded server disagrees with the one it is configured for. It does that now, which is
+     * what makes this window survivable rather than merely narrow: a launch that comes up on the
+     * old incoming server withholds the credential, and a send fired into the window is refused
+     * before a socket exists on either transport. This ordering is what made that refusal
+     * load-bearing rather than merely desirable, and the two shipped separately in that order.
      *
      * WHY THIS IS STILL THE RIGHT TRADE, said plainly rather than assumed. Before this ordering
      * the bad state was THE NORMAL PATH: every reconfigure to a new host dialled it with the old
@@ -760,7 +781,7 @@ export async function enterLocalDoor(
 
   /* THE PASSWORD, AND THE ONLY PLACE IT IS WRITTEN DOWN IS THE ENGINE'S OWN STORE. See
      {@link sealLocalPassword} for what the body carries and why it carries all of it. */
-  const refused = await sealLocalPassword(settled.mailboxId, imap, f.password);
+  const refused = await sealLocalPassword(settled.mailboxId, imap, f.password, smtpHost);
   if (refused !== null) return { status: settled, problem: refused };
 
   /**

@@ -187,7 +187,14 @@ describe("the local door", () => {
     expect(request.payload!.url).toBe("/mailboxes/mbx-1");
     const body = new TextDecoder().decode(Uint8Array.from(request.payload!.body as number[]));
     /* THE TRANSPORT TRAVELS WITH THE PASSWORD. This used to be `{ imap: { pass } }` alone; see
-       the reproduction below for why a body carrying only the secret cannot be acted on. */
+       the reproduction below for why a body carrying only the secret cannot be acted on.
+
+       BOTH SERVERS TRAVEL WITH IT, and the outgoing one is not a second thing to dial: one
+       password covers both transports, so the person filling this form authorized the secret for
+       a PAIR of servers, and `smtpHost` is the only place that pair is written down. The engine
+       reads its outgoing coordinates from the settings file, which can be changed without the
+       credential moving — so without this the engine has nothing to compare a changed outgoing
+       server against, and the stored password stays offerable to a server nobody named. */
     expect(JSON.parse(body)).toEqual({
       imap: {
         host: "imap.fastmail.com",
@@ -195,8 +202,38 @@ describe("the local door", () => {
         secure: true,
         user: "mila@example.com",
         pass: "app-password-1234",
+        smtpHost: "smtp.fastmail.com",
       },
     });
+  });
+
+  /**
+   * THE TWO SERVERS THE ENGINE LATER COMPARES COME FROM ONE VALUE EACH.
+   *
+   * The settings say where to submit; the credential records which submission server the password
+   * was saved for; and the engine refuses to send when those two disagree. So two spellings of the
+   * outgoing host would produce an install that refuses its own sends on the first attempt —
+   * a failure caused entirely by the guard against it. One value, used twice, is why it cannot.
+   */
+  it("the settings and the credential name the SAME outgoing server, including the fallback", async () => {
+    const asked = shellThatWorks();
+    await enterLocalDoor(
+      // Typed nothing for the outgoing server: BOTH sides must then take the preset's, and this
+      // is the case where two independently-derived fallbacks would drift apart unnoticed.
+      { ...filled, smtpHost: "   ", smtpPort: "" },
+      providerById("fastmail"),
+    );
+
+    const config = asked.find((a) => a.command === "engine_configure")!.payload!.config as
+      { smtp?: { host: string } };
+    const patch = JSON.parse(
+      new TextDecoder().decode(
+        Uint8Array.from(asked.find((a) => a.command === "engine_request")!.payload!.body as number[]),
+      ),
+    ) as { imap: { smtpHost?: string } };
+
+    expect(patch.imap.smtpHost).toBe(config.smtp!.host);
+    expect(patch.imap.smtpHost).toBe(providerById("fastmail").smtp.host);
   });
 
   /**

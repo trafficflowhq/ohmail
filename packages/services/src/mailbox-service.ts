@@ -113,6 +113,35 @@ export interface TransportInput {
   secure?: boolean;
   user?: string;
   pass?: string;
+  /**
+   * THE SUBMISSION HOST THIS PASSWORD IS BEING SEALED FOR — recorded, never dialled.
+   *
+   * ── WHAT IT IS FOR ────────────────────────────────────────────────────────────────────────
+   *
+   * An install that holds the whole mailbox itself reads its outgoing server from its own
+   * configuration, not from a stored row: there is one password for both transports, so there is
+   * no second credential to hold submission coordinates. That leaves nothing recording WHICH
+   * outgoing server the password was stored for, and therefore nothing for the sending path to
+   * compare its configuration against. A configuration that moves the outgoing server alone then
+   * offers the password to a server the person never named.
+   *
+   * This is that missing left-hand side, and it is the whole of what it is: the caller states the
+   * outgoing host it is configured for at the moment it seals, and the value is stored beside the
+   * rest of the credential's non-secret half. Nothing reads it as coordinates.
+   *
+   * ── HONOURED ON THE INCOMING BLOCK ONLY ───────────────────────────────────────────────────
+   *
+   * It rides on {@link TransportInput} because that is the one shape both blocks share, and
+   * {@link mergedTransportMeta} carries it for the `imap` transport and drops it for `smtp`. A
+   * mailbox that DOES own an outgoing credential row records its host in that row's own `host`,
+   * and a witness there would be the same fact written twice.
+   *
+   * Absent means "this caller says nothing about it", which leaves whatever is stored alone —
+   * so a deployment that never sends it stores nothing new and behaves exactly as before. The
+   * EMPTY STRING is a statement, not an absence: it records that no outgoing server is
+   * configured, which is how a caller retracts a witness it previously set.
+   */
+  smtpHost?: string;
 }
 
 export interface CreateMailboxBody {
@@ -664,6 +693,30 @@ function mergedTransportMeta(
   transport: ProbeTransport,
 ): Record<string, unknown> {
   const merged: Record<string, unknown> = { ...(stored ?? {}), ...metaOf(patch ?? {}) };
+  /**
+   * THE SUBMISSION HOST THE CREDENTIAL IS SEALED FOR — see {@link TransportInput.smtpHost}.
+   *
+   * INCOMING TRANSPORT ONLY, the same gate `insecureConsent` below is given: an outgoing
+   * credential row already records its own host, and a witness there would be one fact stored
+   * twice. Kept OUT of {@link metaOf} for exactly that reason — that helper is per-transport and
+   * this key is not.
+   *
+   * INSIDE this function rather than added to the result afterwards, and the reason is the
+   * OPPOSITE of the obvious one. `update` recomputes this merge under the mailbox row's lock and
+   * refuses to write one that is no longer the answer. A STALE value is caught either way — the
+   * stored meta is spread in above, so this key rides through the recomputation whether or not the
+   * patch restates it. What the placement decides is whether the patch's NEW statement is visible
+   * to that comparison, and a key applied after the merge is not: two patches that AGREE about the
+   * submission host would then be compared on a merge still carrying the value they both just
+   * replaced, and the second would be refused as a conflict it is not. Measured rather than
+   * reasoned — moving this line to the write leaves the stale case green and reddens the agreeing
+   * one.
+   *
+   * `undefined` is left alone (the stored value survives, as every unrestated key does); `""` is
+   * written through, because a caller with no outgoing server configured is making a statement and
+   * a stale witness is worse than none.
+   */
+  if (transport === "imap" && patch?.smtpHost !== undefined) merged.smtpHost = patch.smtpHost;
   if (proven) {
     merged.port = proven.port;
     merged.secure = proven.secure;

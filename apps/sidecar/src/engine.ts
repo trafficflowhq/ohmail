@@ -44,7 +44,7 @@ import { desktopHostRoutes } from "@trafficflow/api/desktop-host";
 // The boot contract's one comparison. Its own file, with no imports, because the desktop shell's
 // install model has to apply the identical rule and `apps/desktop` declares no `@trafficflow/*`
 // dependency — see the header of `credential-host.ts` for why one definition rather than two.
-import { credentialIsForeign } from "./credential-host.js";
+import { credentialIsForeign, credentialIsForeignSmtp } from "./credential-host.js";
 import { hostPairRoutes } from "./host-pair-routes.js";
 // The static half of the host door — the built browser client the QR sends a phone to, served
 // beside the API out of one `handleHost`. The route table wins; this covers everything else.
@@ -132,17 +132,30 @@ export type CredentialState =
    */
   | "unreadable"
   /**
-   * A stored credential exists and it was PROVED AGAINST A DIFFERENT SERVER than this launch is
-   * configured for.
+   * A stored credential exists and it belongs to A DIFFERENT SERVER than the one this resolution
+   * is about.
    *
-   * NOTE WHAT THIS DOES **NOT** SAY: that the row is readable. The comparison runs BEFORE the
+   * TWO COMPARISONS PRODUCE IT AND THEIR SCOPES ARE NOT THE SAME, so read the caller before
+   * reading a consequence into the value:
+   *
+   *  · THE INCOMING SERVER, compared on every resolution including the launch's own and the one
+   *    the shell renders. The stored host was PROVED by the dial that sealed the credential, and a
+   *    disagreement stops the launch: the engine serves its mirror and dials nothing, on either
+   *    transport.
+   *  · THE OUTGOING SERVER, compared ONLY where a submission transport is about to be opened
+   *    ({@link credentialIsForeignSmtp}, passed in by `openLocalSend` and by nothing else). The
+   *    stored host there was AUTHORIZED by the person who typed it beside the password, not proved
+   *    by a dial. A disagreement refuses THAT SEND and nothing else — the mailbox goes on syncing,
+   *    and this value never reaches the shell for it. Anything that renders a stopped mailbox from
+   *    this state is rendering the first bullet.
+   *
+   * NOTE WHAT NEITHER OF THEM SAYS: that the row is readable. Both comparisons run BEFORE the
    * decrypt, so a row can be both foreign and unopenable and this state reports only the first —
    * `foreign-host` takes PRECEDENCE over `unreadable` rather than excluding it. That precedence is
    * the right way round (the server mismatch is the fact a person can act on, and re-entering a
    * password into the wrong server is the failure being prevented), but it means no surface may
-   * claim the keystore opened anything. The password is withheld — see
-   * {@link credentialIsForeign} — so the engine serves its mirror and dials nothing, on either
-   * transport.
+   * claim the keystore opened anything. The password is withheld either way — see
+   * {@link credentialIsForeign}.
    *
    * ── WHY THIS IS ITS OWN STATE AND NOT ONE OF THE THREE ABOVE ─────────────────────────────
    *
@@ -153,14 +166,20 @@ export type CredentialState =
    * this its own name is that the FAULT is different: the thing to settle is which server this
    * install should be on, not whether a credential can be opened.
    *
-   * That is a claim about the diagnosis and NOT about the effort. Both ways out — keeping the new
-   * server or going back to the old one — go through the local door, and the door refuses a blank
-   * password (`localProblem`), so either way the password is entered again. It is entered for a
-   * different reason than `unreadable` would give: entering it is what PROVES it against whichever
-   * server was chosen. That is the DIAGNOSIS, not an exclusion: because this state takes
-   * precedence over `unreadable` rather than ruling it out, a row can be both, and the recovery
-   * `PATCH` re-encrypts under the current key either way — so entering the password also re-seals
-   * the row when it happened to need it.
+   * That is a claim about the diagnosis and NOT about the effort. On the INCOMING arm both ways
+   * out — keeping the new server or going back to the old one — go through the local door, and the
+   * door refuses a blank password (`localProblem`), so either way the password is entered again. It
+   * is entered for a different reason than `unreadable` would give: entering it is what PROVES it
+   * against whichever server was chosen. That is the DIAGNOSIS, not an exclusion: because this
+   * state takes precedence over `unreadable` rather than ruling it out, a row can be both, and the
+   * recovery `PATCH` re-encrypts under the current key either way — so entering the password also
+   * re-seals the row when it happened to need it.
+   *
+   * THE OUTGOING ARM IS CHEAPER TO UNDO and this is the one place the two genuinely differ: the
+   * credential is untouched and still opens, so restoring the submission host the password was
+   * saved for makes the next send work with nothing re-entered. Moving TO the new outgoing server
+   * does need the password again, because that is what records the new authorization — the door is
+   * where both halves are stated together, so it is the same one form either way.
    */
   | "foreign-host";
 
@@ -1290,12 +1309,33 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * password beside a state that forbids using it is the same half-state this contract exists
      * to remove, and it costs nothing real: an install with no stored row never reaches this
      * branch, and the desktop shell has no route for a password in the environment at all.
+     *
+     * ── THE OUTGOING SERVER IS THE CALLER'S QUESTION TO ASK, NOT THIS FUNCTION'S ──────────────
+     *
+     * A mailbox has two servers and the reconfigure that moves only the OUTGOING one leaves this
+     * comparison satisfied: the incoming host still agrees, so the launch is `ready`, and the send
+     * transport is then built from whatever submission coordinates the process booted with. That is
+     * the same defect one server over, and it ends here too — but only for callers that are about
+     * to submit.
+     *
+     * `smtpHost` is therefore OPT-IN. `start()` and the shell's credential state do not pass it,
+     * deliberately: a mailbox whose outgoing server moved still receives mail perfectly, and
+     * refusing the launch would stop somebody's mail arriving in order to fence a send they may not
+     * be making. `openLocalSend` passes it, because that is the one place the password meets a
+     * submission server.
      */
-    const resolveLogin = async (): Promise<{ state: CredentialState; pass: string | null }> => {
+    const resolveLogin = async (
+      opts?: { smtpHost?: string },
+    ): Promise<{ state: CredentialState; pass: string | null }> => {
       const envPass = config.imap.auth.pass;
       const row = await storedLogin();
       if (!row) return envPass ? { state: "ready", pass: envPass } : { state: "absent", pass: null };
       if (credentialIsForeign(row.meta, config.imap.host)) {
+        return { state: "foreign-host", pass: null };
+      }
+      // Before the decrypt for the same reason the line above is: a credential this engine has no
+      // business offering to this server is never brought into memory as plaintext at all.
+      if (opts !== undefined && credentialIsForeignSmtp(row.meta, opts.smtpHost)) {
         return { state: "foreign-host", pass: null };
       }
       try {
@@ -1337,6 +1377,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * This is why the hosted `makeSendAdapter` cannot simply be reused here: it reads the SMTP
      * host/port from a stored `smtp` credential row (or falls back to the IMAP host on 587), and a
      * local install has neither — its SMTP server is an environment fact, not a stored one.
+     *
+     * ONE THING IS NOW STORED ABOUT IT, and it is not a coordinate: the credential's non-secret
+     * half records the submission host the password was SEALED FOR, so this path can tell whether
+     * the environment fact still names the server the person authorized. It is never dialled from
+     * — the configuration above is still the only source of where to submit — and the refusal it
+     * enables is directly below.
      */
     const openLocalSend: OpenSendAdapter = async (): Promise<SendAdapter> => {
       const smtp = config.imap.smtp;
@@ -1346,10 +1392,35 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           "this mailbox has no SMTP server configured, so mail cannot be sent from this install",
         );
       }
-      // The sealed credential, resolved the way the IMAP side resolves it. A launch that has no
-      // password anywhere serves its mirror and refuses to send, rather than dialling SMTP with an
-      // empty secret — the same posture `start()` takes toward IMAP.
-      const { state, pass } = await resolveLogin();
+      // The sealed credential, resolved the way the IMAP side resolves it — plus the one question
+      // only this path can ask: is this the outgoing server the credential was sealed for? A launch
+      // that has no password anywhere serves its mirror and refuses to send, rather than dialling
+      // SMTP with an empty secret — the same posture `start()` takes toward IMAP.
+      const { state, pass } = await resolveLogin({ smtpHost: smtp.host });
+      /**
+       * ── THE OUTGOING HALF OF THE BOOT CONTRACT, AND ITS OWN SENTENCE ──────────────────────────
+       *
+       * Refused BEFORE the transport is constructed and before the credential is decrypted, so
+       * nothing is dialled and the password is never plaintext in this process.
+       *
+       * It needs a sentence of its own because the one below would be a true statement about the
+       * wrong thing: the password IS available, it opens, and telling somebody to re-enter it sends
+       * them to type a secret into whichever submission server the configuration currently names —
+       * which is the server the refusal exists to keep it away from. What is wrong is which pair of
+       * servers this install is pointed at, and that is what this says.
+       *
+       * NO RE-ENTRY IS NEEDED TO RECOVER, and the sentence does not ask for any: pointing the
+       * outgoing server back at the one the password was stored for makes the next send work with
+       * the credential exactly as it stands. Nothing here rewrites or deletes the row.
+       */
+      if (state === "foreign-host") {
+        throw new ServiceError(
+          "upstream_unavailable", 502,
+          "the stored mailbox password was saved for a different outgoing (SMTP) server than " +
+            "this install is now configured for, so it was not offered and nothing was sent. " +
+            "Point the outgoing server back, or re-enter the password for the new one.",
+        );
+      }
       if (state !== "ready" || !pass) {
         throw new ServiceError(
           "upstream_unavailable", 502,
@@ -1423,6 +1494,19 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         meta: {
           host: config.imap.host, port: config.imap.port,
           secure: config.imap.secure, user: config.imap.auth.user,
+          /**
+           * AND THE SUBMISSION HOST THIS PASSWORD IS BEING SEALED FOR — the outgoing half of the
+           * same record. One password covers both transports, so the person who supplied it named
+           * both servers, and this is the only place that fact is written down: the send path reads
+           * its coordinates from the running configuration, which can be changed without touching
+           * the credential at all.
+           *
+           * OMITTED, NOT EMPTY, when this launch has no submission server configured. A key that
+           * never appears keeps its established meaning of "this row says nothing", which is the
+           * reading every credential sealed before it existed depends on — the same rule the
+           * consent marker on this row follows.
+           */
+          ...(config.imap.smtp?.host ? { smtpHost: config.imap.smtp.host } : {}),
         },
         updatedAt: now(),
       });
