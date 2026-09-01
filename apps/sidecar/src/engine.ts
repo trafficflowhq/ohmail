@@ -57,6 +57,7 @@ import { HOST_SEND_MAX_TOTAL_BYTES, resolveHostConfig, type HostState } from "./
 // The LAN fallback's one reading and its browser-facing explainer — the API-only decision and
 // the secure-context audit behind it live in `host-lan.ts`'s header.
 import { resolveLanBind, serveLanFallback, type LanState } from "./host-lan.js";
+import { ensureLanIdentity, type LanIdentity } from "./host-lan-tls.js";
 import { localLanRoutes } from "./lan-routes.js";
 // ── THE ONE PIPELINE ────────────────────────────────────────────────────────────────────────
 // `runSyncCycle` is imported, never reimplemented. There is ONE pipeline implementation and both
@@ -377,6 +378,18 @@ export interface Sidecar {
    * One reading (`resolveLanBind`), exposed for the same two consumers `hostState` serves.
    */
   readonly lanState: LanState;
+  /**
+   * The LAN door's persistent TLS identity — the key a paired phone pins, resolved once here
+   * because this is the composition that knows the data directory. `null` when no LAN address
+   * was chosen, or when the identity could not be established (in which case `lanState.reason`
+   * says so and the door stays SHUT rather than falling back to cleartext).
+   *
+   * Two consumers, deliberately one value: `main.ts` serves TLS with it, and
+   * `GET /local/lan/pin` hands its fingerprint to the window so the pairing link can carry it.
+   * A second reading would be a second chance for the link's fingerprint and the door's key to
+   * disagree — which is a pairing that fails at the handshake with nothing to point at.
+   */
+  readonly lanIdentity: LanIdentity | null;
   /**
    * Run cycles until the mailbox reports no backlog, then return how many ran.
    *
@@ -908,9 +921,28 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     const hostMode = hostConfig.state.armed;
     // The LAN fallback's one reading — same discipline: a refused value degrades the LAN half
     // with a surfaced reason and nothing else changes. Absent stays silent.
-    const lan = resolveLanBind(config);
+    let lan = resolveLanBind(config);
     if (lan.reason !== null) {
       log("host_lan_config_invalid", { reason: lan.reason });
+    }
+    /**
+     * THE LAN DOOR'S KEY — resolved here, once, because this is the composition that holds the
+     * data directory, and because the link's fingerprint and the socket's certificate have to
+     * come from ONE object or they can disagree.
+     *
+     * Resolved only when an address was actually chosen: an install that has never turned
+     * same-network access on mints nothing and writes nothing, so the ordinary boot is
+     * byte-identical to what it was — the same rule the whole LAN half is held to.
+     *
+     * A refusal DEGRADES the LAN half to off with the refusal's own sentence in `lanState`, so
+     * the pane says why. It deliberately does not fall back to a cleartext door: see
+     * `maybeStartLanListener`.
+     */
+    let lanIdentity: LanIdentity | null = null;
+    if (lan.address !== null) {
+      const outcome = ensureLanIdentity(config.dataDir, log);
+      if (outcome.kind === "identity") lanIdentity = outcome.identity;
+      else lan = { address: null, reason: outcome.refusal.reason };
     }
     const app = createApp([
       ...localRoutes,
@@ -919,7 +951,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       // Which addresses this machine could serve same-network access on — the LAN ceremony's
       // one read, mounted UNARMED because the choice is offered before host mode exists. Never
       // on the host/LAN doors; see `lan-routes.ts`.
-      ...localLanRoutes(),
+      ...localLanRoutes(() => lanIdentity?.fingerprint ?? null),
       // The window-only pairing mint (mint/list/revoke), on this door alone and only when host
       // mode is armed. The machine's own login is the step-up; see `host-pair-routes.ts`.
       ...(hostMode ? hostPairRoutes : []),
@@ -2340,6 +2372,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         : {}),
       hostState: hostConfig.state,
       lanState: lan,
+      lanIdentity,
       syncUntilQuiet,
       organizerState: () => organizer,
       credentialState: async () => (await resolveLogin()).state,

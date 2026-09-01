@@ -52,6 +52,7 @@
         }
       ],
       "./plugins/wake-push-renderer",
+      "./plugins/host-pinning-install",
       "./plugins/release-minification",
       "./plugins/backup-exclusions"
     ]

@@ -41,9 +41,13 @@ export default function ConnectScreen() {
     // its own origin, and splitting it here keeps the one-mechanism rule (the parser is the
     // same one the scanner trusts, query-refusal included).
     const pasted = parsePairLink(token);
-    const target = pasted ?? { origin, token };
+    // A HAND-TYPED PAIR CARRIES NO PIN, and that is the honest outcome rather than a gap: a
+    // fingerprint is 43 characters nobody will type correctly, so the seam refuses a
+    // same-network address typed by hand and says to use the code the desktop shows. A pasted
+    // LINK carries its own pin, which is why the paste path still wins over the fields.
+    const target = pasted ?? { origin, token, pin: null };
     setPhase({ k: "pairing" });
-    const outcome = await conn.pair(target.origin, target.token);
+    const outcome = await conn.pair(target.origin, target.token, target.pin);
     if (outcome.ok) {
       router.replace("/servers");
       return;

@@ -10,6 +10,8 @@
  * Phone-specific lines are marked. They exist because a thumb does things a
  * cursor did not — nothing here softens or oversells the desktop wording.
  */
+
+import { isPinFailure, PIN_CHANGED_SENTENCE } from "./net/host-pinning";
 export const Copy = {
   /* --------------------------------------------------------------- welcome */
 
@@ -72,7 +74,7 @@ export const Copy = {
   choiceDesktopNote: "Scan the QR in Settings → Devices on your computer",
 
   askAddress: "Server address",
-  askAddressHint: "https, or plain http on your own network",
+  askAddressHint: "The https address the desktop app shows under Settings \u2192 Devices",
   askGo: "Check this address",
   askChecking: "Asking the server what it is…",
   stepScan: "Scan its QR",
@@ -110,7 +112,14 @@ export const Copy = {
   connectNote:
     "Type the server address and the pairing token shown beside its QR — or paste the whole pairing link into the token field.",
   connectOrigin: "Server address",
-  connectOriginHint: "https, or plain http on your own network",
+  /**
+   * NOT "or plain http on your own network" any more, and that sentence was the app's own copy
+   * contradicting its own manifest: a release build permits no cleartext, so the half of the hint
+   * that offered it described something the app refuses before opening a socket. A same-network
+   * address also needs the key fingerprint that only the scanned code carries, which is why this
+   * hint points at the code rather than at the field.
+   */
+  connectOriginHint: "The https address the desktop app shows under Settings \u2192 Devices. For a computer on your own network, scan its code instead \u2014 the address alone is not enough.",
   connectToken: "Pairing token",
   connectGo: "Pair",
   connectBooting: "Opening the on-device mirror…",
@@ -120,7 +129,29 @@ export const Copy = {
   connectDisconnect: "Disconnect",
   connectMirrored: (n: number, cursor: string) =>
     `${n} message${n === 1 ? "" : "s"} on this device · cursor ${cursor}`,
-  connectSyncFailed: (detail: string) => `Sync failed — the mirror keeps what it has. ${detail}`,
+  /**
+   * ── A FAILED HANDSHAKE IS NOT A FAILED NETWORK, AND THIS LINE USED TO SAY IT WAS ──────────
+   *
+   * Measured on a real device against a real desktop whose key had been changed: this read
+   *
+   *   "Sync failed — the mirror keeps what it has. MutationRejectedError: network failure:
+   *    Error: fetch failed: javax.net.ssl.SSLHandshakeException:
+   *    java.security.cert.CertPathValidatorException: Trust anchor for certification path not
+   *    found."
+   *
+   * The BEHAVIOUR was right — nothing was trusted, nothing was fetched, the mirror was kept —
+   * and the sentence was unreadable and, worse, indistinguishable from bad wifi. A person whose
+   * desktop key genuinely changed needs to be told that, and a person whose network is being
+   * interfered with needs to be told that even more.
+   *
+   * So a pin failure gets the pin sentence and everything else keeps the detail it always had.
+   * `isPinFailure` matches by SHAPE (the wording differs across Android versions), and a missed
+   * match degrades to the old line — wrong, but not misleading.
+   */
+  connectSyncFailed: (detail: string) =>
+    isPinFailure(detail)
+      ? `Sync stopped. ${PIN_CHANGED_SENTENCE}`
+      : `Sync failed — the mirror keeps what it has. ${detail}`,
 
   /* ----------------------------------------------------------------- ohbox */
 

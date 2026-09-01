@@ -54,14 +54,40 @@ export function lanCandidates(
   return out;
 }
 
-/** The route, closed over nothing — the answer is the machine's, read fresh per request. */
-export function localLanRoutes(): Route[] {
+/**
+ * The two routes the LAN ceremony needs.
+ *
+ * `candidates` is closed over nothing — the answer is the machine's, read fresh per request.
+ * `pin` is closed over a THUNK rather than a value, so the window always reads the identity the
+ * engine actually holds; a captured value would let a route mounted before the identity resolved
+ * answer `null` for the life of the process.
+ *
+ * ── WHY THE FINGERPRINT IS NOT A SECRET, AND WHY THE ROUTE IS STILL WINDOW-ONLY ──────────────
+ *
+ * A public key's hash is public by construction — anything that completes a handshake with the
+ * door learns it. So this route protects nothing by being narrow, and it is narrow anyway, for
+ * the same reason `candidates` is: `desktopHostRoutes` is the surface a PAIRED DEVICE can reach,
+ * and adding to it anything a paired device does not need is how that surface grows one
+ * reasonable-looking route at a time. The window needs it (to compose the pairing link); a
+ * paired phone already has it (it pinned it).
+ */
+export function localLanRoutes(fingerprint: () => string | null): Route[] {
   return [
     {
       method: "GET",
       pattern: "/local/lan/candidates",
       cost: "read",
       handler: async () => jsonResponse({ items: lanCandidates() }, { status: 200 }),
+    },
+    {
+      method: "GET",
+      pattern: "/local/lan/pin",
+      cost: "read",
+      // `null` is the honest answer in three different states — same-network access was never
+      // turned on, it was refused at config, or its key could not be established — and the
+      // window renders the same thing for all three: no pairing link for this address. Which of
+      // the three it is is `lanState`'s to say, and it says it in one sentence.
+      handler: async () => jsonResponse({ fingerprint: fingerprint() }, { status: 200 }),
     },
   ];
 }

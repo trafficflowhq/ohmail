@@ -19,6 +19,21 @@ export const ENGINE_VERSION = "0.1.0";
 export { CALENDAR_FALLBACK_FILENAME, isCalendarMime } from "@trafficflow/core/ics";
 
 /**
+ * THE PAIRING LINK'S SHAPE — composed by the desktop's Devices pane, parsed by the phone. Here
+ * because this is the one package both of those already compile, and a composer and a parser
+ * that disagree is a QR code that cannot be scanned with nothing on either machine to look at.
+ * See `pair-link.ts` for the fragment's form and why the key fingerprint rides in it.
+ */
+export {
+  PAIR_PIN_VERSION,
+  isPairPin,
+  originNeedsPin,
+  pairLink,
+  parsePairLink,
+  type PairLink,
+} from "./pair-link.js";
+
+/**
  * The folder-name validator, re-exported from core's browser-safe leaf (the `/ics` rule above):
  * the honest sentence BEFORE the wire is the SERVER's own rules, and every client that offers
  * the stage-2 folder verbs needs them — the webapp reaches core directly, the mobile app

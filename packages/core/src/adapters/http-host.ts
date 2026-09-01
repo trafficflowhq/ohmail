@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createServer as createTlsServer } from "node:https";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
@@ -55,6 +56,23 @@ export interface AdapterOptions {
    * test sets it small so the slow-header proof runs in milliseconds instead of half a minute.
    */
   connectionsCheckingIntervalMs?: number;
+  /**
+   * Serve TLS with this key pair instead of plain HTTP. PRESENT ONLY FOR THE LAN DOOR
+   * (`apps/sidecar/src/host-lan.ts`), whose one client — a phone's native app — cannot open a
+   * cleartext socket at all on a release build of either mobile platform, and whose trust is
+   * established by the pairing ceremony's key fingerprint rather than by a certificate authority
+   * (`apps/sidecar/src/host-lan-tls.ts` argues the whole shape).
+   *
+   * Deliberately NOT a wider TLS-termination feature: the loopback door stays plain HTTP because
+   * `tailscale serve` terminates TLS in front of it with a real MagicDNS certificate, and the
+   * self-host server stays plain behind the operator's own proxy. One consumer, one reason.
+   *
+   * `https.Server` extends `http.Server`, so every property this module sets afterwards
+   * (`headersTimeout`, `requestTimeout`) and every method its callers use
+   * (`closeIdleConnections`, `closeAllConnections`) is the same one — which is why this is a
+   * choice of constructor and not a second adapter.
+   */
+  tls?: { key: string; cert: string };
 }
 
 /** Thrown into the body stream when a chunked body crosses the cap mid-flight. */
@@ -202,18 +220,22 @@ export function makeHttpServer(
   handle: (req: Request) => Promise<Response>,
   opts: AdapterOptions,
 ): Server {
-  const server = createServer(
-    opts.connectionsCheckingIntervalMs !== undefined
-      ? { connectionsCheckingInterval: opts.connectionsCheckingIntervalMs }
-      : {},
-    (req, res) => {
-      void serve(req, res, handle, opts).catch(() => {
-        // serve() answers its own failures; this catch only covers a socket that died while we
-        // were answering, where there is nothing left to say and nobody left to say it to.
-        res.destroy();
-      });
-    },
-  );
+  const onRequest = (req: IncomingMessage, res: ServerResponse): void => {
+    void serve(req, res, handle, opts).catch(() => {
+      // serve() answers its own failures; this catch only covers a socket that died while we
+      // were answering, where there is nothing left to say and nobody left to say it to.
+      res.destroy();
+    });
+  };
+  const base = opts.connectionsCheckingIntervalMs !== undefined
+    ? { connectionsCheckingInterval: opts.connectionsCheckingIntervalMs }
+    : {};
+  // `https.createServer` passes its options to BOTH `tls.createServer` and node's http server
+  // option store, so `connectionsCheckingInterval` keeps working on the TLS door — the two
+  // constructors take the same bag, which is why the branch is this narrow.
+  const server: Server = opts.tls
+    ? createTlsServer({ ...base, key: opts.tls.key, cert: opts.tls.cert }, onRequest)
+    : createServer(base, onRequest);
   // Point 4: slow-header and slow-body ceilings. requestTimeout bounds RECEIVING the request,
   // so a long-lived SSE RESPONSE is unaffected.
   server.headersTimeout = opts.headersTimeoutMs;

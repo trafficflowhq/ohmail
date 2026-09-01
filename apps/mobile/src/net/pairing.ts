@@ -15,15 +15,25 @@
  *  · the redeem rides a BARE fetch, deliberately not a BearerManager's: there is no session
  *    yet, and a 401 recovery has nothing to recover.
  *
- * ── THE NO-SECURE-CONTEXT WIN, STATED ───────────────────────────────────────────────────────
+ * ── THE NO-SECURE-CONTEXT WIN, STATED — AND THE CLEARTEXT LOSS THAT CAME WITH IT ────────────
  *
- * The served BROWSER client carries three [SecureContext] dependencies that make a plain-http
- * LAN origin unusable there — which is why the desktop's LAN door serves an explainer, not the
- * client, and why its pane says "browsers use Tailscale, the mobile app uses LAN". This module
- * is the other half of that sentence: RN fetch has no secure-context gate and no CORS, and
- * nothing in this seam or the manager touches `navigator.locks`, `isSecureContext` or bare
- * `crypto.randomUUID` (the census in `pairing.test.ts` pins that), so a plain
- * `http://192.168…` desktop-host door pairs and drains exactly like an https one.
+ * The served BROWSER client carries three [SecureContext] dependencies that make a LAN origin
+ * unusable there — which is why the desktop's LAN door serves an explainer, not the client, and
+ * why its pane says "browsers use Tailscale, the mobile app uses same-network". This module is
+ * the other half of that sentence: RN fetch has no secure-context gate and no CORS, and nothing
+ * in this seam or the manager touches `navigator.locks`, `isSecureContext` or bare
+ * `crypto.randomUUID` (the census in `pairing.test.ts` pins that).
+ *
+ * What was NOT true, and read as true here for the whole life of this file, is the rest of that
+ * sentence: *"a plain `http://192.168…` desktop-host door pairs and drains exactly like an https
+ * one."* It does not, and it never did in a build anybody could install. A release build permits
+ * no cleartext (`targetSdk` past 28; iOS App Transport Security is the same refusal by another
+ * name), so the request died with `UnknownServiceException` before opening a socket. Every
+ * exercise of this path was a DEBUG build, whose manifest carries `usesCleartextTraffic`.
+ *
+ * The door serves TLS now, with a key of its own that no authority vouches for, and
+ * {@link admitOrigin} is where this module refuses everything that would paper over that:
+ * cleartext to a network address, and an unverifiable address with no pin.
  *
  * ── WHO NAMES THE ACCOUNT ───────────────────────────────────────────────────────────────────
  *
@@ -35,7 +45,7 @@
  * pairing out loud rather than minting a mirror under an invented owner that the drain-time
  * account guard would then refuse forever.
  */
-import type { OhmailEngine, SqlMirrorStore } from "@ohmail/client-engine";
+import { originNeedsPin, type OhmailEngine, type SqlMirrorStore } from "@ohmail/client-engine";
 import {
   bootEngine,
   forgetMirror,
@@ -46,6 +56,9 @@ import {
 } from "../engine/boot";
 import { ServerProfileStore, type ServerProfile } from "../state/servers";
 import { BearerManagerRN, type FetchLike, type RefreshVault } from "./bearer";
+import {
+  canPin, isPinFailure, pin as installPin, unpin, PIN_CHANGED_SENTENCE,
+} from "./host-pinning";
 import { dropWakeRow } from "./push.js";
 
 /** The hosted service — the managed picker card negotiates against this and nothing else. */
@@ -120,26 +133,14 @@ export function nextStep(hello: HelloAnswer): PickerStep {
 /* ── the pairing link ───────────────────────────────────────────────────────────────────────── */
 
 /**
- * Parse `${origin}/pair#${token}` — the frozen QR/copy-link shape. A hand regex rather than
- * `new URL`, so node tests and Hermes parse identically. Refused, deliberately:
- *  · a non-http(s) scheme (nothing else can be redeemed against);
- *  · any path but `/pair` (a token in the path would ride access logs);
- *  · ANY query string — `?token=` is the regression the fragment rule exists to prevent;
- *  · an empty fragment (there is no token to redeem).
+ * Parse `${origin}/pair#${fragment}` — the QR/copy-link shape, whose definition lives in
+ * `@ohmail/client-engine` because the DESKTOP composes it and this parses it, and a composer and
+ * a parser that disagree is a QR code nobody can scan with nothing on either machine to look at.
+ *
+ * Re-exported here rather than imported at every call site so that the screens keep one import,
+ * and so this module's own header keeps documenting the token discipline it enforces.
  */
-export function parsePairLink(text: string): { origin: string; token: string } | null {
-  // The scheme match is case-insensitive (a QR encoder may upcase); normalizeOrigin lowercases
-  // the result, so one server stays one profile. The PATH comparison stays exact — /pair is a
-  // route, and routes are case-sensitive.
-  const m = /^(https?):\/\/([^/?#\s]+)(\/[^?#\s]*)?(\?[^#\s]*)?(?:#(\S+))?$/i.exec(text.trim());
-  if (!m) return null;
-  const [, scheme, host, path, query, fragment] = m;
-  if (query !== undefined) return null;
-  if ((path ?? "").replace(/\/+$/, "") !== "/pair") return null;
-  const token = (fragment ?? "").trim();
-  if (token === "") return null;
-  return { origin: normalizeOrigin(`${scheme}://${host}`), token };
-}
+export { parsePairLink, type PairLink } from "@ohmail/client-engine";
 
 /* ── the picker's origin handoff ────────────────────────────────────────────────────────────── */
 
@@ -254,6 +255,83 @@ export function mobileDeviceKind(os: string): MobileDeviceKind {
   return os === "ios" ? "mobile-ios" : "mobile-android";
 }
 
+/* ── the transport gate ─────────────────────────────────────────────────────────────────────── */
+
+/** Loopback, in the two spellings a phone could ever see one. */
+function isLoopback(host: string): boolean {
+  return host === "localhost" || host === "[::1]" || /^127\./.test(host);
+}
+
+/**
+ * MAY THIS PHONE TALK TO THIS ORIGIN AT ALL — and if so, on what terms?
+ *
+ * Called before the FIRST request to an origin, in both places a session begins
+ * ({@link pairWithServer} and {@link buildSession}), because the pin has to be installed before
+ * `/hello` and not merely before the redeem.
+ *
+ * Three refusals, and every one of them is a thing the platform would otherwise refuse
+ * obscurely or — worse — a thing nothing would refuse at all:
+ *
+ *  1. **Cleartext to a network address.** The OS kills this with
+ *     `UnknownServiceException: CLEARTEXT communication to <addr> not permitted by network
+ *     security policy`, which reads to a person as "the server is down". Refusing it here says
+ *     what actually happened and what to do. Loopback is exempt: a request from this process to
+ *     this process is not a network hop, and it is where the test suite's servers live.
+ *  2. **An address no certificate can be issued for, with no pin.** An IP literal cannot be
+ *     verified by any trust store, so a TLS connection to one is either pinned or unverified.
+ *     Unverified is worth nothing, so the only honest answer to "no pin" is no pairing.
+ *  3. **A pin this build cannot install.** `canPin()` is false where the native half is absent —
+ *     today, that is iOS. Falling through would connect unpinned, which is precisely the
+ *     property the pin exists to provide; so it refuses, and says which platform half is
+ *     missing rather than blaming the network.
+ *
+ * Note the fourth case, which is a PASS: a DNS-named https origin with no pin — the hosted
+ * service, and a self-host box behind a real certificate. Those are verified by the platform's
+ * own trust store exactly as any website is, and a pin there would add a way for the pairing to
+ * break on certificate renewal while adding nothing.
+ */
+export function admitOrigin(origin: string, pin: string | null): { ok: true } | { ok: false; reason: string } {
+  const normalized = normalizeOrigin(origin);
+  const host = normalized.replace(/^https?:\/\//, "").replace(/:\d+$/, "");
+  if (normalized.startsWith("http://") && !isLoopback(host)) {
+    return {
+      ok: false,
+      reason:
+        "That address is a plain, unencrypted connection, and ohmail will not send your mail " +
+        "over one. A desktop running ohmail serves a secure address — open Settings → Devices " +
+        "there and use the code it shows.",
+    };
+  }
+  if (originNeedsPin(normalized)) {
+    if (pin === null) {
+      return {
+        ok: false,
+        reason:
+          "That pairing code does not carry this computer's identity, so ohmail cannot tell its " +
+          "connection apart from anything else on your network. Mint a fresh code from the " +
+          "desktop app's Settings → Devices and scan that.",
+      };
+    }
+    if (!canPin()) {
+      return {
+        ok: false,
+        reason:
+          "Pairing with a computer on your own network is not available in this build of the " +
+          "ohmail app yet. Use the Tailscale address from that computer's Settings → Devices " +
+          "instead — it works on every platform.",
+      };
+    }
+    if (!installPin(normalized, pin)) {
+      return {
+        ok: false,
+        reason: "ohmail could not record this computer's identity on this phone, so it stopped " +
+          "rather than connecting without it.",
+      };
+    }
+  }
+  return { ok: true };
+}
+
 export interface PairingEnv {
   profiles: ServerProfileStore;
   engineDeps: MobileEngineDeps;
@@ -295,7 +373,7 @@ function vaultFor(profiles: ServerProfileStore, id: string): RefreshVault {
  */
 export async function pairWithServer(
   env: PairingEnv,
-  input: { origin: string; token: string },
+  input: { origin: string; token: string; pin?: string | null },
 ): Promise<PairOutcome> {
   const fetchImpl = env.fetchImpl ?? bareFetch();
   const origin = normalizeOrigin(input.origin);
@@ -305,10 +383,25 @@ export async function pairWithServer(
   const token = input.token.trim();
   if (token === "") return { kind: "refused", reason: "the pairing code is empty" };
 
+  // 0 — THE TRANSPORT, BEFORE THE FIRST REQUEST AND NOT BEFORE THE REDEEM. `/hello` below is
+  // already a request to this origin, so a pin installed after it would leave the negotiation
+  // judged by the platform trust store — which for a self-signed door means it fails, and the
+  // person is told the server is unreachable. See {@link admitOrigin} for each refusal.
+  const pin = input.pin ?? null;
+  const admitted = admitOrigin(origin, pin);
+  if (!admitted.ok) return { kind: "refused", reason: admitted.reason };
+
   // 1 — what is this server, and does it pair? The gate is the same rule the picker renders
   // by, so a flow that reached this line cannot die on a route the descriptor said is absent.
   const negotiated = await negotiate(fetchImpl, origin);
   if (negotiated.kind === "unreachable") {
+    // A HANDSHAKE FAILURE IS NOT "UNREACHABLE", and telling somebody it is sends them to look at
+    // their wifi over a computer whose key changed. The platform's own words for it are
+    // unreadable and, worse, indistinguishable from a dead network — so the shape is recognised
+    // and the sentence says what happened and what to do (`host-pinning.ts`).
+    if (pin !== null && isPinFailure(negotiated.detail)) {
+      return { kind: "refused", reason: PIN_CHANGED_SENTENCE };
+    }
     return { kind: "refused", reason: `could not reach that server — ${negotiated.detail}` };
   }
   if (negotiated.kind === "not-ohmail") {
@@ -446,6 +539,10 @@ export async function pairWithServer(
       flavor: negotiated.hello.flavor,
       accountId: identity.accountId,
       refreshToken: tokens.refreshToken,
+      // The pin is persisted with the credential, because it has to be re-installed on every
+      // launch before the first request — a pin that lived only in this process would pair
+      // perfectly and fail on the next cold start.
+      pin,
     });
   } catch (err) {
     // THE COMPENSATION IS ONLY CLAIMED IF IT LANDED. The status was not read at all, so a 401,
@@ -636,6 +733,11 @@ export async function forgetProfile(
   // `buildSession` refuses anything the queue names.
   try {
     await env.profiles.remove(profileId);
+    // THE TLS PIN GOES WITH THE CREDENTIAL. Best-effort and deliberately un-awaited-for-verdict:
+    // a leftover pin can only ever NARROW what this phone accepts (it names one key for one
+    // host), so it cannot be a residue that opens anything, and holding the forget open over it
+    // would be a take-back refused for a reason nobody could act on.
+    if (row !== null) unpin(row.origin);
   } catch (err) {
     return {
       kind: "partial",
@@ -829,6 +931,20 @@ async function buildSession(
         "Devices list.",
     };
   }
+  /**
+   * ── THE PIN IS RE-INSTALLED ON EVERY LAUNCH, HERE, BEFORE ANY WIRE TOUCH ──────────────────
+   *
+   * The native registry is process-local and empty at launch, so a cold start of a phone paired
+   * with a desktop host holds no pin until this line runs. `buildSession` is the ONE place every
+   * session is built (launch, profile switch, re-pair), which is the same reason the
+   * owed-forget refusal below lives here rather than at the call sites: a new caller cannot
+   * forget to do it.
+   *
+   * A refusal is a refusal to BOOT, never a boot without the pin: the alternative is a phone
+   * that, after one restart, accepts any key on the local network for the mailbox it holds.
+   */
+  const admitted = admitOrigin(profile.origin, profile.pin);
+  if (!admitted.ok) return { kind: "refused", reason: admitted.reason };
   const bearer = new BearerManagerRN({
     origin: profile.origin,
     accessToken,

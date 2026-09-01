@@ -18,11 +18,33 @@ import {
   type UfwVerdict,
 } from "./host-firewall.js";
 import { HOST_CLIENT_CSP } from "./host-static.js";
+import type { LanIdentity } from "./host-lan-tls.js";
 import type { Diagnostic } from "./log.js";
 
 /**
  * THE LAN DOOR — the no-Tailscale fallback: an explicit second bind to ONE operator-chosen LAN
- * interface, plain HTTP, serving the desktop-host API and nothing else (Phase 3).
+ * interface, serving the desktop-host API and nothing else (Phase 3).
+ *
+ * ── IT SERVES TLS, AND IT USED TO SERVE PLAIN HTTP ───────────────────────────────────────────
+ *
+ * This door existed for exactly one client — a phone's NATIVE app — and that client could not
+ * speak to it at all. A release Android build (`targetSdk 36`) permits no cleartext and refuses
+ * the socket before opening it; iOS App Transport Security refuses the same load by default. The
+ * door was reachable only from DEBUG builds, whose manifest carries `usesCleartextTraffic`, which
+ * is why the whole path looked live for its whole life. So the transport changed: the door now
+ * presents a persistent self-signed key of its own ({@link LanIdentity},
+ * `host-lan-tls.ts`), and **plain HTTP is no longer served to the network at all** — there is no
+ * second cleartext socket and no fallback to one, because a fallback is a downgrade an attacker
+ * on the same network gets to choose.
+ *
+ * The trust is the pairing ceremony's, not a certificate authority's: the pairing link carries
+ * this key's SPKI fingerprint and the phone pins it. `host-lan-tls.ts` argues what that enforces
+ * and what it deliberately does not (no chain, no name, no expiry), and why a real certificate is
+ * not available for a DHCP address.
+ *
+ * **The loopback door is untouched and stays plain HTTP** (`host-listener.ts`): `tailscale serve`
+ * terminates TLS in front of it with a real MagicDNS certificate, so TLS there would be a second
+ * termination for nothing. Two doors, two transports, one reason each.
  *
  * ── WHY THIS DOOR IS API-ONLY, DECIDED BY AUDIT RATHER THAN BY PREFERENCE ────────────────────
  *
@@ -66,9 +88,11 @@ import type { Diagnostic } from "./log.js";
  *    concurrent-admission bound and settled-handler drain are imported from the host listener —
  *    one set of numbers for the long-running doors, not two.
  *
- * Plain HTTP on the local network is the stated trade of this fallback: the transport is only as
- * private as the network the operator chose to serve on, which is why the default remains
- * Tailscale-only and the pane's copy says so in the operator's language.
+ * The trade this fallback still makes, stated: the door is only reachable to whoever is on the
+ * network the operator chose to serve on, and the TLS above authenticates the DOOR to a paired
+ * phone — it does not make the network trustworthy. What it does buy is that nothing on that
+ * network can read or rewrite the mail in flight, which is the property plain HTTP did not have
+ * and which is why the default remains Tailscale-only.
  */
 
 /** What `OHMAIL_LAN_BIND` resolved to — one address, or one surfaced refusal. */
@@ -153,6 +177,15 @@ export function startLanListener(opts: {
   handle: (req: Request) => Promise<Response>;
   address: string;
   port: number;
+  /**
+   * THE DOOR'S OWN KEY — required, and required as a TYPE rather than checked at runtime.
+   *
+   * An optional field here would mean a caller that forgot it silently gets the cleartext door
+   * back, which is the exact defect this parameter exists to close, on the one code path where
+   * nothing would fail: the socket binds, the log line prints, and the phone refuses it in the
+   * field. Making it non-optional means that mistake does not compile.
+   */
+  identity: LanIdentity;
   log?: Diagnostic;
   /** The process-wide admission budget — see `createAdmission`. Absent, a private one. */
   admission?: Admission;
@@ -184,6 +217,9 @@ export function startLanListener(opts: {
     bodyMaxBytes: HOST_BODY_MAX_BYTES,
     headersTimeoutMs: HOST_HEADERS_TIMEOUT_MS,
     requestTimeoutMs: HOST_REQUEST_TIMEOUT_MS,
+    // The transport half of this door. Same caps, same timeouts, same drain as the loopback
+    // door — the ONLY difference between the two listeners is this line.
+    tls: { key: opts.identity.key, cert: opts.identity.cert },
     ...(opts.connectionsCheckingIntervalMs !== undefined
       ? { connectionsCheckingIntervalMs: opts.connectionsCheckingIntervalMs }
       : {}),
@@ -241,16 +277,30 @@ function refuse(status: number, code: string, message: string): Response {
 /**
  * The page a BROWSER gets on this door — the honest explainer, in place of the client the
  * Tailscale door serves. Script-free under the same policy, so this page can never become the
- * exposure the real client is defended against, and every sentence is a checked claim:
- * the API is what this door serves; a browser needs HTTPS for a network address; the Tailscale
- * path is where a browser works.
+ * exposure the real client is defended against, and every sentence is a checked claim.
+ *
+ * ── THE SENTENCE CHANGED WHEN THE TRANSPORT DID, AND SO DID WHEN A BROWSER SEES IT ───────────
+ *
+ * It used to say "this connection is plain HTTP", which was true and is now false. The reason a
+ * browser still cannot use this address is no longer the scheme — it is that the certificate is
+ * self-signed, so a browser shows its interstitial first and, past it, the served client's
+ * `[SecureContext]`-gated dependencies (`crypto.randomUUID`, `navigator.locks`,
+ * `navigator.clipboard` — the audit above) still would not have a trusted origin to run on.
+ *
+ * A person who clicks through the warning therefore lands on this page rather than on a broken
+ * mail client, which is the same outcome as before by a different route. That interstitial is a
+ * real cost of the change and it is accepted deliberately: the alternative is keeping a cleartext
+ * socket alive so that an explainer can be read without a click, on a door whose actual client
+ * refuses cleartext.
  */
 const LAN_EXPLAINER_PAGE =
   "<!doctype html><html><head><meta charset=\"utf-8\"><title>ohmail</title></head><body>" +
-  "<p>This address serves the ohmail mail API for apps on your network — it is not a web " +
-  "page. A browser cannot use it: browsers require a secure HTTPS connection for a network " +
-  "address, and this connection is plain HTTP. To read mail in a browser on another device, " +
-  "use the Tailscale address shown in the ohmail desktop app under Settings → Devices.</p>" +
+  "<p>This address serves the ohmail mail API for the ohmail app on your phone — it is not a " +
+  "web page. A browser cannot use it: this computer secures the connection with a key of its " +
+  "own that the ohmail app checks when you pair it, and a browser has no way to know that key, " +
+  "so it warns and then has no trusted origin to run the mail client on. To read mail in a " +
+  "browser on another device, use the Tailscale address shown in the ohmail desktop app under " +
+  "Settings → Devices.</p>" +
   "</body></html>";
 
 /**
@@ -285,6 +335,12 @@ export interface LanDoor {
   readonly hostState: Pick<HostState, "armed" | "port">;
   readonly lanState: LanState;
   handleLan?(req: Request): Promise<Response>;
+  /**
+   * The door's TLS identity, resolved once by the engine that owns the data directory. `null`
+   * means the identity could not be established — which turns the LAN door OFF, and never into a
+   * cleartext one. `lanState.reason` carries the sentence in that case.
+   */
+  readonly lanIdentity?: LanIdentity | null;
 }
 
 /**
@@ -321,11 +377,25 @@ export async function maybeStartLanListener(
     });
     return null;
   }
+  // NO IDENTITY, NO SOCKET — and this is the branch that must never grow an `else`. The engine
+  // has already logged WHY (`host_lan_identity_*`); what matters here is that the answer to "the
+  // door has no key" is a closed door, not a plain-HTTP one. A cleartext fallback would bind
+  // cleanly, log `host_lan_listening`, satisfy every state this module reports, and be refused
+  // by the only client it exists for — the original defect, re-armed as a fallback.
+  const identity = door.lanIdentity ?? null;
+  if (identity === null) {
+    log("host_lan_skipped", {
+      reason: "same-network access has no key to secure the connection with, so the door stays " +
+        "closed; it is never served without one",
+    });
+    return null;
+  }
   try {
     const listener = await startLanListener({
       handle: (req) => door.handleLan!(req),
       address,
       port: door.hostState.port,
+      identity,
       log,
       ...(admission !== undefined ? { admission } : {}),
     });

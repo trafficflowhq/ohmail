@@ -164,7 +164,7 @@ describe("the serving LAN row and its honest copy", () => {
     shell({ hostState: BOTH, tailscale: RUNNING, routes: EMPTY_LISTS });
     await mount();
     expect(text()).toContain(enHost.lanTitle!);
-    expect(text()).toContain("The mail API is served at http://192.168.1.23:47800");
+    expect(text()).toContain("The mail API is served at https://192.168.1.23:47800");
     expect(text()).toContain("while this computer is awake");
     // The honesty line, verbatim from the catalog: the capability is the API, not a browser.
     expect(text()).toContain(enHost.lanBrowserNote!);
@@ -176,7 +176,7 @@ describe("the serving LAN row and its honest copy", () => {
     shell({ hostState: LAN_ONLY, tailscale: RUNNING, routes: EMPTY_LISTS });
     await mount();
     expect(text()).toContain(enHost.guideNoCli!);
-    expect(text()).toContain("The mail API is served at http://192.168.1.23:47800");
+    expect(text()).toContain("The mail API is served at https://192.168.1.23:47800");
     expect(text()).toContain(enHost.lanBrowserNote!);
   });
 
@@ -212,7 +212,7 @@ describe("the serving LAN row and its honest copy", () => {
     expect(button(enHost.checkAgain!)).toBeTruthy();
     // The address is still shown and still copyable: it is the right address, and the operator
     // is one command from it working. A blocked door must not become a dead end.
-    expect(text()).toContain("http://192.168.1.23:47800");
+    expect(text()).toContain("https://192.168.1.23:47800");
     expect(button(enHost.lanCopy!)).toBeTruthy();
   });
 
@@ -242,7 +242,7 @@ describe("the serving LAN row and its honest copy", () => {
     });
     await flush();
     expect(text()).not.toContain("sudo ufw allow 47800/tcp");
-    expect(text()).toContain("The mail API is served at http://192.168.1.23:47800");
+    expect(text()).toContain("The mail API is served at https://192.168.1.23:47800");
   }, 20_000);
 
   it("the serving sentence no longer promises reachability it has not checked", async () => {
@@ -313,7 +313,7 @@ describe("the ceremony's LAN option", () => {
     const arm = asked.find((a) => a.command === "tailscale_serve_arm");
     expect(arm?.payload).toMatchObject({ lan: "192.168.1.23" });
     // The answer is the LAN-only state: degraded tailnet, serving LAN — both rendered.
-    expect(text()).toContain("The mail API is served at http://192.168.1.23:47800");
+    expect(text()).toContain("The mail API is served at https://192.168.1.23:47800");
   });
 
   it("the no-Tailscale ceremony shows the start-at-login choice, visible and honoured", async () => {
@@ -344,14 +344,17 @@ describe("pairing in LAN-only mode — the door must be enterable, not just addr
       body: { id: "pm_1", grant: "device-pair", token: "dpt_lanonly4be6f0a92d3c41e7", label: "" },
     },
   };
+  /** A well-formed SPKI fingerprint — 32 bytes, base64url, 43 characters. */
+  const PIN = "k5PGuAY8E5LFpWM0zgqW20AuzK_KKxn8dKZsV6QmpWg";
+  const PINNED = { "GET /local/lan/pin": { status: 200, body: { fingerprint: PIN } } };
 
-  it("a LAN-only serving install offers the add-a-device mint, and the minted link targets the LAN address — copy only, no QR", async () => {
+  it("a LAN-only serving install mints an HTTPS link carrying the door's key — with the QR the app scans", async () => {
     const written: string[] = [];
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: { writeText: (s: string) => { written.push(s); return Promise.resolve(); } },
     });
-    shell({ hostState: LAN_ONLY, tailscale: RUNNING, routes: { ...EMPTY_LISTS, ...MINT } });
+    shell({ hostState: LAN_ONLY, tailscale: RUNNING, routes: { ...EMPTY_LISTS, ...MINT, ...PINNED } });
     await mount();
     // The bearer-only door's ONLY public bootstrap is /pair/redeem; without a mint here the
     // pane would advertise an address nothing can ever authenticate against.
@@ -359,11 +362,49 @@ describe("pairing in LAN-only mode — the door must be enterable, not just addr
     await click(button(enHost.addAction!));
     expect(text()).toContain(enHost.lanMintedLead!);
     expect(text()).toContain(enHost.mintedOnce!);
-    // No QR in LAN-only: a camera scan would open a phone BROWSER, which this door refuses by
-    // design — the copy button is the whole hand-over.
-    expect(hostEl.querySelector("svg")).toBeNull();
+    // THE QR IS HERE IN LAN-ONLY NOW, and it is not a nicety: the link carries a 43-character
+    // key fingerprint, and the ohmail app's own scanner is the only hand-over that does not
+    // involve somebody re-typing it. (The old rule — no QR, because a camera opens a phone
+    // BROWSER — was about the OS camera app, not about this app's scanner.)
+    expect(hostEl.querySelector("svg")).not.toBeNull();
     await click(button(enHost.copyLink!));
-    expect(written).toEqual(["http://192.168.1.23:47800/pair#dpt_lanonly4be6f0a92d3c41e7"]);
+    // `https`, and the fragment carries the pin the phone will hold the door to. The scheme is
+    // the whole of the guarantee: an `http` link here is a link a release build of the app
+    // refuses before opening a socket.
+    expect(written).toEqual([
+      `https://192.168.1.23:47800/pair#k1.${PIN}.dpt_lanonly4be6f0a92d3c41e7`,
+    ]);
+  });
+
+  it("REFUSES to mint a same-network link when the engine has no key — never an unpinned one", async () => {
+    // The failure this closes is the quiet one. Handing out `https://…/pair#<token>` with no
+    // fingerprint would produce a link the phone must either refuse (fine) or trust blindly
+    // (not fine) — and it would look, on this screen, exactly like a working pairing code.
+    shell({
+      hostState: LAN_ONLY,
+      tailscale: RUNNING,
+      routes: { ...EMPTY_LISTS, ...MINT, "GET /local/lan/pin": { status: 200, body: { fingerprint: null } } },
+    });
+    await mount();
+    await click(button(enHost.addAction!));
+    expect(text()).toContain(enHost.mintNoPin!);
+    // …and nothing was minted: no lead, no QR, no code burned.
+    expect(text()).not.toContain(enHost.lanMintedLead!);
+    expect(hostEl.querySelector("svg")).toBeNull();
+  });
+
+  it("REFUSES a malformed fingerprint too — the shape is checked, not merely the presence", async () => {
+    // A truncated or garbage value is refused on the same path as an absent one. A pin that is
+    // not 32 bytes of base64url can never match any key, so a link carrying it would fail at
+    // the handshake on the phone with nothing on either machine to point at.
+    shell({
+      hostState: LAN_ONLY,
+      tailscale: RUNNING,
+      routes: { ...EMPTY_LISTS, ...MINT, "GET /local/lan/pin": { status: 200, body: { fingerprint: "too-short" } } },
+    });
+    await mount();
+    await click(button(enHost.addAction!));
+    expect(text()).toContain(enHost.mintNoPin!);
   });
 
   it("with the tailnet serving, the mint keeps its QR and the tailnet origin — the LAN row changes nothing there", async () => {

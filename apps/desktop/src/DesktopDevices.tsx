@@ -19,9 +19,12 @@
  *
  * ── THE PAIRING LINK'S SHAPE, AND THE ONE APPEARANCE OF THE RAW TOKEN ────────────────────────
  *
- * The QR encodes `${origin}/pair#<raw-device-pair-token>` — the fragment-link idiom the Invites
- * pane established, for the reasons its header carries: a fragment is not sent in the page
- * request, cannot land in a log, and never rides a `Referer`. The raw token appears exactly once
+ * The QR encodes `${origin}/pair#<fragment>` — the fragment-link idiom the Invites pane
+ * established, for the reasons its header carries: a fragment is not sent in the page request,
+ * cannot land in a log, and never rides a `Referer`. The fragment's own shape lives in
+ * `@ohmail/client-engine` (`pair-link.ts`) because the PHONE parses it, and on the same-network
+ * address it carries this computer's key fingerprint beside the token — see the LAN note below.
+ * The raw token appears exactly once
  * (this mint's answer), as a QR and behind a copy button, and is NEVER printed: a hundred
  * characters of credential is exactly the thing the design rules say never to show where a scan
  * or a copy would do. The engine stores only a hash; the code works once and expires in five
@@ -42,13 +45,23 @@
  * service until it opens again, and a pane that promised otherwise would be lying about the one
  * limit a household will actually meet.
  *
- * ── SAME-NETWORK ACCESS, AND WHY ITS COPY SAYS "APPS ONLY" ──────────────────────────────────
+ * ── SAME-NETWORK ACCESS: `https`, A KEY OF THIS COMPUTER'S, AND STILL APPS ONLY ─────────────
  *
- * The LAN option binds one operator-chosen interface, plain HTTP — and plain HTTP on a network
- * address is no secure context, so the browser client CANNOT be served there (the audit is
+ * The LAN option binds one operator-chosen interface and serves TLS with a key the engine keeps
+ * (`apps/sidecar/src/host-lan-tls.ts`). It used to serve plain HTTP, and that is exactly why
+ * same-network pairing never worked on a shipped phone: a release build of the mobile app
+ * permits no cleartext and refused the socket before opening it.
+ *
+ * No certificate authority issues for a DHCP address, so the trust rides the CEREMONY: this pane
+ * reads the door's key fingerprint (`GET /local/lan/pin`) at mint time and puts it in the link,
+ * and the phone accepts that key and no other. A same-network mint with no fingerprint is
+ * REFUSED here rather than handed out unpinned.
+ *
+ * A phone BROWSER still cannot use the address, for a changed reason: a browser cannot check a
+ * key it was never handed, so it warns — and past the warning the served client's
+ * `[SecureContext]` dependencies still have no trusted origin (the audit is
  * `apps/sidecar/src/host-lan.ts`'s header; the premise is pinned by
- * `test/host-client-secure-context.test.ts`). The pane's copy therefore promises the API for
- * apps and says plainly that a phone browser needs the Tailscale address — truthful over
+ * `test/host-client-secure-context.test.ts`). The copy says so plainly — truthful over
  * flattering, because a QR that opened a broken mail client would be worse than a sentence. The
  * option is opt-in (default off), the address is CHOSEN from the engine's own enumeration
  * (`GET /local/lan/candidates` over the bridge — never typed, never 0.0.0.0), and it is also
@@ -59,6 +72,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useFormatter, useTranslations } from "next-intl";
 import { Button, SettingsRow, SettingsSection, SettingsSubhead, Switch, useToast } from "@ohmail/ui";
+
+import { isPairPin, pairLink } from "@ohmail/client-engine";
 
 import { bridgeFetch } from "./bridge-fetch.js";
 import { QrCode } from "../../webapp/app/shell/QrCode.js";
@@ -555,12 +570,43 @@ export function DesktopDevices() {
     // The link's base: the served tailnet origin where there is one (the browser flow), else
     // the LAN address (the app/API flow — this door's only public bootstrap is /pair/redeem,
     // so a LAN-only install without a mint would be an address nothing can authenticate to).
-    const origin =
-      host?.origin ?? (host?.lan && host?.port ? `http://${host.lan}:${host.port}` : null);
+    //
+    // ── THE SAME-NETWORK ADDRESS IS `https`, AND IT CARRIES THIS COMPUTER'S KEY ─────────────
+    //
+    // It used to be `http://…`, and that is the whole reason same-network pairing never worked
+    // on a shipped phone build: a release app permits no cleartext and refuses the socket before
+    // opening it. The door serves TLS with a key of its own now, and because no certificate
+    // authority vouches for a DHCP address, the CEREMONY carries the trust — the fingerprint
+    // goes in the link, the phone pins it, and a key that is not that key is refused.
+    const lanBase = host?.lan && host?.port ? `https://${host.lan}:${host.port}` : null;
+    const origin = host?.origin ?? lanBase;
     if (!origin) return;
     setBusy("mint");
     setProblem(null);
     try {
+      // The pin is read at MINT time rather than held from the opening read: the key is the
+      // engine's, the engine can have been respawned since this pane mounted, and a link built
+      // from a stale fingerprint is a pairing that dies at the handshake with nothing to see.
+      // Only the same-network address needs one — a tailnet origin is a real name with a real
+      // certificate that the phone's own trust store checks.
+      let pin: string | null = null;
+      if (origin === lanBase) {
+        const pinRes = await bridgeFetch("/local/lan/pin");
+        if (!alive.current) return;
+        const pinBody = pinRes.ok
+          ? ((await pinRes.json()) as { fingerprint?: unknown })
+          : {};
+        pin = typeof pinBody.fingerprint === "string" && isPairPin(pinBody.fingerprint)
+          ? pinBody.fingerprint
+          : null;
+        // NO PIN, NO LINK. A same-network link without one would be a QR the phone must either
+        // refuse (the good case) or trust blindly (the bad one). Refusing here says which of
+        // the two happened, on the machine that can do something about it.
+        if (pin === null) {
+          setProblem(t("mintNoPin"));
+          return;
+        }
+      }
       const label = labelDraft.trim();
       const res = await bridgeFetch("/pair", {
         method: "POST",
@@ -577,8 +623,12 @@ export function DesktopDevices() {
         setProblem(t("mintNoToken"));
         return;
       }
-      /* The link, assembled ONCE, here — the fragment idiom; see the header. */
-      setMinted({ link: `${origin}/pair#${out.token}`, label: typeof out.label === "string" ? out.label : "" });
+      /* The link, assembled ONCE, here, through the shape the PHONE parses — one definition in
+         `@ohmail/client-engine`, so a composer/parser drift is not expressible. */
+      setMinted({
+        link: pairLink(origin, out.token, pin),
+        label: typeof out.label === "string" ? out.label : "",
+      });
       setLabelDraft("");
       await refreshLists();
     } catch (err) {
@@ -953,15 +1003,23 @@ export function DesktopDevices() {
                   : t("mintedLead")
                 : t("lanMintedLead")}
             </p>
-            {/* The QR is the hand-over for the BROWSER flow — a camera on this screen — and the
-                copy button is everything else. In LAN-only there is deliberately NO QR: a camera
-                scan opens a phone browser, and this door refuses browsers by design, so the copy
-                button is the whole hand-over. The raw link is printed nowhere either way. */}
-            {serving ? (
-              <div className="join-qr">
-                <QrCode value={minted.link} ariaLabel={t("qrAria")} />
-              </div>
-            ) : null}
+            {/* ── THE QR IS DRAWN IN BOTH MODES NOW, AND LAN-ONLY IS THE CASE THAT NEEDS IT ──
+
+                It used to be tailnet-only, on the argument that "a camera scan opens a phone
+                browser, and this door refuses browsers by design". That was about the phone's
+                OS camera app; the ohmail app has its own scanner, and the app is precisely the
+                client this door exists for.
+
+                What made it necessary rather than merely nicer is the pin: a same-network link
+                now carries the door's 43-character key fingerprint, and there is no world in
+                which somebody re-types that onto a phone. The copy button hands the link to
+                something that can paste; the QR hands it to the camera. Both, or the ceremony
+                has no path that ends with a paired phone.
+
+                The raw link is still printed nowhere. */}
+            <div className="join-qr">
+              <QrCode value={minted.link} ariaLabel={t("qrAria")} />
+            </div>
             <div className="acct-actions">
               <Button variant="primary" onClick={copy}>
                 {t("copyLink")}
@@ -1020,9 +1078,9 @@ export function DesktopDevices() {
           <SettingsSubhead>{t("lanTitle")}</SettingsSubhead>
           <p className="acct-lead">
             {host.lanState === "serving" && host.port !== null
-              ? t("lanServing", { address: `http://${host.lan}:${host.port}`, port: host.port })
+              ? t("lanServing", { address: `https://${host.lan}:${host.port}`, port: host.port })
               : host.lanState === "blocked" && host.port !== null
-                ? t("lanBlocked", { address: `http://${host.lan}:${host.port}`, port: host.port })
+                ? t("lanBlocked", { address: `https://${host.lan}:${host.port}`, port: host.port })
                 : host.lanState === "failed"
                   ? t("lanFailed")
                   : host.lanState === "invalid"
@@ -1052,7 +1110,7 @@ export function DesktopDevices() {
             <>
               <p className="set-note-inline">{t("lanBrowserNote")}</p>
               <div className="acct-actions">
-                <Button onClick={() => copyLan(`http://${host.lan}:${host.port}`)}>
+                <Button onClick={() => copyLan(`https://${host.lan}:${host.port}`)}>
                   {t("lanCopy")}
                 </Button>
               </div>

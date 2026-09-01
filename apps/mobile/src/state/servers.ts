@@ -54,6 +54,19 @@ export interface ServerProfile {
   /** The server-verified account this pairing opens — half of the mirror's owner key. */
   accountId: string;
   refreshToken: string | null;
+  /**
+   * THE DOOR'S KEY, base64url `SHA-256(SubjectPublicKeyInfo)` — for a desktop host on the local
+   * network, whose self-signed certificate no authority vouches for and whose trust therefore
+   * came from the pairing ceremony. `null` for every origin the platform can verify on its own
+   * (the hosted service, a self-host box with a real certificate) — which is why it is nullable
+   * rather than required, and why a null one here is not a missing pin but an absent need for
+   * one.
+   *
+   * Persisted with the profile because it must be re-installed on EVERY launch, before the first
+   * request: a pin held only in memory would work for the pairing and fail on the next cold
+   * start, which is the worst shape this could have.
+   */
+  pin: string | null;
 }
 
 /** The persisted index — which profiles exist, which one the app boots, and what is owed. */
@@ -251,6 +264,10 @@ export class ServerProfileStore {
         flavor: p.flavor,
         accountId: p.accountId,
         refreshToken: typeof p.refreshToken === "string" ? p.refreshToken : null,
+        // Absent in rows written before pinning existed, and absent for every origin that never
+        // needed one — the same `null`, and correctly so: the pairing seam decides whether an
+        // origin REQUIRES a pin from the origin's own shape, not from whether a row carries one.
+        pin: typeof p.pin === "string" ? p.pin : null,
       };
     } catch {
       return null;
@@ -287,7 +304,11 @@ export class ServerProfileStore {
    * UPDATED in place (fresh flavor + refresh token, same id) — a re-pair, never a duplicate.
    * The origin must arrive normalized (the header's contract with the pairing seam).
    */
-  add(input: { origin: string; flavor: string; accountId: string; refreshToken: string }): Promise<ServerProfile> {
+  add(input: {
+    origin: string; flavor: string; accountId: string; refreshToken: string;
+    /** See {@link ServerProfile.pin}. Omitted is `null` — an origin that needs no pin. */
+    pin?: string | null;
+  }): Promise<ServerProfile> {
     return this.enqueue(async () => {
       if (input.origin !== input.origin.trim().replace(/\/+$/, "").toLowerCase()) {
         throw new Error(`profile origin must arrive normalized: "${input.origin}"`);
@@ -303,6 +324,10 @@ export class ServerProfileStore {
         flavor: input.flavor,
         accountId: input.accountId,
         refreshToken: input.refreshToken,
+        // A RE-PAIR REPLACES THE PIN rather than keeping the old one. That is the rotation
+        // story: a desktop that was reinstalled presents a new key, and the only way this phone
+        // ever accepts it is the person scanning a fresh code from that machine.
+        pin: input.pin ?? null,
       };
       // ── THE INDEX LEARNS THE ID BEFORE THE CREDENTIAL EXISTS ─────────────────────────────
       //

@@ -51,7 +51,10 @@ export default function ScanScreen() {
       }
       armed.current = false;
       setPhase({ k: "pairing" });
-      void conn.pair(parsed.origin, parsed.token).then((outcome) => {
+      // The pin rides straight from the scanned code into the pairing — never re-derived, never
+      // fetched. A fingerprint asked for over the network is a fingerprint an attacker on that
+      // network can answer with; the point of the QR is that this one came off the screen.
+      void conn.pair(parsed.origin, parsed.token, parsed.pin).then((outcome) => {
         if (outcome.ok) {
           router.replace("/servers");
           return;

@@ -40,6 +40,8 @@ import { mirrorExists, mirrorOwnerKey } from "../engine/boot";
 import { nativeEngineDeps } from "../engine/native";
 import { settleInstallGeneration } from "../state/install-marker";
 import { nativeServerProfiles } from "../state/servers-native";
+import { installPinning } from "./host-pinning";
+import { nativeHostPinning } from "./host-pinning-native";
 import type { ServerProfile } from "../state/servers";
 import type { FetchLike } from "./bearer";
 import { SyncRunner } from "./drain";
@@ -81,7 +83,13 @@ export interface Connection {
   /** The picker's /hello probe — negotiation lives in the seam, screens render the answer. */
   ask(origin: string): Promise<Negotiation>;
   /** Redeem a scanned/typed pairing and go live on it. The reason is a showable sentence. */
-  pair(origin: string, token: string): Promise<Attempt>;
+  /**
+   * `pin` is the desktop door's key fingerprint out of the pairing link, for an address no
+   * certificate authority can vouch for. Absent for every origin the platform verifies on its
+   * own. It is a parameter rather than something the seam re-derives because it comes from the
+   * QR the person scanned — that is the whole trust path.
+   */
+  pair(origin: string, token: string, pin?: string | null): Promise<Attempt>;
   /** Switch the live session to a stored profile — BY ID; the row is re-read in the gate. */
   switchTo(profileId: string): Promise<Attempt>;
   /**
@@ -119,11 +127,19 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     // `deviceKind` — what THIS phone is, declared at pairing time so the server's device list
     // and its staleness attribution name the install. `Platform.OS` is read here, in the one
     // RN-world composition, and handed in as a fact — `net/pairing` stays react-native-free.
-    () => ({
-      profiles: nativeServerProfiles(),
-      engineDeps: nativeEngineDeps(),
-      deviceKind: mobileDeviceKind(Platform.OS),
-    }),
+    () => {
+      // THE TLS PIN REGISTRY, INSTALLED BEFORE ANY SESSION EXISTS. `pairing.ts` refuses a
+      // same-network pairing while this is absent (`canPin()`), which is the honest failure —
+      // so this line running before the first `pair`/`connect` is what makes the feature exist
+      // at all, and its absence is a refusal rather than an unpinned connection. `useMemo`'s
+      // factory runs during the provider's first render, before any child can call a verb.
+      installPinning(nativeHostPinning());
+      return {
+        profiles: nativeServerProfiles(),
+        engineDeps: nativeEngineDeps(),
+        deviceKind: mobileDeviceKind(Platform.OS),
+      };
+    },
     [],
   );
   const gateRef = useRef<TransitionGate | null>(null);
@@ -372,11 +388,11 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       profiles,
       activeId,
       ask: (origin) => negotiate(globalThis.fetch.bind(globalThis) as FetchLike, origin),
-      pair: (origin, token) =>
+      pair: (origin, token, pin) =>
         gate.run(async (stillCurrent) => {
           if (live.current.k === "live") teardown(live.current.session);
           if (stillCurrent()) setState({ k: "connecting", origin });
-          const outcome = await pairWithServer(env, { origin, token });
+          const outcome = await pairWithServer(env, { origin, token, pin: pin ?? null });
           await refreshProfiles();
           if (!stillCurrent()) {
             if (outcome.kind === "paired") outcome.session.store.close();
