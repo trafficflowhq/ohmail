@@ -664,6 +664,15 @@ jobs:
 
       # Tauri's Linux prerequisites: the WebKitGTK webview it renders in, the
       # GTK/soup stack under it, and the tools its bundlers shell out to.
+      #
+      # `xdg-utils` is here because of what it is NOT on: the x86_64 runner image
+      # ships `xdg-mime` and the arm64 one does not, so the AppImage bundler —
+      # which shells out to it — worked on one architecture and failed on the
+      # other with `xdg-mime binary not found`. Installed on BOTH rather than
+      # only where it is missing, for the reason the arm64 job states about its
+      # own list: a prerequisite that differs between two jobs meant to be
+      # identical is how they stop being identical. A package already present is
+      # a no-op.
       - name: Install the Tauri prerequisites
         run: |
           sudo apt-get update
@@ -675,7 +684,8 @@ jobs:
             librsvg2-dev \
             libayatana-appindicator3-dev \
             libssl-dev \
-            build-essential curl wget file patchelf desktop-file-utils
+            build-essential curl wget file patchelf desktop-file-utils \
+            xdg-utils
 
       - name: Toolchain
         run: |
@@ -1003,7 +1013,8 @@ jobs:
             librsvg2-dev \
             libayatana-appindicator3-dev \
             libssl-dev \
-            build-essential curl wget file patchelf desktop-file-utils
+            build-essential curl wget file patchelf desktop-file-utils \
+            xdg-utils
 
       - name: Toolchain
         run: |
