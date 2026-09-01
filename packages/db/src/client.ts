@@ -340,6 +340,21 @@ export const ROLE_DEFAULT_TIMEOUTS = {
  * the upstream pooler has its own connection budget, the burst that produced the incident was
  * modest, and nothing measured yet says what the right number is. Guessing ceilings is what
  * produced the two that could not bind.
+ *
+ * ── THE RESIDUAL, NAMED RATHER THAN LEFT TO BE REDISCOVERED ───────────────────────────────────
+ *
+ * This is a PER-QUERY ceiling, not a per-request budget. A route issuing N sequential statements
+ * can in principle accumulate N × 15 s, and at N = 4 that is back at the platform's knife. It
+ * needs a narrow régime to happen — the connection must free just in time, repeatedly, since
+ * genuine starvation refuses the first statement and ends the route there — but it is real.
+ *
+ * A request budget is not merely unimplemented, it needs a decision this slice should not make
+ * alone. `buildDeps` does construct a fresh handle per request (`apps/api-vercel/src/deps.ts`),
+ * so a cumulative deadline would land correctly there — but `servicesFor` caches a handle for the
+ * whole warm instance (the recipient limiter's, same file), and a cumulative deadline on THAT one
+ * expires permanently and takes the instance down. So it would have to be an explicit opt-in from
+ * the request path rather than a property of the factory, and the right total is a number nobody
+ * has measured. Per-query is the safe default; the opt-in is the follow-on.
  */
 export const POOLED_ACQUIRE_TIMEOUT_MS = 15_000;
 
