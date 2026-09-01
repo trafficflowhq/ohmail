@@ -890,9 +890,28 @@ jobs:
           # 2. GDK_BACKEND belongs to whoever launches the app. Forcing x11 put
           #    every Wayland session on XWayland at 1x — blurry on a HiDPI
           #    screen — and overrode a caller who had asked for something else.
-          FORCED="$(grep -a '^export GDK_BACKEND=' "$HOOK" || true)"
-          if [ -n "$FORCED" ]; then
-            echo "the launcher forces a display backend: $FORCED" >&2
+          # Asserted by RUNNING the launcher's environment, not by matching text in it. A grep for
+          # `^export GDK_BACKEND=` is blind to the same assignment indented, wrapped in a
+          # conditional, or spelled as a bare assignment exported later — all valid shell, all
+          # still forcing the backend. Sourcing the hook and reading the variable answers the
+          # question the check is actually asking. APPDIR is supplied so the hook does not try to
+          # locate itself, and OHMAIL_SYSTEM_WEBKIT is explicitly unset so the escape branch
+          # cannot exec out of the subshell.
+          # `set +eu` inside the subshell, and APPDIR exported as its own statement rather than as
+          # an assignment prefix on `.`. Both are load-bearing: the hook reads `$XDG_DATA_DIRS`,
+          # which `-u` turns into a fatal error where it happens to be unset, and the prefix form
+          # left the subshell dying before it could print — which under `set -e` outside took the
+          # whole step down with an empty message. Found by running it.
+          BACKEND="$(
+            set +eu
+            unset GDK_BACKEND OHMAIL_SYSTEM_WEBKIT
+            export APPDIR="$PWD/squashfs-root"
+            . "$HOOK" >/dev/null 2>&1
+            printf '%s' "${GDK_BACKEND-<unset>}"
+          )" || true
+          echo "GDK_BACKEND after sourcing the launcher hook: $BACKEND"
+          if [ "$BACKEND" != "<unset>" ]; then
+            echo "the launcher forces a display backend: GDK_BACKEND=$BACKEND" >&2
             exit 1
           fi
 
@@ -923,8 +942,23 @@ jobs:
 
           # 4. The escape hatch: one variable to run against the host's GTK and
           #    WebKitGTK, for a machine where the bundled stack cannot start.
-          grep -aq 'OHMAIL_SYSTEM_WEBKIT' "$HOOK" || {
-            echo "the launcher has no OHMAIL_SYSTEM_WEBKIT escape" >&2; exit 1; }
+          # The BRANCH, not the token. The hook explains itself in comments that also spell
+          # OHMAIL_SYSTEM_WEBKIT, so a check for the name alone stays green after the `if`/`exec`
+          # is deleted and only the prose survives. Both halves are asserted, because the exec
+          # without LD_LIBRARY_PATH escapes nothing: the binary carries
+          # DT_RUNPATH=$ORIGIN/../lib and would resolve the bundled stack anyway.
+          grep -aqE '^if \[ -n "\$OHMAIL_SYSTEM_WEBKIT" \]; then$' "$HOOK" || {
+            echo "the launcher has no OHMAIL_SYSTEM_WEBKIT branch" >&2; exit 1; }
+          grep -aqE '^ *LD_LIBRARY_PATH="\$_ohmail_sys" exec "\$APPDIR/usr/bin/ohmail" "\$@"$' "$HOOK" || {
+            echo "the escape branch does not override the binary's RUNPATH" >&2; exit 1; }
+          # And it has to come FIRST: anything exported above it is already in the environment of
+          # the process it execs, which is the whole thing the escape is trying not to inherit.
+          ESCAPE_LINE="$(grep -an '^if \[ -n "\$OHMAIL_SYSTEM_WEBKIT" \]; then$' "$HOOK" | cut -d: -f1)"
+          FIRST_EXPORT="$(grep -an '^export GTK_DATA_PREFIX=' "$HOOK" | cut -d: -f1)"
+          if [ -z "$FIRST_EXPORT" ] || [ "$ESCAPE_LINE" -ge "$FIRST_EXPORT" ]; then
+            echo "the escape branch is not ahead of the AppDir exports (escape $ESCAPE_LINE, exports $FIRST_EXPORT)" >&2
+            exit 1
+          fi
 
           # ── THE DESKTOP ENTRY ─────────────────────────────────────────────
           #
@@ -950,24 +984,40 @@ jobs:
           # The shipped binary's own ELF is asserted below; the ~150 libraries
           # beside it were not, and nothing else here would notice one copied
           # from the wrong place.
-          # Every regular file under usr/ is offered to readelf and the ones that are not ELF come
-          # back with an empty machine and are skipped. Scanning by NAME (*.so*) instead would
-          # miss the three things most worth checking: the WebKit process binaries the bundler
-          # copies in by hand, and the vendored Node runtime.
+          # EVERY regular file under usr/ is a candidate, not only the ones named *.so*. Scanning by
+          # name misses the four that matter most: usr/bin/ohmail, the vendored runtime/node, and
+          # WebKitNetworkProcess and WebKitWebProcess — the last being the very process whose
+          # architecture this release is about.
+          #
+          # The file list is captured by a command whose status is checked. Inside a process
+          # substitution `find` reports to nobody: a traversal that dies part-way leaves the loop
+          # exiting zero over however many files it happened to get, and `set -euo pipefail` never
+          # sees it.
+          FILES="$(find squashfs-root/usr -type f)"
+          # ELF-ness is decided by the file's own magic, not by whether readelf succeeded. Reading
+          # it from readelf's exit status makes a CORRUPT shared object indistinguishable from a
+          # PNG — both produce no machine, and the loop would skip the one it exists to catch.
           WRONG=""
           CHECKED=0
           while IFS= read -r f; do
-            m="$(readelf -h "$f" 2>/dev/null | sed -n 's/^ *Machine: *//p' || true)"
-            if [ -z "$m" ]; then continue; fi
+            [ -n "$f" ] || continue
+            magic="$(head -c 4 "$f" | od -An -tx1 | tr -d ' \n')"
+            if [ "$magic" != "7f454c46" ]; then continue; fi
             CHECKED=$((CHECKED + 1))
-            if [ "$m" != "$EXPECT_MACHINE" ]; then WRONG="$WRONG  $f ($m)"$'\n'; fi
-          done < <(find squashfs-root/usr -type f)
+            m="$(readelf -h "$f" 2>/dev/null | sed -n 's/^ *Machine: *//p' || true)"
+            if [ -z "$m" ]; then
+              WRONG="$WRONG  $f (an ELF file readelf cannot parse)"$'\n'
+            elif [ "$m" != "$EXPECT_MACHINE" ]; then
+              WRONG="$WRONG  $f ($m)"$'\n'
+            fi
+          done <<< "$FILES"
           if [ -n "$WRONG" ]; then
-            echo "files built for another architecture:" >&2
+            echo "files that are not this job's architecture:" >&2
             printf '%s' "$WRONG" >&2
             exit 1
           fi
-          # A count, because "nothing was wrong" and "nothing was looked at" print the same way.
+          # A floor, because "nothing was wrong" and "nothing was looked at" print the same way.
+          # The released artifacts carry about 170; 100 is well under that and well over zero.
           if [ "$CHECKED" -lt 100 ]; then
             echo "only $CHECKED ELF files found under usr/ — the scan found almost nothing" >&2
             exit 1
@@ -1345,9 +1395,28 @@ jobs:
             exit 1
           fi
 
-          FORCED="$(grep -a '^export GDK_BACKEND=' "$HOOK" || true)"
-          if [ -n "$FORCED" ]; then
-            echo "the launcher forces a display backend: $FORCED" >&2
+          # Asserted by RUNNING the launcher's environment, not by matching text in it. A grep for
+          # `^export GDK_BACKEND=` is blind to the same assignment indented, wrapped in a
+          # conditional, or spelled as a bare assignment exported later — all valid shell, all
+          # still forcing the backend. Sourcing the hook and reading the variable answers the
+          # question the check is actually asking. APPDIR is supplied so the hook does not try to
+          # locate itself, and OHMAIL_SYSTEM_WEBKIT is explicitly unset so the escape branch
+          # cannot exec out of the subshell.
+          # `set +eu` inside the subshell, and APPDIR exported as its own statement rather than as
+          # an assignment prefix on `.`. Both are load-bearing: the hook reads `$XDG_DATA_DIRS`,
+          # which `-u` turns into a fatal error where it happens to be unset, and the prefix form
+          # left the subshell dying before it could print — which under `set -e` outside took the
+          # whole step down with an empty message. Found by running it.
+          BACKEND="$(
+            set +eu
+            unset GDK_BACKEND OHMAIL_SYSTEM_WEBKIT
+            export APPDIR="$PWD/squashfs-root"
+            . "$HOOK" >/dev/null 2>&1
+            printf '%s' "${GDK_BACKEND-<unset>}"
+          )" || true
+          echo "GDK_BACKEND after sourcing the launcher hook: $BACKEND"
+          if [ "$BACKEND" != "<unset>" ]; then
+            echo "the launcher forces a display backend: GDK_BACKEND=$BACKEND" >&2
             exit 1
           fi
 
@@ -1372,8 +1441,23 @@ jobs:
             exit 1
           fi
 
-          grep -aq 'OHMAIL_SYSTEM_WEBKIT' "$HOOK" || {
-            echo "the launcher has no OHMAIL_SYSTEM_WEBKIT escape" >&2; exit 1; }
+          # The BRANCH, not the token. The hook explains itself in comments that also spell
+          # OHMAIL_SYSTEM_WEBKIT, so a check for the name alone stays green after the `if`/`exec`
+          # is deleted and only the prose survives. Both halves are asserted, because the exec
+          # without LD_LIBRARY_PATH escapes nothing: the binary carries
+          # DT_RUNPATH=$ORIGIN/../lib and would resolve the bundled stack anyway.
+          grep -aqE '^if \[ -n "\$OHMAIL_SYSTEM_WEBKIT" \]; then$' "$HOOK" || {
+            echo "the launcher has no OHMAIL_SYSTEM_WEBKIT branch" >&2; exit 1; }
+          grep -aqE '^ *LD_LIBRARY_PATH="\$_ohmail_sys" exec "\$APPDIR/usr/bin/ohmail" "\$@"$' "$HOOK" || {
+            echo "the escape branch does not override the binary's RUNPATH" >&2; exit 1; }
+          # And it has to come FIRST: anything exported above it is already in the environment of
+          # the process it execs, which is the whole thing the escape is trying not to inherit.
+          ESCAPE_LINE="$(grep -an '^if \[ -n "\$OHMAIL_SYSTEM_WEBKIT" \]; then$' "$HOOK" | cut -d: -f1)"
+          FIRST_EXPORT="$(grep -an '^export GTK_DATA_PREFIX=' "$HOOK" | cut -d: -f1)"
+          if [ -z "$FIRST_EXPORT" ] || [ "$ESCAPE_LINE" -ge "$FIRST_EXPORT" ]; then
+            echo "the escape branch is not ahead of the AppDir exports (escape $ESCAPE_LINE, exports $FIRST_EXPORT)" >&2
+            exit 1
+          fi
 
           ENTRY=squashfs-root/usr/share/applications/ohmail.desktop
           test -f "$ENTRY"
@@ -1385,24 +1469,40 @@ jobs:
           grep -aqx 'StartupWMClass=ohmail' "$ENTRY" || {
             echo "the desktop entry cannot be matched to the window" >&2; exit 1; }
 
-          # Every regular file under usr/ is offered to readelf and the ones that are not ELF come
-          # back with an empty machine and are skipped. Scanning by NAME (*.so*) instead would
-          # miss the three things most worth checking: the WebKit process binaries the bundler
-          # copies in by hand, and the vendored Node runtime.
+          # EVERY regular file under usr/ is a candidate, not only the ones named *.so*. Scanning by
+          # name misses the four that matter most: usr/bin/ohmail, the vendored runtime/node, and
+          # WebKitNetworkProcess and WebKitWebProcess — the last being the very process whose
+          # architecture this release is about.
+          #
+          # The file list is captured by a command whose status is checked. Inside a process
+          # substitution `find` reports to nobody: a traversal that dies part-way leaves the loop
+          # exiting zero over however many files it happened to get, and `set -euo pipefail` never
+          # sees it.
+          FILES="$(find squashfs-root/usr -type f)"
+          # ELF-ness is decided by the file's own magic, not by whether readelf succeeded. Reading
+          # it from readelf's exit status makes a CORRUPT shared object indistinguishable from a
+          # PNG — both produce no machine, and the loop would skip the one it exists to catch.
           WRONG=""
           CHECKED=0
           while IFS= read -r f; do
-            m="$(readelf -h "$f" 2>/dev/null | sed -n 's/^ *Machine: *//p' || true)"
-            if [ -z "$m" ]; then continue; fi
+            [ -n "$f" ] || continue
+            magic="$(head -c 4 "$f" | od -An -tx1 | tr -d ' \n')"
+            if [ "$magic" != "7f454c46" ]; then continue; fi
             CHECKED=$((CHECKED + 1))
-            if [ "$m" != "$EXPECT_MACHINE" ]; then WRONG="$WRONG  $f ($m)"$'\n'; fi
-          done < <(find squashfs-root/usr -type f)
+            m="$(readelf -h "$f" 2>/dev/null | sed -n 's/^ *Machine: *//p' || true)"
+            if [ -z "$m" ]; then
+              WRONG="$WRONG  $f (an ELF file readelf cannot parse)"$'\n'
+            elif [ "$m" != "$EXPECT_MACHINE" ]; then
+              WRONG="$WRONG  $f ($m)"$'\n'
+            fi
+          done <<< "$FILES"
           if [ -n "$WRONG" ]; then
-            echo "files built for another architecture:" >&2
+            echo "files that are not this job's architecture:" >&2
             printf '%s' "$WRONG" >&2
             exit 1
           fi
-          # A count, because "nothing was wrong" and "nothing was looked at" print the same way.
+          # A floor, because "nothing was wrong" and "nothing was looked at" print the same way.
+          # The released artifacts carry about 170; 100 is well under that and well over zero.
           if [ "$CHECKED" -lt 100 ]; then
             echo "only $CHECKED ELF files found under usr/ — the scan found almost nothing" >&2
             exit 1

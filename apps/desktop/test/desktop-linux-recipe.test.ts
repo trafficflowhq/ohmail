@@ -97,7 +97,16 @@ describe("the AppImage's launcher", () => {
    * Asserted against the text the plugin WRITES into the launcher, which is what runs.
    */
   it("leaves the display backend to whoever launches the app", () => {
-    expect(read(PLUGIN)).not.toMatch(/^export GDK_BACKEND=/m);
+    // Any assignment, not just one at column 1 with `export` in front. Indented, wrapped in a
+    // conditional, or a bare assignment exported later are all valid shell and all still force
+    // the backend, and the first draft of this expectation could see none of them. CI asserts the
+    // same thing the stronger way — it sources the generated hook and reads the variable — but
+    // that needs a built artifact, and this file is the one that runs on every push.
+    const code = read(PLUGIN)
+      .split("\n")
+      .filter((line) => !/^\s*#/.test(line))
+      .join("\n");
+    expect(code).not.toMatch(/GDK_BACKEND\s*=/);
   });
 
   /**
@@ -128,7 +137,14 @@ describe("the AppImage's launcher", () => {
   it("can be told to use the host's GTK and WebKitGTK instead", () => {
     const plugin = read(PLUGIN);
     expect(plugin).toMatch(/if \[ -n "\$OHMAIL_SYSTEM_WEBKIT" \]; then/);
-    expect(plugin).toMatch(/exec "\$APPDIR\/usr\/bin\/ohmail" "\$@"/);
+    // AND it must override the binary's own RUNPATH. `exec`ing alone escapes NOTHING: linuxdeploy
+    // patches usr/bin/ohmail with DT_RUNPATH=$ORIGIN/../lib and every bundled library with
+    // DT_RUNPATH=$ORIGIN, so a clean environment still resolves the bundled stack out of the
+    // AppDir. Measured on a released artifact: with the exec alone, libwebkit2gtk, libgtk-3 and
+    // libsoup all came from the AppDir; naming the system directories on LD_LIBRARY_PATH — which
+    // the loader searches BEFORE DT_RUNPATH — took every one of the binary's dependencies to the
+    // host's copies. So the assignment is part of the assertion, not decoration.
+    expect(plugin).toMatch(/LD_LIBRARY_PATH="\$_ohmail_sys" exec "\$APPDIR\/usr\/bin\/ohmail" "\$@"/);
     const escape = plugin.indexOf('if [ -n "$OHMAIL_SYSTEM_WEBKIT" ]');
     const firstOurPath = plugin.indexOf('export GTK_DATA_PREFIX="$APPDIR"');
     expect(firstOurPath).toBeGreaterThan(-1);

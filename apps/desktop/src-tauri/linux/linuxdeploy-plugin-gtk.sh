@@ -224,14 +224,36 @@ APPIMAGE_GTK_THEME="${APPIMAGE_GTK_THEME:-"Adwaita:$GTK_THEME_VARIANT"}" # Allow
 
 export APPDIR="${APPDIR:-"$(dirname "$(realpath "$0")")"}" # Workaround to run extracted AppImage
 
-# ohmail: run against the host's GTK and WebKitGTK instead of the bundled ones. The AppImage's own
-# launcher puts $APPDIR/usr/lib ahead of the system path for everything it starts, and nothing can
-# take it back off once that has happened — so the escape is to exec the binary from HERE, which
-# the launcher sources before it sets anything, with none of our paths in the environment. That is
-# also why this is the first thing in the file and not the last.
+# ohmail: run against the host's GTK and WebKitGTK instead of the bundled ones.
+#
+# Two things have to be defeated, not one, and the second is easy to miss. The AppImage's own
+# launcher puts $APPDIR/usr/lib on LD_LIBRARY_PATH for everything it starts and nothing downstream
+# can take it back off — hence the exec from HERE, which the launcher sources before it sets
+# anything, and hence this being the first thing in the file rather than the last.
+#
+# But exec'ing the binary is NOT enough on its own: linuxdeploy patches `usr/bin/ohmail` with
+# DT_RUNPATH=$ORIGIN/../lib, and every bundled library with DT_RUNPATH=$ORIGIN, so the loader
+# finds our copies from the binary's own headers with the environment completely clean. The
+# loader searches LD_LIBRARY_PATH BEFORE DT_RUNPATH, so naming the system directories explicitly
+# is what actually moves the resolution. Measured on a released artifact: exec alone resolved
+# libwebkit2gtk, libgtk-3 and libsoup out of the AppDir; with the list below, none of the
+# binary's dependencies came from the AppDir at all.
+#
+# A library the host does NOT have still falls through to DT_RUNPATH and loads from the bundle —
+# the tray's appindicator, typically. That is the intended order: prefer the host's, keep ours as
+# the fallback for the pieces a distribution does not ship.
 if [ -n "$OHMAIL_SYSTEM_WEBKIT" ]; then
     echo "ohmail: OHMAIL_SYSTEM_WEBKIT is set — using the system GTK and WebKitGTK" >&2
-    exec "$APPDIR/usr/bin/ohmail" "$@"
+    _ohmail_sys=""
+    for _ohmail_d in "/usr/lib/$(uname -m)-linux-gnu" /usr/lib64 /usr/lib \
+                     "/lib/$(uname -m)-linux-gnu" /lib64 /lib; do
+        # `if`, not `[ -d … ] && …`: AppRun sources this file under `set -e`, where a compound
+        # ending in a false test would take the whole launcher down.
+        if [ -d "$_ohmail_d" ]; then
+            _ohmail_sys="${_ohmail_sys:+$_ohmail_sys:}$_ohmail_d"
+        fi
+    done
+    LD_LIBRARY_PATH="$_ohmail_sys" exec "$APPDIR/usr/bin/ohmail" "$@"
 fi
 
 export GTK_DATA_PREFIX="$APPDIR"
