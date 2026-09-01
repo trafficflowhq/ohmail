@@ -419,6 +419,21 @@ interface PooledQuery {
    * reaches the head. Best effort by construction — the statement is already on the wire, so this
    * races the server rather than preventing it — and worth doing anyway, because winning that race
    * is what keeps a refused statement from running on after nobody is waiting for its answer.
+   *
+   * ── WHAT CANCELLING COSTS, SINCE IT IS NOT FREE AND THE COST LANDS ON THE SCARCE THING ──────
+   *
+   * postgres.js sends a CancelRequest on a NEW socket: the drain loop in `connection.js`'s
+   * `ReadyForQuery` does `Connection(options).cancel(...)` for each cancelled query as it reaches
+   * the head. So N refusals on one instance cost up to N short-lived extra dials — at the upstream
+   * pooler, which is the resource already under pressure.
+   *
+   * Kept anyway, and the reasoning is the ordering rather than a preference. Those dials happen
+   * only as the head COMPLETES, which is when the pressure is releasing rather than peaking; they
+   * are connect-send-close, not pooled sessions; and the alternative is worse in the case that
+   * matters most. A refused statement that is NOT cancelled still executes when the connection
+   * frees, serially, in front of every request that arrives next — so declining to cancel trades N
+   * brief dials for N heavy statements' worth of additional head-of-line blocking, on exactly the
+   * `/search`-shaped work that produced the incident.
    */
   cancel(): unknown;
   then(onOk: (value: unknown) => void, onErr: (err: unknown) => void): unknown;
