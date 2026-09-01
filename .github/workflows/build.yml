@@ -902,6 +902,19 @@ jobs:
           #    arm64 build's GTK_PATH.
           TRIPLES="$(grep -aoE '[a-z0-9_]+-linux-gnu' "$HOOK" | sort -u || true)"
           echo "library triples named by the launcher: $TRIPLES"
+          # Both directions, and the SUBJECT is named as well as the architecture. A check that
+          # only looks for foreign triples passes a hook that names none at all, and one that only
+          # counts triples passes a hook that has lost GTK_PATH while keeping the three other
+          # variables that also spell one — which is what this file's first draft did, found by
+          # deleting the line and watching the check stay green.
+          if ! grep -aq '^export GTK_PATH=' "$HOOK"; then
+            echo "the launcher sets no GTK_PATH" >&2
+            exit 1
+          fi
+          if ! printf '%s\n' "$TRIPLES" | grep -qx "$TRIPLE"; then
+            echo "the launcher names no $TRIPLE directory at all" >&2
+            exit 1
+          fi
           FOREIGN="$(printf '%s\n' "$TRIPLES" | grep -v "^$TRIPLE$" | grep -v '^$' || true)"
           if [ -n "$FOREIGN" ]; then
             echo "the launcher names another architecture's directories: $FOREIGN" >&2
@@ -937,18 +950,29 @@ jobs:
           # The shipped binary's own ELF is asserted below; the ~150 libraries
           # beside it were not, and nothing else here would notice one copied
           # from the wrong place.
+          # Every regular file under usr/ is offered to readelf and the ones that are not ELF come
+          # back with an empty machine and are skipped. Scanning by NAME (*.so*) instead would
+          # miss the three things most worth checking: the WebKit process binaries the bundler
+          # copies in by hand, and the vendored Node runtime.
           WRONG=""
-          while IFS= read -r so; do
-            m="$(readelf -h "$so" 2>/dev/null | sed -n 's/^ *Machine: *//p' || true)"
+          CHECKED=0
+          while IFS= read -r f; do
+            m="$(readelf -h "$f" 2>/dev/null | sed -n 's/^ *Machine: *//p' || true)"
             if [ -z "$m" ]; then continue; fi
-            if [ "$m" != "$EXPECT_MACHINE" ]; then WRONG="$WRONG  $so ($m)"$'\n'; fi
-          done < <(find squashfs-root -type f -name '*.so*')
+            CHECKED=$((CHECKED + 1))
+            if [ "$m" != "$EXPECT_MACHINE" ]; then WRONG="$WRONG  $f ($m)"$'\n'; fi
+          done < <(find squashfs-root/usr -type f)
           if [ -n "$WRONG" ]; then
-            echo "libraries built for another architecture:" >&2
+            echo "files built for another architecture:" >&2
             printf '%s' "$WRONG" >&2
             exit 1
           fi
-          echo "every bundled library is $EXPECT_MACHINE"
+          # A count, because "nothing was wrong" and "nothing was looked at" print the same way.
+          if [ "$CHECKED" -lt 100 ]; then
+            echo "only $CHECKED ELF files found under usr/ — the scan found almost nothing" >&2
+            exit 1
+          fi
+          echo "all $CHECKED ELF files under usr/ are $EXPECT_MACHINE"
 
           rm -rf squashfs-root
 
@@ -1329,6 +1353,19 @@ jobs:
 
           TRIPLES="$(grep -aoE '[a-z0-9_]+-linux-gnu' "$HOOK" | sort -u || true)"
           echo "library triples named by the launcher: $TRIPLES"
+          # Both directions, and the SUBJECT is named as well as the architecture. A check that
+          # only looks for foreign triples passes a hook that names none at all, and one that only
+          # counts triples passes a hook that has lost GTK_PATH while keeping the three other
+          # variables that also spell one — which is what this file's first draft did, found by
+          # deleting the line and watching the check stay green.
+          if ! grep -aq '^export GTK_PATH=' "$HOOK"; then
+            echo "the launcher sets no GTK_PATH" >&2
+            exit 1
+          fi
+          if ! printf '%s\n' "$TRIPLES" | grep -qx "$TRIPLE"; then
+            echo "the launcher names no $TRIPLE directory at all" >&2
+            exit 1
+          fi
           FOREIGN="$(printf '%s\n' "$TRIPLES" | grep -v "^$TRIPLE$" | grep -v '^$' || true)"
           if [ -n "$FOREIGN" ]; then
             echo "the launcher names another architecture's directories: $FOREIGN" >&2
@@ -1348,18 +1385,29 @@ jobs:
           grep -aqx 'StartupWMClass=ohmail' "$ENTRY" || {
             echo "the desktop entry cannot be matched to the window" >&2; exit 1; }
 
+          # Every regular file under usr/ is offered to readelf and the ones that are not ELF come
+          # back with an empty machine and are skipped. Scanning by NAME (*.so*) instead would
+          # miss the three things most worth checking: the WebKit process binaries the bundler
+          # copies in by hand, and the vendored Node runtime.
           WRONG=""
-          while IFS= read -r so; do
-            m="$(readelf -h "$so" 2>/dev/null | sed -n 's/^ *Machine: *//p' || true)"
+          CHECKED=0
+          while IFS= read -r f; do
+            m="$(readelf -h "$f" 2>/dev/null | sed -n 's/^ *Machine: *//p' || true)"
             if [ -z "$m" ]; then continue; fi
-            if [ "$m" != "$EXPECT_MACHINE" ]; then WRONG="$WRONG  $so ($m)"$'\n'; fi
-          done < <(find squashfs-root -type f -name '*.so*')
+            CHECKED=$((CHECKED + 1))
+            if [ "$m" != "$EXPECT_MACHINE" ]; then WRONG="$WRONG  $f ($m)"$'\n'; fi
+          done < <(find squashfs-root/usr -type f)
           if [ -n "$WRONG" ]; then
-            echo "libraries built for another architecture:" >&2
+            echo "files built for another architecture:" >&2
             printf '%s' "$WRONG" >&2
             exit 1
           fi
-          echo "every bundled library is $EXPECT_MACHINE"
+          # A count, because "nothing was wrong" and "nothing was looked at" print the same way.
+          if [ "$CHECKED" -lt 100 ]; then
+            echo "only $CHECKED ELF files found under usr/ — the scan found almost nothing" >&2
+            exit 1
+          fi
+          echo "all $CHECKED ELF files under usr/ are $EXPECT_MACHINE"
 
           rm -rf squashfs-root
 
