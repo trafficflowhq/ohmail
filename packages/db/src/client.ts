@@ -366,14 +366,18 @@ export const POOLED_ACQUIRE_TIMEOUT_MS = 15_000;
  * it. It does NOT mean the database is down, and it is not an unhandled fault — which is why it
  * is its own class rather than a 500. The API answers it 503 with `Retry-After`.
  *
- * **What it deliberately does NOT claim: that nothing reached the server.** The bytes were
- * written to the socket when the driver pipelined the query, so a statement refused here may
- * still be executed by Postgres afterwards; {@link guardAcquire} cancels it, but that cancel
- * races the server. Retry safety for a MUTATION therefore rests where it already rested — on
- * `Idempotency-Key` and `withIdempotency` — and not on this ceiling. The ceiling's contribution
- * is that the ambiguous window is now ~15 s with a named cause instead of 60 s with none: a
- * function killed by the platform mid-flight leaves exactly the same statement running, which is
- * what the paragraph on `maxDuration` in {@link POOLED_TIMEOUTS} is about.
+ * **What it deliberately does NOT claim: that nothing reached the server.** The bytes were written
+ * to the socket when the driver pipelined the query, and {@link guardAcquire} does NOT cancel it
+ * (see there for why cancelling is the more dangerous of the two options behind a transaction-mode
+ * pooler), so a statement refused here will normally still be executed by Postgres — its result is
+ * simply discarded.
+ *
+ * That is the status quo rather than a regression: a function the platform kills at 60 s leaves
+ * exactly the same statement running, which is what the `maxDuration` paragraph in
+ * {@link POOLED_TIMEOUTS} is about. The ceiling's contribution is that the ambiguous window is
+ * ~15 s with a named cause instead of 60 s with none. It follows that **retry safety for a
+ * MUTATION is not something this error can assert**, and `packages/api` does not let it: the 503
+ * marks itself retryable only for a safe method or a request carrying an `Idempotency-Key`.
  */
 export class DbAcquireTimeoutError extends Error {
   readonly code = "db_acquire_timeout";
@@ -411,31 +415,27 @@ interface PooledQuery {
    * assigned to every pipelined query the instant it is written to the socket, so it is true of a
    * query that will not run for another 55 s. Measured, not read — see the probe recorded in
    * {@link POOLED_ACQUIRE_TIMEOUT_MS}.
+   *
+   * ── THE ONE THING THIS SIGNAL DOES NOT COVER, AND IT IS A REAL HOLE ─────────────────────────
+   *
+   * `connection.js` sets `active = true` on the HEAD query **before** `write(toBuffer(q))`, so it
+   * means "the driver handed this to the socket", not "PostgreSQL began executing it". For the
+   * head of an otherwise idle connection those are the same thing in practice — but they come
+   * apart in exactly one case that matters: a transaction-mode pooler that has accepted our client
+   * and is itself waiting for a server backend. There the head is `active`, no statement has
+   * begun, no role `statement_timeout` is running, and this ceiling is disabled — so that request
+   * can still ride to the platform's 60 s kill.
+   *
+   * Left uncovered deliberately rather than papered over. The alternative is to bound a query that
+   * IS executing, which is the one thing this ceiling exists not to do — it would turn a wait
+   * ceiling into a second, tighter statement timeout and kill legitimate work. The right fix for
+   * the pooler half is a ceiling on how long the POOLER itself will make a client wait for a server
+   * backend — its own configuration, not code in this repository. What IS covered is every
+   * follower behind the head, which is the population the
+   * incident was made of: `/health`, `/search`, `/mailboxes`, `/sync` — a trivial read stuck
+   * behind somebody else's long statement.
    */
   active: boolean;
-  /**
-   * `postgres/src/index.js` `cancel`: a pipelined query that has not begun is flagged
-   * `query.cancelled`, and `connection.js` fires a CancelRequest at the backend the moment it
-   * reaches the head. Best effort by construction — the statement is already on the wire, so this
-   * races the server rather than preventing it — and worth doing anyway, because winning that race
-   * is what keeps a refused statement from running on after nobody is waiting for its answer.
-   *
-   * ── WHAT CANCELLING COSTS, SINCE IT IS NOT FREE AND THE COST LANDS ON THE SCARCE THING ──────
-   *
-   * postgres.js sends a CancelRequest on a NEW socket: the drain loop in `connection.js`'s
-   * `ReadyForQuery` does `Connection(options).cancel(...)` for each cancelled query as it reaches
-   * the head. So N refusals on one instance cost up to N short-lived extra dials — at the upstream
-   * pooler, which is the resource already under pressure.
-   *
-   * Kept anyway, and the reasoning is the ordering rather than a preference. Those dials happen
-   * only as the head COMPLETES, which is when the pressure is releasing rather than peaking; they
-   * are connect-send-close, not pooled sessions; and the alternative is worse in the case that
-   * matters most. A refused statement that is NOT cancelled still executes when the connection
-   * frees, serially, in front of every request that arrives next — so declining to cancel trades N
-   * brief dials for N heavy statements' worth of additional head-of-line blocking, on exactly the
-   * `/search`-shaped work that produced the incident.
-   */
-  cancel(): unknown;
   then(onOk: (value: unknown) => void, onErr: (err: unknown) => void): unknown;
 }
 
@@ -444,7 +444,8 @@ interface PooledQuery {
  *
  * The timer fires once and asks one question: is the backend running THIS query? If it is
  * (`active`), the ceiling does nothing at all and the statement runs to whatever end the SERVER's
- * ceilings give it. Only a statement that has not started is cancelled and refused.
+ * ceilings give it. Only a statement that has not started is refused — refused, not cancelled: the
+ * driver's cancellation path is unsafe here, and the block at the timer says exactly why.
  *
  * That split is the whole design, and it is what keeps this from being a second, tighter
  * statement timeout wearing the wrong name. A statement legitimately allowed 55 s by
@@ -470,8 +471,48 @@ function guardAcquire<Q extends object>(query: Q, ms: number): Q {
       // The backend is running THIS statement: the server-side ceilings own it from here, and
       // killing work that is legitimately in progress is not this ceiling's job.
       if (q.active === true) return;
-      try { q.cancel(); } catch { /* best effort — the rejection below is the contract */ }
+
+      // The caller's answer is decided FIRST, so the driver's own 57014 rejection — which the
+      // dequeue below raises synchronously — can never win the race and surface as a bare
+      // `query_canceled` instead of a nameable `db_busy`.
       reject(new DbAcquireTimeoutError(ms));
+
+      /**
+       * AND THAT IS ALL. THE CALLER IS REFUSED; THE STATEMENT IS NEVER CANCELLED.
+       *
+       * This is the third position this line has held and the reasoning for each is worth keeping,
+       * because two of them are defensible and still wrong.
+       *
+       *  1. Cancel always. Wrong: for a query already written to the wire (`state` set, not
+       *     `active`), `postgres/src/index.js` cannot cancel now — it flags `query.cancelled` and
+       *     `connection.js` fires a protocol CancelRequest LATER, on a new socket, naming the
+       *     backend in `state`. Behind a transaction-mode pooler that backend is checked out per
+       *     transaction, so a late cancel can abort ANOTHER TENANT'S statement.
+       *  2. Cancel only when `state === null`. That looked exactly right — the driver's branch for
+       *     it is a local `queries.remove(query)` with no socket at all — and it fixed a real
+       *     defect: a query left in the queue is executed by `onopen` after its caller already had
+       *     a 503. **But `state === null` does not mean "in the queue".** When the pool is cold or
+       *     reconnecting, `index.js` `connect(c, query)` hands the query to the CONNECTION as its
+       *     `initial` (`connection.js` `initial = query`) and never pushes it to `queries`, and
+       *     `state` stays null throughout the dial. Cancelling it removes nothing and only marks it
+       *     cancelled — and then `connection.js`' ready path runs `execute(initial)`, which returns
+       *     immediately at its `if (q.cancelled) return` guard, and RETURNS WITHOUT `onopen`. The
+       *     connection is left in the pool's `connecting` queue, so every later query is enqueued
+       *     behind a connection that is never announced as open. That is not a slow request; it is
+       *     a wedged instance, and `connect_timeout: 10` with a retrying dial means a 15 s ceiling
+       *     can genuinely land inside that window (a failed first dial, then a second).
+       *
+       * So the two hazards are not symmetric and that is what decides it. Not cancelling costs a
+       * refused statement running to completion with its result discarded — wasted work, bounded by
+       * the server's own ceilings, and precisely what already happens when the platform kills an
+       * invocation at 60 s. Cancelling risks converting a twenty-minute incident into a wedged
+       * connection, which is the failure this whole ceiling exists to prevent. A ceiling must not
+       * be able to do worse than the thing it bounds.
+       *
+       * Reaching both would need a signal the driver does not expose from outside a `Query`:
+       * whether it is in the top-level queue or is some connection's `initial`. It is not worth
+       * inventing one by tracking pool state in here.
+       */
     }, ms);
     (timer as unknown as { unref?: () => void }).unref?.();
     // Awaiting the driver's own Query is what DISPATCHES it (`Query#then` calls `handle()`), so

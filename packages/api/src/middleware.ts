@@ -164,13 +164,63 @@ export const withRequestId: Middleware = (next) => async (req, deps, params) => 
  * still needs to be visible.
  */
 /**
- * How long a refused caller is told to wait. Long enough that a retry does not land back inside
- * the same congestion window it was just refused in — the failure this answers lasted twenty
- * minutes, and a one-second retry would have been indistinguishable from a client-side denial of
- * service against the instance it was queued on — and short enough that a momentary blip costs
- * one visible pause rather than a dead request.
+ * How long a refused caller is told to wait.
+ *
+ * **AND WHAT IT DOES NOT DO, BECAUSE THE FIRST VERSION OF THIS COMMENT OVERSTATED IT.** It said
+ * the header is what stops refused clients returning to the congested instance at once. It is not:
+ * OUR OWN clients ignore it. `HttpAdapter.rejectionOf()` reads the JSON body and the status,
+ * `MutationRejectedError` has no retry-delay field, and `fetch` applies `Retry-After` to nothing.
+ * A refused sync therefore comes back on its existing 250–1000 ms backoff, not in five seconds.
+ *
+ * The header is still correct and still worth sending — it is what the HTTP contract says a 503
+ * carries, and monitors, proxies and any non-product client do honour it — but the synchronized-
+ * retry problem is NOT solved until the engine's schedulers read it. That is a change to the
+ * published desktop payload and is the named follow-on, not something to claim here in the
+ * meantime.
  */
 const DB_BUSY_RETRY_AFTER_SECONDS = 5;
+
+/** Methods with no side effect of their own, for which a retry cannot duplicate anything. */
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/**
+ * MAY THE CLIENT RETRY THIS ONE — asked per request, not answered once for the route table.
+ *
+ * The first version of this branch said `retryable: true` unconditionally, and that is a claim the
+ * ceiling cannot support. A refused statement was already written to the socket and is NOT
+ * cancelled (`packages/db/src/client.ts` explains why cancelling is the more dangerous option
+ * behind a transaction-mode pooler), so Postgres will normally still run it. For a read that costs
+ * nothing. For a write it means the effect may have landed while the caller was told 503.
+ *
+ * `withIdempotency` makes that safe wherever a route opts in — but only 24 routes do, and
+ * `POST /snippets` and `POST /contacts/:id/notes` are among the ones that do not: they insert
+ * directly, so a client that retries on this signal creates a duplicate row.
+ *
+ * So: retryable for a safe method, or for a request carrying an `Idempotency-Key` (which is what
+ * the client engine sends for every queued mutation, under the SAME key across retries — see
+ * `client-engine/src/engine.ts`). Otherwise **explicitly `false`**, which is stronger than saying
+ * nothing: the client's fallback is `retryable ?? (status >= 500)`, so silence here would mean
+ * "retry" for exactly the unkeyed writes that must not be retried automatically. The trade is a
+ * write the user may have to repeat by hand against a write that silently happens twice, and this
+ * repository has already decided that direction wherever it has come up.
+ */
+function mayRetry(req: Request): boolean {
+  return SAFE_METHODS.has(req.method.toUpperCase()) || req.headers.has("Idempotency-Key");
+}
+
+/** The one construction of the busy answer, so every pipeline and host gives the same one. */
+export function dbBusyResponse(req: Request): Response {
+  return errorResponse(
+    "db_busy", 503,
+    // Says what happened, and says it accurately. NOT "could not get a connection": it had one —
+    // the connection was busy with other work and this statement never began. The distinction is
+    // the whole diagnosis, and a message that blurs it would send the next reader looking for a
+    // connection leak.
+    "the server's database connection was busy and this request could not be started; retry shortly",
+    undefined, mayRetry(req),
+    { "Retry-After": String(DB_BUSY_RETRY_AFTER_SECONDS) },
+  );
+}
 
 /**
  * The error class name `@trafficflow/db`'s `DbAcquireTimeoutError` carries.
@@ -194,7 +244,7 @@ const DB_ACQUIRE_TIMEOUT_ERROR = "DbAcquireTimeoutError";
  * because the alternative answer is a 500: this is not an unhandled fault, it is the API
  * declining work it has no connection to do.
  */
-function isDbBusy(err: unknown): boolean {
+export function isDbBusy(err: unknown): boolean {
   return typeof err === "object" && err !== null
     && (err as { name?: unknown }).name === DB_ACQUIRE_TIMEOUT_ERROR;
 }
@@ -212,12 +262,16 @@ export const withErrorEnvelope: Middleware = (next, route) => async (req, deps, 
      * which is worse than useless here: it reports a fault in the route to an operator whose
      * actual problem is connection contention, and it names no cause anything can be alerted on.
      *
-     * `retryable: true` is a claim about what the CLIENT should do, not about whether the
-     * statement reached the server — a pipelined statement may still run (see
-     * `DbAcquireTimeoutError`), exactly as one does today when the platform kills the invocation
-     * at 60 s instead. Retrying is right, and `Idempotency-Key` is what makes a mutation's retry
-     * safe; that was already true and this changes none of it. What changes is that the ambiguous
-     * window shrinks from 60 s to the ceiling, and carries a name.
+     * Whether the answer invites a retry is decided per request by {@link mayRetry}, not asserted
+     * here — a refused write may have reached the database, and only a safe method or an
+     * `Idempotency-Key` makes returning safe.
+     *
+     * **This middleware is not the whole story, and that is why {@link dbBusyResponse} is
+     * exported.** `withErrorEnvelope` is in `FULL_PIPELINE` only; `RAW_PIPELINE` and
+     * `ANONYMOUS_PIPELINE` do not carry it (`app.ts`), so a busy session lookup on `/events`,
+     * `/oauth/authorize` or an attachment byte route would escape this branch entirely and reach
+     * the host as a bare 500. The host applies the same answer as a backstop
+     * (`apps/api-vercel/src/handler.ts`).
      *
      * `warn`, not `error`. One refusal is this ceiling WORKING; the incident is the RATE of them,
      * which is a threshold question rather than a per-request one.
@@ -226,16 +280,7 @@ export const withErrorEnvelope: Middleware = (next, route) => async (req, deps, 
       log.warn("request_db_busy", {
         method: req.method, route: route.pattern, status: 503, code: "db_busy",
       });
-      return errorResponse(
-        "db_busy", 503,
-        // Says what happened, and says it accurately. NOT "could not get a connection": it had
-        // one — the connection was busy with other work and this statement never began. The
-        // distinction is the whole diagnosis, and a message that blurs it would send the next
-        // reader looking for a connection leak.
-        "the server's database connection was busy and this request could not be started; retry shortly",
-        undefined, true,
-        { "Retry-After": String(DB_BUSY_RETRY_AFTER_SECONDS) },
-      );
+      return dbBusyResponse(req);
     }
     if (err instanceof ServiceError) {
       if (err.httpStatus >= 500) {

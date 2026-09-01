@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { createApp, apiRoutes, BodyOverCeilingError } from "@trafficflow/api";
+import { createApp, apiRoutes, BodyOverCeilingError, isDbBusy, dbBusyResponse } from "@trafficflow/api";
 import { hostState } from "./config.js";
 import { buildDeps } from "./deps.js";
 import { MalformedPathError } from "./prefix.js";
@@ -78,6 +78,34 @@ export async function handleApiRequest(req: Request): Promise<Response> {
     await res.body?.cancel().catch(() => { /* nothing to release */ });
     return new Response(null, { status: res.status, statusText: res.statusText, headers: res.headers });
   } catch (err) {
+    /**
+     * THE BUSY-CONNECTION ANSWER, AS A BACKSTOP FOR THE PIPELINES THAT HAVE NO ENVELOPE.
+     *
+     * `withErrorEnvelope` maps this to 503 `db_busy`, but it is installed in `FULL_PIPELINE` only:
+     * `RAW_PIPELINE` and `ANONYMOUS_PIPELINE` (`packages/api/src/app.ts`) deliberately carry no
+     * envelope, so a busy session lookup on `/events`, `/oauth/authorize` or an attachment byte
+     * route lands HERE instead — and `internal()` below would call it a 500. That is the wrong
+     * answer twice over: it reports a route fault for connection contention, and it hands a
+     * monitor a status that says "this endpoint is broken" rather than "come back shortly".
+     *
+     * The same function the envelope uses, imported rather than reimplemented, because two
+     * spellings of one answer is how the two halves drift apart.
+     */
+    if (isDbBusy(err)) {
+      console.warn(JSON.stringify({
+        level: "warn", event: "request_db_busy", requestId,
+        method: forRouter.method, path: safePath(forRouter.url), status: 503, code: "db_busy",
+      }));
+      // THROUGH `noStore`, like every other answer this function returns. Returning the response
+      // straight from `dbBusyResponse` skips the host's own contract — no `Cache-Control:
+      // no-store`, no `X-Request-Id` — so the one response a client is most likely to be handed
+      // repeatedly under load would be the one an intermediary may cache and the one an operator
+      // cannot correlate to a log line. Caught by the guard below rather than by review.
+      const res = noStore(dbBusyResponse(forRouter), requestId);
+      if (!isHead) return res;
+      await res.body?.cancel().catch(() => { /* nothing to release */ });
+      return new Response(null, { status: res.status, statusText: res.statusText, headers: res.headers });
+    }
     return internal(requestId, forRouter, err);
   }
 }
