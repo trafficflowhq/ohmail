@@ -1148,9 +1148,14 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * teardown would hang for precisely as long as the hang it is escaping. Destroying the socket is
    * also the only thing that actually ends the abandoned command.
    */
-  private retireConnection(because?: ImapBoundExceeded): void {
-    const breach = because
-      ?? new ImapBoundExceeded("read_deadline", 0, 0, undefined);
+  private retireConnection(breach: ImapBoundExceeded): void {
+    // REQUIRED, and it used to be optional with a `read_deadline` fallback. The truncating
+    // ceilings pass no error of their own, so they fabricated a deadline that had not fired —
+    // reported to the consumer, and rethrown by every later call, as a clock that ran out when the
+    // real cause was a server over-answering. The report IS how a mailbox gets marked, so the
+    // condition it names is not a diagnostic nicety: it is what an operator reads and what
+    // bound-specific handling branches on. A code that names the wrong condition is worse than
+    // none.
     const first = this.retiredBecause === null;
     this.retiredBecause ??= breach;
     this.closing = true;
@@ -1565,7 +1570,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         sampleDeadline.check(folder);
         // Truncating a sample is still an honest answer — but the FETCH behind it keeps
         // running, so the connection cannot be handed on. See `retireConnection`.
-        if (++examined > IMAP_SAMPLE_MAX_ROWS) { this.retireConnection(); break; }
+        if (++examined > IMAP_SAMPLE_MAX_ROWS) {
+          this.retireConnection(
+            new ImapBoundExceeded("sample_rows", IMAP_SAMPLE_MAX_ROWS, examined, folder),
+          );
+          break;
+        }
         const addr = m.envelope?.from?.[0]?.address?.trim().toLowerCase();
         if (!addr || seen.has(addr)) continue;
         seen.add(addr);
@@ -1663,7 +1673,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         pageDeadline.check(folder);
         // Reached only when the server answers a bounded range with MORE rows than it names;
         // the FETCH is still running, so the connection is retired rather than reused.
-        if (rows.length >= limit) { this.retireConnection(); break; }
+        if (rows.length >= limit) {
+          this.retireConnection(
+            new ImapBoundExceeded("page_rows", limit, rows.length + 1, folder),
+          );
+          break;
+        }
         const from = m.envelope?.from?.[0];
         const date = m.envelope?.date ?? m.internalDate;
         rows.push({
@@ -1753,7 +1768,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         pageDeadline.check(folder);
         // Reached only when the server answers a bounded range with MORE rows than it names;
         // the FETCH is still running, so the connection is retired rather than reused.
-        if (rows.length >= limit) { this.retireConnection(); break; }
+        if (rows.length >= limit) {
+          this.retireConnection(
+            new ImapBoundExceeded("page_rows", limit, rows.length + 1, folder),
+          );
+          break;
+        }
         const from = m.envelope?.from?.[0];
         const date = m.envelope?.date ?? m.internalDate;
         rows.push({
@@ -1809,7 +1829,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       outer:
       for await (const m of this.client.fetch(`${start}:*`, { envelope: true })) {
         scanDeadline.check(folder);
-        if (++examined > IMAP_SAMPLE_MAX_ROWS) { this.retireConnection(); break outer; }
+        if (++examined > IMAP_SAMPLE_MAX_ROWS) {
+          this.retireConnection(
+            new ImapBoundExceeded("sample_rows", IMAP_SAMPLE_MAX_ROWS, examined, folder),
+          );
+          break outer;
+        }
         // TRUNCATED PER LIST, not after the spread. The docblock above says `limit` "bounds BOTH
         // the messages scanned and the addresses returned, so a single mail with a 4 000-address
         // To: header cannot turn a bounded scan into an unbounded result" — true of the RESULT,
@@ -4136,7 +4161,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     try {
       lock = await this.bounded(this.client.getMailboxLock(this.toServerPath("INBOX")));
     } catch (err) {
-      if (err instanceof ImapBoundExceeded) this.retireConnection();
+      if (err instanceof ImapBoundExceeded) this.retireConnection(err);
       throw err;
     }
     let grew = false;

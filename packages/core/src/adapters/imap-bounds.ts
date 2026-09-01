@@ -89,6 +89,8 @@ export type ImapBoundKind =
   | "search_uids"
   | "candidate_body_probes"
   | "flag_scan_rows"
+  | "sample_rows"
+  | "page_rows"
   | "body_overrun"
   | "read_deadline"
   | "cycle_deadline";
@@ -96,12 +98,19 @@ export type ImapBoundKind =
 /*
  * ── WHY THE TRUNCATING CEILINGS ARE NOT IN THAT UNION ──────────────────────────────────────
  *
- * {@link IMAP_FOLDER_PATH_MAX_CHARS}, {@link IMAP_ENVELOPE_ADDRESSES_MAX} and
- * {@link IMAP_SAMPLE_MAX_ROWS} are real ceilings that DROP or TRUNCATE rather than refuse, so no
- * `ImapBoundExceeded` is ever constructed for them and they have no code here.
+ * {@link IMAP_FOLDER_PATH_MAX_CHARS} and {@link IMAP_ENVELOPE_ADDRESSES_MAX} are real ceilings
+ * that DROP or TRUNCATE without ending the connection, so no `ImapBoundExceeded` is constructed
+ * for them and they have no code here.
  *
- * {@link IMAP_FLAG_SCAN_MAX_ROWS} WAS in this list and is not any more — see its own note. It
- * truncated, on a premise about `break` that turned out to be false, and it refuses now.
+ * TWO OTHERS HAVE LEFT THIS LIST, and each departure was a correction rather than a widening.
+ * {@link IMAP_FLAG_SCAN_MAX_ROWS} truncated on a premise about `break` that proved false, and
+ * refuses now. {@link IMAP_SAMPLE_MAX_ROWS} still truncates its ANSWER — a smaller sample is not a
+ * wrong sample — but it abandons a running command to do it, which retires the connection, and a
+ * retirement is reported. It needed a code of its own the moment that reporting became the way a
+ * mailbox is marked: without one it borrowed `read_deadline`, claiming a clock had run out when
+ * none had. `page_rows` exists for the same reason, for a server over-answering a bounded page.
+ * **A code that names the wrong condition is worse than no code**, because it is the thing an
+ * operator reads and the thing bound-specific handling branches on.
  *
  * They were in this union first, and the census next door
  * (`imap-bounds-census.test.ts`) failed on them: it asserts that every declared kind is actually
@@ -512,15 +521,17 @@ export async function boundedCollect<T, R>(
     /**
      * Retire the connection — the stream is being abandoned mid-command.
      *
-     * `because` is the refusal the caller is about to see (absent for a truncating stop, which
-     * raises nothing), so a retired adapter can keep answering with the SAME bound.
+     * `because` is the breach — the refusal the caller is about to see, or, for a truncating
+     * stop that raises nothing, the same object describing the ceiling that fired. It is always
+     * supplied: a retirement is reported, and a report naming the wrong condition is worse than
+     * no report at all.
      *
      * The argument is `notify`: TRUE when this function will NOT throw, so nothing else is going
      * to report the retirement and the connection's owner has to be told directly. FALSE when it
      * is about to throw, because then the throw IS the report — and a second, synthetic one
      * would reset the caller's failure accounting instead of adding to it.
      */
-    onAbandon?: (notify: boolean, because?: ImapBoundExceeded) => void;
+    onAbandon?: (notify: boolean, because: ImapBoundExceeded) => void;
     map: (item: T) => R;
   },
 ): Promise<R[]> {
@@ -541,7 +552,7 @@ export async function boundedCollect<T, R>(
       // not one past it.
       const because = new ImapBoundExceeded(opts.bound, opts.max, seen, opts.folder);
       // `stop` returns a value; `throw` does not. That is exactly the distinction.
-      opts.onAbandon?.(overflow === "stop", overflow === "stop" ? undefined : because);
+      opts.onAbandon?.(overflow === "stop", because);
       if (overflow === "stop") break;
       throw because;
     }
