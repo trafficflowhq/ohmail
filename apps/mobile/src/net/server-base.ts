@@ -154,26 +154,81 @@ export function addressProblem(typed: string): string | null {
 const PROBE_PATH = "/sync";
 
 /**
- * DID THIS RESPONSE COME FROM AN OHMAIL API, or from whatever else is serving that path?
+ * Same scheme, host and port — used to refuse an answer that came from somewhere else.
+ * `null`/empty input answers `true`, because "no information" must not reject every response;
+ * see the redirect note in {@link answeredByApi}.
+ */
+function answeredFromCandidate(finalUrl: string, candidate: string): boolean {
+  if (finalUrl === "") return true;
+  try {
+    return new URL(finalUrl).origin === new URL(candidate).origin;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * DID THIS RESPONSE COME FROM AN OHMAIL API AT THE ADDRESS THAT WAS ASKED?
  *
  * The API's refusal envelope, and nothing looser: an unauthenticated `GET /sync` is answered
- * `401` with `application/json` and `{"error":{"code":…}}` by all three route tables, because all
- * three are the same request guard. A Next 404 page is `text/html` and parses as nothing.
+ * `401`, `application/json`, `{"error":{"code":"unauthorized",…}}` by all three route tables,
+ * because all three are the same request guard. A Next 404 page is `text/html` and parses as
+ * nothing.
  *
- * The status is checked as well as the shape because a JSON 404 is exactly what a proxy in front
- * of a stack that does NOT route this path may answer, and reading that as "the API is here"
- * would pick a base whose every drain 404s — the failure this whole file exists to close, one
- * layer in. A 401 is the API saying "this route is mine and you have no session", which is the
- * only answer that establishes both halves.
+ * The STATUS is checked as well as the shape because a JSON 404 is exactly what a proxy in front
+ * of a stack that does NOT route this path may answer, and reading that as "the API is here" would
+ * pick a base whose every drain 404s — the failure this whole file exists to close, one layer in. A
+ * 401 is the API saying "this route is mine and you have no session", which is the only answer that
+ * establishes both halves.
+ *
+ * The CODE is checked exactly, not merely for being a string. Review raised the looser form: any
+ * `{"error":{"code":<anything>}}` satisfied it, so a component that is not the API but answers in a
+ * JSON-error idiom could claim the path. `"unauthorized"` is what the guard actually says.
+ *
+ * ── THE RESIDUAL, STATED RATHER THAN CLOSED ────────────────────────────────────────────────────
+ *
+ * This signal is SELF-ASSERTED, and no unauthenticated request can do better. Something serving
+ * `/sync` at a base could forge that exact refusal and take the bearer that follows.
+ *
+ * What bounds it is WHO could: the forger has to be answering on the origin the person typed or
+ * scanned — the same host, behind the same certificate, that they have already chosen to hold their
+ * whole mailbox. So the reachable harm is one component of the operator's own box getting traffic
+ * another component of it should have had. It is not a cross-origin escalation: a base is only ever
+ * `<origin>` or `<origin>/api`, never an address this function was not given.
+ *
+ * A REQUEST-ID OR `no-store` HEADER CHECK WAS CONSIDERED AND REJECTED, and the reason is worth
+ * recording because it looks like a free win. Both API hosts stamp `X-Request-Id` and
+ * `Cache-Control: no-store` on every response (`apps/server/src/handler.ts`,
+ * `apps/api-vercel/src/handler.ts`), and a Next error page carries neither — so requiring one would
+ * genuinely harden this. But the DESKTOP-HOST door answers straight out of `app.handle` through
+ * `host-listener.ts` with no such wrapper, so requiring either header would refuse the door that
+ * works today in order to harden the one that did not work at all. Regressing a shipping door to
+ * tighten a same-origin signal is the wrong trade.
+ *
+ * ── AND THE ANSWER MUST HAVE COME FROM THE ADDRESS THAT WAS ASKED ─────────────────────────────
+ *
+ * Also review's, and it is the sharper half. `fetch` follows redirects, so an origin could answer
+ * the probe with a redirect to any other address — turning a credential-free GET into a request the
+ * phone makes on somebody else's behalf, possibly to a name only this phone's network can resolve,
+ * and letting the redirect TARGET satisfy the check above.
+ *
+ * Two guards, and neither is complete on its own. `redirect: "manual"` is passed at the call, which
+ * suppresses the follow where the platform honours it; React Native's fetch does not on every
+ * version, which is why the second guard exists: the response's own final URL must still be on the
+ * candidate's origin. Where `Response.url` is empty — some RN versions — that check cannot be made
+ * and is not treated as a failure, so the honest summary is that a platform which both follows the
+ * redirect AND reports no final URL still issues the request. What it cannot do is have the answer
+ * ACCEPTED as this server's API base.
  */
-async function answeredByApi(res: Response): Promise<boolean> {
+async function answeredByApi(res: Response, candidate: string): Promise<boolean> {
   if (res.status !== 401) return false;
+  if (!answeredFromCandidate(res.url ?? "", candidate)) return false;
   if (!(res.headers.get("content-type") ?? "").toLowerCase().includes("application/json")) {
     return false;
   }
   try {
     const body = (await res.json()) as { error?: { code?: unknown } };
-    return typeof body.error?.code === "string";
+    return body.error?.code === "unauthorized";
   } catch {
     return false;
   }
@@ -209,22 +264,46 @@ export async function resolveApiBase(
      them. A deployment that answers BOTH (the hosted service does — it canonicalizes one leading
      `/api` off itself) resolves to the bare origin, which is the value already in every stored
      profile: no existing pairing's base moves. */
+  const transportFailures: string[] = [];
   for (const candidate of [bare, prefixed]) {
     let res: Response;
     try {
-      res = await fetchImpl(`${candidate}${PROBE_PATH}`);
+      /* `redirect: "manual"` — see {@link answeredByApi}'s redirect note. Honoured where the
+         platform honours it; the final-URL check there is what holds when it does not. */
+      res = await fetchImpl(`${candidate}${PROBE_PATH}`, { redirect: "manual" });
     } catch (err) {
-      /* A transport failure is about the ORIGIN, not about this candidate path — the same socket
-         and the same certificate serve both — so there is nothing the second probe could learn.
-         Reported with the platform's words, which the caller may recognise as a pin failure. */
-      return {
-        kind: "refused",
-        reason: `could not reach that server to find its mail API — ${String(err)}`,
-      };
+      /**
+       * A TRANSPORT FAILURE ON ONE CANDIDATE NO LONGER ENDS THE SEARCH.
+       *
+       * This returned immediately, under a comment claiming a transport failure is about the ORIGIN
+       * rather than the path because "the same socket and the same certificate serve both". That is
+       * true of DNS and of a handshake and NOT true in general — review named a reset on one path
+       * and a redirect to an unreachable host, and either would have refused a perfectly good
+       * self-hosted server before its `/api` candidate was ever tried. The claim was too strong for
+       * the conclusion it was carrying.
+       *
+       * So the failure is remembered and the next candidate is tried. Only if nothing answers as
+       * the API does a remembered failure become the sentence — and then it is the FIRST one, whose
+       * words the caller may recognise as a pin failure.
+       */
+      transportFailures.push(String(err));
+      continue;
     }
-    if (await answeredByApi(res)) {
+    if (await answeredByApi(res, candidate)) {
       return { kind: "base", base: candidate, prefixed: candidate === prefixed };
     }
+  }
+
+  /* A REMEMBERED TRANSPORT FAILURE WINS OVER THE GENERIC SENTENCE. It is the more specific fact
+     ("the connection did not happen" rather than "something answered and was not the API"), it
+     carries the platform's own words, and it is the only one of the two that `isPinFailure` can
+     recognise — which is what lets a changed desktop key read as a changed key rather than as a
+     missing API. */
+  if (transportFailures.length > 0) {
+    return {
+      kind: "refused",
+      reason: `could not reach that server to find its mail API — ${transportFailures[0]!}`,
+    };
   }
 
   return {

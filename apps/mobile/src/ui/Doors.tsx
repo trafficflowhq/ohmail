@@ -100,9 +100,25 @@ export function Doors({
    *
    * Both go through the connection layer (`ask`, `probeBase`), so this file opens no socket and
    * names no address of its own — which is a rule the privacy census holds, not a preference.
+   *
+   * ── AND THE BASE PROBE IS FOR A TYPED ADDRESS ONLY, WHICH IS NOT A SPECIAL CASE ─────────────
+   *
+   * `measureBase` is false for the Cloud card, and it started out true there — a regression this
+   * would have shipped on the door that already works. The hosted service's address is a CONSTANT
+   * in this app (`MANAGED_ORIGIN`), so there is nothing about it to discover: the probe could only
+   * ever return the origin it was given, while adding a round trip that can FAIL. A network blip
+   * on it would have shown "ohmail could not find its mail API" in place of the pair step, for the
+   * one door whose API location has never been in question.
+   *
+   * The value the probe has is entirely about a TYPED address: it turns "this stack is proxied in a
+   * way ohmail cannot reach" into a sentence before the person spends a single-use code. That
+   * value does not exist where the address came from this app's own source.
+   *
+   * Nothing is skipped in the ceremony either way — `pairWithServer` measures for itself, for
+   * every origin, including one that arrived by camera and never met this screen.
    */
   const check = useCallback(
-    async (typed: string) => {
+    async (typed: string, measureBase: boolean) => {
       const problem = addressProblem(typed);
       if (problem !== null) {
         setProbe({ k: "failed", sentence: problem });
@@ -125,6 +141,10 @@ export function Doors({
       const step = nextStep(answer.hello);
       if (step.kind !== "pair") {
         setProbe({ k: "failed", sentence: sentenceFor(answer, step) });
+        return;
+      }
+      if (!measureBase) {
+        setProbe({ k: "probed", origin, flavor: answer.hello.flavor, base: origin, prefixed: false });
         return;
       }
       const base = await conn.probeBase(origin);
@@ -167,7 +187,10 @@ export function Doors({
                hosted service ever answers `pairing: false`, the person reads the server's answer
                and not a stale sentence from a source file. */
             setOpen(null);
-            void check(MANAGED_ORIGIN);
+            /* `false` — no base probe. See `check`'s note: this address is this app's own constant,
+               so the probe could only return it, and its one possible outcome beyond that is a
+               failure sentence on the door that has always worked. */
+            void check(MANAGED_ORIGIN, false);
           }}
         />
         <Rule inset={20} />
@@ -202,7 +225,7 @@ export function Doors({
               onPress={
                 probe.k === "asking" || probe.k === "probed" || !address.trim()
                   ? undefined
-                  : () => void check(address)
+                  : () => void check(address, true)
               }
             />
             <Result probe={probe} onScan={onScan} onTypeToken={onTypeToken} />
