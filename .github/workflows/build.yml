@@ -2,9 +2,12 @@ name: build
 
 # Everything the desktop app can honestly prove on a public runner.
 #
-# ONE APPLICATION, THREE PLATFORMS. macOS used to build a separate SwiftUI
-# client here; it now builds the same Tauri app as Windows and Linux, carrying
-# the same mail engine. Each job does the same five things in the same order:
+# ONE APPLICATION, THREE PLATFORMS AND FOUR ARCHITECTURES. macOS used to build a
+# separate SwiftUI client here; it now builds the same Tauri app as Windows and
+# Linux, carrying the same mail engine. macOS is one universal artifact; Linux is
+# two artifacts from two jobs, because there is no Linux equivalent of `lipo` and
+# an AppImage holds one architecture. Each job does the same five things in the
+# same order:
 #
 #   1. render check   — build the WINDOW bundle and smoke it, offline audit
 #                       included: the page's whole reach is the shell's command
@@ -85,7 +88,21 @@ name: build
 # matching one glob makes the update feed's payload pick arbitrary:
 #
 #   ohmail.dmg · ohmail.app.tar.gz · ohmail-windows-setup.exe
-#   ohmail-linux-x86_64.AppImage · ohmail-linux-amd64.deb
+#   ohmail-linux-x86_64.AppImage   · ohmail-linux-amd64.deb
+#   ohmail-linux-aarch64.AppImage  · ohmail-linux-arm64.deb
+#
+# THE TWO LINUX ARCHITECTURES SHARE NO NAME, AND THAT IS THE CONTRACT'S POINT.
+# Each Linux artifact carries its architecture in its own filename, so nothing
+# downstream ever has to pick between two files behind one glob — the exact
+# failure this block exists to prevent. `release-feeds.yml` selects both
+# AppImages BY NAME for that reason, and refuses a release whose asset set does
+# not hold exactly these two.
+#
+# The spellings differ per format on purpose rather than by oversight: an
+# AppImage is named for the machine (`x86_64`, `aarch64`, what `uname -m`
+# prints), a Debian package for the Debian architecture (`amd64`, `arm64`, what
+# `dpkg --print-architecture` prints). Normalising either one would make the
+# filename disagree with the tool a reader is holding.
 #
 # `latest.json` and `appcast-macos.xml` are the update feeds and belong to the
 # release-feeds workflow; nothing here may produce a file by either name.
@@ -773,6 +790,15 @@ jobs:
           # productName is `ohmail`, so is the package — `apt remove ohmail`
           # works, and it matches /usr/bin/ohmail and the AppImage.
           test "$(dpkg-deb -f "$DEB" Package)" = "ohmail"
+          # ── THE ARCHITECTURE THE FILENAME CLAIMS ──────────────────────────
+          # There are two Linux jobs now and they differ in exactly one thing:
+          # the machine they run on. Everything else — the checkout, the scripts,
+          # the bundler invocation — is identical, so a misconfigured `runs-on`
+          # produces a COMPLETE, WORKING artifact under the other architecture's
+          # name, and every check above it passes. `dpkg` names the architecture
+          # itself, which makes this the one assertion that can tell the two jobs
+          # apart. The AppImage half is asserted from the ELF below.
+          test "$(dpkg-deb -f "$DEB" Architecture)" = "amd64"
 
           # ── The AppImage carries the same tree ────────────────────────────
           # Extracted rather than mounted: a runner has no FUSE.
@@ -787,6 +813,13 @@ jobs:
 
           BIN=apps/desktop/src-tauri/target/release/ohmail
           test -s "$BIN"
+          # The shipped ELF is this job's architecture — see the `dpkg` note
+          # above for why an architecture is asserted at all. `readelf -h` prints
+          # the machine out of the ELF header, which is the artifact's own answer
+          # rather than the runner's.
+          ELF_MACHINE="$(readelf -h "$BIN" | sed -n 's/^ *Machine: *//p')"
+          echo "ELF machine: $ELF_MACHINE"
+          test "$ELF_MACHINE" = "Advanced Micro Devices X86-64"
           grep -aq "connect-src 'none'" "$BIN"
           echo "URLs in the binary:"
           ALL_URLS="$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u)"
@@ -857,6 +890,376 @@ jobs:
               echo "| $(basename "$f") | \`$(sha256sum "$f" | cut -d' ' -f1)\` · $(du -h "$f" | cut -f1) |"
             done
             echo
+            echo 'Unsigned and without a repository: `chmod +x` the AppImage before running it.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ==========================================================================
+  # LINUX ON arm64 — the same job as the one above, on a different machine.
+  #
+  # ── WHY THIS IS A SECOND JOB AND NOT A MATRIX ─────────────────────────────
+  #
+  # A `strategy.matrix` over `runs-on` would express this in half the lines, and
+  # it was refused. There is a check that reads THIS FILE as text and asserts,
+  # per job, that the window bundle is built and smoked BEFORE the hour of native
+  # compile — the arrangement whose absence once left that bundle unrendered for
+  # two releases. It finds jobs by their `id:` and reads their steps literally,
+  # so a job that reached the smoke through a matrix variable would be a job it
+  # could no longer see. Two spelled-out jobs keep it able to see what it checks.
+  # The duplication is the price, and it is smaller than the guard.
+  #
+  # ── WHY arm64 LINUX AT ALL ────────────────────────────────────────────────
+  #
+  # Not for Omarchy, which is x86_64-only. This is for the rest of arm64 Linux:
+  # Raspberry Pi desktops, Apple silicon Macs running Linux under Asahi, arm64
+  # workstations, and the arm64 servers people run a desktop session on. Until
+  # this job existed those machines had no ohmail build at all — the x86_64
+  # AppImage does not run on them, and there is no emulation layer in the way
+  # macOS has one.
+  #
+  # ── WHAT IS NEW HERE, AND SO WHAT IS ACTUALLY BEING PROVEN ────────────────
+  #
+  # This job is the FIRST place the Rust half is compiled for aarch64. Nothing in
+  # this project had ever built the shell for anything but x86_64 and Apple
+  # silicon, so `cargo test` and `cargo test --features local-engine` below are
+  # not a formality repeated from the job above: they are the first answer to
+  # "does this program compile and pass its own tests on this architecture".
+  # Read a red there as a finding, not as flake.
+  #
+  # The same is true of the vendored runtime. `vendor-node.mjs --platform
+  # linux-arm64` fetches nodejs.org's own linux-arm64 build, and the checks that
+  # RUN it — inside the script, again from the extracted AppImage, and again as
+  # the engine's own interpreter below — execute an aarch64 binary on aarch64
+  # hardware. That is the whole of the runtime claim, and it is only available
+  # here: this project has no arm64 hardware anywhere else, no arm64 VM, and no
+  # arm64 development machine. See the engine-start step near the end.
+  # ==========================================================================
+
+  linux-arm64:
+    name: Linux arm64 · smoke · engine · appimage + deb
+    # GitHub's hosted arm64 Linux runner, free for public repositories. It is a
+    # NATIVE machine, not emulation: everything below compiles and runs as
+    # aarch64, which is what makes the checks worth running here rather than
+    # cross-building on the x86_64 runner and proving nothing about either.
+    #
+    # Pinned to the version rather than a floating label. There is no
+    # `ubuntu-latest-arm`, and pinning is the right shape anyway — the two Linux
+    # jobs should move between Ubuntu releases together and deliberately, not
+    # because one of their labels was re-pointed.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      # The same list as the x86_64 job. Every one of these has an arm64 build in
+      # Ubuntu's own archive, so nothing here is architecture-conditional — which
+      # is worth stating, because a `[ "$(uname -m)" = … ]` in a prerequisite
+      # list is how two jobs that should be identical stop being identical.
+      - name: Install the Tauri prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev \
+            librsvg2-dev \
+            libayatana-appindicator3-dev \
+            libssl-dev \
+            build-essential curl wget file patchelf desktop-file-utils
+
+      - name: Toolchain
+        run: |
+          rustup update stable
+          rustup default stable
+          # No `rustup target add`: the host triple IS aarch64-unknown-linux-gnu
+          # here, and a native build wants nothing else. (macOS adds two targets
+          # because its artifact is universal; this one is not.)
+          rustc --version
+          # The host triple, printed so a run's own log says which architecture
+          # the cargo gate below actually compiled for. `-vV` has carried `host:`
+          # since long before any rustc this runner will serve.
+          rustc -vV
+          node --version
+          uname -m
+
+      - name: npm install
+        working-directory: apps/desktop
+        run: npm install --no-audit --no-fund
+
+      - name: tsc --noEmit
+        working-directory: apps/desktop
+        run: npm run ui:typecheck
+
+      # Fail-fast render check over the WINDOW bundle — offline audit included;
+      # app:build:engine rebuilds, scans and smokes it again beside the artifact.
+      - name: Build the window bundle
+        working-directory: apps/desktop
+        run: npm run ui:build:engine
+
+      - name: Smoke the window bundle
+        working-directory: apps/desktop
+        run: npm run smoke
+
+      # THE GATE THIS JOB EXISTS FOR — see the banner. First aarch64 compile of
+      # the shell, both feature configurations, and the tests that come with it.
+      - name: cargo test (both configurations)
+        working-directory: apps/desktop/src-tauri
+        run: |
+          set -euo pipefail
+          cargo test
+          cargo test --features local-engine
+
+      - name: Install the locked dependency tree
+        run: npm ci --no-audit --no-fund
+
+      - name: Build the engine bundle
+        run: |
+          set -euo pipefail
+          D="$(mktemp -d)" && (cd "$D" && npm install --no-save esbuild@0.24.0)
+          OHMAIL_ESBUILD_FROM="$D" node scripts/engine-bundle.mjs
+
+      - name: The engine boots from the shipped layout, and only from it
+        run: node scripts/verify-engine-boot.mjs
+
+      - uses: actions/cache@v4
+        with:
+          path: build/vendor
+          # A DIFFERENT KEY FROM THE x86_64 JOB, and this is the one line in this
+          # file where getting it wrong is silent. Both jobs write the runtime to
+          # `build/vendor/node`, so a shared key would let whichever job ran first
+          # serve its runtime to the other — an x86_64 Node inside the arm64 app,
+          # or the reverse. The download and its checksum would never run, so the
+          # only thing standing between that and a shipped artifact is the
+          # `--version` execution further down, which would fail as "the vendored
+          # runtime would not run on this machine" and name nothing about caches.
+          key: vendor-node-linux-arm64-v22.23.2
+
+      - name: Vendor the Node runtime
+        run: node scripts/vendor-node.mjs --platform linux-arm64
+
+      # The bundle is smoked inside this script, on this platform, before the app
+      # is packaged — see the header.
+      - name: Build the engine-bearing app, smoking its bundle
+        # NO_STRIP for the same reason as the x86_64 job: linuxdeploy strips the
+        # binary again while assembling the AppImage and that step is a known
+        # failure on recent glibc. The Rust release profile already strips.
+        env:
+          NO_STRIP: "true"
+        working-directory: apps/desktop
+        run: npm run app:build:engine -- --bundles appimage,deb
+
+      - name: Name the artifacts what the download page links
+        run: |
+          set -euo pipefail
+          B=apps/desktop/src-tauri/target/release/bundle
+          ls -la "$B/appimage" "$B/deb"
+          APPIMAGE="$(ls "$B"/appimage/*.AppImage | head -1)"
+          DEB="$(ls "$B"/deb/*.deb | head -1)"
+          test -s "$APPIMAGE"
+          test -s "$DEB"
+          mkdir -p build
+          # Renamed in place, never copied — see the Windows job. The bundler's
+          # own names already carry the architecture (`…_arm64.deb`,
+          # `…_aarch64.AppImage`), so the globs above match one file each; the
+          # stable names below are what the release attaches and what the update
+          # feed points at.
+          mv "$APPIMAGE" build/ohmail-linux-aarch64.AppImage
+          mv "$DEB" build/ohmail-linux-arm64.deb
+          chmod +x build/ohmail-linux-aarch64.AppImage
+          ls -la build/ohmail-linux-aarch64.AppImage build/ohmail-linux-arm64.deb
+
+      - name: Inspect what was produced
+        run: |
+          set -euo pipefail
+          DEB=build/ohmail-linux-arm64.deb
+          APPIMAGE=build/ohmail-linux-aarch64.AppImage
+
+          echo "--- .deb control ---"
+          dpkg-deb -I "$DEB"
+          # Read the listing ONCE, into a variable, and match against that — never
+          # `dpkg-deb -c "$DEB" | grep -q …`, which SIGPIPEs the tar behind
+          # dpkg-deb and turns a passing assertion into a failed step. The x86_64
+          # job's comment argues it in full.
+          CONTENTS="$(dpkg-deb -c "$DEB")"
+          echo "--- .deb contents ---"
+          printf '%s\n' "$CONTENTS"
+          grep -qE ' usr/bin/ohmail$' <<< "$CONTENTS"
+          grep -qiE ' usr/share/applications/.+\.desktop$' <<< "$CONTENTS"
+          grep -qiE ' usr/share/icons/hicolor/128x128/apps/.+\.png$' <<< "$CONTENTS"
+          # The engine and its runtime are inside the package, at the paths
+          # `engine.rs` composes from `resource_dir()`.
+          grep -qE ' usr/lib/ohmail/engine/bin/ohmail-engine\.mjs$' <<< "$CONTENTS"
+          grep -qE ' usr/lib/ohmail/engine/drizzle/' <<< "$CONTENTS"
+          grep -qE ' usr/lib/ohmail/runtime/node$' <<< "$CONTENTS"
+          # …and the runtime kept its execute bit through the repackaging.
+          NODE_ROW="$(grep -E ' usr/lib/ohmail/runtime/node$' <<< "$CONTENTS")"
+          echo "node row: $NODE_ROW"
+          case "$NODE_ROW" in
+            -rwxr-xr-x*) : ;;
+            *) echo "the vendored runtime is not executable inside the .deb" >&2; exit 1 ;;
+          esac
+          test "$(dpkg-deb -f "$DEB" Package)" = "ohmail"
+          # THE ARCHITECTURE, asserted because the two Linux jobs are otherwise
+          # identical and a misconfigured `runs-on` would produce a complete,
+          # working x86_64 artifact under an arm64 name with every other check in
+          # this step green. See the same assertion in the x86_64 job.
+          test "$(dpkg-deb -f "$DEB" Architecture)" = "arm64"
+
+          # ── The AppImage carries the same tree ────────────────────────────
+          rm -rf squashfs-root
+          ./"$APPIMAGE" --appimage-extract > /dev/null
+          test -f squashfs-root/usr/lib/ohmail/engine/bin/ohmail-engine.mjs
+          test -d squashfs-root/usr/lib/ohmail/engine/drizzle
+          test -x squashfs-root/usr/lib/ohmail/runtime/node
+          # IT RUNS — an aarch64 Node executed on aarch64 hardware. On the x86_64
+          # job this line reads as routine; here it is the first execution of an
+          # arm64 runtime this project has ever performed.
+          squashfs-root/usr/lib/ohmail/runtime/node --version
+          rm -rf squashfs-root
+
+          BIN=apps/desktop/src-tauri/target/release/ohmail
+          test -s "$BIN"
+          ELF_MACHINE="$(readelf -h "$BIN" | sed -n 's/^ *Machine: *//p')"
+          echo "ELF machine: $ELF_MACHINE"
+          test "$ELF_MACHINE" = "AArch64"
+          grep -aq "connect-src 'none'" "$BIN"
+          echo "URLs in the binary:"
+          ALL_URLS="$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u)"
+          printf '%s\n' "$ALL_URLS"
+          # Identical rule to the other two jobs — the update feed by prefix, the
+          # Cloud API by equality, the browser link table page by page, and the
+          # scheme split that keeps adjacent Rust literals from being judged as
+          # one address; the Windows job argues every clause of it.
+          #
+          # It is repeated rather than shared BECAUSE it is an audit of a
+          # different binary. The compiler is free to lay out read-only data
+          # differently for a different architecture, so an arm64 build that
+          # reached an address the x86_64 build does not is a thing this list has
+          # to be able to catch on its own.
+          FEED_PREFIX='https://github.com/trafficflowhq/ohmail/releases/latest/download/latest.json'
+          CLOUD_URL='https://api.ohmail.app'
+          SPLIT_URLS="$(printf '%s\n' "$ALL_URLS" \
+            | awk '{ gsub(/https?:\/\//, "\n&"); print }' | grep -E '^https?://' || true)"
+          FIRST_PARTY="$(grep -Ei 'ohmail|mailoh|trafficflow' <<< "$SPLIT_URLS" | sort -u || true)"
+          if [ -z "$FIRST_PARTY" ]; then
+            echo "the pinned update feed URL is missing from the binary" >&2
+            exit 1
+          fi
+          BAD=0
+          while IFS= read -r u; do
+            [ -z "$u" ] && continue
+            case "$u" in
+              "$FEED_PREFIX"*) : ;;
+              "$CLOUD_URL") : ;;
+              'https://ohmail.app/mailbox#/settings'*) : ;;
+              'https://ohmail.app/mailbox?settings=mailboxes#/settings'*) : ;;
+              'https://ohmail.app/link-desktop'*) : ;;
+              'https://ohmail.app/privacy'*) : ;;
+              'https://ohmail.app/subprocessors'*) : ;;
+              *) echo "  unexpected first-party URL: $u" >&2; BAD=1 ;;
+            esac
+          done <<< "$FIRST_PARTY"
+          if [ "$BAD" -ne 0 ]; then
+            echo "first-party URLs other than the named endpoints are present" >&2
+            exit 1
+          fi
+          echo "unique URL strings (reconcile with the README enumeration): $(grep -c . <<< "$ALL_URLS" || true)"
+
+      # ── THE PACKAGED ENGINE, STARTED, ON THIS ARCHITECTURE ────────────────
+      #
+      # This step is on the arm64 job and NOT on the x86_64 one, which is a
+      # deliberate asymmetry and needs its reason written down or it will be
+      # "tidied" into symmetry by someone who is right to ask.
+      #
+      # The reason is that CI is the ONLY place an arm64 ohmail ever runs. Every
+      # other platform this project ships gets started by a person somewhere
+      # before a release goes out — someone installs the .exe, the .deb, the
+      # .dmg, and opens the window. There is no arm64 machine in this project at
+      # all: no hardware, no emulator. So for arm64, and only for arm64,
+      # "nothing here ever starts the packaged app" — the KNOWN GAP this file's
+      # header names — has no compensating human step behind it.
+      #
+      # What it proves and what it does not: the vendored aarch64 runtime can
+      # execute the aarch64-independent engine bundle from the layout the package
+      # ships, with a PATH that has no node on it, and reach `serving`. It does
+      # NOT open a window, so a fault that only exists once WebKitGTK creates a
+      # real surface is as invisible here as everywhere else in this file.
+      #
+      # It is modelled on the macOS job's step of the same name, including
+      # capturing the process status directly rather than through a pipe.
+      #
+      # The x86_64 job should gain this too. It is not being added there in the
+      # same change because that job is on the critical path of every release and
+      # a step nobody has watched succeed does not belong in front of one.
+      - name: The packaged engine starts on aarch64, with no node on PATH
+        run: |
+          set -euo pipefail
+          rm -rf squashfs-root
+          ./build/ohmail-linux-aarch64.AppImage --appimage-extract > /dev/null
+          RES=squashfs-root/usr/lib/ohmail
+          D="$(mktemp -d)"
+          set +e
+          env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME="$HOME" \
+            OHMAIL_KEK="$(printf 'a%.0s' $(seq 64))" \
+            OHMAIL_IMAP_HOST=127.0.0.1 OHMAIL_IMAP_PORT=59999 \
+            OHMAIL_IMAP_USER=boot@local OHMAIL_MAILBOX_ADDRESS=boot@local \
+            OHMAIL_IMAP_SECURE=0 OHMAIL_DATA_DIR="$D" \
+            "$RES/runtime/node" "$RES/engine/bin/ohmail-engine.mjs" > "$D/out" 2> "$D/err" &
+          ENGINE_PID=$!
+          set -e
+          # It serves and then waits on stdin. Read what it said, then stop it.
+          for _ in $(seq 60); do grep -q '"event":"serving"' "$D/err" && break; sleep 0.5; done
+          SERVED="$(grep -c '"event":"serving"' "$D/err" || true)"
+          kill "$ENGINE_PID" 2>/dev/null || true
+          wait "$ENGINE_PID" 2>/dev/null || true
+          echo "--- engine stderr (last 20) ---"; tail -20 "$D/err"
+          rm -rf squashfs-root
+          if [ "$SERVED" -lt 1 ]; then
+            echo "the packaged engine did not reach 'serving' from the AppImage layout on aarch64" >&2
+            exit 1
+          fi
+          echo "the packaged engine served on aarch64, using only the runtime inside the AppImage"
+
+      - name: Upload the arm64 AppImage
+        uses: actions/upload-artifact@v7
+        with:
+          name: ohmail-appimage-aarch64-${{ github.run_number }}
+          path: build/ohmail-linux-aarch64.AppImage
+          if-no-files-found: error
+
+      - name: Upload the arm64 .deb
+        uses: actions/upload-artifact@v7
+        with:
+          name: ohmail-deb-arm64-${{ github.run_number }}
+          path: build/ohmail-linux-arm64.deb
+          if-no-files-found: error
+
+      - name: Run summary
+        if: always()
+        run: |
+          {
+            echo '### ohmail for Linux on arm64 — unsigned build (engine-bearing)'
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| commit | \`${GITHUB_SHA:0:9}\` |"
+            echo "| toolchain | $(rustc --version) · node $(node --version) |"
+            echo "| runner | $(. /etc/os-release; echo "$PRETTY_NAME") $(uname -m) |"
+            for f in build/ohmail-linux-aarch64.AppImage build/ohmail-linux-arm64.deb; do
+              [ -f "$f" ] || continue
+              echo "| $(basename "$f") | \`$(sha256sum "$f" | cut -d' ' -f1)\` · $(du -h "$f" | cut -f1) |"
+            done
+            echo
+            echo 'For arm64 Linux — a Raspberry Pi desktop, Asahi on Apple silicon, an arm64'
+            echo 'workstation or server. Not for Omarchy, which is x86_64 only.'
             echo 'Unsigned and without a repository: `chmod +x` the AppImage before running it.'
           } >> "$GITHUB_STEP_SUMMARY"
 

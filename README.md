@@ -18,7 +18,7 @@ source, AGPL-3.0, no account.
 
 [![build](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml/badge.svg)](https://github.com/trafficflowhq/ohmail/actions/workflows/build.yml)
 [![GitHub stars](https://img.shields.io/github/stars/trafficflowhq/ohmail?style=flat&label=%E2%98%85&color=a3461c)](https://github.com/trafficflowhq/ohmail/stargazers)
-[![latest release](https://img.shields.io/badge/download-v0.13.2-a3461c)](https://github.com/trafficflowhq/ohmail/releases/latest)
+[![latest release](https://img.shields.io/badge/download-v0.13.3-a3461c)](https://github.com/trafficflowhq/ohmail/releases/latest)
 [![licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-a3461c)](LICENSE)
 [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-111111)](#macos)
 [![Windows 10+](https://img.shields.io/badge/Windows-10%2B-111111)](#windows)
@@ -304,8 +304,13 @@ check what you downloaded against what the run made.
 | Platform | File | Requires |
 |---|---|---|
 | **macOS** | `ohmail.dmg` (universal, arm64 + x86_64) | macOS 15+ |
-| **Windows** | `ohmail-windows-setup.exe` (NSIS, per-user, no admin) | Windows 10+ |
-| **Linux** | `ohmail-linux-x86_64.AppImage` or `ohmail-linux-amd64.deb` | — |
+| **Windows** | `ohmail-windows-setup.exe` (NSIS, per-user, no admin) | Windows 10+, x86_64 |
+| **Linux · x86_64** | `ohmail-linux-x86_64.AppImage` or `ohmail-linux-amd64.deb` | — |
+| **Linux · arm64** | `ohmail-linux-aarch64.AppImage` or `ohmail-linux-arm64.deb` | — |
+
+`uname -m` tells you which Linux build you want: `x86_64` for the first row,
+`aarch64` for the second. macOS is one file for both architectures; Windows is
+x86_64 only — there is no arm64 Windows build.
 
 Every build carries the local mail engine and its own Node runtime — nothing to
 install first. **Nothing is signed yet**, on any platform: code-signing
@@ -337,26 +342,44 @@ requires trusting nobody.
 
 ### Linux
 
+**Two architectures, two builds.** `uname -m` prints `x86_64` or `aarch64`;
+take the matching pair of files. They are separate builds of the same
+application — there is no single Linux file that runs on both, the way the macOS
+DMG does, because ELF has no equivalent of a universal binary.
+
 > [!IMPORTANT]
 > **The AppImage needs the executable bit:**
 > ```bash
 > chmod +x ohmail-linux-x86_64.AppImage && ./ohmail-linux-x86_64.AppImage
+> # on arm64:
+> chmod +x ohmail-linux-aarch64.AppImage && ./ohmail-linux-aarch64.AppImage
 > ```
 > On a distribution without unprivileged user namespaces, run it with
 > `--appimage-extract-and-run`.
 
-The `.deb` installs with `sudo apt install ./ohmail-linux-amd64.deb` and pulls
-in WebKitGTK.
+The `.deb` installs with `sudo apt install ./ohmail-linux-amd64.deb`
+(`./ohmail-linux-arm64.deb` on arm64) and pulls in WebKitGTK.
+
+> [!NOTE]
+> **What arm64 is and is not verified on.** The arm64 build is compiled, tested
+> and packaged on arm64 hardware in this repository's CI, and every check the
+> x86_64 build passes it passes too — including starting its own mail engine
+> from inside the packaged AppImage. What has NOT happened is somebody opening
+> the window on a Raspberry Pi, an Asahi Mac or an arm64 workstation: there is no
+> arm64 machine in this project. If you run it, [say how it
+> went](https://github.com/trafficflowhq/ohmail/issues) — that is the part CI
+> cannot answer.
 
 > [!IMPORTANT]
 > **A `.deb` install cannot update itself — and it will still offer to.** A
 > build installed from the `.deb` asks the release feed for a Debian package,
-> does not find one (the feed publishes the AppImage), falls back to the
-> AppImage, downloads it, and then reports *"ohmail could not install the
-> update."* Nothing on disk is touched and nothing is broken. Update by
-> installing the new `.deb` over the old one — or use the **AppImage**, which is
-> the Linux build that applies its own updates. The same applies to any
-> distribution package built from the `.deb`.
+> does not find one (the feed publishes AppImages, one per architecture), falls
+> back to the AppImage for its architecture, downloads it, and then reports
+> *"ohmail could not install the update."* Nothing on disk is touched and nothing
+> is broken. Update by installing the new `.deb` over the old one — or use the
+> **AppImage**, which is the Linux build that applies its own updates. This is
+> the same on x86_64 and arm64, and it applies to any distribution package built
+> from either `.deb`.
 
 Uninstall with `sudo apt remove ohmail`.
 
@@ -610,7 +633,9 @@ differ, which is what makes a rebuild that matches mean anything.
 
 ## How it is put together
 
-One app, three platforms: a Rust (Tauri) window around the React
+One app, three platforms, four architectures — macOS as one universal binary,
+Windows on x86_64, Linux built separately for x86_64 and arm64. All of them are
+the same program: a Rust (Tauri) window around the React
 implementation of the design system, with a Node mail engine beside it that
 the window talks to over a private pipe — no port, no socket, no listener
 while host mode is off; arming host mode opens exactly the loopback door the

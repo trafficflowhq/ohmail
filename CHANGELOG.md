@@ -13,6 +13,53 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.13.3] — 2026-09-01
+
+ohmail now has an arm64 Linux build, and the mail engine stops using a stored
+password with a server it was never proved against.
+
+### arm64 Linux
+
+Until now the Linux download was x86_64 only, so a Raspberry Pi desktop, a Mac
+running Linux under Asahi, or an arm64 workstation or server had no ohmail build
+at all — the x86_64 AppImage does not run on those machines and there is nothing
+in the way to translate it. There are now two Linux builds:
+
+| architecture | files |
+|---|---|
+| x86_64 | `ohmail-linux-x86_64.AppImage` · `ohmail-linux-amd64.deb` |
+| arm64 | `ohmail-linux-aarch64.AppImage` · `ohmail-linux-arm64.deb` |
+
+`uname -m` tells you which one to take: `x86_64` or `aarch64`. They are the same
+application, compiled twice. There is no single file that runs on both, the way
+the macOS DMG does — ELF has no equivalent of a universal binary — so the two are
+built on separate machines and each carries a Node runtime for its own
+architecture.
+
+**The update feed knows about both.** An arm64 install asks for an arm64 payload
+and is offered the arm64 AppImage; it can never be handed the x86_64 one. Nothing
+changes for existing x86_64 installs: they ask for the same key they always have
+and get the same file.
+
+**What is verified, and what is not.** The arm64 build is compiled, tested and
+packaged on arm64 hardware, and it passes every check the x86_64 build passes:
+both Rust test configurations, the window-bundle render, the artifact inspection,
+and — new for this architecture — starting its own mail engine from inside the
+packaged AppImage with nothing installed on the machine. What has not happened is
+a person opening the window on real arm64 hardware, because this project has
+none. If you run it, please [say how it
+went](https://github.com/trafficflowhq/ohmail/issues).
+
+**Windows stays x86_64.** There is no arm64 Windows build and this release does
+not add one. macOS was already universal and is unchanged.
+
+The `.deb` still cannot update itself, on either architecture, for the reason the
+[README](README.md#linux) gives: a package install updates through the package
+manager it came from.
+
 ### A stored password is only ever used with the server it was set up for
 
 This closes the thing 0.13.2's notes said it did not close.
@@ -51,9 +98,6 @@ stored for, so the only honest claim is about the server it was withheld from.
 
 One limit worth stating: this check compares the incoming mail server. A change that
 moves only the outgoing server is not covered by it yet.
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
 
 ## [0.13.2] — 2026-09-01
 
@@ -2916,7 +2960,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.13.2...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.13.3...HEAD
+[0.13.3]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.3
 [0.13.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.2
 [0.13.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.1
 [0.13.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.0

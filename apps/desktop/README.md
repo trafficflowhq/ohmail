@@ -6,7 +6,8 @@ app renders. There is no desktop fork of the interface.
 
 **Two artifacts come out of this one directory.**
 
-- **The app** — what the releases ship on all three platforms. It carries the
+- **The app** — what the releases ship on all three platforms, and on Linux for
+  two architectures (x86_64 and arm64, built by two jobs on two machines). It carries the
   mail engine and its own Node runtime as resources, speaks IMAP to your own
   server, and grants the window a small, named set of commands over a bridge —
   the engine, one notification, the badge, a fixed table of pages it may hand
@@ -389,7 +390,7 @@ verification; the cost was a second data directory for the same mailbox and an
 update path that could never hand over between them, which is a permanent fork in
 every path the app touches in exchange for a convenience while testing.
 
-The version is **`0.13.2`**, bare, in every place it is written: `tauri.conf.json`,
+The version is **`0.13.3`**, bare, in every place it is written: `tauri.conf.json`,
 `Cargo.toml`, `Cargo.lock`, `package.json`, and the macOS `Info.plist`. The
 `-preview` suffix earlier builds carried is retired — it marked "this build
 cannot update itself yet", and this build ships the auto-updater, so the claim is
@@ -397,7 +398,10 @@ no longer true. "Beta" is the channel name, not a semver suffix; the MSI bundler
 rejects a pre-release identifier anyway, and the bare number is what reaches the
 installer filenames the bundler emits — which the release then renames in place
 to the stable names the download page links (`ohmail.dmg`,
-`ohmail-linux-amd64.deb`, `ohmail-windows-setup.exe`, …).
+`ohmail-linux-amd64.deb`, `ohmail-linux-arm64.deb`,
+`ohmail-windows-setup.exe`, …). The two Linux architectures carry theirs in the
+filename, because they are two different programs and the update feed has to be
+able to point at one without meaning the other.
 `desktop-shell.test.ts` asserts all five places carry the one number, so bumping
 four of five is red in the monorepo suite.
 
@@ -408,7 +412,7 @@ identifier and updated through Sparkle, which compares a feed's version against
 the installed `CFBundleVersion` — so a bundle announcing `0.8.0` there would be
 read as a downgrade from a four-digit build number, and every installed copy
 would report itself up to date for ever. Nothing a person sees uses it:
-`CFBundleShortVersionString` is `0.13.2` and is what the app and every download
+`CFBundleShortVersionString` is `0.13.3` and is what the app and every download
 page show. The floor is asserted in `release-feeds.yml`, so a plist that loses
 the key fails the release instead of stranding the installs it protects.
 

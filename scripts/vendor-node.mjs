@@ -3,8 +3,8 @@
  * vendor-node.mjs — fetch the official Node build for one platform, verify it, and put the runtime
  * in `build/vendor/` where the packager copies it into the app.
  *
- *     node scripts/vendor-node.mjs                    # this machine's platform
- *     node scripts/vendor-node.mjs --platform linux   # darwin | linux | windows
+ *     node scripts/vendor-node.mjs                        # this machine's platform
+ *     node scripts/vendor-node.mjs --platform linux       # darwin | linux | linux-arm64 | windows
  *
  * ── WHY THIS IS A SCRIPT AND NOT A PARAGRAPH ──────────────────────────────────────────────
  *
@@ -47,6 +47,12 @@
  * `lipo`d into one binary — and the check afterwards asserts every slice is present, because a
  * runtime with one slice inside a two-slice app is an app that works on the machine that built it
  * and fails on half the machines that download it.
+ *
+ * LINUX IS THE SAME ARGUMENT ONE LEVEL DOWN. It ships two artifacts, x86_64 and arm64, and there is
+ * no `lipo` for ELF: each is single-architecture and each is built on a runner of its own. So the
+ * two are separate targets here rather than one target with a switch, for exactly the reason the
+ * three platforms are — the only cheap thing this script can prove about a runtime is that it RAN,
+ * and that proof exists only on the machine it was fetched for.
  */
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -90,8 +96,32 @@ const PLATFORMS = {
      * standalone on one architecture and broken on the other. */
     slices: ["arm64", "x86_64"],
   },
+  /* `linux` MEANS x86_64, and the name is kept rather than corrected to `linux-x64`.
+   *
+   * It is the spelling the published README's build instructions and the build workflow have both
+   * used since this script existed, and those are in a repository other people have checked out.
+   * Renaming the key would make every copy of those instructions wrong for the sake of symmetry
+   * with a key added later. The arm64 entry below is explicit about its architecture instead, and
+   * `hostPlatform()` is what keeps a bare run on an arm64 machine from silently taking this one. */
   linux: {
     archives: [`node-${VERSION}-linux-x64.tar.xz`],
+    unpack: ["-xJf"],
+    binary: (name) => path.join(name.replace(/\.tar\.xz$/, ""), "bin", "node"),
+    licence: (name) => path.join(name.replace(/\.tar\.xz$/, ""), "LICENSE"),
+    out: "node",
+  },
+  /* arm64 Linux — a Raspberry Pi desktop, Asahi on Apple silicon, an arm64 workstation or server.
+   * Same archive shape as x86_64 Linux and a different download, which is the whole difference:
+   * nodejs.org publishes `linux-arm64` beside `linux-x64` in the same release, listed in the same
+   * SHASUMS256.txt, so the checksum path above needs nothing added for it.
+   *
+   * No `slices`: unlike macOS there is no Linux `lipo` and no multi-architecture ELF, so an arm64
+   * app carries an arm64-only runtime and the x86_64 app carries an x86_64-only one. The check that
+   * each is the RIGHT one is the `--version` execution at the end of this file, which only runs on
+   * the matching machine — see the header, and `build.yml`'s two separate cache keys, which is the
+   * one place this could go wrong without anything downloading. */
+  "linux-arm64": {
+    archives: [`node-${VERSION}-linux-arm64.tar.xz`],
     unpack: ["-xJf"],
     binary: (name) => path.join(name.replace(/\.tar\.xz$/, ""), "bin", "node"),
     licence: (name) => path.join(name.replace(/\.tar\.xz$/, ""), "LICENSE"),
@@ -133,11 +163,24 @@ const TAR = process.platform === "win32"
   ? path.join(process.env.SystemRoot ?? String.raw`C:\Windows`, "System32", "tar.exe")
   : "tar";
 
-/** `process.platform` → the key above. */
+/**
+ * `process.platform` (and, on Linux, `process.arch`) → the key above.
+ *
+ * ARCHITECTURE IS PART OF THE ANSWER ON LINUX, and it has to be, because of what this value is
+ * used for at the bottom of this file: the vendored binary is EXECUTED only when the target matches
+ * the host. Returning a bare `"linux"` on an arm64 machine would make a `--platform linux` run —
+ * which fetches the x86_64 archive — look like a native one, and the `--version` check would then
+ * be attempted on a binary this machine cannot run, reporting "the vendored runtime would not run
+ * on this machine" for a request that was answered exactly as asked. Distinguishing them turns that
+ * into the honest line the else-branch prints: vendored for one architecture, on another.
+ *
+ * macOS is deliberately NOT split. Its app is universal and its runtime is `lipo`d from both
+ * slices, so one key is the whole truth there and an arch-dependent answer would be wrong.
+ */
 function hostPlatform() {
   if (process.platform === "darwin") return "darwin";
   if (process.platform === "win32") return "windows";
-  if (process.platform === "linux") return "linux";
+  if (process.platform === "linux") return process.arch === "arm64" ? "linux-arm64" : "linux";
   return null;
 }
 

@@ -3,7 +3,7 @@ name: release feeds
 # Generates the two auto-update feeds and attaches them to a published release,
 # so that
 #
-#   …/releases/latest/download/latest.json        (all three platforms, Tauri)
+#   …/releases/latest/download/latest.json        (five platform keys, Tauri)
 #   …/releases/latest/download/appcast-macos.xml   (the macOS HANDOVER, Sparkle)
 #
 # resolve to signed metadata the shipped clients are pinned to. The clients
@@ -45,9 +45,29 @@ name: release feeds
 # private key is rotated, the committed public half must be rotated with it or
 # the update can never verify.
 #
+# ── WHAT latest.json DOES NOT CARRY, AND WHY THAT IS A DECISION ────────────
+#
+# No `.deb` entry, for either architecture. `tauri-plugin-updater` builds its
+# lookup key from a bundle-type marker the bundler PATCHES INTO THE BINARY, so a
+# deb-installed build asks for `linux-x86_64-deb` (or `linux-aarch64-deb`) first
+# and falls back to the plain key. Publishing the plain key alone means such a
+# build downloads an AppImage it then refuses to install — measured, not
+# inferred, on an Arch install at 0.12.1: the dialog appears, 130 MB is fetched,
+# and the app says it could not install the update. Nothing on disk is touched.
+#
+# Adding a `-deb` key would NOT fix it. The updater would then hand the .deb to
+# dpkg on a machine whose packages are owned by whatever installed them, which is
+# an install path nobody here can exercise — there is no Debian-install test on
+# any machine this project builds from. So the honest resolution is the one the
+# release notes carry: a `.deb` install updates through the package manager it
+# came from, and the README, the CHANGELOG and the AUR package all say so in
+# those words. The absence of these keys is deliberate, and `verify-feeds.mjs`
+# refusing any key not on its list is what keeps it deliberate — that refusal is
+# the guard, not an oversight to work around.
+#
 # This runs on a released tag and works OFF the release's own binary assets, so
 # it must run AFTER the build artifacts (the .dmg and .app.tar.gz, the
-# -setup.exe and the .AppImage) are attached to the release. It signs those
+# -setup.exe and the two .AppImages) are attached to the release. It signs those
 # exact bytes and points the feeds at their download URLs.
 
 on:
@@ -149,7 +169,23 @@ jobs:
 
           pick() { ls assets/$1 2>/dev/null | head -1 || true; }
           WIN_EXE="$(pick '*-setup.exe')"
-          APPIMAGE="$(pick '*.AppImage')"
+          # ── THE TWO LINUX AppImages ARE PICKED BY NAME, NOT BY GLOB ────────
+          #
+          # This used to be `pick '*.AppImage'`, and `pick` ends in `head -1`.
+          # That was correct for exactly as long as there was one AppImage on a
+          # release. There are two now — x86_64 and aarch64 — and the glob would
+          # have chosen between them by whatever order `ls` returned, then signed
+          # that file and published it under BOTH Linux keys. Every arm64 install
+          # would have been handed an x86_64 payload, or every x86_64 install an
+          # arm64 one, and the signature would have verified either way: the feed
+          # says nothing about what architecture the bytes are for.
+          #
+          # `build.yml`'s header calls the artifact names a contract for this
+          # exact reason ("two files matching one glob makes the update feed's
+          # payload pick arbitrary"). This is the consumer that contract exists
+          # to protect, so it names both files and refuses if either is absent.
+          LIN_X64_APPIMAGE="assets/ohmail-linux-x86_64.AppImage"
+          LIN_ARM_APPIMAGE="assets/ohmail-linux-aarch64.AppImage"
           # A GZIPPED TAR AND NOT A ZIP, and this is not a preference. Tauri's
           # macOS updater unpacks its payload with GzDecoder + tar and has no
           # zip path at all (tauri-plugin-updater `install_inner`, macOS). The
@@ -157,8 +193,25 @@ jobs:
           # tar.gz serves both feeds and the zip is retired.
           MAC_TGZ="$(pick '*.app.tar.gz')"
           test -n "$WIN_EXE"  || { echo "no NSIS -setup.exe attached to $RELEASE_TAG" >&2; exit 1; }
-          test -n "$APPIMAGE" || { echo "no .AppImage attached to $RELEASE_TAG" >&2; exit 1; }
+          test -s "$LIN_X64_APPIMAGE" || { echo "no ohmail-linux-x86_64.AppImage attached to $RELEASE_TAG" >&2; exit 1; }
+          test -s "$LIN_ARM_APPIMAGE" || { echo "no ohmail-linux-aarch64.AppImage attached to $RELEASE_TAG" >&2; exit 1; }
           test -n "$MAC_TGZ"  || { echo "no *.app.tar.gz attached to $RELEASE_TAG" >&2; exit 1; }
+          # …and NOTHING ELSE ends in .AppImage. Naming the two files above stops
+          # a third one being picked by accident; it does not stop a third one
+          # EXISTING, and a Linux artifact this job has never heard of is a
+          # platform whose installs would silently be offered another
+          # architecture's payload. Counted into a variable rather than piped
+          # into `wc` behind a `grep -q`, for the reason `build.yml` gives at
+          # length: a reader that closes the pipe early kills the producer and
+          # the pipeline reports the wrong thing.
+          APPIMAGES="$(ls assets/*.AppImage 2>/dev/null || true)"
+          APPIMAGE_COUNT="$(printf '%s\n' "$APPIMAGES" | grep -c . || true)"
+          if [ "$APPIMAGE_COUNT" != "2" ]; then
+            echo "expected exactly 2 AppImage assets (x86_64 and aarch64), found $APPIMAGE_COUNT:" >&2
+            printf '%s\n' "$APPIMAGES" >&2
+            echo "Every Linux artifact needs a platform key of its own in latest.json." >&2
+            exit 1
+          fi
 
           # ════════════════════════════════════════════════════════════════════
           # latest.json — the Tauri updater manifest, all three platforms.
@@ -172,6 +225,16 @@ jobs:
           # There is no `darwin-universal` key it would ever ask for, so a single
           # entry under that name is a manifest every Mac misses. Both keys point
           # at the one universal archive and carry the one signature over it.
+          #
+          # TWO linux KEYS FOR TWO DIFFERENT ARCHIVES — the opposite arrangement,
+          # and the reason the two Linux entries can never be collapsed. macOS
+          # ships ONE artifact that runs on both architectures; Linux ships TWO
+          # artifacts that each run on one. `tauri-plugin-updater` derives the
+          # arch half of its key from `cfg!(target_arch)` in the running binary
+          # (`updater.rs::updater_arch` in 2.10.1: `x86_64` → "x86_64",
+          # `aarch64` → "aarch64"), so an arm64 install asks for `linux-aarch64`
+          # and nothing else — there is no fallback to another architecture's
+          # entry, and there must not be one: the payload would not run.
           # ════════════════════════════════════════════════════════════════════
           sign_tauri() {
             # Reads TAURI_SIGNING_PRIVATE_KEY(+_PASSWORD) from the environment.
@@ -182,11 +245,22 @@ jobs:
             cat "$1.sig"
           }
           WIN_SIG="$(sign_tauri "$WIN_EXE")"
-          LIN_SIG="$(sign_tauri "$APPIMAGE")"
+          LIN_X64_SIG="$(sign_tauri "$LIN_X64_APPIMAGE")"
+          LIN_ARM_SIG="$(sign_tauri "$LIN_ARM_APPIMAGE")"
           MAC_SIG="$(sign_tauri "$MAC_TGZ")"
-          test -n "$WIN_SIG" || { echo "empty Windows signature" >&2; exit 1; }
-          test -n "$LIN_SIG" || { echo "empty Linux signature" >&2; exit 1; }
-          test -n "$MAC_SIG" || { echo "empty macOS signature" >&2; exit 1; }
+          test -n "$WIN_SIG"     || { echo "empty Windows signature" >&2; exit 1; }
+          test -n "$LIN_X64_SIG" || { echo "empty Linux x86_64 signature" >&2; exit 1; }
+          test -n "$LIN_ARM_SIG" || { echo "empty Linux arm64 signature" >&2; exit 1; }
+          test -n "$MAC_SIG"     || { echo "empty macOS signature" >&2; exit 1; }
+          # The two Linux signatures are over two different files, so they must
+          # differ. Identical ones mean both `sign_tauri` calls were handed the
+          # same path — the failure the by-name picks above exist to prevent,
+          # caught here as well because this is the last place before the bytes
+          # become a published feed.
+          if [ "$LIN_X64_SIG" = "$LIN_ARM_SIG" ]; then
+            echo "the two Linux AppImages produced the same signature — they are the same file" >&2
+            exit 1
+          fi
 
           jq -n \
             --arg version  "$VERSION" \
@@ -194,8 +268,10 @@ jobs:
             --arg pub_date "$PUB_DATE_ISO" \
             --arg win_url  "$BASE/$(basename "$WIN_EXE")" \
             --arg win_sig  "$WIN_SIG" \
-            --arg lin_url  "$BASE/$(basename "$APPIMAGE")" \
-            --arg lin_sig  "$LIN_SIG" \
+            --arg lin_url  "$BASE/$(basename "$LIN_X64_APPIMAGE")" \
+            --arg lin_sig  "$LIN_X64_SIG" \
+            --arg lin_arm_url "$BASE/$(basename "$LIN_ARM_APPIMAGE")" \
+            --arg lin_arm_sig "$LIN_ARM_SIG" \
             --arg mac_url  "$BASE/$(basename "$MAC_TGZ")" \
             --arg mac_sig  "$MAC_SIG" \
             '{
@@ -205,6 +281,7 @@ jobs:
                platforms: {
                  "windows-x86_64": { signature: $win_sig, url: $win_url },
                  "linux-x86_64":   { signature: $lin_sig, url: $lin_url },
+                 "linux-aarch64":  { signature: $lin_arm_sig, url: $lin_arm_url },
                  "darwin-aarch64": { signature: $mac_sig, url: $mac_url },
                  "darwin-x86_64":  { signature: $mac_sig, url: $mac_url }
                }
@@ -216,9 +293,16 @@ jobs:
           # prevent and the one nobody reports.
           jq -e '.platforms
                   | has("windows-x86_64") and has("linux-x86_64")
+                    and has("linux-aarch64")
                     and has("darwin-aarch64") and has("darwin-x86_64")' \
             latest.json > /dev/null \
             || { echo "latest.json is missing a platform entry" >&2; exit 1; }
+          # The two Linux entries point at two different files. Asserted on the
+          # manifest rather than only on the variables above, because this is the
+          # object the clients read.
+          jq -e '.platforms["linux-x86_64"].url != .platforms["linux-aarch64"].url' \
+            latest.json > /dev/null \
+            || { echo "both Linux entries name one file — one architecture would be handed the other's payload" >&2; exit 1; }
           echo "--- latest.json ---"; cat latest.json
 
           # ════════════════════════════════════════════════════════════════════

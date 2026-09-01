@@ -125,10 +125,39 @@ const latest = JSON.parse(fs.readFileSync(latestPath, "utf8"));
 
 console.log(`\nlatest.json — version ${latest.version}`);
 /* EVERY PLATFORM, INDIVIDUALLY. The two darwin entries point at ONE archive and carry ONE
- * signature, so a loop that deduplicated by (url, signature) would verify three files, report
+ * signature, so a loop that deduplicated by (url, signature) would verify four files, report
  * everything verified, and say nothing at all about a manifest that had lost a platform key. A
- * client whose key is missing does not error — it stops updating. */
-const WANT = ["windows-x86_64", "linux-x86_64", "darwin-aarch64", "darwin-x86_64"];
+ * client whose key is missing does not error — it stops updating.
+ *
+ * ── THE LIST IS EXHAUSTIVE IN BOTH DIRECTIONS, AND THAT IS THE POINT ─────────────────────────
+ *
+ * A key missing from the manifest is a failure (the loop below), and a key in the manifest that is
+ * not on this list is ALSO a failure (the loop after it). The second half is the unusual one and it
+ * is deliberate: `latest.json` is remote code delivery, so every entry in it has to be an entry
+ * somebody decided to publish. Extending this list is how that decision is recorded; loosening the
+ * refusal would delete the record.
+ *
+ * ── WHY `linux-aarch64` IS HERE ──────────────────────────────────────────────────────────────
+ *
+ * Linux ships two artifacts, one per architecture, and unlike macOS neither runs on the other's
+ * machine. `tauri-plugin-updater` composes its key as `{os}-{arch}` from the RUNNING binary —
+ * `updater.rs::updater_arch` in 2.10.1 maps `cfg!(target_arch = "aarch64")` to the string
+ * "aarch64" — and looks it up exactly, with no fallback to another architecture. So an arm64
+ * install asks for this key and only this key; without it, every arm64 install would check for
+ * updates, find nothing addressed to it, and stay where it is for ever.
+ *
+ * ── AND WHY THERE IS NO `-deb` KEY FOR EITHER ARCHITECTURE ──────────────────────────────────
+ *
+ * The same updater asks for `{os}-{arch}-{installer}` FIRST when the binary carries a bundle-type
+ * marker, so a deb-installed build looks for `linux-x86_64-deb` / `linux-aarch64-deb` before the
+ * plain key. Those are not published, on purpose: the fallback hands such a build an AppImage it
+ * refuses to install (watched, at 0.12.1, on an Arch install), and the alternative — publishing a
+ * `-deb` key so the updater shells out to dpkg — is an install path this project has no way to
+ * exercise on any machine it builds from. A `.deb` install updates through the package manager it
+ * came from, which is what the README, the CHANGELOG and the AUR package all say. Adding a key
+ * here to make a red go green would publish an untested install path; the refusal below is the
+ * thing that stops that happening quietly. */
+const WANT = ["windows-x86_64", "linux-x86_64", "linux-aarch64", "darwin-aarch64", "darwin-x86_64"];
 for (const k of WANT) {
   const entry = latest.platforms?.[k];
   if (!entry) { bad(`platforms.${k} is missing — those clients would never update again`); continue; }
@@ -143,6 +172,38 @@ for (const k of WANT) {
 if (verified !== WANT.length) bad(`${verified} of ${WANT.length} platform signatures verified`);
 for (const k of Object.keys(latest.platforms ?? {})) {
   if (!WANT.includes(k)) bad(`platforms.${k} is a key no shipped client asks for`);
+}
+
+/* ── THE ARCHITECTURE IN THE KEY AND THE ARCHITECTURE IN THE PAYLOAD ARE THE SAME ONE ────────
+ *
+ * Everything above proves a signature over some bytes. Nothing above proves those bytes RUN on the
+ * machine that asked for them — a signature says who produced a file, never what it is for. The two
+ * Linux entries name two different artifacts, and if they were swapped, or if both named one file,
+ * every signature here would verify and every arm64 install would be handed an x86_64 binary. That
+ * is not a hypothetical shape: the release workflow selected its Linux payload with a
+ * `*.AppImage` glob ending in `head -1` for as long as there was only one, and a second AppImage
+ * turns that into an arbitrary pick between the two.
+ *
+ * The filename is the only statement of architecture anywhere in the feed, so the filename is what
+ * is checked, by exact name. Restated here rather than derived from the manifest on purpose: a
+ * check that reads the value it is checking proves the value equals itself. These are the names
+ * `build.yml`'s header calls a contract, and this is the other party to it. */
+const LINUX_PAYLOAD = {
+  "linux-x86_64": "ohmail-linux-x86_64.AppImage",
+  "linux-aarch64": "ohmail-linux-aarch64.AppImage",
+};
+const seen = new Map();
+for (const [k, want] of Object.entries(LINUX_PAYLOAD)) {
+  const url = latest.platforms?.[k]?.url;
+  if (!url) continue; // already reported as missing above; not reported twice
+  const got = path.basename(new URL(url).pathname);
+  if (got !== want) {
+    bad(`platforms.${k} points at ${got}, which is not ${want} — that architecture's installs `
+      + "would be offered a payload that cannot run on them");
+  }
+  const first = seen.get(got);
+  if (first) bad(`platforms.${first} and platforms.${k} both point at ${got}`);
+  else seen.set(got, k);
 }
 
 // ── the Sparkle appcast: raw Ed25519 over the archive ────────────────────────────────────────
