@@ -657,6 +657,26 @@ pub enum LanSignal {
     ConfigInvalid,
 }
 
+/// May the tray say *"Serving your network only"* on this LAN signal?
+///
+/// `Listening` ONLY, and the exclusion of `Blocked` is the whole point of this function. The
+/// question is not "is a socket bound" but "is a network being served" — and over a firewall that
+/// admits nothing, it is not. A first draft of the blocked state answered yes here, reasoning that
+/// the door is genuinely up; review caught that the tray then claims service to a network which
+/// cannot reach it, which is the same false claim the blocked state was added to remove, moved one
+/// surface over.
+///
+/// The pane's need to keep showing the address and the pairing mint over a blocked door is a
+/// DIFFERENT question, answered in `DesktopDevices.tsx` from `lanState`, not here.
+///
+/// **A free function so the guard can reach it.** As a match arm inside the runtime method this
+/// was untestable without a shell, and the test written against it re-implemented the pattern
+/// instead — which passed happily while the real method said the opposite. Measured: widening the
+/// method left that test green.
+pub fn lan_serves_network(signal: Option<LanSignal>) -> bool {
+    matches!(signal, Some(LanSignal::Listening { .. }))
+}
+
 /// The LAN signal one diagnostic line carries, or `None` for every other line.
 pub fn lan_signal_of_line(line: &str) -> Option<LanSignal> {
     if !line.contains("host_lan_") {
@@ -955,13 +975,7 @@ impl<R: tauri::Runtime> HostRuntime<R> {
     /// Whether the engine's LAN door holds its socket right now — read off the engine's own
     /// signal, like the loopback listener's tri-state input.
     fn lan_listening(&self) -> bool {
-        // A blocked door IS holding its socket — the firewall is somebody else's rule, not a
-        // failure of this bind. The question this answers is "is the LAN listener up", and the
-        // honest answer over a closed firewall is still yes.
-        matches!(
-            self.shell.engine().lan_signal(),
-            Some(LanSignal::Listening { .. }) | Some(LanSignal::Blocked { .. })
-        )
+        lan_serves_network(self.shell.engine().lan_signal())
     }
 
     /// The same-network half's own wire state, or `Null` when no LAN address is chosen (or host

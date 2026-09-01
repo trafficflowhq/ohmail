@@ -10,7 +10,12 @@ import {
   type Admission,
   type HostState,
 } from "./host-listener.js";
-import { readUfwSources, ufwVerdict, type UfwSources } from "./host-firewall.js";
+import {
+  interfaceForAddress,
+  readUfwSources,
+  ufwVerdict,
+  type UfwSources,
+} from "./host-firewall.js";
 import { HOST_CLIENT_CSP } from "./host-static.js";
 import type { Diagnostic } from "./log.js";
 
@@ -124,6 +129,13 @@ export function resolveLanBind(cfg: { hostMode?: boolean; lanBind?: string }): L
   }
   return { address: trimmed, reason: null };
 }
+
+/**
+ * How often the firewall verdict is re-read while the LAN door is up. Short enough that an
+ * operator who runs the printed command sees the pane clear while they are still looking at it —
+ * which is the whole reason the re-check exists.
+ */
+const FIREWALL_RECHECK_MS = 15_000;
 
 /** A bound LAN-door listener. `close()` is idempotent and never throws. */
 export interface LanListener {
@@ -296,6 +308,8 @@ export async function maybeStartLanListener(
   admission?: Admission,
   /** TEST SEAM — production reads the real files; a test supplies its own three bodies. */
   firewallSources?: () => UfwSources,
+  /** TEST SEAM — production takes {@link FIREWALL_RECHECK_MS}. */
+  recheckMs?: number,
 ): Promise<LanListener | null> {
   const { address } = door.lanState;
   if (!door.hostState.armed || door.handleLan === undefined || address === null) return null;
@@ -318,27 +332,63 @@ export async function maybeStartLanListener(
     // and the chosen interface address identifies the operator's network. The shell knows the
     // address anyway — it configured it.
     log("host_lan_listening", { port: listener.port });
-    // Bound is not reachable. `unitActive` is null in production deliberately: asking the service
-    // manager costs a subprocess on every armed boot, and `ufw disable` — the supported way off —
-    // writes `ENABLED=no` into the file this already reads. The seam stays for the cases a test
-    // needs to state.
-    const firewall = ufwVerdict({
-      port: listener.port,
-      address,
-      sources: (firewallSources ?? readUfwSources)(),
-      unitActive: null,
-    });
-    if (firewall.state === "blocks") {
-      // The remedy is the whole value of this line, and it names a PORT, never the interface —
-      // same rule as the listening line above.
+
+    // ── BOUND IS NOT REACHABLE, AND THE ANSWER HAS TO BE ABLE TO CHANGE ──────────────────────
+    //
+    // The check re-runs on a timer, and that is a correction rather than a refinement. The first
+    // version evaluated the firewall ONCE at bind: it printed `sudo ufw allow <port>/tcp`, the
+    // operator ran it, and the warning stayed up until the engine was restarted — because nothing
+    // ever asked again. Review caught it, and it is the worst shape a remedy can have: the app
+    // tells somebody how to fix a thing and then cannot see that they did.
+    //
+    // Polled in BOTH directions, and only a CHANGE is announced. Recovery re-emits
+    // `host_lan_listening`, which is the same signal the bind emitted, so the pane and the tray
+    // return to serving through the path they already have; a firewall closed while the app runs
+    // emits the blocked line. Nothing is logged while the verdict is steady, so an ordinary
+    // machine's log is unchanged. The files are three small reads.
+    //
+    // `unitActive` is null in production deliberately: asking the service manager costs a
+    // subprocess on every poll, and `ufw disable` — the supported way off — writes `ENABLED=no`
+    // into the file this already reads. The seam stays for the cases a test needs to state.
+    const readSources = firewallSources ?? readUfwSources;
+    const boundInterface = interfaceForAddress(address);
+    /** The firewall as it stands. Pure of logging, so the caller decides what is worth saying. */
+    const evaluate = (): string | null => {
+      const verdict = ufwVerdict({
+        port: listener.port,
+        address,
+        sources: readSources(),
+        unitActive: null,
+        boundInterface,
+      });
+      return verdict.state === "blocks" ? verdict.remedy : null;
+    };
+    // The remedy is the whole value of this line, and it names a PORT, never the interface —
+    // same rule as the listening line above.
+    const announce = (remedy: string): void => {
       log("host_lan_firewall_blocked", {
         port: listener.port,
         reason: "same-network access is bound, but this computer's firewall is not admitting the " +
-          "port, so nothing on the network can reach it; the operator opens it with " +
-          firewall.remedy,
+          "port, so nothing on the network can reach it; the operator opens it with " + remedy,
       });
-    }
-    return listener;
+    };
+    let remedy = evaluate();
+    if (remedy !== null) announce(remedy);
+    const recheck = setInterval(() => {
+      const next = evaluate();
+      // Only a CHANGE is announced — a steady verdict says nothing, in either direction.
+      if (next !== null && remedy === null) announce(next);
+      else if (next === null && remedy !== null) log("host_lan_listening", { port: listener.port });
+      remedy = next;
+    }, recheckMs ?? FIREWALL_RECHECK_MS);
+    recheck.unref?.();
+    return {
+      port: listener.port,
+      close: async () => {
+        clearInterval(recheck);
+        await listener.close();
+      },
+    };
   } catch (err) {
     log("host_lan_listen_failed", {
       err,

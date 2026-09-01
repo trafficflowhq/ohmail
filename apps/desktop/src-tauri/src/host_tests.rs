@@ -866,6 +866,21 @@ fn a_firewalled_lan_door_parses_as_blocked_and_is_still_a_listening_socket() {
     assert_ne!(listening, blocked);
     // And it is NOT a bind failure. Nothing about the app went wrong.
     assert_ne!(blocked, Some(LanSignal::Failed));
+
+    // THE TRAY'S QUESTION IS NOT THE SOCKET'S, and this calls the SHIPPED predicate.
+    //
+    // `lan_serves_network` gates the tray line "Serving your network only". A first draft widened
+    // it to include `Blocked` on the reasoning that the door is genuinely up, which made the tray
+    // claim service to a network that could not reach it.
+    //
+    // The first version of this assertion re-implemented the match here instead of calling the
+    // real thing, and **widening the real thing left it green** — a guard that watched a copy of
+    // itself. That is why the predicate is now a free function and why this line calls it.
+    assert!(lan_serves_network(listening));
+    assert!(
+        !lan_serves_network(blocked),
+        "a firewalled door must not read as serving a network"
+    );
 }
 
 #[test]
