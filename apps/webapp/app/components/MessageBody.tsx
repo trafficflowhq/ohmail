@@ -93,13 +93,14 @@
  *
  * ── WHAT THIS FILE DELIBERATELY DOES NOT DO ─────────────────────────────────────────────
  *
- * It does not fetch a blocked image after consent, and the consent button is therefore
- * absent rather than dead. Loading one means routing it through `GET /img` — the
- * server-side proxy, whose whole purpose is that the SENDER never sees the reader's IP —
- * and that route is deliberately unmounted (the image-proxy route is not mounted) with a
- * mutation-watched test keeping it off. Mounting it is a security decision with its own
- * review, not a side effect of a rendering slice. `imageProxy` below is the seam it lands
- * on, and it is exercised by the tests so it is not an untested branch waiting to be wrong.
+ * It never fetches an image from the host the SENDER named — not before consent and not
+ * after it. The only road is `GET /img`, the server-side proxy whose whole purpose is that
+ * the sender never sees the reader's IP, and `imageProxy` below is the seam it lands on.
+ * That route was unmounted when this file was written and is mounted now
+ * (`packages/api/src/routes/privacy.ts` records the condition that discharged it); the
+ * property this file is responsible for did not move. **The frame's policy names the proxy's
+ * own path and nothing else** — see {@link proxyImgSource} — so a url of any other shape
+ * fetches nothing even when the sanitizer has been defeated.
  *
  * `cid:` images are the one exception, and they are not an exception to the PROMISE: a `cid:`
  * names a part of this very message, so it cannot phone home. The engine fetches those bytes
@@ -322,11 +323,17 @@ const CID_URL = /^cid:/i;
  *
  * What that admitted, once the reader loads images: a srcdoc document has no `<base>` (the head
  * is discarded, see the sanitize call), so it resolves against the EMBEDDER. `url(/api/…)`
- * becomes `https://ohmail.app/api/…` — permitted by the frame's own `img-src data: 'self'`, and
- * a cookie-bearing request because the sandbox keeps `allow-same-origin`. `url(//host/x)`
- * becomes `https://host/x`, a remote fetch that passed neither the proxy nor the counter.
- * Sender-authored mail could therefore issue an unbounded number of authenticated same-origin
- * GETs on open, and none of them appeared in the blocked list the reader is shown.
+ * becomes `https://ohmail.app/api/…` — permitted by the frame's own `img-src data: 'self'` as
+ * it then was, and a cookie-bearing request because the sandbox keeps `allow-same-origin`.
+ * `url(//host/x)` becomes `https://host/x`, a remote fetch that passed neither the proxy nor
+ * the counter. Sender-authored mail could therefore issue an unbounded number of authenticated
+ * same-origin GETs on open, and none of them appeared in the blocked list the reader is shown.
+ *
+ * **That ending is now closed at the policy as well**: `img-src` names the proxy's own path
+ * rather than `'self'` ({@link proxyImgSource}), so the same payload against a reverted
+ * version of this branch fetches nothing. This branch is still the one that keeps the COUNT
+ * honest, which the policy cannot do — a refusal the reader is never told about is a
+ * blocked-content bar that says zero while the browser refuses five.
  *
  * So the question the branch asks is now "is this inert?" rather than "is this not remote?".
  * `data:` carries its own bytes and `cid:` names a part of this very message; both fetch
@@ -481,7 +488,9 @@ const CSS_TOKEN = /@import|(?:-webkit-)?image-set\(|url\(|\\(?:[0-9a-fA-F]{1,6}[
  * stylesheet could therefore name a resource in a spelling this scanner never saw, and the shape
  * that matters is the same one the relative-url branch exists for: `\75 rl(/api/…)` has no
  * `<base>` to resolve against, so it becomes an authenticated same-origin GET, which the frame's
- * CSP permits once the reader has pressed "Show images" (`img-src data: 'self'`).
+ * CSP permitted once the reader had pressed "Show images" (`img-src data: 'self'`, as it then
+ * was — {@link proxyImgSource} narrowed that to the proxy's own path, which is what stops this
+ * particular ending from being reachable by whatever the NEXT unread spelling turns out to be).
  *
  * The scan therefore also stops on an ESCAPE, and from there reads the identifier it sits in.
  *
@@ -2740,7 +2749,8 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
         //
         // `loadPixels` is the reader's own switch, off by default, and it lifts exactly this
         // override: a classified beacon then takes the proxy like any picture. It cannot widen
-        // anything else — with no proxy it is inert, and the CSP still admits only `'self'`.
+        // anything else — with no proxy it is inert, and the CSP still admits only the proxy's
+        // own path, so a beacon that reached the document by another route fetches nothing.
         if (proxy && (!pixel || loadPixels)) {
           node.setAttribute("src", proxy(src));
         } else {
@@ -2996,6 +3006,115 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
 // ── the document ───────────────────────────────────────────────────────────────────────
 
 /**
+ * A url this file hands the proxy purely so the proxy will mint one back. Never fetched, and
+ * never in a document — {@link proxyImgSource} reads the SHAPE of the answer and discards it.
+ * `.invalid` is reserved by RFC 2606 and resolves nowhere, so a mistake here fetches nothing.
+ */
+const CSP_PROBE_URL = "https://csp-probe.invalid/probe.png";
+
+/**
+ * A CSP `host-source` this file is willing to write into a double-quoted `<meta content="…">`.
+ *
+ * IT IS A SYNTAX GATE, NOT A POLICY ONE, and it exists because the source is DERIVED from a
+ * caller's function rather than written here. Two characters would be catastrophic in that
+ * position and both are legal in a url path: `;` ends the directive, so `/api/img;script-src
+ * 'unsafe-inline'` would append a directive of the caller's choosing to the frame's policy,
+ * and `"` ends the attribute, so a path could close the `<meta>` and open an element. `URL`
+ * percent-encodes the second and NOT the first (`new URL("http://x/a;b").pathname` is
+ * `/a;b`), which is exactly the kind of asymmetry that is easier to refuse than to remember.
+ *
+ * So the shape is a positive list: scheme, host, optional port, and a path of unreserved
+ * characters and `/`. `%` is excluded as well — CSP path-matches after percent-decoding, so an
+ * encoded path would be a second spelling of the same source and this file would have two.
+ * Anything else is not a source this file will name, and the caller gets `null`, which is the
+ * blocked policy. {@link proxyImgSource} is where that decision is made.
+ */
+const CSP_HOST_SOURCE = /^https?:\/\/[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::\d{1,5})?\/[A-Za-z0-9._~/-]*$/;
+
+/**
+ * THE ONE URL THE FRAME MAY FETCH, WRITTEN AS A CSP SOURCE — or `null`, which means the frame
+ * may fetch nothing over the network at all.
+ *
+ * ── WHY THIS IS NOT `'self'`, AND WHY THAT WAS THE HIGHEST-VALUE LINE IN THE FILE ───────
+ *
+ * The consented policy used to be `img-src data: 'self'`, and `'self'` is EVERY url on this
+ * origin. The frame needs exactly one of them — the image proxy's own path. The set between
+ * those two is the door that two separate hardening passes each closed a single SPELLING of,
+ * and both bugs ended the same way: a url the sanitizer left behind resolved against the
+ * EMBEDDER (a `srcdoc` document has no `<base>`), became `https://ohmail.app/<any path>`, and
+ * was PERMITTED — an authenticated, cookie-bearing GET at a path of the SENDER's choosing,
+ * because the sandbox keeps `allow-same-origin`. One was a relative `url(/api/…)` in a
+ * stylesheet; the other was the same url spelled `\75 rl(…)` and through a `var()`. Neither
+ * was reachable from any list of shapes, because the list is the thing that keeps being
+ * incomplete.
+ *
+ * Naming the PATH ends the family by construction rather than by enumeration. A CSP source
+ * expression carries a path (CSP3 §6.6.2.6 — exact match when it does not end in `/`, query
+ * and fragment ignored), so `https://ohmail.app/api/img` admits the proxy and refuses every
+ * other url on this origin, including the next spelling of the next sanitizer defect, before
+ * anybody finds it. **The acceptance test is that both prior fixes become redundant**: revert
+ * either one and its payload still fetches nothing, because the policy — not the rewrite — is
+ * what refuses it.
+ *
+ * ── IT IS MINTED BY THE PROXY, NOT WRITTEN BESIDE IT ────────────────────────────────────
+ *
+ * A constant spelling `/api/img` here would be a second copy of `imageProxyUrl`, and this
+ * repo's rule about second copies applies with unusual force: the drift is SILENT in both
+ * directions. Name a path the proxy no longer uses and every consented image quietly stops
+ * loading; keep naming an old path the app still serves and the narrowing is a widening
+ * nobody notices. So the source is produced by calling the caller's own proxy function with
+ * {@link CSP_PROBE_URL} and reading the origin and path back out of the answer. One value,
+ * two uses, one place to delete.
+ *
+ * ── WHAT MAKES IT RETURN `null`, AND WHY EVERY ONE OF THOSE IS FAIL-CLOSED ──────────────
+ *
+ * A proxy that mints a url on ANOTHER origin, a non-http(s) scheme, an unparseable answer, a
+ * throw, or a path this file will not write ({@link CSP_HOST_SOURCE}). All of them mean the
+ * same thing: this file cannot state truthfully where a consented image comes from, so it
+ * states nothing and the frame keeps the blocked policy. **The caller must then not use the
+ * proxy either** — an `<img>` rewritten to a url the policy refuses is a broken picture and a
+ * blocked-content bar that has already stopped counting it. `MessageBody` gates both on this
+ * one value for exactly that reason.
+ *
+ * The cross-origin refusal is the file's oldest rule, restated where it can be enforced:
+ * there is no policy under which this frame may name a host it does not serve from. Today
+ * that is not reachable — `next.config.mjs` fails the BUILD if `NEXT_PUBLIC_API_BASE` is ever
+ * an absolute origin — and it is checked here anyway, because "unreachable" is a fact about
+ * today's config and this is a fact about the policy.
+ *
+ * @param proxy       the caller's url-minting function, called ONCE, with a url that is not real
+ * @param pageOrigin  the embedder's origin — `window.location.origin`, passed so a test can drive
+ *                    the real function rather than a copy of it
+ */
+export function proxyImgSource(proxy: (url: string) => string, pageOrigin: string): string | null {
+  let minted: string;
+  try {
+    minted = proxy(CSP_PROBE_URL);
+  } catch {
+    return null;
+  }
+  let origin: string;
+  try {
+    origin = new URL(pageOrigin).origin;
+  } catch {
+    return null;
+  }
+  let u: URL;
+  try {
+    // The proxy's own url may be root-relative (`/api/img?…`) or absolute; both resolve here
+    // exactly as the browser resolves the `src` this same function will write, which is the
+    // whole point of deriving the source from it.
+    u = new URL(minted, origin);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+  if (u.origin !== origin) return null;
+  const source = `${u.origin}${u.pathname}`;
+  return CSP_HOST_SOURCE.test(source) ? source : null;
+}
+
+/**
  * The frame's own Content-Security-Policy.
  *
  * THIS IS THE ENFORCEMENT. Everything above it is presentation and accounting; this line is
@@ -3003,10 +3122,12 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
  * has thought of. It is an allow-list of `data:` over a `default-src 'none'`, so a vector
  * this file does not know about is refused by not being mentioned.
  *
- * `img-src` gains `'self'` — and ONLY `'self'` — when images have been consented to: the
- * one place a consented image may come from is our own image proxy, which fetches
- * server-side so the sender never sees the reader. There is no policy under which this
- * frame may name a sender's host.
+ * `img-src` gains ONE SOURCE — the image proxy's own path, and nothing else — when images
+ * have been consented to: the one place a consented image may come from is our own image
+ * proxy, which fetches server-side so the sender never sees the reader. It is {@link
+ * proxyImgSource} that decides whether such a source can be stated at all, and `null` here
+ * is the blocked policy. There is no policy under which this frame may name a sender's host,
+ * and — since the narrowing — no policy under which it may name any other path of ours.
  *
  * ── THIS POLICY IS AN INTERSECTION WITH THE APP'S OWN, MEASURED IN CHROME ───────────────
  *
@@ -3019,18 +3140,47 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
  * `img-src 'self' data: blob:` is a real second layer, and the consent path could never have
  * worked by pointing at a sender's host even if this file had let it.
  *
- * It was argued that `'self'` belongs in the BLOCKED policy too, so a future
- * `cid:`-attachment url could render. Not taken, and the disagreement is recorded rather
- * than silently dropped: blocked-by-default is the product's central promise, and `'self'`
- * in that state would admit any same-origin image url a sanitizer bug let through. The slice
- * that resolved `cid:` references confirmed the refusal was right: they resolve as `data:`
- * URIs minted from the part's own bytes ({@link SanitizeOptions.cidImages}), which the
- * blocked policy has always admitted, so `'self'` is still needed by nothing.
+ * The intersection is also why this directive is the ONLY place the narrowing can happen. The
+ * app's own policy has to keep `'self'` in `img-src` — the whole product chrome is
+ * same-origin images — so an origin-wide policy can never be tighter than the frame's, and a
+ * frame that says `'self'` inherits the app's breadth rather than adding to it.
+ *
+ * ── A SEPARATE, COOKIE-LESS ORIGIN FOR THE PROXY IS THE STRONGER VERSION, AND IT IS NOT
+ *    WHAT WAS BUILT ───────────────────────────────────────────────────────────────────────
+ *
+ * Serving `/img` from a host that holds no session would end the authenticated-request class
+ * outright rather than narrowing it to one path, and the disagreement is recorded rather than
+ * dropped. It is not taken, for reasons that are about this codebase and not about taste:
+ * the proxy's AUTHORISATION is the host-only `tf_session` cookie plus an owned `mid`
+ * (`packages/api/src/routes/privacy.ts`), so a cookie-less origin has no authorisation left
+ * and would need signed capability urls — new key material, new rotation, and a token in a
+ * url that the sender chose the query of. It would also re-split the single origin that
+ * `auth/origins.ts` exists to describe. What the path narrowing leaves behind is a strictly
+ * smaller residue than that trade: a sender who defeats the sanitizer can reach `/api/img`
+ * itself, which already refuses without consent, without an owned `mid`, and without passing
+ * the SSRF gate — and which never carries the reader's address either way.
+ *
+ * A `<base>` in the frame's head — so relative urls resolve somewhere dead instead of at the
+ * embedder — was considered for the same family and NOT added. It would need `base-uri` to
+ * stop being `'none'`, which is a widening, to buy a second answer to the question this
+ * directive already answers. This file's own rule (see {@link SAFE_HREF}) is that two
+ * overlapping guards read as belt-and-braces and behave as neither.
+ *
+ * It was argued that a source belongs in the BLOCKED policy too, so a future
+ * `cid:`-attachment url could render. Not taken, and that disagreement is recorded too:
+ * blocked-by-default is the product's central promise. The slice that resolved `cid:`
+ * references confirmed the refusal was right — they resolve as `data:` URIs minted from the
+ * part's own bytes ({@link SanitizeOptions.cidImages}), which the blocked policy has always
+ * admitted, so the blocked state still needs nothing.
+ *
+ * @param imgSource the proxy's own source expression from {@link proxyImgSource}, or `null`
+ *                  for the blocked policy. NOT a boolean: a caller that knows only "images are
+ *                  on" cannot say WHERE from, and that gap is what `'self'` used to paper over.
  */
-export function frameCsp(imagesLoaded: boolean): string {
+export function frameCsp(imgSource: string | null): string {
   return [
     "default-src 'none'",
-    `img-src data:${imagesLoaded ? " 'self'" : ""}`,
+    `img-src data:${imgSource === null ? "" : ` ${imgSource}`}`,
     "style-src 'unsafe-inline'",
     "font-src data:",
     "script-src 'none'",
@@ -3245,7 +3395,13 @@ a[data-ohmail-inert]{text-decoration:line-through;opacity:.75}
  */
 export function buildMailDocument(
   bodyHtml: string,
-  opts: { imagesLoaded?: boolean; dark?: boolean; reflow?: boolean; paper?: Rgb | null } = {},
+  /**
+   * `imgSource` is the proxy's own CSP source ({@link proxyImgSource}) or `null` for "this
+   * document fetches nothing". It replaced an `imagesLoaded: boolean`, and the type change is
+   * the point: a caller holding a boolean knows that images are on and NOT where they may come
+   * from, so the only policy it could ask for was `'self'` — every url on this origin.
+   */
+  opts: { imgSource?: string | null; dark?: boolean; reflow?: boolean; paper?: Rgb | null } = {},
 ): string {
   // The paper rides on the ROOT ELEMENT and is independent of `dark`, so the light and dark
   // builds of the same message still differ by the attribute alone — which is the equality
@@ -3264,7 +3420,7 @@ export function buildMailDocument(
   const reflow = opts.reflow === true ? " data-ohmail-reflow=\"1\"" : "";
   return [
     `<!doctype html><html${opts.dark === true ? " data-ohmail-dark=\"1\"" : ""}${reflow}${paper}><head><meta charset="utf-8">`,
-    `<meta http-equiv="Content-Security-Policy" content="${frameCsp(opts.imagesLoaded === true)}">`,
+    `<meta http-equiv="Content-Security-Policy" content="${frameCsp(opts.imgSource ?? null)}">`,
     // Belongs to the same promise as the CSP: if a consented image is ever fetched through
     // the proxy, not even the path of the page the reader is on travels with it.
     "<meta name=\"referrer\" content=\"no-referrer\">",
@@ -3400,7 +3556,11 @@ export interface MessageBodyProps {
   remoteLoaded?: boolean;
   /**
    * Turn a sender's image url into one this app may load. Absent ⇒ there is no way to load
-   * an image, so no button is offered. See the header: the proxy route is not mounted.
+   * an image, so no button is offered — the demo build, and any client with no API behind it.
+   *
+   * It must mint a SAME-ORIGIN url, because the frame's policy is derived from it: what the
+   * url's origin and path are is what {@link proxyImgSource} writes into `img-src`, and a
+   * function this file cannot read a source out of is treated as absent in every position.
    */
   imageProxy?: ((url: string) => string) | null;
   /** Called when the reader asks for images. Absent ⇒ no button. */
@@ -3542,7 +3702,29 @@ export function MessageBody({
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
 
-  const proxy = remoteLoaded ? imageProxy : null;
+  /**
+   * ── THE POLICY AND THE REWRITE ARE THE SAME DECISION, SO THEY READ ONE VALUE ────────────
+   *
+   * {@link proxyImgSource} answers "can this file state, truthfully, where a consented image
+   * comes from?" — and a `null` there is not a detail of the CSP. It is the answer to whether
+   * the proxy may be used AT ALL. A document whose `<img src>` was rewritten through a proxy
+   * the policy then refuses is a broken picture, and — worse — a blocked-content bar that has
+   * already counted that image as loaded. So the source is computed from the PROP rather than
+   * from the consented proxy, and every place the proxy is offered or used is gated on it:
+   * the sanitizer's rewrite, the frame's policy, and the "Show images" button.
+   *
+   * Not reachable in a shipped build — `next.config.mjs` fails the build if the api base is
+   * ever an absolute origin, so the minted url is always same-origin — which is precisely why
+   * it is wired as one value instead of three checks that could disagree later.
+   */
+  const imgSource = useMemo(
+    () =>
+      imageProxy && typeof window !== "undefined"
+        ? proxyImgSource(imageProxy, window.location.origin)
+        : null,
+    [imageProxy],
+  );
+  const proxy = remoteLoaded && imgSource !== null ? imageProxy : null;
 
   const mail = useMemo(() => {
     if (!html) return null;
@@ -3581,7 +3763,9 @@ export function MessageBody({
       // mail, which is exactly what the attribute mechanism exists to avoid. A rebuild driven
       // by a real dep (html/proxy/mount) reads the current value here, so the two never diverge.
       doc: buildMailDocument(clean, {
-        imagesLoaded: proxy != null,
+        // `proxy` is non-null exactly when the reader has consented AND a source could be
+        // stated, so this is the one value both the rewrite and the policy were decided from.
+        imgSource: proxy ? imgSource : null,
         dark: darkWanted && light,
         // Baked in, never toggled: unlike `dark` this is a property of the document rather than
         // of the theme, so it can only change when `html` changes — and that already rebuilds
@@ -3601,9 +3785,11 @@ export function MessageBody({
     // `darkWanted` is intentionally omitted — it is applied live via toggleAttribute, never by
     // rebuilding the frame; see the note on `doc` above. `cidImages` IS a dep: an arrived
     // embedded image can only reach the frame through a rebuild, and its identity moves once
-    // per arrival batch (the engine replaces the map, never mutates it).
+    // per arrival batch (the engine replaces the map, never mutates it). `imgSource` is a dep
+    // for the same reason `proxy` is — it is half of the document the frame gets — and it is
+    // memoized on `imageProxy`, so it moves only when the proxy itself does.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [html, proxy, mounted, cidImages, loadTrackingPixels]);
+  }, [html, proxy, imgSource, mounted, cidImages, loadTrackingPixels]);
 
   /**
    * THE THREE-TERM ANSWER, IN ONE PLACE SO NOTHING DISAGREES WITH ANYTHING ELSE.
@@ -3937,7 +4123,11 @@ export function MessageBody({
    * all, and the surround has to match that too or a dark newsletter sits in a light frame.
    */
   const surfaceDark = themeDark && (dark || !adaptable);
-  const canLoad = imageProxy != null && onLoadRemote != null && !remoteLoaded && !proseView;
+  // `imgSource !== null` is the third term and it is the same rule the sanitizer's `proxy` is
+  // gated on: a button that consents to images the frame's policy will then refuse is a control
+  // over a capability nothing can serve, which this file already refuses to render elsewhere.
+  const canLoad =
+    imageProxy != null && imgSource !== null && onLoadRemote != null && !remoteLoaded && !proseView;
 
   return (
     <div className="mb" ref={shellRef}>

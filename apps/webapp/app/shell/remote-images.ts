@@ -24,15 +24,21 @@
  *
  * ── THE URL IS SAME-ORIGIN, AND THAT IS LOAD-BEARING IN TWO PLACES ──────────────────────
  *
- * `frameCsp(true)` admits `img-src data: 'self'` and nothing else — there is no policy under
- * which the message frame may name a sender's host — and the app's own policy
- * (`security-headers.ts`) is `img-src 'self' data: blob:`. A `srcdoc` document inherits the
- * embedder's policy container, so what is enforced is the INTERSECTION, and `'self'` on both
- * sides means exactly one host may serve a consented image: this one. `/api/*` is a Next
- * rewrite onto `api.ohmail.app` (`next.config.mjs`), so the browser only ever talks to its
- * own origin and the host-only `tf_session` cookie rides along on the subresource GET —
- * which is what authenticates the proxy. A cross-origin API url would fail BOTH the CSP and
- * the cookie, silently, and look like "images just don't work".
+ * The message frame's `img-src` admits `data:` and **this function's own origin and path**,
+ * and nothing else — there is no policy under which the frame may name a sender's host, and
+ * since the narrowing there is none under which it may name any other path of ours either.
+ * `MessageBody`'s `proxyImgSource` derives that source by calling {@link imageProxyUrl}
+ * through the chrome and reading the answer, so the policy cannot drift from the url: change
+ * the path here and the CSP follows in the same edit. What it must NOT do is return a
+ * cross-origin url — the frame refuses to name a foreign host, so the source would be `null`
+ * and consented images would stay blocked (visibly, not silently: the button goes with it).
+ *
+ * The app's own policy (`security-headers.ts`) is `img-src 'self' data: blob:`. A `srcdoc`
+ * document inherits the embedder's policy container, so what is enforced is the INTERSECTION,
+ * and the frame's half is the strict one. `/api/*` is a Next rewrite onto `api.ohmail.app`
+ * (`next.config.mjs`), so the browser only ever talks to its own origin and the host-only
+ * `tf_session` cookie rides along on the subresource GET — which is what authenticates the
+ * proxy.
  *
  * The url is built ABSOLUTE against `location.origin` rather than left root-relative. A
  * relative url in a `srcdoc` document resolves against the PARENT's base url, which is the
