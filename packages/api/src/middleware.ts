@@ -228,7 +228,11 @@ export const withErrorEnvelope: Middleware = (next, route) => async (req, deps, 
       });
       return errorResponse(
         "db_busy", 503,
-        "the server could not get a database connection in time; retry shortly",
+        // Says what happened, and says it accurately. NOT "could not get a connection": it had
+        // one — the connection was busy with other work and this statement never began. The
+        // distinction is the whole diagnosis, and a message that blurs it would send the next
+        // reader looking for a connection leak.
+        "the server's database connection was busy and this request could not be started; retry shortly",
         undefined, true,
         { "Retry-After": String(DB_BUSY_RETRY_AFTER_SECONDS) },
       );
