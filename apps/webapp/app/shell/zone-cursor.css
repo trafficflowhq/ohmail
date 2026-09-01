@@ -20,10 +20,48 @@
  * cursor arrives, and an inset shadow costs no layout.
  */
 
-:root[data-zone="rail"] .deck > .rail {
-  box-shadow: inset 2px 0 0 var(--accent-soft);
-}
+/* Paper's two cues — the rail's inset bar, the reader's inset hairline — are declared once,
+   inside the ring rules below, so each tile has exactly one rule. */
 
-:root[data-zone="reader"] .view .read-col {
-  box-shadow: inset 0 0 0 1px var(--accent-soft);
+/* ═══ THE FOCUSED TILE'S RING — Hyprland's active border, as a product of tokens ═════════════
+ *
+ * Reported on the ohmarchy face: arrow navigation across the three columns shows no focused
+ * column — the middle one wears nothing at all. Omarchy's idiom for "the keys land here" is the
+ * active window's 2px accent border, and the ohmarchy token set already carries exactly that
+ * shape: the resting tile is `--lift-1` (Hyprland's INACTIVE border, verbatim) and a focused
+ * window is the accent at `--focus-w` with `--focus-offset` 0.
+ *
+ * So the focused tile restates its resting shadow with the accent ring painted first. The ring's
+ * width is `--focus-w × --teach`: 0 under paper (teaching intensity 0 — paper keeps the quiet
+ * cues above and nothing else changes), 2px under ohmarchy, where it sits exactly over the 2px
+ * inactive ring and replaces it. One rule set, both faces, no selector on appearance — the
+ * contract's teaching token consumed as a multiplier (OHMARCHY-CONTRACT.md).
+ *
+ * Tiles: the rail; the list column of every split view; the open-message column while it is a
+ * lifted panel (a thread column dissolves into panels on the canvas and has no edge to ring);
+ * and in Settings the pane, which is the reader zone there. Streams have no list tile — the
+ * cards are the list — and wear nothing, as they do today. Ohmarchy's `--focus` is the theme's
+ * structural accent; paper never reaches the fallback because its ring is zero wide.
+ */
+:root[data-zone="rail"] .deck > .rail {
+  box-shadow:
+    0 0 0 calc(var(--focus-w) * var(--teach)) var(--focus, var(--accent)),
+    var(--lift-1),
+    inset 2px 0 0 var(--accent-soft);
+}
+:root[data-zone="list"] .view .list-col {
+  box-shadow:
+    0 0 0 calc(var(--focus-w) * var(--teach)) var(--focus, var(--accent)),
+    var(--lift-1);
+}
+:root[data-zone="reader"] .view .read-col:not(:has(> .conv)) {
+  box-shadow:
+    0 0 0 calc(var(--focus-w) * var(--teach)) var(--focus, var(--accent)),
+    var(--lift-1),
+    inset 0 0 0 1px var(--accent-soft);
+}
+:root[data-zone="reader"] .view-settings .set-pane {
+  box-shadow:
+    0 0 0 calc(var(--focus-w) * var(--teach)) var(--focus, var(--accent)),
+    var(--lift-1);
 }

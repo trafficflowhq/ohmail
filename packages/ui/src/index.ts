@@ -116,6 +116,13 @@ export {
   SettingsSubhead,
   SettingsRow,
   SettingsNote,
+  SettingsTitle,
+  SettingsLead,
+  SettingsField,
+  SettingsChoice,
+  SettingsVerdict,
+  SettingsActions,
+  SettingsBanner,
   VipChip,
 } from "./composites/Settings.js";
 export type {
@@ -123,6 +130,15 @@ export type {
   SettingsSubheadProps,
   SettingsRowProps,
   SettingsNoteProps,
+  SettingsTitleProps,
+  SettingsLeadProps,
+  SettingsFieldProps,
+  SettingsChoiceProps,
+  SettingsChoiceOption,
+  SettingsVerdictProps,
+  SettingsVerdictState,
+  SettingsActionsProps,
+  SettingsBannerProps,
   VipChipProps,
 } from "./composites/Settings.js";
 export { PilesStack } from "./composites/PilesStack.js";

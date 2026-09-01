@@ -1,16 +1,130 @@
-/* settings — panes on lift-1, rows separated by soft table rules */
-.set-pane{padding:10px 26px 22px;background:var(--panel);border-radius:var(--r-overlay);box-shadow:var(--lift-1)}
-.set-row{display:flex;align-items:center;gap:12px;padding:15px 2px}
-.set-row + .set-row{border-top:1px solid var(--hair-soft)} /* settings table rule — scanability, same family as receipt rules */
-.set-row .btn{font-size:11.5px;padding:5px 12px}
-.set-row .lab{min-width:0}
+/* ═══ SETTINGS — one system for every pane, on every door ═══════════════════════════════════
+   Anatomy, top to bottom: pane (a lift-1 panel) → optional title/lead → subheads → rows →
+   microcopy → fields → verdict → actions → note. Tokens only, so paper and ohmarchy both
+   resolve every rule; the pane is a CONTAINER, so the density ladder follows the pane's own
+   width and not the viewport (the same pane sits in a 760px sheet on a laptop and in a 390px
+   sheet on a phone, and in the Zero layout's narrower tiles).
+
+   THE ROW GRAMMAR. `.set-row` = label block left, ONE thing right (a value, a switch, a
+   segmented control, a button pair). The label block owns the width: it may not be squeezed
+   below 300px, so a description never falls into one-word lines. When the control cannot sit
+   beside that block it drops to the next line, still right-aligned; under 480px of pane width
+   the wide controls (segments, inputs, button pairs) stack flush-left under the text instead.
+   Switches and single buttons stay inline at every width — they are small enough. A button's
+   label never wraps: the row makes room between items, never inside a capsule.
+
+   THE RULE BETWEEN ROWS follows every row, whatever stood before it — a row after a microcopy
+   line used to lose its rule, so two rows read as one paragraph. Subheads and titles are the
+   only things that do not draw one: they are the separator.
+   ═══════════════════════════════════════════════════════════════════════════════════════════ */
+.set-pane{padding:10px 26px 22px;background:var(--panel);border-radius:var(--r-overlay);box-shadow:var(--lift-1);
+  container-type:inline-size;container-name:set-pane}
+/* ── titles ── the pane's subject when the nav label needs a qualifier ("Cloud mailboxes") */
+.set-title{font-size:15px;font-weight:600;letter-spacing:-.01em;margin:14px 0 6px}
+.set-lead{font-size:13px;color:var(--ink2);line-height:1.6;margin:0 0 4px;max-width:62ch}
+/* ── rows ── */
+.set-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;padding:15px 2px}
+.set-row + .set-row,
+.set-note-inline + .set-row,
+.set-field + .set-row,
+.set-fields + .set-row,
+.set-verdict + .set-row,
+.set-actions + .set-row,
+.set-banner + .set-row,
+.set-choice + .set-row{border-top:1px solid var(--hair-soft)} /* settings table rule — scanability, same family as receipt rules */
+.set-row .btn{font-size:11.5px;padding:5px 12px;white-space:nowrap}
+.set-row .lab{flex:1 1 300px;min-width:0}
 .set-row .lab b{font-size:13px;font-weight:600;display:block}
-.set-row .lab span{font-size:11.5px;color:var(--ink2)}
-.set-val{margin-left:auto;font-size:12.5px;color:var(--ink2);flex:none}
+.set-row .lab span{font-size:11.5px;color:var(--ink2);display:block;line-height:1.5;max-width:62ch}
+/* whatever follows the label block is the row's ONE control cluster: right-aligned, never shrunk */
+.set-row > .lab + *{margin-left:auto}
+.set-row > .lab ~ *{flex:0 0 auto}
+/* a text control IS the flexible thing in its row (the away responder's subject line) */
+.set-row > .lab ~ :is(input,textarea,.set-tag-input){flex:1 1 200px;min-width:0}
+.set-val{margin-left:auto;font-size:12.5px;color:var(--ink2);flex:none;text-align:right}
 .set-sub{font-size:12px;font-weight:600;color:var(--ink3);padding:24px 0 2px}
-.set-note-inline{font-size:11.5px;color:var(--ink3);padding:2px 2px 12px}
+.set-sub:first-child{padding-top:12px}
+/* ── microcopy ── the quiet line under a row; tucked against the row it explains */
+.set-note-inline{font-size:11.5px;color:var(--ink3);padding:2px 2px 12px;line-height:1.55;max-width:62ch}
+.set-row + .set-note-inline{margin-top:-9px}
 .set-note{font-size:11.5px;color:var(--ink2);margin:20px 0 24px;display:flex;gap:8px;align-items:flex-start;line-height:1.5}
 .set-note svg{flex:none;color:var(--accent-ink);margin-top:1px}
+/* ── fields ── label above, input, hint below; a group lays them side by side while room lasts */
+.set-field{display:flex;flex-direction:column;gap:6px;padding:8px 0 6px;min-width:0}
+.set-field > label,.set-field-label{font-size:11.5px;font-weight:600;color:var(--ink2)}
+.set-field .set-input,.set-field input,.set-field select,.set-field textarea{
+  width:100%;box-sizing:border-box;padding:9px 12px;font:inherit;font-size:13px;line-height:1.45;color:var(--ink);
+  background:var(--canvas);border:1px solid var(--hair);border-radius:calc(var(--r-card) * 12 / 14)}
+.set-field select{appearance:none;-webkit-appearance:none;padding-right:34px;cursor:pointer;
+  background-image:linear-gradient(45deg,transparent 50%,var(--ink3) 50%),linear-gradient(135deg,var(--ink3) 50%,transparent 50%);
+  background-position:calc(100% - 18px) 55%,calc(100% - 13px) 55%;background-size:5px 5px;background-repeat:no-repeat}
+.set-field input:focus-visible,.set-field select:focus-visible,.set-field textarea:focus-visible{
+  outline:var(--focus-w) solid var(--focus,var(--accent));outline-offset:0;border-color:transparent}
+.set-field input:disabled,.set-field select:disabled{color:var(--ink3);background:var(--tint);cursor:default}
+.set-field .set-mono,.set-field input.set-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.02em}
+.set-field-hint{font-size:11.5px;color:var(--ink3);line-height:1.5;max-width:62ch}
+/* a field with its verb beside it ("Test key") — the button never wraps, the input gives */
+.set-field-row{display:flex;gap:8px;align-items:center}
+.set-field-row > :first-child{flex:1 1 auto;min-width:0}
+.set-field-row .btn{white-space:nowrap;flex:none}
+.set-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:0 16px}
+/* ── choice ── a short list of exclusive options, each with its consequence on one line.
+   The segmented control is for ≤ 4 one-word options; anything with a sentence per option is
+   a choice list, which is why the AI provider is one and the theme is not. */
+.set-choice{display:flex;flex-direction:column;gap:6px;padding:6px 0 8px}
+.set-choice label{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;align-items:start;padding:9px 12px;cursor:pointer;
+  border-radius:calc(var(--r-card) * 12 / 14);box-shadow:inset 0 0 0 1px var(--hair-soft)}
+.set-choice label:hover{background:var(--tint)}
+.set-choice label:has(input:checked){box-shadow:inset 0 0 0 1.5px var(--accent-hair);background:var(--accent-wash,var(--tint))}
+.set-choice label:has(input:focus-visible){outline:var(--focus-w) solid var(--focus,var(--accent));outline-offset:var(--focus-offset)}
+.set-choice input{margin:3px 0 0;accent-color:var(--accent);grid-row:span 2}
+.set-choice b{font-size:13px;font-weight:600}
+.set-choice span{font-size:11.5px;color:var(--ink2);line-height:1.5}
+.set-choice label:has(input:disabled){opacity:.55;cursor:default}
+/* ── verdict ── the answer to a press, under the press that asked. One block, four states. */
+.set-verdict{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;align-items:start;margin:8px 0 6px;padding:11px 13px;
+  border-radius:var(--r-card);box-shadow:inset 0 0 0 1px var(--hair-soft);background:var(--tint)}
+.set-verdict-mark{width:16px;height:16px;border-radius:var(--r-avatar);display:inline-flex;align-items:center;justify-content:center;
+  font-size:11px;font-weight:700;line-height:1;margin-top:1px;grid-row:span 3;color:var(--on-accent);background:var(--ink3)}
+.set-verdict.ok .set-verdict-mark{background:var(--accent)}
+.set-verdict.bad .set-verdict-mark{background:var(--danger,#b3261e)}
+.set-verdict.wait .set-verdict-mark{background:transparent;border:1.5px solid var(--hair);border-top-color:var(--accent);animation:set-spin 1s linear infinite}
+.set-verdict.wait .set-verdict-mark::before{content:""}
+.set-verdict.off .set-verdict-mark{background:transparent;box-shadow:inset 0 0 0 1.5px var(--hair)}
+.set-verdict b{font-size:12.5px;font-weight:600;color:var(--ink);line-height:1.4}
+.set-verdict p{font-size:11.5px;color:var(--ink2);line-height:1.5;margin:0;max-width:62ch}
+.set-verdict .set-verdict-when{font-size:11px;color:var(--ink3)}
+.set-verdict.bad{background:color-mix(in oklab,var(--danger,#b3261e) 6%,transparent)}
+.set-verdict.ok{background:var(--accent-wash,var(--tint))}
+@keyframes set-spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.set-verdict.wait .set-verdict-mark{animation:none}}
+/* ── actions ── a form's verbs, primary first, in one place */
+.set-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:12px 0 4px}
+.set-actions .btn{white-space:nowrap}
+.set-actions .set-note-inline{padding:0;flex-basis:100%}
+/* ── banner ── a standing fact about the pane's subject with its one verb (the reader state) */
+.set-banner{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;margin:12px 0 4px;padding:12px 14px;
+  border-radius:var(--r-card);background:var(--accent-soft)}
+.set-banner .lab{flex:1 1 240px;min-width:0}
+.set-banner .lab b{display:block;font-size:13px;font-weight:600}
+.set-banner .lab span{display:block;font-size:11.5px;color:var(--ink2);line-height:1.5}
+.set-banner .btn{white-space:nowrap;flex:none;margin-left:auto}
+/* ── the density ladder ── read from the PANE's width */
+@container set-pane (max-width: 480px){
+  .set-pane{padding:8px 16px 18px}
+  /* a switch, a value or one button still sits beside the text: the label's floor drops to 200px here */
+  .set-row .lab{flex-basis:200px}
+  /* the wide controls stack under the text. `flex: 0 0 auto` on every child, because the row's
+     main axis is vertical now and the label's 300px basis would otherwise become 300px of HEIGHT */
+  .set-row:has(> .seg),.set-row:has(> input),.set-row:has(> textarea),.set-row:has(> .set-tag-acts),.set-row:has(> .set-row-acts){
+    flex-direction:column;align-items:stretch;gap:8px}
+  .set-row:has(> .seg) > *,.set-row:has(> input) > *,.set-row:has(> textarea) > *,.set-row:has(> .set-tag-acts) > *,.set-row:has(> .set-row-acts) > *{
+    flex:0 0 auto;margin-left:0;width:auto}
+  .set-row .seg{align-self:flex-start;flex-wrap:wrap}
+  .set-row > :is(input,textarea,.set-tag-input){width:100%}
+  .set-fields{grid-template-columns:1fr}
+  .set-banner .btn{margin-left:0}
+}
 /* vip capsules */
 .viplist{display:flex;gap:8px;flex-wrap:wrap;padding:12px 0 4px}
 .vip{display:inline-flex;align-items:center;gap:7px;border-radius:var(--r-pill);

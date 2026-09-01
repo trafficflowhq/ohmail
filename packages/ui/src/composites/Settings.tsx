@@ -62,6 +62,168 @@ export function SettingsNote({ icon = "shield", children }: SettingsNoteProps) {
   );
 }
 
+/* ═══ THE FORM GRAMMAR — the pieces a pane composes when a row is not enough ═══════════════
+   `SettingsRow` is a fact or a switch. Everything below exists for the panes that ASK for
+   something (a key, a password, a host), ANSWER a press (a connection test) or STATE a
+   standing condition with its one verb (a mailbox organized elsewhere). Presentational only:
+   no fetch, no copy of its own — the host brings the words, from the catalogue. */
+
+export interface SettingsTitleProps {
+  children: ReactNode;
+}
+
+/** The pane's subject, when the nav label needs a qualifier ("Cloud mailboxes"). */
+export function SettingsTitle({ children }: SettingsTitleProps) {
+  return <h2 className="set-title">{children}</h2>;
+}
+
+export interface SettingsLeadProps {
+  children: ReactNode;
+}
+
+/** One sentence under the title — what this pane is about, in the mechanism's own words. */
+export function SettingsLead({ children }: SettingsLeadProps) {
+  return <p className="set-lead">{children}</p>;
+}
+
+export interface SettingsFieldProps {
+  /** The `id` of the control, so the label reaches it. */
+  htmlFor: string;
+  label: ReactNode;
+  /** The control — an `<input>`, `<select>` or `<textarea>`; or a `.set-field-row` with its verb. */
+  children: ReactNode;
+  /** The quiet line under the control. */
+  hint?: ReactNode;
+  className?: string;
+}
+
+/** Label above, control, hint below. Fields stack; wrap several in `.set-fields` for columns. */
+export function SettingsField({ htmlFor, label, children, hint, className }: SettingsFieldProps) {
+  return (
+    <div className={className ? `set-field ${className}` : "set-field"}>
+      <label htmlFor={htmlFor}>{label}</label>
+      {children}
+      {hint ? <span className="set-field-hint">{hint}</span> : null}
+    </div>
+  );
+}
+
+export interface SettingsChoiceOption<T extends string = string> {
+  id: T;
+  label: ReactNode;
+  /** The consequence of this option, one line. */
+  description?: ReactNode;
+  disabled?: boolean;
+}
+
+export interface SettingsChoiceProps<T extends string = string> {
+  /** Shared by every radio in the group. */
+  name: string;
+  ariaLabel: string;
+  options: SettingsChoiceOption<T>[];
+  value: T;
+  onChange: (id: T) => void;
+  disabled?: boolean;
+}
+
+/**
+ * A short list of exclusive options, each with its consequence — the control for a choice that
+ * needs a sentence per option. A `SegmentedControl` is for up to four one-word options; the
+ * AI provider ("None · your Anthropic key · …") wrapped its segments into nonsense at every
+ * width, which is what this exists to replace. Real radios: ↑/↓ move, Space selects.
+ */
+export function SettingsChoice<T extends string = string>({
+  name,
+  ariaLabel,
+  options,
+  value,
+  onChange,
+  disabled,
+}: SettingsChoiceProps<T>) {
+  return (
+    <div className="set-choice" role="radiogroup" aria-label={ariaLabel}>
+      {options.map((o) => (
+        <label key={o.id}>
+          <input
+            type="radio"
+            name={name}
+            value={o.id}
+            checked={o.id === value}
+            disabled={disabled || o.disabled}
+            onChange={() => onChange(o.id)}
+          />
+          <b>{o.label}</b>
+          {o.description ? <span>{o.description}</span> : null}
+        </label>
+      ))}
+    </div>
+  );
+}
+
+/** The four things an answer can be. `off` = nothing has been asked yet. */
+export type SettingsVerdictState = "ok" | "bad" | "wait" | "off";
+
+export interface SettingsVerdictProps {
+  state: SettingsVerdictState;
+  /** The headline — what happened, in one clause ("The key works."). */
+  headline: ReactNode;
+  /** What the endpoint said, or what to do next. */
+  detail?: ReactNode;
+  /** "Checked 2 minutes ago" — the host formats it; absent while nothing has been asked. */
+  when?: ReactNode;
+}
+
+/**
+ * THE ANSWER TO A PRESS, under the press that asked — a connection test, a key test.
+ *
+ * It renders in place at every state, so a press changes the block on screen rather than a
+ * line above the fold ("Test connection not showing any response" was exactly a verdict
+ * rendered elsewhere). `role="status"` with a polite live region: a screen reader hears the
+ * outcome without focus leaving the button. `wait` shows the sweep, never a bare "Testing…".
+ */
+export function SettingsVerdict({ state, headline, detail, when }: SettingsVerdictProps) {
+  const mark = state === "ok" ? "✓" : state === "bad" ? "✕" : "";
+  return (
+    <div className={`set-verdict ${state}`} role="status" aria-live="polite" aria-busy={state === "wait" || undefined}>
+      <span className="set-verdict-mark" aria-hidden="true">{mark}</span>
+      <b>{headline}</b>
+      {detail ? <p>{detail}</p> : null}
+      {when ? <span className="set-verdict-when">{when}</span> : null}
+    </div>
+  );
+}
+
+export interface SettingsActionsProps {
+  children: ReactNode;
+}
+
+/** A form's verbs, primary first, in one place. */
+export function SettingsActions({ children }: SettingsActionsProps) {
+  return <div className="set-actions">{children}</div>;
+}
+
+export interface SettingsBannerProps {
+  /** The standing fact ("Organized by ohmail Cloud"). */
+  label: ReactNode;
+  /** Since when, from where — the row's own words. */
+  description?: ReactNode;
+  /** The one verb, or nothing. */
+  action?: ReactNode;
+}
+
+/** A standing condition about the pane's subject, with its one verb — the reader state. */
+export function SettingsBanner({ label, description, action }: SettingsBannerProps) {
+  return (
+    <div className="set-banner" role="note">
+      <div className="lab">
+        <b>{label}</b>
+        {description ? <span>{description}</span> : null}
+      </div>
+      {action}
+    </div>
+  );
+}
+
 export interface VipChipProps {
   children: ReactNode;
   /** Plays the accept pulse. */

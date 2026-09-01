@@ -2561,6 +2561,9 @@ textarea.c-input:read-only {
 .set-tag-input {
   flex: 1 1 auto;
   min-width: 0;
+  /* `.join-input` is `width: 100%`, which forced the verb beside this input onto a line of its
+     own in every create row (tags, invites, devices). The row is the width; the input gives. */
+  width: auto;
 }
 .set-tag-acts {
   margin-left: auto;
@@ -3635,7 +3638,10 @@ textarea.c-input:read-only {
   font-size: 12px;
   font-weight: 600;
   color: var(--ink3);
-  margin: 0 0 8px;
+  /* one section rhythm with `SettingsSubhead` (packages/ui settings.css): 22px above so a
+     subhead never lands on the tail of the paragraph before it ("Invoices and payment method"
+     used to sit directly under the add-on note), 6px below. */
+  margin: 22px 0 6px;
 }
 /* Sign out — text left, action right. It used to carry a bottom rule to separate it from the
    erasure ceremony it shared a card with; it has its own card now, so the rule is gone. A rule
@@ -5635,6 +5641,8 @@ body.dnd-active * { cursor: grabbing !important; }
 .sig-settings .lab {
   margin-bottom: 6px;
 }
+.sig-settings .lab b { display: block; font-size: 13px; font-weight: 600; }
+.sig-settings .lab span { display: block; font-size: 11.5px; color: var(--ink2); line-height: 1.5; }
 .sig-settings-editor {
   display: block;
   width: 100%;
