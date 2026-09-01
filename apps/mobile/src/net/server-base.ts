@@ -64,6 +64,7 @@
  * them where they are and this base governs exactly the `/sync` family, which is exactly what was
  * measured to need it.
  */
+import { originNeedsPin } from "@ohmail/client-engine";
 import {
   apiBaseFor,
   normalizeOrigin as strictOrigin,
@@ -107,7 +108,36 @@ export { apiBaseFor };
 export function addressProblem(typed: string): string | null {
   const trimmed = typed.trim();
   if (trimmed === "") return "Your server's address is missing.";
-  if (parseServerAddress(trimmed) !== null) return null;
+  const origin = parseServerAddress(trimmed);
+  if (origin !== null) {
+    /**
+     * AN ADDRESS NO CERTIFICATE AUTHORITY CAN VOUCH FOR IS REFUSED HERE, EARLY, WITH THE USEFUL
+     * SENTENCE — and this arm is the one that stops a correct refusal from arriving as a vague one.
+     *
+     * A typed IP literal parses perfectly well and is a perfectly ordinary thing to type: it is the
+     * address a router handed a computer on the same network. `originNeedsPin` says such an origin
+     * can only ever be trusted through a pin, and a pin comes from the code the computer shows —
+     * never from an address somebody typed, because a fingerprint is 43 characters nobody will
+     * enter correctly. `admitOrigin` refuses it at pairing time and says exactly that.
+     *
+     * Without this arm the door would probe it first, and the probe would fail at the TLS handshake
+     * — so the person would be told the server could not be reached, which is true and useless, for
+     * an address that is right and a method that is wrong. The remedy sentence belongs at the field
+     * that accepted the address, not three steps later.
+     *
+     * `originNeedsPin` is the engine's own predicate rather than a second IP test here, for the
+     * reason the parse is imported rather than restated: one rule about which addresses need a pin,
+     * and the door cannot come to disagree with the seam that enforces it.
+     */
+    if (originNeedsPin(origin)) {
+      return (
+        "That is a numeric address on a network, and no certificate authority can vouch for one — " +
+        "so ohmail can only trust it through the code your computer shows. Open Settings → " +
+        "Devices there and scan that instead."
+      );
+    }
+    return null;
+  }
   if (/^http:\/\//i.test(trimmed)) {
     return (
       "That is a plain, unencrypted address, and ohmail will not send your mail over one. " +
