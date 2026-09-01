@@ -847,6 +847,21 @@ jobs:
           # apart. The AppImage half is asserted from the ELF below.
           test "$(dpkg-deb -f "$DEB" Architecture)" = "amd64"
 
+          # THE .deb INSTALLS THE SAME DESKTOP ENTRY, and it is asserted here as well as inside the
+          # AppImage further down. One template feeds both — the AppImage's AppDir is built from
+          # this package's data directory — but that is a fact about the bundler, not a check, and
+          # it is exactly the kind of shared assumption that stops being true without anything
+          # going red. The entry claims to handle mailto:, so the field code that carries the
+          # address has to be on the Exec line or the claim is false for everyone who installs the
+          # .deb. Captured into a variable before it is matched: a producer killed by a closed pipe
+          # is indistinguishable from one that found nothing.
+          DEB_ENTRY="$(dpkg-deb --fsys-tarfile "$DEB" | tar -xO --wildcards '*/applications/ohmail.desktop')"
+          printf '%s\n' "$DEB_ENTRY"
+          printf '%s\n' "$DEB_ENTRY" | grep -qx 'Exec=ohmail %U' || {
+            echo "the .deb's desktop entry does not hand the URL to the app" >&2; exit 1; }
+          printf '%s\n' "$DEB_ENTRY" | grep -q '^MimeType=.*x-scheme-handler/mailto' || {
+            echo "the .deb's desktop entry no longer claims mailto" >&2; exit 1; }
+
           # ── The AppImage carries the same tree ────────────────────────────
           # Extracted rather than mounted: a runner has no FUSE.
           rm -rf squashfs-root
@@ -942,24 +957,47 @@ jobs:
           #    arm64 build's GTK_PATH.
           TRIPLES="$(grep -aoE '[a-z0-9_]+-linux-gnu' "$HOOK" | sort -u || true)"
           echo "library triples named by the launcher: $TRIPLES"
-          # Both directions, and the SUBJECT is named as well as the architecture. A check that
-          # only looks for foreign triples passes a hook that names none at all, and one that only
-          # counts triples passes a hook that has lost GTK_PATH while keeping the three other
-          # variables that also spell one — which is what this file's first draft did, found by
-          # deleting the line and watching the check stay green.
-          if ! grep -aq '^export GTK_PATH=' "$HOOK"; then
-            echo "the launcher sets no GTK_PATH" >&2
-            exit 1
-          fi
-          if ! printf '%s\n' "$TRIPLES" | grep -qx "$TRIPLE"; then
-            echo "the launcher names no $TRIPLE directory at all" >&2
-            exit 1
-          fi
           FOREIGN="$(printf '%s\n' "$TRIPLES" | grep -v "^$TRIPLE$" | grep -v '^$' || true)"
           if [ -n "$FOREIGN" ]; then
             echo "the launcher names another architecture's directories: $FOREIGN" >&2
             exit 1
           fi
+          # AND the system fallback is read out of GTK_PATH's own VALUE. Two earlier drafts of this
+          # correlated independent greps — "a GTK_PATH line exists" and "the right triple appears
+          # somewhere in the hook" — and both pass a GTK_PATH that has lost everything except its
+          # AppDir component, because the AppDir component contains the triple too and four other
+          # exports spell one as well. The value is what the launcher gives GTK, so the value is
+          # what gets asserted: at least one entry that is NOT under the AppDir and IS this
+          # architecture's module directory.
+          GTKPATH="$(
+            set +eu
+            unset OHMAIL_SYSTEM_WEBKIT
+            export APPDIR="$PWD/squashfs-root"
+            . "$HOOK" >/dev/null 2>&1
+            rc=$?
+            printf '%s|%s' "$rc" "${GTK_PATH-<unset>}"
+          )"
+          gtk_rc="${GTKPATH%%|*}"; gtk_val="${GTKPATH#*|}"
+          echo "GTK_PATH the launcher produces: $gtk_val"
+          if [ "$gtk_rc" != 0 ]; then
+            echo "the launcher hook could not be sourced (status '$gtk_rc') — this check proved nothing" >&2
+            exit 1
+          fi
+          if [ "$gtk_val" = "<unset>" ]; then
+            echo "the launcher sets no GTK_PATH" >&2
+            exit 1
+          fi
+          SYS_ENTRY=""
+          while IFS= read -r part; do
+            [ -n "$part" ] || continue
+            case "$part" in "$PWD/squashfs-root"*) continue ;; esac
+            case "$part" in *"$TRIPLE"/gtk-3.0) SYS_ENTRY="$part" ;; esac
+          done <<< "$(printf '%s' "$gtk_val" | tr ':' '\n')"
+          if [ -z "$SYS_ENTRY" ]; then
+            echo "GTK_PATH names no $TRIPLE system fallback outside the AppDir: $gtk_val" >&2
+            exit 1
+          fi
+          echo "GTK_PATH's system fallback: $SYS_ENTRY"
 
           # 4. The escape hatch: one variable to run against the host's GTK and
           #    WebKitGTK, for a machine where the bundled stack cannot start.
@@ -1385,6 +1423,15 @@ jobs:
           # this step green. See the same assertion in the x86_64 job.
           test "$(dpkg-deb -f "$DEB" Architecture)" = "arm64"
 
+          # The same desktop-entry assertion as the x86_64 job, which argues it. Repeated rather
+          # than shared because it is an audit of a different artifact.
+          DEB_ENTRY="$(dpkg-deb --fsys-tarfile "$DEB" | tar -xO --wildcards '*/applications/ohmail.desktop')"
+          printf '%s\n' "$DEB_ENTRY"
+          printf '%s\n' "$DEB_ENTRY" | grep -qx 'Exec=ohmail %U' || {
+            echo "the .deb's desktop entry does not hand the URL to the app" >&2; exit 1; }
+          printf '%s\n' "$DEB_ENTRY" | grep -q '^MimeType=.*x-scheme-handler/mailto' || {
+            echo "the .deb's desktop entry no longer claims mailto" >&2; exit 1; }
+
           # ── The AppImage carries the same tree ────────────────────────────
           rm -rf squashfs-root
           ./"$APPIMAGE" --appimage-extract > /dev/null
@@ -1464,24 +1511,47 @@ jobs:
 
           TRIPLES="$(grep -aoE '[a-z0-9_]+-linux-gnu' "$HOOK" | sort -u || true)"
           echo "library triples named by the launcher: $TRIPLES"
-          # Both directions, and the SUBJECT is named as well as the architecture. A check that
-          # only looks for foreign triples passes a hook that names none at all, and one that only
-          # counts triples passes a hook that has lost GTK_PATH while keeping the three other
-          # variables that also spell one — which is what this file's first draft did, found by
-          # deleting the line and watching the check stay green.
-          if ! grep -aq '^export GTK_PATH=' "$HOOK"; then
-            echo "the launcher sets no GTK_PATH" >&2
-            exit 1
-          fi
-          if ! printf '%s\n' "$TRIPLES" | grep -qx "$TRIPLE"; then
-            echo "the launcher names no $TRIPLE directory at all" >&2
-            exit 1
-          fi
           FOREIGN="$(printf '%s\n' "$TRIPLES" | grep -v "^$TRIPLE$" | grep -v '^$' || true)"
           if [ -n "$FOREIGN" ]; then
             echo "the launcher names another architecture's directories: $FOREIGN" >&2
             exit 1
           fi
+          # AND the system fallback is read out of GTK_PATH's own VALUE. Two earlier drafts of this
+          # correlated independent greps — "a GTK_PATH line exists" and "the right triple appears
+          # somewhere in the hook" — and both pass a GTK_PATH that has lost everything except its
+          # AppDir component, because the AppDir component contains the triple too and four other
+          # exports spell one as well. The value is what the launcher gives GTK, so the value is
+          # what gets asserted: at least one entry that is NOT under the AppDir and IS this
+          # architecture's module directory.
+          GTKPATH="$(
+            set +eu
+            unset OHMAIL_SYSTEM_WEBKIT
+            export APPDIR="$PWD/squashfs-root"
+            . "$HOOK" >/dev/null 2>&1
+            rc=$?
+            printf '%s|%s' "$rc" "${GTK_PATH-<unset>}"
+          )"
+          gtk_rc="${GTKPATH%%|*}"; gtk_val="${GTKPATH#*|}"
+          echo "GTK_PATH the launcher produces: $gtk_val"
+          if [ "$gtk_rc" != 0 ]; then
+            echo "the launcher hook could not be sourced (status '$gtk_rc') — this check proved nothing" >&2
+            exit 1
+          fi
+          if [ "$gtk_val" = "<unset>" ]; then
+            echo "the launcher sets no GTK_PATH" >&2
+            exit 1
+          fi
+          SYS_ENTRY=""
+          while IFS= read -r part; do
+            [ -n "$part" ] || continue
+            case "$part" in "$PWD/squashfs-root"*) continue ;; esac
+            case "$part" in *"$TRIPLE"/gtk-3.0) SYS_ENTRY="$part" ;; esac
+          done <<< "$(printf '%s' "$gtk_val" | tr ':' '\n')"
+          if [ -z "$SYS_ENTRY" ]; then
+            echo "GTK_PATH names no $TRIPLE system fallback outside the AppDir: $gtk_val" >&2
+            exit 1
+          fi
+          echo "GTK_PATH's system fallback: $SYS_ENTRY"
 
           # The BRANCH, not the token. The hook explains itself in comments that also spell
           # OHMAIL_SYSTEM_WEBKIT, so a check for the name alone stays green after the `if`/`exec`

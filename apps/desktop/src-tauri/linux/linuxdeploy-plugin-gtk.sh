@@ -253,6 +253,13 @@ if [ -n "$OHMAIL_SYSTEM_WEBKIT" ]; then
             _ohmail_sys="${_ohmail_sys:+$_ohmail_sys:}$_ohmail_d"
         fi
     done
+    # An empty list would mean LD_LIBRARY_PATH="" — no directories, the loader falls straight
+    # through to the binary's own DT_RUNPATH, and the escape silently does not escape. That is the
+    # exact failure this branch was rewritten to stop being, so it says so instead of pretending.
+    if [ -z "$_ohmail_sys" ]; then
+        echo "ohmail: no system library directory found — cannot use the system GTK and WebKitGTK" >&2
+        exit 1
+    fi
     LD_LIBRARY_PATH="$_ohmail_sys" exec "$APPDIR/usr/bin/ohmail" "$@"
 fi
 
