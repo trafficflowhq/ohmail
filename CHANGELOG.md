@@ -62,7 +62,7 @@ be tried against Gmail. Only servers you typed yourself are kept.
 
 ### The settings file is replaced, not overwritten
 
-ohmail keeps one small file recording how you connected, and read it at every
+ohmail keeps one small file recording how you connected, and reads it at every
 launch. It was written by truncating the old file and writing over it, so a crash,
 a power cut or a full disk during that write left the file unreadable — and an
 unreadable file is treated as "never configured", so the app came back asking how
