@@ -227,6 +227,12 @@ type Busy =
   | `revoke:${string}`
   | `remove:${string}`;
 
+/**
+ * How often the open Devices pane re-reads host state. Faster than the engine's own firewall
+ * re-check, so the screen never lags the engine by more than one of its own ticks.
+ */
+const HOST_POLL_MS = 5000;
+
 export function DesktopDevices() {
   const t = useTranslations("host");
   const format = useFormatter();
@@ -314,6 +320,35 @@ export function DesktopDevices() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  /**
+   * KEEP THE OPEN PANE HONEST — re-read host state while this screen is on the display.
+   *
+   * The pane used to read once at mount and never again, and two states this screen exists to
+   * report arrive AFTER that read. The engine's LAN door finishes binding a moment after the
+   * window comes up, so the pane said "Same-network access is starting…" for the life of the
+   * window over a door that was serving — and the pairing controls, which are gated on the
+   * serving state, never appeared at all. Separately, the firewall warning names a command; the
+   * engine re-checks after the operator runs it, but nothing was asking the shell for the result.
+   *
+   * A quiet poll, not a subscription, because the shell exposes state by command and the answer
+   * is three integers and two strings. `busy` is deliberately NOT set: this must never make a
+   * button look pressed or a screen flicker while somebody is reading it.
+   */
+  useEffect(() => {
+    const tick = setInterval(() => {
+      void (async () => {
+        try {
+          const state = await hostState();
+          if (alive.current) setHost(state);
+        } catch {
+          // A poll that fails changes nothing on screen — the last known state is still the
+          // last thing this window actually knows.
+        }
+      })();
+    }, HOST_POLL_MS);
+    return () => clearInterval(tick);
+  }, []);
 
   /** The engine's enumeration of this machine's offerable addresses — read when the LAN option
    *  opens, because the choice must be OFFERED, never typed (a typo'd address is a socket that

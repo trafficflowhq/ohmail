@@ -216,6 +216,35 @@ describe("the serving LAN row and its honest copy", () => {
     expect(button(enHost.lanCopy!)).toBeTruthy();
   });
 
+  it("the open pane follows the engine — the blocked warning clears without a click", async () => {
+    /**
+     * The other half of the remedy being confirmable, and the fix to a defect that BLOCKED the
+     * phone-pairing cell before the firewall did: the pane read host state once at mount and
+     * never again. The engine's LAN door finishes binding a moment after the window appears, so
+     * the pane said "starting…" for the life of the window over a serving door — and the pairing
+     * controls, gated on the serving state, never appeared at all.
+     *
+     * Here the shell reports blocked, then serving, with nothing touched in between.
+     */
+    // `shell` closes over this object, so changing it changes what the next poll is told —
+    // which is the engine noticing that the operator ran the command.
+    const world = {
+      hostState: { ...BOTH, lanState: "blocked" } as unknown,
+      tailscale: RUNNING,
+      routes: EMPTY_LISTS,
+    };
+    shell(world);
+    await mount();
+    expect(text()).toContain("sudo ufw allow 47800/tcp");
+    world.hostState = { ...BOTH };
+    await act(async () => {
+      await new Promise((done) => setTimeout(done, 6000));
+    });
+    await flush();
+    expect(text()).not.toContain("sudo ufw allow 47800/tcp");
+    expect(text()).toContain("The mail API is served at http://192.168.1.23:47800");
+  }, 20_000);
+
   it("the serving sentence no longer promises reachability it has not checked", async () => {
     // The other half of the same repair. `serving` is reported on every machine whose firewall
     // this code cannot read — macOS, Windows, nftables, no firewall at all — so the sentence has

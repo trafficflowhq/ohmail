@@ -15,6 +15,7 @@ import {
   readUfwSources,
   ufwVerdict,
   type UfwSources,
+  type UfwVerdict,
 } from "./host-firewall.js";
 import { HOST_CLIENT_CSP } from "./host-static.js";
 import type { Diagnostic } from "./log.js";
@@ -353,16 +354,14 @@ export async function maybeStartLanListener(
     const readSources = firewallSources ?? readUfwSources;
     const boundInterface = interfaceForAddress(address);
     /** The firewall as it stands. Pure of logging, so the caller decides what is worth saying. */
-    const evaluate = (): string | null => {
-      const verdict = ufwVerdict({
+    const evaluate = (): UfwVerdict =>
+      ufwVerdict({
         port: listener.port,
         address,
         sources: readSources(),
         unitActive: null,
         boundInterface,
       });
-      return verdict.state === "blocks" ? verdict.remedy : null;
-    };
     // The remedy is the whole value of this line, and it names a PORT, never the interface —
     // same rule as the listening line above.
     const announce = (remedy: string): void => {
@@ -372,14 +371,19 @@ export async function maybeStartLanListener(
           "port, so nothing on the network can reach it; the operator opens it with " + remedy,
       });
     };
-    let remedy = evaluate();
-    if (remedy !== null) announce(remedy);
+    const first = evaluate();
+    let blocked = first.state === "blocks";
+    if (first.state === "blocks") announce(first.remedy);
     const recheck = setInterval(() => {
       const next = evaluate();
+      // ONLY A POSITIVE VERDICT MAY CLEAR A WARNING. `unreadable` is not evidence the firewall
+      // opened — it is evidence of nothing — and treating it as recovery would announce a
+      // reachable door because a file briefly could not be read. Whatever stands, stands.
+      if (next.state === "unreadable") return;
       // Only a CHANGE is announced — a steady verdict says nothing, in either direction.
-      if (next !== null && remedy === null) announce(next);
-      else if (next === null && remedy !== null) log("host_lan_listening", { port: listener.port });
-      remedy = next;
+      if (next.state === "blocks" && !blocked) announce(next.remedy);
+      else if (next.state !== "blocks" && blocked) log("host_lan_listening", { port: listener.port });
+      blocked = next.state === "blocks";
     }, recheckMs ?? FIREWALL_RECHECK_MS);
     recheck.unref?.();
     return {
