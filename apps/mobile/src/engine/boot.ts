@@ -471,6 +471,37 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
   if (!/^https?:\/\/\S+$/.test(apiBase)) {
     return { kind: "refused", reason: `not a server API base: "${config.apiBase ?? ""}"` };
   }
+  /**
+   * ── THE BASE MUST BE DERIVABLE FROM THE ORIGIN, AND THAT IS A STRUCTURAL INVARIANT ────────────
+   *
+   * The base is not free-form. `resolveApiBase` only ever answers one of two values — the origin,
+   * or the origin with `/api` on the end — so anything else reaching here did not come from the
+   * measurement, and the ONLY places it could have come from are a corrupted keystore value or a
+   * caller that composed one by hand.
+   *
+   * Review raised the consequence and it is the sharp one: this string is `HttpAdapter`'s
+   * `baseUrl`, so a value naming a foreign address would send the profile's LIVE BEARER there on
+   * every drain — while `origin` and `accountId` stay untouched, so the mirror's owner stamp and
+   * the account guard both pass and nothing else notices. A shape check alone (`^https?://`) does
+   * not stop that; only a comparison against the origin does.
+   *
+   * The check is cheap because the value space is two, and the property it buys is that a base can
+   * never widen what this app talks to beyond the address the pairing already named. A store that
+   * has been tampered with is not a state this can recover from — an attacker who can write the
+   * keystore holds the refresh token too — but it must not be a state in which this app HELPS.
+   *
+   * Refused rather than silently corrected to the origin, on the refusal contract this file states
+   * throughout: quietly dialling something other than what a caller asked for is the dangerous
+   * default standing in for a missing fact.
+   */
+  if (apiBase !== origin && apiBase !== `${origin}/api`) {
+    return {
+      kind: "refused",
+      reason:
+        `this server's API base "${apiBase}" is not on the paired address "${origin}" — ` +
+        `re-pair this server to record it again`,
+    };
+  }
   const token = config.token?.trim() ?? "";
   const accountId = config.accountId.trim();
   if ((!token && !config.auth) || !accountId) {

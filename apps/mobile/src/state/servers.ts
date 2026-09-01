@@ -443,6 +443,23 @@ export class ServerProfileStore {
   }
 
   /**
+   * RECORD WHERE THIS SERVER'S API ANSWERS — the repair path for a row stored before the base was
+   * measured (`net/pairing.ts#buildSession`). See {@link ServerProfile.apiBase}.
+   *
+   * {@link saveRefreshToken}'s exact shape, including its missing-row NO-OP and for the same
+   * reason: a profile forgotten while the probe was in flight has nothing to persist into, and
+   * writing one here would resurrect a pairing somebody asked to forget — the shape the pending-wipe
+   * queue exists to prevent.
+   */
+  setApiBase(id: string, apiBase: string): Promise<void> {
+    return this.enqueue(async () => {
+      const p = await this.readProfile(id);
+      if (p === null) return;
+      await this.writeProfile({ ...p, apiBase });
+    });
+  }
+
+  /**
    * The vault's take-back — a refresh REFUSAL (the server judged the token) clears the
    * credential but KEEPS the profile row, so the picker can say "pairing ended — scan again"
    * instead of the server silently vanishing from the list.

@@ -994,6 +994,44 @@ async function buildSession(
    */
   const admitted = admitOrigin(profile.origin, profile.pin);
   if (!admitted.ok) return { kind: "refused", reason: admitted.reason };
+
+  /**
+   * ── THE ONE POPULATION AN UPGRADE CANNOT FIX BY ITSELF, REPAIRED HERE ─────────────────────────
+   *
+   * A self-hosted pairing made by a build that predates the measured base is stored with no base at
+   * all, which reads as the origin — and the origin is exactly what never worked: every drain
+   * fetched an HTML 404 from the web container. Review named the consequence of leaving it: those
+   * profiles stay broken FOR EVER, because nothing re-probes, so the fix ships and the people it
+   * was written for see no change until somebody tells them to re-pair.
+   *
+   * ── AND IT DOES NOT BREAK BOOT-FROM-LOCAL, BECAUSE OF WHO IT APPLIES TO ──────────────────────
+   *
+   * `bootEngine`'s contract is that the boot touches no wire, so the app paints its cached mirror
+   * immediately. That is why this is NOT a blanket re-probe: it is gated on `flavor === "selfhost"`
+   * AND `apiBase === null`, which is precisely the set of profiles that have never mirrored a
+   * single message. There is no cached mirror to paint quickly for them — the rule's whole benefit
+   * is nil for exactly this set, and its cost is one or two credential-free requests, once, after
+   * which the base is stored and this never runs again.
+   *
+   * Every other profile — managed, desktop-host, local, and any selfhost row paired since the
+   * measurement — takes the same wire-free path it always did.
+   *
+   * A FAILURE HERE IS NOT FATAL. If the probe cannot find the API the profile boots against the
+   * origin exactly as it did before, which is no worse than the state it is already in, and the
+   * drain's own sync error says what happened. Refusing the boot would turn a broken mirror into
+   * an app that will not open at all.
+   */
+  let apiBase = profile.apiBase;
+  if (apiBase === null && profile.flavor === "selfhost") {
+    const measured = await resolveApiBase(env.fetchImpl ?? bareFetch(), profile.origin);
+    if (measured.kind === "base") {
+      apiBase = measured.base;
+      /* Persisted, so the next launch is wire-free again. A refusal from the keystore is not worth
+         failing the boot over — the session works either way and the repair simply retries. */
+      await env.profiles.setApiBase(profile.id, measured.base).catch(() => undefined);
+    }
+  }
+
   const bearer = new BearerManagerRN({
     origin: profile.origin,
     accessToken,
@@ -1020,7 +1058,11 @@ async function buildSession(
     // profile, so no launch pays for a probe and the boot still touches no wire. Absent on every
     // row written before it existed, which `bootEngine` reads as the origin: exactly what those
     // rows have always used, and right for the two doors that serve their API at their root.
-    apiBase: profile.apiBase,
+    //
+    // THE LOCAL, NOT `profile.apiBase`: the self-host repair above may have just measured one for a
+    // row that had none, and reading the held copy would store the base and then boot without it —
+    // a repair that runs, persists, and changes nothing until the launch after.
+    apiBase,
     accountId: profile.accountId,
     auth: { headers: () => bearer.headers(), fetch: bearer.fetch },
   });
