@@ -1571,6 +1571,17 @@ describe("the auto-updater", () => {
     expect(updater).toMatch(/pub fn should_install\(/);
     expect(updater).toMatch(/strip_prefix\("trusted comment: "\)/);
     expect(updater).not.toMatch(/strip_prefix\("untrusted comment: "\)/);
+
+    /* AND IT IS READ BY POSITION. Only lines 1-3 of a minisign signature are signed; line 0,
+       the untrusted comment, is covered by nothing. A scan for the first line beginning
+       `trusted comment: ` therefore reads a line anyone may rewrite — writing that prefix into
+       line 0 leaves a genuine old release's signature verifying while the guard reports the
+       forged version. That was this guard's shape when it was first written, and it undid the
+       whole fix. The positional read is pinned here as well as in Rust, because `find_map` over
+       lines is the natural thing to write and it is the wrong thing. */
+    expect(updater).toMatch(/let mut lines = text\.lines\(\);/);
+    expect(updater).toMatch(/let comment = lines\.next\(\)\?\.strip_prefix\("trusted comment: "\)\?;/);
+    expect(updater).not.toMatch(/find_map\(\|line\| line\.strip_prefix\("trusted comment/);
     expect(updater).toMatch(/advertised != signed\.version \|\| !should_offer\(&installed, &signed\.version\)/);
 
     /* FAILS CLOSED, in all four ways it can refuse: either version unparseable, no signed version

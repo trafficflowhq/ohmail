@@ -700,12 +700,34 @@ pub fn signed_release(signature_b64: &str) -> Option<SignedRelease> {
         .ok()?;
     let text = std::str::from_utf8(&decoded).ok()?;
 
-    // `trusted comment: timestamp:<unix>\tfile:<name>` — tab-separated fields, and only
-    // the `file:` one is read. The timestamp is signed too, but it is not a version and
-    // this guard does not pretend otherwise.
-    let comment = text
-        .lines()
-        .find_map(|line| line.strip_prefix("trusted comment: "))?;
+    // ── THE TRUSTED COMMENT IS READ BY POSITION, NOT BY PREFIX ────────────────────────
+    //
+    // A minisign signature file is exactly four lines, and only two of them are signed:
+    //
+    //   0  untrusted comment: …      NOT covered by any signature — anyone may rewrite it
+    //   1  <base64 signature>        covered
+    //   2  trusted comment: …        covered, by the global signature over `sig || comment`
+    //   3  <base64 global signature> covered
+    //
+    // This function first scanned for the FIRST line beginning `trusted comment: `, which
+    // is a hole big enough to undo the whole guard, and it was found by crafting it rather
+    // than by reading: `minisign_verify::Signature::decode` reads line 2 POSITIONALLY and
+    // never validates line 0, so writing `trusted comment: …file:99.0.0@…` INTO LINE 0
+    // leaves a genuine old release's signature verifying exactly as before — payload and
+    // global signature both — while a prefix scan reads the forged line and reports 99.0.0.
+    // Feed says 99.0.0, guard agrees, `download` verifies, and the downgrade installs.
+    // `a_forged_untrusted_comment_cannot_move_the_version` is that signature.
+    //
+    // So the read is positional and mirrors `decode` line for line: whatever `download`
+    // authenticates is the same text this reads, by construction rather than by agreement.
+    let mut lines = text.lines();
+    lines.next()?; // line 0 — the untrusted comment. Deliberately never read.
+    lines.next()?; // line 1 — the payload signature.
+    let comment = lines.next()?.strip_prefix("trusted comment: ")?;
+
+    // `timestamp:<unix>\tfile:<name>` — tab-separated fields, and only the `file:` one is
+    // read. The timestamp is signed too, but it is not a version and this guard does not
+    // pretend otherwise.
     let name = comment
         .split('\t')
         .find_map(|field| field.strip_prefix("file:"))?;

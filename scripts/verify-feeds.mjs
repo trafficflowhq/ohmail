@@ -132,8 +132,18 @@ function minisignVerify(pubB64, sigB64, payload) {
  * the producer by construction. */
 function signedName(sigB64) {
   const text = Buffer.from(sigB64, "base64").toString("utf8");
-  const line = text.split(/\r?\n/).find((l) => l.startsWith("trusted comment: "));
-  if (!line) return null;
+  /* BY POSITION, LINE 2 — the same line `minisign_verify::Signature::decode` reads and the same
+   * line `updater.rs::signed_release` reads. A minisign file is four lines and only lines 1-3 are
+   * signed; line 0, the untrusted comment, is covered by nothing. Scanning for the first line
+   * beginning `trusted comment: ` therefore reads a line anybody can rewrite: put that prefix in
+   * line 0 and a genuine old release's signature still verifies while the scan reports whatever
+   * version was written there. Both this file and the client had that shape and both are
+   * positional now — a verifier that reads a different line from the client certifies something
+   * the client will never look at. */
+  const lines = text.split(/\r?\n/);
+  if (lines.length < 3) return null;
+  const line = lines[2];
+  if (!line.startsWith("trusted comment: ")) return null;
   const field = line.slice("trusted comment: ".length).split("\t").find((f) => f.startsWith("file:"));
   return field ? field.slice("file:".length) : null;
 }

@@ -223,6 +223,57 @@ fn forged_version_claim_is_refused() {
 }
 
 #[test]
+fn a_forged_untrusted_comment_cannot_move_the_version() {
+    // THE ONE THAT CAUGHT A REAL HOLE IN THIS GUARD. A minisign signature file has four
+    // lines and only lines 1-3 are signed; line 0, the UNTRUSTED comment, is covered by
+    // nothing and anyone may rewrite it. `signed_release` originally scanned for the first
+    // line beginning `trusted comment: `, so writing that prefix into LINE 0 made it read
+    // an attacker's version — while the signature still verified, because
+    // `Signature::decode` reads the real comment at line 2 positionally and never looks at
+    // line 0.
+    //
+    // The fixture is a genuine signature over `payload.bin` with line 0 replaced. It MUST
+    // still verify: a fixture that failed verification would prove nothing, because the
+    // whole danger is that this passes every signature check there is.
+    let pk = minisign_public_key();
+    let payload = fs::read(fixtures_dir().join("payload.bin")).unwrap();
+    let forged_b64 = fs::read_to_string(fixtures_dir().join("payload-forged-untrusted.bin.sig")).unwrap();
+
+    let text = String::from_utf8(BASE64.decode(forged_b64.trim()).unwrap()).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(
+        lines[0].starts_with("trusted comment: ") && lines[0].contains("99.0.0@"),
+        "line 0 must carry the forged claim, or this test is not measuring the hole"
+    );
+    assert!(
+        lines[2].starts_with("trusted comment: ") && lines[2].contains("0.13.3@"),
+        "line 2 must still carry the real, signed claim"
+    );
+
+    assert!(
+        pk.verify(&payload, &minisign_signature(&forged_b64), true).is_ok(),
+        "the forged fixture MUST still verify — the untrusted comment is not signed, which \
+         is exactly why reading it is unsafe and why `download` cannot catch this"
+    );
+
+    // And the version read is the SIGNED one, from line 2.
+    let signed = signed_release(&forged_b64).expect("line 2 still yields a version");
+    assert_eq!(
+        signed.version,
+        semver::Version::parse("0.13.3").unwrap(),
+        "the version must come from the signed line, never from the rewritable one"
+    );
+
+    // Which makes the whole thing a refusal: the feed advertises what it forged into line 0,
+    // and the signed line disagrees.
+    assert_eq!(
+        should_install("0.9.0", "99.0.0", &forged_b64),
+        None,
+        "a signature whose untrusted comment claims 99.0.0 must install nothing"
+    );
+}
+
+#[test]
 fn a_payload_with_no_signed_version_is_not_offered() {
     // Every release up to and including 0.13.2 was signed under its bare asset name, so
     // there is no version in the trusted comment. `None` is the honest answer, and `run`
@@ -299,10 +350,34 @@ fn only_a_well_formed_signed_name_yields_a_version() {
     }
 
     // And the envelope itself: anything that is not base64 of minisign text is refused
-    // rather than panicking. `run` calls this on a string a feed supplied.
-    for junk in ["", "not base64!!", "aGVsbG8=" /* "hello" */] {
+    // rather than panicking. `run` calls this on a string a feed supplied. The last two are
+    // truncated files — a positional read must run out of lines rather than index past them.
+    for junk in [
+        "",
+        "not base64!!",
+        "aGVsbG8=",                                          // "hello" — one line
+        "dW50cnVzdGVkIGNvbW1lbnQ6IHgK",                      // just the untrusted comment
+        "dW50cnVzdGVkIGNvbW1lbnQ6IHgKUlVSVjJOVHdvYUVvTVE9PQo=", // two lines, no comment
+    ] {
         assert!(signed_release(junk).is_none(), "{junk:?} must not yield a version");
     }
+
+    // LINE 0 IS NEVER READ, at the parser level. `a_forged_untrusted_comment_cannot_move_the
+    // _version` proves it on a real signature that still verifies; this proves the parser
+    // ignores the line even when line 2 offers nothing, so the answer is None rather than
+    // the forged claim.
+    let forged_line_0 = BASE64.encode(
+        "trusted comment: timestamp:1\tfile:99.0.0@ohmail-linux-x86_64.AppImage\n\
+         RURV2NTwoaEoMQ==\n\
+         trusted comment: timestamp:1\tfile:ohmail-linux-x86_64.AppImage\n\
+         zKhvIlGHWG3x67M80tyVDQ==\n"
+            .as_bytes(),
+    );
+    assert!(
+        signed_release(&forged_line_0).is_none(),
+        "a trusted-comment prefix in line 0 must be ignored — line 2 is the signed one, and \
+         here it carries no version"
+    );
 }
 
 /// A signature envelope whose trusted comment names `version` — the same shape the
