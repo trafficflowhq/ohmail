@@ -387,11 +387,39 @@ pub fn read(path: &Path) -> Option<Config> {
     parse(&value).ok()
 }
 
-/// Where a replacement for `path` is staged: the same name with `.tmp` appended, in the SAME
-/// directory — which is what makes the rename below a rename and not a copy across filesystems.
+/// Every staging file this process makes gets its own number. See {@link staging_path}.
+static STAGING_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Where a replacement for `path` is staged: the same name in the SAME directory — which is what
+/// makes the rename below a rename and not a copy across filesystems — with a suffix that is
+/// UNIQUE TO ONE CALL.
+///
+/// ── THE FIXED NAME WAS A BUG, AND IT UNDID THE FIX IT WAS PART OF ──────────────────────────
+///
+/// This started as a constant `.tmp`, on the reasoning that these writes are serialized: one
+/// configure command, driven by one window. That reasoning was WRONG, and a review checked it
+/// where I had only asserted it — `engine_configure` and the host-mode commands are declared
+/// `#[tauri::command(async)]`, so two invocations genuinely overlap, and nothing takes a writer
+/// lock. Two writers sharing one staging name is worse than the truncating write this function
+/// replaced: A creates and fills its staging file, B opens the SAME path `O_TRUNC` and empties
+/// it, A renames B's now-empty inode over the live settings file — an empty configuration
+/// published by a write that reported success, which is the exact failure this function exists
+/// to make impossible, reached by a route the fixed name introduced.
+///
+/// The pid keeps two installs apart; the counter keeps two calls in one process apart.
+///
+/// THE RESIDUAL, STATED RATHER THAN SWEPT. A fixed name self-collected — the next write reused
+/// it — and unique names do not: a crash between the create and the rename leaves one staging
+/// file that nothing will reuse. Every failure this function can OBSERVE removes its own file
+/// (see {@link write_private}); what is left is the crash case, which is a couple of hundred
+/// bytes beside a file the app rewrites rarely. Collecting them would mean `read_dir` in this
+/// module, and this module's filesystem reach is deliberately a short, asserted list — a
+/// directory scan here buys less than the capability costs. If it ever needs collecting, the
+/// place is the app's own startup, not the settings writer.
 fn staging_path(path: &Path) -> PathBuf {
+    let seq = STAGING_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut name = path.file_name().unwrap_or_default().to_os_string();
-    name.push(".tmp");
+    name.push(format!(".{}.{seq}.tmp", std::process::id()));
     path.with_file_name(name)
 }
 
@@ -413,10 +441,7 @@ fn staging_path(path: &Path) -> PathBuf {
 /// before the rename is the other half: publishing a name that points at unflushed bytes would
 /// reintroduce the same empty file by a different route.
 ///
-/// The staging name is FIXED rather than unique because these writes are serialized — one
-/// configure command, driven by one window — and a fixed name means a crash leaves at most one
-/// stale `.tmp` that the next write overwrites. Two genuinely concurrent writers would need a
-/// unique name; nothing in this shell has two.
+/// The staging name is UNIQUE PER CALL — {@link staging_path} says why a fixed one was a defect.
 fn write_private(path: &Path, body: &[u8]) -> Result<(), String> {
     use std::io::Write;
 
@@ -424,46 +449,70 @@ fn write_private(path: &Path, body: &[u8]) -> Result<(), String> {
         fs::create_dir_all(parent)
             .map_err(|err| format!("{} could not be created ({err})", parent.display()))?;
     }
-    let staged = staging_path(path);
+    // EVERY failure from here on removes the staging file it made. Not tidiness: with unique
+    // names nothing else will ever reuse that path, so a failure that returned without cleaning
+    // up would leave litter for the life of the install.
+    let failed = |err: std::io::Error, staged: &Path| -> String {
+        let _ = fs::remove_file(staged);
+        format!("{} could not be written ({err})", path.display())
+    };
 
-    {
-        let mut opts = fs::OpenOptions::new();
-        opts.write(true).create(true).truncate(true);
-        // Created private, rather than created world-readable and chmodded a moment later: the
-        // mode has to hold for the file's whole life, and `fs::write` left a window where it did
-        // not. The explicit `set_permissions` below still runs, because `mode()` applies only when
-        // the open CREATES the file and a stale staging file from an earlier crash would keep
-        // whatever mode it already had.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            opts.mode(0o600);
+    // `create_new` rather than `create` + `truncate`, which matters for one reason worth naming:
+    // it refuses to follow a SYMLINK someone left at that path. This directory is the user's own,
+    // so the threat is another account on a shared machine, and the cost of the stricter open is
+    // one retry — a path already taken is our own litter from a crashed run whose pid the system
+    // has since handed out again, and a different number is all that needs.
+    let (mut file, staged) = {
+        let mut opened = None;
+        for _ in 0..8 {
+            let candidate = staging_path(path);
+            let mut opts = fs::OpenOptions::new();
+            opts.write(true).create_new(true);
+            // Created private, rather than created world-readable and chmodded a moment later:
+            // the mode has to hold for the file's whole life, and `fs::write` left a window
+            // where it did not.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                opts.mode(0o600);
+            }
+            match opts.open(&candidate) {
+                Ok(f) => {
+                    opened = Some((f, candidate));
+                    break;
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                // Nothing to clean up: this is the call that would have created the file.
+                Err(err) => {
+                    return Err(format!("{} could not be written ({err})", path.display()))
+                }
+            }
         }
-        let mut file = opts
-            .open(&staged)
-            .map_err(|err| format!("{} could not be written ({err})", path.display()))?;
-        file.write_all(body)
-            .map_err(|err| format!("{} could not be written ({err})", path.display()))?;
-        file.sync_all()
-            .map_err(|err| format!("{} could not be written ({err})", path.display()))?;
-    }
+        opened.ok_or_else(|| {
+            format!("{} could not be written (no free staging name)", path.display())
+        })?
+    };
+
+    file.write_all(body).map_err(|err| failed(err, &staged))?;
+    // The bytes have to be on the disk BEFORE the rename publishes them, or a power cut between
+    // the two leaves the new name pointing at an empty file.
+    file.sync_all().map_err(|err| failed(err, &staged))?;
+    drop(file);
 
     // A chmod that failed is an error, not a shrug: the mode is the whole reason this comment
     // block exists, and a file that stayed world-readable behind an Ok would never be looked at.
+    // (With `create_new` + `mode(0o600)` the file is already private; this covers the platforms
+    // and filesystems where the open's mode is not honoured verbatim.)
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&staged, fs::Permissions::from_mode(0o600))
-            .map_err(|err| format!("{} could not be made private ({err})", path.display()))?;
+        fs::set_permissions(&staged, fs::Permissions::from_mode(0o600)).map_err(|err| {
+            let _ = fs::remove_file(&staged);
+            format!("{} could not be made private ({err})", path.display())
+        })?;
     }
 
-    fs::rename(&staged, path).map_err(|err| {
-        // The staging file is this function's litter, not the caller's problem. Leaving it behind
-        // a failure would be harmless but untidy; a failure to remove it is not worth an error,
-        // because the write itself has already failed and THAT is the sentence worth reporting.
-        let _ = fs::remove_file(&staged);
-        format!("{} could not be written ({err})", path.display())
-    })?;
+    fs::rename(&staged, path).map_err(|err| failed(err, &staged))?;
 
     // Durability of the NAME, as distinct from the bytes: without this the rename can still be
     // lost by a crash even though the file it points at is on the disk. Best effort on purpose —

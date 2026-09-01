@@ -224,65 +224,123 @@ fn what_is_written_is_what_comes_back() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// A WRITE THAT FAILS MUST LEAVE THE PREVIOUS CONFIGURATION STANDING.
+/// THE SETTINGS FILE IS REPLACED, NEVER TRUNCATED IN PLACE — asserted on the INODE.
 ///
 /// This is the whole reason {@link write_private} exists. `fs::write` opens the target `O_TRUNC`,
-/// so a failure anywhere after that open left the settings file empty or half-written — and
-/// {@link read} correctly reads an unparseable file as `None`, which is an install that has
-/// forgotten which door it came in by while its mailbox and sealed credential sit intact behind
-/// it. The local door writes this file TWICE now (the engine has to be replaced once the password
-/// is sealed), so the window is entered twice per first connect.
+/// so for the width of that write the file is empty or half-written — and {@link read} correctly
+/// reads an unparseable file as `None`, which is an install that has forgotten which door it came
+/// in by while its mailbox and sealed credential sit intact behind it. The local door writes this
+/// file TWICE now (the engine has to be replaced once the password is sealed), so the window is
+/// entered twice per first connect.
 ///
-/// The failure is forced by putting a DIRECTORY where the staging file goes: nothing can create a
-/// file at that path, for any user, root included — so the write fails at the earliest possible
-/// point, which is precisely the case that used to be destructive and now must not be.
+/// ── WHY THE INODE AND NOT A FORCED FAILURE ──────────────────────────────────────────────────
 ///
-/// **Watched red against `fs::write`.** With the old implementation this test fails twice over:
-/// the write SUCCEEDS (a read-only sibling directory is no obstacle to truncating `config.json`
-/// itself), so the `expect_err` fails, and the configuration that comes back is the new one.
+/// The first version of this test forced a failure by occupying the staging path with a
+/// directory. That could only work while the staging name was PREDICTABLE, and the fixed staging
+/// name turned out to be a defect of its own — two `#[tauri::command(async)]` configures share
+/// it, and one can rename the other's emptied inode over the live file. Making the name unique
+/// per call fixed that and took the test's grip with it.
+///
+/// The inode is the better assertion anyway, because it names the property directly rather than
+/// a symptom of it: replacing a file by rename gives the path a NEW inode; truncating it in
+/// place keeps the old one. No failure has to be injected, nothing depends on the staging name,
+/// and it holds for any user including root — where a permissions-based forcing would have
+/// silently stopped being a test.
+///
+/// **Watched red against `fs::write`:** the inode is unchanged and the assertion names it.
 #[cfg(unix)]
 #[test]
-fn a_failed_write_leaves_the_stored_configuration_untouched() {
+fn the_settings_file_is_replaced_rather_than_truncated_in_place() {
+    use std::os::unix::fs::MetadataExt;
+
     let dir = std::env::temp_dir().join(format!("ohmail-config-atomic-{}", std::process::id()));
     let path = dir.join(CONFIG_FILE_NAME);
     let _ = fs::remove_dir_all(&dir);
 
-    // The install as it stands: a local door, written and readable.
-    let stored = local_door();
-    write(&path, &stored).expect("the first write is the one that succeeds");
-    assert_eq!(read(&path).as_ref(), Some(&stored));
+    let first = local_door();
+    write(&path, &first).expect("write");
+    assert_eq!(read(&path).as_ref(), Some(&first));
+    let before = fs::metadata(&path).expect("stat").ino();
 
-    // A successful write leaves no litter behind — the staging file is renamed, not copied.
-    let staged = staging_path(&path);
-    assert!(!staged.exists(), "the staging file must not survive a successful write");
+    let second = cloud_door();
+    write(&path, &second).expect("write");
+    assert_eq!(read(&path).as_ref(), Some(&second), "the new configuration must be readable");
+    let after = fs::metadata(&path).expect("stat").ino();
 
-    // Now make staging impossible, and try to write something different.
-    fs::create_dir(&staged).expect("occupy the staging path");
-    let err = write(&path, &cloud_door()).expect_err("a write that cannot stage must fail");
-    assert!(err.contains("could not be written"), "unhelpful sentence: {err}");
-
-    // THE ASSERTION THIS FILE IS FOR: the old configuration is still there, whole.
-    assert_eq!(
-        read(&path).as_ref(),
-        Some(&stored),
-        "a failed write replaced or truncated the stored configuration"
+    assert_ne!(
+        before, after,
+        "the settings file kept its inode across a write, so it was truncated in place rather \
+         than replaced — the window this function exists to close is open again"
     );
 
-    // The host-mode file carries the identical hazard and the identical fix, so it is held to the
-    // identical rule: an unreadable file there reads as "host mode off", which would silently
-    // un-publish a running install.
+    // The host-mode file carries the identical hazard — an unreadable file there reads as "host
+    // mode off", which silently un-publishes a running install — and the identical fix.
     let host_path = dir.join(HOST_FILE_NAME);
-    let on = HostSettings { enabled: true, port: 3311, lan: None };
-    write_host(&host_path, &on).expect("write");
-    assert_eq!(read_host(&host_path), Some(on.clone()));
-    fs::create_dir(staging_path(&host_path)).expect("occupy the staging path");
-    write_host(&host_path, &HostSettings { enabled: false, port: 4400, lan: None })
-        .expect_err("a write that cannot stage must fail");
-    assert_eq!(
-        read_host(&host_path),
-        Some(on),
-        "a failed write un-published a host-mode install"
+    write_host(&host_path, &HostSettings { enabled: true, port: 3311, lan: None }).expect("write");
+    let host_before = fs::metadata(&host_path).expect("stat").ino();
+    write_host(&host_path, &HostSettings { enabled: false, port: 3311, lan: None }).expect("write");
+    assert_ne!(
+        host_before,
+        fs::metadata(&host_path).expect("stat").ino(),
+        "the host-mode file was truncated in place rather than replaced"
     );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// TWO WRITES NEVER SHARE A STAGING NAME, which is the whole of the concurrency fix.
+///
+/// The first version of {@link write_private} used a constant `.tmp`, on the stated reasoning
+/// that these writes are serialized. They are not: `engine_configure` and the host-mode commands
+/// are `#[tauri::command(async)]` and nothing takes a writer lock, so two can be in flight at
+/// once. Sharing one staging name is worse than the truncating write it replaced — A fills its
+/// staging file, B opens the SAME path `O_TRUNC` and empties it, A renames B's empty inode over
+/// the live settings file, and an empty configuration is published by a write that reported
+/// success.
+///
+/// This is a one-line assertion for a defect that a concurrency test could only reach by luck.
+#[test]
+fn two_writes_never_share_a_staging_name() {
+    let path = std::env::temp_dir().join(CONFIG_FILE_NAME);
+    let first = staging_path(&path);
+    let second = staging_path(&path);
+    assert_ne!(
+        first, second,
+        "two overlapping writes would stage into the same file and publish each other's bytes"
+    );
+    // And a staging file is never the target itself.
+    assert_ne!(first, path);
+    assert_eq!(first.parent(), path.parent(), "staging must be in the target's own directory");
+}
+
+/// A WRITE LEAVES NO STAGING FILE BEHIND — not on the way through, and not per call.
+///
+/// The staging name is unique per call now, so nothing reuses it: litter here would accumulate
+/// for the life of the install rather than being overwritten by the next write. This walks the
+/// directory after several writes and asserts the settings files are the ONLY things in it.
+#[test]
+fn writing_repeatedly_leaves_only_the_files_it_owns() {
+    let dir = std::env::temp_dir().join(format!("ohmail-config-litter-{}", std::process::id()));
+    let path = dir.join(CONFIG_FILE_NAME);
+    let host_path = dir.join(HOST_FILE_NAME);
+    let _ = fs::remove_dir_all(&dir);
+
+    for _ in 0..5 {
+        write(&path, &local_door()).expect("write");
+        write(&path, &cloud_door()).expect("write");
+        write_host(&host_path, &HostSettings { enabled: true, port: 3311, lan: None })
+            .expect("write");
+    }
+
+    let mut left: Vec<String> = fs::read_dir(&dir)
+        .expect("read_dir")
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    left.sort();
+    let mut expected = vec![CONFIG_FILE_NAME.to_string(), HOST_FILE_NAME.to_string()];
+    expected.sort();
+    assert_eq!(left, expected, "a staging file survived a successful write");
 
     let _ = fs::remove_dir_all(&dir);
 }
