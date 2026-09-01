@@ -48,14 +48,10 @@ export default function SubprocessorsPage() {
           hold no mail yet, their engine still landing.
         </p>
         <p>
-          Some of these are not processing anything yet. Two mailboxes are
-          connected, both the founder&rsquo;s own, and on 3 August 2026 Anthropic
-          processed 183 of those messages — sender, subject and the first 200
-          characters — to classify them. No other customer mail has been sent to
-          it. Stripe has taken no payment. They are listed regardless, because
-          this page is meant to be complete before it is flattering, and because
-          a subprocessor added quietly on the day it starts processing is exactly
-          the thing this page exists to prevent.
+          Not all of these are processing on any given day. They are listed
+          regardless, because this page is meant to be complete before it is
+          flattering, and because a subprocessor added quietly on the day it
+          starts processing is exactly the thing this page exists to prevent.
         </p>
 
         <h2>Subprocessors</h2>
@@ -237,8 +233,8 @@ export default function SubprocessorsPage() {
           This page is the list. The full product privacy policy — legal bases,
           the mechanism for the two transfers to the USA, the data-subject
           procedure, and the conditions under which a human at TrafficFlow can
-          reach production data — publishes before the first real mailbox
-          connects. Until then no customer mail exists on our servers to describe.
+          reach production data — is still being written. This page is what is
+          true in the meantime rather than a placeholder for it.
         </p>
       </div>
 

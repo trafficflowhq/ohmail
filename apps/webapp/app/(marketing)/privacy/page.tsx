@@ -178,10 +178,7 @@ export default function PrivacyPage() {
           for 293 of one account&rsquo;s 1,698 waiting senders. AI still runs
           only where you turn it on, and automatic background routing — the
           filing that happens without anyone pressing anything — does not send
-          this class of mail to a model at all. On 3 August 2026, 183 messages
-          from the founder&rsquo;s own mailbox — the only mail on our servers at
-          the time — were classified this way in production; no other account has
-          had mail sent to Anthropic.
+          this class of mail to a model at all.
         </p>
         <p>
           Who processes what, where, and for how long is published in full on the{" "}
