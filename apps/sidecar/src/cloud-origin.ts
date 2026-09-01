@@ -368,10 +368,15 @@ export interface MirrorRecord {
  *  · A LEGACY RECORD, or NO RECORD AT ALL. The state was written by a build that could dial only
  *    the managed service, so that is what it is compared against.
  *  · A MODERN RECORD NAMING A SERVER. Compared with it, which is the ordinary case.
- *  · A MODERN RECORD NAMING NONE. FOREIGN, always — which server it belongs to cannot be
- *    established, and there is state here that belongs to somebody. Discarding costs a re-sync of a mirror whose provenance
- *    is unknown; keeping it risks handing one server's session to another, and an unknowable owner
- *    is exactly the case where that risk cannot be reasoned away.
+ *  · A MODERN RECORD WHOSE SERVER CANNOT BE ESTABLISHED. FOREIGN, always. That covers a missing
+ *    field, a blank one, a non-string — and a NON-EMPTY STRING THAT DOES NOT PARSE AS A BASE, which
+ *    is the case this missed until review named it: `baseIsForeign` answers "not foreign" when
+ *    either side fails to normalise (its one-sided default, right for a comparison and wrong as the
+ *    last word here), so `{"base":"garbage"}` was adopted exactly as a null one had been. All four
+ *    are the same fact — nobody can say which server this state belongs to — so all four get the
+ *    same answer. Discarding costs a re-sync of a mirror whose provenance is unknown; keeping it
+ *    risks handing one server's session to another, and an unknowable owner is precisely the case
+ *    where that risk cannot be reasoned away.
  */
 export function mirrorIsForeign(
   record: MirrorRecord | null,
@@ -379,7 +384,10 @@ export function mirrorIsForeign(
   configuredBase: string,
 ): boolean {
   if (!holdsCloudState) return false;
-  if (record !== null && !record.legacy && record.base === null) return true;
-  const owner = record === null || record.legacy ? MANAGED_CLOUD_BASE : record.base;
+  /* LEGACY OR ABSENT: the one server the build that wrote it could reach. */
+  if (record === null || record.legacy) return baseIsForeign(MANAGED_CLOUD_BASE, configuredBase);
+  /* MODERN: which server this state belongs to must be ESTABLISHABLE, not merely present. */
+  const owner = record.base === null ? null : normalizeBase(record.base);
+  if (owner === null) return true;
   return baseIsForeign(owner, configuredBase);
 }
