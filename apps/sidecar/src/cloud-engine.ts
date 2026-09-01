@@ -23,10 +23,14 @@ import { startCloudWake, type CloudWake } from "./cloud-wake.js";
 import { matchReadRoute } from "./cloud-read.js";
 import { createWriteThroughProxy, type WriteThroughProxy } from "./cloud-proxy.js";
 import {
+  apiBaseFor,
   baseIsForeign,
   decodeMirrorRecord,
   encodeMirrorRecord,
   normalizeBase,
+  normalizeOrigin,
+  recordedBaseOfExisting,
+  MANAGED_CLOUD_BASE,
   OPERATOR_CA_FILE,
 } from "./cloud-origin.js";
 import type { Diagnostic } from "./log.js";
@@ -127,6 +131,15 @@ export interface CloudSidecarConfig {
   dataDir: string;
   /** The hosted API base, e.g. `https://api.ohmail.app`. */
   cloudUrl: string;
+  /**
+   * THE ONE SERVER A BROWSER HAND-OFF MAY BE PERFORMED AGAINST. Absent ⇒ {@link MANAGED_CLOUD_BASE}.
+   *
+   * A value rather than a constant for the reason `cloudUrl` is one — a test, and a staging
+   * deployment, are talking to a hosted service at an address that is not the production one, and a
+   * hardcoded comparison would refuse the ceremony there while claiming to be about the ceremony's
+   * meaning. Production never sets it; `main.ts` composes no such variable.
+   */
+  handoffBase?: string;
   /** The bearer/refresh pair the shell passes on FIRST launch. Absent on later launches (sealed). */
   tokens?: CloudTokens;
   /** The mailbox address this account mirrors — the local identity's address. */
@@ -353,7 +366,13 @@ export function enforceMirrorOwner(
   const priorRecord = priorRaw === null ? null : decodeMirrorRecord(priorRaw);
   const prior = priorRecord === null ? null : sameOwner(priorRecord.address);
   const addressChanged = prior !== null && prior !== served;
-  const serverChanged = baseIsForeign(priorRecord?.base ?? null, cloudUrl);
+  /* A record that EXISTS and names no server was written by a build that could only dial one, so
+     the absence is read as that one rather than as "cannot say" — see `recordedBaseOfExisting`,
+     which carries the migration-launch leak that reading it the other way created. A record that
+     does not exist is a fresh directory and is adopted, which is why this is only asked of one
+     that does. */
+  const serverChanged =
+    priorRecord !== null && baseIsForeign(recordedBaseOfExisting(priorRecord.base), cloudUrl);
   const foreign = addressChanged || serverChanged;
   if (foreign) {
     // The database, its cursor and the previous account's sealed session are all stale. Remove
@@ -463,6 +482,29 @@ export async function probeCloudServer(cloudUrl: string, fetchImpl: typeof fetch
       `Something answered at ${target}, but it is not an ohmail server. Check that you gave the ` +
         "address you open ohmail at in a browser.",
       "not_ohmail",
+    );
+  }
+
+  /* ── TWO ANSWERS THAT ARE AN OHMAIL SERVER AND STILL NOT A SERVER TO SIGN IN TO ─────────────
+     Both were reaching the password form, because every 2xx read as success and the greeting's own
+     fields were rendered and then ignored. Raised by review. A server saying `needsSetup` has no
+     accounts yet, so every credential typed into the next screen is refused by definition — and the
+     person is one step away from the page that would fix it. */
+  if (hello.needsSetup === true) {
+    return refuse(
+      `That is an ohmail server, but it has not been set up yet — there are no accounts on it. ` +
+        `Open ${target.replace(/\/api\/hello$/, "")} in a browser and finish setting it up first.`,
+      "needs_setup",
+    );
+  }
+  /* And the MANAGED service answering here means somebody typed our address into the field for
+     their own server. The doors are not interchangeable: this one has no browser hand-off, and the
+     hosted door is the one with the account behind it. */
+  if (hello.flavor === "managed") {
+    return refuse(
+      `${target} is the hosted ohmail service rather than a server you run. Go back and choose ` +
+        "“ohmail Cloud” instead.",
+      "managed",
     );
   }
 
@@ -585,6 +627,33 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
   const log = config.log;
   const now = config.now ?? ((): Date => new Date());
 
+  /**
+   * ── THE SERVER'S BASE, CANONICALIZED ONCE, AND NOTHING BELOW READS THE RAW VALUE ────────────
+   *
+   * Every URL this process composes is `${base}${path}`, and until this line the base was whatever
+   * arrived in the environment. That is a string the WINDOW can choose: `engine_configure` is one of
+   * the commands it holds, and the shell stores what it is given. So a base carrying a FRAGMENT
+   * turns concatenation into a different request entirely — `http://host:port#/` + `/hello` is
+   * `http://host:port#//hello`, and the fragment is never sent, so what actually goes out is
+   * `GET /` at that address. Every one of `/auth/login`, `/sync` and the probe collapses the same
+   * way. Raised by review of this slice, which is where the reach became a designed feature rather
+   * than an unused capability, and the honest fix is at the seam rather than in one route: the base
+   * is parsed and re-composed as scheme + host + path, so a query, a fragment and embedded
+   * credentials cannot survive into any request.
+   *
+   * A base that will not parse REFUSES THE LAUNCH. Every other reading is worse: continuing with
+   * the raw value is the hazard above, and falling back to a default would silently point somebody's
+   * install at a server they did not choose — which on this door is the one thing that must never
+   * happen quietly.
+   */
+  const cloudBase = normalizeBase(config.cloudUrl);
+  if (cloudBase === null) {
+    throw new Error(
+      "OHMAIL_CLOUD_URL is not a server address this engine can dial: it must be http or https, " +
+        "with no query, fragment or embedded credentials.",
+    );
+  }
+
   // ── THE BOOT CLOCK — the same bracket `engine.ts` puts round its own constructor ─────────
   //
   // Started before `enforceMirrorOwner` because the shell is already showing "Opening your
@@ -594,7 +663,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
 
   // The mirror belongs to exactly one hosted account ON ONE SERVER; discard it whole if either has
   // changed. Must run before the database is opened — see {@link enforceMirrorOwner}.
-  enforceMirrorOwner(config.dataDir, config.address, config.cloudUrl, log);
+  enforceMirrorOwner(config.dataDir, config.address, cloudBase, log);
 
   const opened: OpenLocalDb = await openLocalDb(config.dataDir, {
     ...(log ? { log } : {}),
@@ -681,7 +750,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     const activate = (tokens: CloudTokens): Authed => {
       sessionExpired = false;
       const auth = createCloudAuth({
-        baseUrl: config.cloudUrl,
+        baseUrl: cloudBase,
         tokens,
         ...(config.fetchImpl ? { fetchImpl: config.fetchImpl } : {}),
         ...(keyProvider ? { keyProvider } : {}),
@@ -875,15 +944,31 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       // and `offline-guard.ts` replaces every API that could leave the process — so it has to be
       // asked here, by the process that already dials this server for everything else.
       //
-      // ── IT PROBES `config.cloudUrl` AND NOTHING THE REQUEST SAYS, WHICH IS THE WHOLE POINT ──
+      // ── IT TAKES A CANDIDATE ORIGIN, AND THAT IS A DELIBERATE WIDENING ────────────────────
       //
-      // The body is not read and there is no URL parameter. A route that dialled an address out of
-      // the request would turn the one bridge the window is allowed into a general-purpose request
-      // forwarder running outside the webview's sandbox — every claim in `bridge-fetch.ts`'s
-      // header about the page having no way to address anything but this engine would stop being
-      // true. The door instead CONFIGURES the engine for the typed address (which is a settings
-      // write the shell owns and refuses secrets on) and then asks this route what the engine it
-      // just started can see. Same information, no new reach.
+      // The first version probed only the CONFIGURED base, on the reasoning that a route dialling an
+      // address out of the request would turn the one bridge the window is allowed into a
+      // general-purpose request forwarder. Two things were wrong with that, both raised by review.
+      //
+      // THE REASONING DID NOT HOLD. `engine_configure` is also a command the window holds, so the
+      // window could already choose the address and then ask this route what answered. The reach was
+      // never bounded by where the value was read from — only by what the value may BE.
+      //
+      // AND THE ORDER IT FORCED WAS DESTRUCTIVE. Probing the configured base means configuring
+      // first, and configuring for a different server runs `enforceMirrorOwner`, which discards the
+      // previous mirror and its sealed session before the database opens. So a MISTYPED address
+      // cost somebody their whole hosted mirror and a full re-sync — for a typo, before anything had
+      // been proved, with Back offering no way to undo it. That contradicts what the door is for:
+      // the address step exists precisely so that nothing is committed until the server has
+      // answered.
+      //
+      // So the candidate is read from the body and the door probes BEFORE it configures anything.
+      // What that costs, stated plainly rather than argued away: a window running hostile script can
+      // make this process issue `GET <origin>/api/hello` for an origin it chooses, without a restart
+      // between attempts. It is bounded — `normalizeOrigin` admits only https, or http on loopback,
+      // with no path, query, fragment or credentials, and the path is always `/api/hello` — and it
+      // is a cheaper version of something the window could already do. That trade buys removing a
+      // real, reachable-by-accident data loss from every self-hoster's first attempt.
       //
       // ── `/hello` AND NOT `/health`, BECAUSE ONLY ONE OF THEM SAYS *WHAT* ANSWERED ───────────
       //
@@ -900,10 +985,73 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       // the door nothing — it is on the far end of the same pipe — and means nothing that is not
       // this window can make this process dial anything.
       if (req.method === "POST" && path === "/cloud/probe") {
-        return probeCloudServer(config.cloudUrl, config.fetchImpl ?? fetch);
+        let candidate: unknown = null;
+        try {
+          candidate = ((await req.json()) as { origin?: unknown }).origin ?? null;
+        } catch {
+          /* No body, or not JSON: probe what this engine is configured for. */
+        }
+        if (candidate === null || candidate === undefined) {
+          return probeCloudServer(cloudBase, config.fetchImpl ?? fetch);
+        }
+        if (typeof candidate !== "string") {
+          return json(
+            { error: { code: "invalid_request", message: "the origin to probe must be text" } },
+            400,
+          );
+        }
+        /* THROUGH THE DOOR'S OWN PARSE, which is the whole of the bound on what this route can be
+           made to dial: https, or http on loopback, with no path, query, fragment or credentials.
+           The `/api` is composed here rather than accepted, so the path is never the caller's. */
+        const origin = normalizeOrigin(candidate);
+        if (origin === null) {
+          return json(
+            {
+              error: {
+                code: "invalid_request",
+                message:
+                  "that is not a server address this app can open: it must be https (or http on " +
+                  "this machine), with nothing after the host",
+              },
+            },
+            400,
+          );
+        }
+        return probeCloudServer(apiBaseFor(origin), config.fetchImpl ?? fetch);
       }
 
       if (req.method === "POST" && path === "/cloud/signin/challenge") {
+        /* ── A BROWSER HAND-OFF ONLY EVER MAKES SENSE AGAINST THE HOSTED SERVICE ──────────────
+           The ceremony's other half is a PAGE, and the only page the shell can open is one whose
+           address it owns — all of them ohmail.app's. So on a self-hosted base the sign-in surface
+           would send somebody's browser to OUR service, mint a code there, and then claim it
+           against the OPERATOR's server.
+
+           AND THE CLAIM CARRIES THE VERIFIER. `cloudSignIn` posts `{code, verifier}` to the
+           configured base (`cloud-signin.ts`, the browser path), and that pair is exactly what is
+           needed to spend the code at ohmail.app. So the ceremony would not merely fail on the
+           wrong server — it would hand a third party a complete, two-minute account-takeover
+           primitive for the person's HOSTED account, from a screen that says "Sign in". Raised by
+           review, which found the path reachable through the reconnect surface after a self-hosted
+           session expires.
+
+           REFUSED HERE rather than hidden in the window, because the window's wording is not a
+           guard: an install whose session expired renders the shared hosted sign-in surface for any
+           cloud door. This makes the attempt impossible instead of unlikely, and names the path
+           that does work. */
+        if (baseIsForeign(cloudBase, config.handoffBase ?? MANAGED_CLOUD_BASE)) {
+          return json(
+            {
+              error: {
+                code: "handoff_not_available",
+                message:
+                  "Signing in through a browser only works with the hosted ohmail service. On " +
+                  "your own server, sign in with your password and authenticator code.",
+              },
+            },
+            409,
+          );
+        }
         if (authed) {
           return json(
             { error: { code: "already_signed_in", message: "this install already holds a session" } },
@@ -942,7 +1090,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         try {
           tokens = await cloudSignIn(
             {
-              baseUrl: config.cloudUrl,
+              baseUrl: cloudBase,
               ...(config.fetchImpl ? { fetchImpl: config.fetchImpl } : {}),
               ...(log ? { log } : {}),
               // FROM THE BINDING ABOVE, NEVER FROM `body`. The verifier is an OPTION and not a
@@ -993,7 +1141,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         try {
           hostedAddress = await cloudIdentity(
             {
-              baseUrl: config.cloudUrl,
+              baseUrl: cloudBase,
               ...(config.fetchImpl ? { fetchImpl: config.fetchImpl } : {}),
               ...(log ? { log } : {}),
             },

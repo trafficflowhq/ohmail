@@ -95,13 +95,13 @@ export function selfHostProblem(typed: string): string | null {
  * called after `engine_configure` has been accepted and the engine has settled, which is the order
  * {@link enterSelfHostDoor} takes and the order the address step takes.
  */
-export async function probeConfiguredServer(): Promise<string | null> {
+export async function probeConfiguredServer(candidateOrigin?: string): Promise<string | null> {
   let res: Response;
   try {
     res = await bridgeFetch("/cloud/probe", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: "{}",
+      body: JSON.stringify(candidateOrigin === undefined ? {} : { origin: candidateOrigin }),
     });
   } catch (err) {
     return sentence(err);
@@ -133,23 +133,23 @@ export interface SelfHostStep {
  * this is the "your server's address" step, and its whole job is to fail here rather than three
  * fields later with a sentence about credentials.
  *
- * ── THE CONFIGURE COMES FIRST, AND IT IS NOT AVOIDABLE ────────────────────────────────────────
+ * ── THE PROBE COMES FIRST, AND THE ORDER IS THE FINDING ───────────────────────────────────────
  *
- * The window cannot dial: its CSP is `connect-src 'none'` and `offline-guard.ts` replaces every API
- * that could leave the process. The ENGINE is what dials, and the engine dials what it is
- * configured for. So proving the address requires configuring for it, which replaces the engine —
- * the ordinary cost of any door, and cheap here because nothing has been sealed yet.
+ * This configured the engine and then asked the engine what it could see, on the reasoning that the
+ * window cannot dial — its CSP is `connect-src 'none'` — so proving an address requires configuring
+ * for it. The first half of that is true and the conclusion was wrong, because configuring for a
+ * different server is not free: `enforceMirrorOwner` runs before the database opens and DISCARDS
+ * the previous mirror and its sealed session. So a MISTYPED address cost somebody their entire
+ * hosted mirror and a full re-sync, for a typo, before anything had been proved, with Back offering
+ * no way back. Raised by review, and it contradicted this door's own reason for existing.
  *
- * What that leaves behind on a REFUSAL is worth naming: the settings file now points at a server
- * that did not answer, and the install holds no session for it. That is a state the app already
- * handles — the window lands on the hosted sign-in surface — and it is recoverable by opening this
- * door again with a corrected address. It is strictly better than the alternative, which is
- * discovering the same fact after somebody has typed their password.
+ * So the engine is asked about a CANDIDATE first and nothing is configured until it answers. The
+ * engine validates the candidate through the same parse this file uses and composes the path
+ * itself; see the route in `cloud-engine.ts` for what that widens and what it buys.
  *
- * A MIRROR IS NOT AT RISK IN THAT WINDOW. If the previous door was a different server, the engine
- * this configure starts has already discarded that mirror and its sealed session before opening
- * anything (`enforceMirrorOwner`) — which is the correct thing to have happened, since the install
- * is being moved. If it was the same server, nothing was discarded.
+ * A REFUSAL NOW COSTS NOTHING. The settings file is untouched, the previous door is still the
+ * configured one, and its mirror and session are where they were. Only a server that answered as an
+ * ohmail server, set up and self-hosted, gets as far as replacing the engine.
  */
 export async function configureSelfHostDoor(typedOrigin: string, address: string): Promise<SelfHostStep> {
   const addressProblem = selfHostProblem(typedOrigin);
@@ -163,6 +163,11 @@ export async function configureSelfHostDoor(typedOrigin: string, address: string
      nothing checks. */
   if (base === null) return { status: null, problem: selfHostProblem(typedOrigin) };
 
+  /* PROVE, THEN COMMIT — the local door's ordering, for the same class of reason: the step that
+     cannot be undone goes after the step that can fail. */
+  const unreachable = await probeConfiguredServer(typedOrigin);
+  if (unreachable !== null) return { status: null, problem: unreachable };
+
   try {
     await engineConfigure({ mode: "cloud", cloudUrl: base, address: address.trim() });
   } catch (err) {
@@ -170,9 +175,6 @@ export async function configureSelfHostDoor(typedOrigin: string, address: string
   }
   const settled = await settle();
   if (settled.state !== "serving") return { status: settled, problem: stalled(settled) };
-
-  const unreachable = await probeConfiguredServer();
-  if (unreachable !== null) return { status: settled, problem: unreachable };
   return { status: settled, problem: null };
 }
 

@@ -65,6 +65,51 @@
 export const OPERATOR_CA_FILE = "cloud-ca.pem";
 
 /**
+ * THE ONE SERVER EVERY BUILD BEFORE THE SELF-HOSTED DOOR COULD DIAL.
+ *
+ * Not a default and not a fallback destination — nothing is ever CONFIGURED from this value. It
+ * answers exactly one question: *what server does a mirror-owner record that names no server
+ * belong to?*
+ *
+ * ── WHY "ADOPT IT" WAS THE WRONG ANSWER, WHICH IS WORTH WRITING DOWN BECAUSE IT WAS WRITTEN ───
+ *
+ * The first version of this file treated a recorded base of `null` as "cannot compare, so not a
+ * change of server", by analogy with `credential-host.ts`'s one-sided default. That analogy holds
+ * for a credential whose host was never recorded — there is genuinely nothing to compare. It does
+ * NOT hold here, and the difference is that this absence is not unknown: a Cloud mirror written by
+ * any earlier build was built against this address, because it was a constant in the shell and
+ * there was no way to configure another.
+ *
+ * Treating it as unknown created a credential leak on the MIGRATION LAUNCH — the one launch this
+ * reasoning was supposed to protect:
+ *
+ *   1. an existing install holds `cloud-tokens.seal` minted by this service, and a one-line marker;
+ *   2. the person updates and immediately points the door at another server at the same address;
+ *   3. the address is unchanged and the recorded base is absent, so nothing looks foreign — the
+ *      mirror and the sealed session both survive, and the marker is rewritten as if the new server
+ *      had always owned them;
+ *   4. the engine boots and puts this service's bearer in an `Authorization` header addressed to
+ *      that server, which can then answer 401 and collect the refresh token too.
+ *
+ * Reading the absence as THIS BASE makes step 3 a positive disagreement, so the seal and the mirror
+ * are discarded before anything is dialled. It costs nothing in the ordinary case: an existing
+ * hosted install relaunching against this same address compares equal and keeps its mirror.
+ */
+export const MANAGED_CLOUD_BASE = "https://api.ohmail.app";
+
+/**
+ * The base a mirror-owner record belongs to: what it says, or — when it says nothing — the one
+ * server the build that wrote it could have been talking to. See {@link MANAGED_CLOUD_BASE}.
+ *
+ * `null` in, `MANAGED_CLOUD_BASE` out. The caller must only ask this of a record that EXISTS; a
+ * missing record is a fresh directory with nothing to compare and is adopted, which is a different
+ * question and deliberately not this function's.
+ */
+export function recordedBaseOfExisting(base: string | null): string {
+  return base ?? MANAGED_CLOUD_BASE;
+}
+
+/**
  * ── THE `/api` SUFFIX IS NOT COSMETIC, AND IT IS THE ONE THING A SELF-HOST DOOR CANNOT GUESS ───
  *
  * The two deployments do not present the API at the same place, and the difference is invisible
@@ -113,6 +158,14 @@ export function apiBaseFor(origin: string): string {
  * ── WHAT IS REFUSED, AND WHY EACH REFUSAL IS BETTER THAN A REPAIR ──────────────────────────────
  *
  *  · A SCHEME THAT IS NOT `http`/`https`. Nothing else is an origin this app can dial.
+ *  · **`http:` ON ANYTHING BUT LOOPBACK.** This accepted cleartext for every hostname, and that
+ *    made the door's own promise false: the address step says ohmail verifies certificates and has
+ *    no way to skip that, while `http://ohmail.example.com` skips TLS entirely — there is no
+ *    certificate and no server authentication at all. An on-path peer answers the probe with
+ *    `{"product":"ohmail"}`, the door advances, and the account password and the authenticator code
+ *    are posted to whoever is listening. Loopback is the one exception and it is not a loophole:
+ *    `http://localhost` is a deployment the self-host stack documents and supports, and a
+ *    connection that never leaves the machine has no path for anyone to be on.
  *  · A PATH. `https://ohmail.example.com/api` composed with {@link apiBaseFor} is `…/api/api`,
  *    which the API canonicalizes exactly one `/api` off and then 404s. Silently stripping the path
  *    would be guessing which half the operator meant; the stack's own `OHMAIL_ORIGIN` is scheme +
@@ -137,6 +190,7 @@ export function normalizeOrigin(typed: string): string | null {
     return null;
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  if (url.protocol === "http:" && !isLoopbackHost(url.hostname)) return null;
   if (url.username !== "" || url.password !== "") return null;
   if (url.search !== "" || url.hash !== "") return null;
   if (url.pathname !== "" && url.pathname !== "/") return null;
@@ -145,6 +199,25 @@ export function normalizeOrigin(typed: string): string | null {
      lower-cases the hostname. `url.origin` is the same value for these two schemes and is used in
      preference to composing one, so this cannot drift from the platform's own definition. */
   return url.origin;
+}
+
+/**
+ * IS THIS HOSTNAME THIS MACHINE, so that a cleartext connection never leaves it?
+ *
+ * The set is exactly what cannot be reached from another host: the name `localhost` and any name
+ * under it (browsers and the URL standard treat `*.localhost` as loopback), the whole of
+ * `127.0.0.0/8`, and IPv6 `::1`. `new URL` normalises an IPv6 literal into brackets, hence the
+ * two spellings.
+ *
+ * DELIBERATELY NOT "private" or "link-local". `10.x`, `192.168.x` and `169.254.x` are reachable
+ * from every other machine on that network, which is where an on-path peer would be — a LAN is not
+ * a trust boundary, and treating it as one is how a password ends up on somebody's wifi.
+ */
+function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  if (host === "localhost" || host.endsWith(".localhost")) return true;
+  if (host === "[::1]" || host === "::1") return true;
+  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
 }
 
 /**
@@ -159,6 +232,19 @@ export function normalizeOrigin(typed: string): string | null {
  * The PATH is kept and compared. It is what tells `https://ohmail.test/api` from
  * `https://ohmail.test`, and those two are genuinely different bases — one reaches the API and one
  * reaches the web app.
+ *
+ * ── A QUERY, A FRAGMENT OR USERINFO IS REFUSED, NOT DROPPED ───────────────────────────────────
+ *
+ * This used to strip them, which is wrong in both directions and review named both. Dropping makes
+ * two DIFFERENT bases compare EQUAL: `https://gateway/api` and `https://gateway/api?upstream=b` are
+ * plausibly two backends behind one gateway, and reading them as the same server is exactly the
+ * comparison that lets a sealed session survive a move between them. And a dropped component is a
+ * value the caller believed it had configured, silently not in effect.
+ *
+ * Refusing is the only reading that is right for both jobs this function has. As a COMPARISON it
+ * can no longer erase a difference; as a CANONICALIZER it fails a base that carries anything the
+ * composition below it cannot represent, and the caller (`createCloudSidecar`) refuses the launch
+ * rather than dialling something other than what it was given.
  */
 export function normalizeBase(value: string): string | null {
   const trimmed = value.trim();
@@ -170,6 +256,8 @@ export function normalizeBase(value: string): string | null {
     return null;
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  if (url.search !== "" || url.hash !== "") return null;
+  if (url.username !== "" || url.password !== "") return null;
   const path = url.pathname.replace(/\/+$/, "");
   return `${url.origin}${path}`;
 }

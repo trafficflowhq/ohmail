@@ -405,6 +405,55 @@ describe("the door chooser", () => {
     expect(requestedUrls(it)).toContain("/cloud/probe");
   });
 
+  /**
+   * ── THE PROBE COMES BEFORE THE CONFIGURE, AND A REFUSAL COSTS NOTHING ───────────────────────
+   *
+   * The first version configured first and then asked. Configuring for a different server runs
+   * `enforceMirrorOwner`, which discards the previous mirror and its sealed session before the
+   * database opens — so a MISTYPED address cost somebody their whole hosted mirror and a full
+   * re-sync, for a typo, before anything had been proved. Raised by review.
+   *
+   * Both halves are pinned: the ORDER, and the property that follows from it.
+   */
+  it("proves the server BEFORE it configures anything", async () => {
+    const it = install();
+    const el = await render("server");
+    await type(el, "server-origin", OPERATOR_ORIGIN);
+    await type(el, "server-address", ADDRESS);
+    await press(el, "Continue");
+
+    const order = it.asked.map((a) => (a.command === "engine_request" ? String(a.payload!.url) : a.command));
+    expect(order.indexOf("/cloud/probe")).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf("/cloud/probe")).toBeLessThan(order.indexOf("engine_configure"));
+  });
+
+  it("a server that does not answer leaves the previous door untouched — mirror and session", async () => {
+    // An install already mirroring the hosted service, with a session sealed by it.
+    const it = install({ base: CLOUD_URL, address: ADDRESS });
+    it.probe = {
+      status: 502,
+      body: JSON.stringify({
+        error: {
+          code: "cloud_probe_failed",
+          message: `Nothing is answering at ${OPERATOR_BASE}/hello.`,
+          details: { kind: "refused", target: `${OPERATOR_BASE}/hello` },
+        },
+      }),
+    };
+    const el = await render("server");
+    await type(el, "server-origin", OPERATOR_ORIGIN);
+    await type(el, "server-address", ADDRESS);
+    await press(el, "Continue");
+
+    expect(el.querySelector(".join-error")!.textContent).toContain("Nothing is answering");
+    // NOTHING was configured, so nothing was discarded: the hosted mirror and its session are where
+    // they were, and the door somebody was on is still the configured one.
+    expect(it.asked.filter((a) => a.command === "engine_configure")).toHaveLength(0);
+    expect(it.sealed).toEqual({ mintedBy: CLOUD_URL, token: `session-minted-by-${CLOUD_URL}` });
+    expect(it.marker).toEqual({ address: ADDRESS, base: CLOUD_URL });
+    expect(el.querySelector("#server-password")).toBeNull();
+  });
+
   it("shows the sign-in only once the server has answered, and locks the address then", async () => {
     const it = install();
     const el = await render("server");

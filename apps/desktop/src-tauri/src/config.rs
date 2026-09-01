@@ -136,6 +136,71 @@ impl Config {
 /// What the file is called inside the app's data directory.
 pub const CONFIG_FILE_NAME: &str = "config.json";
 
+/// The hosted service's own base — the address every build before the self-hosted door used.
+///
+/// Named here for ONE purpose: deciding whether a cloud door is the managed service or somebody's
+/// own server, which is what scopes the operator CA in [`env_for`]. Nothing is defaulted from it.
+pub const MANAGED_CLOUD_BASE: &str = "https://api.ohmail.app";
+
+/// A cloud door's address, refused rather than stored when it is not one this app may dial.
+///
+/// ── WHY THE SHELL CHECKS THIS AT ALL, WHEN THE ENGINE ALSO DOES ─────────────────────────────
+///
+/// Because this is the TRUST BOUNDARY and the engine is downstream of it. `engine_configure` is one
+/// of the commands the window holds, and this function is what stands between a value that window
+/// chose and a settings file on disk that every later launch reads. Raised by review of the
+/// self-hosted door: the reasoning "the address comes from configuration, not from a request" is
+/// worth nothing while configuration is itself a command the same window can issue.
+///
+/// Deliberately CONSERVATIVE rather than clever. There is no URL parser in this process — the app's
+/// manifest is published and licence-audited, and a dependency for four lines is not the trade — so
+/// this refuses the shapes that turn string concatenation into a different request, and leaves
+/// canonicalization to the engine, which has a real parser and re-composes the base from its parts:
+///
+///  · a scheme other than `http://` or `https://`, so nothing but the two dialable schemes lands;
+///  · `#`, which is the sharp one. Every URL the engine composes is `base + path`, so a fragment in
+///    the base makes the path part of a fragment that is never sent — `http://h:p#/` + `/hello`
+///    goes out as `GET /` at that address, and so does every other route;
+///  · `?`, for the same class of reason;
+///  · `@`, which is how credentials ride inside an authority;
+///  · whitespace and control characters, which the URL standard strips rather than rejects, so a
+///    value carrying them means something different after parsing than it looks like here — and a
+///    line break in particular is what the mirror-owner record's framing had to be hardened against.
+///
+/// A value this accepts may still be refused by the engine's own parse, which is the intended
+/// order: two gates, the strict one where the parser is.
+fn checked_cloud_url(value: &str) -> Result<String, String> {
+    let trimmed = value.trim();
+    let scheme_ok = trimmed.starts_with("https://") || trimmed.starts_with("http://");
+    if !scheme_ok {
+        return Err(
+            "the cloud door's address must begin with https:// (or http:// for a server on this \
+             machine)"
+                .to_string(),
+        );
+    }
+    if trimmed.contains('#') || trimmed.contains('?') || trimmed.contains('@') {
+        return Err(
+            "the cloud door's address may not carry a query, a fragment or a sign-in".to_string(),
+        );
+    }
+    if trimmed.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err("the cloud door's address may not contain spaces or control characters".to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
+/// Whether a cloud door points at somebody's OWN server rather than at the hosted service.
+///
+/// Compared with the trailing slash and the case of the scheme+host folded, because
+/// `https://api.ohmail.app/` and `https://API.ohmail.app` are the same address and must not be
+/// mistaken for a self-hosted one — that mistake would hand the operator CA to the managed door,
+/// which is the whole thing [`env_for`]'s scoping exists to prevent.
+fn is_self_hosted_cloud(cloud_url: &str) -> bool {
+    let fold = |s: &str| s.trim().trim_end_matches('/').to_lowercase();
+    fold(cloud_url) != fold(MANAGED_CLOUD_BASE)
+}
+
 /// The file an operator drops their own certificate authority's root into.
 ///
 /// The same name the engine's refusal tells them to use and the same name the door's address step
@@ -258,8 +323,10 @@ pub fn parse(value: &serde_json::Value) -> Result<Config, String> {
             }))
         }
         "cloud" => Ok(Config::Cloud(CloudDoor {
-            cloud_url: required_string(map, "cloudUrl")
-                .map_err(|_| "the cloud door needs the hosted service's address".to_string())?,
+            cloud_url: checked_cloud_url(
+                &required_string(map, "cloudUrl")
+                    .map_err(|_| "the cloud door needs the hosted service's address".to_string())?,
+            )?,
             address: required_string(map, "address")
                 .map_err(|_| "the cloud door needs the mailbox address".to_string())?,
         })),
@@ -344,12 +411,38 @@ pub fn env_for(config: &Config, root: &Path) -> Vec<(OsString, OsString)> {
     // spawn rather than cached, so an operator who drops the file in and reopens the app is
     // covered, which is what the door's sentence tells them to do.
     //
-    // BOTH DOORS, and that is not scope creep. An operator whose IMAP server presents a private
-    // CA has the identical problem with the identical fix, and a variable that helped one door and
-    // not the other would be a distinction nothing in the product can justify.
-    let ca = root.join(OPERATOR_CA_FILE);
-    if ca.is_file() {
-        env.push((OsString::from("NODE_EXTRA_CA_CERTS"), ca.into_os_string()));
+    // ── AND ONLY ON A SELF-HOSTED CLOUD DOOR. THIS SAID "BOTH DOORS", AND THAT WAS WRONG ─────
+    //
+    // The variable is process-wide inside the engine it is given to: it widens who may satisfy
+    // hostname verification for EVERY connection that process makes. The first version composed it
+    // for both doors on the reasoning that an operator with a private CA on their IMAP server has
+    // the same problem — true, and it ignored what else is in reach. A file left behind after
+    // somebody moves back to the hosted service would then be trusted by the MANAGED door, so
+    // whoever holds that CA key could present a certificate for `api.ohmail.app` and receive the
+    // account's bearer and refresh token; on the local door, one for the user's own IMAP and SMTP
+    // host, and receive the mailbox password. Raised by review of this slice.
+    //
+    // Scoped here, the blast radius is exactly the server the operator installed it for, and that
+    // is structural rather than careful: a cloud-door engine composes NO IMAP or SMTP settings at
+    // all (see the branch below, and `unset_for`, and the engine's own refusal to start in cloud
+    // mode with any `OHMAIL_IMAP_*` present), so the only host it can dial is its configured base.
+    // The managed base is excluded by name, so the door that holds the hosted session never runs
+    // with a widened trust pool.
+    //
+    // A per-origin trust store would be tighter still — the CA attached to one HTTP client for one
+    // hostname instead of to the process — and it is not what this does. What it needs is a custom
+    // TLS dispatcher threaded through the bearer client, the mirror and the write-through proxy;
+    // said plainly rather than implied, because the sentence above is the bound that actually holds
+    // today.
+    let self_hosted_cloud = match config {
+        Config::Cloud(c) => is_self_hosted_cloud(&c.cloud_url),
+        Config::Local(_) => false,
+    };
+    if self_hosted_cloud {
+        let ca = root.join(OPERATOR_CA_FILE);
+        if ca.is_file() {
+            env.push((OsString::from("NODE_EXTRA_CA_CERTS"), ca.into_os_string()));
+        }
     }
     match config {
         Config::Local(l) => {

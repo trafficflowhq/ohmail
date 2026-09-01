@@ -423,15 +423,23 @@ fn the_host_setting_round_trips_and_everything_broken_reads_as_disabled() {
 // the operating system's trust store — so without this variable the engine cannot see their
 // server at all, whatever they have installed on the machine. See `env_for`.
 
+/// A cloud door pointed at somebody's OWN server — the only door the operator CA belongs to.
+fn self_hosted_door() -> Config {
+    Config::Cloud(CloudDoor {
+        cloud_url: "https://ohmail.example.com/api".to_string(),
+        address: "someone@example.com".to_string(),
+    })
+}
+
 #[test]
-fn an_operator_ca_is_composed_for_both_doors_when_the_file_is_there() {
+fn an_operator_ca_reaches_only_the_self_hosted_door() {
     let dir = std::env::temp_dir().join(format!("ohmail-config-ca-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("mkdir");
 
-    // ABSENT: nothing is composed. Node prints a warning for a path that does not exist, on every
-    // launch, at every user — so the empty case has to compose nothing at all rather than a path.
-    for config in [local_door(), cloud_door()] {
+    // ABSENT: nothing is composed anywhere. Node prints a warning for a path that does not exist,
+    // on every launch, at every user — so the empty case has to compose nothing at all.
+    for config in [local_door(), cloud_door(), self_hosted_door()] {
         let env = env_map(&env_for(&config, &dir));
         assert!(
             !env.contains_key("NODE_EXTRA_CA_CERTS"),
@@ -442,23 +450,100 @@ fn an_operator_ca_is_composed_for_both_doors_when_the_file_is_there() {
     let ca = dir.join(OPERATOR_CA_FILE);
     fs::write(&ca, "-----BEGIN CERTIFICATE-----\n").expect("write");
 
-    // PRESENT: composed for BOTH doors. An operator whose IMAP server presents a private CA has
-    // the identical problem with the identical fix.
+    // PRESENT, AND ONLY ON THE SELF-HOSTED DOOR.
+    assert_eq!(
+        env_map(&env_for(&self_hosted_door(), &dir))
+            .get("NODE_EXTRA_CA_CERTS")
+            .map(String::as_str),
+        Some(ca.to_string_lossy().as_ref()),
+        "the operator's CA did not reach the engine it was installed for"
+    );
+
+    // THE TWO DOORS IT MUST NOT REACH, and this is the finding rather than a tidiness rule. The
+    // variable widens who may satisfy hostname verification for every connection that engine makes.
+    // A file left behind after somebody moves back to the hosted service would let whoever holds
+    // that CA key present a certificate for api.ohmail.app and receive the account's bearer and
+    // refresh token; on the local door, one for the user's own IMAP and SMTP host, and receive the
+    // mailbox password.
     for config in [local_door(), cloud_door()] {
         let env = env_map(&env_for(&config, &dir));
-        assert_eq!(
-            env.get("NODE_EXTRA_CA_CERTS").map(String::as_str),
-            Some(ca.to_string_lossy().as_ref()),
-            "the operator's CA did not reach the engine for {config:?}"
+        assert!(
+            !env.contains_key("NODE_EXTRA_CA_CERTS"),
+            "the operator's CA widened trust for {config:?}, which is not the server it was for"
         );
     }
 
     // A DIRECTORY of that name is not a certificate file, and must not be composed as one.
     fs::remove_file(&ca).expect("rm");
     fs::create_dir_all(&ca).expect("mkdir");
-    assert!(!env_map(&env_for(&cloud_door(), &dir)).contains_key("NODE_EXTRA_CA_CERTS"));
+    assert!(!env_map(&env_for(&self_hosted_door(), &dir)).contains_key("NODE_EXTRA_CA_CERTS"));
 
     let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_managed_base_is_recognised_through_its_harmless_spellings() {
+    // A trailing slash and a folded case are the SAME address. Reading either as self-hosted would
+    // hand the operator CA to the door that holds the hosted session — the exact thing the scoping
+    // exists to prevent — so the comparison must not be a bare string equality.
+    let dir = std::env::temp_dir().join(format!("ohmail-config-ca-sp-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("mkdir");
+    fs::write(dir.join(OPERATOR_CA_FILE), "-----BEGIN CERTIFICATE-----\n").expect("write");
+
+    for spelling in [
+        "https://api.ohmail.app",
+        "https://api.ohmail.app/",
+        "https://API.ohmail.app",
+        "  https://api.ohmail.app  ",
+    ] {
+        let door = Config::Cloud(CloudDoor {
+            cloud_url: spelling.to_string(),
+            address: "someone@ohmail.app".to_string(),
+        });
+        assert!(
+            !env_map(&env_for(&door, &dir)).contains_key("NODE_EXTRA_CA_CERTS"),
+            "{spelling:?} was read as a self-hosted server"
+        );
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_hostile_cloud_address_is_refused_before_it_reaches_the_settings_file() {
+    // THE TRUST BOUNDARY. `engine_configure` is a command the WINDOW holds, so "the address comes
+    // from configuration rather than from a request" is worth nothing on its own — this function is
+    // what stands between a value that window chose and a file every later launch reads.
+    //
+    // `#` is the sharp one: every URL the engine composes is base + path, so a fragment in the base
+    // makes the path part of a fragment that is never sent, and `http://h:p#/` + `/hello` goes out
+    // as `GET /` at that address.
+    for hostile in [
+        r#"{ "mode": "cloud", "cloudUrl": "http://127.0.0.1:9000#/", "address": "a@b.example" }"#,
+        r#"{ "mode": "cloud", "cloudUrl": "https://h.example?x=1", "address": "a@b.example" }"#,
+        r#"{ "mode": "cloud", "cloudUrl": "https://me:pw@h.example", "address": "a@b.example" }"#,
+        r#"{ "mode": "cloud", "cloudUrl": "file:///etc/passwd", "address": "a@b.example" }"#,
+        r#"{ "mode": "cloud", "cloudUrl": "ftp://h.example", "address": "a@b.example" }"#,
+        r#"{ "mode": "cloud", "cloudUrl": "https://h.example\nhttps://evil.example", "address": "a@b.example" }"#,
+        r#"{ "mode": "cloud", "cloudUrl": "https://h.example with a space", "address": "a@b.example" }"#,
+    ] {
+        let value: serde_json::Value = serde_json::from_str(hostile).expect("fixture json");
+        assert!(parse(&value).is_err(), "the shell accepted {hostile}");
+    }
+
+    // …and the shapes an operator actually types still pass, trimmed.
+    for ok in [
+        r#"{ "mode": "cloud", "cloudUrl": "https://ohmail.example.com/api", "address": "a@b.example" }"#,
+        r#"{ "mode": "cloud", "cloudUrl": "http://localhost:8080/api", "address": "a@b.example" }"#,
+        r#"{ "mode": "cloud", "cloudUrl": "  https://api.ohmail.app  ", "address": "a@b.example" }"#,
+    ] {
+        let value: serde_json::Value = serde_json::from_str(ok).expect("fixture json");
+        let parsed = parse(&value).unwrap_or_else(|e| panic!("the shell refused {ok}: {e}"));
+        match parsed {
+            Config::Cloud(c) => assert_eq!(c.cloud_url, c.cloud_url.trim()),
+            Config::Local(_) => panic!("a cloud configuration parsed as a local door"),
+        }
+    }
 }
 
 #[test]
