@@ -10,7 +10,35 @@
 #    cookies carry `Secure` unconditionally, and Safari — alone among the major engines —
 #    refuses Secure cookies over http://localhost. Same-box Safari therefore needs the HTTPS
 #    form (or any Chromium/Firefox browser); a real domain is unaffected.
+#  · `https://ohmail.test`, `https://mail.lan`, `https://ohmail.internal` — a PRIVATE name on
+#    your own network. Set `OHMAIL_TLS_INTERNAL=1` in `.env` for these; see below.
 {$OHMAIL_ORIGIN} {
+	# ── A PRIVATE ORIGIN NEEDS ITS OWN CA, AND THE DEFAULT IS NOT MERELY UNHELPFUL ──────────
+	#
+	# Caddy picks the internal issuer on its own for `localhost` and for IP addresses, and for
+	# NOTHING else — a private name like `ohmail.test` or `mail.lan` goes to ACME like any
+	# public domain. Measured on a fresh self-host stack at `https://ohmail.test`:
+	#
+	#   1. every request fails the handshake with `tlsv1 alert internal error`, which names
+	#      nothing the operator can act on and appears in no place they would look;
+	#   2. Caddy registers a REAL ACCOUNT against Let's Encrypt PRODUCTION from the operator's
+	#      own machine — before anyone has agreed to anything — and orders a certificate;
+	#   3. LE refuses (`Domain name does not end with a valid public suffix`), and Caddy then
+	#      RETRIES for `max_duration` — thirty days — so one `docker compose up` on a private
+	#      name becomes a month of rejected orders against a shared public service, which is
+	#      how an account earns a failed-authorization rate limit.
+	#
+	# `OHMAIL_TLS_INTERNAL=1` selects Caddy's own local CA instead: certificates are issued on
+	# the box, nothing is asked of any public CA, and the operator installs the root once
+	# (`docker compose exec proxy cat /data/caddy/pki/authorities/local/root.crt`) — the README
+	# spells that step out.
+	#
+	# The placeholder expands to the whole directive or to nothing, and it can be exactly one
+	# of those two: docker-compose.yml maps a plain boolean to the literal text with
+	# `${OHMAIL_TLS_INTERNAL:+tls internal}`, so no Caddy configuration is reachable from the
+	# operator's `.env` — only the switch is.
+	{$OHMAIL_TLS_DIRECTIVE:}
+
 	# The API's whole path surface, matched EXACTLY as the API mounts it. NO path
 	# stripping anywhere: the API canonicalizes one leading `/api` off itself, so `/api/sync`
 	# through this proxy and `/sync` from a native client hash identically for idempotency —

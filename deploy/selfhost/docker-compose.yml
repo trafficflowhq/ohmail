@@ -49,6 +49,12 @@ services:
         condition: service_started
     environment:
       OHMAIL_ORIGIN: ${OHMAIL_ORIGIN:?set OHMAIL_ORIGIN in .env — the one browser origin this install serves, e.g. https://mail.example.com}
+      # A PRIVATE ORIGIN'S ISSUER, as a switch rather than as configuration. `:+` substitutes
+      # the literal text only when OHMAIL_TLS_INTERNAL is set and non-empty, so this variable
+      # reaches the Caddyfile as exactly `tls internal` or as nothing — the operator's .env
+      # cannot express any other Caddy directive. See the Caddyfile for what the default costs
+      # on a name ACME can never issue for.
+      OHMAIL_TLS_DIRECTIVE: ${OHMAIL_TLS_INTERNAL:+tls internal}
       # The staging bucket's name, because the Caddyfile's browser-upload route matches the
       # path `/<bucket>/*` — path-style object addressing puts the bucket in the URL. Must
       # stay the same value the api and organizer read, which the shared default guarantees.
