@@ -316,6 +316,55 @@ function prefixUnderBudget(sized: readonly { messageId: string; bytes: number | 
   return take;
 }
 
+/** One sized candidate row: the id and the bytes its body would cost to transfer. */
+interface SizedCandidate { messageId: string; bytes: number | string | null }
+
+/**
+ * SIZE, THEN FETCH — the two passes, and the ONE SNAPSHOT that makes them mean something together.
+ *
+ * Both body modes have the same shape and the same hazard, so they share this rather than each
+ * writing it: a byte budget spent on pass 1's answer bounds pass 2's transfer only if the two
+ * passes see THE SAME ROWS. Under `READ COMMITTED` each statement takes its own snapshot, so a
+ * body that was empty (or withheld, or not yet ingested) when it was sized could be filled in by
+ * the worker between the statements — and pass 2 would then transfer a body the budget was never
+ * asked about. A hundred of those is the unbounded read this whole change removes, restored by a
+ * race. Found by review round 1 on the first version of this code, which ran the two passes as
+ * bare statements.
+ *
+ * `repeatable read` + `read only` pins both to one snapshot, which is exactly what
+ * `organizer-profile-store.ts#serializeOrganizerProfile` does for the same reason a few tables
+ * over (a torn read across statements), and PGlite is real Postgres so the level holds on both
+ * stores. `read only` says the intent out loud and lets the server refuse a write that appears
+ * here later.
+ *
+ * The transaction is CHEAP and its span is two selects with no user work between them: the
+ * candidate window costs two integers a row, and the fetch is already bounded to the budget.
+ */
+async function sizedThenFetch<R extends { messageId: string }>(
+  ctx: ServiceContext,
+  spec: {
+    /** The candidate window, sizes only — never a body value. */
+    window: (tx: Db) => PromiseLike<SizedCandidate[]>;
+    /** How many of the window are eligible (the rest is the has-more sentinel), or `null` for all. */
+    take: number | null;
+    /** The bodies for the prefix that fits. */
+    fetch: (tx: Db, ids: string[]) => PromiseLike<R[]>;
+    item: (row: R) => MessageBodyBatchItem;
+    /** Given the ids taken and the whole candidate window, the cursor for the rest. */
+    cursor: (taken: string[], candidates: readonly SizedCandidate[]) => string | null;
+  },
+): Promise<Page<MessageBodyBatchItem>> {
+  return asTx(ctx).transaction(async (tx) => {
+    const db = asDb(tx);
+    const candidates = await spec.window(db);
+    const eligible = spec.take === null ? candidates : candidates.slice(0, spec.take);
+    const taken = prefixUnderBudget(eligible);
+    if (taken.length === 0) return { items: [], nextCursor: null };
+    const rows = await spec.fetch(db, taken);
+    return { items: rows.map(spec.item), nextCursor: spec.cursor(taken, candidates) };
+  }, { isolationLevel: "repeatable read", accessMode: "read only" });
+}
+
 /**
  * MessageService — the read/patch/move surface over `messages`.
  * Reads are account-scoped (a cross-account id is a 404). Every client-visible
@@ -497,55 +546,48 @@ export class MessageService {
       filters.push(gt(messages.id, after));
     }
 
-    // ── PASS 1: THE SIZES. `limit + 1` — the extra row is how a further page is detected. ──
-    // No body value is selected here, so the whole candidate window costs two integers a row
-    // however large the bodies are. See {@link BODY_BYTES}.
-    const sized = await ctx.db.select({ messageId: messages.id, bytes: BODY_BYTES }).from(messages)
-      .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
-      .where(and(...filters))
-      .orderBy(asc(messages.id))
-      .limit(limit + 1);
-
-    const underBudget = prefixUnderBudget(sized.slice(0, limit));
-    if (underBudget.length === 0) return { items: [], nextCursor: null };
-
-    // ── PASS 2: THE BODIES, for exactly the prefix that fits. ──
-    // Account-scoped AGAIN rather than trusting pass 1's ids: `message_bodies` has no
-    // `account_id`, so the join through `messages` with this predicate IS the authorization, and
-    // an authorization that holds only because an earlier query filtered correctly is one edit
-    // away from not holding. `underBudget.length` ≤ `limit` ≤ BODIES_MAX_LIMIT, so the `IN` list
-    // is bounded by the page ceiling, not by the account's size.
-    const rows = await ctx.db.select({
-      messageId: messages.id,
-      text: messageBodies.text,
-      html: messageBodies.html,
-      loadedRemoteContent: messageBodies.loadedRemoteContent,
-      withheldReason: messageBodies.withheldReason,
-    }).from(messages)
-      .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
-      .where(and(eq(messages.accountId, ctx.accountId), inArray(messages.id, underBudget)))
-      .orderBy(asc(messages.id))
-      .limit(underBudget.length);
-
-    const items: MessageBodyBatchItem[] = rows.map((r) => ({
-      messageId: r.messageId,
-      text: r.text ?? "",
-      html: r.html ?? null,
-      loadedRemoteContent: r.loadedRemoteContent ?? false,
+    return sizedThenFetch(ctx, {
+      window: (tx) => tx.select({ messageId: messages.id, bytes: BODY_BYTES }).from(messages)
+        .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
+        .where(and(...filters))
+        .orderBy(asc(messages.id))
+        // `limit + 1`: the extra row is how a further page is detected without a second query.
+        .limit(limit + 1),
+      take: limit,
+      fetch: (tx, underBudget) => tx.select({
+        messageId: messages.id,
+        text: messageBodies.text,
+        html: messageBodies.html,
+        loadedRemoteContent: messageBodies.loadedRemoteContent,
+        withheldReason: messageBodies.withheldReason,
+      }).from(messages)
+        .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
+        .where(and(eq(messages.accountId, ctx.accountId), inArray(messages.id, underBudget)))
+        .orderBy(asc(messages.id))
+        .limit(underBudget.length),
       // The marker rides the MIRROR mode deliberately: without it a withheld body mirrors as
       // an empty complete one, the gap query never re-asks, and the desktop tells the same
       // lie the web used to. A fact about the stored row, not a rehydrate.
-      ...withheldOf(r.withheldReason),
-    }));
-
-    // A next page exists iff a CANDIDATE row sits beyond the last one included — either the
-    // `limit + 1` sentinel, or a row the byte budget stopped short of. Measured against `sized`
-    // and not against `items`: a row deleted between the two passes would otherwise end the walk.
-    const last = items[items.length - 1];
-    const nextCursor = last && underBudget.length < sized.length
-      ? encodeListCursor(last.messageId)
-      : null;
-    return { items, nextCursor };
+      item: (r) => ({
+        messageId: r.messageId,
+        text: r.text ?? "",
+        html: r.html ?? null,
+        loadedRemoteContent: r.loadedRemoteContent ?? false,
+        ...withheldOf(r.withheldReason),
+      }),
+      // A next page exists iff a CANDIDATE row sits beyond the last one included — either the
+      // `limit + 1` sentinel, or a row the byte budget stopped short of.
+      //
+      // The cursor comes from the last CANDIDATE, never from the last ITEM. They are the same id
+      // whenever pass 2 answered in full, and they differ in the one case that matters: a row
+      // deleted between the passes makes `items` shorter, and if the deleted row was the ONLY
+      // one taken then `items` is empty — so an item-derived cursor would be `null` and the
+      // client's body walk would stop while candidates remained. (Round 1 of the review found
+      // this; `limit=1` reaches it with one deletion.)
+      cursor: (taken, candidates) => taken.length < candidates.length
+        ? encodeListCursor(taken[taken.length - 1]!)
+        : null,
+    });
   }
 
   /**
@@ -600,49 +642,48 @@ export class MessageService {
       }
     }
 
-    // PASS 1 — the sizes of the ids this account actually owns, in the answer's own order. A
-    // twenty-message thread of newsletters is real, so this mode needs the byte-aware selection
-    // as much as the keyset one does; it just has no cursor to offer for the remainder.
-    const sized = await ctx.db.select({ messageId: messages.id, bytes: BODY_BYTES }).from(messages)
-      .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
-      .where(and(eq(messages.accountId, ctx.accountId), inArray(messages.id, ids)))
-      .orderBy(asc(messages.id))
-      .limit(BODIES_IDS_MAX);
-
-    const underBudget = prefixUnderBudget(sized);
-    if (underBudget.length === 0) return { items: [], nextCursor: null };
-
-    // PASS 2 — the bodies AND the headers for that prefix, account-scoped again for the reason
-    // the keyset mode gives. The budget covers `text` + `html`; the `headers` bag rides this mode
-    // only, is bounded by at most {@link BODIES_IDS_MAX} rows, and is the input to the derived
-    // posture below rather than something that crosses the wire.
-    const rows = await ctx.db.select({
-      messageId: messages.id,
-      text: messageBodies.text,
-      html: messageBodies.html,
-      headers: messageBodies.headers,
-      loadedRemoteContent: messageBodies.loadedRemoteContent,
-      withheldReason: messageBodies.withheldReason,
-    }).from(messages)
-      .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
-      .where(and(eq(messages.accountId, ctx.accountId), inArray(messages.id, underBudget)))
-      .orderBy(asc(messages.id))
-      .limit(underBudget.length);
-
-    const items: MessageBodyBatchItem[] = rows.map((r) => {
-      const headers = (r.headers as Record<string, unknown>) ?? {};
-      const unsubscribe = unsubscribeHeaderState(headers);
-      return {
-        messageId: r.messageId,
-        text: r.text ?? "",
-        html: r.html ?? null,
-        loadedRemoteContent: r.loadedRemoteContent ?? false,
-        unsubscribe,
-        unsubscribeUrl: unsubscribe === "not_one_click" ? httpsUnsubscribeUri(headers) : null,
-        ...withheldOf(r.withheldReason),
-      };
+    // The same size-then-fetch under one snapshot the keyset mode uses — a twenty-message thread
+    // of newsletters is real, so this mode needs the byte-aware selection as much as that one
+    // does. It differs in two places only: the whole window is eligible (there is no has-more
+    // sentinel to hold back), and there is no cursor to offer for the remainder, so a truncated
+    // answer is simply a short one and the client asks per message for what is missing.
+    return sizedThenFetch(ctx, {
+      window: (tx) => tx.select({ messageId: messages.id, bytes: BODY_BYTES }).from(messages)
+        .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
+        .where(and(eq(messages.accountId, ctx.accountId), inArray(messages.id, ids)))
+        .orderBy(asc(messages.id))
+        .limit(BODIES_IDS_MAX),
+      take: null,
+      // PASS 2 joins the HEADERS, which the keyset mode must not. The budget covers `text` +
+      // `html`; the `headers` bag rides this mode only, is bounded by at most BODIES_IDS_MAX rows,
+      // and is the input to the derived posture below rather than something that crosses the wire.
+      fetch: (tx, underBudget) => tx.select({
+        messageId: messages.id,
+        text: messageBodies.text,
+        html: messageBodies.html,
+        headers: messageBodies.headers,
+        loadedRemoteContent: messageBodies.loadedRemoteContent,
+        withheldReason: messageBodies.withheldReason,
+      }).from(messages)
+        .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
+        .where(and(eq(messages.accountId, ctx.accountId), inArray(messages.id, underBudget)))
+        .orderBy(asc(messages.id))
+        .limit(underBudget.length),
+      item: (r) => {
+        const headers = (r.headers as Record<string, unknown>) ?? {};
+        const unsubscribe = unsubscribeHeaderState(headers);
+        return {
+          messageId: r.messageId,
+          text: r.text ?? "",
+          html: r.html ?? null,
+          loadedRemoteContent: r.loadedRemoteContent ?? false,
+          unsubscribe,
+          unsubscribeUrl: unsubscribe === "not_one_click" ? httpsUnsubscribeUri(headers) : null,
+          ...withheldOf(r.withheldReason),
+        };
+      },
+      cursor: () => null,
     });
-    return { items, nextCursor: null };
   }
 
   async patch(ctx: ServiceContext, id: string, body: MessagePatchBody): Promise<PatchResult> {

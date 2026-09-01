@@ -76,7 +76,7 @@ const CURSOR_KEYSET = new RegExp(
  * the list orders `date desc nulls last`, so a null row sorts AFTER every dated one, while epoch 0
  * sorts among the 1970 mail. The page after an undated row therefore asked for rows older than
  * 1970-01-01 and the undated tail — which is strictly after that point — was unreachable for ever.
- * a null sort key the cursor grammar could not express.
+ * The defect was not the epoch: it was a null sort key the cursor grammar could not express.
  *
  * It is spelled `null` rather than given a punctuation sentinel because a cursor is decoded by
  * hand when a page misbehaves, and `null:<uuid>` says what it is. 4 + 1 + 36 = 41 characters, well
@@ -187,9 +187,21 @@ export function decodeKeysetCursor(cursor: string): { millis: number; id: string
  * reasons — and the addition is the `null:` position described at {@link CURSOR_NULL_KEYSET}.
  * Only `MessageService` issues these, because only its sort column is nullable.
  *
- * A cursor minted before this shape existed encodes an undated row as `0:<uuid>` and still
- * decodes; it resumes at the 1970 boundary as it always did and the client is back on a correct
- * cursor after one page. Cursors are ephemeral, so there is no migration to write.
+ * ── A CURSOR MINTED BY THE OLD SHAPE, AND WHY IT IS NOT VERSIONED ────────────────────────
+ *
+ * A cursor from before this shape existed encodes an undated row as `0:<uuid>`, and it still
+ * decodes — as the epoch, which is a real position and no longer the one it was minted for. So
+ * during a rolling deployment, where a client can hold a page from the old revision and ask the
+ * new one to continue it, that one request answers the undated tail again and skips the dated
+ * rows between 1970 and where the old page stopped. One page, self-healing: the cursor the new
+ * revision hands back is well formed, so the walk is correct from there on.
+ *
+ * **Versioning the shape and refusing unversioned cursors is worse, which is why it is not done.**
+ * It would turn every in-flight cursor into a 400 for the length of the deploy — every client
+ * mid-scroll, not just the ones that happen to have paged onto undated mail — and 400s a client
+ * cannot act on are a worse outcome than one repeated page. `0` also cannot be special-cased
+ * away: it is a legitimate `Date:` header value, and reading a real position as a sentinel is the
+ * mistake this whole shape exists to undo. Cursors are ephemeral; there is no migration to write.
  */
 export function decodeNullableKeysetCursor(cursor: string): { millis: number | null; id: string } {
   const decoded = decodedOr400(cursor);
