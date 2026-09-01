@@ -276,6 +276,13 @@ export async function recordChange(tx: LedgerTx, c: ChangeInput): Promise<bigint
  *
  * Returns the assigned seqs, positionally. An empty list writes nothing and takes no lock.
  */
+/**
+ * How many change rows one INSERT carries. Six bind parameters per row against PostgreSQL's
+ * 65 535-parameter ceiling puts the hard wall at 10 923; this leaves room for a column to be
+ * added without moving the wall onto a caller. See the loop in {@link recordChanges}.
+ */
+const CHANGE_INSERT_CHUNK = 5_000;
+
 export async function recordChanges(tx: LedgerTx, changes: readonly ChangeInput[]): Promise<bigint[]> {
   if (changes.length === 0) return [];
   const accountId = changes[0]!.accountId;
@@ -285,14 +292,35 @@ export async function recordChanges(tx: LedgerTx, changes: readonly ChangeInput[
     if (c.accountId !== accountId) throw new Error("recordChanges: every change must name the same account");
   }
   const seqs = await allocateSeqRange(tx, accountId, changes.length);
-  await tx.insert(changeLog).values(changes.map((c, i) => ({
+  const rows = changes.map((c, i) => ({
     accountId,
     seq: seqs[i]!,
     entityType: c.entityType,
     entityId: c.entityId,
     op: c.op,
     meta: c.meta ?? null,
-  })));
+  }));
+  // ── ONE STATEMENT PER CHUNK, BECAUSE A BIND LIST HAS A CEILING ──────────────────────────
+  //
+  // This was a single `values(rows)`, which is correct for every batch this function was built
+  // for — a cycle's worth of changes — and fails outright above about eleven thousand. Each row
+  // binds SIX parameters and PostgreSQL's protocol allows 65 535 per statement, so 10 923 rows
+  // is the wall: past it the INSERT does not truncate or degrade, it errors.
+  //
+  // It became reachable when a MAILBOX REMOVAL started closing every pending appointment on the
+  // mailbox in one transaction. There the failure is not a retryable blip — the error propagates
+  // out of `MailboxService.delete`, rolls back the tombstone AND the credential delete, and does
+  // so identically on every retry, so the mailbox becomes impossible to remove. A caller cannot
+  // work around it either, because the batch size is a property of the account's data.
+  //
+  // The chunk is well under the ceiling rather than at it: the limit is per STATEMENT and this
+  // is the only statement in the batch, but a margin costs nothing and a future column would
+  // otherwise silently move the wall. Seqs are allocated ONCE above and sliced here, so the
+  // rows keep the exact sequence numbers this call reserved whatever the chunking does, and the
+  // single NOTIFY below still names the highest of them.
+  for (let i = 0; i < rows.length; i += CHANGE_INSERT_CHUNK) {
+    await tx.insert(changeLog).values(rows.slice(i, i + CHANGE_INSERT_CHUNK));
+  }
   // The wake, INSIDE the transaction — Postgres queues it and delivers at COMMIT, so a listener
   // is never woken for a row that rolled back, and never before the row it names is readable.
   // One notification per batch (the highest seq), account id + seq only: see

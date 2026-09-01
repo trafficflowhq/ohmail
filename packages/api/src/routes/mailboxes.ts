@@ -261,8 +261,18 @@ export const mailboxRoutes: Route[] = [
     cost: "work",
     options: { stepUp: true },
     handler: async (req, deps, params) => {
-      await mailbox(deps).delete(serviceContext(deps, req), params.id!);
-      return noContent();
+      const { seq } = await mailbox(deps).delete(serviceContext(deps, req), params.id!);
+      // ── THE DELTA CONTRACT'S ECHO, ON A 204 ────────────────────────────────────────────
+      //
+      // A removal closes the mailbox's pending scheduled sends, which is a `draft` change the
+      // mirror that asked for the removal has to apply. Without the echo it has no seq to wait
+      // for and keeps rendering the appointment until the next drain — `DELETE /drafts/:id`
+      // sets the precedent for a 204 that carries one. Absent when nothing was closed, which is
+      // the ordinary case: there is no change, so there is no seq, and inventing one would name
+      // a row that does not exist.
+      return seq === null
+        ? noContent()
+        : new Response(null, { status: 204, headers: { "X-Sync-Seq": String(seq) } });
     },
   },
 ];

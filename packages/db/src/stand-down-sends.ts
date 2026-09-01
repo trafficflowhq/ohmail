@@ -144,6 +144,18 @@ export interface StandDownSendsResult {
   closed: number;
   /** The drafts that were closed — the log line's evidence, and nothing else reads it. */
   draftIds: string[];
+  /**
+   * THE HIGHEST `change_log` SEQ THIS CLOSE EMITTED, or null when it closed nothing.
+   *
+   * The delta contract's `X-Sync-Seq` echo (the delta contract's own rule: every write advances the sequence it echoes) needs a number to echo, and
+   * the seqs exist — `recordChanges` returns them and this used to drop them on the floor. A
+   * caller that answers 204 with no seq leaves the mirror that made the request with no target
+   * to wait for: it converges on the next `/sync` drain or on the NOTIFY, both of which are
+   * later than read-your-writes, and one of which can be missed.
+   *
+   * The HIGHEST of the batch, because that is what the contract echoes and what the wake names.
+   */
+  seq: bigint | null;
 }
 
 /**
@@ -186,13 +198,15 @@ async function closeAppointmentsWithSentence(
       eq(drafts.status, "scheduled"),
     ))
     .returning({ id: drafts.id });
+  let seq: bigint | null = null;
   if (closed.length > 0) {
-    await recordChanges(tx, closed.map((r) => ({
+    const seqs = await recordChanges(tx, closed.map((r) => ({
       accountId: input.accountId, entityType: "draft" as const, entityId: r.id,
       op: "update" as const, meta: null,
     })));
+    seq = seqs[seqs.length - 1] ?? null;
   }
-  return { closed: closed.length, draftIds: closed.map((r) => r.id) };
+  return { closed: closed.length, draftIds: closed.map((r) => r.id), seq };
 }
 
 /**
@@ -269,16 +283,25 @@ export async function closeStoodDownAppointments(
     // stand-down — a later honest failure, not the silent one this function exists for. Both
     // properties are held by tests beside their own code rather than by this comment.
     //
-    // `disabledReason` as well as `status`, because `disabled` alone has two meanings: with a
-    // reason it is a stand-down (the same mailbox, paused), with none it is a REMOVAL — and a
-    // removal's drafts belong to a row the user deleted, not to an organizer handover. The
-    // removal is not left unhandled by that split: it has its own function below, with its own
-    // sentence, because "schedule it again where the mailbox is organized now" is false about a
-    // mailbox nobody organizes.
-    const [mb] = await tx.select({ status: mailboxes.status, reason: mailboxes.disabledReason })
+    // ── THE PREDICATE IS `organizer_role = 'reader'` (mail 0083), NOT `disabled` + A REASON ──
+    //
+    // It used to read `status='disabled' AND disabled_reason IS NOT NULL`, because that pair WAS
+    // the stand-down: the loser stopped entirely. A loser is now a READER — connected, syncing,
+    // on the roster — so the old predicate matches nothing a stand-down writes any more, and
+    // leaving it would have made this function silently close zero appointments for ever: the
+    // exact orphan it exists to prevent, restored, with the tests still green because they set
+    // up the row the old way.
+    //
+    // The discriminator against a REMOVAL survives the change intact and gets sharper. A removal
+    // is `status='disabled'` with no reason and keeps `organizer_role='organizer'` — nothing
+    // demoted it, the row is simply a tombstone — so the two preconditions are now disjoint on a
+    // column each, rather than on two readings of one. That matters because the sentences differ
+    // in the only thing they must get right: "schedule it again where the mailbox is organized
+    // now" is true of a handover and false about a mailbox nobody organizes.
+    const [mb] = await tx.select({ role: mailboxes.organizerRole })
       .from(mailboxes).where(eq(mailboxes.id, input.mailboxId)).for("update").limit(1);
-    if (!mb || mb.status !== "disabled" || mb.reason === null) {
-      return { closed: 0, draftIds: [] };
+    if (!mb || mb.role !== "reader") {
+      return { closed: 0, draftIds: [], seq: null };
     }
     return closeAppointmentsWithSentence(tx, {
       accountId: input.accountId,
@@ -336,7 +359,7 @@ export async function closeRemovedMailboxAppointments(
     const [mb] = await tx.select({ status: mailboxes.status, reason: mailboxes.disabledReason })
       .from(mailboxes).where(eq(mailboxes.id, input.mailboxId)).for("update").limit(1);
     if (!mb || mb.status !== "disabled" || mb.reason !== null) {
-      return { closed: 0, draftIds: [] };
+      return { closed: 0, draftIds: [], seq: null };
     }
     return closeAppointmentsWithSentence(tx, {
       accountId: input.accountId,
