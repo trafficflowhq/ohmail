@@ -24,7 +24,7 @@ however carefully you filled the form in. Three separate faults sat on that one
 screen — reported by [issue #5](https://github.com/trafficflowhq/ohmail/issues/5),
 which is the only reason any of them was found.
 
-### A first connect works
+### Connecting your own mail server
 
 **"imap host is required", on a form where you had typed the host.** Connecting on
 the desktop app is two requests: the server settings go to the app, which writes
@@ -70,6 +70,22 @@ you want to connect with your mailbox and saved password both still there. The n
 contents are now written beside it and renamed into place, so the file on disk is
 always either the whole old configuration or the whole new one. The same applies to
 the file recording whether this install publishes your mail to your own network.
+
+### What this release does not fix
+
+**Changing an already-connected mailbox to a different server still sends the
+password you had stored to the new server, before you are asked for a new one.**
+Everything above is about a *first* connect, where there is no stored password and
+nothing to send. Re-pointing a mailbox is a different path and it has the wrong
+order: the engine is restarted with the new server and the old password, and it
+tries to log in before you have supplied anything. If you are correcting a typo in
+your own server's name this costs nothing; if you are moving a mailbox to a server
+somebody else runs, that server is offered your previous password. Only the person
+at the machine can reach it, and only for their own mailbox. Fixing it means
+changing the one path that logs in to a real mail server, which is not something to
+do in the same release as the fixes above — so it is stated here rather than
+quietly carried. Until it is fixed, change the password on the old server if you
+move a mailbox to a server you do not control.
 
 ## [0.13.0] — 2026-09-01
 
