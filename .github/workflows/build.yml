@@ -855,7 +855,21 @@ jobs:
           # address has to be on the Exec line or the claim is false for everyone who installs the
           # .deb. Captured into a variable before it is matched: a producer killed by a closed pipe
           # is indistinguishable from one that found nothing.
-          DEB_ENTRY="$(dpkg-deb --fsys-tarfile "$DEB" | tar -xO --wildcards '*/applications/ohmail.desktop')"
+          # The member is named EXACTLY, and there must be exactly one of it. A wildcard like
+          # `*/applications/ohmail.desktop` matches any member with that ending, so a resource or
+          # fixture at some other path would answer for the installed entry — and tar concatenates
+          # every match, which would let the Exec line and the MimeType line come from two
+          # different files. The leading `./` is matched optionally rather than assumed: this
+          # bundler writes the members WITHOUT it, and pinning the spelling to one form is how a
+          # check like this quietly stops matching anything.
+          DEB_MEMBERS="$(dpkg-deb --fsys-tarfile "$DEB" | tar -t)"
+          ENTRY_MEMBER="$(printf '%s\n' "$DEB_MEMBERS" | grep -E '^(\./)?usr/share/applications/ohmail\.desktop$' || true)"
+          ENTRY_COUNT="$(printf '%s\n' "$ENTRY_MEMBER" | grep -c . || true)"
+          if [ "$ENTRY_COUNT" != 1 ]; then
+            echo "the .deb holds $ENTRY_COUNT desktop entries at usr/share/applications/ohmail.desktop" >&2
+            exit 1
+          fi
+          DEB_ENTRY="$(dpkg-deb --fsys-tarfile "$DEB" | tar -xO "$ENTRY_MEMBER")"
           printf '%s\n' "$DEB_ENTRY"
           printf '%s\n' "$DEB_ENTRY" | grep -qx 'Exec=ohmail %U' || {
             echo "the .deb's desktop entry does not hand the URL to the app" >&2; exit 1; }
@@ -969,9 +983,13 @@ jobs:
           # exports spell one as well. The value is what the launcher gives GTK, so the value is
           # what gets asserted: at least one entry that is NOT under the AppDir and IS this
           # architecture's module directory.
+          # GTK_PATH is unset before sourcing for the same reason GDK_BACKEND is: a runner that
+          # happens to export one would satisfy every test below without the artifact setting it
+          # at all — the value would be the RUNNER's, and a hook that had lost the line entirely
+          # would pass.
           GTKPATH="$(
             set +eu
-            unset OHMAIL_SYSTEM_WEBKIT
+            unset OHMAIL_SYSTEM_WEBKIT GTK_PATH
             export APPDIR="$PWD/squashfs-root"
             . "$HOOK" >/dev/null 2>&1
             rc=$?
@@ -1425,7 +1443,21 @@ jobs:
 
           # The same desktop-entry assertion as the x86_64 job, which argues it. Repeated rather
           # than shared because it is an audit of a different artifact.
-          DEB_ENTRY="$(dpkg-deb --fsys-tarfile "$DEB" | tar -xO --wildcards '*/applications/ohmail.desktop')"
+          # The member is named EXACTLY, and there must be exactly one of it. A wildcard like
+          # `*/applications/ohmail.desktop` matches any member with that ending, so a resource or
+          # fixture at some other path would answer for the installed entry — and tar concatenates
+          # every match, which would let the Exec line and the MimeType line come from two
+          # different files. The leading `./` is matched optionally rather than assumed: this
+          # bundler writes the members WITHOUT it, and pinning the spelling to one form is how a
+          # check like this quietly stops matching anything.
+          DEB_MEMBERS="$(dpkg-deb --fsys-tarfile "$DEB" | tar -t)"
+          ENTRY_MEMBER="$(printf '%s\n' "$DEB_MEMBERS" | grep -E '^(\./)?usr/share/applications/ohmail\.desktop$' || true)"
+          ENTRY_COUNT="$(printf '%s\n' "$ENTRY_MEMBER" | grep -c . || true)"
+          if [ "$ENTRY_COUNT" != 1 ]; then
+            echo "the .deb holds $ENTRY_COUNT desktop entries at usr/share/applications/ohmail.desktop" >&2
+            exit 1
+          fi
+          DEB_ENTRY="$(dpkg-deb --fsys-tarfile "$DEB" | tar -xO "$ENTRY_MEMBER")"
           printf '%s\n' "$DEB_ENTRY"
           printf '%s\n' "$DEB_ENTRY" | grep -qx 'Exec=ohmail %U' || {
             echo "the .deb's desktop entry does not hand the URL to the app" >&2; exit 1; }
@@ -1523,9 +1555,13 @@ jobs:
           # exports spell one as well. The value is what the launcher gives GTK, so the value is
           # what gets asserted: at least one entry that is NOT under the AppDir and IS this
           # architecture's module directory.
+          # GTK_PATH is unset before sourcing for the same reason GDK_BACKEND is: a runner that
+          # happens to export one would satisfy every test below without the artifact setting it
+          # at all — the value would be the RUNNER's, and a hook that had lost the line entirely
+          # would pass.
           GTKPATH="$(
             set +eu
-            unset OHMAIL_SYSTEM_WEBKIT
+            unset OHMAIL_SYSTEM_WEBKIT GTK_PATH
             export APPDIR="$PWD/squashfs-root"
             . "$HOOK" >/dev/null 2>&1
             rc=$?
