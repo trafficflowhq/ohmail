@@ -496,8 +496,15 @@ export async function boundedCollect<T, R>(
     deadline?: ImapDeadline;
     folder?: string;
     onOverflow?: "throw" | "stop";
-    /** Retire the connection — the stream is being abandoned mid-command. */
-    onAbandon?: () => void;
+    /**
+     * Retire the connection — the stream is being abandoned mid-command.
+     *
+     * The argument is `notify`: TRUE when this function will NOT throw, so nothing else is going
+     * to report the retirement and the connection's owner has to be told directly. FALSE when it
+     * is about to throw, because then the throw IS the report — and a second, synthetic one
+     * would reset the caller's failure accounting instead of adding to it.
+     */
+    onAbandon?: (notify: boolean) => void;
     map: (item: T) => R;
   },
 ): Promise<R[]> {
@@ -508,11 +515,12 @@ export async function boundedCollect<T, R>(
   for (;;) {
     const step = opts.deadline === undefined
       ? await it.next()
-      : await opts.deadline.race(it.next(), opts.folder, opts.onAbandon);
+      : await opts.deadline.race(it.next(), opts.folder, () => opts.onAbandon?.(false));
     if (step.done === true) break;
     seen++;
     if (seen > opts.max) {
-      opts.onAbandon?.();
+      // `stop` returns a value; `throw` does not. That is exactly the distinction.
+      opts.onAbandon?.(overflow === "stop");
       if (overflow === "stop") break;
       // Thrown BEFORE the item is mapped or pushed: the ceiling is the size of the container,
       // not one past it.

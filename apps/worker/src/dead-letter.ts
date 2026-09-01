@@ -270,7 +270,25 @@ export function classifyIngestFault(err: unknown): IngestFault {
     //
     // Duck-typed on the code rather than by importing the error class, which is why that class
     // publishes one: this module has no business linking the IMAP adapter.
-    if (code === "EIMAPBOUND") return { domain: "infrastructure" };
+    //
+    // ── NOT EVERY BOUND, AND THE EXCLUSION IS NOT TIDINESS ───────────────────────────────────
+    //
+    // This function ALSO backs `sync.ts`'s `isTransportFailure`, so the mapping changes
+    // RECONCILIATION as well as ingest — and the transport arm leaves a `folder_state` row
+    // immediately due with its attempt count unchanged, which is right for a host that is down
+    // and wrong for a condition that will not clear on its own.
+    //
+    // `candidate_body_probes` is exactly such a condition: the destination holds more messages
+    // sharing one Message-ID than the pre-check can disambiguate. Nothing about waiting fixes
+    // that. Routed to transport it would re-run the same SEARCH every cycle for ever, never
+    // entering the widening backoff the reconciler has for precisely this. It keeps the message
+    // domain, where it earns retries and then a durable record an operator can see.
+    //
+    // Every other bound IS the host misbehaving — a flood, an over-large body, a clock — and
+    // those are transport by the same argument the errno set above is.
+    if (code === "EIMAPBOUND" && (err as { bound?: unknown }).bound !== "candidate_body_probes") {
+      return { domain: "infrastructure" };
+    }
     // Both sets, because on the ingest path the only socket is the database's.
     if (PG_DRIVER_CODES.has(code) || TRANSPORT_ERRNOS.has(code)) return { domain: "infrastructure" };
     const cls = sqlStateClass(code);
