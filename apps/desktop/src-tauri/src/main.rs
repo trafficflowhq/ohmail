@@ -73,6 +73,12 @@ mod default_mail;
 mod engine;
 #[cfg(feature = "local-engine")]
 mod host;
+// WHO DRAWS THE FRAME — the app, or the compositor. Always compiled, because the answer
+// decides whether this binary builds a menu bar at all and that is not a feature-gated
+// question: on a tiling Wayland compositor the compositor owns the frame, so ohmail draws
+// neither a title bar nor a menu bar there. Pure and Tauri-free; `menu.rs` performs it, from
+// the one `setup` this binary has.
+mod frame;
 mod menu;
 // The Omarchy theme feed — on an Omarchy desktop the window follows the system theme live.
 // Two modules on purpose: `omarchy_core` is the Tauri-free machinery a standalone harness

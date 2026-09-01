@@ -128,6 +128,42 @@ describe("the AppImage's launcher", () => {
   });
 
   /**
+   * THE LAUNCHER MUST NOT REWRITE THE VARIABLES THAT SAY WHICH DESKTOP THIS IS.
+   *
+   * The app asks four questions of its environment to decide whether the compositor owns the
+   * window frame (`src-tauri/src/frame.rs`): `XDG_CURRENT_DESKTOP`, `XDG_SESSION_DESKTOP`,
+   * `XDG_SESSION_TYPE`, and the compositor's own socket. The AppImage's launcher runs BEFORE the
+   * binary and exports a dozen GTK variables; one line assigning any of these four would silently
+   * decide the answer for every AppImage user — a title bar back on Hyprland, or a title bar gone
+   * on GNOME, with nothing failing anywhere.
+   *
+   * It does not today, and this is a real upstream risk rather than a hypothetical one: the same
+   * file already had to have an unconditional `GDK_BACKEND=x11` taken out of it, and the plugin
+   * this is vendored from is a branch nobody here watches. Asserted the same way that one is —
+   * over the code with the comments stripped, so the explanation above may name the variables.
+   *
+   * `XDG_DATA_DIRS` is deliberately NOT in the list: the launcher does set it, it must (GLib's
+   * `g_get_system_data_dirs`), and it says nothing about which desktop is running.
+   */
+  it("leaves the session's own identity to the session", () => {
+    const code = read(PLUGIN)
+      .split("\n")
+      .filter((line) => !/^\s*#/.test(line))
+      .join("\n");
+    for (const variable of [
+      "XDG_CURRENT_DESKTOP",
+      "XDG_SESSION_DESKTOP",
+      "XDG_SESSION_TYPE",
+      "WAYLAND_DISPLAY",
+      "HYPRLAND_INSTANCE_SIGNATURE",
+    ]) {
+      expect(code, `the launcher assigns ${variable}`).not.toMatch(
+        new RegExp(`${variable}\\s*=`),
+      );
+    }
+  });
+
+  /**
    * The escape hatch. The AppImage's own launcher prepends `$APPDIR/usr/lib` to the library path
    * for everything it starts and nothing downstream can take it back off, so the only way to run
    * against the host's GTK and WebKitGTK is to exec the binary from the hook — which the launcher

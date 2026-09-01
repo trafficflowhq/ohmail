@@ -6,6 +6,21 @@
 //! user looks for an application's commands, and its accelerators have to work before the page
 //! has focus.
 //!
+//! ── AND ON SOME DESKTOPS THERE IS NO BAR AT ALL ────────────────────────────────────────────
+//!
+//! On a tiling Wayland compositor the compositor owns every window's frame: it draws its own
+//! border, it moves and resizes by key, and no window there has a title bar. A menu bar under a
+//! title bar the app should not be drawing is chrome on chrome, so on those sessions this module
+//! builds nothing and the window has neither. `frame.rs` is the rule and carries the evidence for
+//! it; the `setup` below is where it is performed, because a second `setup` is not available.
+//!
+//! The cost is the ACCELERATORS, and it is stated rather than glossed: Ctrl+N and Ctrl+1…Ctrl+5
+//! are bound to menu items, and an uninstalled menu binds nothing. Every one of those actions is
+//! reachable from the client's own keymap — `c` composes, the bare digits switch views, `?`
+//! prints the map — which is what makes this acceptable: the bar was always a second WAY to the
+//! client's commands and never a second implementation. The one thing that lived ONLY here was
+//! the update item, and that is why `updater.rs` now answers a settings pane as well.
+//!
 //! ── ONE OWNER, BECAUSE `Builder::setup` REPLACES AND DOES NOT COMPOSE ───────────────────────
 //!
 //! The menu is installed from `setup`, and a second `setup` on the same builder silently
@@ -164,9 +179,47 @@ pub fn attach<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
             }
         })
         .setup(|app| {
-            install(app.handle())?;
+            /* THE FRAME DECISION LIVES HERE FOR ONE REASON: this is the binary's only `setup`,
+               and a second one would silently replace it (the header above). The rule itself is
+               `frame.rs` — pure, tested against a real Omarchy session's environment and this
+               project's own GNOME one — and it answers two questions from one fact, because a
+               menu bar with no title bar to sit under is not a design anybody chose.
+
+               The order matters: decorations come off BEFORE the menu would have been built, so
+               the window is never asked to lay out a bar it is about to lose. */
+            let frame = crate::frame::decide_from_env();
+            #[cfg(target_os = "linux")]
+            if let Some(said) = crate::frame::describe(|key| std::env::var(key).ok()) {
+                #[cfg(feature = "local-engine")]
+                crate::engine::log_line(format_args!("{said}"));
+                #[cfg(not(feature = "local-engine"))]
+                crate::frame::note(&said);
+            }
+            if !frame.decorations() {
+                undecorate(app.handle());
+            }
+            if frame.menu_bar() {
+                install(app.handle())?;
+            }
             Ok(())
         })
+}
+
+/// Hand the window's frame to the compositor.
+///
+/// Applied to EVERY window this app has, present and future, rather than to `"main"` by name: the
+/// updater's progress window is created later and on demand, and a lone decorated 420×210 window
+/// appearing on a tiling desktop mid-download is the same defect in a smaller rectangle. `windows()`
+/// covers the ones that exist now; `updater.rs` asks the same question of its own builder.
+///
+/// A refusal is not fatal and is not reported: the worst outcome is the title bar this build has
+/// always drawn, on a desktop where it looks wrong — which is exactly where this app was a moment
+/// ago, and is a great deal better than refusing to open.
+fn undecorate<R: Runtime>(app: &AppHandle<R>) {
+    use tauri::Manager;
+    for (_, window) in app.webview_windows() {
+        let _ = window.set_decorations(false);
+    }
 }
 
 /// Build and install the bar.

@@ -219,6 +219,14 @@ export const SHELL_MESSAGE_NAMESPACES = [
   // is the second kind of read the header note warns about and is caught the same way.
   "markAll", "message", "viewError",
   "shortcuts", "sync", "tag", "triage",
+  // `update` is Settings → About → Updates (`src/DesktopUpdate.tsx`) — the app's own update, in
+  // the one place it can always be found. It is a DESKTOP-ONLY namespace: the browser client has
+  // no build to update. Genuinely reachable in the engine-bearing binary, and on the desktops
+  // where the compositor owns the window frame it is the ONLY update affordance there is
+  // (`src-tauri/src/frame.rs` — no menu bar, so no menu item), which makes a missing namespace
+  // here worse than the usual raw key: it would render `update.upToDate` on the one control that
+  // tells somebody whether their mail client is current.
+  "update",
 ] as const;
 
 /**

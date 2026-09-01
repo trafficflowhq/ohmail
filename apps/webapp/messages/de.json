@@ -2064,7 +2064,19 @@
     "desktopOpenWeb": "ohmail.app öffnen",
     "desktopNoBrowser": "Dieser Computer wollte keinen Browser öffnen. Die Seite ist unter ohmail.app.",
     "desktopHoldsCount": "Dieser Computer hat {count, number} von {total, number} Nachrichten deines Kontos. Der Rest bleibt in deinem Konto und wird geladen, sobald du in einer Liste dorthin gelangst oder eine Nachricht öffnest — es fehlt nichts.",
-    "desktopCopyIsACopy": "Deine Post liegt auf deinem Mailserver. Was diese App auf diesem Computer behält, ist eine Kopie — du kannst sie löschen, und im Postfach selbst geht nichts verloren."
+    "desktopCopyIsACopy": "Deine Post liegt auf deinem Mailserver. Was diese App auf diesem Computer behält, ist eine Kopie — du kannst sie löschen, und im Postfach selbst geht nichts verloren.",
+    "remove": "Entfernen",
+    "removeTitle": "{address} entfernen?",
+    "removeStops": "ohmail organisiert dieses Postfach nicht mehr.",
+    "removeMailSafe": "Ihre E-Mails bleiben unberührt. Die ohmail-Ordner und alle Nachrichten bleiben auf Ihrem Mailserver — durch das Entfernen hier wird dort nichts gelöscht.",
+    "removeCredential": "Das von ohmail gespeicherte Passwort für dieses Postfach wird gelöscht.",
+    "removeScheduled": "Geplante Sendungen aus diesem Postfach werden abgebrochen statt gesendet. Jede kehrt mit einer Begründung in die Entwürfe zurück.",
+    "removeCopyStays": "Die von ohmail bereits kopierten E-Mails bleiben in Ihrem Konto und werden nicht mehr aktualisiert. Beim Löschen Ihres Kontos werden sie entfernt.",
+    "removeReconnect": "Sie können dieses Postfach später wieder verbinden.",
+    "removeConfirm": "Postfach entfernen",
+    "removeCancel": "Behalten",
+    "removeWorking": "Wird entfernt…",
+    "factorBodyRemove": "Beim Entfernen eines Postfachs wird das dafür gespeicherte Passwort gelöscht — Ihr Konto verlangt deshalb vorher einen frischen zweiten Faktor."
   },
   "resume": {
     "failedTitle": "Bitte melde dich neu an",
@@ -2588,5 +2600,21 @@
     "offerFailed": "Das ließ sich nicht speichern — versuch es nochmal.",
     "offerDismiss": "Ohmarchy-Angebot ausblenden",
     "offerDismissShort": "Jetzt nicht"
+  },
+  "update": {
+    "subhead": "Updates",
+    "label": "Software-Update",
+    "upToDate": "ohmail {version} ist die neueste Version.",
+    "unchecked": "ohmail {version}. Es ist noch keine Update-Prüfung fertig geworden.",
+    "checking": "Der Release-Feed wird gefragt …",
+    "downloading": "ohmail {offered} wird geladen. Installiert wird erst, wenn du zustimmst.",
+    "ready": "ohmail {offered} ist bereit. Zum Abschließen startet ohmail neu.",
+    "failed": "Die letzte Prüfung ist nicht durchgelaufen. Prüfe deine Verbindung und versuche es noch einmal.",
+    "refused": "ohmail konnte nicht bestätigen, welche Version das verfügbare Update hat — installiert wurde deshalb nichts. Deine Version bleibt unverändert.",
+    "lastChecked": "Geprüft {when}",
+    "neverChecked": "Noch nicht geprüft",
+    "check": "Jetzt prüfen",
+    "restart": "Neu starten und installieren",
+    "working": "Läuft …"
   }
 }

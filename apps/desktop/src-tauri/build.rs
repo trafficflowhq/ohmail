@@ -71,6 +71,15 @@ const WINDOW_COMMANDS: &[&str] = &[
     // window may name; the push half is the `omarchy:theme` event over the listen grant the
     // menu already uses.
     "omarchy_theme",
+    // THE UPDATER, from the settings pane (`src/updater.rs`). Two commands that name nothing:
+    // a read of the flow's own state — installed version, what the last check found and when —
+    // and a press that does exactly what picking the menu item does. They exist because the
+    // menu bar is not always there: on a tiling Wayland compositor the app draws none
+    // (`src/frame.rs`), and an update item that lives only in a bar is then no update
+    // interface at all. The feed, the signature check, the version guard and the install stay
+    // in the shell.
+    "update_state",
+    "update_press",
 ];
 
 fn main() {

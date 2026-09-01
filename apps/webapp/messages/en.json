@@ -2064,7 +2064,19 @@
     "desktopOpenWeb": "Open ohmail.app",
     "desktopNoBrowser": "This computer would not open a browser. The page is at ohmail.app.",
     "desktopHoldsCount": "This computer holds {count, number} of your account's {total, number} messages. The rest stay on your account and load when you reach them in a list or open one — nothing is missing.",
-    "desktopCopyIsACopy": "Your mail lives on your mail server. What this app keeps on this computer is a copy — you can remove it and nothing is lost from the mailbox itself."
+    "desktopCopyIsACopy": "Your mail lives on your mail server. What this app keeps on this computer is a copy — you can remove it and nothing is lost from the mailbox itself.",
+    "remove": "Remove",
+    "removeTitle": "Remove {address}?",
+    "removeStops": "ohmail stops organizing this mailbox.",
+    "removeMailSafe": "Your mail is untouched. The ohmail folders and every message stay on your mail server — removing a mailbox here deletes nothing from it.",
+    "removeCredential": "The password ohmail stored for this mailbox is deleted.",
+    "removeScheduled": "Scheduled sends from this mailbox are closed rather than sent. Each goes back to Drafts saying why.",
+    "removeCopyStays": "The mail ohmail has already copied stays in your account and stops being updated. Deleting your account removes it.",
+    "removeReconnect": "You can connect this mailbox again later.",
+    "removeConfirm": "Remove mailbox",
+    "removeCancel": "Keep it",
+    "removeWorking": "Removing…",
+    "factorBodyRemove": "Removing a mailbox deletes the password stored for it, so your account asks for a fresh second factor first."
   },
   "resume": {
     "failedTitle": "Please sign in again",
@@ -2588,5 +2600,21 @@
     "offerFailed": "Couldn't save that — try again.",
     "offerDismiss": "Dismiss the ohmarchy offer",
     "offerDismissShort": "Not now"
+  },
+  "update": {
+    "subhead": "Updates",
+    "label": "Software update",
+    "upToDate": "ohmail {version} is the newest release.",
+    "unchecked": "ohmail {version}. No update check has finished yet.",
+    "checking": "Asking the release feed…",
+    "downloading": "Downloading ohmail {offered}. Nothing is installed until you agree.",
+    "ready": "ohmail {offered} is ready. ohmail restarts to finish.",
+    "failed": "The last check did not finish. Check your connection and try again.",
+    "refused": "ohmail could not confirm which version the available update is, so nothing was installed. The version you have is unchanged.",
+    "lastChecked": "Checked {when}",
+    "neverChecked": "Not checked yet",
+    "check": "Check now",
+    "restart": "Restart to install",
+    "working": "Working…"
   }
 }

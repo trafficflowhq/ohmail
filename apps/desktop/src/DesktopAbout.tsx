@@ -18,6 +18,7 @@
 import { SettingsNote, SettingsRow, SettingsSection, SettingsSubhead } from "@ohmail/ui";
 
 import type { EngineStatus } from "./bridge-fetch.js";
+import { DesktopUpdate } from "./DesktopUpdate.js";
 
 /** What the two doors are called on screen. The same words the Desktop pane uses. */
 const DOOR: Record<string, string> = {
@@ -43,6 +44,14 @@ export function DesktopAbout({ status }: { status: EngineStatus }) {
         description="Free software. The source of this app is published, and you may build it yourself."
         value="AGPL-3.0"
       />
+
+      {/* THE APP'S OWN UPDATE, directly under the version it is about. It used to live only in
+          the menu bar, which is not drawn on every desktop this app runs on
+          (`src-tauri/src/frame.rs`) — so on those it was an affordance nobody could reach.
+          `DesktopUpdate` is a subhead and one row and owns no layout: whoever restyles Settings
+          next can move the element without rewiring anything, and it renders nothing at all
+          where the shell answers nothing. */}
+      <DesktopUpdate />
 
       <SettingsSubhead>This install</SettingsSubhead>
 

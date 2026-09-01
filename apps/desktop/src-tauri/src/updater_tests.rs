@@ -28,7 +28,10 @@
 //! and both of them read a pure value (`Flow`), so what a person is shown — and, more importantly,
 //! what they are NOT shown twice — is something these drive directly.
 
-use super::{refusal_is_unverifiable, should_install, should_offer, signed_release, Flow, Press, Signal, Stage};
+use super::{
+    refusal_is_unverifiable, report, should_install, should_offer, signed_release, Check,
+    CheckResult, Flow, Press, Signal, Stage,
+};
 use base64::Engine as _;
 use std::fs;
 use std::path::PathBuf;
@@ -787,5 +790,161 @@ fn late_work_cannot_drag_the_flow_backwards() {
         flow.apply(signal);
         assert_eq!(flow.stage(), &Stage::Idle, "an idle flow must stay idle");
         assert_eq!(flow.press(), Press::Check);
+    }
+}
+
+
+/* ── SETTINGS → UPDATES, THE VALUE IT DRAWS ──────────────────────────────────────────────────
+ *
+ * `report` is the whole of what the pane is told, and it is pure so that every state a person
+ * can meet is driven here rather than reached by having a release available at the right moment.
+ * The pane has to be able to say five different true things, and two of them collapse into one
+ * `Stage` — which is the reason `CheckResult` exists at all. */
+
+/// A report's field, or `""` when it is absent — reads at the call site like the JSON does.
+fn field(value: &serde_json::Value, name: &str) -> String {
+    match value.get(name) {
+        None | Some(serde_json::Value::Null) => String::new(),
+        Some(serde_json::Value::String(s)) => s.clone(),
+        Some(other) => other.to_string(),
+    }
+}
+
+#[test]
+fn the_pane_is_told_the_installed_version_whatever_the_flow_is_doing() {
+    // The one fact that is true before any check and stays true through every stage. A pane that
+    // could not name the build it is running in would be an About pane with nothing in it.
+    let mut flow = Flow::default();
+    for signal in [Signal::CheckStarted, Signal::Offered("9.9.9".into()), Signal::Downloaded] {
+        let seen = report(&flow, None, "0.13.4");
+        assert_eq!(field(&seen, "version"), "0.13.4");
+        flow.apply(signal);
+    }
+    assert_eq!(field(&report(&flow, None, "0.13.4"), "version"), "0.13.4");
+}
+
+#[test]
+fn a_client_that_has_never_checked_says_so_rather_than_saying_up_to_date() {
+    // The state a fresh window is in for the second or two before the launch check answers.
+    // "Up to date" there would be a claim about a feed nobody has asked yet.
+    let seen = report(&Flow::default(), None, "0.13.4");
+    assert_eq!(field(&seen, "state"), "idle");
+    assert_eq!(field(&seen, "lastResult"), "never");
+    assert_eq!(seen["lastCheckedAt"], serde_json::Value::Null);
+    assert_eq!(seen["canCheck"], true);
+    assert_eq!(seen["canInstall"], false);
+}
+
+/// THE DISTINCTION THE MENU ITEM CANNOT MAKE, and the reason this value exists beside `Stage`.
+///
+/// A refusal about a payload's identity and an up-to-date client are BOTH `Stage::Idle` — the
+/// flow's own `NothingOffered`, because from its side nothing is being installed either way.
+/// They are not the same fact, and the one the app is quiet about is the one that is our own
+/// fault: a release signed without its version stops every client, and "up to date" is precisely
+/// the report that makes nobody look.
+#[test]
+fn a_refusal_and_an_up_to_date_client_are_the_same_stage_and_not_the_same_report() {
+    let mut flow = Flow::default();
+    flow.apply(Signal::CheckStarted);
+    flow.apply(Signal::NothingOffered);
+    assert_eq!(flow.stage(), &Stage::Idle);
+
+    let fine = report(&flow, Some(Check { at_unix_ms: 1_000, result: CheckResult::UpToDate }), "0.13.4");
+    let refused = report(&flow, Some(Check { at_unix_ms: 1_000, result: CheckResult::Refused }), "0.13.4");
+
+    assert_eq!(field(&fine, "state"), field(&refused, "state"), "one stage");
+    assert_ne!(field(&fine, "lastResult"), field(&refused, "lastResult"), "two facts");
+    assert_eq!(field(&fine, "lastResult"), "upToDate");
+    assert_eq!(field(&refused, "lastResult"), "refused");
+}
+
+#[test]
+fn every_stage_the_flow_can_reach_has_its_own_report() {
+    // Walked in the order a person meets them, so the version being offered is carried into the
+    // two stages that have one — a "ready" report that could not name the version would leave the
+    // pane offering a restart into something unnamed.
+    let mut flow = Flow::default();
+    let seen = report(&flow, None, "0.13.4");
+    assert_eq!(field(&seen, "state"), "idle");
+
+    flow.apply(Signal::CheckStarted);
+    let seen = report(&flow, None, "0.13.4");
+    assert_eq!(field(&seen, "state"), "checking");
+    assert_eq!(seen["canCheck"], false, "a check is already running");
+    assert_eq!(seen["canInstall"], false);
+
+    flow.apply(Signal::Offered("0.13.5".into()));
+    let seen = report(&flow, Some(Check { at_unix_ms: 7, result: CheckResult::Offered }), "0.13.4");
+    assert_eq!(field(&seen, "state"), "downloading");
+    assert_eq!(field(&seen, "offered"), "0.13.5");
+    assert_eq!(seen["canCheck"], false);
+    assert_eq!(seen["canInstall"], false, "nothing is installable mid-download");
+
+    flow.apply(Signal::Downloaded);
+    let seen = report(&flow, Some(Check { at_unix_ms: 7, result: CheckResult::Offered }), "0.13.4");
+    assert_eq!(field(&seen, "state"), "ready");
+    assert_eq!(field(&seen, "offered"), "0.13.5");
+    assert_eq!(seen["canInstall"], true, "this is the press that installs");
+    assert_eq!(seen["canCheck"], false, "re-checking would replace a verified download");
+
+    let mut failed = Flow::default();
+    failed.apply(Signal::CheckStarted);
+    failed.apply(Signal::Failed);
+    let seen = report(&failed, Some(Check { at_unix_ms: 9, result: CheckResult::Failed }), "0.13.4");
+    assert_eq!(field(&seen, "state"), "failed");
+    assert_eq!(field(&seen, "lastResult"), "failed");
+    assert_eq!(seen["canCheck"], true, "the remedy for a failure is to try again");
+}
+
+/// The pane and the bar answer to ONE policy. `canCheck`/`canInstall` are `Flow::press` under
+/// different names, so a settings button cannot offer a press the menu item has disabled — which
+/// is the shape of bug two surfaces over one flow produce.
+#[test]
+fn the_pane_offers_exactly_what_the_menu_item_offers() {
+    let mut flow = Flow::default();
+    for signal in [
+        Signal::CheckStarted,
+        Signal::Offered("0.13.5".into()),
+        Signal::Downloaded,
+        Signal::Deferred,
+    ] {
+        let seen = report(&flow, None, "0.13.4");
+        assert_eq!(seen["canCheck"], serde_json::json!(flow.press() == Press::Check));
+        assert_eq!(seen["canInstall"], serde_json::json!(flow.press() == Press::Restart));
+        assert_eq!(
+            seen["canCheck"] == serde_json::json!(false) && seen["canInstall"] == serde_json::json!(false),
+            flow.press() == Press::Nothing,
+        );
+        flow.apply(signal);
+    }
+}
+
+/// The wire names are the window's vocabulary. A rename in Rust that did not reach `update.ts`
+/// would leave the pane switching on a string nothing sends — which renders as the fallback
+/// sentence, not as an error.
+#[test]
+fn the_result_names_are_the_ones_the_window_switches_on() {
+    assert_eq!(CheckResult::UpToDate.as_str(), "upToDate");
+    assert_eq!(CheckResult::Refused.as_str(), "refused");
+    assert_eq!(CheckResult::Failed.as_str(), "failed");
+    assert_eq!(CheckResult::Offered.as_str(), "offered");
+
+    // Four distinct names, and none of them the one that means "no check has finished yet".
+    let names = [CheckResult::UpToDate, CheckResult::Refused, CheckResult::Failed, CheckResult::Offered]
+        .map(CheckResult::as_str);
+    let mut sorted = names.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(sorted.len(), names.len());
+    assert!(!names.contains(&"never"));
+}
+
+/// The timestamp is carried through unchanged. It is the pane's only input for "checked 4
+/// minutes ago", and a report that rounded or re-based it would make that sentence drift.
+#[test]
+fn the_last_check_is_reported_at_the_instant_it_happened() {
+    for at in [0_u64, 1, 1_767_225_600_000, u64::MAX] {
+        let seen = report(&Flow::default(), Some(Check { at_unix_ms: at, result: CheckResult::UpToDate }), "0.13.4");
+        assert_eq!(seen["lastCheckedAt"], serde_json::json!(at));
     }
 }

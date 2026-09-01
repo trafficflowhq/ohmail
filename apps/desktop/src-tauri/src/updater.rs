@@ -10,10 +10,26 @@
 //! here, and everything it puts on screen is native: one menu item and, at most,
 //! one dialog. The webview gains nothing; the PROCESS makes the requests.
 //!
-//! That constraint is also why there is no update banner inside the mail window.
-//! A banner needs a button, a button needs a command, and a command is the exact
-//! permission this design exists to withhold — so the menu item below IS the
-//! affordance, and it changes its own text to say what the app is doing.
+//! ── AND WHY SETTINGS NOW HAS THE SAME AFFORDANCE, WHICH THIS HEADER USED TO ───
+//!    ARGUE AGAINST
+//!
+//! This paragraph used to read: a banner needs a button, a button needs a command,
+//! and a command is the exact permission this design exists to withhold. The first
+//! two clauses are still true. The third was true of the PREVIEW build and stopped
+//! being true of the one people download, whose window already calls twenty of this
+//! shell's commands — so "no command" had quietly become a rule that held in the
+//! artifact nobody installs. What is actually withheld is the NETWORK, and that is
+//! untouched: `update_state` takes no argument and answers a value, `update_press`
+//! takes no argument and does exactly what picking the menu item does. The request,
+//! the minisign verification, the version guard, the dialog and the install all stay
+//! in this file. The window can ask for a check; it cannot name a feed, see a
+//! payload, or install anything.
+//!
+//! It has to be that way now, because THE MENU BAR IS NOT ALWAYS THERE. On a tiling
+//! Wayland compositor the app draws no menu bar at all (`frame.rs`), and a menu item
+//! that is the app's only update interface is, on those desktops, no update interface.
+//! The preview build keeps the bar as its only affordance, and its launch check and
+//! dialog still work; the engine build has both.
 //!
 //! ── WHAT THE USER ACTUALLY SEES ───────────────────────────────────────────────
 //!
@@ -102,6 +118,14 @@ pub const MENU_LABEL_IDLE: &str = "Check for Updates…";
 /// window's grant stays empty.
 pub const PROGRESS_WINDOW_LABEL: &str = "updater";
 pub const PROGRESS_EVENT: &str = "updater://progress";
+
+/// The event that carries [`report`] to the settings pane, on every transition.
+///
+/// A THIRD name rather than a payload variant on `PROGRESS_EVENT`, for the reason the menu has
+/// two events instead of one union: the two carry different kinds of value to different windows,
+/// and the progress window's capability is scoped to the one event it renders. Spelled again in
+/// `src/update.ts`; `test/desktop-shell.test.ts` holds the two spellings together.
+pub const STATE_EVENT: &str = "updater://state";
 
 /// Where the flow has got to. One value, and every surface reads it rather than deciding for
 /// itself: the menu item's text, whether a press checks or restarts, and whether the one dialog is
@@ -229,6 +253,49 @@ impl Flow {
     }
 }
 
+/// What the LAST COMPLETED CHECK found — a different question from [`Stage`], and it has to be.
+///
+/// The stage says where the flow is right now, and it collapses two facts a person would want
+/// told apart: a client that is up to date and a client that REFUSED an update it could not
+/// identify are both `Idle`, because from the flow's side both mean "nothing is being
+/// installed". A menu item has room for one sentence and takes the collapse; a settings pane has
+/// room for the truth, and "up to date" is a lie in the second case — the same lie the refusal
+/// dialog exists to avoid.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CheckResult {
+    /// The feed answered and there is nothing newer.
+    UpToDate,
+    /// An update exists and this client will not install it — see [`refusal_is_unverifiable`].
+    Refused,
+    /// The feed could not be reached, or the payload did not arrive.
+    Failed,
+    /// A newer signed release was found. What happened next is the stage's business.
+    Offered,
+}
+
+impl CheckResult {
+    /// The wire name. Written out rather than derived so a rename in Rust cannot silently change
+    /// what the window switches on.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CheckResult::UpToDate => "upToDate",
+            CheckResult::Refused => "refused",
+            CheckResult::Failed => "failed",
+            CheckResult::Offered => "offered",
+        }
+    }
+}
+
+/// The last completed check: when it finished, and what it found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Check {
+    /// Unix milliseconds. A wall-clock instant and not a monotonic one, because the only thing
+    /// it is for is a sentence a person reads — "checked 4 minutes ago" — and the window has to
+    /// be able to format it against its own clock.
+    pub at_unix_ms: u64,
+    pub result: CheckResult,
+}
+
 /// A payload that has been fetched and verified and has NOT been installed.
 ///
 /// Held in memory rather than written anywhere: an update nobody consented to must leave no trace
@@ -238,11 +305,15 @@ struct Pending {
     bytes: Vec<u8>,
 }
 
-/// The flow, the payload waiting on it, and the menu item that reports both.
+/// The flow, the payload waiting on it, the menu item that reports both, and the last check.
 struct Updater<R: Runtime> {
     flow: Mutex<Flow>,
     pending: Mutex<Option<Pending>>,
     item: Mutex<Option<MenuItem<R>>>,
+    /// Not persisted, and deliberately: "last checked" means "since this app started", which is
+    /// the honest thing for a launch check to be able to say. A value read back from disk would
+    /// claim a check this run never made.
+    last: Mutex<Option<Check>>,
 }
 
 impl<R: Runtime> Updater<R> {
@@ -251,8 +322,47 @@ impl<R: Runtime> Updater<R> {
             flow: Mutex::new(Flow::default()),
             pending: Mutex::new(None),
             item: Mutex::new(None),
+            last: Mutex::new(None),
         }
     }
+}
+
+/// Now, in Unix milliseconds — or 0 for a clock set before 1970, which is not a case worth a
+/// second code path: the window renders a missing timestamp and a zero one the same way.
+fn now_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// THE WHOLE OF WHAT A SETTINGS PANE IS TOLD, as a value.
+///
+/// Pure, so `updater_tests.rs` drives every state directly rather than a comment claiming them,
+/// and `serde_json::Value` rather than a derived struct for the reason `omarchy_theme` answers
+/// one: the field names are the contract with a TypeScript module that shares no artifact with
+/// this file, and a `Serialize` derive would need `serde` as a direct dependency for nothing.
+///
+/// `canCheck` and `canInstall` are the SAME two questions the menu item asks ([`Flow::press`]),
+/// so the pane and the bar cannot offer different things — one flow, two surfaces, never two
+/// policies.
+pub fn report(flow: &Flow, last: Option<Check>, installed: &str) -> serde_json::Value {
+    let (state, offered) = match flow.stage() {
+        Stage::Idle => ("idle", None),
+        Stage::Checking => ("checking", None),
+        Stage::Downloading(version) => ("downloading", Some(version.clone())),
+        Stage::Ready(version) => ("ready", Some(version.clone())),
+        Stage::Failed => ("failed", None),
+    };
+    serde_json::json!({
+        "version": installed,
+        "state": state,
+        "offered": offered,
+        "canCheck": flow.press() == Press::Check,
+        "canInstall": flow.press() == Press::Restart,
+        "lastCheckedAt": last.map(|c| c.at_unix_ms),
+        "lastResult": last.map(|c| c.result.as_str()).unwrap_or("never"),
+    })
 }
 
 /// Take a lock, and take it even if a previous holder panicked.
@@ -298,6 +408,36 @@ pub fn adopt_menu_item<R: Runtime>(app: &AppHandle<R>, item: MenuItem<R>) {
         *lock(&state.item) = Some(item);
     }
     relabel(app);
+}
+
+/// SETTINGS → UPDATES, THE READ. What the pane draws, and what it re-reads on mount.
+///
+/// A command rather than only an event, for `mailto_claim`'s cold-start reason: the launch check
+/// runs before this bundle's scripts do, so a pane that only listened would open blank after the
+/// one transition it cared about had already happened.
+///
+/// It names nothing and reaches nothing — no argument, no feed, no path. The answer is [`report`]
+/// over state this process already holds.
+#[cfg(feature = "local-engine")]
+#[tauri::command]
+pub fn update_state<R: Runtime>(app: AppHandle<R>) -> serde_json::Value {
+    let state = app.state::<Updater<R>>();
+    let flow = lock(&state.flow);
+    let last = *lock(&state.last);
+    report(&flow, last, env!("CARGO_PKG_VERSION"))
+}
+
+/// SETTINGS → UPDATES, THE PRESS. Exactly what picking the menu item does, and nothing else.
+///
+/// It routes through [`pressed`], which is the same function the bar's `on_menu_event` calls, so
+/// the pane is a second WAY to one implementation and never a second policy: what a press means
+/// in each stage is [`Flow::press`]'s answer for both. In particular there is no "install" verb
+/// here — a press in `Ready` restarts into a payload this module already fetched, verified and
+/// version-checked, and a press anywhere else cannot install anything at all.
+#[cfg(feature = "local-engine")]
+#[tauri::command]
+pub fn update_press<R: Runtime>(app: AppHandle<R>) {
+    pressed(app);
 }
 
 /// The check nobody asked for — one request, shortly after the window opens.
@@ -382,6 +522,7 @@ async fn run<R: Runtime>(app: AppHandle<R>, user_initiated: bool) {
     // They are equal here by construction — `should_install` refuses otherwise — so this
     // is a statement about which one is authoritative rather than a change of value.
     let version = offered.to_string();
+    record(&app, CheckResult::Offered);
     signal(&app, Signal::Offered(version.clone()));
 
     /* THE PROGRESS WINDOW, and only for a check the user asked for. A tiny, bundled, offline page
@@ -516,6 +657,7 @@ pub fn refusal_is_unverifiable(advertised: &str, signature_b64: &str, expected_a
 /// the same answer, so a "Try again" button here would be a button that cannot work. Silent
 /// unless the user asked, like every other outcome in this flow.
 fn unverifiable_offer<R: Runtime>(app: &AppHandle<R>, user_initiated: bool) {
+    record(app, CheckResult::Refused);
     signal(app, Signal::NothingOffered);
     if user_initiated {
         app.dialog()
@@ -530,6 +672,7 @@ fn unverifiable_offer<R: Runtime>(app: &AppHandle<R>, user_initiated: bool) {
 
 /// The feed answered and there is nothing to install.
 fn nothing_to_offer<R: Runtime>(app: &AppHandle<R>, user_initiated: bool) {
+    record(app, CheckResult::UpToDate);
     signal(app, Signal::NothingOffered);
     if user_initiated {
         // One button, and it is not a dead end: it is the answer to a question the user asked.
@@ -542,6 +685,7 @@ fn nothing_to_offer<R: Runtime>(app: &AppHandle<R>, user_initiated: bool) {
 
 /// Something did not work. Silent unless the user asked for the check.
 fn failed<R: Runtime>(app: &AppHandle<R>, user_initiated: bool) {
+    record(app, CheckResult::Failed);
     signal(app, Signal::Failed);
     if user_initiated {
         say_it_failed(
@@ -584,20 +728,46 @@ fn signal<R: Runtime>(app: &AppHandle<R>, signal: Signal) {
     relabel(app);
 }
 
-/// Put the flow's own sentence on the menu item.
+/// Put the flow's own sentence on the menu item — and tell the window the same thing.
+///
+/// TWO SURFACES, ONE CALL, because the failure mode of two calls is a settings pane that says
+/// "up to date" while the bar says "restart to install". Every transition already went through
+/// here for exactly that reason; the window is now the second reader of the same moment.
+///
+/// The event is one-way and needs no permission the window does not already hold: it listens
+/// over the `core:event:allow-listen` grant the menu's own events use. A failed emit is a window
+/// that is not there yet or is closing, and the pane re-reads the state when it next mounts.
 fn relabel<R: Runtime>(app: &AppHandle<R>) {
     let state = app.state::<Updater<R>>();
-    let (label, enabled) = {
+    let (label, enabled, report) = {
         let flow = lock(&state.flow);
-        (flow.menu_label(), flow.menu_enabled())
+        let last = *lock(&state.last);
+        (flow.menu_label(), flow.menu_enabled(), report(&flow, last, env!("CARGO_PKG_VERSION")))
     };
     // A bar that has not been built yet (this runs before `menu.rs` hands the item over on a very
-    // early check) simply has nothing to relabel; `adopt_menu_item` relabels once on arrival.
+    // early check) simply has nothing to relabel; `adopt_menu_item` relabels once on arrival. On a
+    // session where the compositor owns the frame there is no bar at ALL — `frame.rs` — and the
+    // settings pane below is then the only surface, which is why it is not optional.
     let item = lock(&state.item);
     if let Some(item) = item.as_ref() {
         let _ = item.set_text(label);
         let _ = item.set_enabled(enabled);
     }
+    let _ = app.emit(STATE_EVENT, report);
+}
+
+/// Write down what a completed check found.
+///
+/// Called from the three places a check ENDS and from the one where an offer is taken up, so the
+/// pane can say something true about a check that changed no stage — an up-to-date answer and a
+/// refusal are both `Idle` and are not the same fact ([`CheckResult`]).
+///
+/// It announces NOTHING itself, and every call site is immediately followed by the [`signal`]
+/// for the same moment: one transition, one emit, and no window that can catch the pair
+/// half-applied.
+fn record<R: Runtime>(app: &AppHandle<R>, result: CheckResult) {
+    let state = app.state::<Updater<R>>();
+    *lock(&state.last) = Some(Check { at_unix_ms: now_unix_ms(), result });
 }
 
 /// Build the transient progress window that renders `PROGRESS_EVENT`.
@@ -620,6 +790,10 @@ fn show_progress_window<R: Runtime>(app: &AppHandle<R>) -> Option<tauri::Webview
     .minimizable(false)
     .maximizable(false)
     .focused(false)
+    // The same question the main window answered at setup, asked again because this window is
+    // built later and on demand. A decorated 420×210 progress window is the same double frame
+    // as a decorated mail window, in a smaller rectangle; `frame.rs` carries the rule.
+    .decorations(crate::frame::decide_from_env().decorations())
     .center()
     .build()
     .ok()

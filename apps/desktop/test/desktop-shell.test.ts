@@ -503,7 +503,7 @@ describe("the Rust side", () => {
    * describe would stay green while the shell grew a capability. Adding a file therefore fails
    * this test until somebody decides which rules it lives under.
    */
-  it("is these sixteen files and no others", () => {
+  it("is these eighteen files and no others", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/src")).sort();
     expect(files).toEqual([
       // Which door this install came in by, and the environment each one composes. Compiled only
@@ -519,6 +519,15 @@ describe("the Rust side", () => {
       "default_mail_tests.rs",
       "engine.rs",
       "engine_tests.rs",
+      // WHO DRAWS THE FRAME — the app, or the compositor. On a tiling Wayland compositor the
+      // compositor owns every window's geometry and draws its own border, so ohmail draws
+      // neither a title bar nor a menu bar there; everywhere else nothing changes. ALWAYS
+      // compiled, unlike most of the list: the answer decides whether this binary builds a menu
+      // bar at all, which is not a feature-gated question. Pure and Tauri-free — the decision is
+      // a value its tests drive against a real Omarchy session's environment and this project's
+      // own GNOME one, and `menu.rs` performs it from the binary's single `setup`.
+      "frame.rs",
+      "frame_tests.rs",
       // Host mode: publishing the engine's loopback door to the user's own tailnet — the
       // setting, the tailscale invocations (serve, never funnel — mutation-pinned in its own
       // tests), the tray and close-to-hide lifecycle, start-at-login. Compiled only under
@@ -649,7 +658,7 @@ describe("the Rust side", () => {
    * naming its `allow-…` permission cannot be resolved — so neither `cargo check` nor `cargo test`
    * can see it. The set equality below is the only thing that does.
    */
-  it("declares and registers its twenty commands only in the local build", () => {
+  it("declares and registers its twenty-two commands only in the local build", () => {
     const build = read("src-tauri/build.rs");
     const engine = read("src-tauri/src/engine.rs");
     // Host mode's, the default-mail and the Omarchy commands are DEFINED in their own modules;
@@ -658,6 +667,9 @@ describe("the Rust side", () => {
     const hostModule = read("src-tauri/src/host.rs");
     const defaultMailModule = read("src-tauri/src/default_mail.rs");
     const omarchyModule = read("src-tauri/src/omarchy.rs");
+    // The two update commands are defined in `updater.rs`, which is always compiled; only their
+    // registration and their grant are feature-gated, like every other command here.
+    const updaterModule = read("src-tauri/src/updater.rs");
     const COMMANDS = [
       "engine_status",
       "engine_request",
@@ -710,6 +722,17 @@ describe("the Rust side", () => {
       // else `None`. The push half is the `omarchy:theme` event over the one listen grant the
       // window already holds; `omarchy.rs` carries the reasoning.
       "omarchy_theme",
+      // THE APP'S OWN UPDATE, from Settings. Two commands that name nothing: a read of the
+      // update flow's state (installed version, stage, what the last check found and when), and
+      // a press that does exactly what picking the menu item does — `updater.rs` routes both
+      // through the same `Flow` the bar reads, so the pane can never offer a press the bar has
+      // disabled. They exist because the menu bar is not drawn on every desktop (`frame.rs`),
+      // and an update item that lives only in a bar is then no update interface at all. The
+      // feed, the minisign verification, the version guard and the install stay in the shell:
+      // the window may ask for a check and may not name a feed, see a payload or install
+      // anything.
+      "update_state",
+      "update_press",
     ];
 
     expect(build).toMatch(/CARGO_FEATURE_LOCAL_ENGINE/);
@@ -745,7 +768,7 @@ describe("the Rust side", () => {
       // `[<(]` because several are generic over the runtime: a command taking an `AppHandle`
       // has to name the runtime it belongs to, or the handler cannot be built for one.
       expect(
-        engine + hostModule + defaultMailModule + omarchyModule,
+        engine + hostModule + defaultMailModule + omarchyModule + updaterModule,
         `${command} is not defined`,
       ).toMatch(new RegExp(`fn ${command}[<(]`));
       expect(engine, `${command} is not registered`).toMatch(
@@ -1493,20 +1516,138 @@ describe("the auto-updater", () => {
     expect(updater).toMatch(/check\(app\.clone\(\), false\)/);
     expect(read("src-tauri/src/main.rs")).toMatch(/updater::on_launch\(app\.handle\(\)\)/);
 
-    /* The webview gains no updater permission and no way to ask for a check: the runtime
-       capability lists the engine's commands and `core:event:allow-listen`, and nothing else.
-
-       COMMENTS ARE STRIPPED FIRST, and that is a narrowing rather than a softening. The claim is
-       about what engine.rs COMPILES — no updater import, no updater call, no `allow-updater-…` in
-       the capability — and a raw text match cannot tell that from a sentence. It stopped being able
-       to when the launch-abort fix documented why a failed grant must not be fatal, which cannot be
-       explained without the words "before `updater::on_launch` ever ran": the file whose CODE may
-       not name the updater is exactly the file whose PROSE has to. Matching source only keeps the
-       assertion pointed at the thing it protects. */
+    /* THE THIRD TRIGGER IS SETTINGS, AND IT IS THE NARROWEST OF THE THREE.
+     *
+     * This assertion used to read `expect(engineCode).not.toMatch(/updater/)` — engine.rs may not
+     * name the updater at all. That was the right rule while the bar was the only surface, and it
+     * stopped being right when the bar stopped always existing: on a tiling Wayland compositor the
+     * app draws no menu bar (`frame.rs`), so the one place a person could ask whether their mail
+     * client is current was gone. It is REWRITTEN rather than deleted, because the property it
+     * protected is still the important one and is unchanged: the webview is granted no UPDATER
+     * PLUGIN permission, and engine.rs contains no part of the update flow.
+     *
+     * What engine.rs may now name is exactly two things — the two commands the settings pane
+     * calls — and the count is asserted, not just their presence: a third mention is a fourth
+     * verb somebody added without re-deciding this.
+     *
+     * COMMENTS ARE STRIPPED FIRST, and that is a narrowing rather than a softening. The claim is
+     * about what engine.rs COMPILES, and a raw text match cannot tell that from a sentence. It
+     * stopped being able to when the launch-abort fix documented why a failed grant must not be
+     * fatal, which cannot be explained without the words "before `updater::on_launch` ever ran":
+     * the file whose CODE may not name the updater is exactly the file whose PROSE has to. */
     const engineCode = read("src-tauri/src/engine.rs")
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/^[ \t]*\/\/.*$/gm, "");
-    expect(engineCode).not.toMatch(/updater/);
+    const named = [...engineCode.matchAll(/updater/g)];
+    expect(named, "engine.rs names the updater somewhere new — re-decide this rule").toHaveLength(2);
+    expect(engineCode).toMatch(/crate::updater::update_state/);
+    expect(engineCode).toMatch(/crate::updater::update_press/);
+    // And none of the flow, nor the plugin, nor a permission on it.
+    for (const forbidden of [
+      "tauri_plugin_updater",
+      "UpdaterExt",
+      "allow-updater",
+      "pubkey",
+      "minisign",
+      "install_and_restart",
+      "should_install",
+    ]) {
+      expect(engineCode, `engine.rs reaches into the updater: ${forbidden}`).not.toContain(forbidden);
+    }
+
+    /* THE PANE IS THE SAME FLOW, NOT A SECOND ONE. `update_press` routes through `pressed`, which
+       is the function the bar's own `on_menu_event` calls — so what a press means in each stage is
+       decided once. A settings command that reimplemented the ladder could offer a restart into a
+       payload the bar knows is gone. */
+    expect(updater).toMatch(/pub fn update_press<R: Runtime>\(app: AppHandle<R>\) \{\s*pressed\(app\);/);
+    // Neither command takes an argument: no feed, no version, no path the window may name.
+    expect(updater).toMatch(/pub fn update_state<R: Runtime>\(app: AppHandle<R>\)/);
+  });
+
+  /**
+   * THE SETTINGS PANE IS TOLD THE TRUTH, INCLUDING THE UNCOMFORTABLE ONE.
+   *
+   * `Stage` collapses two facts: a client that is up to date and a client that REFUSED an update
+   * whose version it could not confirm are both `Idle`, because from the flow's side nothing is
+   * being installed either way. A pane has room to tell them apart and must, since the refusal is
+   * the shape of this that would be OUR fault — a release signed without its version stops every
+   * client, and "up to date" is precisely the report that makes nobody look.
+   *
+   * The distinction lives in `CheckResult`, which is a pure value its own tests drive across every
+   * state. What those tests cannot reach without a windowing system is the WIRING — which sink
+   * records which result — so it is asserted here, at the four call sites, by source.
+   */
+  it("records what each outcome of a check actually was", () => {
+    // The two that share a stage, recorded as different facts.
+    expect(updater).toMatch(
+      /fn unverifiable_offer<R: Runtime>\([^)]*\) \{\s*record\(app, CheckResult::Refused\);/,
+    );
+    expect(updater).toMatch(
+      /fn nothing_to_offer<R: Runtime>\([^)]*\) \{\s*record\(app, CheckResult::UpToDate\);/,
+    );
+    expect(updater).toMatch(
+      /fn failed<R: Runtime>\([^)]*\) \{\s*record\(app, CheckResult::Failed\);/,
+    );
+    // …and the fourth, where a check ends by finding something.
+    expect(updater).toMatch(/record\(&app, CheckResult::Offered\);\s*signal\(&app, Signal::Offered/);
+
+    /* ONE TRANSITION, ONE ANNOUNCEMENT. `record` deliberately does not emit — every call site is
+       followed by the `signal` for the same moment, so no window can catch the pair half-applied
+       and no transition emits twice. */
+    expect(updater).toMatch(/fn record<R: Runtime>\(app: &AppHandle<R>, result: CheckResult\) \{/);
+    const recordBody = /fn record<R: Runtime>[^{]*\{([\s\S]*?)\n\}/.exec(updater)?.[1] ?? "";
+    expect(recordBody, "the record helper was not found — the assertion below would be vacuous")
+      .toContain("state.last");
+    expect(recordBody, "record announces on its own — the following signal then emits twice")
+      .not.toContain("relabel");
+
+    /* AND ONE PLACE THAT TELLS BOTH SURFACES. The bar and the pane are relabelled from the same
+       call, because the failure mode of two calls is a pane saying "up to date" while the bar
+       says "restart to install". */
+    const relabel = /fn relabel<R: Runtime>[^{]*\{([\s\S]*?)\n\}/.exec(updater)?.[1] ?? "";
+    expect(relabel, "the relabel helper was not found").toContain("set_text");
+    expect(relabel, "the window is not told when the flow moves").toContain("STATE_EVENT");
+
+    /* THE THREE NAMES ARE WRITTEN DOWN TWICE, in two languages that share no artifact to import
+       one from — the same arrangement `menu.rs`/`native.ts` and the progress window already have.
+       A drift here is not a crash: the pane listens for an event nothing emits and invokes a
+       command nothing registers, and simply never appears. */
+    const window = read("src/update.ts");
+    expect(updater).toMatch(/pub const STATE_EVENT: &str = "updater:\/\/state";/);
+    expect(window).toMatch(/UPDATE_STATE_EVENT = "updater:\/\/state"/);
+    expect(window).toMatch(/STATE_COMMAND = "update_state"/);
+    expect(window).toMatch(/PRESS_COMMAND = "update_press"/);
+    // …and the window's own vocabulary matches the shell's wire names for the last result.
+    for (const result of ["upToDate", "refused", "failed", "offered"]) {
+      expect(updater, `the shell does not answer ${result}`).toContain(`"${result}"`);
+      expect(window, `the window does not know ${result}`).toContain(`"${result}"`);
+    }
+
+    /* THE PANE AND THE DIALOG SAY THE SAME THING ABOUT A REFUSAL, and this is a claim pin rather
+       than a style rule. The shell's dialog and the settings row report ONE event — an update
+       exists whose version this client could not confirm — and a person can meet both in the same
+       minute. Two wordings of one fact is how one of them ends up softer than the other, and the
+       softer one here would be the sentence that stops anybody looking into a release we signed
+       wrong. Asserted on the two claims, not on the whole string: the dialog is a sentence and the
+       row is a description, and they may differ in shape. */
+    const copy = (JSON.parse(read("../webapp/messages/en.json")) as {
+      update: Record<string, string>;
+    }).update;
+    expect(copy.refused, "the refusal copy no longer says nothing was installed")
+      .toContain("nothing was installed");
+    expect(copy.refused, "the refusal copy no longer says the installed version is untouched")
+      .toContain("The version you have is unchanged");
+    /* Rust line-continuations are unwrapped before matching: the dialog's sentence is split
+       across source lines with a trailing backslash, and asserting on the wrapped form would make
+       this test a hostage to where somebody re-flowed a comment. */
+    const spoken = updater.replace(/\\\s*\n\s*/g, "");
+    expect(spoken, "the dialog no longer says nothing was installed")
+      .toContain("so nothing was installed");
+    expect(spoken, "the dialog no longer says the installed version is untouched")
+      .toContain("The version you have is unchanged.");
+    // …and neither may claim currency, which is the whole point of the distinction.
+    expect(copy.refused).not.toMatch(/up to date|newest release/i);
+    expect(spoken).not.toMatch(/up to date[^"]*could not confirm/i);
   });
 
   /**
@@ -1743,6 +1884,84 @@ describe("the menu bar", () => {
       expect(edit, `the Edit menu has no ${item}`).toContain(`.${item}()`);
     }
     expect(edit).not.toMatch(/cfg\(feature/);
+  });
+
+  /**
+   * …AND ON SOME DESKTOPS THERE IS NO BAR TO GATE ANYTHING IN.
+   *
+   * On a tiling Wayland compositor the compositor owns every window's frame: it draws its own
+   * border, moves and resizes by key, and no window there has a title bar. This app drew one
+   * anyway, with the menu bar under it — two frames and a row of buttons the compositor already
+   * provides — so on those sessions it now builds neither.
+   *
+   * The rule is `frame.rs`, whose own tests drive the truth table (a real Omarchy session's
+   * environment, this project's GNOME one, X11, the override, every compositor in the table).
+   * What is asserted HERE is the WIRING those tests cannot reach without a windowing system:
+   * that the decision is consulted, that both halves of it are performed, and that it happens in
+   * the one `setup` this binary has.
+   */
+  it("hands the frame to the compositor where the compositor owns it — and nowhere else", () => {
+    const menu = read("src-tauri/src/menu.rs");
+
+    // ONE decision, both halves. A menu bar built under a title bar the app is about to drop is
+    // chrome hanging off nothing, so the two questions come from one value.
+    expect(menu).toMatch(/let frame = crate::frame::decide_from_env\(\);/);
+    expect(menu).toMatch(/if !frame\.decorations\(\) \{\s*undecorate\(app\.handle\(\)\);/);
+    expect(menu).toMatch(/if frame\.menu_bar\(\) \{\s*install\(app\.handle\(\)\)\?;/);
+
+    /* IT MUST BE INSIDE THIS FILE'S `setup`, and that is not tidiness: a menu is installed from
+       `Builder::setup`, a second `setup` REPLACES the first with nothing failing to say so, and
+       this is the only one in the binary (asserted by count elsewhere in this file). A frame
+       decision made anywhere else would have to bring a second `setup` with it. */
+    const setup = /\.setup\(\|app\| \{([\s\S]*?)\n\s*\}\)/.exec(menu)?.[1] ?? "";
+    expect(setup, "menu.rs's setup closure was not found — the assertions below would be vacuous")
+      .toContain("install(app.handle())");
+    expect(setup).toContain("crate::frame::decide_from_env()");
+
+    // The decorations come off BEFORE a menu would have been built, so the window is never asked
+    // to lay out a bar it is about to lose.
+    expect(menu.indexOf("undecorate(app.handle())")).toBeLessThan(
+      menu.indexOf("install(app.handle())?"),
+    );
+
+    /* EVERY WINDOW, not `"main"` by name. The updater's progress window is created later and on
+       demand, and a lone decorated 420x210 window appearing on a tiling desktop mid-download is
+       the same defect in a smaller rectangle. */
+    expect(menu).toMatch(/for \(_, window\) in app\.webview_windows\(\)/);
+    expect(menu).toMatch(/window\.set_decorations\(false\)/);
+    expect(read("src-tauri/src/updater.rs"))
+      .toMatch(/\.decorations\(crate::frame::decide_from_env\(\)\.decorations\(\)\)/);
+
+    /* THE MODULE IS ALWAYS COMPILED. Whether this binary builds a menu bar at all is not a
+       feature-gated question — the interface preview draws a window on the same desktops. */
+    const mainRs = read("src-tauri/src/main.rs");
+    expect(mainRs).toMatch(/^mod frame;$/m);
+    expect(mainRs, "the frame module is behind a feature — the preview build would keep both frames")
+      .not.toMatch(/#\[cfg\(feature = "local-engine"\)\]\s*\nmod frame;/);
+
+    /* AND IT IS THE COMPOSITOR THAT DECIDES, NOT THE DISTRIBUTION. Omarchy is the system this was
+       reported from and is easy to detect — `ID=omarchy` in os-release, an `omarchy` binary, a
+       staged theme under `~/.local/state/omarchy` (which `omarchy_core.rs` reads, for a different
+       question). None of it is the right test: keyed on the distribution the fix would miss every
+       Hyprland user on plain Arch, Fedora or NixOS, and would strip the title bar from somebody
+       running GNOME on Omarchy. `frame.rs` reads the session's own desktop name and the
+       compositor's own socket, and nothing else. */
+    const frame = read("src-tauri/src/frame.rs")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/[!/]?.*$/gm, "");
+    for (const distro of ["os-release", "OMARCHY_PATH", "ID=omarchy", "/usr/bin/omarchy", ".local/state"]) {
+      expect(frame, `frame.rs keys the frame on the distribution: ${distro}`).not.toContain(distro);
+    }
+    // The two variables the specification defines for this, and nothing invented.
+    expect(frame).toContain("XDG_CURRENT_DESKTOP");
+    expect(frame).toContain("XDG_SESSION_TYPE");
+
+    /* THE ESCAPE HATCH, both directions — the same discipline the Linux launcher's
+       `OHMAIL_SYSTEM_WEBKIT` follows. A detection rule about somebody else's desktop must never
+       be the only answer. */
+    expect(frame).toMatch(/pub const OVERRIDE: &str = "OHMAIL_DECORATIONS";/);
+    expect(frame).toMatch(/=> return Frame::AppDraws,/);
+    expect(frame).toMatch(/=> return Frame::CompositorOwns,/);
   });
 });
 
