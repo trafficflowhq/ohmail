@@ -579,7 +579,22 @@ jobs:
             [ -z "$u" ] && continue
             case "$u" in
               "$FEED_PREFIX"*) : ;;
-              "$CLOUD_URL") : ;;
+              # PREFIX, for the reason the comment above gives for the browser link
+              # table: these are Rust string literals with no terminator sitting next
+              # to each other in read-only data, so what comes back is whatever
+              # follows glued on. This was the one entry still matching exactly, and
+              # it held only while nothing happened to sit beside it — the first
+              # release build of 0.13.3 failed on
+              # `https://api.ohmail.appcloud-tokens.sealthe`, which is this URL with
+              # two unrelated literals stuck to its end. The re-split on the scheme
+              # above is what makes a prefix answer for exactly one address.
+              "$CLOUD_URL"*) : ;;
+              # The self-hosted door's PLACEHOLDER, not an endpoint. `example.com` is
+              # reserved by IANA precisely so it can never resolve to anyone, and this
+              # is the greyed-out example in the address field plus the same example
+              # in the sentence under it. It is caught here only because it contains
+              # the product name, which is what makes it a good placeholder.
+              'https://ohmail.example.com'*) : ;;
               'https://ohmail.app/mailbox#/settings'*) : ;;
               # The mailboxes pane hand-off: a hosted install manages mailbox
               # ceremonies on the web, and the Settings pane opens this address
@@ -842,7 +857,22 @@ jobs:
             [ -z "$u" ] && continue
             case "$u" in
               "$FEED_PREFIX"*) : ;;
-              "$CLOUD_URL") : ;;
+              # PREFIX, for the reason the comment above gives for the browser link
+              # table: these are Rust string literals with no terminator sitting next
+              # to each other in read-only data, so what comes back is whatever
+              # follows glued on. This was the one entry still matching exactly, and
+              # it held only while nothing happened to sit beside it — the first
+              # release build of 0.13.3 failed on
+              # `https://api.ohmail.appcloud-tokens.sealthe`, which is this URL with
+              # two unrelated literals stuck to its end. The re-split on the scheme
+              # above is what makes a prefix answer for exactly one address.
+              "$CLOUD_URL"*) : ;;
+              # The self-hosted door's PLACEHOLDER, not an endpoint. `example.com` is
+              # reserved by IANA precisely so it can never resolve to anyone, and this
+              # is the greyed-out example in the address field plus the same example
+              # in the sentence under it. It is caught here only because it contains
+              # the product name, which is what makes it a good placeholder.
+              'https://ohmail.example.com'*) : ;;
               'https://ohmail.app/mailbox#/settings'*) : ;;
               # The mailboxes pane hand-off: a hosted install manages mailbox
               # ceremonies on the web, and the Settings pane opens this address
@@ -1158,7 +1188,22 @@ jobs:
             [ -z "$u" ] && continue
             case "$u" in
               "$FEED_PREFIX"*) : ;;
-              "$CLOUD_URL") : ;;
+              # PREFIX, for the reason the comment above gives for the browser link
+              # table: these are Rust string literals with no terminator sitting next
+              # to each other in read-only data, so what comes back is whatever
+              # follows glued on. This was the one entry still matching exactly, and
+              # it held only while nothing happened to sit beside it — the first
+              # release build of 0.13.3 failed on
+              # `https://api.ohmail.appcloud-tokens.sealthe`, which is this URL with
+              # two unrelated literals stuck to its end. The re-split on the scheme
+              # above is what makes a prefix answer for exactly one address.
+              "$CLOUD_URL"*) : ;;
+              # The self-hosted door's PLACEHOLDER, not an endpoint. `example.com` is
+              # reserved by IANA precisely so it can never resolve to anyone, and this
+              # is the greyed-out example in the address field plus the same example
+              # in the sentence under it. It is caught here only because it contains
+              # the product name, which is what makes it a good placeholder.
+              'https://ohmail.example.com'*) : ;;
               'https://ohmail.app/mailbox#/settings'*) : ;;
               'https://ohmail.app/mailbox?settings=mailboxes#/settings'*) : ;;
               'https://ohmail.app/link-desktop'*) : ;;
