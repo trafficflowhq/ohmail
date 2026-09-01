@@ -1700,48 +1700,41 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * "Organize from this Mac…" action.
      */
     /**
-     * ── A REQUEST MADE FROM SETTINGS IS SPENT HERE, AT THE CLI'S OWN TIMING ────────────────
+     * ── A REQUEST FROM SETTINGS OVERRIDES THE ROW'S MEMORY, AND CHANGES NOTHING ELSE ───────
      *
      * `requestOrganizerTakeover` (the "Organize from this machine" button) writes ONLY the
-     * stamp and deliberately leaves the row `disabled` with its reason — see its header: a row
-     * flipped to `connected` while THIS process is still serving, still `stopped` and still
-     * holding no login would advertise a mailbox nothing is organizing, and `ScheduleService`
-     * and `SendService` refuse on `status = 'disabled'` and on nothing else, so they would begin
-     * accepting work for it.
+     * stamp and deliberately leaves the row `disabled` with its reason — see its header. The
+     * stamp is what this line reads, and all it does is stop the gate SHORT-CIRCUITING: with a
+     * request outstanding, the lease is consulted, which is the one thing that can decide.
      *
-     * This is the other half, and its POSITION is the whole point: assembly, before the gate,
-     * before anything serves a request — which is exactly when the CLI's write lands, since that
-     * one requires the app to be stopped. So the row spends the smallest possible time saying
-     * `connected` while not organized, and no request can be served inside it.
+     * ── THE ROW IS NOT CLEARED HERE, AND THAT IS THE SECOND ROUND'S CORRECTION ────────────
      *
-     * Both columns move together, for `authorizeOrganizerTakeover`'s reason: status without the
-     * reason is a TOMBSTONE, and the next launch would mint a second mailbox row for the same
-     * address with none of this one's history. A failure here leaves the stand-down standing and
-     * the stamp unspent, so the next launch simply tries again — the request is not lost.
+     * It was, for one round: the stand-down was cleared at assembly, on the argument that this
+     * is the CLI's own timing (the CLI needs the app stopped, so nothing serves in between).
+     * The argument was wrong about THIS process. `main.ts` announces the bridge and calls
+     * `start()` asynchronously, and `start()` returns before the gate when no password is
+     * stored — so a row cleared here is a `connected` mailbox served to requests before any
+     * lease has been read, and for the whole life of a passwordless launch. `ScheduleService`
+     * and `SendService` refuse on `status = 'disabled'` and on nothing else, so that window
+     * accepts sends for a mailbox another organizer may still hold.
+     *
+     * So the clear moved to where the answer is: `mayOrganize`'s ORGANIZE arm, which runs only
+     * after `readMailboxLease` has said yes. Until then the row goes on saying it is not
+     * organized here, every surface goes on telling the truth, and nothing may send. If the
+     * lease refuses, the stand-down arm rewrites the row and voids the stamp, and the person is
+     * told which install kept it.
      */
-    let standDownReason = world.standDownReason;
-    if (standDownReason && world.takeoverAuthorizedAt !== null) {
-      try {
-        await db.update(mailboxes)
-          .set({ status: "connected", disabledReason: null })
-          .where(and(eq(mailboxes.id, world.mailboxId), eq(mailboxes.status, "disabled")));
-        log("organizer_takeover_spent", {
-          disabledReason: standDownReason,
-          reason: "a person asked for this machine while it was stood down; the stand-down is " +
-            "cleared and the lease decides now, which is the only thing that can",
-        });
-        standDownReason = null;
-      } catch (err) {
-        log("organizer_takeover_spend_failed", {
-          err,
-          reason: "the stand-down could not be cleared, so this install still organizes nothing " +
-            "and the request stands — the next launch tries again",
-        });
-      }
-    }
-    const priorStandDown = standDownReason;
-    let organizer: OrganizerState = priorStandDown
-      ? { organizing: false, reason: priorStandDown as MailboxDisabledReason, heldBy: null }
+    const takeoverRequested = world.takeoverAuthorizedAt !== null;
+    const priorStandDown = takeoverRequested ? null : world.standDownReason;
+    /**
+     * WHAT THE WINDOW REPORTS, and it is the ROW's answer rather than the gate's optimism: a
+     * stood-down install with a request outstanding is still stood down until the lease says
+     * otherwise, so `organizerState()` keeps saying so and the pane keeps showing why. Reading
+     * `priorStandDown` here instead would announce "organizing" for a mailbox this process has
+     * not claimed and may not get.
+     */
+    let organizer: OrganizerState = world.standDownReason
+      ? { organizing: false, reason: world.standDownReason as MailboxDisabledReason, heldBy: null }
       : { organizing: true, reason: null, heldBy: null };
     /**
      * THE EXIT FROM A STAND-DOWN — a human asked for this machine, once.
@@ -1867,9 +1860,23 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // install seize the mailbox back on some later launch, after a human had deliberately
           // moved it elsewhere. Written only when there is something to clear, so an install that
           // simply keeps organizing writes nothing here on any cycle.
+          //
+          // ── AND THE STAND-DOWN IS CLEARED IN THE SAME STATEMENT, HERE AND NOWHERE EARLIER ──
+          //
+          // This is the moment `readMailboxLease` said ORGANIZE. Clearing the row before it —
+          // at assembly, say — publishes a `connected` mailbox to the send and schedule paths
+          // (which refuse on `status = 'disabled'` and on nothing else) before any lease has
+          // been read, and for the whole life of a launch with no stored password, where
+          // `start()` returns before this gate. Here there is nothing to race: the claim is
+          // already written and this install IS the organizer.
+          //
+          // All three columns together, for `authorizeOrganizerTakeover`'s reason: `status`
+          // without `disabled_reason` is a TOMBSTONE, and the next launch would mint a second
+          // mailbox row for the same address with none of this one's history. A no-op for an
+          // install that was never stood down — the predicate matches nothing.
           try {
             await db.update(mailboxes)
-              .set({ takeoverAuthorizedAt: null })
+              .set({ status: "connected", disabledReason: null, takeoverAuthorizedAt: null })
               .where(eq(mailboxes.id, world.mailboxId));
             takeoverAuthorized = false;
           } catch (err) {
