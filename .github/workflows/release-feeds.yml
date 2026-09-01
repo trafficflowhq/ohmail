@@ -388,6 +388,35 @@ jobs:
             local signed_as="signing/${VERSION}@$(basename "$1")"
             cp "$1" "$signed_as"
             npx --yes @tauri-apps/cli@2 signer sign "$signed_as" < /dev/null 1>&2
+            # ── AND READ BACK WHAT WAS ACTUALLY SIGNED ──────────────────────
+            #
+            # THE FAILURE WINDOW THIS CLOSES. This workflow runs on `release:
+            # published`, so the release is ALREADY the target of
+            # /releases/latest/download/… before a byte of it is verified. If
+            # the signing step regressed and only the verifier at the end
+            # noticed, the job would abort having uploaded no feed at all —
+            # leaving the newest release "latest" with no latest.json behind it,
+            # and every installed client getting a fetch failure until somebody
+            # re-dispatched this workflow. The verifier is still the gate; this
+            # just moves the moment of discovery to the step that made the
+            # mistake, where the message names it. Recovery, if it ever fires:
+            # `workflow_dispatch` with the tag, which regenerates and re-uploads
+            # both feeds for a release that is already published.
+            #
+            # Positional, like every other reader of this field: line 3 of a
+            # minisign file is the trusted comment, and line 1 is the UNTRUSTED
+            # one, which is signed by nothing and must never be read.
+            local trusted
+            trusted="$(sed -n '3p' "$signed_as.sig")"
+            case "$trusted" in
+              "trusted comment: "*"file:${VERSION}@$(basename "$1")") ;;
+              *)
+                echo "the signer did not name the version: $trusted" >&2
+                echo "expected  …file:${VERSION}@$(basename "$1")" >&2
+                echo "clients read the version out of this line and refuse a payload without one" >&2
+                exit 1
+                ;;
+            esac
             cat "$signed_as.sig"
           }
           WIN_SIG="$(sign_tauri "$WIN_EXE")"

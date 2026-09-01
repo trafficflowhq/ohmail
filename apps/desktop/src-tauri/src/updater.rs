@@ -361,7 +361,21 @@ async fn run<R: Runtime>(app: AppHandle<R>, user_initiated: bool) {
         &update.signature,
         EXPECTED_ASSET,
     ) else {
-        return nothing_to_offer(&app, user_initiated);
+        // A REFUSAL IS NOT ALWAYS "UP TO DATE", and saying so would be a false sentence.
+        //
+        // Two different facts arrive here. If the signed version agrees with the feed and
+        // is simply not newer, "up to date" is exactly true and the flow says it. But if
+        // the payload's identity could not be established at all — no signed version, or
+        // one that disagrees with what the feed advertised — then an update DOES exist,
+        // this client will not install it, and telling the person they are up to date is
+        // untrue. It also hides the one shape of this that is our own fault: a release
+        // signed without the version stops every client, and "up to date" is precisely the
+        // report that makes nobody look.
+        return if refusal_is_unverifiable(&update.version, &update.signature, EXPECTED_ASSET) {
+            unverifiable_offer(&app, user_initiated)
+        } else {
+            nothing_to_offer(&app, user_initiated)
+        };
     };
 
     // The SIGNED version is what the rest of the flow reports, not the advertised one.
@@ -472,6 +486,45 @@ fn install_and_restart<R: Runtime>(app: &AppHandle<R>) {
             signal(app, Signal::Failed);
             say_it_failed(app, "ohmail could not install the update. Try again in a moment.");
         }
+    }
+}
+
+/// Was the refusal about the payload's IDENTITY rather than about its age?
+///
+/// `should_install` refuses for four reasons and only one of them means "there is nothing
+/// newer". This separates them, so the sentence the person reads is true: an unparseable
+/// version, a payload with no signed version, or a signed version or asset that disagrees
+/// with what the feed advertised all mean *an update exists and this client will not install
+/// it*. Not newer means what it says.
+///
+/// Pure, and driven directly by `a_refusal_about_identity_is_not_reported_as_up_to_date` —
+/// the distinction is the whole of the difference between two user-facing sentences, and one
+/// of them would be a lie in the other's case.
+pub fn refusal_is_unverifiable(advertised: &str, signature_b64: &str, expected_asset: &str) -> bool {
+    match (semver::Version::parse(advertised), signed_release(signature_b64)) {
+        (Ok(advertised), Some(signed)) => {
+            advertised != signed.version || signed.asset != expected_asset
+        }
+        // An unparseable advertised version, or nothing signed to compare it against.
+        _ => true,
+    }
+}
+
+/// An update was offered and this client will not install it.
+///
+/// One sentence, and it does NOT offer to try again: retrying reaches the same feed and gets
+/// the same answer, so a "Try again" button here would be a button that cannot work. Silent
+/// unless the user asked, like every other outcome in this flow.
+fn unverifiable_offer<R: Runtime>(app: &AppHandle<R>, user_initiated: bool) {
+    signal(app, Signal::NothingOffered);
+    if user_initiated {
+        app.dialog()
+            .message(
+                "ohmail could not confirm which version the available update is, so nothing \
+                 was installed. The version you have is unchanged.",
+            )
+            .title("Update not installed")
+            .show(|_| {});
     }
 }
 

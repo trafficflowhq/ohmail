@@ -1594,8 +1594,19 @@ describe("the auto-updater", () => {
     expect(updater).toMatch(/let advertised = semver::Version::parse\(advertised\)\.ok\(\)\?;/);
     expect(updater).toMatch(/let signed = signed_release\(signature_b64\)\?;/);
     expect(updater).toMatch(
-      /let Some\(offered\) = should_install\(\s*&update\.current_version,\s*&update\.version,\s*&update\.signature,\s*EXPECTED_ASSET,\s*\) else \{\s*return nothing_to_offer\(&app, user_initiated\);/,
+      /let Some\(offered\) = should_install\(\s*&update\.current_version,\s*&update\.version,\s*&update\.signature,\s*EXPECTED_ASSET,\s*\) else \{/,
     );
+
+    /* AND A REFUSAL IS NOT REPORTED AS "UP TO DATE" UNLESS IT IS ONE. Of the four reasons
+       `should_install` refuses, only "not newer" means there is nothing to install. For the other
+       three an update exists and this client has declined it, so telling somebody they are up to
+       date is a false sentence — and it is exactly the report that would hide a release signed
+       without its version, which stops every client at once and produces no complaint. */
+    expect(updater).toMatch(
+      /return if refusal_is_unverifiable\(&update\.version, &update\.signature, EXPECTED_ASSET\) \{\s*unverifiable_offer\(&app, user_initiated\)\s*\} else \{\s*nothing_to_offer\(&app, user_initiated\)\s*\};/,
+    );
+    expect(updater).toMatch(/pub fn refusal_is_unverifiable\(/);
+    expect(updater).toMatch(/could not confirm which version the available update is/);
 
     /* AND THE PAYLOAD IS THE ONE FOR THIS BUILD. Which platform key a feed maps to which url is
        unsigned exactly as the version was, so `linux-x86_64` can be pointed at the genuine,

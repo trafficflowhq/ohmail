@@ -28,7 +28,7 @@
 //! and both of them read a pure value (`Flow`), so what a person is shown — and, more importantly,
 //! what they are NOT shown twice — is something these drive directly.
 
-use super::{should_install, should_offer, signed_release, Flow, Press, Signal, Stage};
+use super::{refusal_is_unverifiable, should_install, should_offer, signed_release, Flow, Press, Signal, Stage};
 use base64::Engine as _;
 use std::fs;
 use std::path::PathBuf;
@@ -461,6 +461,51 @@ fn a_payload_for_another_platform_is_refused() {
         Some(semver::Version::parse("0.13.4").unwrap()),
         "the same payload MUST install on the build it is for, or this is refusing everything"
     );
+}
+
+#[test]
+fn a_refusal_about_identity_is_not_reported_as_up_to_date() {
+    // `should_install` refuses for four reasons and only ONE of them means there is nothing
+    // newer. Telling somebody they are up to date when an update exists and this client has
+    // declined it is a false sentence — and it is the exact report that would hide a release
+    // signed without its version, which stops every client at once.
+    let cases: &[(&str, &str, &str, bool, &str)] = &[
+        // advertised, signed version, signed asset, unverifiable?, what it is
+        ("0.13.2", "0.13.2", ASSET, false, "older than installed — genuinely up to date"),
+        ("0.13.3", "0.13.3", ASSET, false, "the same release — genuinely up to date"),
+        ("0.13.4", "0.13.2", ASSET, true, "an old payload sold as a new one"),
+        ("99.0.0", "0.9.0", ASSET, true, "the downgrade advertised high"),
+        (
+            "0.13.4", "0.13.4", "ohmail-linux-aarch64.AppImage", true,
+            "the right version, another platform's payload",
+        ),
+    ];
+    for &(advertised, signed, asset, expected, what) in cases {
+        let sig = BASE64.encode(
+            format!(
+                "untrusted comment: signature from tauri secret key\n\
+                 RURV2NTwoaEoMQ==\n\
+                 trusted comment: timestamp:1788240000\tfile:{signed}@{asset}\n\
+                 zKhvIlGHWG3x67M80tyVDQ==\n"
+            )
+            .as_bytes(),
+        );
+        assert_eq!(
+            refusal_is_unverifiable(advertised, &sig, ASSET),
+            expected,
+            "advertised={advertised} signed={signed}@{asset} — {what}"
+        );
+    }
+
+    // No signed version at all, and an unparseable advertised version: both are "cannot
+    // establish what this is", never "up to date".
+    let unversioned = BASE64.encode(
+        "untrusted comment: x\nRURV2NTwoaEoMQ==\ntrusted comment: timestamp:1\tfile:ohmail-linux-x86_64.AppImage\nzKhvIlGHWG3x67M80tyVDQ==\n"
+            .as_bytes(),
+    );
+    assert!(refusal_is_unverifiable("0.13.4", &unversioned, ASSET));
+    assert!(refusal_is_unverifiable("not-a-version", &signed_as("0.13.4"), ASSET));
+    assert!(refusal_is_unverifiable("0.13.4", "not base64!!", ASSET));
 }
 
 #[test]
