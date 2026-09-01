@@ -635,6 +635,33 @@ describe("off-state problems are honored — the ladder is not only the probe's"
     expect(probes).toBeGreaterThan(1);
     expect(text()).not.toContain(enHost.checking!);
   }, 20_000);
+
+  it("a HANGING probe is not retried on top of itself — one attempt at a time", async () => {
+    /**
+     * `tailscale_status` shells out with NO timeout, so a tailnet daemon that hangs rather than
+     * refusing never settles. A retry that fired on a timer regardless would start a new
+     * `tailscale` subprocess every five seconds for as long as the window stayed open. A stuck
+     * attempt is still an attempt.
+     */
+    let probes = 0;
+    globe.__TAURI_INTERNALS__ = {
+      invoke: (command) => {
+        if (command === "host_state") return Promise.resolve(OFF);
+        if (command === "tailscale_status") {
+          probes += 1;
+          return new Promise(() => undefined); // never settles
+        }
+        return Promise.resolve(undefined);
+      },
+    };
+    await mount();
+    await act(async () => {
+      await new Promise((done) => setTimeout(done, 12_000));
+    });
+    // Two full poll intervals have passed and the mount's own probe is still out there.
+    expect(probes).toBe(1);
+  }, 30_000);
+
 });
 
 describe("a live code stays revocable in every armed state", () => {
@@ -678,6 +705,39 @@ describe("a rejected disarm re-reads the world instead of keeping the serving sn
     expect(text()).not.toContain("Serving your devices at");
     expect(text()).toContain("the settings file could not be written");
   });
+
+  it("and that sentence SURVIVES — the retry belongs to the opening read, not to this", async () => {
+    /**
+     * The trap in inferring "the opening read has not finished" from `host` and `probe`: a disarm
+     * that fails ALSO lands with host off and — if the follow-up probe fails too — an unresolved
+     * probe. By those two alone it is indistinguishable from a cold mount, so a state-inferred
+     * retry starts, and its `refresh()` clears `problem`. Five seconds after the user pressed the
+     * button, the only explanation for what went wrong disappears.
+     *
+     * That is the same erasure the off-state gate exists to prevent, arriving through the gate's
+     * own escape hatch — which is why "the opening read finished" is a recorded fact and not a
+     * deduction from shared state.
+     */
+    let disarmed = false;
+    installShell({
+      hostState: () => (disarmed ? OFF : SERVING),
+      tailscale: () => {
+        if (disarmed) throw new Error("the tailnet probe is gone too");
+        return RUNNING;
+      },
+      disarmRejects: "the settings file could not be written",
+      routes: EMPTY_LISTS,
+    });
+    await mount();
+    disarmed = true;
+    await click(button(enHost.off!));
+    await click(button(enHost.off!));
+    expect(text()).toContain("the settings file could not be written");
+    await act(async () => {
+      await new Promise((done) => setTimeout(done, 6000));
+    });
+    expect(text()).toContain("the settings file could not be written");
+  }, 20_000);
 });
 
 describe("Done refreshes the lists — a scanned code does not linger as unused", () => {

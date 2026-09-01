@@ -242,6 +242,13 @@ export function DesktopDevices() {
   const [host, setHost] = useState<HostState | null | undefined>(undefined);
   /** The tailnet probe, read only while host mode is off. `undefined` = probing. */
   const [probe, setProbe] = useState<TailscaleStatus | null | undefined>(undefined);
+  /**
+   * Whether the opening read has ever completed — BOTH halves of it. A recorded fact, because
+   * every attempt to infer it from `host`/`probe` also matched states reached long afterwards.
+   */
+  const [openingReadDone, setOpeningReadDone] = useState(false);
+  /** A retry of the opening read is out and has not settled. `tailscale_status` can hang. */
+  const retrying = useRef(false);
   const [busy, setBusy] = useState<Busy>(null);
   /** A refusal or a thrown transport, as one sentence beside the controls. Never a toast. */
   const [problem, setProblem] = useState<string | null>(null);
@@ -312,6 +319,12 @@ export function DesktopDevices() {
       } else if (state?.enabled) {
         await refreshLists();
       }
+      // BOTH halves landed. Recorded as a fact rather than inferred from `host`/`probe` later:
+      // those two are shared with every other action on this pane, so reading "the opening read
+      // has not finished" out of them also matched states reached long afterwards — a disarm
+      // that failed and left an unresolved probe looked identical to a cold mount, and the retry
+      // then wiped the disarm's own error off the screen.
+      if (alive.current) setOpeningReadDone(true);
     } finally {
       if (alive.current) setBusy(null);
     }
@@ -320,7 +333,14 @@ export function DesktopDevices() {
   useEffect(() => {
     // The catch is the difference between a failed first read and an unhandled rejection: the
     // pane's answer to "the shell did not respond" is the retry below, not a console trace.
-    void refresh().catch(() => undefined);
+    // It takes the SAME in-flight marker as the retry: this is the opening read's first attempt,
+    // and a probe that hangs here must not have a second one stacked on top of it by the timer.
+    retrying.current = true;
+    void refresh()
+      .catch(() => undefined)
+      .finally(() => {
+        retrying.current = false;
+      });
   }, [refresh]);
 
   /**
@@ -336,20 +356,23 @@ export function DesktopDevices() {
    */
   const armed = host?.enabled === true;
   /**
-   * Has the opening read finished? BOTH halves, because it has two and either can fail.
+   * When the background read should run: while host mode is ON, and until the opening read has
+   * finished at all.
    *
-   * The first version of this asked only about `host`, and review found the mirror image of the
-   * dead end it was written to close: `host_state` answers off, `tailscale_status` then rejects,
-   * `host` is set so the retry stops — and the off ladder renders "Checking…" for the probe for
-   * ever. A retry that covers one half of a two-part read just moves where the screen gets stuck.
+   * The retry closes a dead end older than this polling: the mount read has no failure path, so a
+   * shell call that rejects leaves the pane on "Checking…" with no control to try again until it
+   * is remounted. It went through two wrong shapes before this one, and both were the same
+   * mistake — INFERRING "the opening read has not finished" from `host` and `probe`, which every
+   * other action on this pane also writes. First it watched only `host`, so a failure in the
+   * probe half stopped it one step later. Then it watched both, and matched a state reached long
+   * after the mount: a disarm that failed leaves an unresolved probe too, and the retry's
+   * `refresh()` then cleared the disarm's own error off the screen — the very thing the OFF gate
+   * exists to protect.
    *
-   * `probe === null` is deliberately NOT included: that is the shell answering unreadably, which
-   * the pane already renders as a sentence with a "Check again" button beside it. Only
-   * `undefined` — nothing came back at all — is an unfinished read.
+   * So it is a recorded fact now, set once by the read that completes, and it cannot be confused
+   * with anything that happens afterwards.
    */
-  const awaitingFirstAnswer =
-    host === undefined || (host !== null && !host.enabled && probe === undefined);
-  const pollHostState = armed || awaitingFirstAnswer;
+  const pollHostState = armed || !openingReadDone;
 
   /**
    * KEEP THE OPEN PANE HONEST — re-read host state while this screen is on the display.
@@ -378,12 +401,21 @@ export function DesktopDevices() {
   useEffect(() => {
     if (!pollHostState) return undefined;
     const tick = setInterval(() => {
-      // NEVER HEARD BACK ⇒ redo the WHOLE first read, not just the half that failed. The ladder
-      // below needs the tailnet probe too, and a retry that filled in only `host` would leave the
-      // pane reporting off while still saying it was checking — a different half-answer in place
-      // of the first one.
-      if (awaitingFirstAnswer) {
-        void refresh().catch(() => undefined);
+      // NEVER HEARD BACK ⇒ redo the WHOLE opening read, not just the half that failed. The
+      // ladder below needs the tailnet probe too, and a retry that filled in only `host` would
+      // leave the pane reporting off while still saying it was checking.
+      if (!openingReadDone) {
+        // ONE AT A TIME. `tailscale_status` shells out with NO TIMEOUT, so a tailnet daemon that
+        // hangs rather than refusing never settles — and a retry that fired regardless would
+        // start a new `tailscale` subprocess every five seconds, for ever. A stuck attempt is
+        // still an attempt; the retry waits for it.
+        if (retrying.current) return;
+        retrying.current = true;
+        void refresh()
+          .catch(() => undefined)
+          .finally(() => {
+            retrying.current = false;
+          });
         return;
       }
       void (async () => {
@@ -397,7 +429,7 @@ export function DesktopDevices() {
       })();
     }, HOST_POLL_MS);
     return () => clearInterval(tick);
-  }, [pollHostState, awaitingFirstAnswer, refresh]);
+  }, [pollHostState, openingReadDone, refresh]);
 
   /** The engine's enumeration of this machine's offerable addresses — read when the LAN option
    *  opens, because the choice must be OFFERED, never typed (a typo'd address is a socket that
