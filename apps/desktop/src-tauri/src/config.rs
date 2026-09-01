@@ -387,27 +387,107 @@ pub fn read(path: &Path) -> Option<Config> {
     parse(&value).ok()
 }
 
-/// Write the configuration, creating the directory if it is not there.
+/// Where a replacement for `path` is staged: the same name with `.tmp` appended, in the SAME
+/// directory — which is what makes the rename below a rename and not a copy across filesystems.
+fn staging_path(path: &Path) -> PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".tmp");
+    path.with_file_name(name)
+}
+
+/// Replace `path` with `body`, `0600` on Unix, WITHOUT EVER TRUNCATING IT.
 ///
-/// Mode `0600` on Unix. Nothing secret is in it — see the header — but it names a mail server and a
-/// username, which is nobody else's business on a shared machine.
-pub fn write(path: &Path, config: &Config) -> Result<(), String> {
+/// ── WHY THIS IS NOT `fs::write` ────────────────────────────────────────────────────────────
+///
+/// `fs::write` opens the target `O_TRUNC`: for the width of that write the settings file is empty
+/// or half-written, and {@link read} treats a file that does not parse as `None` — deliberately,
+/// since the recovery is "ask which door" either way. So a crash, a power cut or an ENOSPC inside
+/// that window left an install that had FORGOTTEN ITS DOOR, with the mailbox and the sealed
+/// credential both intact behind it. Every configure has always written this way; the local door
+/// now configures twice (the engine has to be replaced once the password is sealed, or a first
+/// connect never syncs), which doubled the exposure and is what made it worth closing.
+///
+/// The replacement is staged beside the target and renamed over it. `rename(2)` is atomic on
+/// POSIX, and `std::fs::rename` replaces an existing file on Windows too, so a reader sees either
+/// the whole previous configuration or the whole new one and never a truncated byte. `sync_all`
+/// before the rename is the other half: publishing a name that points at unflushed bytes would
+/// reintroduce the same empty file by a different route.
+///
+/// The staging name is FIXED rather than unique because these writes are serialized — one
+/// configure command, driven by one window — and a fixed name means a crash leaves at most one
+/// stale `.tmp` that the next write overwrites. Two genuinely concurrent writers would need a
+/// unique name; nothing in this shell has two.
+fn write_private(path: &Path, body: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|err| format!("{} could not be created ({err})", parent.display()))?;
     }
-    let body = serde_json::to_vec_pretty(&to_json(config))
-        .map_err(|err| format!("the configuration could not be encoded ({err})"))?;
-    fs::write(path, &body).map_err(|err| format!("{} could not be written ({err})", path.display()))?;
+    let staged = staging_path(path);
+
+    {
+        let mut opts = fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        // Created private, rather than created world-readable and chmodded a moment later: the
+        // mode has to hold for the file's whole life, and `fs::write` left a window where it did
+        // not. The explicit `set_permissions` below still runs, because `mode()` applies only when
+        // the open CREATES the file and a stale staging file from an earlier crash would keep
+        // whatever mode it already had.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let mut file = opts
+            .open(&staged)
+            .map_err(|err| format!("{} could not be written ({err})", path.display()))?;
+        file.write_all(body)
+            .map_err(|err| format!("{} could not be written ({err})", path.display()))?;
+        file.sync_all()
+            .map_err(|err| format!("{} could not be written ({err})", path.display()))?;
+    }
+
     // A chmod that failed is an error, not a shrug: the mode is the whole reason this comment
     // block exists, and a file that stayed world-readable behind an Ok would never be looked at.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+        fs::set_permissions(&staged, fs::Permissions::from_mode(0o600))
             .map_err(|err| format!("{} could not be made private ({err})", path.display()))?;
     }
+
+    fs::rename(&staged, path).map_err(|err| {
+        // The staging file is this function's litter, not the caller's problem. Leaving it behind
+        // a failure would be harmless but untidy; a failure to remove it is not worth an error,
+        // because the write itself has already failed and THAT is the sentence worth reporting.
+        let _ = fs::remove_file(&staged);
+        format!("{} could not be written ({err})", path.display())
+    })?;
+
+    // Durability of the NAME, as distinct from the bytes: without this the rename can still be
+    // lost by a crash even though the file it points at is on the disk. Best effort on purpose —
+    // some filesystems refuse `fsync` on a directory descriptor, and turning that refusal into a
+    // failed configure would be a worse bug than the durability gap it closes. The rename is
+    // already atomic, so what is at risk here is only "did the last write survive a power cut",
+    // never "is the file half-written".
+    #[cfg(unix)]
+    if let Some(parent) = path.parent() {
+        let _ = fs::File::open(parent).and_then(|dir| dir.sync_all());
+    }
+
     Ok(())
+}
+
+/// Write the configuration, creating the directory if it is not there.
+///
+/// Mode `0600` on Unix. Nothing secret is in it — see the header — but it names a mail server and a
+/// username, which is nobody else's business on a shared machine. Replaced rather than truncated —
+/// see {@link write_private} for why that distinction is the whole point.
+pub fn write(path: &Path, config: &Config) -> Result<(), String> {
+    let body = serde_json::to_vec_pretty(&to_json(config))
+        .map_err(|err| format!("the configuration could not be encoded ({err})"))?;
+    write_private(path, &body)
 }
 
 /// Forget which door this install came in by. Absent is not an error.
@@ -489,25 +569,15 @@ pub fn read_host(path: &Path) -> Option<HostSettings> {
 /// is not there, and the file is `0600` on Unix — it is nobody's business on a shared machine
 /// whether this install publishes to a tailnet, or on which port.
 pub fn write_host(path: &Path, settings: &HostSettings) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|err| format!("{} could not be created ({err})", parent.display()))?;
-    }
     let body = serde_json::to_vec_pretty(&serde_json::json!({
         "enabled": settings.enabled,
         "port": settings.port,
         "lan": settings.lan,
     }))
     .map_err(|err| format!("the host-mode setting could not be encoded ({err})"))?;
-    fs::write(path, &body).map_err(|err| format!("{} could not be written ({err})", path.display()))?;
-    // Same rule as {@link write}: a mode this file promises and cannot deliver is an error.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-            .map_err(|err| format!("{} could not be made private ({err})", path.display()))?;
-    }
-    Ok(())
+    // Replaced rather than truncated, for the identical reason: `read_host` reads a file that does
+    // not parse as "host mode off", so a torn write here silently un-publishes a running install.
+    write_private(path, &body)
 }
 
 /// What the cloud engine seals its hosted session into, under this install's key.

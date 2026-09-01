@@ -224,6 +224,69 @@ fn what_is_written_is_what_comes_back() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A WRITE THAT FAILS MUST LEAVE THE PREVIOUS CONFIGURATION STANDING.
+///
+/// This is the whole reason {@link write_private} exists. `fs::write` opens the target `O_TRUNC`,
+/// so a failure anywhere after that open left the settings file empty or half-written — and
+/// {@link read} correctly reads an unparseable file as `None`, which is an install that has
+/// forgotten which door it came in by while its mailbox and sealed credential sit intact behind
+/// it. The local door writes this file TWICE now (the engine has to be replaced once the password
+/// is sealed), so the window is entered twice per first connect.
+///
+/// The failure is forced by putting a DIRECTORY where the staging file goes: nothing can create a
+/// file at that path, for any user, root included — so the write fails at the earliest possible
+/// point, which is precisely the case that used to be destructive and now must not be.
+///
+/// **Watched red against `fs::write`.** With the old implementation this test fails twice over:
+/// the write SUCCEEDS (a read-only sibling directory is no obstacle to truncating `config.json`
+/// itself), so the `expect_err` fails, and the configuration that comes back is the new one.
+#[cfg(unix)]
+#[test]
+fn a_failed_write_leaves_the_stored_configuration_untouched() {
+    let dir = std::env::temp_dir().join(format!("ohmail-config-atomic-{}", std::process::id()));
+    let path = dir.join(CONFIG_FILE_NAME);
+    let _ = fs::remove_dir_all(&dir);
+
+    // The install as it stands: a local door, written and readable.
+    let stored = local_door();
+    write(&path, &stored).expect("the first write is the one that succeeds");
+    assert_eq!(read(&path).as_ref(), Some(&stored));
+
+    // A successful write leaves no litter behind — the staging file is renamed, not copied.
+    let staged = staging_path(&path);
+    assert!(!staged.exists(), "the staging file must not survive a successful write");
+
+    // Now make staging impossible, and try to write something different.
+    fs::create_dir(&staged).expect("occupy the staging path");
+    let err = write(&path, &cloud_door()).expect_err("a write that cannot stage must fail");
+    assert!(err.contains("could not be written"), "unhelpful sentence: {err}");
+
+    // THE ASSERTION THIS FILE IS FOR: the old configuration is still there, whole.
+    assert_eq!(
+        read(&path).as_ref(),
+        Some(&stored),
+        "a failed write replaced or truncated the stored configuration"
+    );
+
+    // The host-mode file carries the identical hazard and the identical fix, so it is held to the
+    // identical rule: an unreadable file there reads as "host mode off", which would silently
+    // un-publish a running install.
+    let host_path = dir.join(HOST_FILE_NAME);
+    let on = HostSettings { enabled: true, port: 3311, lan: None };
+    write_host(&host_path, &on).expect("write");
+    assert_eq!(read_host(&host_path), Some(on.clone()));
+    fs::create_dir(staging_path(&host_path)).expect("occupy the staging path");
+    write_host(&host_path, &HostSettings { enabled: false, port: 4400, lan: None })
+        .expect_err("a write that cannot stage must fail");
+    assert_eq!(
+        read_host(&host_path),
+        Some(on),
+        "a failed write un-published a host-mode install"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 // ── The host-mode file ──────────────────────────────────────────────────────────────────────
 
 #[test]
