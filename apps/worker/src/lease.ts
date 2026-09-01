@@ -442,7 +442,11 @@ export async function assertNoLiveTwin(input: {
     throw new LeaseUnavailableError(
       `this mailbox's adapter cannot read ${META_FOLDER} without writing to it, so it cannot be ` +
       `checked for a live organizer sharing this process's install id`,
-      { op: "no_lease_io" },
+      // `no_lease_peek_io`, NOT `no_lease_io`: an adapter can have the write side and lack the
+      // read-only one, and this branch fires on the second. Tagged with the first briefly, and a
+      // review round caught it — the op is what sends an operator to a missing method, so naming the
+      // wrong one is worse than naming none, which the union's REQUIRED field is designed to prevent.
+      { op: "no_lease_peek_io" },
     );
   }
 

@@ -969,7 +969,18 @@ export type LeaseOp =
   /** STORE `\Deleted` + EXPUNGE our older claims. */
   | "remove_claims"
   /** The adapter has no `leaseIo()` at all, so no operation was even attempted. */
-  | "no_lease_io";
+  | "no_lease_io"
+  /**
+   * The adapter has no `leasePeekIo()` — the READ-ONLY accessor — so a caller that only wanted to
+   * LOOK could not, and no operation was attempted.
+   *
+   * Distinct from {@link no_lease_io} and added 2026-09-01 rather than folded into it, because the
+   * two send an operator to different missing methods and an adapter can genuinely have one and not
+   * the other. It was folded in briefly, and a review round caught the telemetry lying about which
+   * capability was absent — which is the whole reason this union is a closed set of literals rather
+   * than a free string.
+   */
+  | "no_lease_peek_io";
 
 export class LeaseUnavailableError extends Error {
   /**
