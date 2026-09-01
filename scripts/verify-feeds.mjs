@@ -222,6 +222,18 @@ for (const k of WANT) {
   const entry = latest.platforms?.[k];
   if (!entry) { bad(`platforms.${k} is missing — those clients would never update again`); continue; }
   if (!entry.url || !entry.signature) { bad(`platforms.${k} has no ${entry.url ? "signature" : "url"}`); continue; }
+  /* AND THEY ARE STRINGS. `latest.json` is parsed, not validated, so a `signature` that is a
+   * number or an object is truthy and reaches `Buffer.from(value, "base64")`, which throws a
+   * TypeError rather than returning anything. An uncaught throw here exits non-zero — it does
+   * not pass — but it aborts the loop, so the remaining platforms go unchecked, the
+   * architecture and checksum sections never run, and no summary line is printed. This file's
+   * own header says a run that verified no signatures must never look like a run that found
+   * nothing wrong; dying halfway is that failure with a stack trace on top. Reported as one
+   * ordinary FAIL instead, so everything after it is still measured. */
+  if (typeof entry.url !== "string" || typeof entry.signature !== "string") {
+    bad(`platforms.${k}: url and signature must be strings (got ${typeof entry.url} and ${typeof entry.signature})`);
+    continue;
+  }
   const file = path.join(assetsDir, path.basename(new URL(entry.url).pathname));
   if (!fs.existsSync(file)) { bad(`${k}: ${path.basename(file)} is not in the asset set`); continue; }
   const r = minisignVerify(tauriPub, entry.signature, fs.readFileSync(file));
