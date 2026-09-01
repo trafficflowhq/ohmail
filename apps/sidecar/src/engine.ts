@@ -146,12 +146,11 @@ export type CredentialState =
    * ── WHY THIS IS ITS OWN STATE AND NOT ONE OF THE THREE ABOVE ─────────────────────────────
    *
    * Every one of them would be a TRUE SENTENCE ABOUT THE WRONG THING, which is the failure mode
-   * this whole seam exists to end. `unreadable` tells the user their keystore will not open a
-   * credential it opens perfectly, and sends them to re-enter a password that was never the
-   * problem. `absent` says nothing is stored when something is. `ready` is the defect itself.
-   * The recovery is different from all three, which is the test for whether a state has earned
-   * its own name: the password is fine and the SERVER is what moved, so what the person has to do
-   * is finish the change of server or undo it.
+   * this whole seam exists to end. `unreadable` sends somebody to re-enter a password when what
+   * moved is the SERVER — and it is not even known to apply, since nothing here tried the key.
+   * `absent` says nothing is stored when something is. `ready` is the defect itself. The recovery
+   * is different from all three, which is the test for whether a state has earned its own name:
+   * what the person has to do is finish the change of server or undo it, not retype anything.
    */
   | "foreign-host";
 

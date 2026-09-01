@@ -273,8 +273,12 @@ pub enum CredentialState {
     Absent,
     /// A password is stored and this install's key does not open it. Re-entering it re-seals it.
     Unreadable,
-    /// A password is stored and openable, and it was proved against a DIFFERENT server than the
-    /// engine is configured for, so the engine withheld it and dialled nothing.
+    /// A password is stored and it was proved against a DIFFERENT server than the engine is
+    /// configured for, so the engine withheld it and dialled nothing.
+    ///
+    /// Says nothing about whether the row is readable: the engine compares the servers BEFORE it
+    /// decrypts, so this takes precedence over [`CredentialState::Unreadable`] rather than ruling
+    /// it out.
     ///
     /// THE BOOT CONTRACT (`apps/sidecar/src/credential-host.ts`). This variant exists for the
     /// SENTENCE, not for the refusal: the refusal happens in the engine whether or not this shell

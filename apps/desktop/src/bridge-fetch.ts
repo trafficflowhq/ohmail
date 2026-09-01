@@ -286,12 +286,13 @@ export interface EngineStatus {
    * not a shell command, because the password and the code go to the engine and never through the
    * shell.
    *
-   * `foreign-host` is the BOOT CONTRACT: a stored password this install can open, proved against a
-   * different server than the engine is configured for, and therefore withheld from both
-   * transports (`apps/sidecar/src/credential-host.ts`). It is a state about the CONFIGURATION and
-   * not about the credential, so a surface that folds it into `unreadable` sends somebody to
-   * re-enter a password that was never the problem. Local door only — a hosted session is not
-   * proved against a mail server.
+   * `foreign-host` is the BOOT CONTRACT: a stored password proved against a different server than
+   * the engine is configured for, and therefore withheld from both transports
+   * (`apps/sidecar/src/credential-host.ts`). It is a state about the CONFIGURATION, so a surface
+   * that folds it into `unreadable` sends somebody to re-enter a password when what moved is the
+   * server. It does NOT assert the credential is readable: the engine compares the servers before
+   * it decrypts, so this state takes PRECEDENCE over `unreadable` rather than excluding it. Local
+   * door only — a hosted session is not proved against a mail server.
    */
   credentialState?: "ready" | "absent" | "unreadable" | "unknown" | "foreign-host";
   /**
