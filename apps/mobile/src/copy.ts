@@ -78,6 +78,25 @@ export const Copy = {
   doorDesktop: "Your own computer",
   doorDesktopSay:
     "The ohmail app on your computer does the organizing; this phone keeps a copy. Open Settings → Devices there and scan its code.",
+  /**
+   * THE DESKTOP DOOR'S ONE CONDITION, SHOWN ONLY WHERE IT APPLIES.
+   *
+   * The tile above is true on both platforms — a code from that pane does pair a phone — and review
+   * showed the tile alone still leads to a dead end: a computer's SAME-NETWORK code needs the
+   * pinning half, `canPin()` is false where that half is absent, and the seam refuses. So an iPhone
+   * user could follow the tile exactly and be stopped at the scan.
+   *
+   * The original argument for saying nothing was that a door tile is the wrong place for a
+   * conditional. That still holds for the TILE, and this is not the tile: it is a line rendered only
+   * when `canPin()` is false, which is the one platform where it is true. Nobody reads a condition
+   * that does not apply to them, and nobody walks into the refusal either.
+   *
+   * It names the remedy that works rather than the mechanism that does not — the Tailscale address
+   * is on the same Devices pane, so the instruction is one screen, not two. The same sentence the
+   * seam gives on refusal (`admitOrigin`), moved to before the scan instead of after it.
+   */
+  doorDesktopNoPin:
+    "On this phone, use the Tailscale address that pane also shows — ohmail cannot yet verify a computer reached over your own network here.",
 
   /**
    * THE TRAVEL SENTENCE, IN THE ONE FORM THAT IS TRUE FOR A PHONE.
@@ -141,10 +160,12 @@ export const Copy = {
    */
   doorSelfCert:
     "Your server needs an https certificate from an authority this phone already trusts. A stack "
-    + "on a public name gets one automatically; a stack on a private name like ohmail.test does "
-    + "not, and its own certificate will be refused — on Android a root you install on the phone "
-    + "yourself does not change that, because this app trusts only the system's authorities. Use a "
-    + "public name, or reach it over Tailscale.",
+    + "on a public name gets one automatically. A stack on a private name like ohmail.test issues "
+    + "its own, and whether this phone accepts that depends on the phone: on Android it does not — "
+    + "ohmail trusts only the authorities that came with the system, so a root you install yourself "
+    + "makes no difference — while on iPhone and iPad a root you install and switch on under "
+    + "Settings → General → About → Certificate Trust Settings does count. A public "
+    + "name, or a Tailscale address, works on both.",
   /** The address answered as an ohmail server. Named, so "we reached it" is not a guess. */
   doorSelfReached: (origin: string, flavor: string) =>
     `Reached ${origin} — an ohmail server (${flavor}).`,

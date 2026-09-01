@@ -31,21 +31,29 @@
  *     the scanner's own seam decides what it will accept; the copy says what the code carries and
  *     does not promise the platform half that is not there.
  *
- * ── AND THE LAN HALF IS NOT PROMISED EARLY ─────────────────────────────────────────────────────
+ * ── AND THE LAN HALF IS NOT PROMISED EARLY — WHICH TOOK TWO GOES TO GET RIGHT ──────────────────
  *
  * `admitOrigin` refuses a same-network pairing where `canPin()` is false and says which platform
- * half is missing. This screen therefore says nothing at all about "on your own network" beyond
- * pointing at the code the computer shows — the capability is real only where both halves ship,
- * and a door tile is the wrong place to describe a conditional. A person on the platform that
- * cannot do it meets one clear refusal from the seam that knows, rather than a promise here
- * followed by a contradiction there.
+ * half is missing. The first version of this screen therefore said nothing at all about "on your
+ * own network", on the argument that a door tile is the wrong place for a conditional.
+ *
+ * That argument is right about the TILE and was wrong as a whole answer, and review showed why: the
+ * tile says "open Settings → Devices there and scan its code", which is true on both platforms and
+ * still walks an iPhone user into the refusal, because a computer's SAME-NETWORK code is the one
+ * that needs the pin. Saying nothing did not stop the dead end; it just moved the discovery to
+ * after the camera.
+ *
+ * So the tile stays unconditional and TRUE, and one extra line renders only where `canPin()` is
+ * false, naming the address on that same pane which does work. A conditional nobody in the
+ * condition has to read, and nobody outside it ever sees.
  */
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { TextInput, View } from "react-native";
 import { Copy } from "../copy";
 import { useConnection } from "../net/connection";
 import type { Negotiation, PickerStep } from "../net/pairing";
 import { MANAGED_ORIGIN, nextStep, stashPairOrigin } from "../net/pairing";
+import { canPin } from "../net/host-pinning";
 import { addressProblem, parseServerAddress } from "../net/server-base";
 import { useTheme } from "../theme";
 import { Button, Panel, Rule, Section, TapRow, Txt } from "./base";
@@ -87,6 +95,26 @@ export function Doors({
   const [open, setOpen] = useState<Open>(null);
   const [address, setAddress] = useState("");
   const [probe, setProbe] = useState<Probe>({ k: "idle" });
+  /**
+   * WHICH CHECK IS THE NEWEST — the request-identity guard, and it closes a real state bleed.
+   *
+   * `check` awaits two round trips, and NOTHING stopped an older one from landing on top of a newer
+   * state. Review's sequence: tap **ohmail Cloud**, then open **Your own server** before `/hello`
+   * answers. The Cloud check resolves, sets `probed` with the HOSTED origin, and that result renders
+   * inside the self-hosted arm — locking the address field and offering to pair with a server the
+   * person never typed. Two taps on the self-hosted door resolving out of order does the same.
+   *
+   * The connection layer solves this with `TransitionGate`'s `stillCurrent()`; this is the same
+   * discipline at the screen: every check takes a ticket, and only the holder of the newest ticket
+   * may write state. A superseded check writes nothing at all — not even its failure, because a
+   * failure belonging to an abandoned question is noise on the question that replaced it.
+   *
+   * It also covers unmount, which is the other half review named: a check in flight when the screen
+   * routes to the scanner is superseded by nothing, so `latest` simply never matches again after
+   * the component is gone... which is NOT true of a ref, so the effect below marks it.
+   */
+  const latest = useRef(0);
+  useEffect(() => () => { latest.current = -1; }, []);
 
   /**
    * NEGOTIATE, THEN MEASURE — and both before anything says "next".
@@ -119,6 +147,11 @@ export function Doors({
    */
   const check = useCallback(
     async (typed: string, measureBase: boolean) => {
+      /* THE TICKET. Taken before anything awaits, so a check that never gets past the parse still
+         supersedes an older one in flight — pressing a door IS abandoning the previous question. */
+      const ticket = (latest.current += 1);
+      const mine = (): boolean => latest.current === ticket;
+
       const problem = addressProblem(typed);
       if (problem !== null) {
         setProbe({ k: "failed", sentence: problem });
@@ -134,6 +167,7 @@ export function Doors({
       }
       setProbe({ k: "asking" });
       const answer = await conn.ask(origin);
+      if (!mine()) return;
       if (answer.kind !== "hello") {
         setProbe({ k: "failed", sentence: sentenceFor(answer) });
         return;
@@ -148,6 +182,7 @@ export function Doors({
         return;
       }
       const base = await conn.probeBase(origin);
+      if (!mine()) return;
       if (base.kind === "refused") {
         setProbe({ k: "failed", sentence: base.reason });
         return;
@@ -210,11 +245,12 @@ export function Doors({
             <AddressField
               value={address}
               onChange={setAddress}
-              /* LOCKED once a server has answered, the desktop door's rule: the app has measured
-                 where that server's API is and the next step pairs against it, so a field that
-                 could still be edited would let somebody type one server, check it, and pair
-                 believing they had reached another. */
-              locked={probe.k === "probed"}
+              /* LOCKED FROM THE MOMENT THE CHECK STARTS, not from the moment it answers — review
+                 named the window. It read `probe.k === "probed"`, so the field was editable WHILE
+                 asking: type A, press Continue, replace it with B, and A's answer locks the field
+                 showing B while the pair buttons carry A. The token for B would then be sent to A.
+                 Editable only in the two states where nothing is in flight and nothing is proved. */
+              locked={probe.k === "asking" || probe.k === "probed"}
             />
             <Txt variant="caption" tone="ink3" style={{ lineHeight: 16 }}>
               {Copy.doorSelfCert}
@@ -233,6 +269,17 @@ export function Doors({
         ) : null}
         <Rule inset={20} />
         <Door name={Copy.doorDesktop} say={Copy.doorDesktopSay} onPress={onScan} />
+        {/* THE ONE CONDITION THIS DOOR HAS, BEFORE THE SCAN RATHER THAN AFTER IT. `canPin()` is
+            false where the pinning half is absent, and there a same-network code is refused by the
+            seam — so a person could follow the tile exactly and be stopped. See
+            `doorDesktopNoPin`: the remedy that works, named where it is needed and nowhere else. */}
+        {canPin() ? null : (
+          <View style={{ paddingHorizontal: 20, paddingTop: 2 }}>
+            <Txt variant="caption" tone="ink2" style={{ lineHeight: 16 }}>
+              {Copy.doorDesktopNoPin}
+            </Txt>
+          </View>
+        )}
 
         {open === null ? (
           <View style={{ paddingHorizontal: 16, paddingTop: 6 }}>
