@@ -156,6 +156,17 @@ permitting a background process to keep sending.
 > **[screenshot placeholder: the add-mailbox screen with a household member's
 > Gmail account filled in]**
 
+## Screener suggestions and reply drafts (optional)
+
+Both are off until you configure a model, and nothing needs one: the Screener
+still holds first contact, rules still file mail, and search still works. On
+this stack the only provider wired today is Anthropic, under your own key —
+set `ANTHROPIC_API_KEY` in the app's environment and requests go to Anthropic
+billed to your account. `OPENAI_API_KEY` does nothing here; OpenAI and a local
+Ollama are options in the desktop app, not in this server stack.
+[README.md](./README.md#screener-suggestions-and-reply-drafts) has the full
+comparison.
+
 ## Your household
 
 Accounts on your server only ever arrive by invitation — there is no open

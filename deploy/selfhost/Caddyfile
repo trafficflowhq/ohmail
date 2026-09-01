@@ -30,8 +30,19 @@
 	#
 	# `OHMAIL_TLS_INTERNAL=1` selects Caddy's own local CA instead: certificates are issued on
 	# the box, nothing is asked of any public CA, and the operator installs the root once
-	# (`docker compose exec proxy cat /data/caddy/pki/authorities/local/root.crt`) — the README
-	# spells that step out.
+	# (`docker compose exec proxy cat /data/caddy/pki/authorities/local/root.crt`). The
+	# per-platform steps are in `.env.example` beside the switch, and in the guide's
+	# "Private self-hosting, and ohmail over Tailscale" section (`docs/self-host/VPS.md`).
+	# This comment used to say "the README spells that step out"; it did not — the private-name
+	# posture appeared only in `.env.example`, so a reader who followed README -> VPS.md was told
+	# a public domain was required and never learned this switch existed.
+	#
+	# NOTE ON EXTERNAL CERTIFICATES. There is deliberately no third arm here: an operator cannot
+	# point this at a certificate FILE. That is what stops a `tailscale cert` (a real, publicly
+	# trusted certificate for a `ts.net` name) from being usable, and it is why the private-network
+	# recipe installs this CA on each device instead. `tailscale serve` in front does not route
+	# around it either — `OHMAIL_ORIGIN` is BOTH this site's address and the origin the application
+	# announces, so the proxy cannot be told to serve plain HTTP behind an external terminator.
 	#
 	# The placeholder expands to the whole directive or to nothing, and it can be exactly one
 	# of those two: docker-compose.yml maps a plain boolean to the literal text with

@@ -37,10 +37,16 @@ and create a DNS **A record** pointing it at the box's IP address (and an
 AAAA record if the box has IPv6). That is all: the stack obtains and renews
 its TLS certificate itself once the name resolves to the box.
 
-If you don't own a domain, buy a cheap one; a fixed public address is a
-prerequisite, because browsers require an https origin for the features
-ohmail uses (secure cookies, passkeys), and the server refuses to run
-without one.
+Browsers require an https origin for the features ohmail uses (secure
+cookies, passkeys), and the server refuses to run without one — so a fixed
+address of some kind is a prerequisite. A public domain is the simplest, and
+if you don't own one, buy a cheap one.
+
+**If you would rather the install were not on the public internet at all**,
+you do not need a public domain: a name only your own network resolves works
+just as well, and the stack issues its own certificate for it. Read
+[Private self-hosting, and ohmail over Tailscale](#private-self-hosting-and-ohmail-over-tailscale)
+below, then come back to step 3 — the rest of this guide is unchanged.
 
 ## 3. Install Docker
 
@@ -233,6 +239,24 @@ Plain facts about providers:
   Set either, or neither. With both set the app uses your own registration.
 - A mail server on your own LAN needs the probe allowance from step 4.
 
+## 7b. Screener suggestions and reply drafts (optional)
+
+Both are off until you configure a model, and the install works without one:
+the Screener still holds first contact, rules still file mail, and search
+still works. On **this** stack the only provider wired today is Anthropic,
+under your own key — one line in `.env`:
+
+```
+ANTHROPIC_API_KEY=sk-ant-…
+```
+
+Requests go to Anthropic billed to your account; leave it unset and the AI
+surfaces say they are unconfigured rather than failing oddly. Setting an
+`OPENAI_API_KEY` here does nothing — OpenAI and a local Ollama are wired into
+the desktop app, not into this server stack.
+[README.md](./README.md#screener-suggestions-and-reply-drafts) has the full
+comparison and the desktop app's options.
+
 ## 8. Your household
 
 The server never opens signup to strangers: the first account came from box
@@ -295,6 +319,164 @@ It is this install's name in every connected mailbox's `ohmail/_meta`
 claim. Older stacks ran under a shared default name; after this update each
 already-connected mailbox may ask for one "Organize here" confirmation, and
 then stays organized under the install's own name.
+
+## Private self-hosting, and ohmail over Tailscale
+
+Everything above assumes a public domain. It does not have to be. ohmail has
+no opinion about your hostname and needs nothing inbound from the internet,
+so the whole install can live on a private network — a Tailscale tailnet, a
+WireGuard network, or a LAN with its own DNS — reachable only by your own
+devices.
+
+Two things change. Nothing else in this guide does.
+
+### 1. The address, and the certificate for it
+
+Put the private name in `OHMAIL_ORIGIN` and set `OHMAIL_TLS_INTERNAL=1`:
+
+```
+OHMAIL_ORIGIN=https://ohmail.your-tailnet.ts.net
+OHMAIL_TLS_INTERNAL=1
+```
+
+**Do not leave `OHMAIL_TLS_INTERNAL` empty on a private name.** Without it
+Caddy treats the name like a public domain, asks Let's Encrypt for a
+certificate it can never issue, and retries for thirty days while your site
+serves no TLS at all. With it, Caddy issues the certificate from its own CA
+on the box — no public certificate authority is contacted, and nothing about
+the install is announced anywhere.
+
+Then install that CA on every machine that opens the app:
+
+```sh
+docker compose exec proxy cat /data/caddy/pki/authorities/local/root.crt > ohmail-local-ca.crt
+```
+
+- **Debian/Ubuntu:** copy to `/usr/local/share/ca-certificates/` and run
+  `sudo update-ca-certificates`.
+- **Arch:** `sudo trust anchor ohmail-local-ca.crt`.
+- **macOS:** Keychain Access → System → drag the file in → set it to
+  "Always Trust".
+- **Windows:** import into "Trusted Root Certification Authorities".
+- **iOS/Android:** mail the file to yourself and open it; iOS additionally
+  needs Settings → General → About → Certificate Trust Settings.
+
+The certificate the server presents is short-lived and renewed
+automatically. The **root** is the durable thing — it is valid for years, and
+installing it once is the whole ceremony. Never copy the server certificate
+itself to a client; copy the root.
+
+A command-line client that reads Node's trust store — the desktop app in
+self-host mode among them — takes the same file through `NODE_EXTRA_CA_CERTS`:
+
+```sh
+NODE_EXTRA_CA_CERTS=/path/to/ohmail-local-ca.crt <command>
+```
+
+That variable is read **once, when the process starts**. Exporting it from
+inside a running program has no effect, and the failure it produces —
+`UNABLE_TO_GET_ISSUER_CERT_LOCALLY` — looks like a broken certificate rather
+than a mis-set variable.
+
+### 2. Bind the proxy to the private interface
+
+This step is the difference between "private" and "private in intent", and
+it is the one the compose file does not do for you.
+
+As shipped, the proxy publishes `80:80` and `443:443`, which binds **every
+interface on the box**. On a rented VPS that includes its public IP — so an
+install you think of as tailnet-only is answering the internet on port 443,
+regardless of what its hostname is or who can resolve it.
+
+Find the address your private network gave the box (`tailscale ip -4`, or
+`ip -4 addr show tailscale0`) and pin the publish to it in
+`docker-compose.yml`, under the `proxy` service:
+
+```yaml
+    ports:
+      - "100.x.y.z:80:80"
+      - "100.x.y.z:443:443"
+```
+
+Recreate the proxy and check:
+
+```sh
+docker compose up -d --force-recreate proxy
+ss -tlnH | awk '{print $4}' | grep -E ':(80|443)$'
+```
+
+Every line should carry the private address. If any line reads `0.0.0.0:443`
+or `[::]:443`, the install is still listening on the public interface. A
+firewall that drops 80/443 on the public interface achieves the same thing
+and is worth having as well, but the bind is the part that cannot be
+misconfigured open.
+
+### What needs no inbound connection, and why
+
+Worth stating plainly, because it is the usual reason people assume a
+private install cannot work:
+
+- **Nothing reaches the box from outside your network.** The organizer makes
+  outbound IMAP and SMTP connections to your mail provider. No provider, and
+  no ohmail server, ever connects in.
+- **Microsoft 365 / Exchange signs in with the device-code flow**
+  (`MS_DEVICE_CLIENT_ID`, step 7). It has no redirect URI at all, which is
+  exactly why it works on a hostname Microsoft has never heard of. You are
+  shown a code, you enter it at `microsoft.com/devicelogin`, and Microsoft
+  issues the access straight to your server over its outbound connection.
+  The `MS_OAUTH_*` alternative does need a redirect URI reachable by the
+  browser — which on a tailnet means reachable by *your* browser, not by
+  Microsoft — but the device-code flow avoids the question entirely and is
+  the one to use here.
+- **Your session cookie does not care what the hostname is.** It is issued
+  host-only, with no `Domain` attribute, so a private name is treated
+  exactly like a public one.
+
+### Tailscale specifically
+
+Install Tailscale on the box and join your tailnet:
+
+```sh
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up --hostname ohmail
+tailscale ip -4          # the 100.x.y.z address to bind to, above
+```
+
+With MagicDNS on, the box is `ohmail.<your-tailnet>.ts.net` from every
+device you own, and that is the name to put in `OHMAIL_ORIGIN`. Install the
+CA on each device as above and you are done: browser, desktop app in
+self-host mode, and the phone all reach the same origin.
+
+**Phone pairing works unchanged** — the pairing token and its QR are minted
+by your own server, and the phone scans them while on the tailnet.
+
+**On `tailscale cert`.** Tailscale can issue a *publicly trusted* certificate
+for your `ts.net` name (`tailscale cert ohmail.<tailnet>.ts.net`), which
+would remove the CA-installation step entirely. **The stack cannot use it
+today**: the proxy takes its certificate either from its own CA or from ACME,
+and there is no supported way to hand it a certificate file. Putting
+`tailscale serve` in front does not help either, because the same
+`OHMAIL_ORIGIN` value is both the address the proxy serves on and the origin
+the application announces, so it cannot be told to serve plain HTTP behind
+something else. Until that changes, `OHMAIL_TLS_INTERNAL=1` plus the CA
+install is the supported private-network path, and it is the one described
+above.
+
+### What was verified, and what was not
+
+Measured on a real stack, on a private hostname with no public DNS record:
+the local-CA certificate is issued with no ACME request of any kind; the
+first-run setup token, account creation, second factor and recovery codes all
+complete over the private origin; session cookies are issued host-only; and
+the phone-pairing grant is minted. The interface-scoped bind was verified to
+serve on the private address and nowhere else.
+
+Not verified here, because it needs a Tailscale account: `tailscale up`
+against a real tailnet, MagicDNS resolution of the `ts.net` name from a
+second device, and `tailscale cert`. Those are Tailscale's own behaviour
+rather than ohmail's, and the ohmail side of the boundary — a hostname it has
+never seen, a certificate from a CA you control, and no inbound connection —
+is what was tested.
 
 ## External database or storage
 

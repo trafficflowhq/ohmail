@@ -25,11 +25,19 @@ It is not a multi-tenant hosting kit, and nothing in it meters or bills.
   under "Where this stands" before you commit a weekend to it.
 - **Docker**, with the compose plugin (`docker compose`, not the older
   `docker-compose`).
-- **A domain name pointed at that machine.** Mail credentials deserve TLS,
-  and the browser features ohmail relies on — secure cookies, passkeys —
-  require an https origin, so the server refuses to run without one (a
-  same-box `http://localhost` test run is the one exception). The stack
-  provisions and renews certificates itself; you only point the domain.
+- **An https address for that machine.** Mail credentials deserve TLS, and
+  the browser features ohmail relies on — secure cookies, passkeys — require
+  an https origin, so the server refuses to run without one. There are three
+  shapes, and only the first needs anything public:
+  - **A public domain** pointed at the box with an A record. The stack
+    obtains and renews the certificate itself; you only point the name.
+  - **A private name your own network resolves** — a `.lan` or `.internal`
+    name, or a Tailscale/VPN address. Nothing is exposed to the internet and
+    no public certificate authority is involved: the stack issues
+    certificates from its own CA, and you install that CA once on the
+    machines that open the app. See
+    [Private self-hosting, and ohmail over Tailscale](./VPS.md#private-self-hosting-and-ohmail-over-tailscale).
+  - **`http://localhost`**, for a same-box test run only.
 - **About 20 minutes.**
 
 ## Pick your path
