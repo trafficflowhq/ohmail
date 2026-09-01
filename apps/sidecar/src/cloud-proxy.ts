@@ -80,6 +80,22 @@ export interface WriteThroughProxyConfig {
  * server — refusing those would break the door rather than protect it. These two are the whole of
  * the hand-off surface, and nothing else in the API's `/auth` table carries a credential minted
  * elsewhere.
+ *
+ * ── ONE VECTOR THIS DOES NOT CLOSE, NAMED RATHER THAN LEFT TO BE FOUND ────────────────────────
+ *
+ * `fetch` follows redirects, and re-sends the body on a 307/308. So a server could answer some
+ * OTHER, unrefused path with a redirect to the claim route and receive the body that way. Review
+ * raised it and it is real.
+ *
+ * It is accepted, for two reasons that are worth having written down. The FIRST is that the
+ * redirecting server is the operator's own: reaching this vector needs a hostile window to post a
+ * hosted code to a path of its choosing, and a window that hostile has no need of a redirect — it
+ * is already choosing where the request goes. The redirect adds nothing it did not have. The SECOND
+ * is what closing it would cost: `redirect: "manual"` on this relay, and this relay is also how
+ * attachment and media bytes are read, which the hosted API answers with a redirect to a
+ * presigned storage URL. Blocking redirects here would break every attachment on both cloud doors
+ * to narrow a vector that a hostile window does not need. If the byte reads ever stop redirecting,
+ * `redirect: "manual"` becomes free and should be taken.
  */
 export const HANDOFF_CLAIM_PATHS = ["/auth/desktop-claim", "/auth/desktop-link"] as const;
 
@@ -92,15 +108,30 @@ export const HANDOFF_CLAIM_PATHS = ["/auth/desktop-claim", "/auth/desktop-link"]
  * slash would have walked straight past the guard and been relayed. Case is folded for the same
  * reason and costs nothing. Repeated slashes collapse.
  *
- * WHAT IS DELIBERATELY NOT DONE: percent-decoding. `new URL` leaves `%2F` encoded in `pathname`,
- * and the hosted router sees that as one literal segment rather than as a path separator — so
- * decoding here would invent a match the server would never make, and refusing on it would be
- * refusing a request that does not reach the route this is about. Traversal needs no handling: the
- * URL standard resolves `..` before `pathname` is read, so `/x/../auth/desktop-claim` arrives
- * already normalised and is caught by the plain comparison.
+ * PERCENT-ENCODING IS DECODED, and the first version of this said it deliberately was not. That
+ * reasoning covered only `%2F` — where leaving it encoded is right, because the hosted router reads
+ * it as one literal segment — and ignored every OTHER escape: `/auth/desktop%2Dclaim` is
+ * `/auth/desktop-claim` to anything that decodes, and this guard did not. Review named it.
+ *
+ * Decoding is also the safe DIRECTION, which is what settles it. An escape that the hosted router
+ * would not have decoded now matches this refusal, so the worst case is refusing a request that
+ * would have 404'd — nothing lost. Not decoding meant relaying a live credential. A malformed
+ * escape throws in `decodeURIComponent`, and that too is refused rather than passed: an
+ * undecodable path is not a path this relay can reason about.
+ *
+ * Traversal needs no handling: the URL standard resolves `..` before `pathname` is read, so
+ * `/x/../auth/desktop-claim` arrives already normalised — asserted rather than assumed, because it
+ * is a claim about the platform.
  */
 export function normalizeRefusalPath(pathname: string): string {
-  const collapsed = pathname.replace(/\/{2,}/g, "/").toLowerCase();
+  let decoded = pathname;
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {
+    /* Undecodable. Fall through with the raw value; a path this cannot read is a path it refuses
+       rather than reasons about — see above. */
+  }
+  const collapsed = decoded.replace(/\/{2,}/g, "/").toLowerCase();
   return collapsed.length > 1 ? collapsed.replace(/\/+$/, "") : collapsed;
 }
 
