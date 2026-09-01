@@ -3841,6 +3841,17 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
           // `sendReply` resolves that same call again for the wire. A toggle like plain Reply.
           toggleReply(m.id, true);
           break;
+        case "forward":
+          /**
+           * THE BAR'S FORWARD, answered by the seam the panel ⋯ menus have always dispatched.
+           *
+           * NOT `toggleReply`-shaped, deliberately: `openForward` REFUSES a `no_forward` original
+           * with a toast, and a toggle would read that refusal as "the editor is already open on
+           * this message, close it" on the second press. It is also not a second implementation —
+           * one open, one refusal, one scratch lane.
+           */
+          openForward(m.id);
+          break;
         case "draft":
           /**
            * IT NOW ASKS THE DRAFTER, and it used to navigate to Compose.
@@ -4016,7 +4027,7 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
         }
       }
     },
-    [engine, toast, t, now, openReply, toggleReply, markSeen, draftReply, replyTo, replyAll],
+    [engine, toast, t, now, openReply, openForward, toggleReply, markSeen, draftReply, replyTo, replyAll],
   );
 
   /**
@@ -4035,10 +4046,17 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
    *
    * Every other action is a mutation with a toast and needs no surface, so it is passed straight
    * through and the card the reader is on stays where it is.
+   *
+   * `forward` is in the same list as `reply` for the same reason and not a fourth case: the inline
+   * forward IS the reply dock in forward mode (`openForward`), so it needs the identical pane.
+   * Left out, pressing Forward on a Reads or Receipts card would set `replyTo` with nothing
+   * mounted to render it — the dead-button shape this list exists to prevent.
    */
   const onStreamAction = useCallback(
     (action: MessageAction, m: EngineMessage) => {
-      if (action === "reply" || action === "reply_all" || action === "draft") setReaderFor(m.id);
+      if (action === "reply" || action === "reply_all" || action === "forward" || action === "draft") {
+        setReaderFor(m.id);
+      }
       onMessageAction(action, m);
     },
     [onMessageAction],
@@ -4949,6 +4967,35 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
         if (!focused) return;
         if (readerMessage != null || route.view === "ohbox") toggleReply(focused.id, true);
         else onStreamAction("reply_all", focused);
+      },
+    },
+    {
+      /**
+       * FORWARD — `⇧F`, and NOT the `f` a mail client usually gives it.
+       *
+       * `f` is taken, by the Reply Run over the Answer Later pile (declared above, and again in
+       * `TriageView`), and moving a shipped chord to make room for a new one is the more expensive
+       * change of the two. `⇧F` is the shifted variant of a bare letter that already means
+       * something adjacent, which is the convention `⇧R` (reply all) and `⇧U` set — so it reads as
+       * "the other thing F does" rather than as an arbitrary pick, and the `?` sheet prints it
+       * beside `r` and `⇧R` in the same `message` group.
+       *
+       * Its `disabled` carries the SAME predicate the bar's button does (`sensitivity.no_forward`
+       * — the send path refuses such a forward with a 403), so the key and the control appear and
+       * disappear together: the discipline `⇧R` keeps against `replyAllRecipients`, and the reason
+       * the pill's keycap can be generated from this registry rather than typed at the call site.
+       *
+       * Live wherever the pill is (`focused != null`), and NOT a toggle — see `openForward`, which
+       * answers a refused message with a toast that a second-press-closes verb would swallow.
+       */
+      chord: "shift+f",
+      group: "message",
+      label: t("shortcuts.forward"),
+      disabled: focused == null || focused.sensitivity?.no_forward === true,
+      run: () => {
+        if (!focused) return;
+        if (readerMessage != null || route.view === "ohbox") openForward(focused.id);
+        else onStreamAction("forward", focused);
       },
     },
     {

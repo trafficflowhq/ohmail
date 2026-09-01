@@ -50,6 +50,21 @@ export type MessageAction =
    * it; the shell resolves the same call again at send time (`AppShell.sendReply`).
    */
   | "reply_all"
+  /**
+   * FORWARD THIS MESSAGE ON — the third verb of the "answer it" family, and the one that used to
+   * be reachable only from a panel's ⋯ menu.
+   *
+   * Reported from real use: *"fwd message / Forward in general should be within our main
+   * pill-shaped UI besides Reply etc."* It is a row verb on the bar now (`.abar-fwd`, with the
+   * rung `action-bar.css` derives for it) and a `mm-fwd` item behind More below that rung, so it
+   * obeys the same in-the-row-or-in-the-menu rule as every other group.
+   *
+   * The shell answers it with `openForward` — the reply dock in forward mode, docked to THIS
+   * message — which is the same seam the panel menus have always dispatched. NOT a toggle, and
+   * deliberately so: `openForward` refuses a `no_forward` original with a toast, and a verb whose
+   * second press means "close" would swallow that refusal on the second try.
+   */
+  | "forward"
   | "later"
   | "aside"
   | "resurface"
@@ -266,6 +281,12 @@ function ActionBar({
 }) {
   const t = useTranslations("ohbox");
   const tr = useTranslations("screening");
+  /* Forward's label, read from where the verb's copy already lives (`message.menuForward`, the
+     panel ⋯ menu's own string) rather than copied into an `ohbox.actionForward` beside it. The
+     pill and the panel menu are the SAME verb, so they must be the same words; a second key is a
+     second source of copy, and the two would drift the first time one of them was reworded. The
+     cross-namespace read is the pattern the Screening button already uses (`tr("action")`). */
+  const tm = useTranslations("message");
   const press = useKeyPress();
   const chrome = useMessageChrome();
   /** The delete confirm's focus target (Cancel — the safe answer) and its described note. */
@@ -295,6 +316,25 @@ function ActionBar({
    */
   const canReplyAll =
     replyAllRecipients(message, chrome.ownAddresses ?? []) !== null;
+  /**
+   * FORWARD IS OFFERED UNLESS THE MESSAGE MAY NOT BE FORWARDED — the `no_forward` sensitivity.
+   *
+   * The server refuses such a forward with a 403 (`SendService.reserve`, the sensitive-leak gate)
+   * and `AppShell.openForward` refuses it client-side with a toast, so a Forward control on an OTP
+   * or a reset link is a button that can only ever say no. That is the same rule Delete follows
+   * against `chrome.mirrorHolds`: a verb the send path must reject is not offered.
+   *
+   * `⇧F`'s own binding carries the identical predicate (see `AppShell`), so the key and the button
+   * appear and disappear together — the discipline `shift+r` and `replyAllRecipients` already keep.
+   *
+   * THE DENSITY LADDER DELIBERATELY IGNORES THIS. `action-bar.css` derives its rungs with the
+   * Forward group PRESENT, which is the worst case for width; a `no_forward` message's row is then
+   * narrower than the rung assumed, so a later group folds into More one tier early — the ladder's
+   * own benign failure mode — instead of a control being painted outside the pill. A second
+   * `data-*` predicate beside `data-rall` would double every chain in that file to describe a
+   * message class the reader almost never opens.
+   */
+  const canForward = message.sensitivity?.no_forward !== true;
   /** Is the disclosure menu open? A boolean, because the menu is anchored by CSS, not by a point. */
   const [menuOpen, setMenuOpen] = useState(false);
   /**
@@ -628,6 +668,21 @@ function ActionBar({
           run: () => { closeMenu(); onAction("reply_all"); },
         } as MoreMenuItem]
       : []),
+    /**
+     * FORWARD — the folded half of the row group, mirroring its row position: second, beside the
+     * two verbs it stands with. `group: "fwd"` is what makes the 342/443/478/621 tiers hide it
+     * here exactly where `.abar-fwd` stands there, keeping "a verb is in the row or in the menu,
+     * never both". Gated on the SAME `canForward` the row button is, so a `no_forward` message
+     * offers the verb in neither place rather than in one of them.
+     */
+    ...(canForward
+      ? [{
+          id: "forward",
+          group: "fwd",
+          label: tm("menuForward"),
+          run: () => { closeMenu(); onAction("forward"); },
+        } as MoreMenuItem]
+      : []),
     { id: "later", group: "defer", label: copy("actionLater", "Later"), run: () => { closeMenu(); onAction("later"); } },
     { id: "aside", group: "defer", label: t("actionSetAside"), run: () => { closeMenu(); onAction("aside"); } },
     { id: "resurface", group: "defer", label: t("actionResurface"), run: () => { closeMenu(); onPanel("resurface"); } },
@@ -726,6 +781,36 @@ function ActionBar({
             >
               {t("actionReplyAll")}
               <Key chord="shift+r" />
+            </button>
+          </div>
+        ) : null}
+
+        {/* FORWARD — the third verb of the answer family, and the reason this group exists.
+            Reported from real use: *"fwd message / Forward in general should be within our main
+            pill-shaped UI besides Reply etc."* It stood in no row at any width before this: the
+            only mouse door was a panel's ⋯ menu, which is a disclosure a reader has to already
+            know about.
+
+            Its own `.abar-g` beside the other two rather than a segment inside either: Reply is
+            the one primary capsule (the argument the Reply-all group already makes), and Forward
+            answers a different question from both — not "what do I say back" but "who else needs
+            to see this".
+
+            `.abar-fwd` is the ladder's SECOND rung, directly after Reply all, so the three answer
+            verbs stand together at every width a message is read at on a desktop. What pays for it
+            is the three horizons and Tag, which fold into More earlier than they used to — the
+            full arithmetic, and the trade stated as a trade, is at the Forward rung in
+            `action-bar.css`. `mm-fwd` is the other half of "in the row or in the menu, never
+            both". */}
+        {canForward ? (
+          <div className="abar-g abar-fwd">
+            <button
+              type="button"
+              className="abar-b abar-solo"
+              onClick={() => onAction("forward")}
+            >
+              {tm("menuForward")}
+              <Key chord="shift+f" />
             </button>
           </div>
         ) : null}

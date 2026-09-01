@@ -475,6 +475,7 @@
  *                       en        de
  *     Reply           68.2     95.5   `Antworten`
  *     Reply all       95.7    136.8   `Allen antworten`
+ *     Forward         95.7    136.8   `Weiterleiten` — BOUNDED by Reply all, see the Forward rung
  *     defer          221.7    293.3   `Später` · `Parken` · `Wieder auftauchen`
  *     Tag             56.9     56.9   the word is the same
  *     read + More    153.3    221.2   `Als ungelesen markieren`
@@ -486,19 +487,34 @@
  * the geometry note at the rules themselves):
  *
  *                        1:1 message                carrying Reply all
- *     en          base+defer            455.2      base+rall             329.2
- *                 +Tag                  518.2      +defer                556.9
- *                                                  +Tag                  619.8
- *     de          base+defer            622.1      base+rall             465.6
- *                 +Tag                  685.0      +defer                764.9
- *                                                  +Tag                  827.9
+ *     en          base+FORWARD          329.2      base+rall             329.2
+ *                 +defer                556.9      +FORWARD              430.9
+ *                 +Tag                  619.8      +defer                658.6
+ *                                                  +Tag                  721.5
+ *     de          base+FORWARD          465.6      base+rall             465.6
+ *                 +defer                764.9      +FORWARD              608.4
+ *                 +Tag                  827.9      +defer                907.8
+ *                                                  +Tag                  970.7
  *
- * ── REPLY ALL AND TAG CANNOT BOTH STAND WHERE A MESSAGE IS READ, AND REPLY ALL WINS ────
+ * ── THE THREE ANSWER VERBS STAND TOGETHER, AND FILING IS WHAT FOLDS ────────────────────
  *
  * A message's bar is capped by the mail measure: 572 in the reading column, 576 on a stream card,
- * 628 on a conversation — and 619.8 + 12 does not fit in 628, let alone in 576. So on a
- * multi-recipient message Tag stands in no row at any width this bar is given, and lives behind
- * More with `mm-tag`. On every 1:1 message it stands exactly where it did.
+ * 628 on a conversation. Reply·Reply all·Forward is 430.9 in English and fits all three; adding
+ * the horizons is 658.6 and fits none of them. So on an English multi-recipient message the row is
+ * the three answer verbs, and defer, Tag and filing are behind More.
+ *
+ * Tag stands in NO message row at any width now (its lowest rung, 632, is above the widest
+ * container a message bar gets), where before this change it stood on every 1:1 message. That is
+ * the second half of the same trade: Tag is a mark the reader chooses to add and keeps both `t`
+ * and `mm-tag`, while Forward is a verb every message has and had neither a row nor a key.
+ *
+ * ONE CASE IT DOES NOT REACH, AND IT IS THE GERMAN FLOOR AGAIN. `base` in German is 322.8, so two
+ * answer verbs on top of it are 608.4 — more than the 560 the pill leaves at the reading measure.
+ * A German multi-recipient bar therefore stands Reply·Reply all there and picks Forward up only at
+ * its own rung, 621, which just the conversation surface (628) reaches. That is the same
+ * unfixable-by-any-rung floor the closing note names (`Als ungelesen markieren` is 221.2 of it),
+ * not a choice this ordering makes; `test/action-bar.test.ts` pins those two rows as FOLDED so the
+ * limitation is recorded rather than skipped, and that pin reddens the day the label shortens.
  *
  * "REPLY ALL STANDS WHEREVER MAIL IS READ" IS TRUE OF THOSE THREE WIDTHS AND NOT OF ALL FIVE.
  * Its group has a rung like any other, so below that rung it folds — the 242px split column in
@@ -523,11 +539,11 @@
  *
  * ── AND THE LADDER WAS THEN WATCHED, NOT ONLY CALCULATED ──────────────────────────────
  *
- * Arithmetic on measured parts is still arithmetic. The rules below were rendered in Chrome
- * against containers stepped through every rung, in both locales, with and without the Reply-all
- * group, reading which groups stood and the row's own `scrollWidth` against the space the pill
- * actually leaves it — the number that tells you whether a control has been put outside the mail.
- * On a bar that CARRIES the group:
+ * Arithmetic on measured parts is still arithmetic, so the pre-Forward rules were rendered in
+ * Chrome against containers stepped through every rung, in both locales, with and without the
+ * Reply-all group, reading which groups stood and the row's own `scrollWidth` against the space
+ * the pill actually leaves it — the number that tells you whether a control has been put outside
+ * the mail. On a bar that CARRIED the group, before Forward joined it:
  *
  *     container   en: standing in the row / row      de: standing in the row / row
  *      242        reply·read              227.5      reply·read              322.8  ← see below
@@ -538,10 +554,25 @@
  *      576        reply·reply all·defer   556.9      reply·reply all         465.6  ← widest msg
  *      628        reply·reply all·defer   556.9      reply·reply all         465.6  ← conversation
  *
- * and on a 1:1 bar the two chains reach reply·defer·Tag (518.2) at 531 in English and reply·defer
- * (622.1) at 635 in German. No row exceeds the space the pill leaves it at any rung a message bar
- * can reach, in either locale, on either chain. That is the claim this change is making, and it is
- * the first time the file can make it: the rungs it replaces were each 12px too low.
+ * THAT OBSERVATION IS KEPT AS A RECORD AND IS NO LONGER THE CURRENT ROW — it is what the rungs
+ * this change replaces admitted. The Forward rung explains why its WIDTH column could not be
+ * re-read: the reference font does not resolve on the machine that derived the new rungs, and a
+ * Chrome reading in another font is a picture of a different bar.
+ *
+ * The two halves of that table were therefore checked separately, and both were checked:
+ *
+ *   · WHICH GROUPS STAND — re-run in Chrome against this exact stylesheet, at 242 / 350 / 572 /
+ *     576 / 628, in both locales, with and without the Reply-all group, reading `display` off
+ *     every `.abar-*` group AND every `.mmenu .mm-*` item. Font-independent, because it is about
+ *     whether the SELECTORS match: en/solo reaches fwd·defer at 572, en/rall reaches reply
+ *     all·fwd, de/solo fwd, de/rall reply all alone until 628. No group was ever in both places or
+ *     in neither, at any container. That is the one property a regex over this file cannot verify
+ *     — a rule scoped to the wrong chain, or an `mm-` class nothing matches, parses perfectly.
+ *   · WHETHER THE STANDING ROW FITS — arithmetic, and `test/action-bar.test.ts` owns it: it reads
+ *     every rung OUT OF THIS FILE, rebuilds the standing row from the measured parts, and asserts
+ *     it fits `rung − 12`, at each rung and again at each of those five containers, in both
+ *     locales on both chains. The two agree on which groups stand at every one of them, which is
+ *     what makes the arithmetic a model of the real bar rather than a parallel story about it.
  *
  * ── THE ONE THING NO RUNG CAN FIX ─────────────────────────────────────────────────────
  *
@@ -553,6 +584,7 @@
 .abar-defer,
 .abar-file,
 .abar-tag,
+.abar-fwd,
 .abar-rall { display: none; }
 
 /* Duplicates, hidden exactly when the group is standing in the row above, so a verb is in the
@@ -612,30 +644,109 @@
   :root[lang="en"] .msg-actions .mmenu .mm-rall { display: none; }
 }
 
+/* ── FORWARD — THE SECOND RUNG, AND THE GROUP EVERY LOWER RUNG NOW PAYS FOR ──────────────
+ *
+ * Reported from real use: *"fwd message / Forward in general should be within our main pill-shaped
+ * UI besides Reply etc."* Forward stood in NO row at any width before this — the only mouse door
+ * was a message panel's ⋯ menu — so it is a group here, with a rung, exactly like the others.
+ *
+ * ── ITS WIDTH IS BOUNDED BY REPLY ALL'S, AND THAT IS A DELIBERATE SUBSTITUTION ──────────
+ *
+ * Every part in this file was read off Chrome on the machine that derived the ladder, and that
+ * machine's `--font-ui` resolution is not reproducible here: re-running the same harness against
+ * the same markup returns Reply 66.75 / Reply all 88.81 / defer 216.88 / Tag 56.33 / read 151.72
+ * in English — the same figures to within a few px, drifting per string, which is a different font
+ * and not a different measurement. Mixing the two frames silently would be worse than either.
+ *
+ * So the existing parts are LEFT ALONE and Forward is bounded rather than freshly measured. On the
+ * one harness that can compare them, Forward is NARROWER than Reply all in both measured locales
+ * — en 87.92 vs 88.81, de 108.50 vs 129.33 (`Weiterleiten` against `Allen antworten`) — so this
+ * file takes Reply all's own recorded width as Forward's:
+ *
+ *     fwd(en) = 95.69   fwd(de) = 136.84
+ *
+ * An over-estimate makes every rung below FIRE LATE, which folds a group into More one tier
+ * earlier than it strictly must. That is this ladder's own stated failure mode, and the opposite of
+ * the failure that matters (a control painted outside the pill). Re-measure both figures together
+ * when somebody has the reference font again; do not measure one of them.
+ *
+ * ── WHAT IT COSTS, STATED AS A TRADE ────────────────────────────────────────────────────
+ *
+ * The row's floor plus three answer verbs is 430.9 in English, and the mail measure gives a bar
+ * 572–628px. Adding 101.7px to every chain therefore moves real groups off the row:
+ *
+ *     at 572px (the reading measure)   before                     after
+ *       1:1 message                    reply·defer·Tag            reply·FORWARD·defer
+ *       carrying Reply all             reply·reply all·defer      reply·reply all·FORWARD
+ *
+ * Tag yields on a 1:1 bar (it already yielded on a multi-recipient one, for Reply all), and the
+ * three horizons yield on a multi-recipient bar. Both keep their keys — `t`, `a`/`e`/`b` — and
+ * both keep their menu rows, so nothing becomes unreachable; what they lose is the row. Forward had
+ * no row and no key at all. That is the ordering this change asserts: the three verbs that answer
+ * a message stand together, and the verbs that FILE it are the ones that fold.
+ *
+ * ── AND THE `no_forward` MESSAGE IS DELIBERATELY NOT A THIRD CHAIN ──────────────────────
+ *
+ * `ActionBar` renders no Forward on a message the send path must refuse (`sensitivity.no_forward`
+ * — an OTP, a reset link). These rungs are derived with the group PRESENT, so such a message's row
+ * is narrower than its rung assumed and a later group folds one tier early — the benign direction
+ * again. A `data-fwd` predicate beside `data-rall` would double all eight chains below to describe
+ * a message class the reader almost never opens.
+ *
+ *                 1:1 message        carrying Reply all
+ *     en          342  (329.2)       443  (430.9)
+ *     otherwise   478  (465.6)       621  (608.4)
+ *
+ * The 1:1 figures are Reply all's own rungs, which is arithmetic and not a coincidence: with
+ * fwd = rall, one second answer verb costs the same as the other. */
+@container abar (min-width: 478px) {
+  .msg-actions .abar:not([data-rall]) .abar-fwd { display: flex; }
+  .msg-actions .abar:not([data-rall]) .mmenu .mm-fwd { display: none; }
+}
+@container abar (min-width: 342px) {
+  :root[lang="en"] .msg-actions .abar:not([data-rall]) .abar-fwd { display: flex; }
+  :root[lang="en"] .msg-actions .abar:not([data-rall]) .mmenu .mm-fwd { display: none; }
+}
+@container abar (min-width: 621px) {
+  .msg-actions .abar[data-rall] .abar-fwd { display: flex; }
+  .msg-actions .abar[data-rall] .mmenu .mm-fwd { display: none; }
+}
+@container abar (min-width: 443px) {
+  :root[lang="en"] .msg-actions .abar[data-rall] .abar-fwd { display: flex; }
+  :root[lang="en"] .msg-actions .abar[data-rall] .mmenu .mm-fwd { display: none; }
+}
+
 /* ── THE THREE HORIZONS ─────────────────────────────────────────────────────────────────
  *
  * Four rungs on a message bar, one per (chain × locale), each `intrinsic + 12`:
  *
  *                 1:1 message        carrying Reply all
- *     en          468  (455.2)       569  (556.9)
- *     otherwise   635  (622.1)       777  (764.9)
+ *     en          569  (556.9)       671  (658.6)
+ *     otherwise   777  (764.9)       920  (907.8)
+ *
+ * RE-DERIVED FOR THE FORWARD GROUP, which stands above these on the ladder. The figures this
+ * replaces were 468 / 569 / 635 / 777 — each one 101.7px (en) or 142.8px (de) short of the row it
+ * would now admit, which is not a rounding drift: at the 572px reading measure the English 1:1
+ * chain would have stood reply·Forward·defer·Tag at 619.9 in the 560px the pill leaves, putting
+ * the More disclosure outside the paper. That is the exact defect the "+12" section below records
+ * happening once before, from the same cause — a rung not re-derived when a group joined the row.
  *
  * The `[data-rall]` predicate is React's — `ActionBar` puts the attribute on the pill from the
  * same `canReplyAll` that decides whether the group renders — because a container query cannot
  * ask what is in the DOM, and `:has()` would match the group while it is `display: none`. */
-@container abar (min-width: 635px) {
+@container abar (min-width: 777px) {
   .msg-actions .abar:not([data-rall]) .abar-defer { display: flex; }
   .msg-actions .abar:not([data-rall]) .mmenu .mm-defer { display: none; }
 }
-@container abar (min-width: 468px) {
+@container abar (min-width: 569px) {
   :root[lang="en"] .msg-actions .abar:not([data-rall]) .abar-defer { display: flex; }
   :root[lang="en"] .msg-actions .abar:not([data-rall]) .mmenu .mm-defer { display: none; }
 }
-@container abar (min-width: 777px) {
+@container abar (min-width: 920px) {
   .msg-actions .abar[data-rall] .abar-defer { display: flex; }
   .msg-actions .abar[data-rall] .mmenu .mm-defer { display: none; }
 }
-@container abar (min-width: 569px) {
+@container abar (min-width: 671px) {
   :root[lang="en"] .msg-actions .abar[data-rall] .abar-defer { display: flex; }
   :root[lang="en"] .msg-actions .abar[data-rall] .mmenu .mm-defer { display: none; }
 }
@@ -648,31 +759,35 @@
  * what makes it a re-measurement of the shipped ladder rather than a fresh guess beside it.
  *
  *                 1:1 message        carrying Reply all
- *     en          531  (518.2)       632  (619.8)
- *     otherwise   698  (685.0)       840  (827.9)
+ *     en          632  (619.8)       734  (721.5)
+ *     otherwise   840  (827.9)       983  (970.7)
  *
- * 531 is the number that matters: it fires at the 572px desktop reading measure and at the 576px
- * a stream card allows, so Tag stands in the row wherever a message with a single counterpart is
- * read. On a bar CARRYING Reply all it does not fire anywhere — 632 against a conversation's 628
- * is the widest container this bar ever gets — so on multi-recipient mail Tag lives behind More,
- * with `mm-tag` as the other half of "in the row or in the menu, never both". That is the cost of
- * the two reply verbs standing together and it is the deliberate half of this change: Tag keeps
- * `t` and keeps its menu row, while a reader who cannot see "Reply all" has no way to learn it
- * exists. The rungs above 628 are kept rather than deleted so the arithmetic stays complete and a
- * wider surface would admit the group without a fresh derivation. */
-@container abar (min-width: 698px) {
+ * RE-DERIVED FOR THE FORWARD GROUP, like the horizons above. The figures this replaces were
+ * 531 / 632 / 698 / 840, and 531 was "the number that matters" — it fired at the 572px reading
+ * measure and the 576px stream card, which is how Tag came to stand in the row on every 1:1
+ * message. It no longer fires there: 632 is above the 628px a conversation gives, the widest
+ * container a message bar ever gets, so **Tag now lives behind More on EVERY message**, not only
+ * on the multi-recipient ones.
+ *
+ * That is this change's second cost, and it is the same trade the Reply-all rung made once
+ * already, one message class further: a reader looking at mail addressed to several people can SEE
+ * that "Reply" is not the whole answer and cannot see that "Forward" exists behind a disclosure,
+ * while Tag is a mark the reader chooses to add and has both `t` and its `mm-tag` row. The rungs
+ * above 628 are kept rather than deleted so the arithmetic stays complete and a wider surface
+ * would admit the group without a fresh derivation. */
+@container abar (min-width: 840px) {
   .msg-actions .abar:not([data-rall]) .abar-tag { display: flex; }
   .msg-actions .abar:not([data-rall]) .mmenu .mm-tag { display: none; }
 }
-@container abar (min-width: 531px) {
+@container abar (min-width: 632px) {
   :root[lang="en"] .msg-actions .abar:not([data-rall]) .abar-tag { display: flex; }
   :root[lang="en"] .msg-actions .abar:not([data-rall]) .mmenu .mm-tag { display: none; }
 }
-@container abar (min-width: 840px) {
+@container abar (min-width: 983px) {
   .msg-actions .abar[data-rall] .abar-tag { display: flex; }
   .msg-actions .abar[data-rall] .mmenu .mm-tag { display: none; }
 }
-@container abar (min-width: 632px) {
+@container abar (min-width: 734px) {
   :root[lang="en"] .msg-actions .abar[data-rall] .abar-tag { display: flex; }
   :root[lang="en"] .msg-actions .abar[data-rall] .mmenu .mm-tag { display: none; }
 }
@@ -703,17 +818,21 @@
  * pill, on the canvas, on exactly the messages whose action set was widest. Reported from real
  * use, varying by message, which is that admission arithmetic read back verbatim.
  *
- * The widest chain this group can join is base + Reply all + defer + Tag + file, which is 1013.1
- * in the widest measured locale; +12 for the pill is 1026. NO container reaches it and none
- * reaches the English 778 either (628 is the most a message bar is ever given), so filing stays
+ * The widest chain this group can join is base + Reply all + FORWARD + defer + Tag + file, which is
+ * 1155.9 in the widest measured locale; +12 for the pill is 1168. NO container reaches it and none
+ * reaches the English 880 either (628 is the most a message bar is ever given), so filing stays
  * behind More on every message, in every locale, and a per-locale split here would be decoration.
  * One rung, set at the figure that is safe everywhere: `.mmenu .mm-file` switches in the same
  * block, so the verb is in the row or behind More, never both.
  *
+ * 1026 is what this rung was before Forward joined the chain, and it was exactly right for the
+ * chain it was derived against (1013.1 + 12) — which is the whole reason it had to move. A "safe
+ * everywhere" figure is safe for a fixed set of groups and no longer than that.
+ *
  * The cumulative arithmetic — every rung against its own standing row, the +12 the pill costs, and
  * both locales — is asserted by `test/action-bar.test.ts` from these same measured widths.
  * Re-measure the widths when a label changes; the rungs must then follow. */
-@container abar (min-width: 1026px) {
+@container abar (min-width: 1168px) {
   .msg-actions .abar-file { display: flex; }
   .msg-actions .mmenu .mm-file { display: none; }
 }

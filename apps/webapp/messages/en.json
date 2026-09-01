@@ -2176,6 +2176,7 @@
     "compose": "Write a new message",
     "reply": "Reply inside the message",
     "replyAll": "Reply to everyone on the message",
+    "forward": "Forward the message on",
     "sendReply": "Send the reply",
     "replyRun": "Start the Reply Run",
     "screen": "Change this sender's screening",

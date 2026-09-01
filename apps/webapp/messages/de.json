@@ -2176,6 +2176,7 @@
     "compose": "Neue Nachricht schreiben",
     "reply": "In der Nachricht antworten",
     "replyAll": "Allen auf der Nachricht antworten",
+    "forward": "Nachricht weiterleiten",
     "sendReply": "Antwort senden",
     "replyRun": "Antwortrunde starten",
     "screen": "Screening dieses Absenders ändern",
