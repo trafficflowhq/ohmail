@@ -18,10 +18,15 @@ section should take under ten minutes.
 **Both architectures, one package.** Umbrel runs on x86_64 boxes and on
 arm64 ones — an Umbrel Home, a mini PC, a Raspberry Pi 4 or 5 — and each
 digest the package pins is a multi-arch index covering both, so the install
-is identical either way and there is nothing to pick. The arm64 images are
-built and booted on arm64 hardware in this repository's CI every release,
-but no one has yet run one on a Pi for a week of real mail; if you do,
-[say how it went](https://github.com/trafficflowhq/ohmail/issues).
+is identical either way and there is nothing to pick.
+
+Be exact about how far that is checked, because this package pins **0.11.0**
+and the arm64 boot gate is newer than that. Those pinned images were built on
+arm64 hardware; the release that built them booted only the amd64 stack. From
+0.13.3 on, every release boots the whole stack on both architectures before a
+tag moves, so repinning this package to a 0.13.3-or-later release is what buys
+that — and nobody has yet run any of them on a Pi for a week of real mail. If
+you do, [say how it went](https://github.com/trafficflowhq/ohmail/issues).
 
 > **[screenshot placeholder: the ohmail tile in the Umbrel app store —
 > added with the store submission]**

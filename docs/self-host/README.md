@@ -54,13 +54,16 @@ Plainly, so you can decide with open eyes:
   attachment staging, and a local mail sink. The stack runs prebuilt images
   from `ghcr.io/trafficflowhq` (`ohmail-server`, `ohmail-worker`,
   `ohmail-web`), built for amd64 and arm64 and pinnable with
-  `OHMAIL_IMAGE_TAG`. Each release builds every image twice, once on each
-  architecture's own hardware, and boots the whole stack twice — the same
-  proxy, web app, API, organizer, Postgres and staging store, on amd64 and
-  on arm64 — before any public tag moves. What that does **not** cover: no
-  release has been run on a Raspberry Pi, an Asahi Mac or an arm64 server
+  `OHMAIL_IMAGE_TAG`. Every release builds each image twice, once on each
+  architecture's own hardware. **From 0.13.3 on**, a release also boots the
+  whole stack twice before any public tag moves — the same proxy, web app,
+  API, organizer, Postgres and staging store, on amd64 and on arm64. Be
+  exact about the two things that leaves open. Images from **earlier**
+  releases were built for arm64 but only ever booted on amd64, so if you
+  have pinned an older `OHMAIL_IMAGE_TAG`, that is what you have. And no
+  release at all, new or old, has run on a Raspberry Pi or an arm64 server
   for a week of real mail, because there is no arm64 machine in this
-  project. The images are new on that side. If you run one,
+  project. If you run one,
   [report how it went](https://github.com/trafficflowhq/ohmail/issues) —
   hardware reports are the only thing that closes that gap.
   If a pull answers "not found", that tag's images have

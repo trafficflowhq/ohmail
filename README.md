@@ -568,12 +568,14 @@ mail sink for verification mail until you point `SMTP_URL` at a real relay.
 
 The images are prebuilt for amd64 and arm64 —
 `ghcr.io/trafficflowhq/ohmail-server`, `ohmail-worker`, `ohmail-web` — so a
-Raspberry Pi 4 or 5, an Asahi Mac or an Ampere or Graviton server takes the
-same commands as an Intel box; `docker pull` reads the architecture out of
-the image. Each release builds both halves on their own hardware and boots
-the whole stack twice, once per architecture, before a tag moves. What that
-does not cover: nobody has yet run the arm64 images for a week of real
-mail, because there is no arm64 machine in this project — if you do,
+Raspberry Pi 4 or 5 or an Ampere or Graviton server takes the same commands
+as an Intel box; `docker pull` reads the architecture out of the image.
+Every release builds both halves on their own hardware, and from 0.13.3 on
+a release also boots the whole stack twice, once per architecture, before a
+tag moves. Two things that leaves open, stated rather than implied: images
+from earlier releases were built for arm64 but only ever booted on amd64,
+and nobody has run any of them for a week of real mail, because there is no
+arm64 machine in this project — if you do,
 [say how it went](https://github.com/trafficflowhq/ohmail/issues). They are
 built by this repository's own release workflow
 (`.github/workflows/ghcr-images.yml`), on public runners whose logs anyone

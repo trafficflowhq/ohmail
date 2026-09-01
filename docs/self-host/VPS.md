@@ -26,9 +26,9 @@ Any small VPS from any provider. What matters:
   or 5 or an Asahi Mac if the box in the closet is what you are using
   (`uname -m` prints `x86_64` or `aarch64`; a 32-bit Pi OS is the one thing
   that will not work). Read the arm64 note in
-  [README.md](./README.md#where-this-stands) first — those images are built
-  and booted on arm64 hardware every release, but no one has yet run one for
-  a week of real mail.
+  [README.md](./README.md#where-this-stands) first — from 0.13.3 on those
+  images are built AND booted on arm64 hardware every release, earlier ones
+  were only built, and nobody has run any of them for a week of real mail.
 
 ## 2. Point a domain at it
 
