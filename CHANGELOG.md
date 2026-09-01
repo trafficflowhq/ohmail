@@ -16,6 +16,57 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.13.2] — 2026-09-01
+
+A fix release for Windows. On Windows 11, ohmail 0.13.0 and 0.13.1 could not start
+their mail engine at all — so no mailbox could be connected, on any of the three
+ways in. This release fixes that. macOS and Linux were never affected.
+
+### The Windows app can open a mailbox
+
+**The engine would not start.** ohmail carries its own copy of Node and runs the
+mail engine with it, which means it has to work out where its own files are. On
+Windows the answer comes back in an extended form — `\\?\C:\Users\…` rather than
+`C:\Users\…`. Windows accepts both, and so does every check ohmail makes, so the
+app had no reason to think anything was wrong: it found the engine, found the
+runtime, and launched. Node does not accept the extended form for the file it is
+asked to run. It reads the front of such a path as a bare drive letter, fails on
+that, and exits before loading anything. Four attempts, four identical failures,
+and then the app stopped trying. Paths are now converted to their ordinary form
+before anything is handed to Node.
+
+**And the message you got named a cause that was not the cause.** After the fourth
+failed start the app said the engine had stopped restarting, and that another
+running copy of ohmail was the reason. It was not, and nothing on screen could tell
+you otherwise: the engine had written the real error out four times, into ohmail's
+own log file, while the app offered a different explanation. That sentence now
+quotes what the engine actually said. It suggests a second copy only when the
+engine stopped without saying anything at all, and then as one possibility rather
+than as the answer.
+
+### What this release still does not fix
+
+Both of these were named in 0.13.1 and are unchanged. They are being fixed
+together, in the step that stores your settings rather than on the screen itself.
+
+**Changing an already-connected mailbox to a different server still sends the
+password you had stored to the new server, before you are asked for a new one.** A
+*first* connect is fine — there is no stored password and nothing to send.
+Re-pointing an existing mailbox takes a different path, in the wrong order: the
+engine is restarted with the new server and the old password, and tries to log in
+before you have supplied anything. Correcting a typo in your own server's name
+costs nothing; moving a mailbox to a server somebody else runs offers that server
+your previous password. Only the person at the machine can reach it, and only for
+their own mailbox. Until it is fixed, change the password on the old server if you
+move a mailbox to a server you do not control.
+
+**And an attempt that fails partway can leave a mailbox that was working offline.**
+The same two steps on the failing side: the server settings are written before the
+password is checked, so a refused password leaves the app holding the new server
+and the old password. The attempt reports the failure and you back out, but the
+settings are not put back, and the mailbox that worked this morning does not
+connect at the next launch. Re-entering the correct server and password fixes it.
+
 ## [0.13.1] — 2026-09-01
 
 A fix release for the connect screen. Connecting your own mail server on a fresh
@@ -2811,7 +2862,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.13.1...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.13.2...HEAD
+[0.13.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.2
 [0.13.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.1
 [0.13.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.0
 [0.12.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.12.2
