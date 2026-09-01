@@ -154,6 +154,76 @@ export function addressProblem(typed: string): string | null {
 const PROBE_PATH = "/sync";
 
 /**
+ * HOW LONG ONE CANDIDATE MAY HOLD THE PAIRING, and why a deadline is not optional here.
+ *
+ * Raised by review round 2, and it is the same hazard `IDENTITY_PROBE_DEADLINE_MS` exists for one
+ * module over: a server that ACCEPTS the connection and never answers is not a failure any `await`
+ * ends. This probe runs inside `pairWithServer`, which a screen awaits behind a "Pairing…" label,
+ * so an unbounded wait here is a pairing that hangs for ever — and on a self-host stack the bare
+ * `/sync` is served by a component that is not the API, which is exactly the sort of route that
+ * can be misconfigured into never answering.
+ *
+ * The same number as the identity probe's, deliberately, and for the same reason stated there:
+ * far above any healthy round trip, far below "the app never gets anywhere". A timed-out candidate
+ * counts as a TRANSPORT failure rather than as a definitive answer, because nothing was learned —
+ * so the other candidate is still tried.
+ *
+ * NOT A FIX FOR THE WHOLE CEREMONY: `negotiate` and the redeem around this call have no deadline
+ * either, and that is pre-existing rather than addressed here. What this closes is the unbounded
+ * await this slice would otherwise have ADDED.
+ */
+const PROBE_DEADLINE_MS = 8000;
+
+/**
+ * One probe, bounded. Cancels through `AbortSignal` where the platform honours it and falls back to
+ * a race where it does not — belt and braces on purpose, because the two failure modes are
+ * different: an honoured signal frees the socket, while the race only frees the CALLER. Rejects on
+ * a timeout, so the loop treats it as a transport failure and tries the other candidate.
+ */
+async function probeOnce(fetchImpl: FetchLike, url: string): Promise<Response> {
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller?.abort();
+      reject(new Error(`no answer from ${url} within ${PROBE_DEADLINE_MS}ms`));
+    }, PROBE_DEADLINE_MS);
+  });
+  try {
+    /* `redirect: "manual"` — see {@link answeredByApi}'s redirect note. Honoured where the platform
+       honours it; the guards there are what hold when it is not. */
+    return await Promise.race([
+      fetchImpl(url, {
+        redirect: "manual",
+        ...(controller ? { signal: controller.signal } : {}),
+      }),
+      timedOut,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Let go of a response this function is not going to read.
+ *
+ * Review round 2's third finding: a rejected candidate's body was never consumed and never
+ * cancelled, so the stream could sit holding a socket and native buffers. Two probes per pairing
+ * makes that small, and it is free to close, and "small" is not a reason to leave a stream open.
+ *
+ * Best-effort in both directions: `body` is absent on platforms with no streams (React Native's
+ * fetch, on some versions, is one), and `cancel()` can reject on a stream that is already done —
+ * neither is a reason to fail a probe that has already answered its question.
+ */
+function letGo(res: Response): void {
+  try {
+    void res.body?.cancel().catch(() => undefined);
+  } catch {
+    /* no streams on this platform, or already released */
+  }
+}
+
+/**
  * Same scheme, host and port — used to refuse an answer that came from somewhere else.
  * `null`/empty input answers `true`, because "no information" must not reject every response;
  * see the redirect note in {@link answeredByApi}.
@@ -212,18 +282,44 @@ function answeredFromCandidate(finalUrl: string, candidate: string): boolean {
  * phone makes on somebody else's behalf, possibly to a name only this phone's network can resolve,
  * and letting the redirect TARGET satisfy the check above.
  *
- * Two guards, and neither is complete on its own. `redirect: "manual"` is passed at the call, which
- * suppresses the follow where the platform honours it; React Native's fetch does not on every
- * version, which is why the second guard exists: the response's own final URL must still be on the
- * candidate's origin. Where `Response.url` is empty — some RN versions — that check cannot be made
- * and is not treated as a failure, so the honest summary is that a platform which both follows the
- * redirect AND reports no final URL still issues the request. What it cannot do is have the answer
- * ACCEPTED as this server's API base.
+ * THREE guards, and not one of them is complete on its own:
+ *
+ *  1. `redirect: "manual"` at the call, which suppresses the follow where the platform honours it
+ *     (node's undici does; React Native's fetch does not on every version);
+ *  2. `Response.redirected === true` — a platform that followed one and SAYS so is caught here even
+ *     if it reports no final URL. Compared strictly, so a platform that does not set the field is
+ *     not thereby refused;
+ *  3. the response's final URL must still be on the candidate's origin.
+ *
+ * ── AND THE RESIDUAL, WHICH REVIEW ROUND 2 CALLED THE FIX INCOMPLETE FOR, SIZED HONESTLY ───────
+ *
+ * A platform that follows the redirect AND sets no `redirected` AND reports an empty `Response.url`
+ * defeats all three. `Response.url` empty is read as "no information" rather than as a failure,
+ * deliberately: a platform that reports no final URL for ORDINARY responses would otherwise have
+ * every server refused, which is a total breakage traded for a partial guard.
+ *
+ * What that residual can and cannot do is worth stating exactly, because it is smaller than it
+ * looks. The base stored is always `candidate` — `<origin>` or `<origin>/api`, the address the
+ * person named — and NEVER the redirect's target, which this function does not carry anywhere. So
+ * the reachable harm is choosing the wrong PATH on the right ORIGIN: the same bounded outcome as
+ * the forged-refusal residual above.
+ *
+ * The larger-sounding worry — a bearer reaching the redirect's target — is not this probe's to
+ * close and is not created by it: any authenticated request to an origin that redirects does that,
+ * because the engine's own transport follows redirects too. That is a pre-existing property of
+ * `HttpAdapter`, named here so it is not mistaken for something this file introduced or fixed.
  */
 async function answeredByApi(res: Response, candidate: string): Promise<boolean> {
-  if (res.status !== 401) return false;
-  if (!answeredFromCandidate(res.url ?? "", candidate)) return false;
+  /* Every rejection below lets the body go — see {@link letGo}. Only the arm that READS the body
+     does not, because reading it is releasing it. */
+  if (res.status !== 401) { letGo(res); return false; }
+  /* `redirected` is the third guard and the cheapest: a platform that followed a redirect and SAYS
+     so is caught here even if it reports no final URL. Compared strictly to `true`, so a platform
+     that does not set the field at all (RN, on some versions) is not thereby refused. */
+  if ((res as { redirected?: boolean }).redirected === true) { letGo(res); return false; }
+  if (!answeredFromCandidate(res.url ?? "", candidate)) { letGo(res); return false; }
   if (!(res.headers.get("content-type") ?? "").toLowerCase().includes("application/json")) {
+    letGo(res);
     return false;
   }
   try {
@@ -265,12 +361,26 @@ export async function resolveApiBase(
      `/api` off itself) resolves to the bare origin, which is the value already in every stored
      profile: no existing pairing's base moves. */
   const transportFailures: string[] = [];
+  /**
+   * DID ANY CANDIDATE PRODUCE A RESPONSE AT ALL — i.e. was the server REACHED?
+   *
+   * Review round 2's fourth finding, and it is about which of two sentences is true rather than
+   * about a crash. One candidate throwing (a redirect to an unreachable target, a reset on one
+   * route) while the other answers definitively means the server WAS reached, so
+   * "could not reach that server" is a false sentence — and a false sentence `isPinFailure` may
+   * then dress up as "this computer's identity has changed", sending somebody to look for a key
+   * that never changed.
+   *
+   * A genuine pin or handshake failure fails BOTH candidates, because they ride one socket and one
+   * certificate — so this flag is exactly what separates the case the transport sentence is for
+   * from the case it is not. That is the true version of the claim the first draft of this function
+   * made about the whole loop.
+   */
+  let reached = false;
   for (const candidate of [bare, prefixed]) {
     let res: Response;
     try {
-      /* `redirect: "manual"` — see {@link answeredByApi}'s redirect note. Honoured where the
-         platform honours it; the final-URL check there is what holds when it does not. */
-      res = await fetchImpl(`${candidate}${PROBE_PATH}`, { redirect: "manual" });
+      res = await probeOnce(fetchImpl, `${candidate}${PROBE_PATH}`);
     } catch (err) {
       /**
        * A TRANSPORT FAILURE ON ONE CANDIDATE NO LONGER ENDS THE SEARCH.
@@ -289,17 +399,19 @@ export async function resolveApiBase(
       transportFailures.push(String(err));
       continue;
     }
+    reached = true;
     if (await answeredByApi(res, candidate)) {
       return { kind: "base", base: candidate, prefixed: candidate === prefixed };
     }
   }
 
-  /* A REMEMBERED TRANSPORT FAILURE WINS OVER THE GENERIC SENTENCE. It is the more specific fact
-     ("the connection did not happen" rather than "something answered and was not the API"), it
-     carries the platform's own words, and it is the only one of the two that `isPinFailure` can
-     recognise — which is what lets a changed desktop key read as a changed key rather than as a
-     missing API. */
-  if (transportFailures.length > 0) {
+  /* THE TRANSPORT SENTENCE ONLY WHERE NOTHING WAS REACHED — see {@link reached}. It is the more
+     specific fact where it is true ("the connection did not happen"), it carries the platform's own
+     words, and it is the only one of the two that `isPinFailure` can recognise, which is what lets
+     a changed desktop key read as a changed key rather than as a missing API. Where the server DID
+     answer on one candidate, that sentence would be false and the generic one below is the honest
+     description of what happened. */
+  if (!reached && transportFailures.length > 0) {
     return {
       kind: "refused",
       reason: `could not reach that server to find its mail API — ${transportFailures[0]!}`,

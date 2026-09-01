@@ -1,0 +1,44 @@
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+group = 'app.ohmail.hostpinning'
+version = '0.1.0'
+
+def expoModulesCorePlugin = new File(
+  project(":expo-modules-core").projectDir.absolutePath,
+  "ExpoModulesCorePlugin.gradle",
+)
+apply from: expoModulesCorePlugin
+applyKotlinExpoModulesCorePlugin()
+useCoreDependencies()
+useExpoPublishing()
+
+android {
+  namespace "app.ohmail.hostpinning"
+  defaultConfig {
+    minSdkVersion safeExtGet("minSdkVersion", 24)
+    compileSdkVersion safeExtGet("compileSdkVersion", 36)
+    targetSdkVersion safeExtGet("targetSdkVersion", 36)
+  }
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+  kotlinOptions {
+    jvmTarget = "17"
+  }
+}
+
+dependencies {
+  // THE APP'S OWN React Native, and OkHttp only THROUGH it — never a version of our own.
+  //
+  // `compileOnly` because the application module already puts React Native on the runtime
+  // classpath; a second copy is how a trust manager ends up installed on an OkHttp client
+  // nobody uses. And OkHttp is deliberately NOT declared: react-android exposes it as an `api`
+  // dependency, so it is already on this module's compile classpath at exactly the version the
+  // app runs. Naming a version here failed the build outright — react-android 0.86.2 resolves
+  // okhttp 4.9.2 with `strictly`, so `4.12.0` was refused rather than silently winning, which is
+  // the good failure: two OkHttps in one process would mean the pinning client and the client
+  // making requests could be different objects.
+  compileOnly "com.facebook.react:react-android"
+}
