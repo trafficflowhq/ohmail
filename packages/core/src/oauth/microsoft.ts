@@ -772,8 +772,23 @@ export class MicrosoftTokenProvider implements OAuthTokenProvider {
     /* THE SECRET REFUSAL BELONGS TO THE CONFIDENTIAL DOOR ONLY. A public registration has no secret
      * to be missing, and demanding one here would make the desktop and the self-host device-code
      * install unable to refresh at all. `clientAuthFields` is what refuses an EMPTY confidential
-     * secret now — one place, reached by every grant — so this stays a single explicit branch and
-     * not a second copy of the rule. */
+     * secret — one place, reached by every grant — so there is no second copy of the rule here.
+     *
+     * ── THE SECRET IS PASSED THROUGH UNCONDITIONALLY, AND THAT IS THE WHOLE POINT ────────────
+     *
+     * This used to read `...(kind === "confidential" ? { clientSecret } : {})`, which DROPPED the
+     * secret before the seam could look at it — and in doing so bypassed the guard this seam exists
+     * to be. A review caught it. The case it re-opened is the mirror of the one
+     * `clientAuthFields` was written for: a CONFIDENTIAL registration MISLABELLED `public` (a wrong
+     * `kind` on a config row, a resolver returning the wrong door) would have its perfectly good
+     * secret silently discarded, send a secretless request, and have Entra's `invalid_client`
+     * surface as {@link OAuthProviderUnavailableError} — the fleet quietly failing to refresh while
+     * looking like a Microsoft outage, which is EXACTLY the failure the explicit kind was
+     * introduced to make impossible.
+     *
+     * So the value goes to the seam and the seam decides. A public runtime whose secret is empty
+     * (the correct configuration) is unaffected; one carrying a secret is refused by name.
+     */
     const kind: MicrosoftClientKind = client.kind ?? "confidential";
 
     const res = await refreshAccessToken({
@@ -781,7 +796,7 @@ export class MicrosoftTokenProvider implements OAuthTokenProvider {
       tenant: tenant.trim() || (client.defaultTenant ?? this.rt.defaultTenant ?? ""),
       clientId: client.clientId,
       clientKind: kind,
-      ...(kind === "confidential" ? { clientSecret: client.clientSecret } : {}),
+      clientSecret: client.clientSecret,
       fetch: this.rt.fetch,
     }, this.rt.now ?? Date.now);
 
