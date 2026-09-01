@@ -196,20 +196,35 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
  * `POST /snippets` and `POST /contacts/:id/notes` are among the ones that do not: they insert
  * directly, so a client that retries on this signal creates a duplicate row.
  *
- * So: retryable for a safe method, or for a request carrying an `Idempotency-Key` (which is what
- * the client engine sends for every queued mutation, under the SAME key across retries — see
- * `client-engine/src/engine.ts`). Otherwise **explicitly `false`**, which is stronger than saying
- * nothing: the client's fallback is `retryable ?? (status >= 500)`, so silence here would mean
- * "retry" for exactly the unkeyed writes that must not be retried automatically. The trade is a
- * write the user may have to repeat by hand against a write that silently happens twice, and this
- * repository has already decided that direction wherever it has come up.
+ * So: retryable for a safe method, or for a keyed request **on a route that is actually
+ * `idempotent`-marked**. Both halves of that second condition are load-bearing, and the header
+ * alone is NOT enough — which is the trap this nearly walked into. The client engine sends an
+ * `Idempotency-Key` on every queued mutation (under the SAME key across retries,
+ * `client-engine/src/engine.ts`), but `withIdempotency` only acts where the ROUTE opted in, and
+ * `http-adapter.ts` says so in its own words: a send is two requests and *"only the second is
+ * idempotent server-side (`POST /drafts` is not `idempotent`-marked)"*. Trusting the header would
+ * have promised deduplication that the server never performs.
+ *
+ * Otherwise **explicitly `false`**, which is stronger than saying nothing: the client's fallback is
+ * `retryable ?? (status >= 500)`, so silence here would mean "retry" for exactly the writes that
+ * must not be retried automatically. The trade is a write the user may have to repeat by hand
+ * against a write that silently happens twice, and this repository has already decided that
+ * direction wherever it has come up.
  */
-function mayRetry(req: Request): boolean {
-  return SAFE_METHODS.has(req.method.toUpperCase()) || req.headers.has("Idempotency-Key");
+function mayRetry(req: Request, routeIsIdempotent: boolean): boolean {
+  if (SAFE_METHODS.has(req.method.toUpperCase())) return true;
+  return routeIsIdempotent && req.headers.has("Idempotency-Key");
 }
 
-/** The one construction of the busy answer, so every pipeline and host gives the same one. */
-export function dbBusyResponse(req: Request): Response {
+/**
+ * The one construction of the busy answer, so every pipeline and host gives the same one.
+ *
+ * `routeIsIdempotent` defaults to FALSE because the caller that cannot supply it is the host's
+ * backstop (`apps/api-vercel/src/handler.ts`), which catches throws that escaped the router and
+ * therefore has no route in hand. Not knowing must mean "do not invite a retry" — the safe
+ * direction — rather than the permissive one.
+ */
+export function dbBusyResponse(req: Request, routeIsIdempotent = false): Response {
   return errorResponse(
     "db_busy", 503,
     // Says what happened, and says it accurately. NOT "could not get a connection": it had one —
@@ -217,7 +232,7 @@ export function dbBusyResponse(req: Request): Response {
     // the whole diagnosis, and a message that blurs it would send the next reader looking for a
     // connection leak.
     "the server's database connection was busy and this request could not be started; retry shortly",
-    undefined, mayRetry(req),
+    undefined, mayRetry(req, routeIsIdempotent),
     { "Retry-After": String(DB_BUSY_RETRY_AFTER_SECONDS) },
   );
 }
@@ -280,7 +295,7 @@ export const withErrorEnvelope: Middleware = (next, route) => async (req, deps, 
       log.warn("request_db_busy", {
         method: req.method, route: route.pattern, status: 503, code: "db_busy",
       });
-      return dbBusyResponse(req);
+      return dbBusyResponse(req, route.options?.idempotent === true);
     }
     if (err instanceof ServiceError) {
       if (err.httpStatus >= 500) {
