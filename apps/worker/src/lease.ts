@@ -446,8 +446,22 @@ export async function assertNoLiveTwin(input: {
     );
   }
 
-  // WRAPPED, so a transport fault reaches the callers' `LeaseUnavailableError` arm and gets the exit
-  // code and the sentence that arm exists to print. Unwrapped, a dropped connection here surfaced as
+  // WRAPPED, so a transport fault reaches the callers' `LeaseUnavailableError` arm and gets the
+  // SENTENCE that arm exists to print.
+  //
+  // Not the exit code, and this line said "the exit code and the sentence" until a second review
+  // round checked it. **Both CLIs set `process.exitCode` and then rethrow, and the rethrow is
+  // uncaught at top level, so node overrides it and exits 1.** The codes those arms select (3 for a
+  // stand-down, 4 for an unreadable lease) reach no operator and no script: "held elsewhere",
+  // "could not look" and "crashed" are one status to anything scripting these commands.
+  //
+  // That is older than this wrapper and is not this function's to fix — the repair belongs at the
+  // top of each command, which must honour the chosen status AFTER its cleanup has run, since
+  // exiting from inside the handler would skip closing the mail connection and the pool. What is
+  // fixed here is the sentence: this line claimed the code as well as the message, and a comment
+  // that overstates a protection is the thing this file has been correcting all day.
+  //
+  // Unwrapped, a dropped connection here surfaced as
   // a raw IMAP error through a `catch` that classifies neither — reported as no known refusal at all,
   // which is the one outcome §3.4 is written to prevent: "I could not look" must never be
   // indistinguishable from anything else.
