@@ -1,5 +1,5 @@
 import { hostname } from "node:os";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import {
   StaticKeyProvider, kekRingFingerprint, UNMETERED_STORAGE_CAP,
   type KekEnvIdentity, type KeyProvider, type OpenSendAdapter, type SendAdapter,
@@ -1872,11 +1872,28 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           //
           // All three columns together, for `authorizeOrganizerTakeover`'s reason: `status`
           // without `disabled_reason` is a TOMBSTONE, and the next launch would mint a second
-          // mailbox row for the same address with none of this one's history. A no-op for an
-          // install that was never stood down — the predicate matches nothing.
+          // mailbox row for the same address with none of this one's history.
+          //
+          // ── AND `disabled_reason` IS RE-CHECKED IN THE WRITE, NOT ASSUMED FROM MEMORY ──────
+          //
+          // `takeoverAuthorized` was read at assembly and the lease read since then is a network
+          // round trip, during which the bridge is serving. A `DELETE /mailboxes/:id` committing
+          // in that window makes the row a TOMBSTONE — `disabled`, reason NULL, credentials
+          // deleted — and an unconditional write here would revive it as `connected`, undoing a
+          // removal the person asked for and leaving a connected mailbox with no stored login.
+          //
+          // So the stand-down clear is conditional on the stand-down still being there, in SQL
+          // rather than in a prior read, while the STAMP is spent either way: whatever the row
+          // became, this authorization has been used and must not authorize a later seizure.
+          // A row that was never stood down keeps its `connected`/NULL values, so this stays the
+          // no-op it has always been for an install that simply organizes.
           try {
             await db.update(mailboxes)
-              .set({ status: "connected", disabledReason: null, takeoverAuthorizedAt: null })
+              .set({
+                status: sql`case when ${mailboxes.disabledReason} is not null then 'connected' else ${mailboxes.status} end`,
+                disabledReason: null,
+                takeoverAuthorizedAt: null,
+              })
               .where(eq(mailboxes.id, world.mailboxId));
             takeoverAuthorized = false;
           } catch (err) {
