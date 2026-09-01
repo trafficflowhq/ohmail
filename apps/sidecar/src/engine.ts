@@ -51,7 +51,7 @@ import { credentialIsForeign, credentialIsForeignSmtp, sealedSmtpHost } from "./
 // The exit from a stand-down, as a ceremony rather than a flag — the SAME function the
 // `organize-here` CLI runs. See its header for why status, reason and the one-shot stamp move
 // together, and this file's `handle` for why the desktop door needs a route onto it.
-import { authorizeOrganizerTakeover } from "./organize-here.js";
+import { requestOrganizerTakeover } from "./organize-here.js";
 import { hostPairRoutes } from "./host-pair-routes.js";
 // The static half of the host door — the built browser client the QR sends a phone to, served
 // beside the API out of one `handleHost`. The route table wins; this covers everything else.
@@ -1699,7 +1699,47 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * consulted — there is nothing for it to decide. Only clearing the row does, which is the
      * "Organize from this Mac…" action.
      */
-    const priorStandDown = world.standDownReason;
+    /**
+     * ── A REQUEST MADE FROM SETTINGS IS SPENT HERE, AT THE CLI'S OWN TIMING ────────────────
+     *
+     * `requestOrganizerTakeover` (the "Organize from this machine" button) writes ONLY the
+     * stamp and deliberately leaves the row `disabled` with its reason — see its header: a row
+     * flipped to `connected` while THIS process is still serving, still `stopped` and still
+     * holding no login would advertise a mailbox nothing is organizing, and `ScheduleService`
+     * and `SendService` refuse on `status = 'disabled'` and on nothing else, so they would begin
+     * accepting work for it.
+     *
+     * This is the other half, and its POSITION is the whole point: assembly, before the gate,
+     * before anything serves a request — which is exactly when the CLI's write lands, since that
+     * one requires the app to be stopped. So the row spends the smallest possible time saying
+     * `connected` while not organized, and no request can be served inside it.
+     *
+     * Both columns move together, for `authorizeOrganizerTakeover`'s reason: status without the
+     * reason is a TOMBSTONE, and the next launch would mint a second mailbox row for the same
+     * address with none of this one's history. A failure here leaves the stand-down standing and
+     * the stamp unspent, so the next launch simply tries again — the request is not lost.
+     */
+    let standDownReason = world.standDownReason;
+    if (standDownReason && world.takeoverAuthorizedAt !== null) {
+      try {
+        await db.update(mailboxes)
+          .set({ status: "connected", disabledReason: null })
+          .where(and(eq(mailboxes.id, world.mailboxId), eq(mailboxes.status, "disabled")));
+        log("organizer_takeover_spent", {
+          disabledReason: standDownReason,
+          reason: "a person asked for this machine while it was stood down; the stand-down is " +
+            "cleared and the lease decides now, which is the only thing that can",
+        });
+        standDownReason = null;
+      } catch (err) {
+        log("organizer_takeover_spend_failed", {
+          err,
+          reason: "the stand-down could not be cleared, so this install still organizes nothing " +
+            "and the request stands — the next launch tries again",
+        });
+      }
+    }
+    const priorStandDown = standDownReason;
     let organizer: OrganizerState = priorStandDown
       ? { organizing: false, reason: priorStandDown as MailboxDisabledReason, heldBy: null }
       : { organizing: true, reason: null, heldBy: null };
@@ -2574,23 +2614,26 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           }
           // ── "ORGANIZE FROM THIS MACHINE", THE ROUTE ──────────────────────────────────────
           //
-          // The ceremony is `authorizeOrganizerTakeover`'s and is NOT re-implemented here: it
-          // writes status, reason and the one-shot stamp in ONE statement, and any two of the
-          // three without the third leave a row meaning something the user did not ask for (see
-          // that function's header). This handler is the transport and the outcome, nothing more.
+          // The ceremony is `requestOrganizerTakeover`'s and is NOT re-implemented here. This
+          // handler is the transport and the outcome, nothing more.
           //
-          // IT AUTHORIZES; IT DOES NOT SEIZE. The mailbox is still the authority — the next
-          // launch reads the lease first, and an organizer that is actively renewing its claim
-          // keeps the mailbox whatever was authorized here. That ordering is the reason this can
-          // be a button at all: it cannot produce two organizers, only a request to become one.
+          // IT RECORDS A REQUEST; IT DOES NOT SEIZE. The mailbox is still the authority — the
+          // next launch reads the lease first, and an organizer that is actively renewing its
+          // claim keeps the mailbox whatever was asked here. That ordering is the reason this
+          // can be a button at all: it cannot produce two organizers, only a request to become
+          // one.
           //
-          // AND IT DOES NOT RE-ARM THIS PROCESS. A stand-down set `stopped`, cleared the poll
-          // timer and closed the IMAP login; `priorStandDown` was read once at assembly. Undoing
-          // all of that from a request handler would mean re-opening a login and restarting the
-          // poll loop beside a `serialize` queue that has already been told this install
-          // organizes nothing — which is precisely the shape that produces two organizers on one
-          // mailbox. The stamp is durable, so the honest answer is the one the CLI has always
-          // given: authorized, and it takes effect on the next launch. The pane says so.
+          // AND IT LEAVES THE ROW STOOD DOWN, WHICH IS THE DIFFERENCE FROM THE CLI. A stand-down
+          // set `stopped`, cleared the poll timer and closed the IMAP login; `priorStandDown` was
+          // read once at assembly. Undoing all of that from a request handler would mean
+          // re-opening a login and restarting the poll loop beside a `serialize` queue already
+          // told this install organizes nothing — the shape that produces two organizers on one
+          // mailbox. So this process goes on organizing nothing, and the row goes on SAYING so:
+          // marking the mailbox `connected` here would advertise one that nothing is organizing,
+          // and `ScheduleService`/`SendService` refuse on `status = 'disabled'` and on nothing
+          // else, so they would start accepting sends for it in that window. The stamp alone is
+          // durable and means exactly what the press means; the engine spends it at its next
+          // assembly, which is the CLI's own timing. The pane says to quit and reopen.
           let body: { mailboxId?: unknown } = {};
           try {
             body = (await req.json()) as { mailboxId?: unknown };
@@ -2604,7 +2647,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               { status: 400, headers: { "content-type": "application/json" } },
             );
           }
-          const result = await authorizeOrganizerTakeover(db, { mailboxId, now: now() });
+          const result = await requestOrganizerTakeover(db, { mailboxId, now: now() });
           log("organizer_takeover_authorized", {
             // `verdict` and not `outcome`: `ALLOWED_FIELDS` carries the former, and a field the
             // census drops is an instrumented line that says nothing in production.

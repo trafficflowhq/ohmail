@@ -141,6 +141,70 @@ export async function authorizeOrganizerTakeover(
   return { outcome: "authorized", previousReason: row.disabledReason, mailboxId: row.id };
 }
 
+/**
+ * THE SAME REQUEST, MADE WHILE THE ENGINE IS RUNNING — the Settings action's half.
+ *
+ * ── WHY IT CANNOT BE {@link authorizeOrganizerTakeover} ───────────────────────────────────
+ *
+ * That function moves status, reason and the stamp together, and its header explains why: any
+ * two without the third leave a row meaning something the user did not ask for. That is right
+ * FOR THE CLI, which "needs the database to itself — stop ohmail, run this, start ohmail". The
+ * engine is not running when it lands, so the row goes from `disabled` to `connected` and the
+ * next process to read it is the one that also reads the lease.
+ *
+ * From a button it is wrong, and the window is the reason. This process keeps serving after the
+ * press: it is stood down, `stopped` is set, the poll timer is cleared and the IMAP login is
+ * closed, and none of that can be undone from a request handler without restarting a poll loop
+ * beside a queue already told this install organizes nothing. So a row flipped to `connected`
+ * here would advertise a mailbox that nothing is organizing — the mailbox strip would stop
+ * saying "not organized here", and `ScheduleService` and `SendService` (which refuse on
+ * `status = 'disabled'` and on nothing else) would start accepting work for it. The row would be
+ * making a claim about this install that is not true until the next launch.
+ *
+ * ── SO THE STAMP TRAVELS ALONE, AND THE ENGINE SPENDS IT AT ASSEMBLY ──────────────────────
+ *
+ * `takeover_authorized_at` alone means exactly what the press means: a human asked for this
+ * machine, once. The row stays `disabled` with its reason, so every surface goes on telling the
+ * truth and no send or schedule is accepted, and the ENGINE clears the stand-down on its next
+ * launch — before it reads the lease, which is the CLI's timing exactly, with no process serving
+ * in between. The lease is still the authority: an organizer that is still renewing keeps the
+ * mailbox and this install stands down again, which also voids the stamp.
+ *
+ * Idempotent, and writes nothing unless there is a stand-down to end — so a second press is not
+ * a second becoming, and a press on a healthy or removed mailbox is a no-op that says so.
+ */
+export async function requestOrganizerTakeover(
+  db: LocalDb,
+  input: { mailboxId: string; now: Date },
+): Promise<TakeoverAuthorizationResult> {
+  const [row] = await db
+    .select({
+      id: mailboxes.id,
+      status: mailboxes.status,
+      disabledReason: mailboxes.disabledReason,
+    })
+    .from(mailboxes)
+    .where(eq(mailboxes.id, input.mailboxId))
+    .limit(1);
+
+  if (!row) return { outcome: "no_mailbox", previousReason: null, mailboxId: null };
+  if (row.status !== "disabled") {
+    return { outcome: "already_organizing", previousReason: null, mailboxId: row.id };
+  }
+  // Disabled with no reason is a REMOVAL, not a pause — the same discriminator the whole product
+  // uses, and the reason this may not quietly resurrect a mailbox taken off this machine.
+  if (!row.disabledReason) {
+    return { outcome: "removed", previousReason: null, mailboxId: row.id };
+  }
+
+  await db
+    .update(mailboxes)
+    .set({ takeoverAuthorizedAt: input.now })
+    .where(and(eq(mailboxes.id, row.id), eq(mailboxes.status, "disabled")));
+
+  return { outcome: "authorized", previousReason: row.disabledReason, mailboxId: row.id };
+}
+
 /** What the command says for each outcome. One line each; nothing needs a paragraph. */
 export const TAKEOVER_MESSAGES: Record<TakeoverAuthorizationOutcome, string> = {
   authorized:
