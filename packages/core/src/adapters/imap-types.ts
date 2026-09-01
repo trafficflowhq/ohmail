@@ -837,6 +837,19 @@ export interface ImapAdapterOpts {
    * that rethrows inside an `error` listener reproduces the crash it exists to prevent.
    */
   onConnectionError?: (err: unknown) => void;
+  /**
+   * The clock the adapter's wall-clock ceilings read — see `imap-bounds.ts`
+   * ({@link IMAP_READ_DEADLINE_MS}, {@link IMAP_CYCLE_DEADLINE_MS}).
+   *
+   * A TEST SEAM, and it exists because the alternative is worse. The slow-server ceilings are
+   * measured in minutes, so a test that proved them against the real clock would have to sleep
+   * for minutes, and one that proved them by lowering the ceilings would be exercising numbers
+   * the product does not ship. Handing the adapter its clock lets a hostile-server test drive
+   * the SHIPPING constants to the millisecond.
+   *
+   * Defaults to `Date.now`. Nothing in production supplies it.
+   */
+  nowMs?: () => number;
 }
 
 export interface PersistedFolderCursor { uidValidity: string; uidNext: number; highestModseq: string; }

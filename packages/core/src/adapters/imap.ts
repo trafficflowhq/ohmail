@@ -83,6 +83,10 @@ import {
   // the other two ports, which is the point of moving it there: the adapter states what it
   // offers without naming the migration that consumes it.
   type FolderScanner,
+  // The one spelling of this adapter's "not at that locator any more" code. It lives on a leaf so
+  // the service layer can recognise the refusal without importing this file (and `imapflow` with
+  // it); `MessageGoneError` is built from it here so the class and the predicate cannot drift.
+  MESSAGE_GONE_CODE,
 } from "../mail.js";
 import {
   WATCHED_FOLDERS, OHMAIL_FOLDERS, DEFAULT_NET_TIMEOUTS, DEFAULT_SENT_SCAN_MESSAGES,
@@ -107,9 +111,22 @@ import { makeProfileIo, type ProfileImapClient, type ProfileIo } from "./organiz
 // The HARD per-message ceiling `normalizeMime` enforces after a download — imported so
 // `fetchCapped` can enforce the same number BEFORE the download, from RFC822.SIZE alone.
 import { MAX_RAW_MESSAGE_BYTES } from "../mime.js";
+// THE CEILINGS ON SERVER-CHOSEN VALUES. `imap-bounds.ts` carries the whole argument — the short
+// version is that the user picks their own mail server and the worker process is shared, so every
+// count, size and wait this file accepts from that server is a lever on other people's mail.
+import {
+  ImapBoundExceeded, ImapDeadline, boundedCollect, boundListResponse, boundSearchResult,
+  boundEnvelopeAddresses, bodyOverrunCeiling, minOf,
+  IMAP_ENUM_MAX_UIDS, IMAP_CANDIDATE_BODY_PROBES_MAX,
+  IMAP_FLAG_SCAN_MAX_ROWS, IMAP_SAMPLE_MAX_ROWS,
+  IMAP_READ_DEADLINE_MS, IMAP_CYCLE_DEADLINE_MS,
+} from "./imap-bounds.js";
 
 // Re-export the adapter types + folder constants so consumers can import them from this entrypoint.
 export * from "./imap-types.js";
+// …and the server-value ceilings, so a consumer bounding its own IMAP read reaches for the same
+// numbers rather than inventing a second set.
+export * from "./imap-bounds.js";
 // The shared credential→auth builder lives beside the adapter and is reached through the same
 // entrypoint every dialer already imports, so no site has to reinvent the `authType` branch.
 export * from "./imap-auth.js";
@@ -720,7 +737,12 @@ export class ImapConnectionClosedError extends Error {
  * `instanceof` remains correct inside core and the worker, which do import it.
  */
 export class MessageGoneError extends Error {
-  readonly code = "EMSGGONE";
+  /**
+   * ONE spelling, shared with the duck-typed predicate every consumer outside this package uses —
+   * see `gone.ts#MESSAGE_GONE_CODE`. A second literal here would be a predicate that quietly stops
+   * matching, which on this seam reads exactly like "a gone locator never happens".
+   */
+  readonly code = MESSAGE_GONE_CODE;
   constructor(public locator: NativeLocator) {
     super(`message not at source locator ${locator.folder}#${locator.ref}`);
     this.name = "MessageGoneError";
@@ -997,6 +1019,206 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    */
   private closing = false;
 
+  /* ══ THE SERVER-VALUE CEILINGS ═══════════════════════════════════════════════════════════════
+   *
+   * Ceilings on what an arbitrary mail server may make this process do.
+   * `imap-bounds.ts` holds the constants and the argument for each; what
+   * lives here is the plumbing — a clock, a per-pass budget, and the two helpers every read in
+   * this class goes through instead of calling `list()` or `search()` raw.
+   */
+
+  /**
+   * The clock every ceiling in this class reads. See {@link ImapAdapterOpts.nowMs}.
+   *
+   * A METHOD, not a field initialised from `this.opts`. Parameter properties and class-field
+   * initialisers do not have a stable relative order across TypeScript's `useDefineForClassFields`
+   * settings, so a field reading `this.opts` at construction is a `undefined is not a function`
+   * waiting for a compiler-option change. A method reads it at call time and cannot be sequenced
+   * wrong.
+   */
+  private now(): number { return (this.opts.nowMs ?? Date.now)(); }
+
+  /**
+   * The budget for the `changesSince` pass currently running, or `undefined` outside one.
+   *
+   * Set on entry and cleared in a `finally` so it can never leak into the NEXT pass — a stale
+   * deadline would make a healthy cycle refuse instantly, which is a self-inflicted outage
+   * wearing this row's error message.
+   */
+  private cycleDeadline: ImapDeadline | undefined;
+
+  /**
+   * The clock for ONE read: the per-read ceiling, or the remainder of the pass budget when a pass
+   * is running and is the tighter of the two.
+   *
+   * Composing them is not optional — see {@link IMAP_CYCLE_DEADLINE_MS}. A per-read ceiling alone
+   * lets a server be slow once per read, and a pass makes a dozen reads.
+   *
+   * The refusal names the CLOCK that fired (`read_deadline` / `cycle_deadline`) and not the read
+   * it fired during — the read is already carried in `folder`. Naming the read instead was tried
+   * and is wrong: it makes a COUNT breach and a TIME breach on the same command report the same
+   * `bound`, so an operator (and a test) cannot tell "this server sent too much" from "this
+   * server answered too slowly", which are different faults with different remedies.
+   */
+  private readDeadline(): ImapDeadline {
+    return ImapDeadline.soonest(
+      ImapDeadline.in(IMAP_READ_DEADLINE_MS, "read_deadline", () => this.now()),
+      this.cycleDeadline,
+    );
+  }
+
+  /**
+   * Retire this connection because a command was ABANDONED while the server may still be filling
+   * it.
+   *
+   * ── WHY ABANDONING IS NOT ENDING, AND WHY THE CALLER CANNOT BE TRUSTED TO CLOSE ────────────
+   *
+   * Two mechanisms in this file stop reading a response early: a deadline that fires while a
+   * command is outstanding, and a ceiling that breaks out of an ImapFlow async generator. Neither
+   * CANCELS anything. `ImapFlow` keeps draining the FETCH it was given, and its command queue
+   * stays owned by a command nobody is reading — so the next `SELECT` on this connection queues
+   * behind a response that may be endless. A ceiling that leaves the read running has not bounded
+   * the read; it has bounded the array and moved the stall one command later.
+   *
+   * This was originally left to the caller on the argument that the worker closes the adapter in
+   * its per-mailbox catch arm. It does — for the failures that reach it. But the worker RETAINS an
+   * adapter across generic failures, so a later cycle can reuse a connection whose queue is
+   * already wedged, and a `"stop"` truncation does not throw at all. A convention that holds for
+   * some callers is not a bound.
+   *
+   * `forceClose()` is the existing synchronous teardown; `closing` makes it a deliberate teardown
+   * rather than an out-of-band death, so the connection-error listener stays quiet about a
+   * decision we took on purpose.
+   */
+  /**
+   * The breach this adapter was retired for, or `null` while it is usable.
+   *
+   * ── THREE DESIGNS WERE TRIED HERE. THIS IS THE FOURTH, AND THE OTHERS ARE WHY ──────────────
+   *
+   * The question is what a ceiling breach should do to the mailbox it came from, and the answer
+   * has to satisfy two things at once: the connection must really end (an abandoned command holds
+   * ImapFlow's queue, so the NEXT command on it waits behind a response nobody is reading), and
+   * the mailbox must be MARKED, or a server that breaches every cycle is reconnected for ever.
+   *
+   *  1. Close, and say nothing. The connection ended cleanly and the mailbox was never marked:
+   *     the cycle's own failure tally is discarded when the runtime is replaced.
+   *  2. Close, and report it as a connection that ENDED. That detaches without marking — a closed
+   *     socket is blameless by design — so the tally reset instead of accumulating.
+   *  3. Do NOT close; refuse every later command so the next two cycles are counted. Worse in
+   *     three separate ways, each found by review: the lease read runs BEFORE the cycle and on a
+   *     raw client, so it queued behind the abandoned command instead of reaching the refusal; a
+   *     socket the server then closed reported itself as a blameless disconnect and reset the
+   *     tally anyway; and teardown's polite `logout()` queues behind the same hung command, so
+   *     detaching — and therefore the status write that quarantine depends on — could hang for
+   *     ever.
+   *
+   * So: **close, and report the BREACH ITSELF.** The consumer's handler reads an error that is not
+   * a connection-ended as this mailbox's fault, and detaches AND quarantines it on the spot. The
+   * count problem disappears because there is nothing to count — one breach is the decision.
+   *
+   * **That is stricter than a consecutive-failure threshold, deliberately.** A threshold exists
+   * for faults that are flaky and recover; a ceiling breach is not one. Reaching it means the
+   * server sent an unreasonable amount, lied about a size, or took minutes over one command — and
+   * quarantine is a marked status plus an exponential backoff, not a door closed for good: the
+   * status returns to connected after a verified recovery. Waiting for a third breach would mean
+   * two more cycles of a mailbox that cannot sync, and the shard paying for each one.
+   *
+   * `retiredBecause` remains as the fast-refusal belt: anything still holding this adapter gets
+   * the same error immediately rather than a confusing failure from a dead client.
+   */
+  private retiredBecause: ImapBoundExceeded | null = null;
+
+  /**
+   * Refuse immediately if this adapter has been retired. Called by every method that would
+   * otherwise reach for a connection that is gone.
+   *
+   * A belt, not the mechanism: the connection is already destroyed, so a call that got past this
+   * would fail anyway — just less legibly, and one layer further from the cause.
+   */
+  private assertUsable(): void {
+    if (this.retiredBecause !== null) throw this.retiredBecause;
+  }
+
+  /**
+   * End this connection because a command was abandoned while the server may still be filling it,
+   * and tell whoever owns the adapter what happened.
+   *
+   * `forceClose` and not `close`: the polite path issues a LOGOUT, imapflow serialises commands,
+   * and the abandoned command is exactly what a LOGOUT would queue behind — so the courteous
+   * teardown would hang for precisely as long as the hang it is escaping. Destroying the socket is
+   * also the only thing that actually ends the abandoned command.
+   */
+  private retireConnection(because?: ImapBoundExceeded): void {
+    const breach = because
+      ?? new ImapBoundExceeded("read_deadline", 0, 0, undefined);
+    const first = this.retiredBecause === null;
+    this.retiredBecause ??= breach;
+    this.closing = true;
+    try { this.forceClose(); } catch { /* the socket is going away regardless */ }
+    // Once only. A second report for the same dead connection would be a second detach for a
+    // mailbox already gone — harmless, because the consumer's handler is de-duplicated, and still
+    // not worth emitting.
+    if (!first) return;
+    try { this.opts.onConnectionError?.(breach); }
+    catch { /* a handler that throws here is the crash that listener exists to prevent */ }
+  }
+
+  /**
+   * Await ONE server command under the composed clock, retiring the connection if it does not
+   * answer in time.
+   *
+   * Everything that awaits the server goes through here, not just `LIST` and `SEARCH`. The first
+   * version raced only those two on the reasoning that they are the unbounded-response commands —
+   * which is true about SIZE and irrelevant to TIME. `getMailboxLock` (a `SELECT`), `status`,
+   * `fetchOne` and `download` all return a fixed-size result and can all be left unanswered for
+   * ever by a server that simply stops talking mid-response, and a `changesSince` pass parked in
+   * one of them never reaches a single `deadline.check()`.
+   */
+  private async bounded<T>(op: Promise<T>, folder?: string): Promise<T> {
+    // Silent: `race` rejects, so the caller propagates and the failure is counted there — and
+    // the adapter stays retired, so the NEXT cycle's refusal is counted too.
+    this.assertUsable();
+    return this.readDeadline().race(op, folder, (because) => this.retireConnection(because));
+  }
+
+  /**
+   * EVERY LIST in this class goes through here.
+   *
+   * Ten call sites issued `this.client.list()` raw and each one then did something O(n) with the
+   * answer — a `Set` of every path, a `map` of every path, a canonicalise-sort-retain. One
+   * ceiling in one place is what keeps the eleventh call site from being unbounded again; see
+   * {@link IMAP_LIST_MAX_FOLDERS} for the count, and for the honest note that the driver has
+   * already buffered the response by the time this runs, which is why the deadline is doing the
+   * load-bearing work on this particular read.
+   */
+  private async listBounded(
+    opts?: { statusQuery: { messages: boolean; uidNext: boolean; highestModseq: boolean } },
+  ): Promise<ListResponse[]> {
+    const list = await this.bounded(
+      opts === undefined ? this.client.list() : this.client.list(opts),
+    );
+    return boundListResponse(list);
+  }
+
+  /**
+   * EVERY SEARCH in this class goes through here — the ceiling applied BEFORE the caller copies,
+   * sorts or iterates the result. See {@link IMAP_SEARCH_MAX_UIDS}.
+   *
+   * The `false` imapflow answers for a refused SEARCH is passed straight through: distinguishing
+   * "refused" from "no matches" is the caller's obligation and several of them do it differently.
+   */
+  private async searchBounded(
+    query: Parameters<ImapFlow["search"]>[0],
+    // `{ uid?: boolean }` written out rather than `Parameters<…>[1]`: `ImapFlow.search` is
+    // OVERLOADED and `Parameters<>` resolves to the LAST overload, whose `returnOptions` is
+    // required — so the inferred type rejects the `{ uid: true }` every call site here passes.
+    opts: { uid?: boolean },
+    folder?: string,
+  ): Promise<number[] | false> {
+    const found = await this.bounded(this.client.search(query, opts), folder);
+    return boundSearchResult(found as number[] | false);
+  }
+
   constructor(private readonly config: ImapConfig, private readonly opts: ImapAdapterOpts = {}) {}
 
   async connect(): Promise<void> {
@@ -1028,7 +1250,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       this.guardAsyncErrors();
       await this.client.connect();
     }
-    const list = await this.client.list();
+    const list = await this.listBounded();
     this.delimiter = list.find((f) => f.path.toUpperCase() === "INBOX")?.delimiter ?? list[0]?.delimiter ?? "/";
     this.sentFolder = this.findSent(list);
     // AFTER the delimiter and the Sent resolution, both of which it reads. See
@@ -1113,6 +1335,11 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   async close(): Promise<void> {
     // BEFORE the logout, because `logout()` itself emits `close` — see {@link closing}.
     this.closing = true;
+    // A RETIRED adapter is already destroyed, and its LOGOUT would queue behind the very command
+    // that retired it — so a caller tearing down after a breach would wait out the hang it was
+    // escaping. On the quarantine path that matters twice over: the status write happens AFTER
+    // the detach, so a teardown that never returns is a mailbox that is never marked.
+    if (this.retiredBecause !== null) { this.transporter?.close(); this.established = false; return; }
     try { await this.client?.logout(); } catch { this.client?.close(); }
     this.transporter?.close();
     this.established = false;
@@ -1151,7 +1378,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   }
 
   async ensureFolders(): Promise<void> {
-    const list = await this.client.list();
+    const list = await this.listBounded();
     const existing = new Set(list.map((f) => f.path));
     this.sentFolder = this.findSent(list);
     this.learnPassiveFolders(list);
@@ -1170,7 +1397,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
 
   /** Canonical paths of every selectable folder on the server. */
   async listFolders(): Promise<string[]> {
-    const list = await this.client.list();
+    this.assertUsable();
+    const list = await this.listBounded();
     return list
       .filter((f) => !(f.flags?.has("\\Noselect") ?? false))
       .map((f) => this.toCanonical(f.path));
@@ -1210,7 +1438,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       // `ensureFolders`' own idiom: "already exists" is success for a CREATE.
       if (!/already ?exists/i.test(String((err as Error).message))) throw err;
     }
-    const list = await this.client.list();
+    const list = await this.listBounded();
     const paths = new Set(list.map((f) => this.toCanonical(f.path)));
     if (paths.has(canonical)) return canonical;
     const prefixed = `INBOX/${canonical}`;
@@ -1228,7 +1456,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * something the user did not name.
    */
   async renameFolder(from: string, to: string): Promise<"renamed" | "already" | "conflict" | "gone"> {
-    const list = await this.client.list();
+    const list = await this.listBounded();
     const paths = new Set(list.map((f) => f.path));
     const src = this.toServerPath(from);
     const dst = this.toServerPath(to);
@@ -1257,9 +1485,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    */
   async deleteFolder(canonical: string): Promise<"deleted" | "already" | "not_empty" | "unverified"> {
     const path = this.toServerPath(canonical);
-    const list = await this.client.list();
+    const list = await this.listBounded();
     if (!list.some((f) => f.path === path)) return "already";
-    const st = await this.client.status(path, { messages: true }).catch(() => null);
+    const st = await this.bounded(this.client.status(path, { messages: true })).catch(() => null);
     if (!st || typeof st.messages !== "number") return "unverified";
     if (st.messages > 0) return "not_empty";
     await this.client.mailboxDelete(path);
@@ -1280,8 +1508,14 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const dst = this.toServerPath(toFolder);
     let lock: { release(): void };
     try {
-      lock = await this.client.getMailboxLock(src);
-    } catch {
+      lock = await this.bounded(this.client.getMailboxLock(src));
+    } catch (err) {
+      // A CEILING BREACH IS NOT "THIS FOLDER IS NOT THERE". The arm below turns any SELECT
+      // failure into an honest "no such folder / nothing to do" answer, which is right for a
+      // missing or unselectable mailbox and WRONG for a deadline: it would report a server that
+      // stopped answering as an empty result, which is the silent degrade this whole file exists
+      // to replace with a refusal. See `imap-bounds.ts`.
+      if (err instanceof ImapBoundExceeded) throw err;
       return 0;
     }
     try {
@@ -1304,8 +1538,14 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const serverPath = this.toServerPath(folder);
     let lock: { release(): void };
     try {
-      lock = await this.client.getMailboxLock(serverPath);
-    } catch {
+      lock = await this.bounded(this.client.getMailboxLock(serverPath));
+    } catch (err) {
+      // A CEILING BREACH IS NOT "THIS FOLDER IS NOT THERE". The arm below turns any SELECT
+      // failure into an honest "no such folder / nothing to do" answer, which is right for a
+      // missing or unselectable mailbox and WRONG for a deadline: it would report a server that
+      // stopped answering as an empty result, which is the silent degrade this whole file exists
+      // to replace with a refusal. See `imap-bounds.ts`.
+      if (err instanceof ImapBoundExceeded) throw err;
       return [];   // folder not present / not selectable
     }
     try {
@@ -1316,7 +1556,16 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       // Newest `limit` messages by sequence number (envelope-only fetch is cheap).
       const start = Math.max(1, mb.exists - limit + 1);
       const range = `${start}:*`;
+      // An OPEN-ENDED range whose exit condition is `limit` DISTINCT addresses — which a server
+      // answering a million rows with one address, or none, never satisfies. Truncating a sample
+      // is not a wrong answer; see {@link IMAP_SAMPLE_MAX_ROWS}.
+      let examined = 0;
+      const sampleDeadline = this.readDeadline();
       for await (const m of this.client.fetch(range, { envelope: true })) {
+        sampleDeadline.check(folder);
+        // Truncating a sample is still an honest answer — but the FETCH behind it keeps
+        // running, so the connection cannot be handed on. See `retireConnection`.
+        if (++examined > IMAP_SAMPLE_MAX_ROWS) { this.retireConnection(); break; }
         const addr = m.envelope?.from?.[0]?.address?.trim().toLowerCase();
         if (!addr || seen.has(addr)) continue;
         seen.add(addr);
@@ -1356,13 +1605,20 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const limit = Math.max(1, Math.min(opts.limit ?? FOLDER_PAGE_MAX, FOLDER_PAGE_MAX));
     let lock: { release(): void };
     try {
-      lock = await this.client.getMailboxLock(this.toServerPath(folder));
+      lock = await this.bounded(this.client.getMailboxLock(this.toServerPath(folder)));
     } catch (err) {
       // ONLY a live connection's refusal of the SELECT means "no such window" (missing folder,
       // `\Noselect`). A transport failure — the socket died, the open timed out and killed the
       // connection — propagates, so the caller's honest states can tell "this mailbox has no
       // Junk folder" from "the mailbox could not be read just now" (the §16.2 rule; a review
       // caught the first version folding both into the first sentence, the misleading one).
+      // A CEILING BREACH IS NOT "THIS MAILBOX HAS NO SUCH WINDOW", and this arm would have said
+      // so. The rule below turns a SELECT refusal into the honest `null` degrade — right for a
+      // missing or `\Noselect` folder, and wrong for a deadline or a retired connection, which
+      // would be rendered to the person as "you have no Junk folder". It is also not covered by
+      // the `usable` check: a throwing retirement deliberately leaves the socket for the caller
+      // to close, so the client still reports itself usable.
+      if (err instanceof ImapBoundExceeded) throw err;
       if (!(this.client as unknown as { usable?: boolean }).usable) throw err;
       return null;
     }
@@ -1397,9 +1653,17 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       const start = Math.max(1, end - limit + 1);
 
       const rows: FolderPageItem[] = [];
+      // The range names at most `limit` messages, so an answer longer than that is the SERVER
+      // over-answering a bounded page. Rows past it are declined rather than retained — the page
+      // is `limit` items by contract either way, so nothing honest is lost.
+      const pageDeadline = this.readDeadline();
       for await (const m of this.client.fetch(
         `${start}:${end}`, { uid: true, envelope: true, flags: true, internalDate: true },
       )) {
+        pageDeadline.check(folder);
+        // Reached only when the server answers a bounded range with MORE rows than it names;
+        // the FETCH is still running, so the connection is retired rather than reused.
+        if (rows.length >= limit) { this.retireConnection(); break; }
         const from = m.envelope?.from?.[0];
         const date = m.envelope?.date ?? m.internalDate;
         rows.push({
@@ -1446,8 +1710,15 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const term = query.trim();
     let lock: { release(): void };
     try {
-      lock = await this.client.getMailboxLock(this.toServerPath(folder));
+      lock = await this.bounded(this.client.getMailboxLock(this.toServerPath(folder)));
     } catch (err) {
+      // A CEILING BREACH IS NOT "THIS MAILBOX HAS NO SUCH WINDOW", and this arm would have said
+      // so. The rule below turns a SELECT refusal into the honest `null` degrade — right for a
+      // missing or `\Noselect` folder, and wrong for a deadline or a retired connection, which
+      // would be rendered to the person as "you have no Junk folder". It is also not covered by
+      // the `usable` check: a throwing retirement deliberately leaves the socket for the caller
+      // to close, so the client still reports itself usable.
+      if (err instanceof ImapBoundExceeded) throw err;
       if (!(this.client as unknown as { usable?: boolean }).usable) throw err;
       return null;
     }
@@ -1456,7 +1727,14 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       const uidValidity = mb && mb.uidValidity != null ? String(mb.uidValidity) : "0";
       if (!mb || mb.exists === 0 || term.length === 0) return { uidValidity, items: [], truncated: false };
 
-      const found = await this.client.search({ or: [{ from: term }, { subject: term }] }, { uid: true });
+      // BOUNDED BEFORE THE SORT, and the sort one line below is why this matters. The docblock
+      // above this method promised "never a fetch proportional to the match count" — true of the
+      // FETCH, and false of `[...found].sort()`, which copied and sorted the server's entire
+      // match set to take 50 of it. A common word over a decade of junk is a six-figure array
+      // that a caller asking for one page has no idea it paid for. See {@link IMAP_SEARCH_MAX_UIDS}.
+      const found = await this.searchBounded(
+        { or: [{ from: term }, { subject: term }] }, { uid: true }, folder,
+      );
       // imapflow does NOT reject a refused SEARCH — it answers `false` (its declared return is
       // `number[] | false`). Reading that as "no matches" would make a failed provider search
       // an honest-looking empty answer; it is a failure, and the caller states it as one.
@@ -1466,9 +1744,16 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       const wanted = uids.slice(0, limit);
 
       const rows: FolderPageItem[] = [];
+      // `wanted` names at most `limit` UIDs; a longer answer is the server over-answering. Same
+      // rule as {@link listFolderPage}.
+      const pageDeadline = this.readDeadline();
       for await (const m of this.client.fetch(
         wanted, { uid: true, envelope: true, flags: true, internalDate: true }, { uid: true },
       )) {
+        pageDeadline.check(folder);
+        // Reached only when the server answers a bounded range with MORE rows than it names;
+        // the FETCH is still running, so the connection is retired rather than reused.
+        if (rows.length >= limit) { this.retireConnection(); break; }
         const from = m.envelope?.from?.[0];
         const date = m.envelope?.date ?? m.internalDate;
         rows.push({
@@ -1501,8 +1786,14 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     if (!folder) return [];
     let lock: { release(): void };
     try {
-      lock = await this.client.getMailboxLock(this.toServerPath(folder));
-    } catch {
+      lock = await this.bounded(this.client.getMailboxLock(this.toServerPath(folder)));
+    } catch (err) {
+      // A CEILING BREACH IS NOT "THIS FOLDER IS NOT THERE". The arm below turns any SELECT
+      // failure into an honest "no such folder / nothing to do" answer, which is right for a
+      // missing or unselectable mailbox and WRONG for a deadline: it would report a server that
+      // stopped answering as an empty result, which is the silent degrade this whole file exists
+      // to replace with a refusal. See `imap-bounds.ts`.
+      if (err instanceof ImapBoundExceeded) throw err;
       return [];   // not present / not selectable — the kickstart simply has no material
     }
     try {
@@ -1511,9 +1802,24 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       const seen = new Set<string>();
       const out: string[] = [];
       const start = Math.max(1, mb.exists - limit + 1);
+      // The same open-ended range and the same non-terminating exit condition as
+      // {@link sampleSenders} — see {@link IMAP_SAMPLE_MAX_ROWS}.
+      let examined = 0;
+      const scanDeadline = this.readDeadline();
       outer:
       for await (const m of this.client.fetch(`${start}:*`, { envelope: true })) {
-        const rcpts = [...(m.envelope?.to ?? []), ...(m.envelope?.cc ?? []), ...(m.envelope?.bcc ?? [])];
+        scanDeadline.check(folder);
+        if (++examined > IMAP_SAMPLE_MAX_ROWS) { this.retireConnection(); break outer; }
+        // TRUNCATED PER LIST, not after the spread. The docblock above says `limit` "bounds BOTH
+        // the messages scanned and the addresses returned, so a single mail with a 4 000-address
+        // To: header cannot turn a bounded scan into an unbounded result" — true of the RESULT,
+        // and false of this line, which materialised all 4 000 before the loop looked at one.
+        // See {@link IMAP_ENVELOPE_ADDRESSES_MAX}: a sample's inputs may be trimmed.
+        const rcpts = [
+          ...boundEnvelopeAddresses(m.envelope?.to ?? []),
+          ...boundEnvelopeAddresses(m.envelope?.cc ?? []),
+          ...boundEnvelopeAddresses(m.envelope?.bcc ?? []),
+        ];
         for (const r of rcpts) {
           const addr = r.address?.trim().toLowerCase();
           if (!addr || !addr.includes("@") || seen.has(addr)) continue;
@@ -1633,7 +1939,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   private async findSentForScan(): Promise<string | null> {
     if (this.sentFolder) return this.sentFolder;
     if (this.scanSentFolder) return this.scanSentFolder;
-    const list = await this.client.list();
+    const list = await this.listBounded();
     const special = this.findSent(list);
     if (special) { this.sentFolder = special; return special; }
     const byName = list.find(
@@ -1664,7 +1970,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     if (this.specialJunk !== null && this.specialTrash !== null) {
       return { junk: this.specialJunk, trash: this.specialTrash };
     }
-    const list = await this.client.list();
+    const list = await this.listBounded();
     const resolve = (use: string, belt: RegExp): string | null => {
       const selectable = (f: ListResponse): boolean => !(f.flags?.has("\\Noselect") ?? false);
       const outsideOhmail = (path: string): boolean => !/(?:^|\/)ohmail(?:\/|$)/i.test(path);
@@ -1701,6 +2007,11 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * the delimiter discovered at login.
    */
   leaseIo(): LeaseIo {
+    // The lease and profile reads run BEFORE the cycle and on the raw client, so without this a
+    // retired adapter's next visit would reach for a destroyed connection here — and that failure
+    // is wrapped as a lease fault, which is deliberately not this mailbox's fault. Refuse with the
+    // breach instead, so the cause survives the trip.
+    this.assertUsable();
     return makeLeaseIo(this.client as unknown as LeaseImapClient, (c) => this.toServerPath(c));
   }
 
@@ -1716,6 +2027,11 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * with the profile document's size.
    */
   profileIo(): ProfileIo {
+    // The lease and profile reads run BEFORE the cycle and on the raw client, so without this a
+    // retired adapter's next visit would reach for a destroyed connection here — and that failure
+    // is wrapped as a lease fault, which is deliberately not this mailbox's fault. Refuse with the
+    // breach instead, so the cause survives the trip.
+    this.assertUsable();
     return makeProfileIo(this.client as unknown as ProfileImapClient, (c) => this.toServerPath(c));
   }
 
@@ -1732,6 +2048,11 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * It also never CREATEs `ohmail/_meta`. See {@link makeLeasePeekIo}.
    */
   leasePeekIo(): LeasePeekIo {
+    // The lease and profile reads run BEFORE the cycle and on the raw client, so without this a
+    // retired adapter's next visit would reach for a destroyed connection here — and that failure
+    // is wrapped as a lease fault, which is deliberately not this mailbox's fault. Refuse with the
+    // breach instead, so the cause survives the trip.
+    this.assertUsable();
     return makeLeasePeekIo(this.client as unknown as LeaseImapClient, (c) => this.toServerPath(c));
   }
 
@@ -1747,13 +2068,37 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     return serverPath.split(this.delimiter).join("/");
   }
 
-  /** Enumerate current UIDs of the OPEN mailbox (delete detection + fallback create detection). */
-  private async enumerateUids(): Promise<number[]> {
+  /**
+   * Enumerate current UIDs of the OPEN mailbox (delete detection + fallback create detection).
+   *
+   * ── BOUNDED AT THE READ, AND THE BATCH BUDGET IS NOT WHAT BOUNDS IT ────────────────────────
+   *
+   * This walked `1:*` and pushed every UID the server named into an array, and the caller then
+   * built a `Set` of it and a `filter` over it — three retained copies of a number the SERVER
+   * picks. {@link DEFAULT_SYNC_BATCH_MAX_MESSAGES} bounds the BODIES fetched afterwards, which is
+   * the outage everybody remembers, and it is consulted long after this array exists. A folder
+   * claiming 10^8 messages costs the shared worker process ~10^8 numbers before the budget is
+   * read once.
+   *
+   * {@link boundedCollect} stops PULLING at the ceiling rather than measuring the array
+   * afterwards, so the container never grows past it, and it checks the clock as it goes — a
+   * server that answers this fetch one UID a minute is neither too large nor idle, and the wall
+   * clock is the only thing that sees it. See {@link IMAP_ENUM_MAX_UIDS}.
+   *
+   * It THROWS rather than truncating: a short enumeration is read downstream as "those UIDs are
+   * not on the server any more", which is the durable lie the `unanswered` machinery exists to
+   * prevent. Failing this mailbox's cycle is the honest answer.
+   */
+  private async enumerateUids(folder?: string): Promise<number[]> {
     const mb = this.client.mailbox as MailboxObject | false;
     if (!mb || mb.exists === 0) return [];
-    const uids: number[] = [];
-    for await (const m of this.client.fetch("1:*", { uid: true })) uids.push(m.uid);
-    return uids;
+    return boundedCollect(this.client.fetch("1:*", { uid: true }), {
+      max: IMAP_ENUM_MAX_UIDS, bound: "enumerate_uids",
+      deadline: this.readDeadline(), folder,
+      // `notify` is true only for the non-throwing ("stop") disposition.
+      onAbandon: (_notify, because) => this.retireConnection(because),
+      map: (m) => m.uid,
+    });
   }
 
   /**
@@ -1763,13 +2108,19 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * N" is a position question and UIDs are not contiguous after deletes — `scanSentRecipients`
    * asks the same question the same way.
    */
-  private async enumerateNewestUids(count: number): Promise<number[]> {
+  private async enumerateNewestUids(count: number, folder?: string): Promise<number[]> {
     const mb = this.client.mailbox as MailboxObject | false;
     if (!mb || mb.exists === 0) return [];
     const start = mb.exists > count ? mb.exists - count + 1 : 1;
-    const uids: number[] = [];
-    for await (const m of this.client.fetch(`${start}:*`, { uid: true })) uids.push(m.uid);
-    return uids;
+    // The sequence range asks for `count`; the SERVER decides what it actually sends back, and a
+    // range is not a promise. Same ceiling and same clock as {@link enumerateUids}.
+    return boundedCollect(this.client.fetch(`${start}:*`, { uid: true }), {
+      max: IMAP_ENUM_MAX_UIDS, bound: "enumerate_uids",
+      deadline: this.readDeadline(), folder,
+      // `notify` is true only for the non-throwing ("stop") disposition.
+      onAbandon: (_notify, because) => this.retireConnection(because),
+      map: (m) => m.uid,
+    });
   }
 
   /**
@@ -1781,14 +2132,22 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * for ever. Without the filter the newest sent message is re-fetched (body and all) on every
    * poll of every idle mailbox in the fleet.
    */
-  private async enumerateUidsFrom(fromUid: number): Promise<number[]> {
+  private async enumerateUidsFrom(fromUid: number, folder?: string): Promise<number[]> {
     const mb = this.client.mailbox as MailboxObject | false;
     if (!mb || mb.exists === 0) return [];
-    const uids: number[] = [];
-    for await (const m of this.client.fetch(`${fromUid}:*`, { uid: true }, { uid: true })) {
-      if (m.uid >= fromUid) uids.push(m.uid);
-    }
-    return uids;
+    // The ceiling counts what the server SENDS, not what survives the `uid >= fromUid` filter —
+    // otherwise a server answering `UID FETCH n:*` with every UID it has, below the watermark and
+    // all (the reversed-range behaviour this filter exists for), would stream without limit while
+    // the array stayed empty and the bound never fired.
+    const kept: number[] = [];
+    await boundedCollect(this.client.fetch(`${fromUid}:*`, { uid: true }, { uid: true }), {
+      max: IMAP_ENUM_MAX_UIDS, bound: "enumerate_uids",
+      deadline: this.readDeadline(), folder,
+      // `notify` is true only for the non-throwing ("stop") disposition.
+      onAbandon: (_notify, because) => this.retireConnection(because),
+      map: (m) => { if (m.uid >= fromUid) kept.push(m.uid); return 0; },
+    });
+    return kept;
   }
 
   /**
@@ -1960,11 +2319,54 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     }
     if (take.length === 0) return { fetched, truncated, unanswered: [], oversize };
 
+    /* ── THE BYTE BUDGET ABOVE TRUSTS A NUMBER THE SERVER CHOSE ────────────────────────────────
+     *
+     * The LITERAL-LENGTH arm of the server-value ceilings. Everything above this line is bounded
+     * against `RFC822.SIZE`: the per-message refusal, the batch byte budget, the anti-stall rule.
+     * All three are computed from a value the SERVER declared, and the fetch below then had no
+     * byte accounting of its own whatever. A server that answers `RFC822.SIZE 1` for two hundred
+     * messages and streams a gigabyte for each satisfies every ceiling in this function on paper
+     * and takes the shared worker process with it — the count ceilings are no defence at all here,
+     * because one message is enough.
+     *
+     * So the bytes that actually ARRIVE are counted, per message against what that message
+     * declared and in total against what the batch declared, and the loop STOPS at the first
+     * crossing instead of draining two hundred lying messages into `fetched`.
+     *
+     * **The honest limit of this, stated rather than left to be found:** `ImapFlow.fetch` yields a
+     * message whose `source` is already a complete Buffer, so the driver has buffered that ONE
+     * message before this code sees a byte of it. Refusing here bounds what is RETAINED and what
+     * is fetched AFTER the liar — it cannot un-buffer the liar itself. Bounding a single body at
+     * the socket needs `download()`'s `maxBytes`, which is what {@link fetchRaw} uses and which
+     * has no batch form. {@link IMAP_BODY_OVERRUN_FACTOR} carries the numbers.
+     */
+    const declaredTotal = take.reduce((sum, uid) => sum + (sizes.get(uid) ?? 0), 0);
+    const batchCeiling = bodyOverrunCeiling(declaredTotal);
+    let streamedBytes = 0;
+    const bodyDeadline = this.readDeadline();
+
     for await (const m of this.client.fetch(
       take,
       { uid: true, flags: true, envelope: true, source: true, internalDate: true },
       { uid: true },
     )) {
+      bodyDeadline.check(folder);
+      const arrived = ((m.source ?? Buffer.alloc(0)) as Buffer).length;
+      const declared = sizes.get(m.uid);
+      // Throwing out of a `for await` leaves the FETCH outstanding — see `retireConnection`.
+      if (arrived > bodyOverrunCeiling(declared)) {
+        const because = new ImapBoundExceeded(
+          "body_overrun", bodyOverrunCeiling(declared), arrived, folder,
+        );
+        this.retireConnection(because);
+        throw because;
+      }
+      streamedBytes += arrived;
+      if (streamedBytes > batchCeiling) {
+        const because = new ImapBoundExceeded("body_overrun", batchCeiling, streamedBytes, folder);
+        this.retireConnection(because);
+        throw because;
+      }
       fetched.push({
         folder, uidValidity: curUidValidity, uid: m.uid,
         raw: (m.source ?? Buffer.alloc(0)) as Buffer,
@@ -2047,6 +2449,30 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         { uid: true, flags: true, source: true, internalDate: true },
         { uid: true },
       )) {
+        // ── THE RETRY IS A BODY FETCH TOO, AND IT WAS THE HOLE IN THE ACCOUNTING ────────────
+        //
+        // The byte accounting above was applied to the FIRST body fetch only, which left the
+        // cleanest bypass in the slice: a server declares a tiny `RFC822.SIZE`, OMITS the row from
+        // the first fetch — the exact iCloud behaviour this retry exists for, so it is a shape the
+        // adapter already expects rather than a contrived one — and then returns an arbitrarily
+        // large body here, past every size ceiling. Same per-message and batch-total rules, same
+        // clock.
+        bodyDeadline.check(folder);
+        const arrivedRetry = ((m.source ?? Buffer.alloc(0)) as Buffer).length;
+        const declaredRetry = sizes.get(m.uid);
+        if (arrivedRetry > bodyOverrunCeiling(declaredRetry)) {
+          const becauseRetry = new ImapBoundExceeded(
+            "body_overrun", bodyOverrunCeiling(declaredRetry), arrivedRetry, folder,
+          );
+          this.retireConnection(becauseRetry);
+          throw becauseRetry;
+        }
+        streamedBytes += arrivedRetry;
+        if (streamedBytes > batchCeiling) {
+          const becauseBatch = new ImapBoundExceeded("body_overrun", batchCeiling, streamedBytes, folder);
+          this.retireConnection(becauseBatch);
+          throw becauseBatch;
+        }
         const raw = (m.source ?? Buffer.alloc(0)) as Buffer;
         answered.add(m.uid);
         fetched.push({
@@ -2120,12 +2546,22 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     this.passiveCycle++;
     if (this.passiveFolders === null || wantStatus || stale) {
       try {
-        this.learnPassiveFolders(await this.client.list(
+        this.learnPassiveFolders(await this.listBounded(
           wantStatus
             ? { statusQuery: { messages: true, uidNext: true, highestModseq: true } }
             : undefined,
         ));
-      } catch {
+      } catch (err) {
+        // ── A CEILING BREACH IS NOT "ONE BAD COMMAND" ────────────────────────────────────────
+        //
+        // This arm exists so a transient LIST failure costs the refresh and nothing else. A
+        // {@link ImapBoundExceeded} is the opposite kind of event: the server answered, and the
+        // answer was past a ceiling this mailbox's cycle is not allowed to pay. Swallowed here it
+        // would be re-paid every cycle for ever, and on the FIRST pass (`passiveFolders === null`)
+        // the `??= []` below would additionally drop every customer folder out of the scan
+        // silently — a hostile LIST rendered as "you have no folders". So it propagates and
+        // fails this mailbox's cycle, which is the whole isolation story (`imap-bounds.ts`).
+        if (err instanceof ImapBoundExceeded) throw err;
         // A LIST that fails costs the refresh and nothing else: keep the inventory we have rather
         // than dropping every customer folder out of the scan on one bad command.
         this.passiveFolders ??= [];
@@ -2181,7 +2617,37 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       && Number(status.messages) === prev.known.length;
   }
 
+  /**
+   * ── THE PASS HAS A WALL-CLOCK BUDGET, AND IT IS THE PER-MAILBOX TIME BUDGET ────────────────
+   *
+   * The TIME arm of the server-value ceilings. A per-read ceiling
+   * ({@link IMAP_READ_DEADLINE_MS}) bounds one command, and a pass issues a dozen: six watched
+   * folders plus Sent plus up to {@link DEFAULT_PASSIVE_FOLDERS_MAX} passives, each stopping just
+   * short of the per-read ceiling, is a cycle measured in hours. So the pass carries a budget of
+   * its own ({@link IMAP_CYCLE_DEADLINE_MS}) and every read inside it takes the EARLIER of the two.
+   *
+   * This is the row's "per-mailbox time budget", placed here rather than in the worker's cycle
+   * scheduler: this method is where the pass begins and ends and where the folder loop already
+   * lives, so the budget needs a clock and a check — while obtaining the same property from the
+   * scheduler would mean rebuilding it, which is a much larger change for the same guarantee.
+   *
+   * `finally`, not a trailing assignment: a pass that throws — which is precisely what a breach
+   * does — must still clear the budget, or the NEXT pass inherits an expired clock and refuses
+   * instantly. That would turn one hostile cycle into a permanently broken mailbox.
+   */
   async changesSince(cursor: ImapCursor): Promise<ChangeBatch> {
+    this.assertUsable();
+    this.cycleDeadline = ImapDeadline.in(
+      IMAP_CYCLE_DEADLINE_MS, "cycle_deadline", () => this.now(),
+    );
+    try {
+      return await this.changesSinceInner(cursor);
+    } finally {
+      this.cycleDeadline = undefined;
+    }
+  }
+
+  private async changesSinceInner(cursor: ImapCursor): Promise<ChangeBatch> {
     const caps = await this.capabilities();
     const {
       folders: scanFolders, sent: sentFolder, passive: passiveFolders, status: listStatus,
@@ -2293,8 +2759,17 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       }
       let lock: { release(): void };
       try {
-        lock = await this.client.getMailboxLock(serverPath);
-      } catch {
+        lock = await this.bounded(this.client.getMailboxLock(serverPath));
+      } catch (err) {
+        // ── A CEILING BREACH IS THE ONE THING THIS ARM MUST NOT ABSORB ────────────────────────
+        //
+        // This is the most consequential of the SELECT catches. "The folder is not there" is a
+        // legitimate, common state and carrying the cursor forward is exactly right for it. A
+        // DEADLINE reaching here would be read the same way: the folder is silently reported as
+        // having no changes, `hasBacklog` stays false, and the pass ends looking complete — so a
+        // server that simply stopped answering one folder's SELECT would present as a healthy,
+        // fully-drained cycle. That is the shape `initial_import_completed_at` is written on.
+        if (err instanceof ImapBoundExceeded) throw err;
         // Folder does not exist yet (e.g. ensureFolders not run, or server lacks it).
         // Carry the previous cursor forward and skip — no changes can be observed here.
         newFolders[folder] = prev
@@ -2359,20 +2834,28 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         let currentUids: number[];
         let enumFloorUid = 0;
         if (!isSent) {
-          currentUids = await this.enumerateUids();
+          currentUids = await this.enumerateUids(folder);
         } else {
           const watermark = uidValidityChanged ? 0 : (prev?.uidNext ?? 0);
           if (watermark > 0) {
-            currentUids = await this.enumerateUidsFrom(watermark);
+            currentUids = await this.enumerateUidsFrom(watermark, folder);
             enumFloorUid = watermark;
           } else {
             // First scan (or a UIDVALIDITY reset): the newest N by sequence number.
-            currentUids = await this.enumerateNewestUids(sentHistory);
+            currentUids = await this.enumerateNewestUids(sentHistory, folder);
             // A UIDVALIDITY reset keeps the ordinary full-delete semantics: every prior UID is
             // meaningless, so the floor stays 0 and `knownMap` is emitted wholesale below.
             enumFloorUid = uidValidityChanged
               ? 0
-              : (currentUids.length > 0 ? Math.min(...currentUids) : Number.MAX_SAFE_INTEGER);
+              // ITERATIVE, NOT `Math.min(...currentUids)`.
+              //
+              // The spread passes one ARGUMENT per element, and the JavaScript engine throws
+              // `RangeError: Maximum call stack size exceeded` at roughly 125 000 of them — well
+              // below {@link IMAP_ENUM_MAX_UIDS}. So the enumeration ceiling was admitting arrays
+              // this line could not then process, which is a ceiling that does not keep its
+              // promise: every array the bound accepts has to remain workable, or the bound is
+              // just a larger number to crash at.
+              : minOf(currentUids, Number.MAX_SAFE_INTEGER);
           }
         }
         const currentSet = new Set(currentUids);
@@ -2481,11 +2964,45 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           ));
           let taken = 0;
           let lastFlagUid = from - 1;
+          // ── THE FLAG BUDGET COUNTS CHANGES; THIS COUNTS ROWS, AND THEY ARE NOT THE SAME ────
+          //
+          // `taken` and `budget.flags` bound flag CHANGES. The two dispositions below that are
+          // not changes — an unknown UID, and a row agreeing with the baseline — `continue`
+          // without spending either, and on a provider whose CHANGEDSINCE is inert (iCloud, as
+          // the note below records) EVERY row is one of those. So the drain streamed the whole
+          // folder with no ceiling engaged at all. See {@link IMAP_FLAG_SCAN_MAX_ROWS} for why
+          // this one truncates instead of refusing: the drain has a resume point, so stopping is
+          // a bounded degrade that keeps every flag rather than a failed cycle.
+          let examined = 0;
+          const flagDeadline = this.readDeadline();
           for await (const m of this.client.fetch(
             `${from}:*`,
             { uid: true, flags: true },
             canFastPath ? { uid: true, changedSince: BigInt(since) } : { uid: true },
           )) {
+            flagDeadline.check(folder);
+            // ── THIS USED TO TRUNCATE, AND THE PREMISE FOR THAT WAS FALSE ─────────────────
+            //
+            // It set `flagsTruncated` and broke, on the argument that the drain has a resume
+            // point so stopping keeps every flag. The resume point is real; the *stopping* was
+            // not. Breaking out of an ImapFlow generator does NOT cancel the FETCH — the driver
+            // keeps draining it and the next folder's SELECT queues behind a response nobody is
+            // reading, so a server willing to stream for ever wedged the cycle while the pass
+            // reported a tidy truncation. A bounded degrade that does not bound the read is not a
+            // degrade.
+            //
+            // So a breach is now what it actually is: this server sent an unreasonable number of
+            // rows for one folder's flags, the connection is finished, and this mailbox's cycle
+            // fails. The ORDINARY truncation below (`taken >= allowance`) is untouched — that one
+            // stops after at most a few hundred rows of a response the server is finishing
+            // normally, which is a different event from a flood.
+            if (++examined > IMAP_FLAG_SCAN_MAX_ROWS) {
+              const becauseFlags = new ImapBoundExceeded(
+                "flag_scan_rows", IMAP_FLAG_SCAN_MAX_ROWS, examined, folder,
+              );
+              this.retireConnection(becauseFlags);
+              throw becauseFlags;
+            }
             // NOT A SKIP — an unknown UID was EXAMINED, and unknown-ness is the answer. It is a
             // create, sourced by the known-set diff above with its flags attached, so this pass
             // owes it nothing; leaving the cursor behind it only re-reads it from the server on
@@ -2765,7 +3282,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     }
     if (wanted.length === 0) return { uidValidity: "0", creates: [], absent: [], oversize: [] };
 
-    const lock = await this.client.getMailboxLock(this.toServerPath(folder));
+    const lock = await this.bounded(this.client.getMailboxLock(this.toServerPath(folder)));
     try {
       const mb = this.client.mailbox as MailboxObject;
       const curUidValidity = mb.uidValidity;
@@ -2886,22 +3403,91 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   private async destinationLook(
     dstPath: string, messageId: string | null, sourceFingerprint: string | null,
   ): Promise<{ uidValidity: bigint; candidates: number[]; matches: number[] }> {
-    const lock = await this.client.getMailboxLock(dstPath);
+    const lock = await this.bounded(this.client.getMailboxLock(dstPath), dstPath);
     try {
       const uidValidity = (this.client.mailbox as MailboxObject).uidValidity;
       const inner = messageId ? messageId.replace(/[<>]/g, "").trim() : "";
       const found = inner
-        ? await this.client.search({ header: { "message-id": inner } }, { uid: true })
+        ? await this.searchBounded({ header: { "message-id": inner } }, { uid: true }, dstPath)
         : [];
       const candidates = Array.isArray(found) ? found : [];
       const matches: number[] = [];
       if (sourceFingerprint !== null) {
-        for (const candidate of candidates) {
-          const fetched = await this.client.fetchOne(
-            String(candidate), { uid: true, source: true }, { uid: true },
+        // ── THE WORST COUNT-TO-BYTES MULTIPLIER IN THIS FILE ──────────────────────────────────
+        //
+        // The loop below fetches a FULL MESSAGE BODY per candidate. Message-IDs are meant to be
+        // unique, so the honest candidate count is 0 or 1 and 2–3 happens when a message was
+        // copied about — but the count comes from a SEARCH the server answers, and a server
+        // answering it with ten thousand UIDs turns one move into ten thousand body downloads on
+        // the worker's shared, long-lived connection. {@link IMAP_SEARCH_MAX_UIDS} above bounds
+        // the array; it is far too loose to bound THIS, which is why there is a second, much
+        // tighter ceiling here. See {@link IMAP_CANDIDATE_BODY_PROBES_MAX}.
+        //
+        // Past it the move REFUSES rather than adopting a prefix: with more identically-identified
+        // candidates than the probe budget, the pre-check cannot establish which message it is
+        // looking at, and a move that guesses is a move that lands on the wrong one.
+        if (candidates.length > IMAP_CANDIDATE_BODY_PROBES_MAX) {
+          throw new ImapBoundExceeded(
+            "candidate_body_probes", IMAP_CANDIDATE_BODY_PROBES_MAX, candidates.length, dstPath,
           );
-          if (!fetched) continue;
-          const fp = await ImapAdapter.fingerprintOf(fetched.source as Buffer | undefined);
+        }
+        // ── AND THE COUNT CEILING ALONE IS NOT ENOUGH, BECAUSE ONE BODY IS UNBOUNDED ───────
+        //
+        // A candidate count of ONE satisfies the ceiling above and says nothing about how many
+        // bytes that one body is. `fetchOne(..., { source: true })` materialises the whole literal
+        // before this code sees it, so a server offering a single enormous message under a
+        // Message-ID the user already holds exhausts the shared worker while obeying the 32-probe
+        // cap exactly.
+        //
+        // `download` with `maxBytes` instead — the same instrument {@link fetchRaw} uses, and for
+        // the same reason: it stops at a CHUNK boundary, so the loop declines to ask for the next
+        // one and the socket is left clean rather than abandoned mid-literal. A body that reaches
+        // the ceiling cannot be the message we are looking for (ours was refused above that size
+        // long before it was stored), so it is skipped rather than fingerprinted — a truncated
+        // body would fingerprint to a value that matches nothing, which is the same OUTCOME by
+        // accident, and an accident is not a guard.
+        for (const candidate of candidates) {
+          // ── `+ 1`, AND IT IS THE DIFFERENCE BETWEEN A CEILING AND A SILENT TRUNCATION ────
+          //
+          // Asking for exactly `MAX_RAW_MESSAGE_BYTES` makes the driver emit exactly that many
+          // bytes and stop, so `total > MAX_RAW_MESSAGE_BYTES` can NEVER be true and the read
+          // looks complete. The truncated prefix is then fingerprinted — and a prefix can MATCH:
+          // a source whose meaningful content ends before the cap (a complete multipart followed
+          // by epilogue bytes the parser ignores) fingerprints identically to its own truncation.
+          // The consequence is not a slow move, it is the WRONG one: `move` adopts a stranger's
+          // destination UID and then expunges the real source.
+          //
+          // One extra byte makes saturation observable, and a saturated read is treated as
+          // UNVERIFIABLE rather than as evidence.
+          const probe = await this.bounded(this.client.download(
+            String(candidate), undefined, { uid: true, maxBytes: MAX_RAW_MESSAGE_BYTES + 1 },
+          ), dstPath);
+          if (!probe || !probe.content) continue;
+          const chunks: Buffer[] = [];
+          let total = 0;
+          let over = false;
+          for await (const chunk of probe.content) {
+            const buf = chunk as Buffer;
+            total += buf.length;
+            if (total > MAX_RAW_MESSAGE_BYTES) { over = true; break; }
+            chunks.push(buf);
+          }
+          // Drained to the end even when already over, exactly as `fetchRaw` argues: draining is
+          // what leaves the connection usable, and it is bounded by the ceiling.
+          //
+          // SATURATION IS `over`, AND NOTHING ELSE — the `+ 1` above is what makes that exact.
+          //
+          // This read `>= MAX_RAW_MESSAGE_BYTES` for one round, on the reasoning that a read
+          // stopping AT the cap might have been cut short. With the limiter asked for `MAX + 1`
+          // that is no longer true: a genuine body of exactly the maximum ends normally with a
+          // byte still available, so it is COMPLETE, and `normalizeMime` accepts exactly that
+          // size. Discarding it made a legitimate 64 MiB message permanently unverifiable — and
+          // on the COPY fallback, where verification is the only way to learn the destination
+          // UID, every retry would leave the source in place and add another 64 MiB copy.
+          if (over) continue;
+          const declared = probe.meta?.expectedSize;
+          if (typeof declared === "number" && declared > MAX_RAW_MESSAGE_BYTES) continue;
+          const fp = await ImapAdapter.fingerprintOf(Buffer.concat(chunks));
           if (fp !== null && fp === sourceFingerprint) matches.push(candidate);
         }
       }
@@ -2922,7 +3508,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * existence probe already ran, so the honest answer is "nothing to compare", which refuses.
    */
   private async sourceFingerprintOf(locator: NativeLocator, srcPath: string, uid: number): Promise<string | null> {
-    const lock = await this.client.getMailboxLock(srcPath);
+    const lock = await this.bounded(this.client.getMailboxLock(srcPath));
     try {
       // THE THIRD SOURCE SELECTION, and it is a locator-consuming read like any other — see
       // {@link assertLocatorEpoch}. `move` releases its lock to look at the destination and
@@ -2958,12 +3544,24 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    *
    * The refusal is {@link MessageGoneError} — deliberately the same signal an expunged UID
    * produces, because the two mean the same thing to every caller: *the message is not at this
-   * locator any more*. Every consumer already handles it honestly and RE-RESOLVABLY. The
-   * worker's filing and flag passes leave the row pending and let the next `changesSince` adopt
-   * whatever the server now shows (`sync.ts#fileOne`, `#reconcileFlags`), voiding only when the
-   * disappearance is on durable record; the Junk rescue reports the press as stale; the body
-   * re-read passes mark the message unreadable rather than storing the bytes. The message is
-   * never lost — it is re-found by Message-ID and fingerprint on the next scan.
+   * locator any more*. The message is not lost by it: adoption keys on Message-ID and fingerprint,
+   * so the next scan re-finds it under whatever UID it now wears.
+   *
+   * ── WHAT THIS DOCBLOCK USED TO CLAIM, AND WHY THE CORRECTION IS PART OF THE RECORD ──────────
+   *
+   * It read *"Every consumer already handles it honestly and RE-RESOLVABLY"*, and listed the
+   * worker's filing and flag passes as proof. Those two ARE the reference implementations and
+   * that half was true. The universal was not: at the time it was written, `SendService` billed a
+   * message it had provably not sent into ambiguous-send recovery, the Junk sweep let a
+   * whole-folder refusal retire the user's one-time command, and the reconcile write path threw
+   * out of a loop, abandoning the rows behind it. Making this guard unconditional did not create
+   * any of that — an expunged UID has raised this error since the adapter was written — but it
+   * raised how often, which is how they were found together.
+   *
+   * The claim is now the RULE rather than a census of who obeys it: `gone.ts` states the three
+   * readings and which seam may take which, and the consumers are written against it. That is the
+   * correct thing to assert here, because a sentence about every caller in the tree is a claim
+   * that goes stale the next time somebody adds one.
    *
    * ── THE TWO `"0"` ESCAPES ARE DELIBERATE AND ARE THE WHOLE COMPATIBILITY STORY ──────────────
    *
@@ -3110,7 +3708,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // Step 1: under the SOURCE lock — probe existence and capture identity. NOTHING is written
     // here any more; the decision to write comes after the destination has been read.
     {
-      const lock = await this.client.getMailboxLock(srcPath);
+      const lock = await this.bounded(this.client.getMailboxLock(srcPath));
       try {
         assertEpoch();
         const one = await this.client.fetchOne(
@@ -3151,7 +3749,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     } else {
       // Step 3: nothing of ours at the destination, so write. Under the SOURCE lock again —
       // and under the epoch guard again, because the lock was released in between.
-      const lock = await this.client.getMailboxLock(srcPath);
+      const lock = await this.bounded(this.client.getMailboxLock(srcPath));
       try {
         assertEpoch();
         if (caps.move) {
@@ -3190,7 +3788,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // duplicate rather than a dangling locator, and the next reconcile pass retries the whole
     // move — which the pre-check above now makes convergent instead of amplifying.
     if (sourceAwaitingDelete) {
-      const lock = await this.client.getMailboxLock(srcPath);
+      const lock = await this.bounded(this.client.getMailboxLock(srcPath));
       try {
         assertEpoch(); // the expunge is the destructive half — never against a recycled UID
         await this.client.messageDelete([uid], { uid: true }); // \Deleted + EXPUNGE on source
@@ -3322,7 +3920,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // Step 1: the existence probe and the Message-IDs, for the whole set, under one source lock.
     const present = new Map<number, string | null>();
     {
-      const lock = await this.client.getMailboxLock(srcPath);
+      const lock = await this.bounded(this.client.getMailboxLock(srcPath));
       try {
         // UNDER THE LOCK, BEFORE THE FETCH — the group shares one real epoch (above), so checking
         // the representative checks the set. A mismatch here means every ref in the chunk is stale.
@@ -3350,15 +3948,16 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       .filter((id) => id !== "");
     let dstUidValidity: bigint;
     {
-      const lock = await this.client.getMailboxLock(dstPath);
+      const lock = await this.bounded(this.client.getMailboxLock(dstPath));
       try {
         dstUidValidity = (this.client.mailbox as MailboxObject).uidValidity;
         if (ids.length > 0) {
-          const found = await this.client.search(
+          const found = await this.searchBounded(
             ids.length === 1
               ? { header: { "message-id": ids[0]! } }
               : { or: ids.map((id) => ({ header: { "message-id": id } })) },
             { uid: true },
+            dstPath,
           );
           // ANY hit sends the whole chunk back to the per-message path — see the header.
           if (Array.isArray(found) && found.length > 0) return empty;
@@ -3373,7 +3972,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const uids = [...present.keys()];
     const moved = new Map<string, NativeLocator>();
     {
-      const lock = await this.client.getMailboxLock(srcPath);
+      const lock = await this.bounded(this.client.getMailboxLock(srcPath));
       try {
         // THE RECHECK, for `move`'s reason one folder over: the source lock was released while
         // the destination was inspected, and imapflow re-selects the mailbox on each
@@ -3424,14 +4023,15 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    */
   async setFlags(locator: NativeLocator, flags: { seen: boolean }): Promise<void> {
     const { uid } = parseRef(locator.ref);
-    const lock = await this.client.getMailboxLock(this.toServerPath(locator.folder));
+    const lock = await this.bounded(this.client.getMailboxLock(this.toServerPath(locator.folder)));
     try {
       // UNDER THE LOCK, BEFORE THE PROBE — see {@link assertLocatorEpoch}. A recycled folder
       // re-issues low UIDs, and `UID STORE` on a stale ref marks a STRANGER'S message read (or
       // unread) in the user's own mailbox. One lock, so one check is enough here: unlike `move`
       // there is no window in which it is released.
       this.assertLocatorEpoch(locator);
-      const present = await this.client.fetchOne(String(uid), { uid: true }, { uid: true });
+      const present = await this.bounded(
+        this.client.fetchOne(String(uid), { uid: true }, { uid: true }));
       if (!present) throw new MessageGoneError(locator);
       const ok = flags.seen
         ? await this.client.messageFlagsAdd([uid], ["\\Seen"], { uid: true })
@@ -3480,7 +4080,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     this.client.on("exists", handler);
     this.watchArmed = true;
     this.watchSignal = onSignal;
-    const lock = await this.client.getMailboxLock(inboxPath);
+    const lock = await this.bounded(this.client.getMailboxLock(inboxPath));
     lock.release();
     this.startIdle();
     return async () => {
@@ -3517,7 +4117,28 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    */
   async rearmWatch(): Promise<void> {
     if (!this.watchArmed) return;
-    const lock = await this.client.getMailboxLock(this.toServerPath("INBOX"));
+    this.assertUsable();
+    // ── THE ONE THROWING PATH THAT STILL HAS TO NOTIFY, BECAUSE ITS CALLER SWALLOWS ──────────
+    //
+    // `retireConnection` is silent for throwing paths, on the rule that the throw is the report.
+    // This is the exception, and it is documented at the call site rather than inferred: the
+    // worker catches `rearmWatch()` and only logs, explicitly *because* it expects the adapter's
+    // own close listener to do the detaching ("the connection is likely dying and its own close
+    // listener detaches"). A retirement here therefore reports to nobody — the connection is
+    // dead, the runtime still holds it, and the mailbox is poll-only until something unrelated
+    // notices.
+    //
+    // It stays SILENT about failure counting, which is the point of the split: this notifies as
+    // a connection that ENDED, which detaches without walking the mailbox toward `status=error`.
+    // A re-arm that could not SELECT is not evidence against the mailbox, and the worker's own
+    // comment says so.
+    let lock: { release(): void };
+    try {
+      lock = await this.bounded(this.client.getMailboxLock(this.toServerPath("INBOX")));
+    } catch (err) {
+      if (err instanceof ImapBoundExceeded) this.retireConnection();
+      throw err;
+    }
     let grew = false;
     try {
       const mb = this.client.mailbox as MailboxObject | false;
@@ -3576,7 +4197,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    */
   private async resolveSentFolder(): Promise<string> {
     if (this.sentFolder) return this.sentFolder;
-    const list = await this.client.list();
+    const list = await this.listBounded();
     const special = this.findSent(list);
     if (special) { this.sentFolder = special; return special; }
     // Same filter as the read path: a `\Noselect` node cannot be APPENDed to, and treating one
@@ -3645,12 +4266,20 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const sentCanonical = await this.resolveSentFolder();
     let lock: { release(): void };
     try {
-      lock = await this.client.getMailboxLock(this.toServerPath(sentCanonical));
-    } catch {
+      lock = await this.bounded(this.client.getMailboxLock(this.toServerPath(sentCanonical)));
+    } catch (err) {
+      // A CEILING BREACH IS NOT "THIS FOLDER IS NOT THERE". The arm below turns any SELECT
+      // failure into an honest "no such folder / nothing to do" answer, which is right for a
+      // missing or unselectable mailbox and WRONG for a deadline: it would report a server that
+      // stopped answering as an empty result, which is the silent degrade this whole file exists
+      // to replace with a refusal. See `imap-bounds.ts`.
+      if (err instanceof ImapBoundExceeded) throw err;
       return false;
     }
     try {
-      const found = await this.client.search({ header: { "message-id": inner } }, { uid: true });
+      const found = await this.searchBounded(
+        { header: { "message-id": inner } }, { uid: true }, sentCanonical,
+      );
       return Array.isArray(found) && found.length > 0;
     } finally {
       lock.release();
@@ -3669,7 +4298,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const { uid } = parseRef(locator.ref);
     const serverPath = this.toServerPath(locator.folder);
     const part = partId ?? "1";
-    const lock = await this.client.getMailboxLock(serverPath);
+    const lock = await this.bounded(this.client.getMailboxLock(serverPath));
     try {
       // Not a mutation, and it is here for the same reason all the same — see
       // {@link assertLocatorEpoch}. A recycled folder makes this download part `n` of whatever
@@ -3677,7 +4306,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       // the requester as their own attachment. `move` and `setFlags` corrupt the mailbox; this
       // one hands one person's file to another.
       this.assertLocatorEpoch(locator);
-      const dl = await this.client.download(String(uid), part, { uid: true });
+      const dl = await this.bounded(this.client.download(String(uid), part, { uid: true }));
       if (!dl || !dl.content) throw new MessageGoneError(locator);
       const chunks: Buffer[] = [];
       // COUNT AS WE GO, and stop the moment the ceiling is crossed.
@@ -3737,7 +4366,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const maxBytes = opts.maxBytes ?? DEFAULT_FETCH_RAW_MAX_BYTES;
     const { uid } = parseRef(locator.ref);
     const serverPath = this.toServerPath(locator.folder);
-    const lock = await this.client.getMailboxLock(serverPath);
+    const lock = await this.bounded(this.client.getMailboxLock(serverPath));
     try {
       // Both callers of this method WRITE what it returns into the message's own row
       // (`redacted-restore.ts`, `sensitive-backfill.ts`), so a stale-epoch read is how one
@@ -3751,7 +4380,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       // `undefined` for the part is what makes this a source fetch, and a source fetch is what
       // makes it `BODY.PEEK[]`. Not `""` — an empty string reaches the same branch by being
       // falsy, which is a property of the driver rather than a thing it promises.
-      const dl = await this.client.download(String(uid), undefined, { uid: true, maxBytes });
+      const dl = await this.bounded(
+        this.client.download(String(uid), undefined, { uid: true, maxBytes }));
       if (!dl || !dl.content) throw new MessageGoneError(locator);
       const chunks: Buffer[] = [];
       let total = 0;
