@@ -1,10 +1,7 @@
-import { and, asc, eq, inArray, isNotNull, ne, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import {
-  assertOrganizerRole,
-  mailboxes, mailboxCredentials, mailboxFolders, folderState, messages, accountSettings,
+  mailboxes, mailboxCredentials, mailboxFolders, folderState, messages,
   isMailboxDisabledReason, isMailboxSyncBlockReason,
-  isOrganizerRole, isOrganizerKind, isOrganizerState,
-  standDownMemory,
   closeRemovedMailboxAppointments,
   type LedgerTx, type MailboxErrorCode, type Tx,
 } from "@trafficflow/db";
@@ -18,9 +15,6 @@ import { ServiceError } from "./errors.js";
 import { defaultMailboxAllowance } from "./mailbox-allowance-registry.js";
 import type { KeyProvider } from "./auth/crypto.js";
 import type { MailboxDTO, MailboxFolderSummary } from "./dto/types.js";
-// The window's vocabulary, from the one place it is defined (core), so the ceremony that writes
-// `dormancy_days` and `screening_scope` cannot disagree with the two cutlines that read them.
-import { DEFAULT_DORMANCY_DAYS, type ScreeningScope } from "@trafficflow/core/mail";
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
@@ -43,78 +37,12 @@ export interface ListMailboxesOptions {
 }
 
 export type MailboxTakeoverResult =
-  /**
-   * One organizing is authorized. The worker decides on its next pass.
-   *
-   * `previousReason` is the stand-down reason the row carried — DERIVED, since mail 0083, by
-   * `standDownMemory`: a reader row written by this build carries no `disabled_reason` at all,
-   * because the ROLE is the record now, and reading the column returned `null` for every one of
-   * them. A consent-less mailbox genuinely has none, and answers `null` here for a reason rather
-   * than by omission. Nothing decides on it; it is the sentence the person is shown.
-   */
-  | { outcome: "authorized"; previousReason: string | null }
-  /** This install already organizes it, and consent is already recorded. Nothing written. */
+  /** The stand-down was ended and one takeover is authorized. The worker decides on its next pass. */
+  | { outcome: "authorized"; previousReason: string }
+  /** Not stood down — this side already organizes it, or is already trying to. Nothing written. */
   | { outcome: "already_organizing" }
   /** Disconnected by the user, which is not a stand-down. Reconnect it instead. Nothing written. */
   | { outcome: "disconnected" };
-
-/**
- * The optional credential half of {@link MailboxService.organizeHere} — a password re-entered
- * inside the claim ceremony.
- *
- * ── THE DEFECT THIS CLOSES (`QAR-TAKEOVER-NEEDS-A-READABLE-CREDENTIAL`) ────────────────────
- *
- * A takeover authorized a becoming and wrote a stamp. It said nothing about whether the mailbox
- * still had a credential the worker could USE — and on the standalone door, the exact path a
- * person takes is: organize on machine A, machine B demotes to reader, months later claim back on
- * B, whose stored password the provider has since invalidated. The stamp landed, the gate
- * promoted, the login failed, and the mailbox quarantined with a backoff — an action that looked
- * like it worked and left the mailbox worse than before.
- *
- * So the ceremony takes a password when the caller has one, PROVES it against the real server,
- * and stores it in the SAME transaction as the stamp. A wrong password is refused naming the
- * probe, before anything is written; a right one means the promotion the worker performs is one
- * it can actually carry out. Omitted ⇒ the stored credential stands, which is the ordinary Cloud
- * case where nothing about the login has changed.
- */
-export interface OrganizeHereInput {
-  imap?: { pass: string };
-  /**
-   * THE SCREENING WINDOW, CHOSEN IN THE SAME BREATH AS CONSENT — and it must ride the same
-   * transaction, which is why it is on this input rather than left to `PATCH /consent/settings`.
-   *
-   * ── THE DEFECT THIS CLOSES, AND IT IS NOT THE WINDOW ─────────────────────────────────────
-   *
-   * `account_settings.screening_baseline_at` is the instant the window is measured back from, and
-   * it is written by THE FIRST SCREENER DECIDE and by nothing else. So between consenting and
-   * making a first decision there is NO baseline, and with no baseline there is NO cutoff — the
-   * router holds every unruled sender's mail whatever its date. On a mailbox with years of
-   * history that is the entire backlog moved into `ohmail/Screener`, physically, one IMAP move
-   * per message, before the person has answered a single card. The window they just chose had no
-   * effect at all, because the thing it is measured from did not exist yet.
-   *
-   * So consent WRITES THE BASELINE, `COALESCE`d so an account that already has one keeps it (the
-   * column's own guard — "written once, by the account's first screener decide, in that decide's
-   * own transaction and only while still NULL"). Re-running onboarding therefore does not slide
-   * a live account's cutline forward, which would silently re-open its Screener queue.
-   *
-   * ── ABSENT ⇒ NOTHING IS WRITTEN TO `account_settings` AT ALL ─────────────────────────────
-   *
-   * A claim-back on a mailbox whose account has been screening for months carries no window, and
-   * must not: the person pressed "organize here", not "reconsider my history depth". Only the
-   * onboarding flow sends this half.
-   */
-  screening?: {
-    /**
-     * `account_settings.dormancy_days`, 1-365. Onboarding writes **365 explicitly** for its
-     * default — it does NOT change `DEFAULT_DORMANCY_DAYS`, which is 60 and pinned in three
-     * places for the accounts already on it.
-     */
-    dormancyDays?: number;
-    /** `'all_time'` is a MODE: no cutoff and no dormancy anywhere. See `ScreeningScope`. */
-    scope?: ScreeningScope;
-  };
-}
 
 /**
  * The stored form of a mailbox address — TRIMMED, and nothing else.
@@ -356,20 +284,7 @@ export interface ProvenEndpoint {
  * A parallel vocabulary here would mean two sets of sentences for one set of failures.
  */
 export type MailboxProbeVerdict =
-  | {
-    verdict: "ok"; proven?: ProvenEndpoint;
-    /**
-     * HOW MANY FOLDERS the account can see, counted on the rung that answered — present only when
-     * the probe was built to ask for it (the TEST action; never the create path, which has no use
-     * for the number and should not pay a LIST for it).
-     *
-     * It is the CHECKABLE half of a success sentence. "Connected" is a claim a person cannot
-     * verify; "signed in as you, 14 folders" is one they can recognise as their mailbox or not,
-     * which is the same job the model count does in the AI pane's verdict. Absent means nobody
-     * counted, and no reader may substitute a zero for that.
-     */
-    folders?: number;
-  }
+  | { verdict: "ok"; proven?: ProvenEndpoint }
   | { verdict: "store_unverified"; code: MailboxErrorCode; proven?: ProvenEndpoint }
   | { verdict: "refuse"; code: MailboxErrorCode; tls?: ProbeTlsDetail };
 
@@ -866,33 +781,6 @@ function stableJson(v: unknown): string {
  * (`HttpAdapter.rejectionOf`), and an automatic retry here would re-dial somebody's mail server
  * without being asked — a connection cost, and a way to walk into a provider's lockout.
  */
-/**
- * A probe whose middle verdict is a refusal — see {@link MailboxService.organizeHere}.
- *
- * A WRAPPER rather than a flag on `probedImapMeta`, so the policy travels with the CALL that
- * needs it and no other caller can be moved onto it by editing a default. It changes no sentence:
- * `probeRefused` maps the same `MailboxErrorCode` the permissive path would have stored, so the
- * person is told the same true thing about their provider and is simply not authorized on it.
- */
-const proveOrRefuse = (probe: MailboxProbe): MailboxProbe => async (input) => {
-  const v = await probe(input);
-  return v.verdict === "store_unverified" ? { verdict: "refuse", code: v.code } : v;
-};
-
-/**
- * A claim on a mailbox with no stored IMAP credential — see the check inside `organizeHere`.
- *
- * `422` and not `409`: nothing is in conflict, the request is simply missing the one thing it
- * needs. `retryable: false`, because retrying the identical request changes nothing — what
- * changes it is the person typing a password, which is what the sentence asks for.
- */
-const credentialNeeded = (): ServiceError => new ServiceError(
-  "credential_needed", 422,
-  "This mailbox has no password stored on this install, so organizing it would fail at the first "
-  + "connection. Enter the mailbox password to organize it here.",
-  undefined, false,
-);
-
 const configMoved = (transport: ProbeTransport): ServiceError => new ServiceError(
   "mailbox_config_changed", 409,
   transport === "smtp"
@@ -1055,94 +943,6 @@ export class MailboxService {
    * working mailbox. Where no `smtpProbe` is injected the old behaviour stands, stated by the
    * option's own docblock.
    */
-  /**
-   * TRY A LOGIN AND SAY WHAT HAPPENED. Writes nothing, stores nothing, creates no mailbox.
-   *
-   * ── WHY THIS EXISTS AT ALL, WHEN `create` ALREADY PROBES ─────────────────────────────────
-   *
-   * Because until now the ONLY way to find out whether a set of mail-server details worked was to
-   * submit them and watch the mailbox either appear or not. Every failure taxonomy, every
-   * certificate detail and all fourteen `probe_*` sentences were reachable only as the by-product
-   * of a create that did not happen. There was no test action on any mailbox form, and no success
-   * copy anywhere in the product — the affirmative half of the verdict had never been written,
-   * because nothing could produce it.
-   *
-   * ── IT SHARES `create`'s REFUSAL BY CONSTRUCTION, NOT BY RESEMBLANCE ─────────────────────
-   *
-   * A failure here throws exactly what a failing `create` throws — {@link probeRefused}, the same
-   * `mailbox_probe_failed` code, the same seven-member `details.reason` taxonomy, the same
-   * {@link ProbeTlsDetail}. That is the whole reason this method lives in this file rather than in
-   * the route: every client that can already render a connect failure renders a test failure with
-   * no new copy and no new branch, and the two can never drift into two vocabularies for one set
-   * of failures. Only SUCCESS is new, and only success needed a new sentence.
-   *
-   * ── WHAT "OK" MEANS HERE INCLUDES THE FOLDER COUNT ───────────────────────────────────────
-   *
-   * A greeting and an accepted LOGIN prove the host, the port, the TLS mode and the password. They
-   * do not prove that this account can READ anything, and "connected" over a mailbox whose folders
-   * are unreadable is the kind of true-but-useless answer this codebase keeps refusing to give. So
-   * the probe lists folders on the rung that succeeded and the count rides the verdict: it is the
-   * checkable half of the sentence, the same role the model count plays in the AI pane's verdict.
-   * A LIST that throws is classified by the ordinary taxonomy rather than reported as success.
-   *
-   * NO OWNERSHIP CHECK, because there is no mailbox yet — this is a PRE-create action. What bounds
-   * it is the probe closure the caller injects: the SSRF/port guard on the hosted deployment, the
-   * per-address admission counter, and the deadline. Those are the reason the probe is passed in
-   * rather than dialled here, and a call site that built its own adapter would silently have none
-   * of them.
-   */
-  async probeConnection(
-    ctx: ServiceContext,
-    input: { address: string; imap: { host: string; port?: number; secure?: boolean; user?: string; pass: string } },
-    opts: { probe: MailboxProbe },
-  ): Promise<{ ok: true; host: string; user: string; folders: number | null }> {
-    const address = canonicalAddress(input.address ?? "");
-    if (!address) throw new ServiceError("validation_failed", 400, "address is required");
-    const host = (input.imap?.host ?? "").trim();
-    if (!host) throw new ServiceError("validation_failed", 400, "imap.host is required");
-    if (!input.imap?.pass) throw new ServiceError("validation_failed", 400, "imap.pass is required");
-    // The username defaults to the address, which is what every provider preset does and what the
-    // connect form fills in. Defaulted HERE rather than at the route so the test and the create
-    // that follows it dial the same identity — a test that quietly proved a different username
-    // than the create would use is worse than no test.
-    const user = (input.imap.user ?? "").trim() || address;
-
-    const verdict = await opts.probe({
-      accountId: ctx.accountId,
-      address,
-      imap: { host, port: input.imap.port, secure: input.imap.secure, user, pass: input.imap.pass },
-    });
-
-    if (verdict.verdict === "refuse") throw probeRefused(verdict.code, verdict.tls);
-    // `store_unverified` is REPORTED AS A FAILURE HERE, and that is the one place this method
-    // deliberately parts company with `create`.
-    //
-    // There, the verdict means "the server was reached and declined to serve right now", which is
-    // positive evidence about the host, the port and the TLS mode and no evidence about the
-    // password — so the credential is stored and the mailbox reads as "connecting". That is the
-    // right answer when the person's goal is to ADD the mailbox: refusing would lock out anyone
-    // whose provider caps concurrent connections.
-    //
-    // The goal here is the opposite. The question this method answers is "did this work", and the
-    // honest answer to that when the server said `NO [UNAVAILABLE]` is no — nothing about the
-    // password has been established. Reporting it as ok would put a green verdict naming a folder
-    // count it never read on screen. It carries `connect`, whose sentence already says the server
-    // could not be reached properly and to try again.
-    if (verdict.verdict === "store_unverified") throw probeRefused(verdict.code);
-
-    return {
-      ok: true,
-      // The PROVEN host, not the typed one where they differ — the verdict names the rung that
-      // actually answered, and the sentence on screen should name what answered.
-      host: verdict.proven?.host ?? host,
-      user,
-      // `null` when the ok verdict carries no count: a probe built without the folder-listing
-      // option, or an adapter that cannot list. The COPY decides what to do with that; inventing a
-      // zero here would render "0 folders" over a mailbox nobody counted.
-      folders: verdict.folders ?? null,
-    };
-  }
-
   async create(
     ctx: ServiceContext, body: CreateMailboxBody, opts: CreateMailboxOptions,
   ): Promise<MailboxDTO> {
@@ -1251,27 +1051,6 @@ export class MailboxService {
         address,
         displayName: body.displayName ?? null,
         authKind,
-        // ── A NEW MAILBOX IS A CONSENT-LESS READER (mail 0083) ────────────────────────────
-        //
-        // Connecting is not consenting to be organized, and until this line the two were the same
-        // act: the row was born an organizer, the worker's first cycle found an empty
-        // `ohmail/_meta`, claimed it, created the `ohmail/*` tree and filed the backlog — before
-        // the person had seen a consent screen. `QAO-CLOUD-CONNECT-SAYS-CONNECTED-BEFORE-TAKEOVER`
-        // is the same defect seen from the other side: the connect screen said "connected" about a
-        // mailbox whose organizing had not been asked about.
-        //
-        // So a fresh mailbox READS. Its mirror builds at once — which is the whole point, because
-        // the person can search their mail while the flow continues — and nothing moves, nothing
-        // is created on the server, and `ohmail/*` never appears. `MailboxService.organizeHere` is
-        // the one door that changes that, on every surface.
-        //
-        // BOTH columns, not one. `organizerRole` alone would still be promoted by the gate (which
-        // reads consent), and `organizeConsentedAt` alone would leave the DTO claiming this
-        // install organizes a mailbox it has not been asked to — the row must not say two things.
-        // The column's DEFAULT stays `'organizer'` so an un-updated writer behaves as it always
-        // did; this is the create path declaring the newer answer.
-        organizerRole: "reader",
-        organizeConsentedAt: null,
         // WHAT THIS MAILBOX'S SUBMISSION SERVER SAID IT WILL ACCEPT (mail 0055) — read out of the
         // EHLO the probe above already ran, so it costs no extra dial. `?? null` covers both "no
         // SMTP block was submitted" and "the server announced no ceiling", which are the same
@@ -1486,10 +1265,6 @@ export class MailboxService {
         address,
         displayName: input.displayName ?? null,
         authKind: "oauth",
-        // A consent-less reader, exactly as the password `create` above — see its note. An OAuth
-        // connect is a connect: the door differs, the meaning does not.
-        organizerRole: "reader",
-        organizeConsentedAt: null,
       }).returning();
       await this.upsertCredOn(tx, ctx, kp, created!.id, "imap", o.refreshToken, meta);
       // Same hook, same transaction, as `create` — an OAuth connect of a NEW address is a
@@ -1822,18 +1597,6 @@ export class MailboxService {
    */
   async requestResync(ctx: ServiceContext, id: string): Promise<void> {
     await this.ownedRow(ctx, id); // 404 if not owned
-    /* -- A READER DOES NOT RE-SYNC A MAILBOX IT DOES NOT ORGANIZE (mail 0083) --------------
-     *
-     * This nulls every folder's `highestmodseq` and delta token, which makes the next cycle walk
-     * the mailbox from scratch. On an ORGANIZER that is a repair; on a reader it is a full
-     * re-read of somebody else's mailbox — every folder, every UID — with no decision at the end
-     * of it, paid for in the customer's provider rate limits and in ours.
-     *
-     * It is also the one door on this list whose damage is not to the mail: a reader can re-read
-     * its own mirror by other means, and the honest answer to "the mirror looks wrong" on a
-     * reader is that the ORGANIZER owns the repair.
-     */
-    await assertOrganizerRole(asTx(ctx), ctx.accountId, id);
     await asTx(ctx).update(mailboxFolders)
       .set({ highestmodseq: null, deltaToken: null, updatedAt: ctx.now() })
       .where(eq(mailboxFolders.mailboxId, id));
@@ -1973,7 +1736,7 @@ export class MailboxService {
   private static readonly PULL_MIN_GAP_MS = 5_000;
 
   /**
-   * THE ONE CLAIM CEREMONY, FOR EVERY DOOR — ask this install to organize this mailbox.
+   * ASK TO BECOME THE ORGANIZER OF A MAILBOX THIS SIDE STOOD DOWN FROM.
    *
    * ── THE RULE THIS IMPLEMENTS, AND THE HALF PEOPLE GET WRONG ────────────────────────────────
    *
@@ -2016,217 +1779,32 @@ export class MailboxService {
    * a resurrection would bring back a mailbox somebody deliberately removed, and would do it
    * without the credential it no longer has.
    */
-  async organizeHere(
-    ctx: ServiceContext, id: string, input: OrganizeHereInput = {},
-    opts?: UpdateMailboxOptions,
-  ): Promise<MailboxTakeoverResult> {
-    /* -- THE PROBE RUNS BEFORE THE TRANSACTION, AND MUST -----------------------------------
-     *
-     * It opens a socket to the customer's provider. A network round trip inside a transaction
-     * that holds a `FOR UPDATE` on the mailbox row would hold that lock for the length of a
-     * provider's timeout — up to the dial deadline — and every other writer of this row (the
-     * delete, the patch, the worker's lifecycle writes) blocks behind it. So the ceremony
-     * PROVES first and WRITES second, and what makes that sound is `assertMergeCurrent` below:
-     * the stored config is re-read inside the transaction and compared against the config that
-     * was actually dialled, so a config that moved while the probe was in flight is refused
-     * rather than silently stored under a proof of a different endpoint.
-     *
-     * A refusal here throws (the probe's own honest sentence — wrong password, wrong host, TLS,
-     * timeout) and NOTHING is written: no stamp, no consent, no allowance spent.
-     */
-    const kp = input.imap ? this.requireKeyProvider() : null;
-    /* -- THIS DOOR NEEDS A STRICTER VERDICT THAN `create` DOES ------------------------------
-     *
-     * `MailboxProbe` has three answers, and the middle one — `store_unverified` — is deliberately
-     * permissive: at CONNECT time a provider that answers `UNAVAILABLE` or a rate limit is not
-     * evidence that the password is wrong, and refusing there would strand somebody behind their
-     * provider's bad afternoon. The row is stored "connecting" and the worker settles it.
-     *
-     * That policy is wrong for THIS door, and a max-effort review found it. The whole reason the
-     * ceremony takes a password is that a stamp on a mailbox whose login does not work is an
-     * action that looks like it worked and leaves the mailbox quarantined — so accepting an
-     * UNVERIFIED password and committing the authorization with it reproduces the exact defect,
-     * atomically. The transaction is sound and it commits the forbidden state.
-     *
-     * So when a password is supplied it must be PROVED. `store_unverified` is refused with the
-     * probe's own honest sentence — "we could not reach that mail server", "that server's
-     * certificate was refused" — which is true, actionable, and asks the person to try again in a
-     * moment rather than telling them their password is wrong.
-     *
-     * `create`'s policy is untouched: a connect with no organizing attached to it can still be
-     * optimistic, because nothing is authorized by it.
-     */
-    const probed = input.imap
-      ? await this.probedImapMeta(
-        ctx, id, { imap: { pass: input.imap.pass } },
-        opts === undefined ? undefined : { ...opts, probe: proveOrRefuse(opts.probe) },
-      )
-      : null;
-
+  async takeover(ctx: ServiceContext, id: string): Promise<MailboxTakeoverResult> {
     return asTx(ctx).transaction(async (tx) => {
       // `FOR UPDATE`, in the same order and on the same row as `update` and `delete` take it, so
-      // the three serialize instead of interleaving. Without it, an organize and a `delete` can
-      // both read the row and commit in either order, and the losing order leaves a mailbox that
-      // is authorized to organize and has had its credentials deleted.
+      // the three serialize instead of interleaving. Without it, a takeover and a `delete` can
+      // both read `disabled` + reason and commit in either order, and the losing order leaves a
+      // mailbox that is `connected`, authorized to organize, and has had its credentials deleted.
       const current = await this.ownedRowOn(tx, ctx, id, { forUpdate: true }); // 404 if not owned
 
-      /* -- THE PRECONDITION, RESTATED FOR THE ROLE (mail 0083) ------------------------------
-       *
-       * It used to be "the row is `disabled` WITH a reason", because that pair was the whole of a
-       * stand-down. There are now TWO states this ceremony is for, and they are the two states in
-       * which this install is not organizing the mailbox:
-       *
-       *  · `organizer_role = 'reader'` — somebody else holds it, or this install has not been
-       *    promoted yet. The claim-back.
-       *  · `organizer_role = 'organizer'` with `organize_consented_at IS NULL` — the row this
-       *    install would organize, that nobody has asked it to. The FIRST consent, which is the
-       *    ordinary onboarding path and had no door at all before this method.
-       *
-       * Anything else is already organizing with consent recorded, and the answer is a no-op
-       * rather than a re-stamp: re-authorizing a becoming that has already happened would put a
-       * spendable takeover stamp on a healthy mailbox, and that stamp is precisely what lets a
-       * gate seize a mailbox past a live foreign claim.
-       */
-      if (current.status === "disabled") {
-        // The tombstone. See the header — this is a refusal, never a revival. It is checked
-        // BEFORE the role, because a removed mailbox's role says nothing about it and answering
-        // `already_organizing` for a row the user deleted would be a lie in the reassuring
-        // direction.
-        return { outcome: "disconnected" as const };
-      }
-      if (current.organizerRole !== "reader" && current.organizeConsentedAt !== null) {
-        return { outcome: "already_organizing" as const };
-      }
+      if (current.status !== "disabled") return { outcome: "already_organizing" as const };
+      // The tombstone. See the header — this is a refusal, never a revival.
+      if (current.disabledReason === null) return { outcome: "disconnected" as const };
 
       // THE ALLOWANCE GATE, BEFORE THE WRITE, for the reason `update` states at its own re-enable:
-      // becoming the organizer of a mailbox IS a connection, whichever door it comes through.
-      // Omitting it here would make this the cheapest way past a plan limit — and cheaper than the
-      // door `update` guards, because a user can cause a demotion at will simply by pointing
-      // another install at their own mailbox, minting the free slot themselves. The row is
-      // excluded from the count because it does not yet hold the slot it is asking for.
+      // `disabled → connected` IS a connection, whichever door it comes through. Omitting it here
+      // would make this the cheapest way past a plan limit — and cheaper than the door `update`
+      // guards, because a user can cause a stand-down at will simply by pointing another install
+      // at their own mailbox, minting the free slot themselves. The row is excluded from the count
+      // because it does not yet hold the slot it is asking for.
       await this.allowance(tx as LedgerTx, ctx.accountId, ctx.now(), { excludeMailboxId: id });
 
-      /* -- AND WITH NO PASSWORD SUPPLIED, THERE MUST STILL BE ONE STORED --------------------
-       *
-       * The empty-body call is the ordinary claim-back: nothing about the login has changed, so
-       * the stored credential stands. "Stands" was doing unexamined work — a max-effort review
-       * found the case, and it needs no race:
-       *
-       *   the install is a reader; the provider revokes the saved password; the reader's own
-       *   cycle observes the auth failure and the row goes to `status='error'` WITH the dead
-       *   credential still stored; the person presses "Organize here instead" with no password
-       *   (there is nowhere to type one on the plain claim-back); the authorization commits; the
-       *   worker spends it, cannot log in, and quarantines the mailbox with a backoff.
-       *
-       * That is `QAR-TAKEOVER-NEEDS-A-READABLE-CREDENTIAL` reached through the door built to
-       * close it. A credential ROW that is simply absent produces the same ending.
-       *
-       * So a claim with no password requires a stored one, and the refusal ASKS FOR THE PASSWORD
-       * rather than reporting a fault — which is the true and actionable sentence, and the one the
-       * claim screen can act on by showing the field.
-       *
-       * It checks the ROW and does not decrypt or dial. Decrypting proves the envelope opens and
-       * says nothing about whether the provider still accepts what is inside; dialling here would
-       * put a network round trip inside a transaction holding the mailbox row lock, which is the
-       * thing the probe is deliberately placed outside for. The honest bound is "there is a
-       * credential to try", and where the person supplies one it is PROVED.
-       */
-      if (!input.imap) {
-        const [cred] = await tx.select({ transport: mailboxCredentials.transport })
-          .from(mailboxCredentials)
-          // `'imap'` for BOTH auth kinds: an oauth mailbox stores its refresh token under the
-          // same transport (`connectOAuth` writes it there), so one predicate covers both and a
-          // branch would be two spellings of one row.
-          .where(and(
-            eq(mailboxCredentials.mailboxId, id),
-            eq(mailboxCredentials.transport, "imap"),
-          ))
-          .limit(1);
-        if (!cred) throw credentialNeeded();
-      }
-      // The credential, in THIS transaction, so the stamp and the password the worker will use to
-      // spend it commit together. See {@link OrganizeHereInput}: a stamp without a usable login is
-      // an action that looks like it worked and leaves the mailbox quarantined.
-      if (probed && input.imap) {
-        await this.assertMergeCurrent(tx, id, "imap", { pass: input.imap.pass }, probed);
-        await this.upsertCredOn(tx, ctx, kp!, id, "imap", input.imap.pass, probed.meta);
-      }
-
-      /* -- THE ACCOUNT'S SCREENING STATE, IN THE SAME TRANSACTION AS THE CONSENT ------------
-       *
-       * See {@link OrganizeHereInput.screening}. Three columns, one upsert, and the baseline is
-       * the one that matters: without it the window the person just chose has nothing to be
-       * measured from and the whole backlog moves.
-       *
-       * `COALESCE` on the baseline so a live account keeps the instant it already had; the two
-       * dials are overwritten because they ARE the answer the person just gave. The order —
-       * settings before the mailbox row — is deliberate and matches every other writer of this
-       * table (`setDormancyDays`, `setThemeFace`): one lock chain, always the same direction.
-       */
-      if (input.screening) {
-        const days = input.screening.dormancyDays;
-        if (days !== undefined && (!Number.isInteger(days) || days < 1 || days > 365)) {
-          throw new ServiceError(
-            "validation_failed", 400,
-            "dormancyDays must be an integer between 1 and 365",
-          );
-        }
-        const scope = input.screening.scope ?? "window";
-        if (scope !== "window" && scope !== "all_time") {
-          throw new ServiceError("validation_failed", 400, "screeningScope must be window or all_time");
-        }
-        // NEVER STORE THE DEFAULT for the dial — `setDormancyDays`' rule verbatim, so the product
-        // default can move without rewriting every account that never chose.
-        const stored = days === undefined || days === DEFAULT_DORMANCY_DAYS ? null : days;
-        await tx.insert(accountSettings)
-          .values({
-            accountId: ctx.accountId,
-            dormancyDays: stored,
-            screeningScope: scope,
-            screeningBaselineAt: ctx.now(),
-            updatedAt: ctx.now(),
-          })
-          .onConflictDoUpdate({
-            target: accountSettings.accountId,
-            set: {
-              dormancyDays: stored,
-              screeningScope: scope,
-              // The column's own guard, in SQL so two consents racing produce ONE baseline
-              // without this transaction having to read the row first.
-              // Same cast, same reason as the mailbox row's consent below — see its note.
-              screeningBaselineAt: sql`coalesce(${accountSettings.screeningBaselineAt}, ${ctx.now().toISOString()}::timestamptz)`,
-              updatedAt: ctx.now(),
-            },
-          });
-      }
-
       const rows = await tx.update(mailboxes).set({
-        // NOT the role. **The GATE promotes, and this is the whole reason the ceremony is safe to
-        // expose on every door.** All this writes is a request; the worker's next pass reads the
-        // claim in the mailbox and decides, and if another organizer is still renewing and
-        // outranks us, this side stays a reader on that same pass and the stamp is voided with it.
-        // Flipping the role here would make a button in a browser the thing that decides who
-        // organizes a mailbox, with no reference to what the mailbox itself says.
-        takeoverAuthorizedAt: ctx.now(),
-        // ── CONSENT, WRITTEN ONCE AND NEVER MOVED ──────────────────────────────────────────
-        //
-        // `COALESCE` because consent is the FIRST time somebody agreed: re-running onboarding, or
-        // claiming a mailbox back after a handover, must not rewrite the record of when the person
-        // originally said yes. It is also what makes this method idempotent in the way that
-        // matters — two presses produce one consent and one spendable stamp.
-        // `.toISOString()` PLUS AN EXPLICIT CAST, and this is not defensive spelling — it is the
-        // idiom `markMailboxFailed` records as having bitten twice. Inside a raw `sql` fragment
-        // there is no column type to coerce a bare `Date` against, so postgres-js binds it as
-        // TEXT and the driver throws `The "string" argument must be ... Received an instance of
-        // Date`. PGlite accepts the bare Date happily, so the unit suite stays green while
-        // production throws — which is exactly what happened here, caught by the real-Postgres
-        // run and by nothing else.
-        organizeConsentedAt: sql`coalesce(${mailboxes.organizeConsentedAt}, ${ctx.now().toISOString()}::timestamptz)`,
-        // Rows written before mail 0083 still carry a stand-down reason; clear it with the rest so
-        // a mailbox being organized here does not also claim somebody else organizes it.
+        status: "connected",
         disabledReason: null,
-        // The block is this process's report about the worker's relationship to the mailbox, and
-        // this request invalidates it in both directions — the same rule `update` applies. The
+        takeoverAuthorizedAt: ctx.now(),
+        // The block is this process's report about the worker's relationship to the mailbox, and a
+        // status move invalidates it in both directions — the same rule `update` applies. The
         // worker re-writes it within one roster pass if it is still true.
         syncBlockedReason: null,
         syncBlockedSince: null,
@@ -2246,33 +1824,17 @@ export class MailboxService {
         .where(and(
           eq(mailboxes.id, id),
           eq(mailboxes.accountId, ctx.accountId),
-          // NOT `status = 'disabled'` any more — a reader is CONNECTED, so the old predicate
-          // matched nothing this method is now for. `<> 'disabled'` is the honest restatement:
-          // never revive a tombstone, and the two states this ceremony serves are both live.
-          ne(mailboxes.status, "disabled"),
+          eq(mailboxes.status, "disabled"),
+          isNotNull(mailboxes.disabledReason),
         ))
         .returning({ id: mailboxes.id });
 
       if (rows.length === 0) return { outcome: "already_organizing" as const };
-      /* -- DERIVED FROM THE ROLE, BECAUSE THE COLUMN HAS HAD NO WRITER SINCE MAIL 0083 --------
-       *
-       * This read `current.disabledReason` and the field's own note above already said what that
-       * now returns: `null`, for every reader row this build writes. So the one sentence the
-       * takeover gives the person — what they have just claimed this mailbox back FROM — was
-       * blank on exactly the door that exists to tell them.
-       *
-       * `standDownMemory` recomposes it from `organizer_role` and `organized_by_kind`, which is
-       * where migration 0083 put the same two facts, and still answers the legacy column for a
-       * row that carries one. It is the same derivation the desktop's two arms use, in the same
-       * module, so Cloud and a standalone install cannot drift into two answers.
-       */
-      return { outcome: "authorized" as const, previousReason: standDownMemory(current) };
+      return { outcome: "authorized" as const, previousReason: current.disabledReason };
     }).catch((err: unknown) => {
-      // Kept from the `disabled → connected` era: this statement no longer moves `status`, so it
-      // no longer inserts into the active-address index and 23505 is unreachable from here. It
-      // stays because the honest answer to an address conflict on this door is still
-      // `addressTaken()` rather than a 500, and a future edit that restores a status move must not
-      // have to rediscover that.
+      // `disabled → connected` inserts into the active-address index, so a takeover of an old row
+      // whose address has since been re-added as a NEW mailbox raises 23505 here. Reachable in
+      // order: stand down, add the same address again, then ask to take the old one over.
       if (isActiveAddressConflict(err)) throw addressTaken();
       throw err;
     });
@@ -2542,32 +2104,6 @@ export class MailboxService {
       hasSyncCursor: f.highestmodseq != null,
       updatedAt: f.updatedAt.toISOString(),
     }));
-    /* ── THE FIRST PULL'S DENOMINATOR (see `MailboxDTO.serverMessageCount`) ────────────────
-     *
-     * Σ `server_exists` over the rows just read. Mail 0083 added the column and every cycle
-     * that opens a folder writes it; until this line NOTHING read it back, which is the
-     * built-tested-unreachable shape the onboarding rulings name — a number written on a
-     * heartbeat that no surface could ever show.
-     *
-     * NO `?? 0` ANYWHERE IN HERE, in either direction. A row whose `server_exists` is NULL is a
-     * folder no cycle has opened under a build that writes the column, and treating that as a
-     * zero would understate the total; a mailbox where EVERY row is NULL has no answer at all,
-     * and `seen` is what keeps that case ABSENT rather than shipping a `0` that reads as "the
-     * server holds no mail". The accumulator starts at 0 and only rows that actually carry a
-     * number reach it, so the two cases stay apart.
-     *
-     * It is a sum over the folders that have been OPENED, so it grows as the first cycle walks
-     * the tree — stated on the DTO field, because a client that treats it as a fixed total will
-     * draw a progress bar that loses ground.
-     */
-    let serverExistsSum = 0;
-    let serverExistsSeen = false;
-    for (const f of fRows) {
-      if (typeof f.serverExists === "number") {
-        serverExistsSum += f.serverExists;
-        serverExistsSeen = true;
-      }
-    }
     // ── OUR OWN FILINGS THIS MAILBOX HAS NOT APPLIED YET (see `MailboxDTO.pendingMoves`) ──
     //
     // A COUNT and never the rows: this DTO is read on the mailbox panel and by the shell strip,
@@ -2659,36 +2195,6 @@ export class MailboxService {
       // return no row here, but a driver that answered `undefined` must degrade to "nothing
       // outstanding" rather than to `NaN` on somebody's strip.
       pendingMoves: pending?.n ?? 0,
-      // ── THE ORGANIZING ROLE AND ITS HOLDER (mail 0083) ─────────────────────────────────
-      //
-      // UNCONDITIONAL, on the sync-block pair's rule stated above: a reader is `connected`, so a
-      // status gate would make the three fields permanently absent on exactly the rows they
-      // describe. This is the DTO half of the same argument `disabledReason`'s note makes — the
-      // lease's verdict used to be invisible to every client, and `disabledReason` was a partial
-      // fix that only spoke while the mailbox was `disabled`.
-      //
-      // COERCED, never projected verbatim: `organizerRole` falls back to `reader` (the safe
-      // direction — a client that renders a reader banner for an organizer is wrong and harmless;
-      // the reverse offers somebody a button that will not work), and `organizedBy.kind` narrows
-      // to null on anything outside the closed set.
-      //
-      // `organizedBy` is NULL as a whole when nothing is named, rather than an object of three
-      // nulls, so the copy layer has ONE thing to test. A reader with no holder is a mailbox
-      // nobody has consented to organize, and its banner says something different.
-      organizerRole: isOrganizerRole(m.organizerRole) ? m.organizerRole : "reader",
-      organizedBy: (m.organizedByKind !== null || m.organizedByName !== null || m.organizedSince !== null)
-        ? {
-          kind: isOrganizerKind(m.organizedByKind) ? m.organizedByKind : null,
-          name: m.organizedByName,
-          since: m.organizedSince ? m.organizedSince.toISOString() : null,
-        }
-        : null,
-      organizerState: isOrganizerState(m.organizerState) ? m.organizerState : null,
-      // THE CONSENT STAMP, beside the role rather than derived from it — the two are independent
-      // and the DTO's own doc carries the argument. Projected UNCONDITIONALLY like its three
-      // neighbours, and as a plain instant: no coercion is possible or needed, since the only
-      // writer is `organizeHere`'s COALESCE.
-      organizeConsentedAt: m.organizeConsentedAt ? m.organizeConsentedAt.toISOString() : null,
       // WHAT THIS MAILBOX'S SUBMISSION SERVER SAID IT WILL ACCEPT (mail 0055). UNCONDITIONAL, for
       // the reason the two lines above are: it is meaningful in every lifecycle state, and it is
       // read by the compose surface rather than by any error copy. `null` is "not known" — no
@@ -2702,11 +2208,6 @@ export class MailboxService {
          a key whose presence says the opposite of what it means, and `packages/api` hands these
          objects to a local host as well as to a serializer. */
       ...(messageCount === undefined ? {} : { messageCount }),
-      /* SPREAD, on the line above's rule and for the sharper of the two reasons it gives: here
-         ABSENT means "no folder of this mailbox has been counted", and a `0` in its place is the
-         sentence "your mail server holds nothing". That is the one number on this DTO whose
-         wrong value is a claim about somebody's mailbox rather than about this build. */
-      ...(serverExistsSeen ? { serverMessageCount: serverExistsSum } : {}),
       folders,
       createdAt: m.createdAt.toISOString(),
     };
