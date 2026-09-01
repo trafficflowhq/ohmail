@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { DEFAULT_DORMANCY_DAYS } from "@trafficflow/core/mail";
+import { DEFAULT_DORMANCY_DAYS, type ScreeningScope } from "@trafficflow/core/mail";
 import type { ServiceContext } from "./context.js";
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
@@ -39,6 +39,7 @@ import type { ServiceContext } from "./context.js";
  * still pins the client engine's independent copy against it.
  */
 export { DEFAULT_DORMANCY_DAYS };
+export type { ScreeningScope };
 
 /** Folders the product presents. A Sent folder, or any of the user's own, is not one of them. */
 const PRESENTED_FOLDERS = [
@@ -106,6 +107,17 @@ export interface CutlineOptions {
    * to before this field existed.
    */
   baselineAt?: Date | null;
+  /**
+   * SCREENING SCOPE — `account_settings.screening_scope` (mail 0083). Absent ⇒ `'window'` ⇒
+   * byte-identical counts to before this field existed.
+   *
+   * `'all_time'` means the person asked for everything to be screened, so NOTHING is dormant:
+   * every undecided sender is active-undecided and the History pile has nobody in it who was
+   * never asked about. It is a MODE and not a window value — `dormancyDays` is bounded 1-365, so
+   * no number in it can say this — and it is implemented in BOTH cutline implementations plus
+   * `resolveScreeningCutoff`, pinned together by `consent-cutline.pg.test.ts`.
+   */
+  scope?: ScreeningScope | string | null;
 }
 
 /**
@@ -126,6 +138,16 @@ export async function cutlineCounts(
   const baselined = baselineMs !== null && Number.isFinite(baselineMs);
   const measuredFrom = baselined ? baselineMs! : ctx.now().getTime();
   const cutoff = new Date(measuredFrom - days * 24 * 60 * 60 * 1000);
+  /**
+   * ALL TIME ⇒ NO DORMANCY (mail 0083). See {@link CutlineOptions.scope}.
+   *
+   * Expressed as the ACTIVITY predicate rather than by moving the cutoff, and the difference is
+   * not cosmetic: a cutoff pushed to epoch 0 would still be a date comparison, so a message with
+   * a NULL `date` — which every arm here treats as "not recent", deliberately — would still be
+   * read as dormant. Under this mode a sender with mail in an undecided residence is active
+   * BECAUSE they have undecided mail, full stop, and nothing about a header decides it.
+   */
+  const allTime = opts.scope === "all_time";
   const folders = sql`(${sql.join(PRESENTED_FOLDERS.map((f) => sql`${f}`), sql`, `)})`;
   const undecidedResidences = sql`(${sql.join(UNDECIDED_RESIDENCES.map((f) => sql`${f}`), sql`, `)})`;
   /**
@@ -187,7 +209,7 @@ export async function cutlineCounts(
               or (position('@' in i.addr) > 0
                   and exists (select 1 from decided_domain d
                                where d.m = substring(i.addr from position('@' in i.addr) + 1)))) as decided,
-             (${unreadTerm} or (i.newest is not null and i.newest >= ${cutoff.toISOString()}::timestamptz)) as active
+             ${allTime ? sql`true` : sql`(${unreadTerm} or (i.newest is not null and i.newest >= ${cutoff.toISOString()}::timestamptz))`} as active
         from inbound i
     )
     select count(*) filter (where decided)                        as decided,

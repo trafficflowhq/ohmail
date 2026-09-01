@@ -8,6 +8,8 @@ import { messageRoutes } from "./messages.js";
 import { threadRoutes } from "./threads.js";
 import { screenerRoutes } from "./screener.js";
 import { screeningRoutes } from "./screening.js";
+// Mail 0083. See the mount below: THE STANDALONE DOOR HAD NO SCREENING WINDOW AT ALL.
+import { consentRoutes } from "./consent.js";
 import { approvalRoutes } from "./approvals.js";
 import { triageRoutes } from "./triage.js";
 import { searchRoutes } from "./search.js";
@@ -82,6 +84,30 @@ export const localRoutes: Route[] = [
   ...threadRoutes,
   ...screenerRoutes,
   ...screeningRoutes,
+  /* -- THE SCREENING WINDOW REACHES THE FREE DESKTOP (mail 0083) --------------------------
+   *
+   * `consentRoutes` was mounted by `selfHostRoutes` and by the hosted table, and NOT here — so
+   * the standalone install, which is the funnel and the tier most people meet first, had:
+   *
+   *  · no `GET /consent`, so no way to READ `dormancy_days`, `screening_scope` or
+   *    `screening_baseline_at`;
+   *  · no `PATCH /consent/settings`, so no way to WRITE any of them;
+   *  · and therefore no window at all — `apps/sidecar/src/engine.ts` had zero occurrences of
+   *    `screeningCutoff`, so its cycle screened EVERY backfilled message regardless of age. A
+   *    person with a decade of mail got a decade of it in `ohmail/Screener`, one physical IMAP
+   *    move at a time, and there was nowhere in the product to say otherwise.
+   *
+   * Mounting it here is half the fix; the other half is `engine.ts` threading the resolved cutoff
+   * into its `runSyncCycle` deps exactly as the hosted `index.ts#screeningFor` does. Both are in
+   * this commit, because either alone is a surface that does nothing (the mount without the
+   * thread is a dial that stores a value nothing reads).
+   *
+   * `POST /consent/reset` and `/consent/seed` come with it, which is correct rather than
+   * incidental: they are the same account state, they are already reachable on every other door,
+   * and a standalone user who can choose a window can also re-run the seed review and clear
+   * screening state. The routes are account-scoped and this host serves exactly one account.
+   */
+  ...consentRoutes,
   ...approvalRoutes,
   ...triageRoutes,
   ...searchRoutes,

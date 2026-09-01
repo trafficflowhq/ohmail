@@ -184,6 +184,30 @@ export async function runReconcileCron(
       });
       return { ran: false, reason: "mailbox-disabled" };
     }
+    // ── AND A **READER** ROW IS REFUSED HERE, BEFORE THE DIAL (mail 0083) ──────────────────
+    //
+    // This whole pass is an ORGANIZER backstop: it dials, takes the lease permit, ensures the
+    // `ohmail/*` tree, and runs two full cycles with `role: "organizer"` — every one of those a
+    // reader may not do. Before 0083 the check above covered it for free, because a stood-down
+    // mailbox was `disabled`; a reader is `connected`, so the predicate that used to exclude it
+    // admits it, and the pass would have organized a mailbox another install holds.
+    //
+    // The permit WOULD have refused it a moment later, and refusing here anyway is the difference
+    // between "a live foreign claim stopped us" and "the row already said this is not ours": the
+    // second costs no connection, no IMAP round trip and no `ensureFolders` against somebody
+    // else's mailbox, and it is right even in the window where the other organizer's heartbeat
+    // has gone stale (which is exactly when the permit would let this pass through).
+    //
+    // A takeover a human authorized is NOT refused: that stamp is the explicit action §4 requires
+    // for a becoming, the permit consumes it, and this pass is one of the paths that executes it.
+    if (row.organizerRole === "reader" && row.takeoverAuthorizedAt === null) {
+      log.info(cronEvent("reconcile", "mailbox_reader"), {
+        mailboxId, accountId: row.accountId,
+        reason: "this install is a reader of this mailbox — another organizer holds it and no "
+          + "takeover has been authorized — so the backstop organizes nothing here",
+      });
+      return { ran: false, reason: "mailbox-reader" };
+    }
 
     // CLAIM THE SHARD, so the fence has a leadership record to be refused against. Written only
     // after every validation above has passed: a run that is about to return `other-shard` has no
@@ -242,7 +266,17 @@ export async function runReconcileCron(
       // A fenced-out write still stands the mailbox down IN THIS PROCESS: the decision not to
       // organize is ours and is not contingent on recording it.
       try {
-        const written = await markMailboxStoodDown(db, mailboxId, err.reason, { fence });
+        // The holder columns ride the same write (mail 0083): the demotion IS the banner, and the
+        // claim this verdict was reached from is the claim the row should name.
+        const written = await markMailboxStoodDown(db, mailboxId, err.reason, {
+          fence,
+          by: {
+            kind: err.by?.kind ?? null,
+            displayName: err.by?.displayName ?? null,
+            claimedAt: err.by?.claimedAt ?? null,
+            state: err.state,
+          },
+        });
         if (!written) {
           log.info(cronEvent("reconcile", "stand_down_write_fenced"), {
             mailboxId, accountId: row.accountId,
@@ -399,6 +433,11 @@ export async function runReconcileCron(
     await profileSync.armHoldFromFolder();
     const deps: SyncDeps = {
       repo: makeDrizzleRepo(db), adapter, accountId, mailboxId,
+      // ORGANIZER, always, and typed rather than derived (mail 0083). This pass reached here only
+      // by passing the reader refusal above AND the lease permit, so the role is a fact about the
+      // path rather than a value to look up — and typing it is what makes the census over
+      // `runSyncCycle` call sites able to see this composition at all.
+      role: "organizer",
       // The same host string the adapter above dials names whose report may be believed.
       trustedAuthservIds: providerAuthservIds(config.imap.host),
       // METERED, like the loop this pass stands in for: the backstop ingests the same mail the

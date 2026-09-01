@@ -1,5 +1,8 @@
 import { and, asc, desc, eq, inArray, isNull, ne, sql, type SQL } from "drizzle-orm";
-import { mailboxes, mailboxCredentials, type Tx } from "@trafficflow/db";
+import {
+  mailboxes, mailboxCredentials, isOrganizerRole, organizerDisplayName, type Tx,
+  type OrganizerRole, type OrganizerKind, type OrganizerState,
+} from "@trafficflow/db";
 import { makeDb } from "@trafficflow/db/cloud";
 import { workerHeartbeats, accountsWithSyncDisabled } from "@trafficflow/db/cloud";
 import type { KeyProvider, OAuthTokenProvider } from "@trafficflow/core";
@@ -61,9 +64,39 @@ export interface EnabledMailbox {
   /**
    * Mail 0027. A lease reason left over from a previous stand-down that a human has since
    * re-enabled past. Read only so the gate knows there is something to CLEAR — nothing decides
-   * on it.
+   * on it. **It gains no new writer in mail 0083**: a stand-down now writes the ROLE, and
+   * `disabled` means tombstone or plan-disable. This column is read for the clear and for nothing
+   * else, and existing rows carry it until their next promotion clears it.
    */
   disabledReason: string | null;
+  /**
+   * Mail 0083. ORGANIZER OR READER — and this is the field the whole roster now turns on.
+   *
+   * A reader is CONNECTED and SYNCING, so it is on this roster exactly like an organizer and the
+   * `status <> 'disabled'` predicate admits it with no change (the migration's backfill is what
+   * put the existing stood-down population here). What branches on it is the attach — a reader
+   * creates no folders, runs no kickstart and publishes no profile — and the cycle, which passes
+   * it to `runSyncCycle` as `SyncDeps.role`.
+   *
+   * COERCED at the read, not trusted: an unrecognised value reads as `reader`, because the
+   * direction an unreachable state must fail in is "do not organize somebody else's mailbox".
+   */
+  organizerRole: OrganizerRole;
+  /**
+   * Mail 0083. WHO holds the lease when we do not — carried on the roster row so the attach can
+   * decide whether the holder columns need refreshing without a second query, and so a promotion
+   * knows what it is clearing.
+   */
+  organizedByKind: string | null;
+  organizedByName: string | null;
+  organizedSince: Date | null;
+  organizerState: string | null;
+  /**
+   * Mail 0083. When a human asked THIS install to organize this mailbox. NULL means nobody has —
+   * a consent-less reader, which is what `POST /mailboxes` now creates. Read by the attach so a
+   * mailbox nobody has consented to organize is never promoted by an empty `ohmail/_meta`.
+   */
+  organizeConsentedAt: Date | null;
   /**
    * Mail 0029. What the row currently says about why this mailbox is not being synced.
    *
@@ -215,6 +248,12 @@ export async function loadEnabledMailboxes(
       provider: mailboxes.provider, address: mailboxes.address, status: mailboxes.status,
       takeoverAuthorizedAt: mailboxes.takeoverAuthorizedAt,
       disabledReason: mailboxes.disabledReason,
+      organizerRole: mailboxes.organizerRole,
+      organizedByKind: mailboxes.organizedByKind,
+      organizedByName: mailboxes.organizedByName,
+      organizedSince: mailboxes.organizedSince,
+      organizerState: mailboxes.organizerState,
+      organizeConsentedAt: mailboxes.organizeConsentedAt,
       syncBlockedReason: mailboxes.syncBlockedReason,
       retryAfter: mailboxes.retryAfter,
       retryCount: mailboxes.retryCount,
@@ -231,6 +270,13 @@ export async function loadEnabledMailboxes(
       accountId: r.accountId, mailboxId: r.id, provider: r.provider, address: r.address, status: r.status,
       takeoverAuthorizedAt: r.takeoverAuthorizedAt ?? null,
       disabledReason: r.disabledReason ?? null,
+      // COERCED, never trusted — see the field. `reader` is the safe direction.
+      organizerRole: isOrganizerRole(r.organizerRole) ? r.organizerRole : "reader",
+      organizedByKind: r.organizedByKind ?? null,
+      organizedByName: r.organizedByName ?? null,
+      organizedSince: r.organizedSince ?? null,
+      organizerState: r.organizerState ?? null,
+      organizeConsentedAt: r.organizeConsentedAt ?? null,
       syncBlockedReason: r.syncBlockedReason ?? null,
       retryAfter: r.retryAfter ?? null,
       retryCount: r.retryCount ?? 0,
@@ -268,7 +314,12 @@ export async function accountInShard(
 export async function loadMailboxById(
   db: WorkerDb, mailboxId: string,
 ): Promise<
-  { accountId: string; status: string; takeoverAuthorizedAt: Date | null; disabledReason: string | null }
+  {
+    accountId: string; status: string; takeoverAuthorizedAt: Date | null;
+    disabledReason: string | null;
+    /** Mail 0083. The reconcile backstop is an ORGANIZER pass and must refuse a reader row. */
+    organizerRole: OrganizerRole;
+  }
   | null
 > {
   const rows = await db
@@ -276,9 +327,13 @@ export async function loadMailboxById(
       accountId: mailboxes.accountId, status: mailboxes.status,
       takeoverAuthorizedAt: mailboxes.takeoverAuthorizedAt,
       disabledReason: mailboxes.disabledReason,
+      organizerRole: mailboxes.organizerRole,
     })
     .from(mailboxes).where(eq(mailboxes.id, mailboxId)).limit(1);
-  return rows[0] ?? null;
+  const r = rows[0];
+  if (!r) return null;
+  // COERCED, `reader` on anything unrecognised — see `EnabledMailbox.organizerRole`.
+  return { ...r, organizerRole: isOrganizerRole(r.organizerRole) ? r.organizerRole : "reader" };
 }
 
 /** The DISTINCT accounts of a mailbox set, in selection order (the per-account cron loop). */
@@ -1168,15 +1223,53 @@ export type { MailboxDisabledReason };
  * it is the guard for the call site nobody has written yet, and it is the reason the constraint
  * can never be the thing that fires.
  */
+export interface StandDownHolder {
+  /** The winning claim's kind. `null` when the claim was malformed — 'unknown' is then written. */
+  kind?: OrganizerKind | null;
+  /** `X-Ohmail-Display-Name`, header-safe and capped at the write. */
+  displayName?: string | null;
+  /** `X-Ohmail-Claimed-At` — when they became the organizer. */
+  claimedAt?: Date | null;
+  /** The lease's occupancy as this read saw it. */
+  state?: OrganizerState | null;
+}
+
 export async function markMailboxStoodDown(
   db: WorkerDb, mailboxId: string, reason: MailboxDisabledReason,
-  opts: { fence?: LeaderFence } = {},
+  opts: { fence?: LeaderFence; by?: StandDownHolder } = {},
 ): Promise<boolean> {
   const safe: MailboxDisabledReason =
     isMailboxDisabledReason(reason) ? reason : "organized_elsewhere:unknown";
+  // The kind, from the CLAIM where there is one and from the reason otherwise. The two agree by
+  // construction (`readMailboxLease` derives the reason from the same claim), and the fallback is
+  // what keeps the column populated for a malformed claim, whose reason is the honest
+  // `organized_elsewhere:unknown`.
+  const kind = (opts.by?.kind ?? safe.split(":")[1] ?? "unknown") as OrganizerKind;
   return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes).set({
-    status: "disabled",
-    disabledReason: safe,
+    // ── MAIL 0083: THE ROLE, NOT THE STATUS ───────────────────────────────────────────────
+    //
+    // This used to write `status: "disabled"` plus the reason, and the mailbox left the roster.
+    // A loser is now a READER — connected, syncing, mirroring — so the status is untouched and
+    // the role carries the whole decision. Four consequences worth stating because each of them
+    // used to be handled by the status flip and is now handled by this column:
+    //
+    //  · `loadEnabledMailboxes` keeps returning the row, so the mirror keeps growing;
+    //  · `closeStoodDownAppointments` keys on `organizer_role = 'reader'` (it used to key on
+    //    `disabled` + a reason, which nothing writes any more);
+    //  · `disabled` goes back to meaning tombstone or plan-disable, with no second reading;
+    //  · `disabled_reason` gains NO writer here. The column stays for the rows that carry it and
+    //    for the clear; nothing new is written to it, ever.
+    organizerRole: "reader",
+    organizedByKind: kind,
+    // Header-safe and capped at the write site — this is a CUSTOMER'S MACHINE NAME arriving out
+    // of another install's RFC822 header. Empty becomes NULL: "the claim did not say" is a
+    // different fact from "the claim named the empty string", and only one of them renders.
+    organizedByName: organizerDisplayName(opts.by?.displayName ?? null),
+    organizedSince: opts.by?.claimedAt ?? null,
+    // The occupancy as THIS read saw it. Persisted now (mail 0083) because a reader cycle
+    // refreshes it every pass — see the column's own note for why `lease.ts` argued it must not
+    // be, and why that premise moved.
+    organizerState: opts.by?.state ?? null,
     // Standing down is not failing. See the block above.
     errorCode: null, errorDetail: null, failedAt: null, retryCount: 0,
     // Mail 0029. `disabled_reason` is now the whole answer to "why is this mailbox not syncing",
@@ -1301,7 +1394,54 @@ export async function clearOrganizerStandDown(
   db: WorkerDb, mailboxId: string, opts: { fence?: LeaderFence } = {},
 ): Promise<boolean> {
   return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes)
-    .set({ disabledReason: null, takeoverAuthorizedAt: null })
+    .set({
+      // ── MAIL 0083: THIS IS THE PROMOTION ────────────────────────────────────────────────
+      //
+      // It used to clear two columns; it now performs the role flip that IS becoming the
+      // organizer, and the four holder columns go with it. They must: a row that says
+      // `organizer` while still naming who organizes it is a banner that contradicts itself, and
+      // the banner reads the ROW rather than a live dial precisely so it can be read cheaply
+      // everywhere.
+      //
+      // `disabledReason` is still cleared — for rows written before 0083, which carry one, and
+      // for the mailbox a human re-enabled past an old stand-down. Nothing writes it any more.
+      organizerRole: "organizer",
+      organizedByKind: null,
+      organizedByName: null,
+      organizedSince: null,
+      organizerState: null,
+      disabledReason: null,
+      // The authorization is spent by this one becoming. See the header.
+      takeoverAuthorizedAt: null,
+    })
+    .where(lifecycleWhere(mailboxId, opts.fence))
+    .returning({ id: mailboxes.id }));
+}
+
+/**
+ * REFRESH WHAT A READER'S LAST LOOK SAW — the four holder columns, from a `peekLease` read.
+ *
+ * A reader stays on the roster and cycles, which is what makes these columns maintainable at all
+ * (see `schema-mail.ts#organizerState` for the premise that moved). One write per reader cycle,
+ * and only when something CHANGED: the steady state of a reader whose organizer is quietly
+ * renewing is zero writes, exactly like `clearMailboxSyncBlock`'s.
+ *
+ * FENCED, like every other write that describes this process's relationship to a mailbox: a
+ * surrendered leader's late note about a mailbox somebody else now serves is as stale as its late
+ * failure write would be. It does NOT touch `organizerRole` — a peek is a look, never a decision,
+ * and the only two writers of the role are the stand-down and the promotion above.
+ */
+export async function refreshOrganizerHolder(
+  db: WorkerDb, mailboxId: string, by: StandDownHolder,
+  opts: { fence?: LeaderFence } = {},
+): Promise<boolean> {
+  return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes)
+    .set({
+      organizedByKind: by.kind ?? null,
+      organizedByName: organizerDisplayName(by.displayName ?? null),
+      organizedSince: by.claimedAt ?? null,
+      organizerState: by.state ?? null,
+    })
     .where(lifecycleWhere(mailboxId, opts.fence))
     .returning({ id: mailboxes.id }));
 }

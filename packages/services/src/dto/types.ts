@@ -380,6 +380,41 @@ import type {
 export type { MailboxDisabledReason, MailboxErrorCode, MailboxSyncBlockReason };
 
 export interface MailboxDTO {
+  /**
+   * ORGANIZER OR READER — what THIS install is to this mailbox (mail 0083).
+   *
+   * `'reader'` means another install organizes it, or nobody has asked this one to. Either way
+   * the mailbox is CONNECTED and its mirror is growing; what a reader does not do is move, file
+   * or delete mail. It is the field every client's banner and the "Organize here instead" button
+   * read, and it rides the POLLED `GET /mailboxes` row rather than a live IMAP dial — so it is at
+   * most one worker pass behind, which the copy states ("on its next pass") rather than hides.
+   *
+   * The three organizer fields are UNCONDITIONAL, on `syncBlockedReason`'s rule: every state they
+   * describe happens while `status` IS `connected`, and gating them on a status would reproduce
+   * the invisibility they exist to end.
+   */
+  organizerRole: "organizer" | "reader";
+  /**
+   * WHO ORGANIZES IT, when this install does not — `null` when this install does, or when nobody
+   * has ever claimed it (a mailbox connected and not yet consented to).
+   *
+   * `kind` is a closed set with a CHECK behind it. `name` is the holder's own machine name, which
+   * is why it is on the ADMIN DTO's deny-list: an account's own user may see what named their
+   * laptop, staff may not. `since` is when that install BECAME the organizer, not when it was
+   * last seen — a banner says "since Tuesday", never "last seen 40 seconds ago", because a
+   * heartbeat on a screen invites a person to watch it.
+   */
+  organizedBy: { kind: "cloud" | "local" | "unknown" | null; name: string | null; since: string | null } | null;
+  /**
+   * Whether that organizer is still RENEWING — `'held'` — or stopped and left its claim behind
+   * (`'stopped'`). `null` is "this install has not looked", which is every reader's row until its
+   * first cycle and every organizer's row always.
+   *
+   * The two states want opposite offers on screen ("ohmail Cloud organizes this" versus "ohmail
+   * Cloud stopped organizing this"), which is the whole reason the lease's three verdicts are not
+   * collapsed into two anywhere they reach a person.
+   */
+  organizerState: "held" | "stopped" | null;
   id: string;
   provider: string;              // 'imap' today; 'exchange' planned
   address: string;

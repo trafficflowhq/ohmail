@@ -94,10 +94,11 @@ import {
 } from "./push-wake.js";
 import { driverWriteRaceReason } from "./driver-write-race.js";
 import { recordSmtpMaxSize, smtpSizeDial } from "./smtp-size.js";
-import type { Tx } from "@trafficflow/db";
+import type { Tx, OrganizerRole, OrganizerState } from "@trafficflow/db";
 import {
   loadEnabledMailboxes, loadMailboxCreds, loadMailboxById, bootstrapEnvCreds,
   markMailboxFailed, markMailboxConnected, markMailboxStoodDown, clearOrganizerStandDown,
+  refreshOrganizerHolder,
   markMailboxSyncBlocked, clearMailboxSyncBlock,
   classifyMailboxError, mailboxErrorDetail,
   stampMailboxSyncNow, stampInitialImportComplete, makeSyncWriteFence, type LeaderFence,
@@ -108,8 +109,12 @@ import {
 import { OrganizerProfileSync } from "./profile.js";
 import {
   readMailboxLease, releaseMailboxClaim, cloudInstallId, CLOUD_DISPLAY_NAME, LeaseUnavailableError,
-  type LeaseSelf,
+  type LeaseSelf, type LeasePeekCapableAdapter,
 } from "./lease.js";
+// The APPEND-less read of `ohmail/_meta` — see `LeasePeekCapableAdapter`. A reader LOOKS at the
+// lease every cycle to keep `organizer_state` and the holder columns honest, and looking must
+// never write a claim: `readLeasePeek` takes the read-only IO and creates nothing.
+import { readLeasePeek } from "@trafficflow/core/adapters/organizer-lease";
 
 /** How often the leader runs the global maintenance pass (expired-idempotency-key sweep). */
 export const MAINTENANCE_EVERY_MS = 60 * 60 * 1000;
@@ -330,7 +335,51 @@ interface MailboxRuntime {
    * already serving the mailbox. A value captured once would mean a user's explicit "yes, move
    * this to Cloud" did nothing until the worker happened to restart.
    */
-  lease: { takeoverAuthorizedAt: Date | null; disabledReason: string | null };
+  lease: {
+    takeoverAuthorizedAt: Date | null;
+    disabledReason: string | null;
+    /**
+     * Mail 0083. WHAT THE ROW SAYS THE ROLE IS — which is not the same thing as what this process
+     * is doing (`MailboxRuntime.role` carries that) and is why both exist.
+     *
+     * The gate needs it for one decision: whether a promotion has a row to flip. That used to be
+     * `takeoverAuthorizedAt || disabledReason` and the second term was the whole of "this row is
+     * stood down" — until 0083 moved the stand-down onto the role and left `disabled_reason` with
+     * no writer, at which point a consented reader whose foreign claim had simply gone away was
+     * promoted by the lease and never written back.
+     */
+    organizerRole: OrganizerRole;
+    /**
+     * Mail 0083. NULL means NOBODY HAS ASKED THIS INSTALL TO ORGANIZE THIS MAILBOX, which is the
+     * state `POST /mailboxes` now creates. It is read by the gate for one purpose and it is the
+     * purpose the whole reader mode turns on: a consent-less mailbox must never be promoted by an
+     * EMPTY `ohmail/_meta`. `decideLease`'s "nobody has ever organized this mailbox" arm organizes
+     * on an empty folder, which is right for a mailbox somebody consented to and is a seizure for
+     * one they merely connected.
+     */
+    organizeConsentedAt: Date | null;
+  };
+  /**
+   * Mail 0083. WHAT THE ROW ALREADY SAYS THE HOLDER IS, so a reader's per-cycle peek writes only
+   * when something CHANGED.
+   *
+   * Seeded from the roster row at attach and updated in place by `refreshReaderHolder`. Without
+   * it a reader would issue one `UPDATE mailboxes` per poll interval per mailbox for ever, to
+   * write the four values that are already there — the same "zero writes in the steady state"
+   * rule `clearMailboxSyncBlock` and `clearOrganizerStandDown` each keep for their own columns.
+   */
+  holderSeen: { kind: string | null; name: string | null; since: Date | null; state: string | null };
+  /**
+   * Mail 0083. What this process IS to this mailbox right now — and it is MUTABLE, unlike almost
+   * everything else on a runtime, because the role can flip in either direction without a
+   * re-attach: a human authorizes a claim-back and the next gate promotes; another install takes
+   * over and the next gate demotes. Both used to require a detach (a demotion left the roster
+   * entirely), and neither does now.
+   *
+   * It is what `runSyncCycle` receives as `SyncDeps.role`, read at the cycle rather than captured
+   * on `deps`, so a flip applies on the very next pass.
+   */
+  role: OrganizerRole;
   /**
    * This mailbox's LAST cycle ended still owing work — a truncated inbound batch
    * (`hasBacklog`) or filing that hit the reconciler's per-cycle budget (`owesFiling`).
@@ -1291,25 +1340,120 @@ export async function startWorkerWithLock(
     }
 
     /**
+     * A READER LOOKS. IT DOES NOT CLAIM (mail 0083).
+     *
+     * The APPEND-less read of `ohmail/_meta`, run once per reader cycle, whose whole product is
+     * the four holder columns — so the banner every client renders is a ROW read rather than a
+     * live IMAP dial per viewer. `readLeasePeek` cannot create the folder and cannot write a
+     * claim; that narrowness is the enforcement, not a convention (see `LeasePeekCapableAdapter`).
+     *
+     * NEVER THROWS. A reader that could not look is a reader that keeps reading mail: the columns
+     * keep their previous answer, which is at worst one poll interval stale, and the alternative
+     * — treating an unreadable folder as evidence — is exactly the conflation the lease forbids
+     * ("somebody else holds this" and "I could not look" must not be reachable from one another).
+     *
+     * It writes only when something CHANGED, so a reader whose organizer is quietly renewing
+     * costs zero writes per cycle.
+     */
+    async function refreshReaderHolder(
+      mb: { mailboxId: string; accountId: string },
+      adapter: MailboxAdapter,
+      current: { kind: string | null; name: string | null; since: Date | null; state: string | null },
+    ): Promise<void> {
+      const peek = (adapter as Partial<LeasePeekCapableAdapter>).leasePeekIo;
+      if (typeof peek !== "function") return;
+      try {
+        const seen = await readLeasePeek({ io: peek.call(adapter), now: new Date() });
+        // FRESHEST FIRST, and the freshest is the one a person means by "who organizes this".
+        // `holders` is already sorted that way by `peekLease`; an empty list means the folder
+        // holds no readable claim, which is reported as "nobody named" rather than invented.
+        const top = seen.holders[0] ?? null;
+        // `none` is not a member of the column's closed set and must not be coerced into one:
+        // "nobody has ever organized this mailbox" is genuinely absent, not `stopped`.
+        const state: OrganizerState | null =
+          seen.state === "held" ? "held" : seen.state === "stopped" ? "stopped" : null;
+        const name = top && top.displayName.trim() !== "" ? top.displayName.trim() : null;
+        const kind = top === null ? null : top.kind;
+        const since = top ? top.claimedAt : null;
+        if (current.kind === kind && current.name === name && current.state === state
+          && (current.since ? current.since.getTime() : null) === (since ? since.getTime() : null)) return;
+        await refreshOrganizerHolder(db, mb.mailboxId, {
+          kind, displayName: name, claimedAt: since, state,
+        }, { fence });
+        log.info("organizer_holder_refreshed", {
+          mailboxId: mb.mailboxId, accountId: mb.accountId,
+          organizerState: state, heldBy: name,
+          reason: "this install reads this mailbox; the row now names who organizes it, so every "
+            + "client's banner is a row read rather than an IMAP dial per viewer",
+        });
+        current.kind = kind; current.name = name; current.since = since; current.state = state;
+      } catch (err) {
+        // Deliberately swallowed — see the header. A reader that cannot read the lease keeps
+        // reading mail.
+        log.warn("organizer_holder_refresh_failed", {
+          mailboxId: mb.mailboxId, accountId: mb.accountId, err,
+        });
+      }
+    }
+
+    /**
      * Read the lease for one mailbox and, when it says no, make that durable.
      *
-     * Returns `true` iff this process may organize this mailbox right now. Throws
-     * {@link LeaseUnavailableError} when the lease could not be read at all — never a
-     * stand-down, because "somebody else holds this" and "I could not look" must not be
-     * reachable from one another. Both call sites exempt that
-     * class the way they already exempt `ClassifierFaultError`.
+     * Returns `true` iff this process may organize this mailbox right now — which, since mail
+     * 0083, is the same question as "is this install the ORGANIZER of this mailbox", and `false`
+     * is no longer "stop": it is `role: "reader"`, and the caller keeps syncing. Throws
+     * {@link LeaseUnavailableError} when the lease could not be read at all — never a stand-down,
+     * because "somebody else holds this" and "I could not look" must not be reachable from one
+     * another. Both call sites exempt that class the way they already exempt
+     * `ClassifierFaultError`.
      *
-     * The stand-down write is FENCED like every other mailbox lifecycle write, and a fenced-out
-     * write still stands the mailbox down IN THIS PROCESS: the row belongs to whoever leads the
-     * shard now, but the decision not to organize is ours and is not contingent on recording it.
+     * `false` has TWO causes and they are deliberately one answer here: another organizer holds
+     * the mailbox, or nobody has asked this install to organize it (a consent-less mailbox, the
+     * state `POST /mailboxes` creates). The behaviour is identical — read, move nothing — and what
+     * distinguishes them for a human is the ROW, which names a holder only in the first case.
+     *
+     * The demotion write is FENCED like every other mailbox lifecycle write, and a fenced-out
+     * write still demotes IN THIS PROCESS: the row belongs to whoever leads the shard now, but the
+     * decision not to organize is ours and is not contingent on recording it.
      */
     async function mayOrganize(
       mb: { mailboxId: string; accountId: string },
-      lease: { takeoverAuthorizedAt: Date | null; disabledReason: string | null },
+      lease: {
+        takeoverAuthorizedAt: Date | null; disabledReason: string | null;
+        organizerRole: OrganizerRole;
+        organizeConsentedAt: Date | null;
+      },
       nonce: { leaseNonce: string | null },
       adapter: MailboxAdapter,
       phase: "attach" | "cycle",
     ): Promise<boolean> {
+      /* -- A CONSENT-LESS MAILBOX IS NEVER PROMOTED BY AN EMPTY FOLDER (mail 0083) -----------
+       *
+       * `decideLease`'s first arm organizes a mailbox with ZERO claims — "nobody has ever
+       * organized this mailbox", which is the right answer for a mailbox somebody asked us to
+       * organize and is a SEIZURE for one they merely connected. `POST /mailboxes` now creates a
+       * consent-less reader precisely so a fresh connect builds a mirror and moves nothing, and
+       * without this line the very first cycle would find an empty `ohmail/_meta`, claim it,
+       * create the `ohmail/*` tree and file the backlog — the outcome the pre-consent state
+       * exists to prevent, reached before the person ever saw the consent screen.
+       *
+       * It sits ABOVE the read rather than inside `decideLease` because it is not a fact about
+       * the LEASE: the folder says what it says. It is a fact about whether THIS install has been
+       * asked, and that lives in the row.
+       *
+       * `takeover_authorized_at` overrides it, and must: that stamp IS the explicit human action,
+       * and `organizeHere` writes both columns in one transaction — so a mailbox reaching here
+       * with a stamp and no consent is one whose consent write is committing beside it, never a
+       * mailbox nobody asked about.
+       */
+      if (lease.organizeConsentedAt === null && lease.takeoverAuthorizedAt === null) {
+        log.info("organizer_awaiting_consent", {
+          mailboxId: mb.mailboxId, accountId: mb.accountId, phase,
+          reason: "nobody has asked this install to organize this mailbox, so it reads it and "
+            + "moves nothing — an empty lease folder must not be read as permission",
+        });
+        return false;
+      }
       const outcome = await readMailboxLease({
         adapter,
         self: leaseSelfFor(nonce),
@@ -1328,11 +1472,33 @@ export async function startWorkerWithLock(
         // let a lapse-then-resubscribe seize the mailbox back months later from whatever a human
         // deliberately moved it to. Written only when there IS something to clear, so the steady
         // state is zero extra writes per cycle.
-        if (lease.takeoverAuthorizedAt || lease.disabledReason) {
+        /* -- AND THE ROW'S ROLE IS THE THIRD TERM, WITHOUT WHICH THIS WROTE NOTHING (mail 0083)
+         *
+         * The two original terms were the whole of "there is a stand-down on this row" while a
+         * stand-down WAS `status='disabled'` plus a reason. 0083 moved that fact to
+         * `organizer_role` and left `disabled_reason` with no writer at all, so for the one shape
+         * that needs no stamp — a CONSENTED reader whose foreign organizer released its claim, at
+         * which point `decideLease` correctly says organize — both terms were null and this block
+         * was skipped. The lease said organizer, the pipeline ran as organizer, and the ROW went
+         * on saying `reader`.
+         *
+         * That is not a cosmetic disagreement: `organizer_role` is the authority every service
+         * write door consults (`assertOrganizerRole`), so the process would move mail on IMAP
+         * while its own API answered `409 organized_elsewhere` to every request that asked it to —
+         * naming itself as the holder, out of the holder columns nothing had cleared either.
+         *
+         * `apps/sidecar/src/engine.ts` repaired the identical hole in the identical place, and
+         * for the identical reason: the arm was unreachable until a reader could be promoted
+         * without a relaunch, and then it was not.
+         */
+        if (lease.takeoverAuthorizedAt || lease.disabledReason || lease.organizerRole === "reader") {
           try {
             await clearOrganizerStandDown(db, mb.mailboxId, { fence });
             lease.takeoverAuthorizedAt = null;
             lease.disabledReason = null;
+            // The row now says `organizer`, so the next cycle issues no second UPDATE — the
+            // "no-op UPDATE every cycle" `clearOrganizerStandDown`'s header refuses to pay for.
+            lease.organizerRole = "organizer";
           } catch (err) {
             // The gate already said organize and our claim is already written. Failing to spend
             // the stamp costs one more cycle of it being spendable, never correctness.
@@ -1342,7 +1508,13 @@ export async function startWorkerWithLock(
         return true;
       }
 
-      lease.disabledReason = outcome.reason;
+      /* THE ROW'S MIRROR, AS `markMailboxStoodDown` IS ABOUT TO LEAVE IT (mail 0083). This line
+         was `lease.disabledReason = outcome.reason`, which had been true of the write below and
+         stopped being true when the demotion moved onto the role: the column gains no writer
+         there, so the mirror was recording a value the row does not hold. It happened to keep the
+         promotion above firing IN THIS PROCESS, which is precisely what hid the missing term from
+         every test that demoted and promoted inside one run. */
+      lease.organizerRole = "reader";
       log.warn("organizer_stand_down", {
         mailboxId: mb.mailboxId, accountId: mb.accountId, phase,
         disabledReason: outcome.reason,
@@ -1360,11 +1532,22 @@ export async function startWorkerWithLock(
           "exactly one active organizer per mailbox is the invariant this enforces",
       });
       try {
-        const written = await markMailboxStoodDown(db, mb.mailboxId, outcome.reason, { fence });
+        // The holder columns ride the SAME statement as the role (mail 0083): a row that says
+        // `reader` without naming who organizes it is a banner with a blank in it, and the banner
+        // reads the row precisely so no client has to dial IMAP to render one.
+        const written = await markMailboxStoodDown(db, mb.mailboxId, outcome.reason, {
+          fence,
+          by: {
+            kind: outcome.by ? outcome.by.kind : null,
+            displayName: outcome.by ? outcome.by.displayName : null,
+            claimedAt: outcome.by ? outcome.by.claimedAt : null,
+            state: outcome.state,
+          },
+        });
         if (!written) {
           log.info("organizer_stand_down_write_fenced", {
             mailboxId: mb.mailboxId, accountId: mb.accountId,
-            reason: "the mailbox is already disabled or this instance no longer leads the shard",
+            reason: "the mailbox is a tombstone, or this instance no longer leads the shard",
           });
         }
       } catch (err) {
@@ -1868,20 +2051,62 @@ export async function startWorkerWithLock(
         const leaseState = { leaseNonce: null as string | null };
         const leaseRow = {
           takeoverAuthorizedAt: mb.takeoverAuthorizedAt, disabledReason: mb.disabledReason,
+          // Mail 0083 — see `MailboxRuntime.lease.organizerRole`. This is the shape the promotion
+          // hole was reachable through: an existing reader row attaches with no stamp and a null
+          // reason, so without this the gate had nothing left to notice it by.
+          organizerRole: mb.organizerRole,
+          organizeConsentedAt: mb.organizeConsentedAt,
+        };
+        /** What the row says the holder is, so the reader peek writes only on a CHANGE. */
+        const holderSeen = {
+          kind: mb.organizedByKind, name: mb.organizedByName,
+          since: mb.organizedSince, state: mb.organizerState,
         };
         const tLease = Date.now();
-        if (!(await mayOrganize(mb, leaseRow, leaseState, adapter, "attach"))) {
-          // `reason: null` — `markMailboxStoodDown` has already written `disabled` plus
-          // `disabled_reason` AND cleared the sync-block columns in that same statement. See
+        /* -- A STAND-DOWN NO LONGER ENDS THE ATTACH (mail 0083) --------------------------------
+         *
+         * This block used to `return`, and the mailbox left the roster with its connection closed:
+         * standing down meant stopping. It now means BEING A READER — another mail client on the
+         * mailbox — so the attach continues past this line with `role: "reader"`, keeps its login
+         * and its poll timer, and builds a mirror that GROWS. What it does not do is any of the
+         * four things below that write to somebody else's mailbox.
+         *
+         * `mayOrganize` has already written the demotion and the holder columns and closed the
+         * appointments this process can no longer keep, exactly as before; the only thing that
+         * changed is what happens on the line after it.
+         *
+         * TWO REFUSALS ARE FOLDED INTO ONE ANSWER HERE, deliberately. `mayOrganize` returns false
+         * both for "somebody else holds this" and for "nobody has asked this install to organize
+         * it" (a consent-less mailbox), and the attach treats them identically because the
+         * BEHAVIOUR is identical: read, do not move. What tells them apart for a human is the row
+         * — a consent-less mailbox names no holder — and the log line each arm writes.
+         */
+        const role: OrganizerRole =
+          (await mayOrganize(mb, leaseRow, leaseState, adapter, "attach")) ? "organizer" : "reader";
+        const leaseMs = Date.now() - tLease;
+        if (role === "organizer") {
+          leaseBlocked.delete(mb.mailboxId);
+        } else {
+          // `reason: null` — the ROLE now carries the whole answer to "why is this mailbox not
+          // being organized here", and it is a better answer than any sync-block member. See
           // `SyncBlock`.
           noteBlock(leaseBlocked, mb.mailboxId, null);
-          try { await adapter.close(); } catch { /* ignore */ }
-          return;
+          // The row's holder columns, refreshed from the same connection that just looked. On the
+          // stand-down path `markMailboxStoodDown` has already written them from the verdict's own
+          // claim; this covers the OTHER arm — a consent-less reader, whose refusal never read the
+          // folder at all, so without this its banner would have nothing to say.
+          await refreshReaderHolder(mb, adapter, holderSeen);
         }
-        const leaseMs = Date.now() - tLease;
-        leaseBlocked.delete(mb.mailboxId);
         const tFolders = Date.now();
-        await adapter.ensureFolders();
+        /* -- `ohmail/*` IS CREATED BY AN ORGANIZER AND BY NOTHING ELSE ------------------------
+         *
+         * The first of the four skips, and the one the two-worlds test asserts against the SERVER
+         * rather than against a log line: after N reader cycles over unruled INBOX mail, `ohmail/*`
+         * is ABSENT on the mail server and every message is still in INBOX. A reader that created
+         * the tree would be visibly organizing a mailbox it does not hold — in every other mail
+         * client the person owns, and in the folder list of whoever does hold it.
+         */
+        if (role === "organizer") await adapter.ensureFolders();
         const foldersMs = Date.now() - tFolders;
         // ── Mail 0065: DISCOVER THE PROVIDER'S OWN \Junk AND \Trash, AND WRITE THEM DOWN ──
         //
@@ -1912,6 +2137,11 @@ export async function startWorkerWithLock(
         let sweepScan: SweepScanState = SWEEP_SCAN_START;
         const deps: SyncDeps = {
           repo, adapter, accountId: mb.accountId, mailboxId: mb.mailboxId,
+          // Mail 0083. THE ATTACH-TIME ROLE, and it is the field's floor rather than its whole
+          // story: `cycle()` re-verifies the lease before every pass and spreads `role: rt.role`
+          // over these deps, so a flip in either direction applies on the very next cycle without
+          // a re-attach. It is required here so this composition cannot be the one that forgets.
+          role,
           // ── THE LEADER FENCE OVER THIS MAILBOX'S MAIL-BEARING WRITES ─────────────────────
           //
           // The SAME `fence` the lifecycle writes key on — one definition of "am I still the
@@ -2109,6 +2339,9 @@ export async function startWorkerWithLock(
           accountId: mb.accountId, mailboxId: mb.mailboxId, adapter, deps, unwatch: null,
           failures: 0, lastSuccessAt: null, leaseNonce: leaseState.leaseNonce,
           lease: leaseRow,
+          // Mail 0083. Mutable, and re-read by every cycle — see the fields.
+          role,
+          holderSeen,
           // A FRESH CONNECTION HAS NOT FAILED TO READ ANYTHING YET. The gate above
           // just answered organize over this very socket, so starting anywhere but `null` would
           // charge the new connection for the dead one's silence.
@@ -2152,7 +2385,19 @@ export async function startWorkerWithLock(
         // residual is at most one pre-fix cycle (the method's doc carries the direction
         // argument). Ordinary mailboxes (no document, our own document, an in-sync one) return
         // in one FETCH and arm nothing.
-        await rt.profile.armHoldFromFolder();
+        /* -- SKIPPED FOR A READER: THE PROFILE HOLD IS AN INCOMING ORGANIZER'S QUESTION ------
+         *
+         * The third of the four skips. `armHoldFromFolder` exists so an organizer TAKING a mailbox
+         * over does not re-screen the decisions it is inheriting — it detects a foreign profile
+         * document, holds it, and asks the person whether to import. A reader inherits nothing and
+         * decides nothing, so there is no question to hold open; arming it would put a pending
+         * import prompt on a screen for a mailbox this install does not organize. The read itself
+         * is harmless, but the MARKER it writes is what the confirm surface renders.
+         *
+         * On promotion the hold is armed by the attach that follows it, which is the first cycle
+         * with anything to inherit.
+         */
+        if (role === "organizer") await rt.profile.armHoldFromFolder();
 
         // ── MAKE THE MAILBOX SCREENER-SHAPED, ONCE, BEFORE THE FIRST DRAIN ───────────────
         //
@@ -2187,8 +2432,16 @@ export async function startWorkerWithLock(
         // next attach simply tries again — and a mailbox whose Sent folder is unreadable still
         // syncs perfectly well, it just screens more.
         const tKickstart = Date.now();
+        /* -- SKIPPED FOR A READER: THE KICKSTART RE-ROUTES THE SCREENER BACKLOG ---------------
+         *
+         * The second of the four skips. `runKickstart` imports the Sent folder's recipients into
+         * `contacts` and then RE-ROUTES the Screener backlog — physical IMAP moves, once per
+         * mailbox, on the organizer's authority. Its marker (`mailboxes.kickstart_at`) is
+         * deliberately left unwritten here, so a reader that is later promoted runs it on the
+         * attach after the promotion, which is the first moment it is entitled to.
+         */
         try {
-          const shaped = await runKickstart({
+          const shaped = role === "reader" ? { ran: false } as Awaited<ReturnType<typeof runKickstart>> : await runKickstart({
             repo, adapter, accountId: mb.accountId, mailboxId: mb.mailboxId, log,
           });
           if (shaped.ran) {
@@ -2517,6 +2770,16 @@ export async function startWorkerWithLock(
             // next cycle's gate instead of waiting for a restart.
             attached.lease = {
               takeoverAuthorizedAt: mb.takeoverAuthorizedAt, disabledReason: mb.disabledReason,
+              // Mail 0083, refreshed with the other two: a promotion or demotion written by
+              // another process (the connect flow, the reconcile backstop) is a fact about this
+              // row, and a value captured at attach would leave this gate deciding against it.
+              organizerRole: mb.organizerRole,
+              // Mail 0083. Refreshed for `takeover_authorized_at`'s exact reason: `organizeHere`
+              // stamps CONSENT from another process while this one is already reading the mailbox,
+              // and a value captured at attach would leave a person's "organize here" doing
+              // nothing until the worker happened to restart. The two columns are written in one
+              // transaction, so refreshing them together is also what keeps them consistent here.
+              organizeConsentedAt: mb.organizeConsentedAt,
             };
             // CONVERGE THE ROW ONTO REALITY — but only about a mailbox that has actually SYNCED.
             //
@@ -3030,6 +3293,18 @@ export async function startWorkerWithLock(
       const backlogged: string[] = [];
 
       /** Mailboxes this cycle stood down from; detached after the loop, never inside it. */
+      /**
+       * Runtimes whose LEASE could not be read for long enough to give up on — and NOT, since mail
+       * 0083, runtimes that stood down.
+       *
+       * A stand-down no longer detaches: it demotes the runtime to a reader in place, which keeps
+       * the login, the poll timer and a mirror that grows (see the cycle's own note). What still
+       * reaches this list is the unreadable-lease path below, which is a CONNECTION fault: we
+       * cannot tell whether we hold the mailbox, and the honest answer to that is to stop touching
+       * it, not to assume either role. The list keeps its name because the detach and the log line
+       * it drives are unchanged, and because renaming it would obscure that the population shrank
+       * rather than that the handling changed.
+       */
       const toStandDown: MailboxRuntime[] = [];
       /**
        * Mailboxes whose organizer lease has been unreadable past `leaseUnavailableDetachMs`
@@ -3130,6 +3405,47 @@ export async function startWorkerWithLock(
           const organize = await mayOrganize(
             { mailboxId: rt.mailboxId, accountId: rt.accountId }, rt.lease, rt, rt.adapter, "cycle",
           );
+          /* -- THE ROLE FLIP, IN BOTH DIRECTIONS, WITHOUT A RE-ATTACH (mail 0083) -------------
+           *
+           * `wasOrganizer` is what this process was a moment ago; `organize` is what the lease
+           * just said. The two comparisons below are the only two transitions there are, and each
+           * used to require a detach:
+           *
+           *  · ORGANIZER -> READER. This used to push the runtime onto `toStandDown`, which
+           *    detached it and closed the connection. It now keeps the connection, keeps the poll
+           *    timer, keeps the credentials and keeps syncing — as a reader. The demotion write
+           *    and the appointment close already happened inside `mayOrganize`.
+           *  · READER -> ORGANIZER. A human authorized a claim-back (or gave consent), the gate
+           *    spent the stamp, and `clearOrganizerStandDown` has already flipped the row. What
+           *    the ROW cannot do is create the folder tree, so `ensureFolders` runs here — the
+           *    one line of the attach a promotion has to catch up on, and the reason the person
+           *    is never asked to quit and reopen anything.
+           */
+          const wasOrganizer = rt.role === "organizer";
+          rt.role = organize ? "organizer" : "reader";
+          if (organize && !wasOrganizer) {
+            // BEFORE the cycle, so this very pass files into a tree that exists. It is idempotent
+            // (the adapter creates only what is missing) and it is the first write this process is
+            // entitled to make against this mailbox, which is why it is here and not one line
+            // earlier: `mayOrganize` returning true is the entitlement.
+            await rt.adapter.ensureFolders();
+            // The known-set memo is dropped for the reason a stand-down drops it, in the mirror
+            // direction: everything this runtime remembers about the mailbox it remembered as a
+            // READER, and the cycle that follows is going to move mail on the strength of it.
+            rt.deps.knownSet?.drop("organizer promotion");
+            log.info("organizer_promoted", {
+              mailboxId: rt.mailboxId, accountId: rt.accountId,
+              reason: "a human asked this install to organize this mailbox and the lease agreed; "
+                + "the folder tree is ensured and this cycle organizes — no relaunch",
+            });
+          }
+          if (!organize && wasOrganizer) {
+            log.info("organizer_demoted_to_reader", {
+              mailboxId: rt.mailboxId, accountId: rt.accountId,
+              reason: "another organizer holds this mailbox; this install keeps its login and its "
+                + "mirror and becomes a reader — it marks mail read and sends, and moves nothing",
+            });
+          }
           // THE LEASE ANSWERED, SO IT IS READABLE — whichever way it answered. A
           // stand-down is evidence about this connection every bit as strong as an organize verdict:
           // it means `ohmail/_meta` was created and FETCHed successfully and somebody else's claim
@@ -3138,13 +3454,35 @@ export async function startWorkerWithLock(
           // exactly that reason — putting it there would leave a mailbox that alternates
           // stand-down / unreadable accumulating toward a detach it has not earned.
           rt.leaseUnavailableSince = null;
+          /* -- A READER DOES NOT LEAVE THE ROSTER, AND THE MEMO IS NOT DROPPED --------------
+           *
+           * This block used to drop the known-set memo and push the runtime onto `toStandDown`,
+           * which detached it. Both are wrong for a reader and for opposite reasons.
+           *
+           * The DETACH is wrong because a reader's whole product is a mirror that keeps growing:
+           * detaching would freeze it at the instant of the handover, which is exactly the
+           * behaviour this ruling replaced (the earlier dual-mode design's "stops syncing entirely",
+           * amended in the same commit as this line).
+           *
+           * DROPPING THE MEMO is wrong because the memo is a record of what THIS mailbox contains,
+           * not of who organizes it. It was dropped at a stand-down because the runtime was about
+           * to die and any surviving copy would be a memory of somebody else's mailbox; the
+           * runtime now survives and keeps reading the SAME mailbox, so the memo is still true.
+           * Dropping it would buy nothing and cost a full `listKnownLocators` re-read on every
+           * demotion. (It IS dropped on the promotion above — that direction is about to move
+           * mail on the strength of it.)
+           *
+           * `leaseBlocked` is still noted so `/health` and `sync_blocked_reason` can say why this
+           * mailbox is not being ORGANIZED here, which stays true and is not the same statement as
+           * "not being synced".
+           */
           if (!organize) {
-            // The lease named somebody else. The detach that follows the loop drops this too, but
-            // the verdict is the event and this is where it is known: from here on, every UID this
-            // process remembers about this mailbox belongs to another organizer's mailbox.
-            rt.deps.knownSet?.drop("organizer stand-down");
-            toStandDown.push(rt);
-            return;
+            noteBlock(leaseBlocked, rt.mailboxId, null);
+            await refreshReaderHolder(
+              { mailboxId: rt.mailboxId, accountId: rt.accountId }, rt.adapter, rt.holderSeen,
+            );
+          } else {
+            leaseBlocked.delete(rt.mailboxId);
           }
           // The classifier is resolved HERE, once per cycle, from the circuit — not stored on
           // `rt.deps`. That is what lets an outage degrade this mailbox to rules-only between
@@ -3153,6 +3491,11 @@ export async function startWorkerWithLock(
           const visitStartedMs = Date.now();
           const { hasBacklog, owesFiling } = await runSyncCycle({
             ...rt.deps, ...aiFor(rt.mailboxId, rt.accountId), ...(await screeningFor(rt.accountId)),
+            // Mail 0083. THE ROLE THE GATE JUST ANSWERED, spread over the attach-time deps so a
+            // flip applies to THIS pass rather than to the one after the next re-attach. Placed
+            // after the spread deliberately: it must win over `rt.deps.role`, which is only ever
+            // the value the attach saw.
+            role: rt.role,
             // The cap is refreshed per cycle like the screening posture beside it, so an
             // upgrade's headroom (or a downgrade's new ceiling) applies without a re-attach.
             storageCap: await storageCapFor(rt.accountId),
@@ -3763,10 +4106,10 @@ export async function startWorkerWithLock(
       // asserted, so the next person knows which line is evidence and which is argument.
       for (const rt of toStandDown) {
         if (runtimes.get(rt.mailboxId) !== rt) continue;
-        await detach(rt, `another organizer holds this mailbox (${rt.lease.disabledReason ?? "organized elsewhere"})`);
-        // `reason: null` — the row is `disabled` with a `disabled_reason`, which is a strictly
-        // better answer than any sync-block member, and `markMailboxStoodDown` cleared these two
-        // columns in the statement that wrote it. See `SyncBlock`.
+        await detach(rt, "this mailbox's organizer lease could not be read for long enough to stop trying");
+        // `reason: null` — the sync-block reason for this population is written by the
+        // unreadable-lease arm itself (`lease_unreadable`), which is a better answer than
+        // anything this line could add. See `SyncBlock`.
         noteBlock(leaseBlocked, rt.mailboxId, null);
       }
 
@@ -4229,7 +4572,29 @@ export async function startWorkerWithLock(
             db as unknown as Tx,
             {
               accountId, log,
-              openSend: async (mailboxId) => runtimes.get(mailboxId)?.adapter ?? null,
+              /* -- A READER SENDS NO AWAY REPLY (mail 0083) ---------------------------------
+               *
+               * `runtimes` now holds READER runtimes — that is the whole point of the mode, and
+               * it is what made this line dangerous. It used to hand over the attached adapter
+               * for any mailbox this process holds, on the reasoning stated just above: *"the one
+               * this process already holds the organizer lease on"*. That sentence stopped being
+               * true of `runtimes.get(...)` the moment a loser stayed attached.
+               *
+               * A reader MAY send — a send is a person pressing send, and it completes in the
+               * request. An away reply is not that: it is an automatic message the ORGANIZER
+               * sends on the person's behalf when mail arrives, and its at-most-once claim is
+               * per-STORE. So a reader and the real organizer would each hold their own claim and
+               * each reply, and a stranger writing once would get two identical auto-replies from
+               * the same person — from a machine that was told to stop organizing the mailbox.
+               *
+               * `null` is a SUPPRESSION and not an error, which is exactly the contract this hook
+               * already has for a mailbox this instance is not attached to. The organizer's own
+               * process answers instead.
+               */
+              openSend: async (mailboxId) => {
+                const rt = runtimes.get(mailboxId);
+                return rt && rt.role === "organizer" ? rt.adapter : null;
+              },
             },
             new Date(),
           );

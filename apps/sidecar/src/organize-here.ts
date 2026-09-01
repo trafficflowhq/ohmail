@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import { mailboxes } from "@trafficflow/db";
 import { isCliEntry } from "@trafficflow/worker/entry";
 import { openLocalDb, type LocalDb } from "./db.js";
@@ -112,6 +112,12 @@ export async function authorizeOrganizerTakeover(
       id: mailboxes.id,
       status: mailboxes.status,
       disabledReason: mailboxes.disabledReason,
+      // Mail 0083 — the precondition moved off `status`. A demoted install is now `connected`
+      // with `organizer_role = 'reader'`, so a `status = 'disabled'` test matches nothing this
+      // build writes; and a mailbox NOBODY has consented to organize is the second state this
+      // ceremony serves, which `status` could never express at all.
+      organizerRole: mailboxes.organizerRole,
+      organizeConsentedAt: mailboxes.organizeConsentedAt,
     })
     .from(mailboxes)
     .where(input.mailboxId
@@ -121,22 +127,36 @@ export async function authorizeOrganizerTakeover(
     .limit(1);
 
   if (!row) return { outcome: "no_mailbox", previousReason: null, mailboxId: null };
-  if (row.status !== "disabled") {
-    return { outcome: "already_organizing", previousReason: null, mailboxId: row.id };
-  }
-  if (!row.disabledReason) {
-    // Disabled with no reason is a removal, not a pause. Re-adding a removed mailbox is a
-    // different action with different consequences, and quietly converting one into the other
-    // here would resurrect a mailbox the user deliberately took off this machine.
+  // A tombstone is checked FIRST (mail 0083). A removed mailbox keeps whatever role it had — a
+  // removal demotes nothing, it retires the row — so asking about the role first would answer
+  // `already_organizing` about a mailbox the person deleted. Re-adding it is a different action
+  // with different consequences, and quietly converting one into the other here would resurrect a
+  // mailbox somebody deliberately took off this machine.
+  if (row.status === "disabled") {
     return { outcome: "removed", previousReason: null, mailboxId: row.id };
   }
+  // Already the organizer AND already consented ⇒ nothing to ask for. Both terms: a mailbox that
+  // is nominally an organizer but has never been consented to is exactly the FIRST-consent case
+  // this ceremony now serves, and refusing it here would leave that case with no door.
+  if (row.organizerRole !== "reader" && row.organizeConsentedAt !== null) {
+    return { outcome: "already_organizing", previousReason: null, mailboxId: row.id };
+  }
 
-  // Status, reason and stamp in ONE write. Any two of the three applied without the third leaves
-  // a row that means something the user did not ask for — see the header.
+  // CONSENT AND STAMP IN ONE WRITE — and the role is deliberately NOT among them. The GATE
+  // promotes: the next launch reads `ohmail/_meta` and decides, and an organizer that is still
+  // renewing keeps the mailbox whatever was asked here. Flipping the role from a CLI would be a
+  // command line deciding who organizes a mailbox with no reference to the mailbox itself.
+  //
+  // `coalesce` on the consent so a re-run does not move the record of when the person first
+  // agreed; the stamp is unconditional because it authorizes THIS becoming.
   await db
     .update(mailboxes)
-    .set({ status: "connected", disabledReason: null, takeoverAuthorizedAt: input.now })
-    .where(and(eq(mailboxes.id, row.id), eq(mailboxes.status, "disabled")));
+    .set({
+      disabledReason: null,
+      organizeConsentedAt: sql`coalesce(${mailboxes.organizeConsentedAt}, ${input.now})`,
+      takeoverAuthorizedAt: input.now,
+    })
+    .where(and(eq(mailboxes.id, row.id), ne(mailboxes.status, "disabled")));
 
   return { outcome: "authorized", previousReason: row.disabledReason, mailboxId: row.id };
 }
@@ -182,25 +202,33 @@ export async function requestOrganizerTakeover(
       id: mailboxes.id,
       status: mailboxes.status,
       disabledReason: mailboxes.disabledReason,
+      // Mail 0083 — the precondition moved off `status`. A demoted install is now `connected`
+      // with `organizer_role = 'reader'`, so a `status = 'disabled'` test matches nothing this
+      // build writes; and a mailbox NOBODY has consented to organize is the second state this
+      // ceremony serves, which `status` could never express at all.
+      organizerRole: mailboxes.organizerRole,
+      organizeConsentedAt: mailboxes.organizeConsentedAt,
     })
     .from(mailboxes)
     .where(eq(mailboxes.id, input.mailboxId))
     .limit(1);
 
   if (!row) return { outcome: "no_mailbox", previousReason: null, mailboxId: null };
-  if (row.status !== "disabled") {
-    return { outcome: "already_organizing", previousReason: null, mailboxId: row.id };
-  }
-  // Disabled with no reason is a REMOVAL, not a pause — the same discriminator the whole product
-  // uses, and the reason this may not quietly resurrect a mailbox taken off this machine.
-  if (!row.disabledReason) {
+  // The tombstone first, then the role — see the CLI arm above for why that order.
+  if (row.status === "disabled") {
     return { outcome: "removed", previousReason: null, mailboxId: row.id };
+  }
+  if (row.organizerRole !== "reader" && row.organizeConsentedAt !== null) {
+    return { outcome: "already_organizing", previousReason: null, mailboxId: row.id };
   }
 
   await db
     .update(mailboxes)
-    .set({ takeoverAuthorizedAt: input.now })
-    .where(and(eq(mailboxes.id, row.id), eq(mailboxes.status, "disabled")));
+    .set({
+      organizeConsentedAt: sql`coalesce(${mailboxes.organizeConsentedAt}, ${input.now})`,
+      takeoverAuthorizedAt: input.now,
+    })
+    .where(and(eq(mailboxes.id, row.id), ne(mailboxes.status, "disabled")));
 
   return { outcome: "authorized", previousReason: row.disabledReason, mailboxId: row.id };
 }
@@ -208,8 +236,8 @@ export async function requestOrganizerTakeover(
 /** What the command says for each outcome. One line each; nothing needs a paragraph. */
 export const TAKEOVER_MESSAGES: Record<TakeoverAuthorizationOutcome, string> = {
   authorized:
-    "Authorized. Start ohmail to organize this mailbox from this machine. " +
-    "If another organizer is still active, it keeps the mailbox and this machine stands down again.",
+    "Authorized. This machine organizes this mailbox on its next pass — no restart. " +
+    "If another organizer is still active, it keeps the mailbox and this machine goes on reading it.",
   already_organizing: "This machine already organizes that mailbox. Nothing to do.",
   removed: "That mailbox was removed from this machine. Add it again rather than authorizing a takeover.",
   no_mailbox: "This machine has no mailbox for that address.",

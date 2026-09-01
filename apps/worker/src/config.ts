@@ -901,6 +901,24 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     buildError: buildIdentityErrorOf(environment, buildVersion),
     organizer: {
       ...(env.TF_ORGANIZER_INSTALL_ID ? { installId: env.TF_ORGANIZER_INSTALL_ID } : {}),
+      // ── HOW THIS DEPLOYMENT NAMES ITSELF IN SOMEBODY'S MAILBOX ────────────────────────────
+      //
+      // `organizer.displayName` has been TYPED since the lease landed and was never read from the
+      // environment, so `leaseSelfFor` fell through to `CLOUD_DISPLAY_NAME` — and **every
+      // self-hosted deployment in the world wrote "ohmail Cloud" into its customers' `ohmail/_meta`
+      // and onto the reader banner of every other install they own.** A person running their own
+      // server was told a service they are not a customer of had taken their mailbox.
+      //
+      // Read here, and DEFAULTED FROM THE ORIGIN rather than left empty: an operator who sets
+      // nothing gets the host they actually deployed (`mail.example.com`), which is both true and
+      // recognisable, instead of a brand name that is false. `deploy/selfhost` sets
+      // `TF_ORGANIZER_DISPLAY_NAME` explicitly from `OHMAIL_ORIGIN` so the value is visible in the
+      // compose file rather than derived silently.
+      //
+      // The value ends up in an RFC822 header and on other people's screens, so it is
+      // header-safe and bounded at the write site (`organizerDisplayName`, mail 0083) — this is a
+      // configuration read, not a sanitiser.
+      ...(organizerDisplayNameFrom(env) ? { displayName: organizerDisplayNameFrom(env)! } : {}),
       ...(env.TF_LEASE_STALE_MS ? { staleAfterMs: optInt(env, "TF_LEASE_STALE_MS", 0) } : {}),
       ...(env.TF_PROFILE_FLUSH_MS ? { profileFlushIntervalMs: optInt(env, "TF_PROFILE_FLUSH_MS", 0) } : {}),
     },
@@ -1107,6 +1125,32 @@ export function loadAiPorts(
  * written under the identity `"unknown"` are indistinguishable — which would make the one
  * genuinely useful line ("who is the leader right now") a coin flip.
  */
+/**
+ * The organizer display name for THIS deployment: the operator's own, or the origin's host.
+ *
+ * Empty and whitespace-only are treated as unset (an operator who exported the variable with no
+ * value meant "use the default", not "call me the empty string"), and CR/LF are stripped here as
+ * well as at the write site, because a configuration value that can inject an RFC822 header is
+ * worth refusing twice.
+ *
+ * Returns `undefined` when neither source has anything, which leaves `CLOUD_DISPLAY_NAME` — the
+ * right answer for the hosted deployment and the only one it is true of.
+ */
+export function organizerDisplayNameFrom(env: NodeJS.ProcessEnv): string | undefined {
+  const explicit = (env.TF_ORGANIZER_DISPLAY_NAME ?? "").replace(/[\r\n]+/g, " ").trim();
+  if (explicit !== "") return explicit.slice(0, 120);
+  const origin = (env.OHMAIL_ORIGIN ?? env.TF_PUBLIC_ORIGIN ?? "").trim();
+  if (origin === "") return undefined;
+  try {
+    const host = new URL(origin).host;
+    return host === "" ? undefined : host.slice(0, 120);
+  } catch {
+    // Not a URL. An operator may have written a bare host, which is exactly what we want anyway.
+    const bare = origin.replace(/[\r\n]+/g, " ").trim();
+    return bare === "" ? undefined : bare.slice(0, 120);
+  }
+}
+
 export function instanceIdFrom(env: NodeJS.ProcessEnv = process.env): string {
   const railway = env.RAILWAY_REPLICA_ID ?? env.RAILWAY_DEPLOYMENT_ID;
   if (railway && railway.trim() !== "") return railway.trim().slice(0, 64);

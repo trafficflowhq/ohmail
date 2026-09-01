@@ -105,17 +105,25 @@ export interface LeasePeekCapableAdapter {
  * organizing this mailbox" and "Cloud stopped organizing this mailbox" the same value by the time
  * anything downstream saw it — and those two want opposite actions offered to the user.
  *
- * ── IT IS CORRECT WHEN PRODUCED AND STALE ONE MINUTE LATER, SO IT IS NEVER PERSISTED ───────
+ * ── IT IS PERSISTED SINCE MAIL 0083, AND THIS BLOCK USED TO ARGUE THAT IT MUST NOT BE ──────
  *
- * A mailbox that has been stood down is `status='disabled'`, and `loadEnabledMailboxes` filters
- * those out — so nothing re-reads its lease, ever, until a human asks for it. A `held` written to
- * a column would therefore be frozen at the instant of the stand-down and would keep saying
- * "somebody is organizing this" long after they stopped. That is the same half-truth
- * `mailbox-errors.ts` removes when it makes every writer clear the statements its write
- * falsifies, and the fix there does not transfer: there is no later writer to clear this one.
+ * The argument that stood here was: a mailbox that has been stood down is `status='disabled'`,
+ * `loadEnabledMailboxes` filters those out, so nothing re-reads its lease until a human asks —
+ * and a `held` written to a column would be frozen at the instant of the stand-down, still saying
+ * "somebody is organizing this" long after they stopped. The conclusion followed from a premise
+ * that is now false. **A loser is a READER: connected, on the roster, cycling.** So there IS a
+ * later writer — every reader cycle refreshes `mailboxes.organizer_state` (and the three holder
+ * columns beside it) from a `readLeasePeek`, the APPEND-less read, so the stored value is never
+ * older than one poll interval.
  *
- * So it is carried, logged and returned, and the durable answer to "who holds this mailbox now"
- * is obtained by LOOKING AGAIN at the moment somebody asks — `readLeasePeek`.
+ * It is amended here rather than deleted because the RULE it derived from still governs and is
+ * the thing worth keeping: a column may hold a fact that goes stale only if something is
+ * committed to refreshing it. What changed is that something now is. The mailbox with no writer
+ * for these columns is a tombstone, which nothing displays.
+ *
+ * The value is still carried, logged and returned as well — the ROW is what every banner reads,
+ * and `readLeasePeek` remains the live answer for the one surface that must not be a poll behind
+ * (the web connect step's "already organized elsewhere?" peek).
  */
 export type LeaseOccupancyState = "held" | "stopped";
 
@@ -272,6 +280,15 @@ export class OrganizerStandDownError extends Error {
   readonly reason: MailboxDisabledReason;
   readonly state: LeaseOccupancyState;
   readonly heldBy: string | null;
+  /**
+   * THE WINNING CLAIM ITSELF (mail 0083) — beside `heldBy`, which is only its display name.
+   *
+   * `heldBy` was enough while a stand-down wrote one column; the demotion now writes four, and
+   * the other three (`kind`, `claimedAt`, and the occupancy above) come off the claim. Carried
+   * rather than re-read, because the claim this verdict was reached from is the claim the row
+   * should name — re-reading the folder to populate the columns would let the two disagree.
+   */
+  readonly by: OrganizerClaim | null;
   constructor(outcome: Extract<MailboxLeaseOutcome, { organize: false }>) {
     super(
       `this organizer no longer holds the mailbox (${outcome.reason}); ` +
@@ -281,6 +298,7 @@ export class OrganizerStandDownError extends Error {
     this.reason = outcome.reason;
     this.state = outcome.state;
     this.heldBy = outcome.by?.displayName ?? null;
+    this.by = outcome.by;
   }
 }
 

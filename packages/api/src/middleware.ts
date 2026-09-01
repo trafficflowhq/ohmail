@@ -3,6 +3,9 @@ import {
   ServiceError, IdempotencyRaceLost, resolveSession, sha256, isAllowedOrigin,
 } from "@trafficflow/services/mail";
 import { silentLogger } from "@trafficflow/core/mail";
+// The reader refusal, from the package that throws it — see the envelope arm below for why it
+// cannot live beside `ServiceError`.
+import { OrganizedElsewhereError, MailboxNotFoundError } from "@trafficflow/db";
 import { csrfTokenFor } from "./csrf.js";
 import { errorResponse, jsonResponse } from "./responses.js";
 import { lookupIdempotent, type StoredIdempotent } from "./idempotency.js";
@@ -388,6 +391,28 @@ export const withErrorEnvelope: Middleware = (next, route) => async (req, deps, 
         hasAccount: Boolean(deps.session?.accountId),
         routeRequiresSession: route.options?.public !== true,
       });
+    }
+    /* -- THE REFUSAL EVERY READER DOOR SHARES (mail 0083) ------------------------------------
+     *
+     * `OrganizedElsewhereError` and `MailboxNotFoundError` are thrown from `@trafficflow/db`,
+     * which cannot import `@trafficflow/services` — the dependency runs the other way, and the
+     * refusal has to live in the db package because eleven service write doors AND the worker
+     * need one spelling of it (`organizer-role.ts`'s header carries the argument).
+     *
+     * They carry the same four fields `ServiceError` does, so this arm is the same call. It is
+     * ABOVE the `ServiceError` arm only because it is the narrower test; nothing depends on the
+     * order. Handled HERE rather than in each route because the alternative is eleven per-route
+     * catches, and the one that gets forgotten turns a 409 the client knows how to render into a
+     * 500 it does not.
+     *
+     * `details` carries `{ by: { kind, name, since } }` so every door composes ONE sentence —
+     * "ohmail Cloud organizes this mailbox, since Tuesday" — instead of eleven.
+     */
+    if (err instanceof OrganizedElsewhereError || err instanceof MailboxNotFoundError) {
+      return errorResponse(
+        err.code, err.httpStatus, err.message,
+        err instanceof OrganizedElsewhereError ? err.details : undefined,
+      );
     }
     if (err instanceof ServiceError) {
       if (err.httpStatus >= 500) {

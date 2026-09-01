@@ -125,6 +125,83 @@ export const mailboxes = pgTable("mailboxes", {
   // or a lapse-then-resubscribe would silently seize a mailbox back from a deliberate local
   // choice (the lease's "No seize-back" rule).
   takeoverAuthorizedAt: timestamp("takeover_authorized_at", { withTimezone: true }),
+  // ── Mail 0083 — THE ORGANIZING ROLE, WHICH IS NOT THE CONNECTION ──
+  //
+  // A row carries two independent facts and `status` used to hold both. `status` is whether
+  // ohmail can REACH this mailbox; this column is whether ohmail ORGANIZES it. The stand-down
+  // encoded the second in the first (`disabled` + `disabledReason`), which was right while the
+  // only two states were "ours" and "not ours at all", and is wrong now that the answer to
+  // "somebody else organizes this" is BE ANOTHER MAIL CLIENT: read it, search it, mark it read,
+  // send from it, and touch nothing else. That install is connected and syncing, so it cannot be
+  // `disabled` — `loadEnabledMailboxes` filters those out and a reader needs the roster to have
+  // a mirror at all.
+  //
+  // NOT NULL with the pre-migration behaviour as its default, which is what makes the deploy
+  // safe in both directions: an un-updated worker binary organizes exactly what it organized
+  // yesterday, and a new binary against a row nobody has touched reads 'organizer'.
+  //
+  // 'reader' IS THE PRE-CONSENT STATE AS WELL AS THE LOST-THE-LEASE ONE, and that is the design
+  // rather than an overload. `POST /mailboxes` creates a consent-less reader, so a fresh connect
+  // builds its mirror at once, creates no `ohmail/*` and moves nothing — there is no
+  // half-applied mailbox because the reader mode IS the pre-consent state. What separates the
+  // two is {@link organizeConsentedAt}, not this column.
+  //
+  // The set is closed by `mailboxes_organizer_role_closed`; members are `ORGANIZER_ROLES`
+  // (organizer-role.ts) and a real-Postgres test reconciles the two.
+  organizerRole: text("organizer_role").notNull().default("organizer"),
+  // WHO holds the lease when we do not — the three columns a banner needs, written from
+  // `StandDownVerdict.by` at the stand-down and refreshed each reader cycle.
+  //
+  // `organizedByKind` is the same closed three as `disabledReason`'s suffix ('cloud' | 'local' |
+  // 'unknown'), behind `mailboxes_organized_by_kind_closed`, for `disabledReason`'s own reason:
+  // it is read by the account's own user and must never be able to hold a string a mail server
+  // chose.
+  //
+  // `organizedByName` is the holder's `X-Ohmail-Display-Name` — A CUSTOMER'S MACHINE NAME. It is
+  // header-safe and capped at `ORGANIZED_BY_NAME_MAX` at the single write site, and it is on the
+  // admin DTO deny-list: staff see the role and the kind, never the name. No CHECK, because free
+  // text closes no set — the bound is at the write site, exactly as `signature`'s is.
+  //
+  // `organizedSince` is the holder's `X-Ohmail-Claimed-At`: when they BECAME the organizer, as
+  // distinct from when they were last seen. The heartbeat is deliberately not persisted — see
+  // {@link organizerState}.
+  organizedByKind: text("organized_by_kind"),
+  organizedByName: text("organized_by_name"),
+  organizedSince: timestamp("organized_since", { withTimezone: true }),
+  /**
+   * The lease's `LeaseOccupancyState` — `'held'` (somebody is renewing) or `'stopped'` (somebody
+   * WAS organizing and nothing has renewed since). NULL is "we have not looked".
+   *
+   * **`apps/worker/src/lease.ts` argued this value must NEVER be persisted, and the premise it
+   * argued from has moved.** Its reason was that a stood-down mailbox left the roster, so nothing
+   * would ever refresh the column and it would keep saying "somebody is organizing this" long
+   * after they stopped. A READER stays connected and cycles, so there is a later writer: every
+   * reader cycle refreshes this from a `peekLease` read — the APPEND-less IO, so looking costs no
+   * claim. The value is therefore never older than one poll interval. The mailbox with no writer
+   * for it is a tombstone, which nothing displays.
+   *
+   * Closed by `mailboxes_organizer_state_closed`.
+   */
+  organizerState: text("organizer_state"),
+  /**
+   * WHEN A HUMAN ASKED THIS INSTALL TO ORGANIZE THIS MAILBOX — the consent event, per mailbox.
+   *
+   * NULL means nobody has. That is the state `POST /mailboxes` now creates and the state a fresh
+   * standalone launch is in: the mirror builds, and not one message moves. It is written by
+   * `MailboxService.organizeHere` (the one ceremony, every door) in the same transaction as
+   * `takeoverAuthorizedAt` and the account's screening window — and, crucially, in the same
+   * transaction as `accountSettings.screeningBaselineAt` while that is still NULL, because
+   * without a baseline there is no cutoff and the ENTIRE backlog goes to the Screener whatever
+   * window the person chose.
+   *
+   * `COALESCE(., now())` on write: consent is the FIRST time, and re-running onboarding must not
+   * move the record of when the person agreed.
+   *
+   * Backfilled by mail 0083 to `created_at` for every connected row, because connecting a
+   * mailbox WAS the consent under the old copy — a record of something that happened, which is
+   * the line 0027 drew when it refused to invent a `takeover_authorized_at`.
+   */
+  organizeConsentedAt: timestamp("organize_consented_at", { withTimezone: true }),
   // ── Mail 0065 — the provider's OWN Junk and Trash folders, as discovered at connect ──
   //
   // Canonical (`/`-delimited) paths, resolved by the worker's connect-time discovery
@@ -467,6 +544,26 @@ export const mailboxes = pgTable("mailboxes", {
     "mailboxes_sync_blocked_reason_closed",
     sql`${t.syncBlockedReason} is null or ${t.syncBlockedReason} in ('lease_unreadable', 'awaiting_credentials', 'at_capacity')`,
   ),
+  // THE THIRD AND FOURTH CLOSED SETS (mail 0083). `organizerRole` has no `is null` arm because
+  // the column is NOT NULL — the set really is two members, and spelling a third state that
+  // cannot exist would invite a reader to handle it. Members are `ORGANIZER_ROLES` and
+  // `ORGANIZER_KINDS` (organizer-role.ts); a real-Postgres test reconciles each against its
+  // constraint the way 0027's and 0029's are reconciled. Declared here to keep the TS schema
+  // honest; both constraints are created by the migration.
+  ckOrganizerRole: check(
+    "mailboxes_organizer_role_closed",
+    sql`${t.organizerRole} in ('organizer', 'reader')`,
+  ),
+  ckOrganizedByKind: check(
+    "mailboxes_organized_by_kind_closed",
+    sql`${t.organizedByKind} is null or ${t.organizedByKind} in ('cloud', 'local', 'unknown')`,
+  ),
+  // THE FIFTH (mail 0083). `organizerState` is the lease's occupancy as a reader cycle last saw
+  // it; NULL is "we have not looked", which is every row until its first cycle.
+  ckOrganizerState: check(
+    "mailboxes_organizer_state_closed",
+    sql`${t.organizerState} is null or ${t.organizerState} in ('held', 'stopped')`,
+  ),
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -496,6 +593,20 @@ export const mailboxFolders = pgTable("mailbox_folders", {
   uidnext: bigint("uidnext", { mode: "bigint" }),
   highestmodseq: bigint("highestmodseq", { mode: "bigint" }),
   deltaToken: text("delta_token"),
+  /**
+   * THE FOLDER'S `EXISTS`, AS THE SELECT REPORTED IT (mail 0083) — the first pull's denominator.
+   *
+   * No truthful total existed anywhere. This table held cursors only, and the adapter read
+   * `mb.exists` off every SELECT and discarded it — so the import progress strip had a numerator
+   * (the mirror's row count) and nothing to divide it by, and the one number ever shown was a
+   * literal multiplier somebody guessed. Remaining is Σ this column over WATCHED folders minus
+   * the mirror count; the rate is the client's own rolling `MirrorGrowth`; the ETA is
+   * remaining/rate, said as "about", and it is gone at `initialImportCompletedAt`.
+   *
+   * Written by every cycle that opens the folder, and NULL means "not yet opened under this
+   * build" — never zero. A reader writes it exactly like an organizer: counting is a read.
+   */
+  serverExists: integer("server_exists"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({ uq: unique().on(t.mailboxId, t.folder) }));
 
@@ -2370,6 +2481,41 @@ export const accountSettings = pgTable("account_settings", {
    * that device (that is what the scope option promised when it was chosen).
    */
   themeFace: text("theme_face"),
+  /**
+   * WHEN THIS ACCOUNT FINISHED (OR CANCELLED) THE FIRST-RUN FLOW — mail 0083.
+   *
+   * Onboarding state is DERIVED from truth-conditions and never from a step counter: the current
+   * step is the first UNMET of consent → screening baseline → import complete → AI answered →
+   * this. Every other condition already has a witness somewhere in the schema; this is the one
+   * that has none, because "the person is done with the flow" is not a fact about their mail.
+   *
+   * **CANCEL AND FINISH BOTH STAMP IT**, and that is the point rather than a shortcut: cancel
+   * means "stop asking me", and a cancel that left the column NULL would re-open the flow on the
+   * next launch for ever. Re-running from Settings re-renders pre-filled from truth and
+   * re-stamps, so the value is the LAST completion and not the first.
+   *
+   * Read as `IS NOT NULL`, like every other stamp on this row bar {@link screeningBaselineAt}.
+   */
+  onboardingCompletedAt: timestamp("onboarding_completed_at", { withTimezone: true }),
+  /**
+   * SCREENING SCOPE — `'window'` (the default) or `'all_time'`. Mail 0083, CHECK in the migration.
+   *
+   * **"All time" is a MODE, not a window value, and there was no way to spell it before.**
+   * `dormancyDays` is bounded 1–365 at the write site and NULL means the product default, so no
+   * number in that column says "no cutoff at all" — the onboarding step offers 90 · 180 · 365 ·
+   * all time, and the fourth option needed somewhere to live.
+   *
+   * `'all_time'` ⇒ NO cutoff and NO dormancy, in BOTH readers: `resolveScreeningCutoff` on the
+   * server and `consent-cutline.ts` on the client, held in step by a parity test. Everything is
+   * screened, nothing is filed to History unscreened, and no sender ever ages out of the queue
+   * unanswered.
+   *
+   * NOT NULL with the default stored, unlike {@link dormancyDays} beside it, and the difference
+   * is that this column has no device-local default to defer to: 'window' is what every existing
+   * account is on and what the absent value means, so storing it costs nothing and removes a
+   * three-valued read from two cutline implementations.
+   */
+  screeningScope: text("screening_scope").notNull().default("window"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });

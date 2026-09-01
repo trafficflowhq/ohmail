@@ -368,6 +368,43 @@ export interface PlanDeps {
   repo: RepoPort;
   accountId: string;
   mailboxId: string;
+  /**
+   * THIS INSTALL IS A READER OF THIS MAILBOX — another mail client, not its organizer.
+   *
+   * **REQUIRED, and it is the first field on this interface for the same reason it is required:
+   * for this input the absent-config default IS the dangerous branch.** An omitted `readerMode`
+   * routes as an ORGANIZER, and an organizer that is not the organizer means two installs moving
+   * one person's mail — the single invariant the lease exists to hold. `trustedAuthservIds` states
+   * the same rule for its own gate and shipped inert at all five production sites while it was
+   * optional; this one cannot be allowed to.
+   *
+   * The type is what a compiler can enforce, and almost no test file here is typechecked, so the
+   * REAL guard is a census over product source that asserts the EXACT SET of compositions passing
+   * the field — a new one goes red until it is named on purpose. And there is exactly ONE place in
+   * the tree that decides this value — `sync.ts#syncCycleWithin`, from `SyncDeps.role` — so `role`
+   * and `readerMode` cannot drift into disagreeing about the same cycle.
+   *
+   * ── WHAT THE MODE DOES ────────────────────────────────────────────────────────────────────
+   *
+   * A reader adopts the mailbox instead of deciding about it. Concretely, and each clause is
+   * pinned by a test:
+   *
+   *  · a NEW message keeps `change.locator.folder` — where the server already had it — and is
+   *    committed with {@link NewPlan.passive}, i.e. `last_set_by: 'external'`. That is what the
+   *    placement IS: the standing state of the user's own mailbox, made by whoever organizes it.
+   *  · NO rules are read, NO known-sender set is read, NO classifier is constructed, NO credit is
+   *    debited, NO `routing_decisions` row is written and NO learning signal is recorded. Not
+   *    "the classifier happens to be undefined" — the branch is never entered, which is why the
+   *    proof for this is a test that INJECTS a classifier double and asserts silence. A reader's
+   *    `classifier: undefined` would otherwise be byte-identical to "AI is off".
+   *  · an EXISTING message never yields a `move`. The reconciler's answer is forced to
+   *    `adopt_external` (or `none`), which is exactly a reader following the organizer's hand.
+   *
+   * `passive` and `external` are not new machinery invented for this: every retro pass already
+   * requires `last_set_by = 'us'`, so a reader's rows are out of every mover's reach by DATA as
+   * well as by the branch that put them there. Two independent gates, either sufficient.
+   */
+  readerMode: boolean;
   classifier?: ClassifierPort;
   routing?: RoutingPort;
   /** The AI spend gate. Absent ⇒ unmetered; see {@link CreditGate}. */
@@ -856,6 +893,42 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
     // `folder_state` lands `reconciled`, and no IMAP move is ever issued. `commitChange` writes the
     // row `last_set_by: 'external'` — see {@link NewPlan.passive} — which is what keeps every retro
     // pass out as well, since all of them require `'us'`.
+    /* ── A READER ADOPTS. IT DOES NOT DECIDE ──────────────────────────────────────────────
+     *
+     * See {@link PlanDeps.readerMode}. This arm sits with `change.passive` above because it is
+     * the SAME plan — arrival folder kept, `last_set_by: 'external'`, no decision recorded — and
+     * it sits ABOVE the `listRules` / `knownSenders` reads for the same cost reason plus a
+     * stronger one: a reader must not merely discard the gate's verdict, it must never compute
+     * one. Everything below this line is the organizer's judgement about somebody's mail —
+     * rules, the known-sender set, the AI residue, the money gate, `routing_decisions`, the
+     * graduation lookup — and a reader is entitled to none of it.
+     *
+     * `sensitivity` IS still computed, and that is deliberate. It is pure, local, buys nothing
+     * and reads nothing; it lands on the message row, where `no_ai` is a standing property of
+     * the mail rather than a routing decision; and a reader that stored it as "not sensitive"
+     * would hand its own AI-draft door a wrong answer about mail it must never send to a model.
+     * What it may NOT do here is what it does below — force `INBOX` — because that is a MOVE.
+     *
+     * `seen` is the SERVER's flag, like the passive arm's: the mailbox is the master, and a
+     * reader claiming mail is unread would mark somebody's archive unread in every other client.
+     */
+    if (deps.readerMode === true) {
+      return {
+        outcome: "new",
+        new: {
+          normalized,
+          dedupKey: key,
+          sensitivity,
+          arrivalLocator,
+          desired: arrivalLocator.folder,
+          snippet: bodySnippet(normalized),
+          seen: change.seen ?? false,
+          authVerdict,
+          passive: true,
+        },
+      };
+    }
+
     if (change.passive) {
       return {
         outcome: "new",
@@ -1213,8 +1286,16 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
   // which requires exactly one fingerprint match, then finds several and refuses for ever. That is
   // why these two changes are one change, and why keeping this pending on its own would have been
   // strictly worse than the duplicate it was trying to fix.
+  //
+  // NEVER FOR A READER, and this is not the same statement as the action override below. A
+  // demoted organizer's rows survive demotion — that is the design, the mirror is kept — so a
+  // reader really can meet a message whose row still says "a move of ours is outstanding", and
+  // `own_move` really is reachable on its first cycles. What it must not do is inherit the
+  // OBLIGATION: this field is "a source expunge is still owed by us", and a reader owes no IMAP
+  // write but `setFlags`. Leaving it set would carry a conflict flag and a withheld-move locator
+  // across the demotion, for an expunge nothing may ever perform.
   const unexpungedSource =
-    outcome.kind === "own_move" && evidence.kind === "appearance_only"
+    deps.readerMode !== true && outcome.kind === "own_move" && evidence.kind === "appearance_only"
       ? existingMsg.nativeLocator
       : undefined;
 
@@ -1222,9 +1303,35 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
   // alone desired and observed agree — and that answer is exactly the premature completion above.
   // Re-asserting the pending `move` is what puts the retry, and with it the source expunge, back
   // into the reconcile pass's queue.
-  const action: ReconcileAction = unexpungedSource
-    ? { type: "move", to: state.desiredFolder }
-    : reconcile(state, change.locator.folder, evidence);
+  /* ── A READER'S RECONCILER NEVER ANSWERS `move` ────────────────────────────────────────────
+   *
+   * See {@link PlanDeps.readerMode}. The organizer's reconciler exists to carry OUR intent to the
+   * server; a reader has no intent to carry, so the only truthful answer about a message that has
+   * moved is "it moved" — `adopt_external`, which writes `desired = observed = where it is` with
+   * `last_set_by: 'external'` and records the audit row. That is precisely a mail client noticing
+   * its user's folders changed, and it is why the reader mode needed no new commit path.
+   *
+   * Two arms of the organizer's version are refused here rather than merely not taken:
+   *
+   *  · `unexpungedSource` re-asserts a pending move so the source expunge is retried. A reader
+   *    issues no moves, so it has no source to expunge, and re-asserting one would put a `move`
+   *    into `folder_state` for the reconcile pass to execute the moment this install were ever
+   *    promoted — a mail move nobody decided, executed by an organizer that was a reader when the
+   *    decision was made.
+   *  · `reconcile`'s own `move` fall-through, which fires when the message is somewhere other
+   *    than `desired_folder` and adoption is not evidenced. For a reader that is not a divergence
+   *    to repair — it is the mailbox, which is the master.
+   *
+   * `none` when the message is where the row already says it is, so a reader's steady state
+   * writes nothing at all.
+   */
+  const action: ReconcileAction = deps.readerMode === true
+    ? (change.locator.folder === state.desiredFolder
+      ? { type: "none" }
+      : { type: "adopt_external", newDesired: change.locator.folder })
+    : unexpungedSource
+      ? { type: "move", to: state.desiredFolder }
+      : reconcile(state, change.locator.folder, evidence);
 
   return {
     outcome: outcome.kind,

@@ -59,6 +59,19 @@ export {
   type StandDownSendsInput, type StandDownSendsResult, type RemovedMailboxSendsInput,
 } from "./stand-down-sends.js";
 
+// The ONE spelling of "somebody else organizes this mailbox" (mail 0083) — the same argument as
+// the two lines above: the worker may not import services at runtime, the sidecar's gate and the
+// hosted gate both write the holder columns, and eleven service write doors share one refusal.
+// Reaches `schema-mail.js` and `change-log.js` alone, so the closure rule holds.
+export {
+  assertOrganizerRole, assertAccountOrganizes, readOrganizerRole, organizerDisplayName,
+  OrganizedElsewhereError, MailboxNotFoundError,
+  ORGANIZER_ROLES, ORGANIZER_KINDS, ORGANIZER_STATES, ORGANIZED_BY_NAME_MAX,
+  isOrganizerRole, isOrganizerKind, isOrganizerState,
+  type OrganizerRole, type OrganizerKind, type OrganizerState,
+  type OrganizedBy, type OrganizerRoleRow,
+} from "./organizer-role.js";
+
 export {
   allocateSeq, allocateSeqRange, recordChange, recordChanges, minRetainedSeq, seqBounds,
   CHANGE_LOG_CHANNEL, changeWakePayload, parseChangeWake,

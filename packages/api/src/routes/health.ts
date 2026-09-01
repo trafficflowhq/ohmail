@@ -702,6 +702,34 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // Deploy order: migration → API. A CHECK marker as well, 0053's reason: the column closes a
   // set over free text. See `account_settings_theme_face_supported` below.
   ["account_settings", "theme_face"],
+  // mail 0083_organizer_role — THE ORGANIZING ROLE, SPLIT OFF THE CONNECTION, plus the
+  // onboarding state and the first-pull denominator. FIVE markers for a nine-column migration,
+  // on this list's standing rule: probe the column a QUERY actually reads, once per table facet.
+  // A partial 0083 is not reachable — one migration, one transaction — so five probes and nine
+  // probes detect exactly the same fault, and the five name the five decisions:
+  //
+  //  · `mailboxes.organizer_role` is read by the GATE, by `loadEnabledMailboxes`' roster, by
+  //    every service write door's refusal and by `MailboxDTO`. It is also the column whose
+  //    absence is worst: an API ahead of this migration 42703s the mailbox panel and the connect
+  //    flow (`MailboxService` selects whole rows), and a WORKER ahead of it cannot tell an
+  //    organizer from a reader at all — which is the one state that has two organizers in it.
+  //  · `mailboxes.organize_consented_at` is the ceremony's own record and the first unmet
+  //    condition onboarding resolves. Its own marker rather than riding on the role's, because
+  //    the two answer different questions and a future migration may move one without the other.
+  //  · both `account_settings` columns, on 0053's whole-row-select argument verbatim:
+  //    `consentSettings` does `select().from(accountSettings)`, so an API deployed ahead of the
+  //    migration 42703s `GET /consent` AND `PATCH /consent/settings` — the entire consent
+  //    surface, not merely the window mode.
+  //  · `mailbox_folders.server_exists`, written by every cycle's SELECT and read by the import
+  //    strip's denominator. `buildCursor` selects whole rows of this table.
+  //
+  // Deploy order is migration → API → worker, 0027's exact reasoning: the API selects whole rows
+  // and the WORKER is the process that starts writing the role. Four CHECK markers below.
+  ["mailboxes", "organizer_role"],
+  ["mailboxes", "organize_consented_at"],
+  ["account_settings", "onboarding_completed_at"],
+  ["account_settings", "screening_scope"],
+  ["mailbox_folders", "server_exists"],
   // mail 0054_auto_unsubscribe_optout — the switch for auto-unsubscribe on screen-out, stored as
   // the opt-out. The fifth `account_settings` marker, on the whole-row-select argument every one
   // above it makes: `consentSettings` does `select().from(accountSettings)`, so an API deployed
@@ -1083,6 +1111,29 @@ export const SCHEMA_CHECK_MARKERS: ReadonlyArray<string> = [
   // work" leaves no error in any log. The service validates the same set with a 400, but that
   // is code and can regress; the CHECK holds for a hand-run UPDATE and any importer.
   "account_settings_theme_face_supported",
+  // mail 0083_organizer_role — the FOUR closed sets this migration adds. Listed on 0027's rule
+  // (the column and the CHECK fail DIFFERENTLY, and only one of them is loud), and two of them
+  // have the privacy edge that rule was written for:
+  //
+  //  · `mailboxes_organizer_role_closed` is the strongest constraint in this list, because the
+  //    state it makes unrepresentable is TWO ORGANIZERS ON ONE MAILBOX. A value outside the set
+  //    is read as `reader` by `readOrganizerRole` (which fails safe), but nothing stops a
+  //    hand-run UPDATE or an importer writing one, and the CHECK is the layer that holds when
+  //    the code does not.
+  //  · `mailboxes_organized_by_kind_closed` closes the same three kinds `disabled_reason` does,
+  //    for `disabled_reason`'s own reason: the value is derived from ANOTHER INSTALL'S CLAIM —
+  //    a header a foreign writer chose — and it is read by the account's own user. The write
+  //    site is allowlisted; the constraint is the half that survives a call site nobody has
+  //    written yet. (`organized_by_name` deliberately has no CHECK: free text closes no set, and
+  //    its bound is `ORGANIZED_BY_NAME_MAX` at the write site, `signature`'s exact rule.)
+  //  · `mailboxes_organizer_state_closed` and `account_settings_screening_scope_closed` are
+  //    0053's silent-degradation shape: a value outside either set renders as "we have not
+  //    looked" and as the default window respectively — a setting that simply does not work,
+  //    with no error in any log and nothing to grep for.
+  "mailboxes_organizer_role_closed",
+  "mailboxes_organized_by_kind_closed",
+  "mailboxes_organizer_state_closed",
+  "account_settings_screening_scope_closed",
   // mail 0063_smtp_size_probe_stamp — the closed set behind `mailboxes.smtp_size_probe_code`.
   // Listed on 0027's rule (the column and the CHECK fail DIFFERENTLY, and only one of them is
   // loud), and its origin is the sharpest on this list: the value stored there is derived from an
@@ -1582,7 +1633,12 @@ export const MAIL_EXPECTED_MARKERS =
  * window its completion check looks back over). Two markers for a two-column migration, as
  * `0078_inbound_quiet` above. They are columns on `mailboxes`, and `MailboxService` selects whole
  * rows, so an API ahead of them 42703s the mailbox list rather than only the operator pass. It is
- * the newest entry, so it is also the tag below.
+ * the newest entry.
+ *
+ * `0083_organizer_role` is probed as FIVE columns and FOUR CHECKs — see both lists' own entries
+ * for why five and not nine. It is the newest entry, so it is also the tag below, and the object
+ * `health.test.ts` names as its proof is `mailboxes_organizer_role_closed`: the CHECK rather than
+ * the column, 0082's rule, because the constraint is the stronger probe of the two.
  *
  * **THE FIRST VERSION OF THIS BUMPED THE TAG AND ADDED NO MARKER, on the stated ground that "the
  * census probes COLUMNS". That ground is false and the mistake is recorded rather than quietly
@@ -1596,7 +1652,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0082_theme_face";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0083_organizer_role";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */

@@ -867,12 +867,25 @@ export const mailboxes = {
    * Ask Cloud to organize a mailbox it stood down from.
    *
    * It authorizes ONE attempt and does not win anything: the worker reads the claim on its next
-   * pass and decides. If another install is still renewing and outranks us, this side stands back
-   * down and the authorization is spent with it. Step-up-gated — it decides who moves somebody's
-   * mail.
+   * pass and decides. If another install is still renewing and outranks us, this side stays a
+   * reader and the authorization is spent with it. Step-up-gated — it decides who moves somebody's
+   * mail, and the body may carry a mailbox password.
+   *
+   * RENAMED from `takeover`. The old name was true of the only case that existed — wresting a
+   * mailbox back from another install — and false of the case that is now the common one: the
+   * FIRST consent, where there is nobody to take it over from. Both halves are one ceremony and
+   * one route.
+   *
+   * `imap.pass` re-proves the login before anything is written, for the claim-back whose stored
+   * password the provider has since invalidated; `screening` carries the onboarding window, which
+   * must ride the same transaction as the consent because the window is measured from a baseline
+   * the consent is what writes.
    */
-  takeover: (id: string) =>
-    api<MailboxTakeover>(`/mailboxes/${id}/takeover`, { method: "POST", body: {} }),
+  organize: (id: string, body: {
+    imap?: { pass: string };
+    screening?: { dormancyDays?: number; scope?: "window" | "all_time" };
+  } = {}) =>
+    api<MailboxTakeover>(`/mailboxes/${id}/organize`, { method: "POST", body }),
 
   /**
    * BEGIN the Microsoft consent ceremony. Returns the URL to navigate to at TOP LEVEL.

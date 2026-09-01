@@ -810,7 +810,7 @@ export function MailboxSection() {
   const confirmTakeover = useCallback(async (id: string): Promise<void> => {
     setError(null);
     try {
-      const result = await mailboxApi.takeover(id);
+      const result = await mailboxApi.organize(id);
       if (!alive.current) return;
       setOrganizer(null);
       setNotice(
@@ -1778,7 +1778,7 @@ export function MailboxSection() {
               {/* ── WHY, AND THE ONE ACTION THERE IS ─────────────────────────────────────────
                   This block used to end at the two sentences and say, in a comment, that there
                   must never be a takeover control here because nothing in the Cloud tier wrote
-                  `takeover_authorized_at`. That is no longer true — `MailboxService.takeover`
+                  `takeover_authorized_at`. That is no longer true — `MailboxService.organizeHere`
                   does — so the copy that told people to go and delete a message out of their own
                   `ohmail/_meta` folder by hand has gone with it.
 

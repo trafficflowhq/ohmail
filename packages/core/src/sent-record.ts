@@ -149,7 +149,17 @@ export async function recordSentMessage(
   // absence is the guarantee, not an omission. `ownAuthored` returns before every one of them is
   // read, so passing them would be describing a code path that cannot execute; leaving them out
   // means a future edit that moves that early return also breaks the build here.
-  const plan = await planChange(change, { repo, accountId, mailboxId });
+  //
+  // `readerMode: false` IS TYPED, and it is the one required field here whose value is an
+  // argument rather than a fact about this call site. A READER may send — sending is one of the
+  // four things another mail client does, and a reader's send appends to Sent exactly as an
+  // organizer's does — so this function runs on both sides of the role. It says `false` because
+  // the reader arm and the `ownAuthored` arm want the SAME plan (arrival folder kept, nothing
+  // decided, no money, no routing row) and `ownAuthored` reaches it FIRST, above sensitivity and
+  // above every read. Typing `true` here would route this call through a second arm that produces
+  // the same result by a longer path, and would then quietly diverge the day either arm changes.
+  // `false` keeps one answer: the Sent projection is the same program whoever organizes.
+  const plan = await planChange(change, { repo, accountId, mailboxId, readerMode: false });
   return deps.withTx((txRepo) =>
     commitChange(plan, { repo: txRepo, routing: txRepo, accountId, mailboxId, storageCap: deps.storageCap }),
   );

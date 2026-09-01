@@ -234,9 +234,40 @@ export const DEFAULT_DORMANCY_DAYS = 60;
  * and any later reader must not drift apart, and the arithmetic belongs on one side of the seam —
  * `PlanDeps.screeningCutoff` takes a resolved instant precisely so the engine never repeats it.
  */
+/**
+ * SCREENING SCOPE — `account_settings.screening_scope` (mail 0083).
+ *
+ * `'window'` is the product default and everything below it. `'all_time'` is a MODE and not a
+ * window value, which is the whole reason it needed a column: `dormancy_days` is bounded 1-365
+ * at the write site and NULL means the default, so NO number in that column spells "no cutoff".
+ *
+ * It is here, beside {@link DEFAULT_DORMANCY_DAYS}, for that constant's stated reason — the rule
+ * has three implementations (this resolver, the server's `consent-cutline.ts`, the client
+ * engine's own copy) and a mode written out three times is a mode that will eventually be three
+ * different modes.
+ */
+export type ScreeningScope = "window" | "all_time";
+
 export function resolveScreeningCutoff(
   baselineAt: Date | null | undefined, dormancyDays: number | null | undefined,
+  scope?: ScreeningScope | string | null,
 ): Date | undefined {
+  /* -- "ALL TIME" IS NO CUTOFF, AND IT IS THE FIRST TEST FOR A REASON (mail 0083) ------------
+   *
+   * The person asked for everything to be screened, so nothing is backlog: the gate holds every
+   * unruled sender's mail whatever its date, which is precisely what `undefined` already means
+   * here and has meant since mail 0056. So the mode needs no new branch downstream — it selects
+   * the behaviour the absent-baseline case already has, on purpose instead of by accident.
+   *
+   * ABOVE the baseline test, so `all_time` wins even for an account that HAS a baseline. The
+   * other order would make the mode silently inert for every account that has ever screened
+   * anything, which is every account the switch is offered to.
+   *
+   * Anything that is not exactly `'all_time'` is the window — an unrecognised stored value reads
+   * as the default rather than as the wider mode, which is the direction a bad value must fail
+   * in: screening everything is a lot of moved mail to undo by hand.
+   */
+  if (scope === "all_time") return undefined;
   if (!(baselineAt instanceof Date)) return undefined;
   const base = baselineAt.getTime();
   if (!Number.isFinite(base)) return undefined;
