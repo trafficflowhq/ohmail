@@ -893,27 +893,48 @@ jobs:
           # Asserted by RUNNING the launcher's environment, not by matching text in it. A grep for
           # `^export GDK_BACKEND=` is blind to the same assignment indented, wrapped in a
           # conditional, or spelled as a bare assignment exported later — all valid shell, all
-          # still forcing the backend. Sourcing the hook and reading the variable answers the
-          # question the check is actually asking. APPDIR is supplied so the hook does not try to
-          # locate itself, and OHMAIL_SYSTEM_WEBKIT is explicitly unset so the escape branch
-          # cannot exec out of the subshell.
+          # still forcing the backend.
+          #
+          # The probe reports the sourcing STATUS as well as the value, because they are different
+          # questions and only one of them was being asked: with the status discarded, a hook with
+          # a syntax error sources to nothing, the `printf` after it still runs, and "could not
+          # execute the hook" arrives looking exactly like "the hook left the variable alone".
+          #
           # `set +eu` inside the subshell, and APPDIR exported as its own statement rather than as
           # an assignment prefix on `.`. Both are load-bearing: the hook reads `$XDG_DATA_DIRS`,
           # which `-u` turns into a fatal error where it happens to be unset, and the prefix form
           # left the subshell dying before it could print — which under `set -e` outside took the
           # whole step down with an empty message. Found by running it.
-          BACKEND="$(
-            set +eu
-            unset GDK_BACKEND OHMAIL_SYSTEM_WEBKIT
-            export APPDIR="$PWD/squashfs-root"
-            . "$HOOK" >/dev/null 2>&1
-            printf '%s' "${GDK_BACKEND-<unset>}"
-          )" || true
-          echo "GDK_BACKEND after sourcing the launcher hook: $BACKEND"
-          if [ "$BACKEND" != "<unset>" ]; then
-            echo "the launcher forces a display backend: GDK_BACKEND=$BACKEND" >&2
-            exit 1
-          fi
+          probe_backend() {
+            (
+              set +eu
+              unset GDK_BACKEND OHMAIL_SYSTEM_WEBKIT
+              if [ -n "$1" ]; then export GDK_BACKEND="$1"; fi
+              export APPDIR="$PWD/squashfs-root"
+              . "$HOOK" >/dev/null 2>&1
+              rc=$?
+              printf '%s|%s' "$rc" "${GDK_BACKEND-<unset>}"
+            )
+          }
+          # BOTH DIRECTIONS. Probing only the unset case passes a hook that forces x11 exactly
+          # when the caller HAS chosen — which is the case the whole fix is about, and which the
+          # comment above this check used to claim was covered when it was not.
+          for want in "<unset>" wayland; do
+            case "$want" in
+              "<unset>") got="$(probe_backend "")"      ; how="with no backend chosen" ;;
+              *)         got="$(probe_backend "$want")" ; how="with GDK_BACKEND=$want chosen" ;;
+            esac
+            rc="${got%%|*}"; val="${got#*|}"
+            echo "launcher hook $how: status $rc, GDK_BACKEND=$val"
+            if [ "$rc" != 0 ]; then
+              echo "the launcher hook could not be sourced (status '$rc') — this check proved nothing" >&2
+              exit 1
+            fi
+            if [ "$val" != "$want" ]; then
+              echo "the launcher decides the display backend $how: expected $want, got $val" >&2
+              exit 1
+            fi
+          done
 
           # 3. Every library directory the launcher names is THIS
           #    architecture's. The upstream plugin spells the x86_64 triple
@@ -1398,27 +1419,48 @@ jobs:
           # Asserted by RUNNING the launcher's environment, not by matching text in it. A grep for
           # `^export GDK_BACKEND=` is blind to the same assignment indented, wrapped in a
           # conditional, or spelled as a bare assignment exported later — all valid shell, all
-          # still forcing the backend. Sourcing the hook and reading the variable answers the
-          # question the check is actually asking. APPDIR is supplied so the hook does not try to
-          # locate itself, and OHMAIL_SYSTEM_WEBKIT is explicitly unset so the escape branch
-          # cannot exec out of the subshell.
+          # still forcing the backend.
+          #
+          # The probe reports the sourcing STATUS as well as the value, because they are different
+          # questions and only one of them was being asked: with the status discarded, a hook with
+          # a syntax error sources to nothing, the `printf` after it still runs, and "could not
+          # execute the hook" arrives looking exactly like "the hook left the variable alone".
+          #
           # `set +eu` inside the subshell, and APPDIR exported as its own statement rather than as
           # an assignment prefix on `.`. Both are load-bearing: the hook reads `$XDG_DATA_DIRS`,
           # which `-u` turns into a fatal error where it happens to be unset, and the prefix form
           # left the subshell dying before it could print — which under `set -e` outside took the
           # whole step down with an empty message. Found by running it.
-          BACKEND="$(
-            set +eu
-            unset GDK_BACKEND OHMAIL_SYSTEM_WEBKIT
-            export APPDIR="$PWD/squashfs-root"
-            . "$HOOK" >/dev/null 2>&1
-            printf '%s' "${GDK_BACKEND-<unset>}"
-          )" || true
-          echo "GDK_BACKEND after sourcing the launcher hook: $BACKEND"
-          if [ "$BACKEND" != "<unset>" ]; then
-            echo "the launcher forces a display backend: GDK_BACKEND=$BACKEND" >&2
-            exit 1
-          fi
+          probe_backend() {
+            (
+              set +eu
+              unset GDK_BACKEND OHMAIL_SYSTEM_WEBKIT
+              if [ -n "$1" ]; then export GDK_BACKEND="$1"; fi
+              export APPDIR="$PWD/squashfs-root"
+              . "$HOOK" >/dev/null 2>&1
+              rc=$?
+              printf '%s|%s' "$rc" "${GDK_BACKEND-<unset>}"
+            )
+          }
+          # BOTH DIRECTIONS. Probing only the unset case passes a hook that forces x11 exactly
+          # when the caller HAS chosen — which is the case the whole fix is about, and which the
+          # comment above this check used to claim was covered when it was not.
+          for want in "<unset>" wayland; do
+            case "$want" in
+              "<unset>") got="$(probe_backend "")"      ; how="with no backend chosen" ;;
+              *)         got="$(probe_backend "$want")" ; how="with GDK_BACKEND=$want chosen" ;;
+            esac
+            rc="${got%%|*}"; val="${got#*|}"
+            echo "launcher hook $how: status $rc, GDK_BACKEND=$val"
+            if [ "$rc" != 0 ]; then
+              echo "the launcher hook could not be sourced (status '$rc') — this check proved nothing" >&2
+              exit 1
+            fi
+            if [ "$val" != "$want" ]; then
+              echo "the launcher decides the display backend $how: expected $want, got $val" >&2
+              exit 1
+            fi
+          done
 
           TRIPLES="$(grep -aoE '[a-z0-9_]+-linux-gnu' "$HOOK" | sort -u || true)"
           echo "library triples named by the launcher: $TRIPLES"
