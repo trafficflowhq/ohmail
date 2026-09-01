@@ -34,6 +34,15 @@ export interface MigrateSummary {
   unchanged: number;    // migrated rules that already existed (idempotent re-run)
   ruleIds: string[];    // ids of all migrated rules for the supplied observations
   rerouted: number;     // messages physically re-routed (0 unless reroute:true)
+  /**
+   * Messages whose re-route was DEFERRED rather than performed: the source locator was stale, so
+   * the desire is persisted and the organizer applies it once the next scan re-finds the message.
+   *
+   * Separate from {@link rerouted} because they are different facts and the difference is what the
+   * user is told. Counting a deferred row as rerouted would report mail as moved that has not
+   * moved; dropping it would report a mailbox as fully migrated while rows are still queued.
+   */
+  deferred: number;
 }
 
 /**
@@ -142,11 +151,12 @@ export class HeyMigrationService {
 
     // ── Opt-in re-route via the reconciler write-path, OUTSIDE the tx (idempotent) ──
     let rerouted = 0;
+    let deferred = 0;
     if (opts.reroute) {
-      rerouted = await this.rerouteToMatchRules(ctx, deduped);
+      ({ moved: rerouted, deferred } = await this.rerouteToMatchRules(ctx, deduped));
     }
 
-    return { created, unchanged, ruleIds, rerouted };
+    return { created, unchanged, ruleIds, rerouted, deferred };
   }
 
   /** Remove ONLY `provenance:'migrated'` rules; emit a `change_log` `rule` `delete` per row. */
@@ -177,10 +187,28 @@ export class HeyMigrationService {
    * but whose desired folder differs. Idempotent: a message already in its destination
    * reconciles to `none` (no adapter move). Runs OUTSIDE any DB tx. Bounded: at most
    * one move per out-of-place matching message.
+   *
+   * ── ONE STALE LOCATOR MAY NOT END THE MIGRATION ─────────────────────────────────────────
+   *
+   * This loop runs AFTER the rules have committed, over every message in the account, on a verb
+   * the user opted into once. Until `applyReconcileAction` learned to defer a gone locator, the
+   * first message whose source UID had moved threw straight out of this method: the rules were in
+   * place, the mail behind that row was never attempted, and — because this pass is the only thing
+   * that persists these desires — the un-attempted rows carried NO durable intent for the
+   * organizer to drain. A provider recycling one folder therefore silently truncated a
+   * mailbox-wide migration, and re-running the verb was the only recovery.
+   *
+   * The seam now persists the desire and reports `deferred`, so the loop continues and every row
+   * it touched is queued. Nothing else here catches: a transport failure or a refused MOVE is not
+   * evidence about the rest of the mailbox either, but it is also not a condition this pass can
+   * make durable on its own, so it still ends the pass rather than being logged away.
    */
-  private async rerouteToMatchRules(ctx: ServiceContext, observations: MigrationObservation[]): Promise<number> {
+  private async rerouteToMatchRules(
+    ctx: ServiceContext,
+    observations: MigrationObservation[],
+  ): Promise<{ moved: number; deferred: number }> {
     const adapter = this.deps.adapter;
-    if (!adapter) return 0;
+    if (!adapter) return { moved: 0, deferred: 0 };
 
     // Build sender/domain → destination lookups (sender wins over domain).
     const bySender = new Map<string, Destination>();
@@ -200,6 +228,7 @@ export class HeyMigrationService {
 
     const repo = makeDrizzleRepo(ctx.db as unknown as Tx);
     let moved = 0;
+    let deferred = 0;
     for (const r of rows) {
       const from = r.fromAddress.toLowerCase();
       const dest = bySender.get(from) ?? byDomain.get(domainOf(from));
@@ -223,16 +252,17 @@ export class HeyMigrationService {
       if (action.type !== "move") continue;
 
       const locator = (r.nativeLocator as NativeLocator | null) ?? { folder: r.observedFolder, ref: "0:0" };
-      await applyReconcileAction(
+      const applied = await applyReconcileAction(
         // mailboxId is unused by the move path (it goes through adapter.move + repo),
         // matching the established ScreenerService/ApprovalService call sites.
         { repo, adapter, accountId: ctx.accountId, mailboxId: "" },
         { messageId: r.messageId, locator, state },
         action,
       );
-      moved++;
+      if (applied.deferred) deferred++;
+      else moved++;
     }
-    return moved;
+    return { moved, deferred };
   }
 }
 

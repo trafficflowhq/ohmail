@@ -992,6 +992,14 @@ export class ScreenerReadService {
       // `rerouted`, never `heldMail`: a row the guard skipped belongs to whoever wrote it, and
       // moving it on IMAP would make the mailbox disagree with the database that just declined
       // to claim it. This is the one place a stale read could still reach the user's server.
+      //
+      // A STALE SOURCE LOCATOR DOES NOT END THIS LOOP, and the verdict does not become an error.
+      // The transaction above has already committed the decision AND `desired_folder` with
+      // `reconcile_status: 'pending'` for every one of these rows, so the physical move is owed by
+      // the organizer whether or not this opportunistic pass lands it. Until `applyReconcileAction`
+      // learned to defer (see its header), one recycled folder threw out of here and the reader was
+      // shown a 500 for a decision that had committed and was converging — the Screener is this
+      // product's front door, and "your press failed" is the one thing that was not true.
       for (const m of rerouted) {
         await applyReconcileAction(
           { repo, adapter, accountId: ctx.accountId, mailboxId: "" },

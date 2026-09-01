@@ -9,6 +9,10 @@ import {
   effectForDestination, evaluateRules, type AuthVerdict, type OhboxPolicy,
 } from "./rules.js";
 import { classifyDedup, type DedupOutcome } from "./dedup.js";
+// The leaf predicate, not `adapters/imap.js`: this module is the model layer and naming the
+// adapter here would pull `imapflow` into the desktop engine — the same reason `epochOfRef` above
+// is hand-rolled. `gone.ts` carries the rule this file's `move` arm implements.
+import { isMessageGone } from "./gone.js";
 import { reconcile, type ReconcileAction } from "./reconciler.js";
 import { resolveThread } from "./threading.js";
 // The ROOT barrel, not `/cloud`: this module runs inside the desktop engine, and `/cloud` is
@@ -48,12 +52,36 @@ export interface ApplyContext {
  * This is the OUTSIDE-transaction move path: the worker's
  * reconcile runner calls it after the short persist transaction has committed,
  * so the IMAP `adapter.move` network call never sits inside the seq/change_log tx.
+ *
+ * ── A GONE SOURCE LOCATOR IS DEFERRED HERE, NEVER THROWN ────────────────────────────────────
+ *
+ * Four call sites reach this function and every one of them is a USER'S DECISION that has already
+ * committed: the Screener's verdict (`screener-service.ts`), an approval (`approval-service.ts`),
+ * an opt-in HEY reroute (`hey-migration.ts`), and the worker's own runner. `adapter.move` refusing
+ * with a gone locator says the source UID moved or its folder was recycled — see `gone.ts` for the
+ * three readings — and it says NOTHING about whether the decision can be carried out. Throwing it
+ * therefore reported a committed decision as a server error, and, at the two call sites that loop,
+ * abandoned every row behind the one that refused.
+ *
+ * So the arm below persists the DESIRE and returns. The row is then exactly what a decision taken
+ * with no adapter injected produces — `desired ≠ observed`, which is the reconciler's queue — and
+ * the organizer applies it on its next cycle, against the locator adoption has by then repointed.
+ *
+ * **It deliberately does NOT re-resolve the locator and move again.** A read may do that; a
+ * MUTATION may not. Re-resolving a UID and then moving what is found under it is the precise
+ * defect `ImapAdapter#assertLocatorEpoch` exists to refuse — the identity of the message now
+ * wearing that UID has not been proved. Re-resolution belongs where identity IS proved: the scan,
+ * which adopts by Message-ID and fingerprint.
+ *
+ * `deferred` is on the return so a caller that COUNTS moves does not count this one. The two
+ * loops need that — reporting a deferred row as rerouted would tell the user mail moved that has
+ * not moved yet.
  */
 export async function applyReconcileAction(
   deps: PipelineDeps,
   ctx: ApplyContext,
   action: ReconcileAction,
-): Promise<{ locator: NativeLocator; state: FolderStateRow }> {
+): Promise<{ locator: NativeLocator; state: FolderStateRow; deferred?: boolean }> {
   const { repo, adapter, accountId } = deps;
   const { messageId, locator, state } = ctx;
 
@@ -68,7 +96,34 @@ export async function applyReconcileAction(
       return { locator, state: next };
     }
     case "move": {
-      const newLocator = await adapter.move(locator, action.to);
+      let newLocator: NativeLocator;
+      try {
+        newLocator = await adapter.move(locator, action.to);
+      } catch (err) {
+        if (!isMessageGone(err)) throw err;
+        // DEFERRED — see this function's header. The desire is persisted so the intent is durable
+        // and queued; `observedFolder` is left at what we last saw, which is what makes the row
+        // unconverged and therefore visible to the reconciler. `lastSetBy: "us"` because this IS
+        // our decision — the same value the success arm two lines down writes.
+        const pending: FolderStateRow = {
+          desiredFolder: action.to,
+          observedFolder: state.observedFolder,
+          lastSetBy: "us",
+        };
+        await repo.upsertFolderState(messageId, pending);
+        await repo.recordAudit(
+          accountId,
+          "move_deferred",
+          {
+            messageId, from: locator.folder, to: action.to,
+            reason: "the message is no longer at the locator this decision was computed against — "
+              + "it moved, or its folder was recreated. The intent stands and the organizer "
+              + "applies it once the next scan re-finds the message by Message-ID.",
+          },
+          null,
+        );
+        return { locator, state: pending, deferred: true };
+      }
       await repo.updateLocator(messageId, newLocator);
       const next: FolderStateRow = {
         desiredFolder: action.to,

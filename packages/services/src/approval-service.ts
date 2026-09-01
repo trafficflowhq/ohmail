@@ -224,6 +224,13 @@ export class ApprovalService {
     // ── Physical IMAP move via the reconciler write-path, OUTSIDE the tx (step 3, idempotent) ──
     // Only when an adapter is injected. The serverless API path has none — the
     // folder_state row is left `pending` and the always-on worker drains it later.
+    //
+    // That last sentence is also the answer to a stale source locator, and it is why
+    // `applyReconcileAction` defers one rather than throwing (see its header): the transaction
+    // above wrote `desired_folder` + `reconcile_status: 'pending'` for this message, so a
+    // deferred move is EXACTLY the adapter-less shape this path already ships and converges on.
+    // Throwing turned it into a 500 over an approval that had committed — and the idempotency
+    // claim stored the 200, so the retry replayed success for a request the user saw fail.
     if (approve && msg && target && this.deps.adapter) {
       const repo = makeDrizzleRepo(ctx.db as unknown as Tx);
       await applyReconcileAction(
