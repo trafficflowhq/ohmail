@@ -344,7 +344,21 @@ function Door({ name, say, onPress }: { name: string; say: string; onPress: () =
     <TapRow
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={name}
+      /**
+       * THE NAME *AND* THE SENTENCE — because an explicit label REPLACES the one React Native would
+       * derive from the child text, and the sentence is not decoration here.
+       *
+       * This carried only the NAME, inherited from the picker row it replaced, and on that row it
+       * was nearly harmless: the note was a short category. On a door the second line is
+       * the whole answer — WHICH MACHINE does the organizing, and what to do next — so a screen
+       * reader announced "Your own computer, button" and dropped "open Settings → Devices there and
+       * scan its code". The desktop door would then take somebody straight to a camera without ever
+       * having said what to point it at.
+       *
+       * One label with both, rather than a `hint`: a hint is spoken after a pause and can be turned
+       * off entirely, and this sentence is not supplementary to the choice — it IS the choice.
+       */
+      accessibilityLabel={`${name}. ${say}`}
       style={{ marginHorizontal: 8, paddingHorizontal: 12, paddingVertical: 12, gap: 3 }}
     >
       <Txt variant="navLabel">{name}</Txt>
