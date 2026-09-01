@@ -254,13 +254,28 @@ export interface JunkSweepCommandPort {
     junkFolder: string | null;
     /**
      * How many of `skipped` were skipped because the SOURCE LOCATOR WAS STALE rather than because
-     * the server refused the move — `JunkSweepResult.deferred`, which carries the full argument.
-     *
-     * The port names it because the RETIREMENT DECISION below is made here and not in the pass: a
-     * deferral is not evidence that the pile is unmovable, and reading it as such consumes the
-     * user's one-time press for a condition the next scan clears on its own.
+     * the server refused the move — THIS WINDOW's count, straight from
+     * `JunkSweepResult.deferred`, which carries the full argument. Reported for the operator, and
+     * deliberately NOT what the retirement decision reads: see {@link deferralsHold}.
      */
     deferred: number;
+    /**
+     * Whether a deferral should still hold the user's press open.
+     *
+     * A SEPARATE FIELD FROM THE COUNT, and the split is the point. Two different things were being
+     * asked of one number and it could not answer both honestly:
+     *
+     *  · the count is per WINDOW, and the retirement decision needs the whole SCAN — the cursor
+     *    moves past a deferred row, so a final window truthfully reports zero while the row it
+     *    deferred is still in the pile (`SweepScanState.deferredSinceTop`);
+     *  · the exemption is BOUNDED (`SWEEP_MAX_DEFERRED_SCANS`), so after three consecutive barren
+     *    scans a deferral must stop holding the press even though the count is still non-zero.
+     *
+     * Folding both into the count meant the number an operator reads and the number the decision
+     * reads had to be the same number, and then one of them was a lie — the log would have said
+     * `deferred: 1` for a window that deferred forty.
+     */
+    deferralsHold: boolean;
     /**
      * TRUE only when this run looked at EVERY remaining candidate (a scan from the top that ran
      * off the end, or a mailbox with no Junk folder to move into). A run that moved nothing
@@ -648,7 +663,7 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
         });
         const left = await deps.junkSweep.remaining();
         const drained = left === 0;
-        // `res.deferred === 0` IS PART OF "STUCK", and it is the difference between retiring a
+        // `!res.deferralsHold` IS PART OF "STUCK", and it is the difference between retiring a
         // command and consuming it. The other three conjuncts together say "a full scan of a
         // non-empty pile moved nothing", which is read as a server that refuses every member —
         // the one reading that licenses throwing the user's press away. A member skipped because
@@ -661,7 +676,7 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
         // asking the person to press again for mail nothing was wrong with. A cycle with any
         // deferral keeps the stamp and re-kicks instead, which terminates for the same reason
         // every other convergence here does: the deferrals shrink as adoption repoints them.
-        const stuck = !drained && res.moved.length === 0 && res.deferred === 0 && res.examinedAll;
+        const stuck = !drained && res.moved.length === 0 && !res.deferralsHold && res.examinedAll;
         if (drained || stuck) {
           await deps.junkSweep.clear(observed);
         } else {
@@ -676,7 +691,7 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
             ? "the account's user pressed the one-time Quarantine→Junk offer; the pile is drained and the command retired"
             : stuck
               ? "a full scan moved nothing — the server refused every member — so the command is retired rather than retried every cycle; the offer returns with what is left"
-              : res.deferred > 0
+              : res.deferralsHold
                 ? "some members are no longer at the locator the mirror holds; the command stands and the mailbox is re-kicked, so the next window sweeps them once adoption has repointed them"
                 : "one bounded window ran; the command stands and the mailbox is re-kicked for the next window",
         });

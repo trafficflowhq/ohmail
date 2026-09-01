@@ -98,7 +98,20 @@ export function adoptSweepWindow(
     deferredCount?: number;
   },
   limit: number,
-): { state: SweepScanState; examinedAll: boolean; deferredSinceTop: boolean; exhaustedDeferrals: boolean } {
+): {
+  state: SweepScanState; examinedAll: boolean; deferredSinceTop: boolean;
+  exhaustedDeferrals: boolean;
+  /**
+   * THE GATE THE CYCLE ACTUALLY READS — the two halves combined here rather than at the call site.
+   *
+   * It was `deferredSinceTop && !exhaustedDeferrals` written out in `index.ts`, and a mutation
+   * proved that spelling unguarded: dropping the bound there left every test green, because the
+   * two halves were each covered on their own and their COMBINATION was covered nowhere. A
+   * conjunction assembled at a call site is a decision with no name and no test; returning it from
+   * the function that computes both halves gives it both.
+   */
+  deferralsHold: boolean;
+} {
   const startedAtTop = state.after === null;
   const movedSinceTop = (startedAtTop ? false : state.movedSinceTop) || window.movedCount > 0;
   const deferredSinceTop =
@@ -116,7 +129,10 @@ export function adoptSweepWindow(
   const next: SweepScanState = ranOffTheEnd
     ? { after: null, movedSinceTop: false, deferredSinceTop: false, deferredScans }
     : { after: window.lastId, movedSinceTop, deferredSinceTop, deferredScans };
-  return { state: next, examinedAll, deferredSinceTop, exhaustedDeferrals };
+  return {
+    state: next, examinedAll, deferredSinceTop, exhaustedDeferrals,
+    deferralsHold: deferredSinceTop && !exhaustedDeferrals,
+  };
 }
 
 export interface JunkSweepCandidate { messageId: string; subject: string; ref: string }

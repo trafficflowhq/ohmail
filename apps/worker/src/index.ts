@@ -1960,7 +1960,8 @@ export async function startWorkerWithLock(
                 // command may retire. Without it, a stale locator nothing will ever repoint keeps
                 // the command queued and the mailbox re-kicked for ever — which is the hole the
                 // retirement rule existed to close, re-opened through a different door.
-                deferred: adopted.deferredSinceTop && !adopted.exhaustedDeferrals ? 1 : 0,
+                deferred: res.deferred,
+                deferralsHold: adopted.deferralsHold,
                 examinedAll: adopted.examinedAll,
               };
             },
