@@ -321,6 +321,9 @@ export function DesktopDevices() {
     void refresh();
   }, [refresh]);
 
+  /** Armed as the shell last said. Gates the background poll — see the effect below. */
+  const armed = host?.enabled === true;
+
   /**
    * KEEP THE OPEN PANE HONEST — re-read host state while this screen is on the display.
    *
@@ -334,8 +337,19 @@ export function DesktopDevices() {
    * A quiet poll, not a subscription, because the shell exposes state by command and the answer
    * is three integers and two strings. `busy` is deliberately NOT set: this must never make a
    * button look pressed or a screen flicker while somebody is reading it.
+   *
+   * **ONLY WHILE ARMED, and that gate is a fix rather than an optimisation.** Every state this
+   * poll exists to catch — the LAN door binding, a firewall opening — happens on an ARMED
+   * install. Polling while host mode is OFF actively destroys information: an arm the shell
+   * refused answers with the CURRENT state (still off) plus that attempt's problem, and that
+   * problem is the only thing on screen explaining why nothing happened. A plain `host_state` a
+   * moment later does not carry it, so an unconditional poll wiped the explanation and left the
+   * stale "Tailscale is ready" probe beside an Enable button that silently does nothing — the
+   * exact silent-retry loop `desktop-devices.test.tsx` already guards. Off is driven by explicit
+   * acts; there is nothing here to discover between them.
    */
   useEffect(() => {
+    if (!armed) return undefined;
     const tick = setInterval(() => {
       void (async () => {
         try {
@@ -348,7 +362,7 @@ export function DesktopDevices() {
       })();
     }, HOST_POLL_MS);
     return () => clearInterval(tick);
-  }, []);
+  }, [armed]);
 
   /** The engine's enumeration of this machine's offerable addresses — read when the LAN option
    *  opens, because the choice must be OFFERED, never typed (a typo'd address is a socket that

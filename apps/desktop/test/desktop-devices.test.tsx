@@ -550,6 +550,31 @@ describe("off-state problems are honored — the ladder is not only the probe's"
     await click(button(enHost.enable!));
     expect(text()).toContain(enHost.guideNotRunning!);
   });
+
+  it("and that problem SURVIVES — no background read may wipe the only explanation on screen", async () => {
+    /**
+     * The regression this exists to stop, caught by review of the change that caused it. A poll
+     * was added so an ARMED pane follows the engine's LAN door; written unconditionally, it also
+     * ran while host mode was OFF, where a plain `host_state` does NOT carry the problem an
+     * arm-refusal answered with. Five seconds after the refusal the sentence vanished, leaving a
+     * stale "Tailscale is ready" beside an Enable button that silently did nothing.
+     *
+     * So the wait here is longer than the poll interval, and the assertion is that nothing moved.
+     */
+    installShell({
+      hostState: OFF,
+      tailscale: RUNNING,
+      armAnswer: { ...OFF, problem: "not-running" },
+      routes: {},
+    });
+    await mount();
+    await click(button(enHost.enable!));
+    expect(text()).toContain(enHost.guideNotRunning!);
+    await act(async () => {
+      await new Promise((done) => setTimeout(done, 6000));
+    });
+    expect(text()).toContain(enHost.guideNotRunning!);
+  }, 20_000);
 });
 
 describe("a live code stays revocable in every armed state", () => {
