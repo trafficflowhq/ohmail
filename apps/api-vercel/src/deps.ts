@@ -778,7 +778,22 @@ function oauthProviderFor(cfg: HostConfig, db: ApiDeps["db"]): MicrosoftTokenPro
     clientId: cfg.msOAuth?.clientId ?? "",
     clientSecret: cfg.msOAuth?.clientSecret ?? "",
     defaultTenant: cfg.msOAuth?.tenant || "common",
-    resolveClient: async () => {
+    resolveClient: async (want) => {
+      /*
+       * THIS HOST HAS ONE DOOR, AND SAYS SO.
+       *
+       * The managed deployment serves the REDIRECT ceremony and does not mount the device-code
+       * routes, so no mailbox here can hold a token from the public registration — and it reads no
+       * `MS_DEVICE_CLIENT_ID`, because a variable nothing here would use is a variable that does
+       * nothing. A `want` of `"public"` therefore means something impossible has happened (a row
+       * carrying a `clientKind` this host never wrote), and the honest answer is to resolve the
+       * confidential registration and let the token client refuse the mismatch by name — which it
+       * does, before any request reaches Microsoft, rather than sending a doomed refresh whose
+       * `invalid_client` would read as a Microsoft outage.
+       *
+       * `kind` is stated rather than left to default for exactly that check's benefit.
+       */
+      void want;
       const resolved = await resolveOAuthProviderConfig({
         tx: db,
         decrypt: (ct, kv) => cfg.keyProvider.decrypt(ct, kv),
@@ -789,6 +804,7 @@ function oauthProviderFor(cfg: HostConfig, db: ApiDeps["db"]): MicrosoftTokenPro
         clientId: resolved.clientId,
         clientSecret: resolved.clientSecret,
         defaultTenant: resolved.tenant || cfg.msOAuth?.tenant || "common",
+        kind: "confidential",
       };
     },
     keyProvider: cfg.keyProvider,

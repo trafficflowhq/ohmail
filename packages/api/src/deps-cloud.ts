@@ -2,7 +2,7 @@ import type {
   AdminDb, AuthService, ProposalsService, BillingPlanePort, EntitlementsService, WaitlistService,
 } from "@trafficflow/services";
 import type { AlertSink, AlertThresholds, MsOAuthBootstrap } from "@trafficflow/db/cloud";
-import type { FetchLike } from "@trafficflow/core";
+import type { FetchLike, MicrosoftDeviceClient } from "@trafficflow/core";
 
 /**
  * THE HOSTED HALF OF THE DEPENDENCY SURFACE, declared where only a hosted build will see it.
@@ -130,6 +130,23 @@ declare module "./deps.js" {
      * `secretSet: boolean` and nothing else.
      */
     msOAuth?: MsOAuthBootstrap;
+    /**
+     * THE PUBLIC CLIENT THE DEVICE-CODE FLOW RUNS AS — a SEPARATE registration, and absent on every
+     * composition that does not mount the device routes.
+     *
+     * It is not a fallback for {@link msOAuth} and must never be resolved from it: a confidential
+     * application's client id is refused outright on the device grant (`unauthorized_client`,
+     * because that grant carries no secret), so an operator who has set up their own confidential
+     * registration has NOT thereby armed this door. There is no secret field, because a public
+     * registration has none and `clientAuthFields` refuses one on that arm.
+     *
+     * ABSENT ⇒ the device door is dark: `GET …/availability` reports `device: false`, and the two
+     * device routes answer 503 with the reason named. That is the state of every hosted deployment,
+     * whose composition mounts neither the routes nor this field — which is why there is no
+     * environment variable for it there. A variable that does nothing is the reassuring
+     * half-sentence that becomes a support question.
+     */
+    msDevice?: MicrosoftDeviceClient;
     /**
      * The BROWSER ORIGIN this deployment's app is served from, for the one route that has to build
      * an absolute redirect the browser will follow (the OAuth bounce). Absent ⇒ it falls back to

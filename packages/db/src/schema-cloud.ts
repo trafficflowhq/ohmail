@@ -783,6 +783,87 @@ export const mailboxOauthCeremonies = pgTable("mailbox_oauth_ceremonies", {
 }));
 
 /**
+ * THE DEVICE-CODE CEREMONY (cloud 0027) — the self-host door's in-flight state.
+ *
+ * A SEPARATE TABLE from `mailbox_oauth_ceremonies`, and the reason is not that the fields differ a
+ * little. It is that the two ceremonies have opposite consumption disciplines and one column that
+ * cannot be shared:
+ *
+ *  · The redirect ceremony is spent by ONE request. Its `code_verifier_enc` is NOT NULL, and a
+ *    device ceremony has no PKCE verifier to put there — the device grant has no redirect and no
+ *    authorization code, so there is nothing for a verifier to bind (RFC 8628 has no PKCE arm).
+ *    Sharing the table would mean either dropping that NOT NULL — weakening the redirect flow's
+ *    own invariant for a feature that does not use the column — or storing a dummy verifier, which
+ *    is a lie in the one place a reader most needs the truth.
+ *  · The device ceremony is READ REPEATEDLY and consumed once. A person is walking to a browser;
+ *    this row is polled every few seconds for up to fifteen minutes and must survive every one of
+ *    those reads. Its single-use write happens only on a TERMINAL verdict. Two disciplines in one
+ *    table is one `WHERE` clause away from the poll consuming the ceremony it is polling for.
+ *
+ * ── WHAT IS SECRET HERE, AND WHAT IS MERELY ON SCREEN ─────────────────────────────────────
+ *
+ * `device_code_enc` is the bearer credential that redeems the grant. It is a KEK envelope for the
+ * same reason `mailbox_credentials.secret_enc` is: this row is the one place a read-only injection
+ * could stand between the ceremony and somebody's mailbox. It is never rendered and never logged.
+ *
+ * `user_code` and `verification_uri` are the two values the person is SHOWN. They are stored in
+ * clear, deliberately, and storing them adds no exposure the start response did not already have —
+ * what it buys is that a poll can re-supply them, so reloading the settings page does not strand a
+ * live grant the operator can no longer complete.
+ *
+ * ── `poll_interval_ms` AND `last_polled_at` ARE THE SHARED CLIENT'S PROTECTION ────────────
+ *
+ * RFC 8628 §3.5 requires the interval to increase by five seconds on every `slow_down`,
+ * CUMULATIVELY. Across a stateless poll route that arithmetic has nowhere to live but this row: a
+ * client that carried it could simply not, and the client id being throttled is SHARED by every
+ * self-hosted install using the public registration, so one buggy or hostile caller degrades the
+ * flow for all of them. The server therefore holds the interval and refuses a poll that arrives
+ * early, without spending a request on Microsoft to be told so.
+ *
+ * ── DELIBERATELY NO `mailbox_id`, FOR THE REDIRECT CEREMONY'S REASON VERBATIM ─────────────
+ *
+ * The address comes from the `id_token` this ceremony's own tokens carry, and the live-address
+ * unique index resolves the target row. A `mailbox_id` here would be a second answer to a question
+ * the token already answers, and it would let a ceremony started for one address attach to another.
+ */
+export const mailboxOauthDeviceCeremonies = pgTable("mailbox_oauth_device_ceremonies", {
+  /**
+   * 256-bit random, base64url — MINTED BY US, and never the `device_code`.
+   *
+   * This is the handle the operator's browser polls with, so it travels in request bodies and sits
+   * in a client's memory. The `device_code` is the credential and stays sealed in this row: a
+   * design that used it as the poll handle would put a bearer credential in every poll body and in
+   * whatever logs the operator's reverse proxy keeps.
+   */
+  state: text("state").primaryKey(),
+  accountId: uuid("account_id").notNull().references(() => accounts.id),
+  /** Today only `"microsoft"`. Stored so a second provider needs no column. */
+  provider: text("provider").notNull(),
+  /** The KEK envelope of the `device_code`. SECRET — never rendered, never logged. */
+  deviceCodeEnc: text("device_code_enc").notNull(),
+  /** NOT NULL beside the ciphertext: `decrypt(ct, keyVersion)` cannot be called without it. */
+  deviceCodeKeyVersion: integer("device_code_key_version").notNull(),
+  /** The short code the person types. On screen by design; useless without a Microsoft session. */
+  userCode: text("user_code").notNull(),
+  /** Where the person goes — typically `https://microsoft.com/devicelogin`. On screen by design. */
+  verificationUri: text("verification_uri").notNull(),
+  /** The interval currently in force, already including every `slow_down` increment so far. */
+  pollIntervalMs: integer("poll_interval_ms").notNull(),
+  /** Microsoft's own `expires_in`, clamped and absolute. The hard deadline for polling this grant. */
+  grantExpiresAt: timestamp("grant_expires_at", { withTimezone: true }).notNull(),
+  /** When this ceremony was last polled, or NULL before the first poll. The early-poll fence. */
+  lastPolledAt: timestamp("last_polled_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  /**
+   * When this ceremony reached a TERMINAL verdict and was claimed. A pending poll never writes it.
+   * Presence is the state, exactly as on the redirect ceremony — the predicate is `IS NULL`.
+   */
+  consumedAt: timestamp("consumed_at", { withTimezone: true }),
+}, (t) => ({
+  ixCreated: index("mailbox_oauth_device_ceremonies_created_idx").on(t.createdAt),
+}));
+
+/**
  * THE OPERATOR'S OAuth APPLICATION REGISTRATION (cloud 0009) — the Entra app the whole hosted
  * deployment signs with, managed from the admin console.
  *
@@ -1022,6 +1103,7 @@ export const setupGrantSpends = pgTable("setup_grant_spends", {
  */
 export const cloudSchema = {
   credentials, webauthnCredentials, webauthnChallenges, totpSecrets, recoveryCodes, loginTokens, oauthAuthCodes, authEvents, authThrottle, pushSubscriptions, billingCustomers, billingSubscriptions, billingReconciliationRuns, creditBalances, creditLedger, billingEvents, workerHeartbeats, alertState, waitlist, staffUsers, staffSessions, accountSuspensions,
-  mailboxOauthCeremonies, oauthProviderConfig, attachmentStaging, invites, aiAttemptClaims,
+  mailboxOauthCeremonies, mailboxOauthDeviceCeremonies,
+  oauthProviderConfig, attachmentStaging, invites, aiAttemptClaims,
   setupGrants, setupGrantSpends,
 };

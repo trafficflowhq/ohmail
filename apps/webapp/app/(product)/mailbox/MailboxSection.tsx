@@ -594,6 +594,41 @@ export function MailboxSection() {
    */
   const [oauthAvailable, setOauthAvailable] = useState(false);
   /**
+   * THE SECOND MICROSOFT DOOR — the device-code flow, on servers whose operator has no Entra
+   * registration of their own.
+   *
+   * Read from the same capability call as `oauthAvailable` and FAILS CLOSED for the identical
+   * reason: an unread or unreadable answer leaves this false, so no affordance appears for a
+   * ceremony this deployment cannot run.
+   *
+   * The two doors are independent — an install may have neither, either, or both — and they are NOT
+   * two buttons. One "Connect Outlook" affordance is offered when either is armed, and
+   * `startOutlook` picks: the operator's OWN registration wins when it is present, because it is
+   * theirs and it does not put their users behind a client id shared with every other install. The
+   * device flow is what makes the door exist at all for everybody else.
+   */
+  const [deviceAvailable, setDeviceAvailable] = useState(false);
+  /**
+   * THE LIVE DEVICE CEREMONY, or null. What is on screen and what the poll loop is polling.
+   *
+   * `state` is our own handle, never the device code — that never leaves the server. `userCode` and
+   * `verificationUri` are the two values the person reads off the screen, and `expiresAt` is the
+   * deadline the countdown renders. `retryAfterMs` is the SERVER's cadence and is re-read from every
+   * poll: the interval is Microsoft's, it widens on `slow_down`, and the client id it protects is
+   * shared with other people's installs.
+   */
+  const [device, setDevice] = useState<null | {
+    state: string; userCode: string; verificationUri: string;
+    expiresAt: number; retryAfterMs: number;
+  }>(null);
+  /**
+   * How a device ceremony ENDED, when it ended without a mailbox. `declined` and `expired` are the
+   * two honest outcomes that are not errors — somebody said no at Microsoft, or the fifteen minutes
+   * ran out — so they get their own sentence rather than the red `error` line, which is for things
+   * that went wrong.
+   */
+  const [deviceEnded, setDeviceEnded] = useState<null | "declined" | "expired">(null);
+  /**
    * THE MICROSOFT TILE'S SECONDARY PATH, requested explicitly.
    *
    * When the Entra door is armed, picking the Microsoft tile connects by SIGN-IN — Continue enters
@@ -791,8 +826,13 @@ export function MailboxSection() {
     // shown, exactly as a dormant registration's must not.
     void (async () => {
       try {
-        const { available } = await mailboxApi.oauthAvailability();
-        if (alive.current) setOauthAvailable(available);
+        const { available, device: deviceDoor } = await mailboxApi.oauthAvailability();
+        if (!alive.current) return;
+        setOauthAvailable(available);
+        // The device-code door, from the same payload. `?? false` rather than a truthiness read of a
+        // possibly-absent field: an older server that predates this key answers without it, and the
+        // honest reading of a missing capability is that the deployment does not have it.
+        setDeviceAvailable(deviceDoor ?? false);
       } catch {
         /* unreadable ⇒ leave it hidden; a dead config read must not offer a button that 503s */
       }
@@ -902,6 +942,18 @@ export function MailboxSection() {
   const startOutlook = (mailboxId?: string): void => {
     setError(null);
     setNotice(null);
+    /*
+     * WHICH DOOR. The operator's OWN registration wins whenever it is armed, and the reason is not
+     * that the redirect flow is nicer: it is theirs. The device flow runs against a client id shared
+     * by every install using it, so a throttle or an abuse report against that application is felt
+     * by strangers — an operator who has done the work of registering their own application should
+     * not be quietly put behind the shared one.
+     *
+     * `deviceAvailable` alone is the ordinary self-hosted case, and it is the whole reason this
+     * branch exists: before it, an install with no Entra registration had no way to connect an
+     * Outlook mailbox at all on a tenant where basic authentication is already off.
+     */
+    if (!oauthAvailable && deviceAvailable) { startDeviceFlow(); return; }
     setOauthBusy("starting");
     void (async () => {
       try {
@@ -921,6 +973,140 @@ export function MailboxSection() {
       }
     })();
   };
+
+  /**
+   * THE DEVICE-CODE CEREMONY — no redirect, and the app is never left.
+   *
+   * What the person does: read a short code off this screen, open a URL on any device they like,
+   * type the code, sign in to Microsoft. Their own server does the rest over its own back channel;
+   * the tokens are issued straight to it. That is why this is the door for an install that is not
+   * `ohmail.app` — there is no redirect URI to register with Microsoft, so nothing has to be, and
+   * no stranger's refresh token passes through anybody else's infrastructure.
+   *
+   * The ceremony survives this component: it is a database row on the operator's server. Navigating
+   * away loses the code from the screen (a poll re-supplies it, which is why the server stores the
+   * display values) and the grant simply expires on Microsoft's own schedule if nobody finishes it.
+   */
+  const startDeviceFlow = (): void => {
+    setError(null);
+    setNotice(null);
+    setDeviceEnded(null);
+    setOauthBusy("starting");
+    void (async () => {
+      try {
+        const started = await mailboxApi.deviceOAuthStart();
+        if (!alive.current) return;
+        setOauthBusy(null);
+        setOutlookOffer(false);
+        setDevice({
+          state: started.state,
+          userCode: started.userCode,
+          verificationUri: started.verificationUri,
+          expiresAt: Date.parse(started.expiresAt),
+          // The FIRST poll goes out immediately. The server's own fence is what enforces the
+          // cadence from there — `last_polled_at` has not been written yet, so this one is allowed,
+          // and every later one is scheduled from what the server says it will accept.
+          retryAfterMs: 0,
+        });
+      } catch (err) {
+        if (!alive.current) return;
+        setOauthBusy(null);
+        setError(messageOf(err));
+      }
+    })();
+  };
+
+  /** Put the pane back where it was before a ceremony, without touching the mailbox list. */
+  const clearDeviceFlow = (): void => { setDevice(null); setDeviceEnded(null); };
+
+  /**
+   * THE POLL LOOP — one timer, cadence from the SERVER, and it stops on the first terminal answer.
+   *
+   * ── WHY THE DELAY IS NEVER THIS CLIENT'S CHOICE ────────────────────────────────────────────
+   *
+   * The interval is Microsoft's, it grows cumulatively when Microsoft says `slow_down` (RFC 8628
+   * §3.5), and the application being throttled is SHARED with every other install using the public
+   * client. So `retryAfterMs` comes back from each poll and is used verbatim. The server also
+   * refuses an early poll outright — atomically, without a request to Microsoft — so polling faster
+   * would buy nothing; this is written the honest way round so that the code and the enforcement say
+   * the same thing rather than one of them being decoration.
+   *
+   * ── A `setTimeout` PER POLL, NOT A `setInterval` ───────────────────────────────────────────
+   *
+   * The delay changes between polls, and a fixed interval would keep the first one for ever — which
+   * is precisely the case where Microsoft has asked us to slow down. Each poll schedules the next
+   * from the answer it just got, and the effect's cleanup cancels whatever is pending, so a
+   * navigation mid-ceremony leaves no timer behind.
+   */
+  useEffect(() => {
+    if (!device) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let stopped = false;
+
+    const poll = async (): Promise<void> => {
+      if (stopped || !alive.current) return;
+      try {
+        const r = await mailboxApi.deviceOAuthPoll({ state: device.state });
+        if (stopped || !alive.current) return;
+        if (r.status === "granted") {
+          setDevice(null);
+          /*
+           * THE SAME TWO SENTENCES the redirect ceremony's landing uses, with the address from the
+           * stored mailbox — which came from Microsoft's own token and not from anything anybody
+           * typed. `created` distinguishes a first connect from a reconnect, and those are different
+           * things to somebody who came here to fix a mailbox that had stopped.
+           */
+          const addr = r.mailbox?.address ?? "";
+          setNotice(t(r.created ? "oauthConnected" : "oauthReconnected", { address: addr }));
+          await refresh();
+          // The shell's strip reads the same route on its own slower clock; without this the new
+          // mailbox is on this screen and absent from the one above it for up to thirty seconds.
+          refreshMailState();
+          return;
+        }
+        if (r.status === "declined" || r.status === "expired") {
+          setDevice(null);
+          setDeviceEnded(r.status);
+          return;
+        }
+        // Still pending. Re-arm at the cadence the server just stated, and carry the deadline and
+        // the display values forward — the poll re-supplies them, so a reload mid-ceremony can
+        // still render the code rather than stranding a live grant.
+        const next = typeof r.retryAfterMs === "number" ? Math.max(0, r.retryAfterMs) : device.retryAfterMs;
+        timer = setTimeout(() => { void poll(); }, next || DEVICE_POLL_FLOOR_MS);
+      } catch (err) {
+        if (stopped || !alive.current) return;
+        /*
+         * A FAILED POLL IS NOT A FAILED CEREMONY, and the loop does not stop on one. The server
+         * answers 503 for "Microsoft could not be reached" and says in as many words that the
+         * sign-in is still valid; the grant's own expiry is the bound, and it is checked server-side
+         * on every poll. So the error is shown — a silent pause here reads as a hung screen to
+         * somebody staring at a code — and the loop re-arms on the floor cadence.
+         *
+         * The one thing that DOES stop it is the ceremony being gone: a 400 `state_invalid` means
+         * the row has reached a terminal verdict or been pruned, and re-polling it for fifteen
+         * minutes would be asking a question that now has one permanent answer.
+         */
+        setError(messageOf(err));
+        if (codeOf(err) === "oauth_device_state_invalid" || codeOf(err) === "forbidden") {
+          setDevice(null);
+          return;
+        }
+        timer = setTimeout(() => { void poll(); }, Math.max(device.retryAfterMs, DEVICE_POLL_FLOOR_MS));
+      }
+    };
+
+    timer = setTimeout(() => { void poll(); }, device.retryAfterMs);
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
+    // `device.state` identifies the ceremony; `retryAfterMs` is read inside the closure and a
+    // change to it does not need to restart the loop (the running poll already scheduled from the
+    // value it was given). Re-running on the whole object would cancel a pending poll on every
+    // pending answer, which is the loop restarting itself for ever.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [device?.state, refresh, refreshMailState, t]);
 
   /**
    * THE BOUNCE'S LANDING — READ, NOT PERFORMED. This pane no longer runs the ceremony.
@@ -1309,12 +1495,18 @@ export function MailboxSection() {
    * Picking it and pressing Continue enters the SAME consent ceremony the standalone "Connect
    * Outlook" button starts — no address, no host, no password, because Microsoft states the address
    * in the token it issues. The app-password fields are the SECONDARY path, for a work tenant that
-   * blocks the sign-in, reached by an explicit "use an app password instead". When the door is NOT
-   * armed (`oauthAvailable` false) the tile falls back to the app-password form as before, because
-   * that path needs no server-side registration.
+   * blocks the sign-in, reached by an explicit "use an app password instead". When NEITHER door is
+   * armed the tile falls back to the app-password form as before, because that path needs no
+   * server-side registration.
+   *
+   * EITHER door counts. Which ceremony `startOutlook` then runs — the redirect, or the device code —
+   * is the server's configuration and not something this tile has an opinion about; what matters
+   * here is the one thing this predicate decides, which is whether Continue asks for a password.
+   * Gating on the redirect flow alone would have shown an app-password form as the only way in on
+   * exactly the installs where the device flow is the only way in.
    */
   const microsoftOauth =
-    typed.provider?.id === "microsoft" && oauthAvailable && !msAppPassword;
+    typed.provider?.id === "microsoft" && (oauthAvailable || deviceAvailable) && !msAppPassword;
 
   return (
     <SettingsSection>
@@ -1569,11 +1761,16 @@ export function MailboxSection() {
                        fall back to (that is the whole point of the branch), so when the door is shut
                        there is nothing actionable here — the row still shows its status and "Sync
                        now", and reconnect returns the moment the operator re-arms the registration. */
-                    oauthAvailable ? (
+                    /* …and `deviceAvailable` counts as an armed door too. An install with only the
+                       device flow can reconnect exactly as well: the address comes from the token
+                       either way, so the fresh consent lands on this same row. Withholding
+                       reconnect there would leave the one mailbox that CANNOT be fixed with a
+                       password form with nothing actionable at all. */
+                    oauthAvailable || deviceAvailable ? (
                       <Button
                         className="mbx-btn"
                         onClick={() => startOutlook(m.id)}
-                        disabled={oauthBusy !== null || finishing}
+                        disabled={oauthBusy !== null || finishing || device !== null}
                       >
                         {oauthBusy === "starting" ? t("working") : t("oauthReconnect")}
                       </Button>
@@ -1603,11 +1800,60 @@ export function MailboxSection() {
         </p>
       ) : null}
 
+      {/* ── THE DEVICE-CODE CEREMONY, ON SCREEN ───────────────────────────────────────────────
+          The whole ceremony happens here: no redirect, no navigation, and nothing hidden. What it
+          has to say, in the order somebody needs it: WHERE to go, WHAT to type, and HOW LONG they
+          have. The code is the largest thing in the block because it is the one thing being
+          transcribed, by eye, onto another device.
+          `role="status"` and not `alert`: a live ceremony is progress. `aria-live="polite"` on the
+          countdown alone would announce every tick, so the region is polite and the countdown is
+          rendered as ordinary text inside it — a screen reader hears the instruction and the code,
+          and is not interrupted once a minute by a clock. */}
+      {device ? (
+        <div className="acct-confirm" role="status">
+          <p className="acct-lead">{t("deviceGoTo")}</p>
+          {/* A real link, and it opens in a new tab: the ceremony is still running in THIS one, and
+              navigating away from it loses the code from the screen. `rel="noreferrer"` so the
+              settings URL is not handed to Microsoft's page. */}
+          <p className="acct-lead">
+            <a href={device.verificationUri} target="_blank" rel="noreferrer noopener">
+              {device.verificationUri}
+            </a>
+          </p>
+          <p className="acct-lead">{t("deviceEnterCode")}</p>
+          {/* `<code>` because it IS one, and the class carries the size and letter-spacing that make
+              a hyphenated Microsoft code readable in one glance. Selectable, so somebody on the same
+              machine can copy it rather than retype it. */}
+          <p className="mbx-device-code"><code>{device.userCode}</code></p>
+          <p className="acct-fine">
+            {/* THE HONEST COUNTDOWN. The deadline is Microsoft's own, so this is not a guess — and it
+                is stated in whole minutes because a second-by-second clock on a fifteen-minute
+                errand is pressure with no information in it. `now` ticks on the pane's existing
+                timer, which is what re-renders this. */}
+            {t("deviceExpiresIn", { minutes: Math.max(0, Math.ceil((device.expiresAt - now) / 60_000)) })}
+          </p>
+          <p className="acct-fine">{t("deviceWaiting")}</p>
+          <div className="acct-actions">
+            {/* CANCEL is local, and says so by doing nothing else: it takes the code off this screen
+                and stops polling. The grant itself is Microsoft's and expires on its own schedule —
+                claiming otherwise ("cancelled") would be a sentence this button cannot make true. */}
+            <Button onClick={clearDeviceFlow}>{t("deviceStopWaiting")}</Button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* HOW IT ENDED, when it ended without a mailbox. Neither of these is a failure of anything:
+          somebody declined at Microsoft, or the grant ran out of time. So they are `acct-lead` and
+          `role="status"`, not the red alert line — and each one says what to do next. */}
+      {deviceEnded ? (
+        <p className="acct-lead" role="status">{t(`device_${deviceEnded}`)}</p>
+      ) : null}
+
       {error ? <p className="acct-warn" role="alert">{error}</p> : null}
       {/* A settled outcome, not an alert. `role="status"` so it is announced without interrupting. */}
       {notice ? <p className="acct-lead" role="status">{notice}</p> : null}
 
-      {stage === "list" && gateRead ? (
+      {stage === "list" && gateRead && !device ? (
         <>
           {/* THE REFUSAL, AT SCREEN ONE. See `connectBlock` for why each state gets its
               own sentence and why an unknown never produces one. The remedy for all three
@@ -1629,7 +1875,15 @@ export function MailboxSection() {
                note is the same sentence the picker's Microsoft tile shows, so the two doors
                describe the one ceremony identically. */
             <div className="acct-confirm">
-              <p className="acct-lead">{t("microsoftOauthNote")}</p>
+              {/* WHICH DOOR THIS IS ABOUT TO BE — the disclosure has to describe the ceremony that
+                  will actually run, and the two are genuinely different experiences: one leaves the
+                  app for Microsoft's sign-in page, the other never leaves and hands you a code to
+                  type somewhere else. `startOutlook` picks the same way this sentence does (the
+                  operator's own registration first), so the promise and the behaviour are one
+                  expression apart, not two. */}
+              <p className="acct-lead">
+                {oauthAvailable ? t("microsoftOauthNote") : t("deviceOauthNote")}
+              </p>
               <p className="acct-fine">{t("oauthOfferWhich")}</p>
               <div className="acct-actions">
                 <Button
@@ -1659,11 +1913,13 @@ export function MailboxSection() {
                   A modern Microsoft 365 tenant refuses basic IMAP authentication outright, so for
                   those accounts this is not an alternative to the password path but the only path.
                   `secondary`, because the generic path is still the one most mailboxes take.
-                  GATED ON `oauthAvailable`: shown only when the deployment's Entra registration is
-                  armed, so this is never a button whose press returns a raw 503. The password door
-                  beside it is unaffected — it needs no server-side registration.
-                  THE PRESS OPENS THE DISCLOSURE ABOVE; only its continue leaves the app. */}
-              {oauthAvailable ? (
+                  GATED ON EITHER DOOR being armed, so this is never a button whose press returns a
+                  raw 503 — and ONE button rather than two, because "Connect Outlook" is one thing a
+                  person wants and which ceremony runs is the server's business, not theirs. The
+                  password door beside it is unaffected: it needs no server-side registration.
+                  THE PRESS OPENS THE DISCLOSURE ABOVE, which names the ceremony that will actually
+                  run; only its continue starts anything. */}
+              {oauthAvailable || deviceAvailable ? (
                 <Button
                   icon="open"
                   onClick={() => { setError(null); setOutlookOffer(true); }}
@@ -2104,3 +2360,15 @@ function errorTitle(
  * in: a true statement that looks like a failure because nothing ever changes it.
  */
 const TICK_MS = 10_000;
+
+/**
+ * The FLOOR under a device-flow poll's delay — five seconds, matching the interval Microsoft
+ * actually returns.
+ *
+ * It is a floor and not the cadence: every delay comes from the server's `retryAfterMs`, which
+ * already carries Microsoft's interval plus every `slow_down` increment. This value covers the two
+ * cases where that number is absent or zero — the answer to a poll the server refused as early, and
+ * a retry after a failed request — so a client that lost the cadence cannot end up in a tight loop
+ * against an application shared with other people's installs.
+ */
+const DEVICE_POLL_FLOOR_MS = 5_000;

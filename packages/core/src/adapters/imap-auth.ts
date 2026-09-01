@@ -34,6 +34,26 @@ export interface CredMetaAuth {
   provider?: string;
   /** For `oauth2`: the Azure AD tenant segment of the token endpoint (validated in the token client). */
   tenant?: string;
+  /**
+   * For `oauth2`: WHICH APPLICATION REGISTRATION ISSUED THIS REFRESH TOKEN — `"public"` or
+   * `"confidential"`. Absent means `"confidential"`, which is what every token stored before the
+   * device-code door existed came through.
+   *
+   * ── WHY THE MAILBOX HAS TO CARRY THIS, AND WHY A HOST-WIDE SETTING CANNOT ──────────────────
+   *
+   * A refresh token is bound to the client that obtained it. Microsoft refuses to renew one
+   * presented by a different `client_id`, and the whole failure is silent: `refreshAccessToken`
+   * maps a rejected client to `OAuthProviderUnavailableError` deliberately (a rejected client is
+   * not the mailbox's fault), so nothing quarantines and nothing pages — the mailbox simply stops
+   * receiving mail one hour after it was connected, looking like a Microsoft outage.
+   *
+   * One self-hosted install can legitimately hold BOTH kinds at once: a mailbox connected through
+   * the operator's own confidential registration, and one connected through the shared public
+   * client's device-code flow. So "which door does this HOST refresh through" has no single
+   * answer, and a host-wide value would be right for one of those mailboxes and fatal for the
+   * other. The provenance travels with the credential instead.
+   */
+  clientKind?: string;
 }
 
 /**
@@ -73,7 +93,15 @@ export function oauthSmtpEndpoint(
  * rather than falling back to a password interpretation of a refresh token.
  */
 export type AccessTokenFetcherFactory = (
-  input: { refreshToken: string; tenant: string; provider: string },
+  input: {
+    refreshToken: string; tenant: string; provider: string;
+    /**
+     * The DOOR this token came through — see {@link CredMetaAuth.clientKind}. Optional so every
+     * existing caller compiles unchanged, and absent is read as `"confidential"` by the one
+     * implementation, which is the door every pre-device-flow token was issued by.
+     */
+    clientKind?: string;
+  },
 ) => () => Promise<string>;
 
 /**
@@ -136,7 +164,16 @@ export function buildImapAuth(
     }
     return {
       user: meta.user ?? "",
-      fetchAccessToken: makeFetcher({ refreshToken: secret, tenant: meta.tenant ?? "", provider: meta.provider }),
+      fetchAccessToken: makeFetcher({
+        refreshToken: secret,
+        tenant: meta.tenant ?? "",
+        provider: meta.provider,
+        // Passed through UNINTERPRETED. This module does not know what the kinds mean — it only
+        // knows the provenance belongs to the credential, so the factory that resolves a
+        // registration is the thing that gets to see it. Dropping it here would make every
+        // device-connected mailbox refresh against the confidential client.
+        ...(meta.clientKind !== undefined ? { clientKind: meta.clientKind } : {}),
+      }),
     };
   }
   throw new UnsupportedAuthTypeError(authType);

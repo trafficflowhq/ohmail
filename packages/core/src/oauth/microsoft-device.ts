@@ -38,10 +38,77 @@
 // us to replay-protect. What this module owns instead is the BOUND — see {@link deviceDeadline} —
 // so a poll loop cannot outlive the grant it is polling for.
 import {
-  MS_MAIL_SCOPE, MS_TENANT_RE, OAuthConfigError, OAuthProviderUnavailableError,
+  MS_CLIENT_ID_ENV, MS_MAIL_SCOPE, MS_TENANT_RE,
+  OAuthConfigError, OAuthProviderUnavailableError,
   clientAuthFields, microsoftTokenEndpoint,
   type FetchLike, type MicrosoftClientKind,
 } from "./microsoft.js";
+
+/**
+ * THE PUBLIC CLIENT THIS FLOW RUNS AS — a registration of its own, with no secret field anywhere in
+ * the type.
+ *
+ * ── WHY IT CANNOT BE THE CONFIDENTIAL REGISTRATION'S CLIENT ID ─────────────────────────────
+ *
+ * A confidential application is one Entra expects to authenticate with a secret. Presenting its
+ * client id on the device grant — which by definition carries no secret — is refused with
+ * `unauthorized_client`, and that refusal is not something this code can pre-empt: a client id is an
+ * opaque uuid, and nothing about the string says which kind of application it names. So the two ids
+ * live in two variables and this flow reads only its own. An operator who has set up their own
+ * confidential registration has NOT thereby armed the device door, and an operator who pastes their
+ * confidential id here gets Entra's `unauthorized_client` surfaced as an operator-side fault, which
+ * is what it is.
+ *
+ * The absent secret is also a structural refusal rather than a convention: there is no field to put
+ * one in, and {@link clientAuthFields} refuses a secret on the public arm even if a caller found a
+ * way to supply one.
+ */
+export interface MicrosoftDeviceClient {
+  /** The PUBLIC application's client id. `MS_DEVICE_CLIENT_ID`. */
+  clientId: string;
+  /**
+   * The authority segment. `common` for the multi-tenant public registration, which is what lets a
+   * work mailbox and an `outlook.com` mailbox both sign in through one application.
+   */
+  tenant: string;
+}
+
+/** The variables that arm the device door. Two, and neither has an alias — see {@link MS_CLIENT_ID_ENV}. */
+export const MS_DEVICE_ENV = {
+  clientId: MS_CLIENT_ID_ENV.public,
+  tenant: "MS_DEVICE_TENANT",
+} as const;
+
+/**
+ * Read the device door's registration out of an environment, or `null` when it is not armed.
+ *
+ * `null` and not a blank object: "this deployment has no public client" is the state the routes and
+ * the settings pane both branch on, and a half-filled record would make that branch a field check
+ * every reader has to remember to write. A missing client id is the whole answer — the tenant alone
+ * arms nothing.
+ *
+ * The tenant defaults to `common` rather than being required, because for the shared multi-tenant
+ * public registration `common` is the only correct value and requiring it would be a variable with
+ * one acceptable setting. An operator whose registration is single-tenant sets it.
+ */
+export function msDeviceEnv(env: Record<string, string | undefined>): MicrosoftDeviceClient | null {
+  const pick = (name: string): string => (typeof env[name] === "string" ? env[name]!.trim() : "");
+  const clientId = pick(MS_DEVICE_ENV.clientId);
+  if (!clientId) return null;
+  return { clientId, tenant: pick(MS_DEVICE_ENV.tenant) || "common" };
+}
+
+/**
+ * Is the device door armed — the ONE predicate a surface may ask before offering it.
+ *
+ * It exists for the reason the redirect flow's availability predicate exists: a button whose press
+ * returns a 503 is worse than no button. The tenant is re-checked here so this expression and the
+ * refusal inside the route are the same two clauses, and a junk tenant cannot surface as a 500 on a
+ * door that reported itself ready.
+ */
+export function deviceFlowAvailable(client: MicrosoftDeviceClient | null | undefined): boolean {
+  return !!client && client.clientId.trim().length > 0 && MS_TENANT_RE.test(client.tenant ?? "");
+}
 
 /**
  * The device-code endpoint for a tenant.

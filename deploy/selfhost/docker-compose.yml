@@ -157,6 +157,20 @@ services:
       # Derived from the origin unless overridden: the exact URL the app registration must
       # list as a redirect URI. Read only when a Microsoft client is configured at all.
       MS_OAUTH_REDIRECT_URI: ${MS_OAUTH_REDIRECT_URI:-${OHMAIL_ORIGIN}/api/mailboxes/oauth/microsoft/callback}
+      # THE SECOND MICROSOFT DOOR — a PUBLIC registration, driven by the device-code flow, for a
+      # server with no app registration of its own. Unset is the default and means the door is dark:
+      # the settings pane offers nothing and the two routes answer 503 naming this variable.
+      #
+      # It is a DIFFERENT registration from MS_OAUTH_CLIENT_ID and is never derived from it — a
+      # confidential app's id fails the device grant outright, so borrowing it would turn a working
+      # registration into a door that always fails. No secret: a public app has none.
+      #
+      # THE SAME PAIR IS ON THE ORGANIZER, deliberately and not as duplication to be tidied away:
+      # a refresh token can only be renewed by the application that issued it, so a mailbox
+      # connected through this door needs the organizer to hold the same public client id or it
+      # stops syncing about an hour after it was connected.
+      MS_DEVICE_CLIENT_ID: ${MS_DEVICE_CLIENT_ID:-}
+      MS_DEVICE_TENANT: ${MS_DEVICE_TENANT:-}
     healthcheck:
       # /health is schema-complete or failing: the server migrates BEFORE it listens, and the
       # route 503s on a broken key ring — so "healthy" here really means "migrated, keyed,
@@ -223,6 +237,19 @@ services:
       MS_OAUTH_CLIENT_SECRET: ${MS_OAUTH_CLIENT_SECRET:-}
       MS_OAUTH_TENANT: ${MS_OAUTH_TENANT:-}
       MS_OAUTH_REDIRECT_URI: ${MS_OAUTH_REDIRECT_URI:-${OHMAIL_ORIGIN}/api/mailboxes/oauth/microsoft/callback}
+      # THE PUBLIC CLIENT, HERE TOO — and this is the half that is easy to leave out.
+      #
+      # This process renews the access for every oauth mailbox, for ever. A refresh token can only
+      # be renewed by the application that issued it, so a mailbox connected through the device-code
+      # flow needs THIS service to hold the same public client id the api used. Set on the api alone,
+      # such a mailbox connects, syncs once, and stops about an hour later — and it stops quietly,
+      # because a rejected client is reported as "we could not reach Microsoft" rather than as a
+      # dead credential, so nothing quarantines and nothing alerts.
+      #
+      # No redirect URI here: this door has none, which is the whole reason it works on a server
+      # Microsoft has never heard of.
+      MS_DEVICE_CLIENT_ID: ${MS_DEVICE_CLIENT_ID:-}
+      MS_DEVICE_TENANT: ${MS_DEVICE_TENANT:-}
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/').then((r)=>process.exit(r.status===200?0:1)).catch(()=>process.exit(1))"]
       interval: 10s

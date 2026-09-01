@@ -16,6 +16,11 @@ import { authRoutes } from "./auth.js";
 // Exchange Online / Microsoft 365 onboarding (start / bounce / complete / availability). The
 // callback's shape is dictated by the `SameSite=Strict` session cookie; see `mailbox-oauth.ts`.
 import { mailboxOAuthRoutes } from "./mailbox-oauth.js";
+// The DEVICE-CODE door (RFC 8628) — start + poll. HERE AND NOWHERE ELSE, because this is the only
+// composition whose operator can be told to register a public client of their own and because the
+// hosted deployment already has a redirect URI registered. The hosted table not importing this
+// module is what keeps both handlers out of its artifact; see the header's absence rule.
+import { mailboxDeviceOAuthRoutes } from "./mailbox-oauth-device.js";
 // The send's direct-upload transport. This composition is in the hosted deployment's exact
 // position — a browser on one machine, the SMTP dial on the server, a request body between
 // them — and it owns its object storage, so it mints upload grants against its own bucket.
@@ -118,6 +123,13 @@ export const selfHostRoutes: Route[] = [
   ...localRoutes,
   ...authRoutes,
   ...mailboxOAuthRoutes,
+  /*
+   * The device-code door, mounted ONLY here. Both routes are `cost: "work"` — they end in a stored
+   * credential and a full sync — and both answer 503 until this server's composition root supplies
+   * `deps.msDevice`, which it does from `MS_DEVICE_CLIENT_ID`. `GET …/availability` (above) reports
+   * the same predicate as `device`, so the settings pane never offers a door that would refuse.
+   */
+  ...mailboxDeviceOAuthRoutes,
   ...attachmentStagingRoutes,
   ...accountRoutes,
   ...consentRoutes,

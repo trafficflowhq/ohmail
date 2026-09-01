@@ -372,7 +372,29 @@ export function oauthProviderFor(cfg: ServerConfig, db: Db): MicrosoftTokenProvi
     clientId: cfg.msOAuth?.clientId ?? "",
     clientSecret: cfg.msOAuth?.clientSecret ?? "",
     defaultTenant: cfg.msOAuth?.tenant || "common",
-    resolveClient: async () => {
+    resolveClient: async (want) => {
+      /*
+       * TWO REGISTRATIONS, AND THE MAILBOX SAYS WHICH ONE ISSUED ITS TOKEN.
+       *
+       * This install can legitimately hold both: a mailbox connected through the operator's own
+       * confidential registration, and one connected through the shared public client's device-code
+       * flow. A refresh token is only renewable by the client that obtained it, so "which door does
+       * this HOST use" has no single answer and `want` — read off the credential's own meta — is the
+       * question that does.
+       *
+       * The public arm resolves from the environment alone: there is no `oauth_provider_config` row
+       * for it, and this composition mounts no admin console to manage one. `kind` is STATED on both
+       * arms, because the token client re-checks that the door it asked for is the door that
+       * answered, and an unlabelled return would agree only by defaulting.
+       */
+      if (want === "public") {
+        return {
+          clientId: cfg.msDevice?.clientId ?? "",
+          clientSecret: "",
+          defaultTenant: cfg.msDevice?.tenant || "common",
+          kind: "public",
+        };
+      }
       const resolved = await resolveOAuthProviderConfig({
         tx: db,
         decrypt: (ct, kv) => cfg.keyProvider.decrypt(ct, kv),
@@ -383,6 +405,7 @@ export function oauthProviderFor(cfg: ServerConfig, db: Db): MicrosoftTokenProvi
         clientId: resolved.clientId,
         clientSecret: resolved.clientSecret,
         defaultTenant: resolved.tenant || cfg.msOAuth?.tenant || "common",
+        kind: "confidential",
       };
     },
     keyProvider: cfg.keyProvider,
@@ -501,6 +524,13 @@ export function buildDeps(req: Request, rt: ServerRuntime): ApiDeps {
     // NO admin, NO adminDb: selfHostRoutes carries no admin group at all — account isolation on
     // this server is absolute, and the operator's observability is /health + /internal/alerts.
     msOAuth: cfg.msOAuth,
+    /*
+     * THE PUBLIC CLIENT — the field that arms the device-code routes this table mounts, and the only
+     * composition that supplies it. `null` from the config becomes an ABSENT field rather than a
+     * null one, so `deviceFlowAvailable` reads one shape and the availability read answers
+     * `device: false` without a second null check.
+     */
+    ...(cfg.msDevice ? { msDevice: cfg.msDevice } : {}),
     appOrigin: cfg.origin,
     oauth: rt.oauth,
   };

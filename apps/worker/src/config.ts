@@ -2,7 +2,7 @@ import { hostname } from "node:os";
 import {
   keyProviderFromEnvOptional, kekFingerprint, kekFingerprintFromEnv, kekEnvIdentity,
   makeAnthropicClient, assertAnthropicKey, makeHaikuClassifier, makeSonnetDrafter, makeOpusProposer,
-  callCeilingMs,
+  callCeilingMs, msDeviceEnv,
   type KeyProvider, type ClassifierPort, type DraftPort, type WorkflowPort,
   type KekEnvIdentity, type Logger,
 } from "@trafficflow/core";
@@ -337,6 +337,24 @@ export interface WorkerConfig {
    * refuse, because a deployment with no oauth mailboxes yet has nothing wrong with it.
    */
   msOAuth?: { clientId: string; clientSecret: string; tenant: string; redirectUri?: string };
+  /**
+   * THE PUBLIC CLIENT — `MS_DEVICE_CLIENT_ID`, and the reason this worker needs it at all.
+   *
+   * A mailbox connected through the device-code flow holds a refresh token issued by the PUBLIC
+   * application registration, and a refresh token is only renewable by the client that obtained it.
+   * This process is the organizer on a self-hosted install — the same image the compose file runs as
+   * `organizer` — so it is the process that has to renew those tokens for ever. Without this field
+   * it would present the confidential registration's client id, Microsoft would refuse, and
+   * `refreshAccessToken` maps a rejected client to "provider unavailable" deliberately: nothing
+   * quarantines, nothing pages, and the mailbox simply stops receiving mail an hour after somebody
+   * connected it.
+   *
+   * ABSENT is the ordinary state and is not a fault: an install with no public client has no
+   * device-connected mailboxes either, and a mailbox that claims otherwise is refused BY NAME
+   * (`MicrosoftTokenProvider` quotes `MS_DEVICE_CLIENT_ID`) rather than sending a doomed request.
+   * There is deliberately NO SECRET here — a public registration has none.
+   */
+  msDevice?: { clientId: string; tenant: string };
   /**
    * THE STAGING BUCKET THIS WORKER SWEEPS — or absent on a deployment with no object storage.
    *
@@ -870,6 +888,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
       ...msOAuthEnv(env as Record<string, string | undefined>),
       tenant: msOAuthEnv(env as Record<string, string | undefined>).tenant || "common",
     },
+    // The PUBLIC client, read through the same one reader the API host calls (`msDeviceEnv`), so
+    // the two cannot accept different spellings — the `msOAuthEnv` rule applied to the second
+    // registration. `null` becomes an absent field: a worker with no public client is the ordinary
+    // case, and the refusal for a device mailbox that arrives anyway is named at token time.
+    ...(msDeviceEnv(env as Record<string, string | undefined>)
+      ? { msDevice: msDeviceEnv(env as Record<string, string | undefined>)! }
+      : {}),
     instanceId: instanceIdFrom(env),
     environment,
     buildVersion,

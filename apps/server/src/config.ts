@@ -1,6 +1,6 @@
 import {
-  keyProviderFromEnv, kekEnvIdentity, assertAnthropicKey,
-  type KeyProvider, type KekEnvIdentity,
+  keyProviderFromEnv, kekEnvIdentity, assertAnthropicKey, msDeviceEnv,
+  type KeyProvider, type KekEnvIdentity, type MicrosoftDeviceClient,
 } from "@trafficflow/core";
 import { transactionPoolerReason, providerFamily } from "@trafficflow/db";
 import { msOAuthEnv, type MsOAuthBootstrap } from "@trafficflow/db/cloud";
@@ -175,6 +175,22 @@ export interface ServerConfig {
   anthropicApiKey: string | null;
   alerts: { secret: string; webhookUrl: string | null } | null;
   msOAuth: MsOAuthBootstrap;
+  /**
+   * `MS_DEVICE_CLIENT_ID` (+ optional `MS_DEVICE_TENANT`) — the PUBLIC application the device-code
+   * door runs as, or `null` when this install has not armed it.
+   *
+   * THIS IS THE VARIABLE THAT TURNS THE SECOND MICROSOFT DOOR ON, and it exists because the route
+   * that reads it ships in the same change. It is not a fallback for {@link msOAuth} and is never
+   * derived from it: a confidential application's client id is refused outright on the device grant
+   * (that grant carries no secret, so Entra answers `unauthorized_client`), so an operator with
+   * their own BYO registration has NOT thereby armed this door, and treating one as the other would
+   * turn a complete, working registration into a device flow that always fails.
+   *
+   * `null` ⇒ `GET /mailboxes/oauth/microsoft/availability` reports `device: false`, the settings
+   * pane offers nothing, and the two device routes answer 503 naming this variable. There is no
+   * secret field, because a public registration has none.
+   */
+  msDevice: MicrosoftDeviceClient | null;
   /** `TF_PROBE_ALLOW_PRIVATE=1` — see {@link loadServerConfig}. Absent means ENFORCE. */
   probeAllowPrivate: boolean;
   /**
@@ -459,6 +475,12 @@ export function loadServerConfig(env: NodeJS.ProcessEnv): ServerConfig {
     // The SAME resolver the worker and the managed host call, so the three cannot accept
     // different variable sets (MS_OAUTH_* canonical, MICROSOFT_* aliases).
     msOAuth: msOAuthEnv(env),
+    // The PUBLIC client for the device-code door, through the one reader the organizer also calls
+    // (`msDeviceEnv`) — the same rule as above, applied to the second registration: these two
+    // processes must agree on the spelling or an install arms the API's door and not the refresh
+    // that keeps it alive. ONE name, no aliases: the variable is new, so no deployment's
+    // environment already spells it another way.
+    msDevice: msDeviceEnv(env),
     /**
      * The add-time IMAP/SMTP probe's SSRF gate. ENFORCING by default — this is a multi-user
      * server and the probe dials a host a signed-in family member typed, so private/loopback/

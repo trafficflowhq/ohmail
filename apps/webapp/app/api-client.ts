@@ -887,7 +887,50 @@ export const mailboxes = {
    * operator saves the console form.
    */
   oauthAvailability: () =>
-    api<{ available: boolean }>("/mailboxes/oauth/microsoft/availability"),
+    api<{ available: boolean; device?: boolean }>("/mailboxes/oauth/microsoft/availability"),
+
+  /**
+   * BEGIN THE DEVICE-CODE CEREMONY — the door an install that is not ohmail.app connects Outlook
+   * through, and the only one available to a server whose operator has no Entra registration.
+   *
+   * There is no URL to navigate to and no redirect anywhere in this flow. The answer is a short code
+   * and a URL the person opens themselves, on whatever device they like; the tokens are issued
+   * straight to their own server. The caller renders the code and then drives {@link deviceOAuthPoll}.
+   *
+   * `device` from {@link oauthAvailability} is the gate — offered only where a public client is
+   * configured, so this is never a call that returns 503. 503 `oauth_device_unconfigured` is still a
+   * first-class answer for the race where an operator unsets the variable mid-ceremony, and its
+   * sentence names the variable, as the server's sentences always do.
+   */
+  deviceOAuthStart: () =>
+    api<{
+      state: string; userCode: string; verificationUri: string;
+      expiresAt: string; intervalMs: number;
+    }>("/mailboxes/oauth/microsoft/device/start", { method: "POST", body: {} }),
+
+  /**
+   * ONE POLL. Called repeatedly at the cadence the SERVER states, never at one this client picks.
+   *
+   * `retryAfterMs` is authoritative: the interval belongs to Microsoft (RFC 8628 §3.5 — `slow_down`
+   * widens it cumulatively) and the client id being throttled is shared by every install using the
+   * public registration, so a client that polled faster would degrade the flow for other people's
+   * servers. The server refuses an early poll outright without spending a request on Microsoft, so
+   * ignoring this value buys nothing anyway — it is stated so the honest client and the enforced
+   * behaviour are the same thing.
+   *
+   * `status` is the whole state machine. `pending` re-arms; `declined` and `expired` are terminal
+   * and not errors — somebody said no, or ran out of time; `granted` carries the stored mailbox.
+   */
+  deviceOAuthPoll: (b: { state: string }) =>
+    api<{
+      status: "pending" | "declined" | "expired" | "granted";
+      retryAfterMs?: number;
+      expiresAt?: string;
+      userCode?: string;
+      verificationUri?: string;
+      mailbox?: MailboxDTO;
+      created?: boolean;
+    }>("/mailboxes/oauth/microsoft/device/poll", { method: "POST", body: b }),
 
   /**
    * FINISH it — the SAME-SITE half, and the reason the ceremony is three steps rather than two.

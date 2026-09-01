@@ -3825,6 +3825,34 @@ textarea.c-input:read-only {
 @keyframes mbx-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .mbx-spin { animation: none; } }
 
+/* ── THE DEVICE-CODE, AS THE ONE THING BEING TRANSCRIBED ─────────────────────────────────────
+   This code is read off a screen and typed, by eye, into a different device. Everything here
+   serves that single act and nothing else:
+
+   · The SIZE is the largest text this pane has, because it is the only content on it that is
+     copied character by character. A code set in body text is a code somebody squints at.
+   · `letter-spacing` on a monospace face, because Microsoft's codes are groups of similar
+     glyphs and the failure mode is losing your place mid-code, not misreading one letter.
+   · `user-select: all` so a click selects the WHOLE code — on the same machine the sane move is
+     to copy it, and a partial selection produces a code that fails with no clue why.
+   · `tabular-nums` keeps the groups aligned if a code carries digits.
+
+   No box, no border, no "copy" button: the block is already inside `.acct-confirm`'s panel, and
+   a second frame around a second panel is chrome competing with the thing it contains. */
+.mbx-device-code {
+  margin: 10px 0 12px;
+}
+.mbx-device-code code {
+  font: 600 clamp(22px, 5vw, 30px)/1.25 var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.14em;
+  color: var(--ink);
+  user-select: all;
+  /* The code can be long enough to wrap on a phone. Wrapping is correct — truncating a credential
+     is not — so it breaks anywhere rather than overflowing the panel. */
+  overflow-wrap: anywhere;
+}
+
 /* ================= the boot silhouette =================
    The other waiting affordance, filed beside the spinner because they answer the same question
    at two different lengths and share one reduced-motion rule between them (see `BootSkeleton.tsx`

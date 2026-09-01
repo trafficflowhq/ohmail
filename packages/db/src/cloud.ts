@@ -137,6 +137,17 @@ export {
   OAUTH_CEREMONY_TTL_MS, OAUTH_CEREMONY_RETENTION_MS,
   type OAuthCeremonyRow, type CreateOAuthCeremonyInput,
   type ConsumeOAuthCeremonyInput, type ConsumeOAuthCeremonyOutcome,
+  /*
+   * Cloud 0027 — the DEVICE-CODE ceremony's four arms, exported beside the redirect flow's because
+   * they live in one module and share one law each way: `readDeviceCeremony` writes nothing, and
+   * `claimDeviceCeremony` is the only writer of that table's `consumed_at`, exactly as
+   * `consumeOAuthCeremony` is of the redirect table's. The separation is the security property —
+   * see the module's own header for why one table with a flag would not be.
+   */
+  createDeviceCeremony, readDeviceCeremony, leaseDeviceCeremonyPoll,
+  noteDeviceCeremonySlowDown, claimDeviceCeremony, pruneDeviceCeremonies,
+  DEVICE_CEREMONY_RETENTION_MS,
+  type DeviceCeremonyRow, type CreateDeviceCeremonyInput, type ReadDeviceCeremonyOutcome,
 } from "./oauth-ceremony.js";
 
 export {

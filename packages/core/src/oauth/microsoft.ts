@@ -111,6 +111,43 @@ export class OAuthConfigError extends Error {
 export type MicrosoftClientKind = "confidential" | "public";
 
 /**
+ * WHICH ENVIRONMENT VARIABLE CARRIES EACH DOOR'S CLIENT ID — one map, because the refusals name it.
+ *
+ * The two registrations are different applications and cannot be one (a secret shipped inside a
+ * downloadable binary, or handed to a stranger's self-hosted server, is not a secret), so they have
+ * separate variables and a deployment may hold either, both, or neither. What makes the split useful
+ * rather than merely tidy is that every refusal quotes the name of the variable for the door that
+ * was actually being asked for: an operator whose device-code mailbox cannot refresh must be sent to
+ * `MS_DEVICE_CLIENT_ID` and not to `MS_OAUTH_CLIENT_ID`, which on their install is very likely set,
+ * perfectly valid, and completely irrelevant to the failure in front of them.
+ *
+ * `MS_DEVICE_CLIENT_ID` has NO legacy aliases, unlike the confidential names: it is new, so no
+ * deployment's environment already spells it another way, and one name is one name.
+ */
+export const MS_CLIENT_ID_ENV: Readonly<Record<MicrosoftClientKind, string>> = {
+  confidential: "MS_OAUTH_CLIENT_ID",
+  public: "MS_DEVICE_CLIENT_ID",
+};
+
+/**
+ * Read a stored `clientKind` as a door, fail-safe.
+ *
+ * The value arrives from a jsonb column, so it is `string | undefined` and could be anything. ONLY
+ * the exact string `"public"` selects the public door; absent, misspelt or unknown all read as
+ * `"confidential"`, which is the door every token stored before the device flow existed came
+ * through and is therefore the answer that keeps an existing fleet working.
+ *
+ * The failure direction matters and this is the safe one: a confidential mailbox misread as public
+ * would drop its secret and be refused by Entra; a device mailbox misread as confidential is
+ * refused by the kind check in {@link MicrosoftTokenProvider} with a named variable, before any
+ * request is made. Neither silently succeeds, and only one of them can be caused by a typo in a
+ * column.
+ */
+export function wantedClientKind(clientKind: string | undefined): MicrosoftClientKind {
+  return clientKind === "public" ? "public" : "confidential";
+}
+
+/**
  * The client-authentication fields of a token request, for one kind of registration.
  *
  * ONE function, called by the exchange, the refresh and the device flow, so "does a public client
@@ -700,8 +737,18 @@ export interface MicrosoftOAuthRuntime {
    * cached access token is inside its refresh margin — at most once per mailbox per ~55 minutes — so
    * there is deliberately NO CACHE in front of it. A cache here would reintroduce exactly the
    * staleness window this field exists to remove, to save a single-row indexed SELECT per hour.
+   *
+   * ── IT IS ASKED FOR A DOOR, AND IT MUST ANSWER ABOUT THAT DOOR ────────────────────────────
+   *
+   * `want` is the registration kind the MAILBOX's stored token came through
+   * ({@link CredMetaAuth.clientKind}), not a preference. A host holding both registrations — the
+   * self-hosted install with its own confidential app AND the shared public client behind the
+   * device-code flow — must return the one that was asked for, and a host holding neither of a
+   * given kind must return an empty `clientId` so the refusal is named. Returning the OTHER door's
+   * credentials is the one answer that produces a silent failure, which is why
+   * {@link MicrosoftTokenProvider} re-checks the `kind` it gets back.
    */
-  resolveClient?: () => Promise<MicrosoftClientCredentials>;
+  resolveClient?: (want: MicrosoftClientKind) => Promise<MicrosoftClientCredentials>;
   keyProvider: KeyProvider;
   updateSecret: UpdateSecretPort;
   fetch: FetchLike;
@@ -733,17 +780,25 @@ export class MicrosoftTokenProvider implements OAuthTokenProvider {
   constructor(private readonly rt: MicrosoftOAuthRuntime) {}
 
   forMailbox(mailboxId: string): AccessTokenFetcherFactory {
-    return ({ refreshToken, tenant, provider }) => {
+    return ({ refreshToken, tenant, provider, clientKind }) => {
       if (provider !== "microsoft") {
         // Should never happen — buildImapAuth already gated the provider — but a factory that
         // silently accepted a foreign provider would be a hole waiting for a caller that skips it.
         throw new OAuthConfigError("provider", `MicrosoftTokenProvider cannot serve provider ${provider}`);
       }
-      return () => this.accessToken(mailboxId, refreshToken, tenant);
+      return () => this.accessToken(mailboxId, refreshToken, tenant, wantedClientKind(clientKind));
     };
   }
 
-  private async accessToken(mailboxId: string, refreshToken: string, tenant: string): Promise<string> {
+  private async accessToken(
+    mailboxId: string, refreshToken: string, tenant: string,
+    /**
+     * The door the MAILBOX's token came through. Defaults to `"confidential"` at
+     * {@link wantedClientKind}, so every mailbox stored before the device flow existed keeps
+     * refreshing through exactly the registration that issued it.
+     */
+    want: MicrosoftClientKind = "confidential",
+  ): Promise<string> {
     // THE CACHE IS CHECKED BEFORE THE REGISTRATION IS RESOLVED, and that order is deliberate: a live
     // access token is good regardless of what the console has since been edited to say, and resolving
     // first would put a query in front of every dial rather than in front of every REFRESH.
@@ -752,9 +807,11 @@ export class MicrosoftTokenProvider implements OAuthTokenProvider {
     const cached = this.cache.get(mailboxId);
     if (cached && cached.expiresAtMs - now > margin) return cached.accessToken;
 
-    // The resolver WINS over the static fields when one is wired — see `resolveClient`.
+    // The resolver WINS over the static fields when one is wired — see `resolveClient`. It is told
+    // WHICH DOOR the mailbox's token came through; the static fallback cannot select, so a host with
+    // no resolver serves whatever single registration it was constructed with.
     const client: MicrosoftClientCredentials = this.rt.resolveClient
-      ? await this.rt.resolveClient()
+      ? await this.rt.resolveClient(want)
       : {
         clientId: this.rt.clientId,
         clientSecret: this.rt.clientSecret,
@@ -765,9 +822,15 @@ export class MicrosoftTokenProvider implements OAuthTokenProvider {
     // The NAMED refusals, still deferred to the moment a token is actually needed. They quote the
     // ENV variable because that is the name an operator can search for, and it remains the honest
     // name even when the value would have come from the config row: an empty resolution means
-    // neither source carried it.
+    // neither source carried it. WHICH variable is named follows the door — a device-connected
+    // mailbox on a host with no public client is missing `MS_DEVICE_CLIENT_ID`, and sending its
+    // operator to look for `MS_OAUTH_CLIENT_ID` (which may well be set, and is irrelevant) is a
+    // wrong answer that reads as a right one.
     if (!client.clientId.trim()) {
-      throw new OAuthConfigError("MS_OAUTH_CLIENT_ID", "OAuth mailbox requires MS_OAUTH_CLIENT_ID, which is not set");
+      throw new OAuthConfigError(
+        MS_CLIENT_ID_ENV[want],
+        `OAuth mailbox requires ${MS_CLIENT_ID_ENV[want]}, which is not set`,
+      );
     }
     /* THE SECRET REFUSAL BELONGS TO THE CONFIDENTIAL DOOR ONLY. A public registration has no secret
      * to be missing, and demanding one here would make the desktop and the self-host device-code
@@ -790,6 +853,39 @@ export class MicrosoftTokenProvider implements OAuthTokenProvider {
      * (the correct configuration) is unaffected; one carrying a secret is refused by name.
      */
     const kind: MicrosoftClientKind = client.kind ?? "confidential";
+
+    /*
+     * THE DOOR THAT ANSWERED MUST BE THE DOOR THAT WAS ASKED FOR.
+     *
+     * `want` came from the mailbox's own credential; `kind` is what the host resolved. A mismatch
+     * means the host is about to renew a refresh token against a registration that did not issue
+     * it, and Microsoft's answer to that is `invalid_client` or `invalid_grant` — the first of which
+     * `refreshAccessToken` deliberately maps to {@link OAuthProviderUnavailableError} (a rejected
+     * client is not the mailbox's fault) and the second to the re-auth verdict, i.e. to
+     * "your consent expired" about a consent granted ten minutes ago.
+     *
+     * Both readings are wrong and both are actionable by the wrong person. So the mismatch is
+     * refused HERE, by name, before a request goes out — the same argument `clientAuthFields` makes
+     * one level down about a secret on the wrong door, applied to the registration itself. A host
+     * whose `resolveClient` cannot serve the door being asked for must return an empty `clientId`
+     * (refused above with the right variable name), never the other door's credentials.
+     *
+     * ── IT APPLIES ONLY WHEN A RESOLVER WAS ASKED, AND THAT IS NOT A LOOPHOLE ─────────────────
+     *
+     * The static `clientId`/`clientSecret`/`kind` fallback is for a host that holds exactly ONE
+     * registration and has said which. There is nothing for it to select between, so `want` is not
+     * a question it can answer differently — checking it there would refuse every mailbox on a
+     * single-door host that happens to disagree with the stored provenance, with no configuration
+     * change available that would satisfy the check. Every host in this repository wires a resolver
+     * (`apps/server`, `apps/api-vercel`, `apps/worker`), so every host is under the check; the
+     * static path remains what it always was, a host declaring its one door.
+     */
+    if (this.rt.resolveClient && kind !== want) {
+      throw new OAuthConfigError(
+        MS_CLIENT_ID_ENV[want],
+        `this mailbox's token was issued by the ${want} registration, but this host resolved the ${kind} one`,
+      );
+    }
 
     const res = await refreshAccessToken({
       refreshToken,

@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import {
   buildMicrosoftAuthorizeUrl, pkcePair, oauthState, exchangeAuthorizationCode,
-  addressFromIdToken, classifyConsentFailure, MS_TENANT_RE,
+  addressFromIdToken, classifyConsentFailure, deviceFlowAvailable, MS_TENANT_RE,
   OAuthConfigError, OAuthExchangeFailedError, OAuthProviderUnavailableError,
   silentLogger, type FetchLike,
 } from "@trafficflow/core";
@@ -349,17 +349,40 @@ export const mailboxOAuthRoutes: Route[] = [
      *
      * `cost: "read"`, behind a session like every other mailbox read: only the signed-in settings
      * pane asks, and there is no reason to let an anonymous caller enumerate a deployment's config
-     * state. The BODY is `{ available }` and nothing else — the resolver behind it holds the client
-     * id, the tenant and the decrypted secret, and `microsoftOAuthAvailable` collapses all of that
-     * to a boolean before it can leave the process. A whole payload rather than a bare boolean so a
-     * later capability can join it without a second round trip.
+     * state. The BODY is TWO BOOLEANS and nothing else — the resolvers behind them hold the client
+     * ids, the tenants and the decrypted secret, and each predicate collapses all of that before it
+     * can leave the process.
+     *
+     * ── `device` IS THE SECOND DOOR, AND IT JOINED THIS PAYLOAD RATHER THAN GETTING ITS OWN ──
+     *
+     * This route was built with "a whole payload rather than a bare boolean so a later capability
+     * can join it without a second round trip" written on it, and the device-code door is that
+     * capability. The pane has to know which of the two Microsoft ceremonies this deployment can
+     * run BEFORE it renders anything, so the alternative was a second request whose answer is
+     * meaningless without this one's.
+     *
+     * `available` is the REDIRECT ceremony (a confidential registration with an https callback);
+     * `device` is the device-code flow (a separate public client, and the routes for it are mounted
+     * only by the self-host composition). They are independent: an install may have neither, either,
+     * or both. On the hosted deployment `device` is always `false`, because nothing there populates
+     * `deps.msDevice` and nothing there mounts the routes it would advertise — which is why the
+     * managed host reads no environment variable for it.
      */
     method: "GET",
     pattern: "/mailboxes/oauth/microsoft/availability",
     cost: "read",
     handler: async (_req, deps) => {
       const cfg = await resolveConfig(deps);
-      return jsonResponse({ available: microsoftOAuthAvailable(cfg) }, { status: 200 });
+      return jsonResponse({
+        available: microsoftOAuthAvailable(cfg),
+        /*
+         * The predicate comes from `packages/core`, NOT from the device route module. Importing that
+         * module here would drag both device handlers into the graph of every composition that
+         * mounts this route — including the hosted one, which deliberately does not serve them. The
+         * device routes call the same function, so the door and its advertisement cannot disagree.
+         */
+        device: deviceFlowAvailable(deps.msDevice),
+      }, { status: 200 });
     },
   },
   {

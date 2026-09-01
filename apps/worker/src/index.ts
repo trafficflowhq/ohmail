@@ -524,7 +524,31 @@ export async function startWorkerWithLock(
       clientId: config.msOAuth?.clientId ?? "",
       clientSecret: config.msOAuth?.clientSecret ?? "",
       defaultTenant: config.msOAuth?.tenant ?? "common",
-      resolveClient: async () => {
+      resolveClient: async (want) => {
+        /*
+         * THE PUBLIC DOOR IS A DIFFERENT REGISTRATION AND IT IS NOT IN THE CONFIG STORE.
+         *
+         * A mailbox connected through the device-code flow holds a refresh token issued by the
+         * PUBLIC application, and only that application can renew it. This process is the organizer
+         * on a self-hosted install, so it is the process that has to do so for ever. It resolves the
+         * public client from the environment alone — there is no `oauth_provider_config` arm for it,
+         * and deliberately so: that table's whole content is the confidential registration an
+         * operator manages from the admin console, and this composition has no admin console.
+         *
+         * `kind: "public"` is STATED. Returning it unlabelled would let the token client default it
+         * to `confidential`, and then `clientAuthFields` would demand a secret a public
+         * registration does not have. Missing entirely, the empty `clientId` is refused by name
+         * (`MS_DEVICE_CLIENT_ID`) before any request goes out — which is the honest answer for a
+         * mailbox whose door this install no longer has.
+         */
+        if (want === "public") {
+          return {
+            clientId: config.msDevice?.clientId ?? "",
+            clientSecret: "",
+            defaultTenant: config.msDevice?.tenant || "common",
+            kind: "public",
+          };
+        }
         const resolved = await resolveOAuthProviderConfig({
           tx: db,
           decrypt: (ct, kv) => keyProvider.decrypt(ct, kv),
@@ -540,6 +564,11 @@ export async function startWorkerWithLock(
           clientId: resolved.clientId,
           clientSecret: resolved.clientSecret,
           defaultTenant: resolved.tenant || (config.msOAuth?.tenant ?? "common"),
+          // Stated for the same reason the public arm states its own: this is the confidential
+          // registration, and the token client re-checks that the door it asked for is the door
+          // that answered. An unlabelled return would pass by defaulting, which is exactly the
+          // kind of agreement-by-coincidence the explicit kind exists to remove.
+          kind: "confidential",
         };
       },
       keyProvider,

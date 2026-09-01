@@ -201,10 +201,26 @@ Plain facts about providers:
   password" — Gmail and several others require an app password for IMAP,
   generated in the provider's own security settings.
 - **Microsoft 365 / Exchange Online** signs in with OAuth instead of a
-  password and needs a one-time app registration on the Microsoft side. The
-  `MS_OAUTH_*` block in `.env.example` documents it, including the exact
-  redirect URI to register. Skip this entirely unless you have such a
-  mailbox.
+  password, and needs a one-time app registration on the Microsoft side.
+  Skip this entirely unless you have such a mailbox. There are two ways in
+  and `.env.example` documents both:
+  - `MS_OAUTH_*` — **your own registration.** A confidential app with a
+    client secret, and a redirect URI pointing at your origin (the block
+    gives the exact URL to register, byte for byte).
+  - `MS_DEVICE_CLIENT_ID` — **the device-code flow.** A public app with no
+    secret and **no redirect URI at all**, which is why it works on a
+    hostname Microsoft has never heard of. Connecting shows a short code;
+    you enter it at `microsoft.com/devicelogin` on any device, approve the
+    sign-in, and Microsoft issues the access straight to your server.
+    Nothing about the exchange passes through ohmail.
+    Two things to get right: **"Allow public client flows" = Yes** in the
+    registration (without it the flow fails and says only
+    `unauthorized_client`), and set the variable on **both** the `api` and
+    the `organizer` service — the api runs the sign-in, the organizer
+    renews the access afterwards, and a refresh token can only be renewed
+    by the app that issued it.
+
+  Set either, or neither. With both set the app uses your own registration.
 - A mail server on your own LAN needs the probe allowance from step 4.
 
 ## 8. Your household

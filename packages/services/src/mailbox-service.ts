@@ -319,6 +319,19 @@ export interface ConnectOAuthMailboxInput {
     provider: string;
     /** The Azure AD tenant SEGMENT, validated before it ever reaches a URL. */
     tenant: string;
+    /**
+     * WHICH APPLICATION REGISTRATION ISSUED THIS TOKEN — `"public"` or `"confidential"`. Omitted
+     * means confidential, which is the redirect ceremony's door and the only one that existed
+     * before the device-code flow.
+     *
+     * It is stored in the credential meta because a refresh token is bound to the client that
+     * obtained it, and one install can legitimately hold both kinds: a mailbox connected through
+     * the operator's own confidential registration and one connected through the shared public
+     * client. A host-wide setting would be right for one of them and would silently kill the
+     * other — Microsoft's refusal of a mismatched client renews nothing and quarantines nothing,
+     * so the mailbox would simply stop receiving mail an hour after it was connected.
+     */
+    clientKind?: "public" | "confidential";
     /** Stored as `secret_enc`. THE credential — an oauth mailbox has no other. */
     refreshToken: string;
     /**
@@ -1122,6 +1135,13 @@ export class MailboxService {
       authType: "oauth2",
       provider: o.provider,
       tenant: o.tenant,
+      /*
+       * WRITTEN ONLY WHEN IT IS THE PUBLIC DOOR, so no existing row's meta changes shape and the
+       * absent value keeps its established meaning (`wantedClientKind` reads absent as
+       * confidential). A field written unconditionally would have been the same behaviour and a
+       * larger diff against every stored credential, for no reader's benefit.
+       */
+      ...(o.clientKind === "public" ? { clientKind: "public" } : {}),
       ...(o.smtp ? { smtp: { host: o.smtp.host, port: o.smtp.port, secure: o.smtp.secure } } : {}),
     };
 

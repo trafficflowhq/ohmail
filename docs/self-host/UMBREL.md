@@ -116,8 +116,13 @@ mailbox. The ceremony is identical to the VPS guide's:
 Sign in and add a mailbox: your address, your provider's IMAP server, and
 your password or app password. The provider notes in
 [VPS.md, step 7](./VPS.md#7-connect-your-first-mailbox) apply unchanged —
-Gmail wants an app password; Microsoft 365 needs the one-time
-`MS_OAUTH_*` registration (those lines also go in `settings.env`).
+Gmail wants an app password; Microsoft 365 needs a one-time app
+registration on the Microsoft side, either your own (`MS_OAUTH_*`) or a
+public one driven by the device-code flow (`MS_DEVICE_CLIENT_ID`, which
+needs no redirect URI and no secret). Those lines also go in
+`settings.env` — and `MS_DEVICE_CLIENT_ID` has to be there for the
+organizer as well as the api, or such a mailbox stops syncing after an
+hour.
 
 If the mailbox you are connecting lives on your own network — the same NAS
 the Umbrel sits next to, say — add `TF_PROBE_ALLOW_PRIVATE=1` to
