@@ -3,13 +3,13 @@ import {
   attachments, drafts, mailboxes, messageBodies, messages, outboundSends, recordChange, threads, type Tx,
 } from "@trafficflow/db";
 import {
-  createLogger, mintMessageId, recordSentMessage,
+  createLogger, isMessageGone, mintMessageId, recordSentMessage,
   type AppendedSent, type EmailAddress, type Logger, type NativeLocator, type OutboundMessage,
   type OpenSendAdapter, type RepoPort, type RoutingPort, type StorageCap,
 } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { ServiceContext } from "./context.js";
-import type { OpenAdapter } from "./attachments-service.js";
+import type { AttachmentAdapter, OpenAdapter } from "./attachments-service.js";
 import { ServiceError } from "./errors.js";
 import { sanitizeOutboundHtml } from "./outbound-html.js";
 
@@ -28,6 +28,17 @@ const defaultLog = createLogger({ service: "send" });
 function domainOf(address: string | null | undefined): string {
   const at = (address ?? "").lastIndexOf("@");
   return at >= 0 ? address!.slice(at + 1).trim() : "";
+}
+
+/**
+ * Do two locators name the same physical message?
+ *
+ * Both halves, and the `ref` half is the one that carries the epoch (`${uidvalidity}:${uid}`), so
+ * this is also what tells a re-adopted message from a merely re-read row. Used to decide whether a
+ * re-read locator is worth a second fetch — see {@link SendService.streamForwardParts}.
+ */
+function sameLocator(a: NativeLocator, b: NativeLocator): boolean {
+  return a.folder === b.folder && a.ref === b.ref;
 }
 
 /** Escape the five characters that would let a header value break out of an html quote. */
@@ -552,7 +563,7 @@ type Reservation =
       kind: "new"; sendId: string; mintedMessageId: string; mailboxId: string;
       msg: OutboundMessage; seq: number;
       /** A forward's original parts to stream + the mailbox they live in — resolved outside the tx. */
-      forward?: { parts: ForwardPart[]; mailboxId: string; locator: NativeLocator };
+      forward?: { parts: ForwardPart[]; mailboxId: string; locator: NativeLocator; messageId: string };
     }
   | { kind: "existing"; row: typeof outboundSends.$inferSelect; mailboxId: string };
 
@@ -598,43 +609,34 @@ export class SendService {
     // ── 2. SMTP OUTSIDE the tx. Always close() in finally. ───────────────
     const { sendId, mintedMessageId, mailboxId, msg } = reservation;
 
-    // ── STAGED: PULL THE BYTES FROM OBJECT STORAGE onto the outgoing message ────────────────
+    // ══════════════════════════════════════════════════════════════════════════════════════════
+    //  THE PRE-SMTP WINDOW. EVERY FAILURE IN HERE IS A DEFINITE NON-DELIVERY, AND IS RECORDED
+    //  AS ONE.
+    // ══════════════════════════════════════════════════════════════════════════════════════════
     //
-    // Here, outside the reservation tx (it is network) and BEFORE `send`, exactly where the
-    // forward's IMAP stream runs and for the same reasons: the files must be on the one
-    // `OutboundMessage` that both goes out and is appended to Sent, and they are never persisted.
+    // The reservation has COMMITTED and the draft says `sending`. What has not happened is any
+    // part of a delivery: `openSendAdapter` has not been called, no socket exists, no envelope has
+    // been offered to anybody. So the two assembly steps below — pulling staged bytes from object
+    // storage, and streaming a forward's original parts from IMAP — can only fail in one way, and
+    // this service knows exactly what that way means.
     //
-    // A failure is NOT swallowed. `fetch` throws when an object is gone or is bigger than its
-    // ticket declared, and that ends the send with the reservation still `pending` — the user
-    // retries under the same key. A send that quietly dropped an attachment the composer showed
-    // is a wrong send, which is the same ruling the forward path already made.
+    // It did not act on that knowledge. A throw left the invocation with the reservation still
+    // `pending`, and this service reads a stale `pending` row as an AMBIGUOUS send: `in_flight`
+    // for ten minutes, then verify-by-Sent, which finds nothing because nothing was ever sent, and
+    // finalizes `unverified` — "check your Sent folder before retrying". The docblock on the staged
+    // arm below described that as "the user retries under the same key", which is true and is not
+    // the same thing as harmless: the same key is precisely what routes them into the ambiguous
+    // recovery instead of a new send.
     //
-    // The bytes were already refused against the cap BY DECLARATION in `reserve`; `fetch`
-    // re-measures each object against its own ticket, so what lands here can only be smaller.
-    //
-    // DEDUPED, and the same list `reserve` weighed. One ticket named twice is one file: the bytes
-    // are pulled once and the recipient gets one copy. Both halves of that mattered — before it,
-    // a repeated id was a second object-storage download AND a second copy of the file on the
-    // message, so the amplification and a plain correctness bug sat on the same line.
-    const stagedIds = dedupeStagedIds(input.stagedAttachmentIds);
-    if (stagedIds.length > 0 && deps.stagedAttachments) {
-      const staged = await deps.stagedAttachments.fetch(ctx.accountId, stagedIds, ctx.now());
-      // INLINE FIRST, then staged — the order a mixed send's composer listed them in, and the
-      // order the recipient sees. `msg.attachments` is absent for a staged-only send (the
-      // reservation only sets it from `input.attachments`), so this is also where that key
-      // appears at all.
-      msg.attachments = [...(msg.attachments ?? []), ...staged];
-    }
-
-    // ── FORWARD: STREAM THE ORIGINAL'S ATTACHMENTS, then send them with the message ──────────
-    //
-    // Done here, outside the reservation tx (it is IMAP network) and BEFORE `send`, so the
-    // forwarded files are on the one `OutboundMessage` that goes out and is appended to Sent —
-    // never persisted. A fetch failure is not swallowed: a forward that silently dropped the
-    // original's files would be a wrong send, so it fails the whole send (the reservation is
-    // `pending` and the user retries). Bounded by count and total bytes against a serverless OOM.
-    if (reservation.forward && deps.openFetchAdapter) {
-      await this.streamForwardParts(reservation.forward, msg, deps.openFetchAdapter);
+    // The window is closed as a WINDOW rather than at the one call that raised the row, because
+    // every step in it has the identical property. `finalizeFailed` records the definite outcome,
+    // the draft comes back to `draft`, and the reader is told the truth — including, for a stale
+    // forward source, what it was and what fixes it.
+    try {
+      await this.assemble(ctx, reservation, deps, input);
+    } catch (err) {
+      await this.finalizeFailed(ctx, sendId, draftId);
+      throw err;
     }
 
     const adapter = await deps.openSendAdapter(mailboxId);
@@ -675,6 +677,70 @@ export class SendService {
       return { status: "sent", providerMessageId, draftId, seq };
     } finally {
       await adapter.close();
+    }
+  }
+
+  /**
+   * Put the attachment bytes on the outgoing message — the whole of the pre-SMTP window.
+   *
+   * Extracted from {@link send} so the window has one boundary rather than two call sites the
+   * next person has to notice are related. Both steps are network, both run outside the
+   * reservation transaction, and neither persists a byte: the files land on the one
+   * `OutboundMessage` that both goes out and is appended to Sent.
+   *
+   * A failure is never swallowed and never partially applied. A send that quietly dropped an
+   * attachment the composer showed is a WRONG send, which is the ruling the forward path made
+   * first and the staged path inherited.
+   */
+  private async assemble(
+    ctx: ServiceContext,
+    reservation: Extract<Reservation, { kind: "new" }>,
+    deps: SendDeps,
+    input: SendInput,
+  ): Promise<void> {
+    const { msg } = reservation;
+
+    // ── STAGED: PULL THE BYTES FROM OBJECT STORAGE onto the outgoing message ────────────────
+    //
+    // Here, outside the reservation tx (it is network) and BEFORE `send`, exactly where the
+    // forward's IMAP stream runs and for the same reasons: the files must be on the one
+    // `OutboundMessage` that both goes out and is appended to Sent, and they are never persisted.
+    //
+    // A failure is NOT swallowed. `fetch` throws when an object is gone or is bigger than its
+    // ticket declared, and that ends the send — as a DEFINITE non-delivery, recorded by the
+    // window's own handler in `send` (`finalizeFailed`), because nothing has been offered to any
+    // server at this point. This used to read "the reservation is `pending` — the user retries
+    // under the same key", which is how a definite failure came to be recovered as an ambiguous
+    // one. A send that quietly dropped an attachment the composer showed is a wrong send, which
+    // is the same ruling the forward path already made.
+    //
+    // The bytes were already refused against the cap BY DECLARATION in `reserve`; `fetch`
+    // re-measures each object against its own ticket, so what lands here can only be smaller.
+    //
+    // DEDUPED, and the same list `reserve` weighed. One ticket named twice is one file: the bytes
+    // are pulled once and the recipient gets one copy. Both halves of that mattered — before it,
+    // a repeated id was a second object-storage download AND a second copy of the file on the
+    // message, so the amplification and a plain correctness bug sat on the same line.
+    const stagedIds = dedupeStagedIds(input.stagedAttachmentIds);
+    if (stagedIds.length > 0 && deps.stagedAttachments) {
+      const staged = await deps.stagedAttachments.fetch(ctx.accountId, stagedIds, ctx.now());
+      // INLINE FIRST, then staged — the order a mixed send's composer listed them in, and the
+      // order the recipient sees. `msg.attachments` is absent for a staged-only send (the
+      // reservation only sets it from `input.attachments`), so this is also where that key
+      // appears at all.
+      msg.attachments = [...(msg.attachments ?? []), ...staged];
+    }
+
+    // ── FORWARD: STREAM THE ORIGINAL'S ATTACHMENTS, then send them with the message ──────────
+    //
+    // Done here, outside the reservation tx (it is IMAP network) and BEFORE `send`, so the
+    // forwarded files are on the one `OutboundMessage` that goes out and is appended to Sent —
+    // never persisted. A fetch failure is not swallowed: a forward that silently dropped the
+    // original's files would be a wrong send, so it fails the whole send — definitively, and
+    // recorded as such by the window's handler. Bounded by count and total bytes against a
+    // serverless OOM.
+    if (reservation.forward && deps.openFetchAdapter) {
+      await this.streamForwardParts(ctx, reservation.forward, msg, deps.openFetchAdapter);
     }
   }
 
@@ -1072,7 +1138,11 @@ export class SendService {
       // sensitive body must never leave through a quote block), and the quoted original is folded
       // into the outgoing text/html. Its attachments are collected as metadata and STREAMED later,
       // outside this tx, because fetching bytes is IMAP network and a reservation tx opens none.
-      let forward: { parts: ForwardPart[]; mailboxId: string; locator: NativeLocator } | undefined;
+      // `messageId` rides along so the fetch can re-read this row's locator if the one captured
+      // here goes stale before the bytes are pulled — see `streamForwardParts`.
+      let forward:
+        | { parts: ForwardPart[]; mailboxId: string; locator: NativeLocator; messageId: string }
+        | undefined;
       let fwdText = "";
       let fwdHtml = "";
       if (input.forwardOf) {
@@ -1113,6 +1183,7 @@ export class SendService {
           .orderBy(asc(attachments.id)).limit(FORWARD_MAX_PARTS);
         forward = {
           mailboxId: orig.mailboxId,
+          messageId: orig.id,
           locator: orig.locator as NativeLocator,
           parts: attRows.map((a) => ({
             partId: a.partId,
@@ -1179,19 +1250,57 @@ export class SendService {
    * resolve. The bytes land only on `msg.attachments` — the same zero-at-rest path an uploaded
    * file takes — and a part over the running byte budget stops the fetch: a forward that silently
    * dropped files is a wrong send, and the total is bounded so it cannot OOM the function.
+   *
+   * ── A STALE SOURCE LOCATOR IS RE-RESOLVED ONCE, THEN REFUSED HONESTLY ───────────────────────
+   *
+   * The locator came off the `messages` row inside the reservation transaction. Between that read
+   * and this fetch the original can move — another client files it, or its folder is recycled and
+   * re-enumerated under a new UIDVALIDITY — and the adapter then refuses with `MessageGoneError`
+   * rather than handing back part *n* of whatever now wears that UID.
+   *
+   * **A READ MAY RE-RESOLVE, so this one does.** `messages.native_locator` is a mirror of what the
+   * organizer last observed, and adoption repoints it by Message-ID and fingerprint, so re-reading
+   * that column is the witness — no new IMAP surface, no search this code has to bound against a
+   * hostile server, and no possibility of acting on a message whose identity was never proved. It
+   * is tried EXACTLY ONCE and only when the row now names a DIFFERENT locator: a second attempt
+   * against the same value would be a retry loop dressed as a repair. Re-fetching is safe in a way
+   * re-moving is not — the worst case is one wasted read, which is why `gone.ts` grants this to
+   * reads and withholds it from mutations.
+   *
+   * When the re-read has not caught up, the send is refused with what is TRUE: nothing was sent,
+   * here is why, and here is what makes it work. It must never reach the ambiguous-send recovery,
+   * which would tell the reader to check Sent for a message that was never offered to any server —
+   * the window handler in {@link send} is what guarantees that, and this sentence is what makes
+   * the refusal actionable rather than merely accurate.
    */
   private async streamForwardParts(
-    forward: { parts: ForwardPart[]; mailboxId: string; locator: NativeLocator },
+    ctx: ServiceContext,
+    forward: { parts: ForwardPart[]; mailboxId: string; locator: NativeLocator; messageId: string },
     msg: OutboundMessage,
     openFetchAdapter: OpenAdapter,
   ): Promise<void> {
     if (forward.parts.length === 0) return;
     const adapter = await openFetchAdapter(forward.mailboxId);
     try {
+      let locator = forward.locator;
+      let reResolved = false;
       const fetched: NonNullable<OutboundMessage["attachments"]> = [];
       let total = 0;
       for (const part of forward.parts) {
-        const bytes = await adapter.fetchPart(forward.locator, part.partId);
+        let bytes: Awaited<ReturnType<AttachmentAdapter["fetchPart"]>>;
+        try {
+          bytes = await adapter.fetchPart(locator, part.partId);
+        } catch (err) {
+          if (!isMessageGone(err) || reResolved) throw this.forwardSourceGone(err);
+          reResolved = true;
+          const fresh = await this.currentLocatorOf(ctx, forward.messageId);
+          // A row that still names the locator we just tried has nothing new to say, and neither
+          // does one whose locator has been cleared. Only a genuinely different locator earns the
+          // second attempt.
+          if (!fresh || sameLocator(fresh, locator)) throw this.forwardSourceGone(err);
+          locator = fresh;
+          bytes = await adapter.fetchPart(locator, part.partId);
+        }
         total += bytes.body.byteLength;
         if (total > FORWARD_MAX_TOTAL_BYTES) {
           throw new ServiceError(
@@ -1210,6 +1319,49 @@ export class SendService {
     } finally {
       await adapter.close();
     }
+  }
+
+  /**
+   * THE SENTENCE A READER SEES WHEN A FORWARD'S ORIGINAL HAS MOVED — three facts, in the order
+   * they need them.
+   *
+   * 1. *Nothing was sent.* First, because it is the thing they are actually worried about and the
+   *    thing the old behaviour got wrong. This service knows it with certainty: `adapter.send` had
+   *    not been reached.
+   * 2. *What went wrong*, in terms of the mailbox rather than of this code — the message being
+   *    forwarded moved, so its attachments could not be read. Not "MessageGoneError", not "the
+   *    mail server is having trouble" (it is not), and not a UIDVALIDITY lecture.
+   * 3. *What makes it work* — press Send again after the mailbox has caught up. That is a real
+   *    recovery and not a hopeful one: the next scan re-finds the message by Message-ID and
+   *    repoints the locator this send reads.
+   *
+   * 409 rather than 410: the state we held conflicts with the server's, which is exactly what 409
+   * means, and 410 would assert a permanence that is usually false — the message has almost always
+   * simply moved. The route maps `ServiceError`, and the client engine puts this sentence in front
+   * of the reader verbatim with Send live again (`mail-send.ts#phaseFor`).
+   */
+  private forwardSourceGone(err: unknown): unknown {
+    if (!isMessageGone(err)) return err;
+    return new ServiceError(
+      "forward_source_moved", 409,
+      "Nothing was sent. The message you're forwarding is no longer where your mail server said "
+        + "it was, so its attachments couldn't be read. Try again once your mailbox has caught up.",
+    );
+  }
+
+  /**
+   * The forward source's locator AS THE MIRROR NOW HAS IT — the re-resolution witness.
+   *
+   * Account-scoped, like every read in this service: a cross-account message id must resolve to
+   * nothing rather than to somebody else's locator. Returns `null` when the row is gone or its
+   * locator has been cleared, both of which mean "no better answer than the one that just failed".
+   */
+  private async currentLocatorOf(ctx: ServiceContext, messageId: string): Promise<NativeLocator | null> {
+    const [row] = await ctx.db.select({ locator: messages.nativeLocator })
+      .from(messages)
+      .where(and(eq(messages.id, messageId), eq(messages.accountId, ctx.accountId)))
+      .limit(1);
+    return (row?.locator as NativeLocator | null) ?? null;
   }
 
   /**
@@ -1343,6 +1495,51 @@ export class SendService {
       });
     });
     return Number(seq);
+  }
+
+  /**
+   * FINALIZE-failed tx: **the message definitively did not go out, and the code KNOWS it.**
+   *
+   * ── WHY THIS EXISTS AT ALL ──────────────────────────────────────────────────────────────────
+   *
+   * `failed` was declared by this service, mapped by the route (409) and handled by the client
+   * engine (`send_failed`, non-retryable) from the day the state machine was written — and NOTHING
+   * EVER WROTE IT. The `pending` reservation was the only thing a pre-SMTP failure left behind, and
+   * a `pending` row is, by this service's own recovery rules, an AMBIGUOUS one: a same-key retry
+   * answers `in_flight` for {@link SEND_STALE_AFTER_MS}, and after that it probes the Sent folder,
+   * finds nothing, and finalizes `unverified` — *"We couldn't confirm this send. Check your Sent
+   * folder before retrying."*
+   *
+   * That sentence is false for every failure that happens BEFORE `adapter.send` is called. No
+   * socket was opened, no envelope was offered, nothing can be in Sent, and telling somebody to go
+   * and look for mail that provably never left is the worst kind of wrong answer: it is
+   * unfalsifiable from where they are standing, and the honest action it hides — press Send again —
+   * is the one it talks them out of.
+   *
+   * ── AND WHY `failed` IS SAFE HERE SPECIFICALLY ──────────────────────────────────────────────
+   *
+   * `failed` is terminal for this KEY, which is the whole point: a same-key replay must never
+   * resend, and it does not — it replays this refusal. It does not brick the draft, because the
+   * client releases the durable send key on any terminal outcome (`mail-send.ts#absorb`), so the
+   * reader's next press is a genuinely new send with a new key. The draft is returned to `draft`
+   * rather than left at `sending` for the same reason `schedule-send-pass.ts` returns it: a
+   * composer stuck on "Sending…" for a message that was never sent is the same lie one surface
+   * over.
+   *
+   * `sendAt`/`sendKey` are cleared on the terminal outcome — {@link finalizeSent}'s rule, and it
+   * matters more here than there: an appointment that outlived a definite non-delivery would be
+   * re-claimed by the scheduled-send sweep and replayed.
+   */
+  private async finalizeFailed(ctx: ServiceContext, sendId: string, draftId: string): Promise<void> {
+    const now = ctx.now();
+    await asTx(ctx).transaction(async (tx) => {
+      await tx.update(outboundSends).set({ status: "failed" }).where(eq(outboundSends.id, sendId));
+      await tx.update(drafts).set({ status: "draft", sendAt: null, sendKey: null, updatedAt: now })
+        .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId)));
+      await recordChange(tx, {
+        accountId: ctx.accountId, entityType: "draft", entityId: draftId, op: "update", meta: null,
+      });
+    });
   }
 
   /** FINALIZE-unverified tx: the ambiguous terminal state; the draft surfaces `unverified`. */
