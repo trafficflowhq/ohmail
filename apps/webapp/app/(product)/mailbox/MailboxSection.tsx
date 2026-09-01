@@ -1036,14 +1036,16 @@ export function MailboxSection() {
           expiresAt: Date.parse(started.expiresAt),
           // Stamped with the account that started it, so a later tab-reuse cannot restore it. An
           // empty string when the session read has not landed, which `recallDevice` treats as an
-          // unknown owner and refuses — the fail-closed direction.
+          // account it cannot establish and refuses — the fail-closed direction.
+          // The account is NOT stamped here — see the persistence effect below. A start can happen
+          // before the session read lands, and a record written with an empty account is one the
+          // restore would later delete as belonging to nobody it can name.
           accountId: accountId ?? "",
           // The FIRST poll goes out immediately. The server's own fence is what enforces the
           // cadence from there — `last_polled_at` has not been written yet, so this one is allowed,
           // and every later one is scheduled from what the server says it will accept.
           retryAfterMs: 0,
         };
-        rememberDevice(live);
         setDevice(live);
       } catch (err) {
         if (!alive.current) return;
@@ -1052,6 +1054,27 @@ export function MailboxSection() {
       }
     })();
   };
+
+  /**
+   * PERSIST THE LIVE CEREMONY — and ONLY once its owner is actually known.
+   *
+   * ── WHY THIS IS AN EFFECT AND NOT A LINE IN `startDeviceFlow` ──────────────────────────────
+   *
+   * The pane makes three independent reads on mount: the mailbox list, the availability capability,
+   * and the session. The Outlook affordance is enabled by the second, so a ceremony can legitimately
+   * START before the third has landed — and the first version of this stamped whatever `accountId`
+   * held at that moment, which was `null`. The restore effect below then read that record back,
+   * found an owner it could not match, and DELETED IT — while the in-memory poll loop carried on
+   * happily. The ceremony worked, and the reload recovery it exists for was silently gone.
+   *
+   * Found by review, and it is the third round in a row where the fix for one layer opened the next
+   * one down. Writing the record from here closes the family rather than the instance: there is one
+   * writer, it runs whenever either fact changes, and it cannot write an owner it does not have.
+   */
+  useEffect(() => {
+    if (!device || !accountId) return;
+    rememberDevice({ ...device, accountId });
+  }, [device, accountId]);
 
   /**
    * PICK UP A CEREMONY THIS TAB WAS ALREADY RUNNING — once both facts are known.
@@ -1163,12 +1186,28 @@ export function MailboxSection() {
          * the row has reached a terminal verdict or been pruned, and re-polling it for fifteen
          * minutes would be asking a question that now has one permanent answer.
          */
-        setDevicePollError(messageOf(err));
+        /*
+         * WHICH LINE THE MESSAGE GOES ON DEPENDS ON WHETHER THE CEREMONY SURVIVES IT.
+         *
+         * A TERMINAL refusal — the row reached a verdict, was pruned, or belongs to another account
+         * — ends the ceremony, and the block that renders `devicePollError` is inside the ceremony's
+         * own markup. Putting the explanation there and then nulling `device` in the same tick meant
+         * React unmounted the container and the message with it: the code simply vanished off the
+         * screen with nothing said. Found by review, and it is the same mistake as the sticky error
+         * one layer over — the right question is not "which field" but "does the surface that shows
+         * this field still exist".
+         *
+         * So a terminal failure goes to the PANE-WIDE error, which outlives the ceremony, and a
+         * transient one stays on the ceremony's own line where the loop is still running.
+         */
         if (codeOf(err) === "oauth_device_state_invalid" || codeOf(err) === "forbidden") {
           forgetDevice();
+          setDevicePollError(null);
+          setError(messageOf(err));
           setDevice(null);
           return;
         }
+        setDevicePollError(messageOf(err));
         timer = setTimeout(() => { void poll(); }, Math.max(device.retryAfterMs, DEVICE_POLL_FLOOR_MS));
       }
     };
