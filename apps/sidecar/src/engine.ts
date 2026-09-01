@@ -156,7 +156,10 @@ export type CredentialState =
    * server or going back to the old one — go through the local door, and the door refuses a blank
    * password (`localProblem`), so either way the password is entered again. It is entered for a
    * different reason than `unreadable` would give: entering it is what PROVES it against whichever
-   * server was chosen, not what re-seals an envelope this install could not open.
+   * server was chosen. That is the DIAGNOSIS, not an exclusion: because this state takes
+   * precedence over `unreadable` rather than ruling it out, a row can be both, and the recovery
+   * `PATCH` re-encrypts under the current key either way — so entering the password also re-seals
+   * the row when it happened to need it.
    */
   | "foreign-host";
 
