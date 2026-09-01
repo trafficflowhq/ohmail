@@ -13,13 +13,16 @@ It is not a multi-tenant hosting kit, and nothing in it meters or bills.
 
 - **A machine that stays on.** A small VPS, a home server, or a box in a
   closet. 2 GB of memory and 20 GB of disk are comfortable.
-- **An x86_64 or an arm64 machine.** Both are built and published, so a
-  Raspberry Pi 4 or 5, an Apple-silicon Mac running Asahi, an Ampere or
-  Graviton instance run the same stack as an Intel box, with the same
-  commands — `docker pull` picks your architecture out of the image itself
-  and there is nothing to configure. (`uname -m` prints `x86_64` or
-  `aarch64`; a 32-bit Pi OS is the one thing that will not work — reflash
-  the 64-bit one.)
+- **An x86_64 or an arm64 machine.** Every image in the stack is published
+  for both, so a Raspberry Pi 4 or 5, an Ampere or Graviton instance, or an
+  Apple-silicon Mac takes the same commands as an Intel box — `docker pull`
+  reads the architecture out of the image and there is nothing to
+  configure. (`uname -m` prints `x86_64` or `aarch64`. A 32-bit Pi OS will
+  not work at all: there is no 32-bit image — reflash the 64-bit one. A
+  Linux distribution using 16 KB memory pages, which is how Asahi runs on
+  some Macs, is the one arm64 shape with a known history of trouble for
+  prebuilt binaries, and nobody here has tried it.) Read the arm64 note
+  under "Where this stands" before you commit a weekend to it.
 - **Docker**, with the compose plugin (`docker compose`, not the older
   `docker-compose`).
 - **A domain name pointed at that machine.** Mail credentials deserve TLS,
