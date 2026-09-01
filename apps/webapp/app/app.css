@@ -3707,6 +3707,19 @@ textarea.c-input:read-only {
   line-height: 1.55;
   margin: 9px 0 0;
 }
+/* THE REMOVAL CONFIRMATION'S CONSEQUENCE LIST. A list because it IS one — five separate
+   statements about what a removal does, and a paragraph would let the eye skip the two that
+   matter most (the mail is untouched; the copy already synced is not). Inherits `.acct-fine`'s
+   type; only the bullets and the rhythm are here. */
+.mbx-remove-list {
+  margin: 8px 0 12px;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.mbx-remove-list li { line-height: 1.45; }
+
 .acct-fine a {
   color: var(--ink2);
   text-decoration: underline;

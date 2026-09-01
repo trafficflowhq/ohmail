@@ -2060,7 +2060,7 @@
     "desktopOrganizeHere_removed": "Dieses Postfach wurde von diesem Rechner entfernt. Füge es stattdessen im Bereich „Desktop“ wieder hinzu.",
     "desktopOrganizeHere_no_mailbox": "Dieser Rechner hat kein Postfach für diese Adresse.",
     "desktopManageOnWeb": "Postfächer werden in ohmail im Web verwaltet",
-    "desktopManageOnWebWhy": "Ein Postfach zu verbinden, sein Passwort zu ändern oder es zu trennen speichert ein Postfachpasswort, und dein Konto verlangt davor einen zweiten Faktor — eine Prüfung, die diese App nicht durchführen kann. Dein Browser kann es, und dort bist du schon angemeldet.",
+    "desktopManageOnWebWhy": "Ein Postfach zu verbinden oder sein Passwort zu ändern speichert ein Postfachpasswort; eines zu entfernen löscht das dafür gespeicherte Passwort. Dein Konto verlangt vor beidem einen zweiten Faktor — eine Prüfung, die diese App nicht durchführen kann. Dein Browser kann es, und dort bist du schon angemeldet.",
     "desktopOpenWeb": "ohmail.app öffnen",
     "desktopNoBrowser": "Dieser Computer wollte keinen Browser öffnen. Die Seite ist unter ohmail.app.",
     "desktopHoldsCount": "Dieser Computer hat {count, number} von {total, number} Nachrichten deines Kontos. Der Rest bleibt in deinem Konto und wird geladen, sobald du in einer Liste dorthin gelangst oder eine Nachricht öffnest — es fehlt nichts.",

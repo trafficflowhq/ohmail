@@ -833,6 +833,23 @@ export const mailboxes = {
     api<MailboxDTO>(`/mailboxes/${id}`, { method: "PATCH", body: b }),
 
   /**
+   * REMOVE A MAILBOX — stop organizing it, and forget the login stored for it.
+   *
+   * `stepUp`-gated with `create` and `update`, and for the mirror image of their reason: those
+   * two STORE a mailbox password, this one DESTROYS the stored credential and ends the mail
+   * flowing into an account. The route has existed since the mailbox surface was built and until
+   * now nothing in any client called it — the only way to disconnect a mailbox was to ask
+   * somebody with database access.
+   *
+   * 204, and it is a SOFT delete on the server: the row stays because `messages.mailbox_id`
+   * references it, the credential rows go, the lease columns are cleared, and the pending
+   * scheduled sends are closed with a sentence. Nothing reaches the IMAP mailbox — no folder is
+   * touched and no message is deleted there — which is the load-bearing claim the confirmation
+   * makes and the reason it can be made at all.
+   */
+  remove: (id: string) => api<void>(`/mailboxes/${id}`, { method: "DELETE" }),
+
+  /**
    * WHO IS ORGANIZING THIS MAILBOX RIGHT NOW, read from the mailbox itself.
    *
    * Exactly one ohmail organizes a mailbox at a time, and the claim lives in an unsubscribed

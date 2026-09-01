@@ -2060,7 +2060,7 @@
     "desktopOrganizeHere_removed": "That mailbox was removed from this machine. Add it again in the Desktop settings pane instead.",
     "desktopOrganizeHere_no_mailbox": "This machine has no mailbox for that address.",
     "desktopManageOnWeb": "Mailboxes are managed in ohmail on the web",
-    "desktopManageOnWebWhy": "Connecting a mailbox, changing its password or disconnecting it stores a mailbox password, and your account asks for a second factor before it will — a check this app cannot make. Your browser can, and is already signed in.",
+    "desktopManageOnWebWhy": "Connecting a mailbox or changing its password stores a mailbox password; removing one deletes the password stored for it. Your account asks for a second factor before either — a check this app cannot make. Your browser can, and is already signed in.",
     "desktopOpenWeb": "Open ohmail.app",
     "desktopNoBrowser": "This computer would not open a browser. The page is at ohmail.app.",
     "desktopHoldsCount": "This computer holds {count, number} of your account's {total, number} messages. The rest stay on your account and load when you reach them in a list or open one — nothing is missing.",

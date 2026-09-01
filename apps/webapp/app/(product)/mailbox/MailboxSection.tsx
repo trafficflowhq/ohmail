@@ -90,7 +90,13 @@ import { displayAddress } from "../../shell/idn";
  * ceremony steps (`password` → `factor`), because `POST` and `PATCH` are both step-up-gated and
  * both write a credential — the only thing that differs is which call the verified factor makes.
  */
-type Stage = "list" | "form" | "edit" | "password" | "factor" | "saving";
+/**
+  * `"remove"` is the CONFIRMATION, not the removal: it states the consequences and asks. The
+  * removal itself runs from `"factor"` like every other write that touches a stored credential —
+  * `DELETE /mailboxes/:id` is step-up gated for the mirror image of `create`'s reason, because it
+  * DESTROYS one.
+  */
+type Stage = "list" | "form" | "edit" | "remove" | "password" | "factor" | "saving";
 type Factor = "webauthn" | "totp" | "recovery_code";
 
 /**
@@ -516,6 +522,16 @@ export function MailboxSection() {
    */
   const [gateRead, setGateRead] = useState(false);
   const [stage, setStage] = useState<Stage>("list");
+  /**
+   * THE MAILBOX A REMOVAL IS ABOUT, held for the whole ceremony.
+   *
+   * The row it came from can leave the list under a refresh mid-ceremony, so the DTO is captured
+   * rather than looked up again at the end — a removal that resolved its target at confirm time
+   * could act on a different mailbox than the one the confirmation named. Mutually exclusive with
+   * `editing` by construction: both are entered from a resting list, and `finishCeremony` reads
+   * them in a fixed order.
+   */
+  const [removing, setRemoving] = useState<MailboxDTO | null>(null);
   const [typed, setTyped] = useState<Typed>(emptyTyped);
   /**
    * The mailbox being edited, or `null` in the connect flow. It is what the ceremony's final step
@@ -1509,8 +1525,47 @@ export function MailboxSection() {
     }
   };
 
-  /** Which write the verified factor makes. An edit PATCHes; everything else creates. */
-  const finishCeremony = (): Promise<void> => (editing ? saveEdit() : connect());
+  /**
+   * REMOVE THE MAILBOX — reached only from a verified second factor, like every other write here.
+   *
+   * The server does the whole of it in one transaction: the row goes `disabled` with its lease and
+   * sync columns cleared, the credential rows are deleted, and the pending scheduled sends are
+   * closed with a sentence. Nothing here reaches the IMAP mailbox, which is the claim the
+   * confirmation makes.
+   *
+   * A failure returns to the CONFIRMATION rather than to the list, for `saveEdit`'s reason: the
+   * person is mid-decision, and dropping them back to a list that still shows the mailbox says
+   * nothing about whether the removal happened.
+   */
+  const removeMailbox = async (): Promise<void> => {
+    const target = removing;
+    if (!target) {
+      setStage("list");
+      return;
+    }
+    setStage("saving");
+    try {
+      await mailboxApi.remove(target.id);
+      if (!alive.current) return;
+      setRemoving(null);
+      setPassword("");
+      setChallenge(null);
+      setError(null);
+      setStage("list");
+      await refresh();
+      // The rail's strip reads the same route on its own slower clock; without this the pane and
+      // the strip disagree about this mailbox for up to thirty seconds.
+      refreshMailState();
+    } catch (err) {
+      if (!alive.current) return;
+      setStage("remove");
+      fail(err);
+    }
+  };
+
+  /** Which write the verified factor makes. A removal DELETEs, an edit PATCHes, else it creates. */
+  const finishCeremony = (): Promise<void> =>
+    (removing ? removeMailbox() : editing ? saveEdit() : connect());
 
   const submitPassword = (e: React.FormEvent): void => {
     e.preventDefault();
@@ -1927,6 +1982,20 @@ export function MailboxSection() {
                       {t("edit")}
                     </Button>
                   )}
+                  {/* REMOVE — the door out, and until now there was none on any surface. The
+                      route has been served since the mailbox surface was built and no client
+                      ever called it, so the only way to disconnect a mailbox was to ask
+                      somebody with database access.
+
+                      It opens a CONFIRMATION, never the removal: the press that destroys a
+                      stored credential is two screens away, behind the account's own second
+                      factor, which is the same gate connecting a mailbox passes. */}
+                  <Button
+                    className="mbx-btn"
+                    onClick={() => { setError(null); setRemoving(m); setStage("remove"); }}
+                  >
+                    {t("remove")}
+                  </Button>
                 </>
               )}
             </div>
@@ -2324,6 +2393,59 @@ export function MailboxSection() {
         </form>
       ) : null}
 
+      {/* ══ THE REMOVAL CONFIRMATION ═══════════════════════════════════════════════════════
+          A real confirmation, which means it states CONSEQUENCES rather than asking "are you
+          sure". Every line is a statement about what the server actually does, and the set is
+          chosen by what a person is about to lose track of:
+
+           · organizing stops — the visible change.
+           · THE MAIL IS UNTOUCHED. This is the one somebody is actually afraid of, and it is the
+             product's central promise: `MailboxService.delete` does not open an IMAP connection
+             at all, so no folder and no message on their server is reachable from this press.
+           · the stored password is deleted — the thing that cannot be undone by reconnecting
+             without typing it again.
+           · scheduled sends are closed rather than sent — a consequence with no other surface,
+             and one a person who has queued mail would otherwise discover in Drafts.
+           · THE COPY ALREADY SYNCED STAYS. Said plainly because it is true and unflattering:
+             erasure here is account-scoped and there is no per-mailbox purge, so a confirmation
+             claiming the local copy goes would be exactly the false statement this panel exists
+             to avoid. It names the thing that does remove it.
+
+          `role="alertdialog"` and the safe answer first in the DOM, the delete strip's discipline
+          one surface over. */}
+      {stage === "remove" && removing ? (
+        <div className="acct-confirm" role="alertdialog" aria-label={t("removeTitle", { address: removing.address })}>
+          <h3 className="acct-sub">{t("removeTitle", { address: removing.address })}</h3>
+          <ul className="acct-fine mbx-remove-list">
+            <li>{t("removeStops")}</li>
+            <li>{t("removeMailSafe")}</li>
+            <li>{t("removeCredential")}</li>
+            <li>{t("removeScheduled")}</li>
+            <li>{t("removeCopyStays")}</li>
+          </ul>
+          <p className="acct-fine">{t("removeReconnect")}</p>
+          {error ? <p className="acct-error" role="alert">{error}</p> : null}
+          <div className="acct-actions">
+            {/* THE SAFE ANSWER FIRST. A destructive confirmation that puts the destructive
+                button under the keyboard's first stop is a confirmation that confirms itself. */}
+            <Button onClick={() => { setRemoving(null); setError(null); setStage("list"); }}>
+              {t("removeCancel")}
+            </Button>
+            {/* It does not remove anything — it enters the step-up. The account asks for a fresh
+                second factor before it will destroy a stored credential, and this button is
+                honest about being the start of that rather than the end of it. */}
+            {/* `primary danger` — the account section's own convention for a destructive
+                confirm (`AccountSection.tsx`), so the two read as one product. */}
+            <Button
+              variant="primary" className="danger"
+              onClick={() => { setError(null); setStage("password"); }}
+            >
+              {t("removeConfirm")}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
       {stage === "password" ? (
         <form className="acct-confirm" onSubmit={submitPassword}>
           <h3 className="acct-sub">{t("confirmTitle")}</h3>
@@ -2342,7 +2464,10 @@ export function MailboxSection() {
               {busy ? t("working") : t("continue")}
             </Button>
             {/* Back to whichever form we came from — both still hold every typed field. */}
-            <Button onClick={() => { setStage(editing ? "edit" : "form"); setPassword(""); setError(null); }}>
+            <Button onClick={() => {
+              setStage(removing ? "remove" : editing ? "edit" : "form");
+              setPassword(""); setError(null);
+            }}>
               {t("back")}
             </Button>
           </div>
@@ -2352,7 +2477,12 @@ export function MailboxSection() {
       {stage === "factor" ? (
         <div className="acct-confirm">
           <h3 className="acct-sub">{t("factorTitle")}</h3>
-          <p className="acct-fine">{editing ? t("factorBodyEdit") : t("factorBody")}</p>
+          <p className="acct-fine">
+            {/* WHICH write this factor authorises. A removal is not a save, and a screen that
+                said "storing a mailbox password" over a delete would be asking for consent to
+                the wrong act. */}
+            {removing ? t("factorBodyRemove") : editing ? t("factorBodyEdit") : t("factorBody")}
+          </p>
 
           {method === "webauthn" ? (
             <div className="acct-actions">
@@ -2407,7 +2537,11 @@ export function MailboxSection() {
         </div>
       ) : null}
 
-      {stage === "saving" ? <p className="acct-lead">{editing ? t("savingEdit") : t("connecting")}</p> : null}
+      {stage === "saving" ? (
+        <p className="acct-lead">
+          {removing ? t("removeWorking") : editing ? t("savingEdit") : t("connecting")}
+        </p>
+      ) : null}
     </SettingsSection>
   );
 }
