@@ -1372,8 +1372,35 @@ function climb(input: MailStateInputs): MailState {
    * bundle, a fixture that predates it — simply omits it, and `undefined !== null` is TRUE. That reading
    * turns EVERY ordinary disconnect into an organizer conflict, which is a brand-new false
    * sentence in the place a false sentence was being removed. It went red on exactly that. */
+  /* ── AND A STOOD-DOWN ROW WHOSE ADDRESS IS BACK IS SUPERSEDED, NOT SPEAKING ─────────────
+   *
+   * A tombstone is a DESIGNED, PERMANENT state here, which is what makes this arm's "scan every
+   * mailbox" reach one it must not. `mailboxes_active_address_uq` is unique on
+   * `(account_id, lower(address))` only `WHERE status <> 'disabled'`
+   * (`packages/db/src/schema-mail.ts:446`), and the comment there says why in as many words: a
+   * plain unique "would make reconnecting a disconnected address fail forever against its own
+   * tombstone". So reconnecting an address AFTER a stand-down is the supported path, and it
+   * leaves the old row disabled, carrying `organized_elsewhere:*`, for ever — nothing clears it.
+   *
+   * This arm outranks every state below it, so that dead row pinned the whole strip to
+   * "Not organized here — ohmail on your own machine has claimed this mailbox" naming an address
+   * that was connected and syncing. MEASURED, not argued: on a self-hosted instance read from a
+   * Windows guest, Settings → Mailboxes said `ohmaillouis@gmail.com — Gmail · connected ·
+   * 11 messages · Synced just now` while the rail, in the same render, said that mailbox was not
+   * organized here. That is precisely the failure the block above says this arm exists to end —
+   * "Three statements on one screen, no two of them agreeing" — arrived at from the other side.
+   *
+   * The Mailboxes pane already knows the rule and says it out loud ("An earlier entry for this
+   * address is no longer in use"), so this is the ladder catching up with copy the product had.
+   *
+   * `lower()` because the index is on `lower(address)`: the tombstone and its replacement can
+   * differ in case and still be one mailbox to the server, and a case-sensitive compare here
+   * would let exactly that pair through. */
+  const liveAddresses = new Set(live.map((m) => m.address.toLowerCase()));
   const stoodDown = mailboxes.find(
-    (m) => m.status === "disabled" && typeof m.disabledReason === "string",
+    (m) => m.status === "disabled"
+      && typeof m.disabledReason === "string"
+      && !liveAddresses.has(m.address.toLowerCase()),
   );
   if (stoodDown) {
     return {
