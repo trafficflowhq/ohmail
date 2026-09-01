@@ -160,7 +160,7 @@ describe("what counts as a compose this window opens", () => {
   });
 
   /**
-   * THE PLATFORM CASE, and the one this file could not see until a reviewer named it.
+   * THE PLATFORM CASE, and the one that is invisible from any other platform.
    *
    * On macOS the app document is served from `tauri://localhost`. `tauri:` is not a "special"
    * scheme, so its WHATWG origin is OPAQUE and serialises to the literal string `"null"` — and

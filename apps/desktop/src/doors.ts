@@ -730,8 +730,7 @@ export async function enterLocalDoor(
      * ── THE ONE WINDOW THIS ORDER OPENS, NAMED RATHER THAN LEFT TO BE FOUND ─────────────────
      *
      * From here until the configure below returns, the CREDENTIAL names host B and the SETTINGS
-     * still name host A. Both halves of that were raised by review of this change and both are
-     * real:
+     * still name host A. Both halves of that window are real:
      *
      *  · IF THE CONFIGURE FAILS, OR THE APP EXITS HERE, the install is left in the mirror image
      *    of the divergence this ordering exists to end, and the next launch would offer B's

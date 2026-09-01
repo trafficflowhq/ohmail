@@ -51,7 +51,7 @@ export type MailboxTakeoverResult =
  * `" victim@example.com "` are different keys to the index and identical to every IMAP server
  * on earth: submit the second after the first and you get two rows, two allowance slots, and
  * two worker runtimes against one physical mailbox — the exact production failure 0021 was
- * written to stop, still reachable through the public API. An independent review caught it.
+ * written to stop, still reachable through the public API.
  *
  * TRIM ONLY, deliberately. Case is NOT folded here even though the index folds it: the local
  * part of an address is case-sensitive per RFC 5321, providers disagree about whether they
@@ -645,8 +645,8 @@ const addressTaken = (): ServiceError => new ServiceError(
  * rather than merely intended.
  *
  * `delete` establishes the invariant (disable the row, delete its credentials, so the worker
- * stops), mail 0021's prelude relies on it in as many words, and until an independent review
- * looked nothing enforced it: `update` would happily upsert a credential onto a tombstone.
+ * stops), mail 0021's prelude relies on it in as many words, and nothing enforced it: `update`
+ * would happily upsert a credential onto a tombstone.
  * The concrete sequence is a race with a dedup pass or a delete —
  *
  *   Thread 1  PATCH /mailboxes/:id { imap: { pass } }   reads the row: 'connected'
@@ -1378,7 +1378,7 @@ export class MailboxService {
       : undefined;
 
     return asTx(ctx).transaction(async (tx) => {
-      // `FOR UPDATE`, and it is the fix for a race an independent review found.
+      // `FOR UPDATE`, and it is the fix for a race between two concurrent PATCHes.
       // Without it a credentials-only PATCH took NO lock at all — it writes `mailbox_credentials`
       // and never touches the `mailboxes` row — so it could read a row as 'connected', have the
       // row disabled and stripped underneath it (by `delete`, by the dedup resolver, or by 0021's
@@ -1615,8 +1615,8 @@ export class MailboxService {
    *
    * ── ONE TRANSACTION, ROW LOCKS FIRST, DB CLOCK THROUGHOUT — the settle contract ────────────
    *
-   * The answer is the client's honest-settle baseline, and three review findings (2026-08-26,
-   * round 1) shaped this exact form:
+   * The answer is the client's honest-settle baseline, and three properties shape this exact
+   * form:
    *
    *  · PER MAILBOX, not one scalar. A mailbox holding a YOUNG standing stamp keeps it, and its
    *    request predates this call — a single `requestedAt: now` would set that mailbox a bar its
@@ -1650,7 +1650,7 @@ export class MailboxService {
       // The wire form is FIXED ISO-8601 UTC via to_char, never `::text`: the bare cast renders
       // at the server's DateStyle (space separator, `+00` offset), which `Date.parse` is not
       // required to accept — a rejected format is a NaN baseline and a spinner that always runs
-      // to its cap (2026-08-26 review, round 2). Millisecond precision, matching the DTO's
+      // to its cap. Millisecond precision, matching the DTO's
       // `toISOString()` on the other side of the comparison; the sub-millisecond loss floors the
       // baseline, which is the conservative direction.
       const mine = await tx.select({
