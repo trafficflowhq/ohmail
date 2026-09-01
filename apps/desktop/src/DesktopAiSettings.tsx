@@ -281,9 +281,6 @@ export function DesktopAiSettings({
         value={status.available ? "Working" : "Not in use"}
       />
 
-      {problem ? <p className="join-error">{problem}</p> : null}
-      {said ? <p className="join-hint">{said}</p> : null}
-
       <SettingsRow
         label="Where the model comes from"
         description={
@@ -441,6 +438,22 @@ export function DesktopAiSettings({
           </span>
         }
       />
+
+      {/*
+        * THE ANSWER SITS UNDER THE BUTTONS THAT ASKED FOR IT.
+        *
+        * These two lines used to render near the TOP of the pane, immediately after the "State"
+        * row — while the buttons are down here, behind the provider's own fields (a key, two model
+        * names, an address). So pressing "Test connection" changed one line above the fold, the
+        * button went "Testing…" and straight back, and from the chair the control looked dead. It
+        * was reported as exactly that: no visible response.
+        *
+        * The verdict is not a property of the pane, it is the ANSWER TO A PRESS, so it belongs
+        * beside the press. The "State" row above still carries the durable fact — what the engine
+        * found when it last asked — which is a different statement and stays where it is.
+        */}
+      {problem ? <p className="join-error">{problem}</p> : null}
+      {said ? <p className="join-hint">{said}</p> : null}
 
       {/*
         * OFFERED WHENEVER ANYTHING IS STORED — a provider, or EITHER vendor's key.
