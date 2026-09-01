@@ -11,8 +11,19 @@
  *
  * So this is a different control for a different question, sharing everything that is not about
  * money: the same endpoint, the same request shape, the same overlay the rows read their chips
- * from. What it drops is the ladder, the dry run and the price. What it adds is the one thing the
- * hosted client never has to say — that there may be no model at all.
+ * from. What it drops is the dry run and the price. What it adds is the one thing the hosted
+ * client never has to say — that there may be no model at all.
+ *
+ * ── IT KEEPS THE LADDER, WHICH IT USED TO DROP TOO, AND THAT WAS THE DEFECT ─────────────────
+ *
+ * Dropping the PRICE is right. Dropping the COUNT was not, and the two went together because the
+ * hosted ladder is a ladder of prices. This control offered one fixed number — fifty — so a person
+ * with three hundred senders waiting read "Suggest for 50 senders", every time, with no way to ask
+ * for the rest except to press again six times and no indication that was the intent. The reason
+ * recorded for the fifty was that a bigger press "would be a buy ladder without the number that
+ * made one honest"; there is nothing bought here, and the number that makes a press honest on this
+ * door is simply how many senders it will ask about. So the rungs come back — the hosted ladder's
+ * own, over the queue instead of over a price, topping out at ALL of them.
  *
  * ── NEVER A CONTROL WITH NOTHING BEHIND IT ──────────────────────────────────────────────────
  *
@@ -33,7 +44,9 @@ import { unavailableLine, type LocalAiStatus } from "./local-ai.js";
 import {
   hydrateSuggestions,
   runSuggest,
-  PER_PRESS,
+  localBatchSizes,
+  lanesFor,
+  DEFAULT_PER_PRESS,
   type SuggestionRow,
 } from "./local-suggest-run.js";
 
@@ -51,6 +64,13 @@ export interface LocalSuggestProps {
 export function LocalSuggest({ senders, absorb, ai, onConfigure }: LocalSuggestProps) {
   const [running, setRunning] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  /**
+   * THE RUNG THE PERSON CHOSE, or `null` while they have not — in which case the resting default
+   * stands. Kept as the NUMBER rather than an index into the ladder, because the ladder is derived
+   * from a queue that shrinks as answers land: an index would silently point at a different size
+   * after every chunk, which is the control changing what a press means while somebody reads it.
+   */
+  const [size, setSize] = useState<number | null>(null);
   /**
    * `run` counts presses and NOTHING ELSE increments it.
    *
@@ -98,7 +118,15 @@ export function LocalSuggest({ senders, absorb, ai, onConfigure }: LocalSuggestP
     );
   }
 
-  const total = Math.min(senders.length, PER_PRESS);
+  /* THE RUNGS, over what is actually waiting — so the top one is "all 312" and not a number
+     larger than the queue. `localBatchSizes` is the hosted control's own ladder function. */
+  const sizes = localBatchSizes(senders.length);
+  /* The chosen rung, or the resting default — and never larger than the queue, which is what
+     makes the button's number true when the queue has shrunk under a stale choice. */
+  const total = Math.min(senders.length, size ?? DEFAULT_PER_PRESS);
+  /* Where the model runs decides how many requests may be in flight. See `lanesFor`: measured
+     to be worth nothing against a daemon on this machine, and worth a great deal against a key. */
+  const lanes = lanesFor(ai.contentGoesTo);
 
   const stop = (): void => {
     io.current.run++;
@@ -119,6 +147,8 @@ export function LocalSuggest({ senders, absorb, ai, onConfigure }: LocalSuggestP
       try {
         const out = await runSuggest({
           senders,
+          limit: total,
+          lanes,
           absorb,
           alive: mine,
           onProgress: (done, of) => {
@@ -162,6 +192,25 @@ export function LocalSuggest({ senders, absorb, ai, onConfigure }: LocalSuggestP
         </>
       ) : (
         <>
+          {/* THE RUNGS. Rendered only when there is a choice to make — one rung is not a ladder,
+              it is the button's own number said twice. The top rung says "all N" rather than the
+              bare figure, because "all of them" is the thing a person with a backlog is looking
+              for and a number alone does not say whether it is all of them. */}
+          {sizes.length > 1 ? (
+            <div className="scn-sg-sizes">
+              {sizes.map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  className={n === total ? "scn-sg-size on" : "scn-sg-size"}
+                  aria-pressed={n === total}
+                  onClick={() => setSize(n)}
+                >
+                  {n === senders.length ? `all ${n}` : n}
+                </button>
+              ))}
+            </div>
+          ) : null}
           <Button onClick={start}>
             {total === 1 ? "Suggest for 1 sender" : `Suggest for ${total} senders`}
           </Button>
