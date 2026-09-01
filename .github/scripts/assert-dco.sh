@@ -22,6 +22,23 @@
 # MERGE COMMITS ARE SKIPPED. A merge contributes no lines; requiring a sign-off on one would fail
 # every branch that had `main` merged into it, which teaches people the check is noise.
 #
+# ── THE RANGE IS `base..head`, AND A MERGE BASE WAS TRIED AND REJECTED ────────────────────────
+#
+# Worth writing down because the argument for `git merge-base` is persuasive and wrong. It goes:
+# the recorded base sha is the base branch as it stood when the pull request was last updated,
+# `main` here advances by MACHINE-GENERATED commits that carry no sign-off, so a raw range will
+# sweep one in and tell a contributor to sign somebody else's commit.
+#
+# It does not, and the reason is what `A..B` means: `B --not A` lists commits reachable from B.
+# A commit that is only on the base branch is not reachable from the pull request's head, so it
+# was never a candidate. Built the case and ran it — base advanced by an unsigned generated
+# commit, branch signed — and both spellings return the same one commit.
+#
+# Where they DO differ, `merge-base` is the worse of the two: if a contributor merges the base
+# branch into their branch, those base commits become head-reachable, `base..head` still excludes
+# them (they are base-reachable) and `merge-base..head` includes them — which is the failure the
+# argument was trying to prevent, introduced by the fix for it.
+#
 # ── THE GUARD ON THE GUARD ────────────────────────────────────────────────────────────────────
 #
 # This is a check for the PRESENCE of something in a set of commits, so it passes trivially when
@@ -30,6 +47,14 @@
 # and an EMPTY range is a hard failure with its own message, never a pass. `assert-no-fcm.sh`
 # states the same rule from the other direction: a scan for an absence passes when the scan is
 # broken.
+#
+# ── THE COMMIT DATA IS DATA, NEVER CODE ───────────────────────────────────────────────────────
+#
+# Every field read below — author, committer, subject, message body — is written by whoever
+# opened the pull request. Nothing here evaluates any of it: every expansion is double-quoted,
+# every comparison is `[ "$a" = "$b" ]`, and there is no `eval` and no unquoted expansion in a
+# command position. That property is what lets the caller run this against a contributor's
+# commits without checking their tree out.
 #
 # ── NO `! producer | grep -q .`, AND NO `while read` IN A PIPELINE ────────────────────────────
 #
@@ -59,6 +84,16 @@ for ref in "$BASE" "$HEAD"; do
     exit 2
   fi
 done
+
+# A shared ancestor is not needed to compute the range — see the header, `base..head` is right as
+# it stands — but its ABSENCE means the base history was never fetched, and then the range is
+# "everything on the branch" rather than "what this pull request adds". That is a broken checkout
+# wearing the costume of a clean one, so it is loud rather than silently over-strict.
+if ! git merge-base "$BASE" "$HEAD" > /dev/null 2>&1; then
+  echo "assert-dco: '$BASE' and '$HEAD' have no common ancestor in this checkout." >&2
+  echo "assert-dco: the workflow needs the base history fetched (fetch-depth: 0)." >&2
+  exit 2
+fi
 
 # `--no-merges`: see the header. Captured whole rather than piped into the loop.
 COMMITS="$(git rev-list --no-merges "${BASE}..${HEAD}")"

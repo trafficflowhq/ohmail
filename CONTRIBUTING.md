@@ -113,12 +113,20 @@ By making a contribution to this project, I certify that:
     this project or the open source license(s) involved.
 ```
 
-Sign-off is checked by a human at review time, not by a bot. We deliberately did
-not add a CI gate for it: the commits on `main` are machine-generated syncs from
-the private monorepo and carry no trailer, so a check that ran on pushes would
-sit permanently red and teach everyone to ignore a red build. If that ever
-changes, the safe shape is a job scoped to `pull_request` only. Until then, if
-you forget, we will just ask.
+Sign-off is checked by CI, on pull requests only — the **dco** check. It walks
+the commits your branch adds and asks each one for a trailer whose address is the
+commit's author or its committer, so `git rebase --signoff` works and so does a
+maintainer signing off a patch they are landing for you. Merge commits are
+skipped.
+
+It runs on pull requests and merge groups and never on pushes, and that is not an
+oversight: the commits on `main` are machine-generated syncs from a private
+development repository and carry no trailer, so a check that ran on pushes would
+sit permanently red and teach everyone to ignore a red build. The check is
+`.github/scripts/assert-dco.sh` and it is meant to be read.
+
+If you forget, the check tells you which commits and what to run. Nobody will
+ask you to sign anything else.
 
 ### What your contribution is licensed as, and what that means for us
 

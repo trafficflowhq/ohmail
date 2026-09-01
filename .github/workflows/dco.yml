@@ -8,19 +8,41 @@ name: dco
 # itself lives in .github/scripts/assert-dco.sh so that it can be read, and run, without a
 # GitHub Actions run to find out what it does.
 #
-# ── PULL REQUESTS ONLY, AND THAT IS NOT AN OVERSIGHT ─────────────────────────────────────────
+# ── `pull_request_target`, AND THAT IS THE SECURITY DECISION, NOT A STYLE ONE ─────────────────
 #
-# `push` is deliberately not a trigger. This repository's history is GENERATED — commits arrive
-# here in batches, replayed from the development repository with their original authors and
-# dates and with messages written for a public reader. Those messages carry no sign-off and
-# never will, so a push trigger would fail every publish while proving nothing about anybody's
-# contribution. What needs certifying is a patch arriving from outside, which is a pull request.
+# A `pull_request` workflow runs the workflow file AND the repository tree from the pull
+# request's own merge commit. For every other check in this repository that is exactly right —
+# the point is to build the contributor's code. For THIS one it is a hole big enough to walk
+# through: the pull request being judged would supply the judge. Replace assert-dco.sh with
+# `exit 0`, or gut the run step below, and the required check goes green over unsigned commits.
+#
+# `pull_request_target` runs the workflow file and the checked-out tree from the BASE — code a
+# maintainer has already reviewed and merged. What it is famous for being dangerous is the other
+# half of that trade: it hands out a token with write scope, so a workflow that checks out and
+# then EXECUTES the pull request's code is handing that code the repository. This one never does,
+# and the two lines that keep it true are worth reading as a pair:
+#
+#   · `permissions: contents: read` — nothing this job can do is a write.
+#   · the fetch below brings the pull request's commits in as OBJECTS and never checks them out.
+#     assert-dco.sh reads their author, committer and message and compares strings. There is no
+#     build step, no install, no script from that tree, and nothing is evaluated.
+#
+# If a step is ever added here that runs anything out of the contributor's tree, this trigger has
+# to change back on the same day.
+#
+# ── PULL REQUESTS AND MERGE GROUPS ONLY, NEVER PUSH ──────────────────────────────────────────
+#
+# This repository's history is GENERATED — commits arrive in batches, replayed from the
+# development repository with their original authors and dates and with messages written for a
+# public reader. Those messages carry no sign-off and never will, so a push trigger would fail
+# every publish while proving nothing about anybody's contribution, and the first thing anyone
+# would do about a permanently red build is learn to ignore it.
 #
 # `merge_group` is included so that a queued merge is checked against the same rule as the pull
 # request it came from, rather than being a way past it.
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
   merge_group:
 
@@ -32,38 +54,55 @@ jobs:
     name: every commit is signed off
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: check out the BASE revision — the checker must not come from the pull request
+        uses: actions/checkout@v4
         with:
-          # The whole history: the check walks base..head, and a shallow clone has no merge
-          # base to walk from. assert-dco.sh refuses rather than passing when a ref is
-          # missing, so a shallow checkout would be a loud failure — but a loud failure on
-          # every pull request is not a check either.
+          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          # The whole history: the check walks from the point the branch left the base, and a
+          # shallow clone has no merge base to find. assert-dco.sh refuses rather than passing
+          # when it cannot find one, so a shallow checkout is a loud failure — but a loud failure
+          # on every pull request is not a check either.
           fetch-depth: 0
+
+      - name: fetch the commits under review as OBJECTS, without checking them out
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MG_HEAD_REF: ${{ github.event.merge_group.head_ref }}
+        run: |
+          set -euo pipefail
+          # `refs/pull/<n>/head` exists on the BASE repository for fork pull requests too, so this
+          # one form covers both. Nothing is checked out: the objects land under refs/dco/head and
+          # the working tree stays on the base revision.
+          if [ -n "${PR_NUMBER:-}" ]; then
+            git fetch --no-tags --force origin "+refs/pull/${PR_NUMBER}/head:refs/dco/head"
+          elif [ -n "${MG_HEAD_REF:-}" ]; then
+            git fetch --no-tags --force origin "+${MG_HEAD_REF}:refs/dco/head"
+          else
+            echo "dco: neither a pull_request_target nor a merge_group payload named a head." >&2
+            echo "dco: refusing rather than checking nothing." >&2
+            exit 1
+          fi
 
       - name: resolve the range this event is about
         id: range
         env:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
-          PR_HEAD: ${{ github.event.pull_request.head.sha }}
           MG_BASE: ${{ github.event.merge_group.base_sha }}
-          MG_HEAD: ${{ github.event.merge_group.head_sha }}
         run: |
           set -euo pipefail
-          # One of the two pairs is populated, decided by the event. Both empty means the
-          # payload is not the shape this workflow was written against, and the honest answer
-          # to that is a failure rather than an empty range that passes — the same rule
-          # assert-dco.sh applies to the range itself.
-          if [ -n "$PR_BASE" ] && [ -n "$PR_HEAD" ]; then
-            base="$PR_BASE"; head="$PR_HEAD"
-          elif [ -n "$MG_BASE" ] && [ -n "$MG_HEAD" ]; then
-            base="$MG_BASE"; head="$MG_HEAD"
-          else
-            echo "dco: neither a pull_request nor a merge_group payload carried a base and head." >&2
-            echo "dco: refusing rather than checking nothing." >&2
+          # One of the two is populated, decided by the event. Both empty means the payload is not
+          # the shape this workflow was written against, and the honest answer to that is a
+          # failure rather than an empty range that passes — the same rule assert-dco.sh applies
+          # to the range itself.
+          base="${PR_BASE:-${MG_BASE:-}}"
+          if [ -z "$base" ]; then
+            echo "dco: no base sha in the event payload. Refusing rather than checking nothing." >&2
             exit 1
           fi
           echo "base=$base" >> "$GITHUB_OUTPUT"
-          echo "head=$head" >> "$GITHUB_OUTPUT"
+          echo "head=$(git rev-parse refs/dco/head)" >> "$GITHUB_OUTPUT"
 
       - name: every commit carries its author's sign-off
+        # The script comes from the base checkout above, so it is the version a maintainer
+        # merged. Only the two SHAs come from the event.
         run: bash .github/scripts/assert-dco.sh "${{ steps.range.outputs.base }}" "${{ steps.range.outputs.head }}"
