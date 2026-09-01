@@ -203,12 +203,22 @@ export function TriageView({
   // footer dispatches through, so the key and the button remain one code path. On a message
   // already in the pile a key names, the shell's toggle takes it OUT (`state:"none"` — the
   // un-triage path), which is what makes a mis-key recoverable from right here.
+  // `⇧F` (Forward) joins this list for exactly the reason the four above are in it: the pill this
+  // view mounts prints a `⇧F` keycap read from the registry, and the shell's own binding is
+  // `disabled` here because `focused` has no arm for this view. Without a local declaration the
+  // bar would advertise a key that does nothing — the defect the keycap-always law exists to
+  // prevent. Gated on `no_forward` like the button it belongs to (`ActionBar#canForward`), so the
+  // key and the control disappear together; the mirror half needs no gate here, because every
+  // message in a triage pile is a local row by construction.
   const verbs = shown
     ? ([
         { chord: "a", key: "answerLater", action: "later" },
         { chord: "e", key: "park", action: "aside" },
         { chord: "b", key: "resurface", action: "resurface" },
         { chord: "r", key: "reply", action: "reply" },
+        ...(shown.sensitivity?.no_forward === true
+          ? []
+          : [{ chord: "shift+f", key: "forward", action: "forward" }] as const),
       ] as const)
     : [];
   useKeyBindings([

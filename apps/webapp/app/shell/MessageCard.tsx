@@ -146,7 +146,30 @@ export function MessageHeader({
       });
     }
   }
-  if (chrome.forward) {
+  /**
+   * FORWARD, UNDER THE SAME TWO PREDICATES THE PILL APPLIES (`MessagePane.ActionBar#canForward`).
+   *
+   * These used to be `chrome.forward` alone, and while this menu was Forward's ONLY door that was
+   * merely permissive. It is not the only door any more — the verb stands in the action bar — and
+   * two surfaces offering the same verb under DIFFERENT conditions is worse than either rule on
+   * its own: on a `no_forward` message the bar withholds Forward while this menu still offers it,
+   * so the reader is told "no" by one control and "yes, then a refusal toast" by the other, on the
+   * same message, at the same moment.
+   *
+   *   · `no_forward` — the send path answers 403 (the sensitive-leak gate: an OTP or a reset link
+   *     must not leave the account inside a quote block).
+   *   · off-mirror — `AppShell.openForward` reads the row out of the engine and returns silently
+   *     when it is absent, so the item would be a no-op with no reason given.
+   *
+   * Both are the house rule for a verb whose path must reject it — Delete's own `mirrorHolds`
+   * gate is the precedent — and degrading by OMISSION is what this menu already does for every
+   * other unwired verb.
+   */
+  if (
+    chrome.forward &&
+    message.sensitivity?.no_forward !== true &&
+    chrome.mirrorHolds?.(message.id) !== false
+  ) {
     menuItems.push({
       id: "forward",
       label: tm("menuForward"),

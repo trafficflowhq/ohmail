@@ -4683,6 +4683,24 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
           ? (receiptsCur ? (reader.get<EngineMessage>("message", receiptsCur) ?? null) : null)
           : null);
 
+  /**
+   * DOES THE LOCAL MIRROR HOLD THIS ROW? — one definition, two consumers.
+   *
+   * The reader can show rows the mirror deliberately does not hold: an archive-only hit opened
+   * from Search reaches past it. A verb whose implementation reads the local row must then be
+   * withheld rather than offered and guaranteed to fail — Delete (`message_delete` acts on a
+   * local row) and Forward (`openForward` reads the message out of the engine and returns
+   * silently when it is absent) both need exactly this question answered.
+   *
+   * Declared here rather than inline in the chrome because `⇧F`'s binding needs it too, and two
+   * spellings of "is this row in the mirror" is how the key and the button come to disagree —
+   * the same one-derivation rule `canSend` and `replyAllRecipients` are held to.
+   */
+  const mirrorHolds = useCallback(
+    (id: string): boolean => reader.get<EngineMessage>("message", id) != null,
+    [reader],
+  );
+
   /* A half-open destination strip must not carry over when the cursor moves — the same rule
      the pane enforced per mount while it owned the state (see `useBarPanel`). */
   const focusedId = focused?.id ?? null;
@@ -4980,18 +4998,35 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
        * "the other thing F does" rather than as an arbitrary pick, and the `?` sheet prints it
        * beside `r` and `⇧R` in the same `message` group.
        *
-       * Its `disabled` carries the SAME predicate the bar's button does (`sensitivity.no_forward`
-       * — the send path refuses such a forward with a 403), so the key and the control appear and
+       * Its `disabled` carries the SAME TWO predicates the bar's button does
+       * (`MessagePane.ActionBar#canForward`) — `sensitivity.no_forward`, which the send path
+       * answers with a 403, and the mirror, because `openForward` below reads the row out of the
+       * engine and returns silently when it is absent. So the key and the control appear and
        * disappear together: the discipline `⇧R` keeps against `replyAllRecipients`, and the reason
        * the pill's keycap can be generated from this registry rather than typed at the call site.
        *
-       * Live wherever the pill is (`focused != null`), and NOT a toggle — see `openForward`, which
-       * answers a refused message with a toast that a second-press-closes verb would swallow.
+       * NOT a toggle — see `openForward`, which answers a refused message with a toast that a
+       * second-press-closes verb would swallow.
+       *
+       * ── WHERE IT IS LIVE, AND WHERE IT IS NOT ────────────────────────────────────────────
+       *
+       * `focused` is the reader (over any view), the Ohbox, Reads and Receipts. On a WIDE split in
+       * Triage, Folder, Tag or History the message on screen is that view's own local cursor,
+       * which the shell cannot see — so this binding is inert there while the pill still prints
+       * the keycap. That is not specific to Forward: `r`, `⇧R`, `a`, `e`, `b`, `s`, `t`, `m` and
+       * `d` are all inert on those three of the four views for the same reason, and `TriageView`
+       * is the one that already fixes it by declaring its own bindings over `shown` ("views
+       * declare their own"). Forward joins that list THERE rather than adding a fourth silent
+       * chord; Folder, Tag and History declare no message verbs at all, which is a pre-existing
+       * gap across every verb and not this one's to close.
        */
       chord: "shift+f",
       group: "message",
       label: t("shortcuts.forward"),
-      disabled: focused == null || focused.sensitivity?.no_forward === true,
+      disabled:
+        focused == null ||
+        focused.sensitivity?.no_forward === true ||
+        mirrorHolds(focused.id) === false,
       run: () => {
         if (!focused) return;
         if (readerMessage != null || route.view === "ohbox") openForward(focused.id);
@@ -5681,7 +5716,8 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
       // …and on the mirror actually HOLDING the row: an off-mirror archive hit (Search's
       // reach-past reader) has no local row for `message_delete` to act on, so the verb is
       // withheld there rather than offered and guaranteed to fail (review finding).
-      mirrorHolds: (id: string) => reader.get<EngineMessage>("message", id) != null,
+      // ONE definition, shared with `⇧F`'s own gate — see `mirrorHolds` above.
+      mirrorHolds,
       absoluteTime,
       onToggleAbsoluteTime: toggleAbsoluteTime,
       replyTo, replyAll, replyMode, replyBody, onReplyBody, closeReply, sendReply,

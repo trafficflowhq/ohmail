@@ -327,14 +327,26 @@ function ActionBar({
    * `⇧F`'s own binding carries the identical predicate (see `AppShell`), so the key and the button
    * appear and disappear together — the discipline `shift+r` and `replyAllRecipients` already keep.
    *
-   * THE DENSITY LADDER DELIBERATELY IGNORES THIS. `action-bar.css` derives its rungs with the
-   * Forward group PRESENT, which is the worst case for width; a `no_forward` message's row is then
-   * narrower than the rung assumed, so a later group folds into More one tier early — the ladder's
-   * own benign failure mode — instead of a control being painted outside the pill. A second
-   * `data-*` predicate beside `data-rall` would double every chain in that file to describe a
-   * message class the reader almost never opens.
+   * ── AND OFF-MIRROR IS THE SECOND HALF, for a reason specific to THIS verb ─────────────────
+   *
+   * The reader shows rows the local mirror deliberately does not hold — an archive-only hit
+   * opened from Search, an older Folder row. Reply survives that (`toggleReply` opens an editor
+   * over the message it was handed), but FORWARD does not: `AppShell.openForward` starts with
+   * `engine.read().get("message", id)` and RETURNS SILENTLY when the row is absent, so the
+   * button, the menu item and `⇧F` would all be no-ops that give no reason. Same predicate and
+   * same precedent as Delete (`chrome.mirrorHolds`): a verb the path behind it must reject is not
+   * offered. Absent chrome reads as "holds" (`!== false`), which is the bare-test/desktop default
+   * every other consumer of this field uses.
+   *
+   * THE DENSITY LADDER DELIBERATELY IGNORES BOTH. `action-bar.css` derives its rungs with the
+   * Forward group PRESENT, which is the worst case for width; a message that gets no Forward then
+   * has a row NARROWER than the rung assumed, so a later group folds into More one tier early —
+   * the ladder's own benign failure mode — instead of a control being painted outside the pill. A
+   * second `data-*` predicate beside `data-rall` would double every chain in that file to describe
+   * message classes the reader rarely opens.
    */
-  const canForward = message.sensitivity?.no_forward !== true;
+  const canForward =
+    message.sensitivity?.no_forward !== true && chrome.mirrorHolds?.(message.id) !== false;
   /** Is the disclosure menu open? A boolean, because the menu is anchored by CSS, not by a point. */
   const [menuOpen, setMenuOpen] = useState(false);
   /**
