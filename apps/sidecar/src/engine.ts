@@ -44,7 +44,7 @@ import { desktopHostRoutes } from "@trafficflow/api/desktop-host";
 // The boot contract's one comparison. Its own file, with no imports, because the desktop shell's
 // install model has to apply the identical rule and `apps/desktop` declares no `@trafficflow/*`
 // dependency — see the header of `credential-host.ts` for why one definition rather than two.
-import { credentialIsForeign, credentialIsForeignSmtp } from "./credential-host.js";
+import { credentialIsForeign, credentialIsForeignSmtp, sealedSmtpHost } from "./credential-host.js";
 import { hostPairRoutes } from "./host-pair-routes.js";
 // The static half of the host door — the built browser client the QR sends a phone to, served
 // beside the API out of one `handleHost`. The route table wins; this covers everything else.
@@ -1331,7 +1331,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      */
     const resolveLogin = async (
       opts?: { smtpHost?: string },
-    ): Promise<{ state: CredentialState; pass: string | null; foreign?: "incoming" | "outgoing" }> => {
+    ): Promise<{
+      state: CredentialState;
+      pass: string | null;
+      foreign?: "incoming" | "outgoing" | "outgoing-none";
+    }> => {
       const envPass = config.imap.auth.pass;
       const row = await storedLogin();
       if (!row) return envPass ? { state: "ready", pass: envPass } : { state: "absent", pass: null };
@@ -1355,7 +1359,20 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       // INCOMING FIRST, so the incoming fault wins when both disagree: it stops the whole launch,
       // and settling it is what makes the outgoing question meaningful.
       if (opts !== undefined && credentialIsForeignSmtp(row.meta, opts.smtpHost)) {
-        return { state: "foreign-host", pass: null, foreign: "outgoing" };
+        /**
+         * TWO OUTGOING CAUSES, NOT ONE, and this split is also a review finding rather than a
+         * refinement. The credential can disagree because it names a DIFFERENT submission server,
+         * or because it names NONE — and those have different recoveries. "Point the outgoing
+         * server back" is an instruction with no referent for the second: there was never a
+         * previous submission server to return to, and the only way out is to save the password
+         * for the one that is now configured. Telling somebody to restore a setting that never
+         * existed is the same true-sentence-about-the-wrong-thing this whole seam exists to end.
+         */
+        return {
+          state: "foreign-host",
+          pass: null,
+          foreign: sealedSmtpHost(row.meta) === "" ? "outgoing-none" : "outgoing",
+        };
       }
       try {
         const secret = await keyProvider.decrypt(row.secretEnc, row.keyVersion);
@@ -1428,15 +1445,19 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * the server the refusal exists to keep it away from. What is wrong is which pair of servers
        * this install is pointed at.
        *
-       * AND IT NEEDS TWO OF THEM, which a review round had to point out. One state, two causes: a
-       * send made while the INCOMING server disagrees reaches here too, and naming the outgoing
-       * server there would send somebody to change a setting that was already correct. So the arm
-       * is carried out of the resolution and each one says which half moved.
+       * AND IT NEEDS THREE OF THEM, which two review rounds had to point out one at a time. One
+       * state, three causes, and each has a DIFFERENT recovery — which is the only test that
+       * matters for whether a sentence has earned its own branch:
        *
-       * NEITHER ASKS FOR A RE-ENTRY IT DOES NOT NEED. Putting the server back makes the next send
-       * work with the credential exactly as it stands — nothing here rewrites or deletes the row —
-       * and saving the password for the new server is the other way out, which is what makes it a
-       * choice rather than an instruction.
+       *  · the INCOMING server moved. A send reaches here too, and naming the outgoing server
+       *    would send somebody to change a setting that was already correct.
+       *  · the OUTGOING server moved. Putting it back restores sending with nothing re-entered.
+       *  · the credential names NO outgoing server, and one is configured now. "Point the outgoing
+       *    server back" has no referent here — there was never one to return to — so the only way
+       *    out is to save the password for the server that is configured.
+       *
+       * NONE ASKS FOR A RE-ENTRY IT DOES NOT NEED, and the one that does asks for it because it is
+       * the only way out rather than as a reflex. Nothing here rewrites or deletes the row.
        */
       if (state === "foreign-host") {
         throw new ServiceError(
@@ -1445,9 +1466,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             ? "the stored mailbox password was saved for a different outgoing (SMTP) server than " +
               "this install is now configured for, so it was not offered and nothing was sent. " +
               "Point the outgoing server back, or re-enter the password for the new one."
-            : "the stored mailbox password was proved against a different incoming (IMAP) server " +
-              "than this install is now configured for, so it was not offered and nothing was " +
-              "sent. Finishing or undoing the change of server resolves it.",
+            : foreign === "outgoing-none"
+              ? "the stored mailbox password was saved with no outgoing (SMTP) server, so it was " +
+                "not offered to the one this install is now configured for and nothing was sent. " +
+                "Enter the password again to save it for this server."
+              : "the stored mailbox password was proved against a different incoming (IMAP) " +
+                "server than this install is now configured for, so it was not offered and " +
+                "nothing was sent. Finishing or undoing the change of server resolves it.",
         );
       }
       if (state !== "ready" || !pass) {
