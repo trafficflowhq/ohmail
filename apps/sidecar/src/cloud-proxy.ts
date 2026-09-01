@@ -87,15 +87,17 @@ export interface WriteThroughProxyConfig {
  * OTHER, unrefused path with a redirect to the claim route and receive the body that way. Review
  * raised it and it is real.
  *
- * It is accepted, for two reasons that are worth having written down. The FIRST is that the
- * redirecting server is the operator's own: reaching this vector needs a hostile window to post a
- * hosted code to a path of its choosing, and a window that hostile has no need of a redirect — it
- * is already choosing where the request goes. The redirect adds nothing it did not have. The SECOND
- * is what closing it would cost: `redirect: "manual"` on this relay, and this relay is also how
- * attachment and media bytes are read, which the hosted API answers with a redirect to a
- * presigned storage URL. Blocking redirects here would break every attachment on both cloud doors
- * to narrow a vector that a hostile window does not need. If the byte reads ever stop redirecting,
- * `redirect: "manual"` becomes free and should be taken.
+ * It is accepted on ONE reason, and that reason is sufficient by itself: a redirect grants the
+ * operator's server nothing it does not already have. To answer with a redirect it must first have
+ * RECEIVED the request — body included — so by the time it could steer the retry it is holding the
+ * credential the retry would carry. There is nothing left to protect at that point.
+ *
+ * An earlier version of this note gave a second reason: that closing it meant `redirect: "manual"`
+ * on a relay which also reads attachment bytes through a redirect to presigned storage, so blocking
+ * would break attachments. That OVERSTATED the cost and review said so — manual redirects could be
+ * limited to body-bearing methods and leave the GET byte reads alone. The first reason is why this
+ * is accepted; the second was a bad argument for a right answer, and is removed rather than left
+ * standing.
  */
 export const HANDOFF_CLAIM_PATHS = ["/auth/desktop-claim", "/auth/desktop-link"] as const;
 
@@ -122,6 +124,19 @@ export const HANDOFF_CLAIM_PATHS = ["/auth/desktop-claim", "/auth/desktop-link"]
  * Traversal needs no handling: the URL standard resolves `..` before `pathname` is read, so
  * `/x/../auth/desktop-claim` arrives already normalised — asserted rather than assumed, because it
  * is a claim about the platform.
+ *
+ * ── AND ONE LEADING `/api` IS STRIPPED, BECAUSE THE SERVER STRIPS IT ─────────────────────────
+ *
+ * This is the slice's own central measurement turned back on it. `apiBaseFor` composes
+ * `<origin>/api` precisely BECAUSE the API canonicalizes one leading `/api` off itself — that is
+ * why one base works against both deployments. The same fact makes `/api/auth/desktop-claim` reach
+ * the claim handler, and the guard was comparing the path as sent rather than as the server would
+ * read it, so that spelling was relayed. Reachable with an origin-only base, which the shell
+ * accepts because it validates the shape and does not require the suffix. Review reproduced it end
+ * to end: the upstream canonical pathname came out as `/auth/desktop-claim`.
+ *
+ * Exactly ONE prefix is stripped, matching what the server does — `/api/api/auth/...` is not a
+ * route there and must not become one here.
  */
 export function normalizeRefusalPath(pathname: string): string {
   let decoded = pathname;
@@ -132,7 +147,9 @@ export function normalizeRefusalPath(pathname: string): string {
        rather than reasons about — see above. */
   }
   const collapsed = decoded.replace(/\/{2,}/g, "/").toLowerCase();
-  return collapsed.length > 1 ? collapsed.replace(/\/+$/, "") : collapsed;
+  const trimmed = collapsed.length > 1 ? collapsed.replace(/\/+$/, "") : collapsed;
+  /* ONE leading `/api`, the way the API canonicalizes it off itself — see the header. */
+  return trimmed === "/api" ? "/" : trimmed.replace(/^\/api(?=\/)/, "");
 }
 
 const REFUSED_PATHS = new Set<string>(HANDOFF_CLAIM_PATHS.map(normalizeRefusalPath));
