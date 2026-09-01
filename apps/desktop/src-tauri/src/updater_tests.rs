@@ -539,8 +539,32 @@ fn the_expected_asset_names_match_the_release() {
         }
     };
     let verifier = fs::read_to_string(root.join("scripts/verify-feeds.mjs")).unwrap();
-    let workflow =
-        fs::read_to_string(root.join("public/ohmail/github/workflows/release-feeds.yml")).unwrap();
+
+    // THE WORKFLOW SITS AT TWO DIFFERENT PATHS IN THE TWO TREES THIS CRATE COMPILES IN.
+    //
+    // In the workspace it is published FROM, the release workflows are templates under
+    // `public/ohmail/github/…`; in the published tree they are `.github/workflows/…`, where
+    // GitHub actually runs them. This crate is built in BOTH — and the second one is the one
+    // that matters, because that is where the release is built.
+    //
+    // Found the expensive way rather than by reading: hard-coding the template path passed
+    // locally and failed every platform job of the first release build, at `cargo test`, after
+    // the mirror had already been published. `verify-feeds.mjs` had solved this before me and
+    // says so in its own words — "one script serves both trees; a verifier that runs in only one
+    // of them is one that gets skipped in the other". Same shape, same remedy.
+    //
+    // Both are tried and a MISSING FILE IN BOTH IS A PANIC, never a skip: a check that quietly
+    // passes where it cannot find its inputs is the failure this whole test exists to prevent.
+    let workflow = ["public/ohmail/github/workflows/release-feeds.yml", ".github/workflows/release-feeds.yml"]
+        .iter()
+        .find_map(|rel| fs::read_to_string(root.join(rel)).ok())
+        .unwrap_or_else(|| {
+            panic!(
+                "release-feeds.yml is at neither known path under {} — this test cannot \
+                 establish what the release publishes, so it must not pass",
+                root.display()
+            )
+        });
 
     // Every name any build of this file could be compiled with — not just this target's, so
     // the check does not go quiet on the platforms it is not running on.
