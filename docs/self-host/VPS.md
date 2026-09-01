@@ -341,10 +341,20 @@ OHMAIL_TLS_INTERNAL=1
 
 **Do not leave `OHMAIL_TLS_INTERNAL` empty on a private name.** Without it
 Caddy treats the name like a public domain, asks Let's Encrypt for a
-certificate it can never issue, and retries for thirty days while your site
-serves no TLS at all. With it, Caddy issues the certificate from its own CA
-on the box — no public certificate authority is contacted, and nothing about
-the install is announced anywhere.
+certificate it can never issue, and retries for **thirty days** while your
+site serves no TLS at all. With it, Caddy issues the certificate from its own
+CA on the box — no public certificate authority is contacted, and nothing
+about the install is announced anywhere.
+
+**On a `ts.net` name the empty setting fails differently, and worse.** Caddy
+recognises Tailscale's own domain and, before it considers ACME at all, tries
+to fetch the certificate from a `tailscaled` running *inside the proxy
+container* — where there is none, because Tailscale runs on the host. Every
+handshake then fails, and the error names a missing Unix socket
+(`/var/run/tailscale/tailscaled.sock`), which reads like a broken Tailscale
+install rather than a certificate setting. `OHMAIL_TLS_INTERNAL=1` takes that
+path out of the picture. On a `ts.net` name the switch is not advice, it is
+required.
 
 Then install that CA on every machine that opens the app:
 
@@ -453,14 +463,26 @@ by your own server, and the phone scans them while on the tailnet.
 **On `tailscale cert`.** Tailscale can issue a *publicly trusted* certificate
 for your `ts.net` name (`tailscale cert ohmail.<tailnet>.ts.net`), which
 would remove the CA-installation step entirely. **The stack cannot use it
-today**: the proxy takes its certificate either from its own CA or from ACME,
-and there is no supported way to hand it a certificate file. Putting
-`tailscale serve` in front does not help either, because the same
-`OHMAIL_ORIGIN` value is both the address the proxy serves on and the origin
-the application announces, so it cannot be told to serve plain HTTP behind
-something else. Until that changes, `OHMAIL_TLS_INTERNAL=1` plus the CA
-install is the supported private-network path, and it is the one described
-above.
+today**, and the reason is worth knowing because it also points at the fix.
+
+The proxy takes its certificate from its own CA or from ACME, and there is no
+supported way to hand it a certificate file — so a certificate `tailscale
+cert` writes to disk has nowhere to go. Putting `tailscale serve` in front
+does not help either: the same `OHMAIL_ORIGIN` value is both the address the
+proxy serves on and the origin the application announces, so the proxy cannot
+be told to serve plain HTTP behind something else.
+
+What *is* interesting is that the proxy already knows how to ask Tailscale
+directly — it is the behaviour described above, where a `ts.net` name sends it
+to `/var/run/tailscale/tailscaled.sock` looking for the certificate. It fails
+only because that socket is on the host and not in the container. Mounting the
+host's `tailscaled` socket into the proxy is therefore the obvious way to get
+a publicly trusted certificate with no CA to install, and it needs one line in
+`docker-compose.yml`. **It is not documented as a supported path here because
+nobody has run it against a real tailnet** — if you try it, say how it went.
+
+Until then, `OHMAIL_TLS_INTERNAL=1` plus the CA install is the supported
+private-network path, and it is the one described above.
 
 ### What was verified, and what was not
 
@@ -470,6 +492,14 @@ first-run setup token, account creation, second factor and recovery codes all
 complete over the private origin; session cookies are issued host-only; and
 the phone-pairing grant is minted. The interface-scoped bind was verified to
 serve on the private address and nowhere else.
+
+The public-domain path in the rest of this guide was checked the same way,
+against a real ACME server run for the purpose: account registration, the
+order, an `http-01` challenge served by this stack's own proxy on port 80,
+validation, issuance and installation all completed, and the proxy then served
+the issued certificate. What that leaves untested is Let's Encrypt itself —
+its rate limits and its view of public DNS — rather than anything in this
+stack.
 
 Not verified here, because it needs a Tailscale account: `tailscale up`
 against a real tailnet, MagicDNS resolution of the `ts.net` name from a
