@@ -217,7 +217,20 @@ jobs:
           echo "assets to be signed and hashed:"; ls -la assets
 
           pick() { ls assets/$1 2>/dev/null | head -1 || true; }
-          WIN_EXE="$(pick '*-setup.exe')"
+          # ── NAMED, NOT GLOBBED, FOR THE REASON THE LINUX PICKS GIVE BELOW ──
+          #
+          # This was `pick '*-setup.exe'`, and `pick` ends in `head -1`. The
+          # comment under the Linux picks argues the whole case: two files
+          # matching one glob makes the payload choice arbitrary, and the
+          # signature verifies either way because the feed says nothing about
+          # what the bytes are. Windows had exactly one match and so the glob
+          # was harmless — until the CLIENT started refusing a payload whose
+          # signed asset name is not the one its build expects
+          # (`updater.rs::EXPECTED_ASSET`). A glob that ever picked a
+          # differently-named installer would now publish a feed every Windows
+          # install silently refuses, reporting itself up to date. So the name is
+          # written down, in the same place and the same way as the other three.
+          WIN_EXE="assets/ohmail-windows-setup.exe"
           # ── THE TWO LINUX AppImages ARE PICKED BY NAME, NOT BY GLOB ────────
           #
           # This used to be `pick '*.AppImage'`, and `pick` ends in `head -1`.
@@ -240,8 +253,11 @@ jobs:
           # zip path at all (tauri-plugin-updater `install_inner`, macOS). The
           # previous `ohmail.app.zip` was for Sparkle, which reads both — so one
           # tar.gz serves both feeds and the zip is retired.
-          MAC_TGZ="$(pick '*.app.tar.gz')"
-          test -n "$WIN_EXE"  || { echo "no NSIS -setup.exe attached to $RELEASE_TAG" >&2; exit 1; }
+          # Named for the same reason as the Windows installer above: the
+          # client refuses any asset name but its own build's.
+          MAC_TGZ="assets/ohmail.app.tar.gz"
+          test -s "$WIN_EXE"  || { echo "no ohmail-windows-setup.exe attached to $RELEASE_TAG" >&2; exit 1; }
+          test -s "$MAC_TGZ"  || { echo "no ohmail.app.tar.gz attached to $RELEASE_TAG" >&2; exit 1; }
           test -s "$LIN_X64_APPIMAGE" || { echo "no ohmail-linux-x86_64.AppImage attached to $RELEASE_TAG" >&2; exit 1; }
           if [ "$ARM_LINUX" = 1 ]; then
             test -s "$LIN_ARM_APPIMAGE" || { echo "no ohmail-linux-aarch64.AppImage attached to $RELEASE_TAG" >&2; exit 1; }
@@ -251,7 +267,6 @@ jobs:
               exit 1
             }
           fi
-          test -n "$MAC_TGZ"  || { echo "no *.app.tar.gz attached to $RELEASE_TAG" >&2; exit 1; }
           # …and NOTHING ELSE ends in .AppImage. Naming the two files above stops
           # a third one being picked by accident; it does not stop a third one
           # EXISTING, and a Linux artifact this job has never heard of is a

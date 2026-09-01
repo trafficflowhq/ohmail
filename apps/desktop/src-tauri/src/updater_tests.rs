@@ -267,7 +267,7 @@ fn a_forged_untrusted_comment_cannot_move_the_version() {
     // Which makes the whole thing a refusal: the feed advertises what it forged into line 0,
     // and the signed line disagrees.
     assert_eq!(
-        should_install("0.9.0", "99.0.0", &forged_b64),
+        should_install("0.9.0", "99.0.0", &forged_b64, ASSET),
         None,
         "a signature whose untrusted comment claims 99.0.0 must install nothing"
     );
@@ -383,6 +383,9 @@ fn only_a_well_formed_signed_name_yields_a_version() {
 /// A signature envelope whose trusted comment names `version` — the same shape the
 /// release pipeline produces, minus a valid key, because `should_install` reads the name
 /// and `download` is what checks the key.
+/// The asset both `signed_as` and the committed fixtures are signed for.
+const ASSET: &str = "ohmail-linux-x86_64.AppImage";
+
 fn signed_as(version: &str) -> String {
     let text = format!(
         "untrusted comment: signature from tauri secret key\n\
@@ -408,7 +411,7 @@ fn the_advertised_version_must_equal_the_signed_one() {
         ("1.0.0", "1.0.0", "1.0.0", None),              // a reinstall
     ];
     for &(installed, advertised, signed, expected) in cases {
-        let got = should_install(installed, advertised, &signed_as(signed));
+        let got = should_install(installed, advertised, &signed_as(signed), ASSET);
         let expected = expected.map(|v| semver::Version::parse(v).unwrap());
         assert_eq!(
             got, expected,
@@ -417,12 +420,115 @@ fn the_advertised_version_must_equal_the_signed_one() {
     }
 
     // Unparseable versions refuse rather than fall through to an install.
-    assert_eq!(should_install("0.13.3", "not-a-version", &signed_as("0.13.4")), None);
-    assert_eq!(should_install("not-a-version", "0.13.4", &signed_as("0.13.4")), None);
+    assert_eq!(should_install("0.13.3", "not-a-version", &signed_as("0.13.4"), ASSET), None);
+    assert_eq!(should_install("not-a-version", "0.13.4", &signed_as("0.13.4"), ASSET), None);
     // And a payload with no signed version at all — every release through 0.13.2.
     assert_eq!(should_install("0.13.3", "0.13.4", &BASE64.encode(
         "untrusted comment: x\nRURV2NTwoaEoMQ==\ntrusted comment: timestamp:1\tfile:ohmail-linux-x86_64.AppImage\nzKhvIlGHWG3x67M80tyVDQ==\n"
-    )), None);
+    ), ASSET), None);
+}
+
+#[test]
+fn a_payload_for_another_platform_is_refused() {
+    // THE OTHER UNSIGNED MAPPING. Which platform key points at which url is exactly as
+    // unsigned as the version was, so a feed writer holding no key can point `linux-x86_64`
+    // at the genuine, genuinely-signed `linux-aarch64` AppImage of the same release. Every
+    // version check above passes: advertised equals signed, and it is newer.
+    let arm = format!(
+        "untrusted comment: signature from tauri secret key\n\
+         RURV2NTwoaEoMQ==\n\
+         trusted comment: timestamp:1788240000\tfile:0.13.4@ohmail-linux-aarch64.AppImage\n\
+         zKhvIlGHWG3x67M80tyVDQ==\n"
+    );
+    let arm_b64 = BASE64.encode(arm.as_bytes());
+
+    // The version half is entirely happy with it, which is the point of asserting it here.
+    let signed = signed_release(&arm_b64).unwrap();
+    assert_eq!(signed.version, semver::Version::parse("0.13.4").unwrap());
+    assert_eq!(signed.asset, "ohmail-linux-aarch64.AppImage");
+
+    // An x86_64 build must refuse it. Installing it moves the running binary aside and
+    // writes an ELF the machine cannot execute, with no backup left afterwards.
+    assert_eq!(
+        should_install("0.13.3", "0.13.4", &arm_b64, "ohmail-linux-x86_64.AppImage"),
+        None,
+        "an aarch64 payload must not install on an x86_64 build — the restart would fail on \
+         an incompatible executable and the install would be unrecoverable"
+    );
+    // And the mirror image, so the refusal is about disagreement rather than about arm64.
+    assert_eq!(
+        should_install("0.13.3", "0.13.4", &arm_b64, "ohmail-linux-aarch64.AppImage"),
+        Some(semver::Version::parse("0.13.4").unwrap()),
+        "the same payload MUST install on the build it is for, or this is refusing everything"
+    );
+}
+
+#[test]
+fn the_expected_asset_names_match_the_release() {
+    // `EXPECTED_ASSET` is restated per target, and a restated value drifts. If a release
+    // renames an artifact and this constant is not updated, every client on that platform
+    // refuses every update and reports "up to date" — the silent direction. So the names are
+    // held against the two files that decide them, in a language this process does not link.
+    //
+    // Read as text on purpose: `verify-feeds.mjs` is the offline gate's own list and
+    // `release-feeds.yml` is what the release actually attaches. Both must contain each name.
+    //
+    // The root is found by walking UP rather than by counting `..` segments. A fixed
+    // `../../../` is correct only at the depth this crate happens to sit at, and this crate
+    // gets copied — every Rust check in this repository is run from a standalone copy of it
+    // at some other depth, where a fixed path silently reads nothing and the test dies on an
+    // unwrap that says nothing about why. Not found anywhere is a PANIC, never a skip: a test
+    // that quietly passes when it cannot find its inputs is worse than no test.
+    let root = {
+        let mut dir = manifest_dir();
+        loop {
+            if dir.join("scripts/verify-feeds.mjs").is_file() {
+                break dir;
+            }
+            assert!(
+                dir.pop(),
+                "no ancestor of {} contains scripts/verify-feeds.mjs — this test cannot \
+                 establish what the release publishes, so it must not pass",
+                manifest_dir().display()
+            );
+        }
+    };
+    let verifier = fs::read_to_string(root.join("scripts/verify-feeds.mjs")).unwrap();
+    let workflow =
+        fs::read_to_string(root.join("public/ohmail/github/workflows/release-feeds.yml")).unwrap();
+
+    // Every name any build of this file could be compiled with — not just this target's, so
+    // the check does not go quiet on the platforms it is not running on.
+    for asset in [
+        "ohmail-windows-setup.exe",
+        "ohmail.app.tar.gz",
+        "ohmail-linux-x86_64.AppImage",
+        "ohmail-linux-aarch64.AppImage",
+    ] {
+        assert!(
+            verifier.contains(asset),
+            "scripts/verify-feeds.mjs does not name {asset:?} — the client would refuse a \
+             payload the release publishes, or accept one it does not"
+        );
+        assert!(
+            workflow.contains(asset),
+            "release-feeds.yml does not name {asset:?} — this constant names an artifact no \
+             release attaches"
+        );
+    }
+
+    // And THIS build's constant is one of them.
+    assert!(
+        [
+            "ohmail-windows-setup.exe",
+            "ohmail.app.tar.gz",
+            "ohmail-linux-x86_64.AppImage",
+            "ohmail-linux-aarch64.AppImage",
+        ]
+        .contains(&super::EXPECTED_ASSET),
+        "EXPECTED_ASSET is {:?}, which is not one of the published names",
+        super::EXPECTED_ASSET
+    );
 }
 
 #[test]
@@ -437,7 +543,7 @@ fn the_attack_this_guard_exists_for() {
     let genuine_old_payload = signed_as("0.9.0");
 
     assert_eq!(
-        should_install(installed, advertised, &genuine_old_payload),
+        should_install(installed, advertised, &genuine_old_payload, ASSET),
         None,
         "a feed advertising 99.0.0 over an old release's genuine artifact MUST install nothing"
     );

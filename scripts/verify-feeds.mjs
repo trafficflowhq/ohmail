@@ -101,11 +101,49 @@ function minisignVerify(pubB64, sigB64, payload) {
     ? crypto.createHash("blake2b512").update(payload).digest()
     : payload;
   const good = crypto.verify(null, message, ed25519Key(pkRaw), raw);
+  if (!good) {
+    return { ok: false, why: `signature does not verify (alg ${sigAlg}, public key alg ${pkAlg})` };
+  }
+
+  /* ── AND THE GLOBAL SIGNATURE, WHICH THIS SCRIPT WAS NOT CHECKING ──────────────────────────
+   *
+   * minisign signs TWO things and the check above covers one of them. The global signature on
+   * the last line covers `payload signature || trusted comment`, and `minisign-verify` — what
+   * the shipped client actually uses — verifies it unconditionally on the same call
+   * (0.2.5 `PublicKey::verify_ed25519`). Without it this verifier accepted a signature whose
+   * trusted comment had been edited after signing: the payload signature still matched, so both
+   * this check and the signed-name check below reported ok and the feed could be published,
+   * while every real client would decode the same file, fail the global signature and refuse the
+   * download — a platform stranded with nothing red anywhere in the release.
+   *
+   * That mattered specifically because the signed-name check below reads the trusted comment. A
+   * gate that reads a field it has not authenticated certifies the field's spelling and nothing
+   * about its provenance, and the comment there claiming it keeps the signed-name arrangement
+   * honest was untrue until this existed.
+   *
+   * Positional, like the client: line 2 is the trusted comment, line 3 the global signature. The
+   * signed message is the comment WITHOUT its `trusted comment: ` prefix, concatenated after the
+   * 64 raw signature bytes. */
+  const sigLines = Buffer.from(sigB64.trim(), "base64").toString("utf8").split(/\r?\n/);
+  if (sigLines.length < 4) {
+    return { ok: false, why: "the signature file has fewer than four lines — no global signature to check" };
+  }
+  const PREFIX = "trusted comment: ";
+  if (!sigLines[2].startsWith(PREFIX)) {
+    return { ok: false, why: "the third line is not a trusted comment, so the file is not a minisign signature" };
+  }
+  const globalMessage = Buffer.concat([raw, Buffer.from(sigLines[2].slice(PREFIX.length), "utf8")]);
+  const globalRaw = Buffer.from(sigLines[3].trim(), "base64");
+  if (globalRaw.length !== 64 || !crypto.verify(null, globalMessage, ed25519Key(pkRaw), globalRaw)) {
+    return {
+      ok: false,
+      why: "the payload signature verifies but the GLOBAL signature over the trusted comment does not "
+        + "— the comment was changed after signing, and every client would refuse this download",
+    };
+  }
   return {
-    ok: good,
-    why: good
-      ? `${sigAlg} over ${payload.length} bytes, key id ${pkId.toString("hex")}`
-      : `signature does not verify (alg ${sigAlg}, public key alg ${pkAlg})`,
+    ok: true,
+    why: `${sigAlg} over ${payload.length} bytes + trusted comment, key id ${pkId.toString("hex")}`,
   };
 }
 
@@ -126,6 +164,11 @@ function minisignVerify(pubB64, sigB64, payload) {
  * SILENT IN THE WRONG DIRECTION: if the signing step ever stops naming the version, clients do
  * not error, they refuse every update for ever and report "up to date". Nobody files that. So the
  * publish fails here instead.
+ *
+ * IT ONLY MEANS ANYTHING BECAUSE `minisignVerify` NOW CHECKS THE GLOBAL SIGNATURE. This reads the
+ * trusted comment, and for a while nothing in this file authenticated it — so the check certified
+ * a spelling and implied a provenance it had not established. See the global-signature block
+ * above; the two belong together and neither is worth much alone.
  *
  * The name is compared as a whole string, restated rather than derived from the same expression
  * the workflow uses — a check that rebuilds the value the same way the producer did agrees with
@@ -248,6 +291,26 @@ for (const k of WANT) {
   if (!fs.existsSync(file)) { bad(`${k}: ${path.basename(file)} is not in the asset set`); continue; }
   const r = minisignVerify(tauriPub, entry.signature, fs.readFileSync(file));
   if (r.ok) { ok(`${k}: ${path.basename(file)} — ${r.why}`); verified++; } else bad(`${k}: ${path.basename(file)} — ${r.why}`);
+  /* THE ASSET THIS KEY MUST NAME, restated. The two Linux entries are checked by exact name
+   * further down, for the architecture reason; these are the other three, and they needed the
+   * same treatment the moment the CLIENT started refusing a payload whose signed asset name is
+   * not the one its own build expects (`updater.rs::EXPECTED_ASSET`). Before that, renaming the
+   * Windows installer or the macOS archive would have been caught by nothing here — the url was
+   * read, never asserted — and every install on that platform would have gone quiet, refusing
+   * every update and reporting itself up to date. `the_expected_asset_names_match_the_release`
+   * in the Rust suite holds this list and the client's constant together. */
+  const ASSET_FOR = {
+    "windows-x86_64": "ohmail-windows-setup.exe",
+    "linux-x86_64": "ohmail-linux-x86_64.AppImage",
+    "linux-aarch64": "ohmail-linux-aarch64.AppImage",
+    "darwin-aarch64": "ohmail.app.tar.gz",
+    "darwin-x86_64": "ohmail.app.tar.gz",
+  };
+  if (ASSET_FOR[k] && path.basename(file) !== ASSET_FOR[k]) {
+    bad(`${k}: names ${JSON.stringify(path.basename(file))}, expected ${JSON.stringify(ASSET_FOR[k])} — `
+      + `a client built for this platform refuses any other name`);
+  }
+
   /* And the signed name, which is the only place the version is not a bare assertion by
    * whoever wrote the feed. Both halves are checked: the version, so a client's downgrade
    * guard has something to compare against, and the asset, so a signature made over one

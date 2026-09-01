@@ -355,8 +355,12 @@ async fn run<R: Runtime>(app: AppHandle<R>, user_initiated: bool) {
     // THE DOWNGRADE GUARD. Every reason it is shaped the way it is lives on
     // `should_install`; this is the one call site, and it is the only thing standing
     // between a feed and an install.
-    let Some(offered) = should_install(&update.current_version, &update.version, &update.signature)
-    else {
+    let Some(offered) = should_install(
+        &update.current_version,
+        &update.version,
+        &update.signature,
+        EXPECTED_ASSET,
+    ) else {
         return nothing_to_offer(&app, user_initiated);
     };
 
@@ -600,10 +604,32 @@ pub fn should_install(
     installed: &str,
     advertised: &str,
     signature_b64: &str,
+    expected_asset: &str,
 ) -> Option<semver::Version> {
     let installed = semver::Version::parse(installed).ok()?;
     let advertised = semver::Version::parse(advertised).ok()?;
     let signed = signed_release(signature_b64)?;
+
+    // ── AND THE PAYLOAD IS THE ONE FOR *THIS* BUILD ───────────────────────────────────
+    //
+    // The version being right does not make the ARTIFACT right. Which platform key a feed
+    // maps to which url is unsigned exactly as the version was, so a feed writer holding no
+    // key can point `linux-x86_64` at the genuine, genuinely-signed `linux-aarch64`
+    // AppImage of the SAME release. Advertised and signed versions agree, the version is
+    // newer, every signature verifies — and the plugin's AppImage installer then moves the
+    // running x86-64 binary aside and writes an AArch64 ELF in its place. The restart fails
+    // on an executable the machine cannot run, and the backup is gone with the temporary
+    // directory. That is not a downgrade; it is every install on one architecture bricked,
+    // permanently, by editing one file.
+    //
+    // The signed name carries the asset as well as the version, so the check is a
+    // comparison. `expected_asset` is a parameter rather than read here so the tests can
+    // drive every platform's case on one machine; `EXPECTED_ASSET` is the value the shipping
+    // call site passes, and `the_expected_asset_names_match_the_release` holds it against
+    // the names the release actually publishes.
+    if signed.asset != expected_asset {
+        return None;
+    }
     // The ordering is applied to the SIGNED version, never the advertised one. That
     // substitution is the fix — see `signed_release`.
     //
@@ -626,6 +652,28 @@ pub fn should_install(
     }
     Some(signed.version)
 }
+
+/// The published asset name THIS build may install, and no other.
+///
+/// Restated per target rather than derived, because there is nothing to derive it from: the
+/// mapping from platform to filename is a release decision, and `build.yml`'s header calls
+/// those names a contract. This is the other party to it, and
+/// `the_expected_asset_names_match_the_release` fails if the two ever disagree — which is
+/// the drift this constant would otherwise introduce, since a renamed asset would stop
+/// every update with the client reporting "up to date".
+///
+/// A target with no arm here does not compile, deliberately. The four below are the four
+/// the project publishes; a fifth platform must decide its own name before it can ship an
+/// updater, rather than inheriting "accept anything".
+#[cfg(target_os = "windows")]
+pub const EXPECTED_ASSET: &str = "ohmail-windows-setup.exe";
+/// One universal archive for both Mac architectures — the same file under both feed keys.
+#[cfg(target_os = "macos")]
+pub const EXPECTED_ASSET: &str = "ohmail.app.tar.gz";
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub const EXPECTED_ASSET: &str = "ohmail-linux-x86_64.AppImage";
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+pub const EXPECTED_ASSET: &str = "ohmail-linux-aarch64.AppImage";
 
 /// What the SIGNING KEY says a payload is: the version, and the asset it was signed as.
 #[derive(Clone, Debug, PartialEq, Eq)]
