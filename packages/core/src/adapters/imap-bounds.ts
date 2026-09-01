@@ -63,9 +63,19 @@
  * was. Everything reached through `ImapFlow.fetch()` is an async iterable and IS bounded at the
  * read: {@link boundedCollect} stops consuming, so the array never grows past the ceiling.
  *
- * A deadline breach on a promise-shaped call abandons a command the driver is still running, so
- * the connection is poisoned — the same trade `fetchPart` documents for its stream abandonment,
- * and the caller closes the connection on the way out for the same reason.
+ * ## ABANDONING A READ IS NOT ENDING IT, AND THIS IS THE CORRECTION THAT MATTERS MOST
+ *
+ * Neither a deadline that fires mid-command nor a ceiling that breaks out of a `fetch()` generator
+ * CANCELS anything. The driver keeps draining the response it was given and its command queue
+ * stays owned by a read nobody is consuming, so the next command on that connection queues behind
+ * it. **A ceiling that leaves the read running has not bounded the read — it has bounded the array
+ * and moved the stall one command later, behind a reassuring log line.**
+ *
+ * This file's first version left the cleanup to a convention ("the caller closes the connection on
+ * the way out"), which is true of the worker's per-mailbox catch arm and false in general: the
+ * worker RETAINS an adapter across generic failures, and a truncating ceiling does not throw at
+ * all. So every abandonment now retires the connection through `onAbandon`, at the point of
+ * abandonment, by the code that decided to stop reading.
  */
 
 /**
@@ -78,6 +88,7 @@ export type ImapBoundKind =
   | "enumerate_uids"
   | "search_uids"
   | "candidate_body_probes"
+  | "flag_scan_rows"
   | "body_overrun"
   | "read_deadline"
   | "cycle_deadline";
@@ -85,10 +96,12 @@ export type ImapBoundKind =
 /*
  * ── WHY THE TRUNCATING CEILINGS ARE NOT IN THAT UNION ──────────────────────────────────────
  *
- * {@link IMAP_FOLDER_PATH_MAX_CHARS}, {@link IMAP_ENVELOPE_ADDRESSES_MAX},
- * {@link IMAP_FLAG_SCAN_MAX_ROWS} and {@link IMAP_SAMPLE_MAX_ROWS} are real ceilings that DROP or
- * TRUNCATE rather than refuse, so no `ImapBoundExceeded` is ever constructed for them and they
- * have no code here.
+ * {@link IMAP_FOLDER_PATH_MAX_CHARS}, {@link IMAP_ENVELOPE_ADDRESSES_MAX} and
+ * {@link IMAP_SAMPLE_MAX_ROWS} are real ceilings that DROP or TRUNCATE rather than refuse, so no
+ * `ImapBoundExceeded` is ever constructed for them and they have no code here.
+ *
+ * {@link IMAP_FLAG_SCAN_MAX_ROWS} WAS in this list and is not any more — see its own note. It
+ * truncated, on a premise about `break` that turned out to be false, and it refuses now.
  *
  * They were in this union first, and the census next door
  * (`imap-bounds-census.test.ts`) failed on them: it asserts that every declared kind is actually
@@ -222,12 +235,21 @@ export const IMAP_CANDIDATE_BODY_PROBES_MAX = 32;
  * on that provider a drain streams the whole folder and the budget never engages at all. A
  * ceiling on changes is not a ceiling on rows.
  *
- * **This one DEGRADES rather than refusing**, and it is the one place in this module where that
- * is the better answer: the drain already has resume machinery (`FlagDrain.resumeUid`), so
- * stopping at the ceiling means the pass is marked truncated, the mailbox is re-kicked, and the
- * next pass continues from the last examined UID. Progress is strictly monotone and no flag is
- * lost — which is a better outcome than failing the mailbox's cycle over a provider being
- * verbose, and it is available here only because the resume point exists.
+ * ── IT WAS WRITTEN AS A DEGRADE, AND THE PREMISE FOR THAT WAS FALSE ────────────────────────
+ *
+ * The first version truncated: set the drain's `flagsTruncated`, break, let `FlagDrain.resumeUid`
+ * continue on the next pass. The reasoning was sound about STATE — the resume point is real and no
+ * flag can be lost — and wrong about the READ. **Breaking out of an ImapFlow async generator does
+ * not cancel the FETCH.** The driver goes on draining the response, its command queue stays owned
+ * by a read nobody is consuming, and the next folder's SELECT queues behind it — so a server
+ * willing to stream indefinitely wedged the cycle anyway while the pass reported a tidy
+ * truncation. **A bounded degrade that does not bound the read is not a degrade; it is the same
+ * stall one command later, with a reassuring log line.**
+ *
+ * So this refuses, and the refusal retires the connection. A server that sends 100 000 rows for
+ * one folder's flags is not one this connection can be handed on to. The drain's ORDINARY
+ * truncation — its per-folder flag allowance — is untouched: that one stops after a few hundred
+ * rows of a response the server is finishing normally, which is a different event.
  *
  * 100 000 is well above a legitimate folder scan's row count per pass and far below a stream that
  * costs the shared process anything.
@@ -393,16 +415,32 @@ export class ImapDeadline {
    * The timer is always cleared, including on the success path — a dangling 180 s timer per read
    * would keep the process alive past its work.
    */
-  async race<T>(op: Promise<T>, folder?: string): Promise<T> {
+  async race<T>(op: Promise<T>, folder?: string, onAbandon?: () => void): Promise<T> {
     const remaining = this.remainingMs();
-    if (remaining < 0) this.check(folder);
+    if (remaining < 0) { onAbandon?.(); this.check(folder); }
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       return await Promise.race([
         op,
         new Promise<never>((_resolve, reject) => {
           timer = setTimeout(
-            () => reject(new ImapBoundExceeded(this.bound, this.budgetMs, this.budgetMs, folder)),
+            () => {
+              // ── ABANDONING A COMMAND IS NOT THE SAME AS ENDING IT ────────────────────────
+              //
+              // The rejection below unblocks THIS caller and does nothing whatever to the
+              // command: `op` is still outstanding, ImapFlow's queue still belongs to it, and
+              // the server may still be filling it. An earlier version of this comment said the
+              // caller closes the connection on the way out, which is true of the worker's
+              // per-mailbox catch arm and NOT true of every caller — the worker retains an
+              // adapter across generic failures, so a later cycle could reuse a connection whose
+              // queue is owned by a command nobody is reading.
+              //
+              // So the connection is retired HERE, by the code that decided to stop reading,
+              // rather than left to a convention. A deadline breach means this connection is
+              // finished.
+              onAbandon?.();
+              reject(new ImapBoundExceeded(this.bound, this.budgetMs, this.budgetMs, folder));
+            },
             remaining,
           );
           // Never hold the event loop open on account of a deadline.
@@ -431,6 +469,24 @@ export class ImapDeadline {
  * load-bearing — an enumeration that silently stopped early would read as "those messages were
  * expunged", which is the durable lie this adapter's `unanswered` handling exists to avoid.
  * `"stop"` is for genuine SAMPLES, where fewer items is a smaller sample and not a wrong answer.
+ *
+ * ── THE PULL IS RACED, NOT THE GAP BETWEEN PULLS, AND THE DIFFERENCE IS THE WHOLE GUARD ─────
+ *
+ * This was written as `for await (const item of src) { deadline.check() }`, and that check runs
+ * **between items and nowhere else.** A `for await` suspends inside the iterator's `next()`, so a
+ * server that starts a row and never finishes it parks the loop in a place the clock is never
+ * consulted from — while still emitting enough bytes to reset the socket's inactivity timer. The
+ * slow-loris defence this file is largely about was therefore defeated by the most obvious version
+ * of a slow loris: not "one item per minute", but "one item, then nothing, for ever".
+ *
+ * Driving the iterator by hand and racing **each `next()`** is what closes it. The gap between
+ * items and the wait *inside* an item are now the same thing to the clock.
+ *
+ * `onAbandon` retires the connection whenever this function stops consuming a stream the server
+ * may still be filling — an overflow (either disposition) or a deadline. Breaking out of an
+ * ImapFlow generator does NOT cancel the underlying FETCH: the driver keeps draining it, and the
+ * next command on that connection queues behind a command nobody is reading. Truncation that
+ * leaves the read running is not truncation.
  */
 export async function boundedCollect<T, R>(
   src: AsyncIterable<T>,
@@ -440,24 +496,50 @@ export async function boundedCollect<T, R>(
     deadline?: ImapDeadline;
     folder?: string;
     onOverflow?: "throw" | "stop";
+    /** Retire the connection — the stream is being abandoned mid-command. */
+    onAbandon?: () => void;
     map: (item: T) => R;
   },
 ): Promise<R[]> {
   const out: R[] = [];
   const overflow = opts.onOverflow ?? "throw";
+  const it = src[Symbol.asyncIterator]();
   let seen = 0;
-  for await (const item of src) {
-    opts.deadline?.check(opts.folder);
+  for (;;) {
+    const step = opts.deadline === undefined
+      ? await it.next()
+      : await opts.deadline.race(it.next(), opts.folder, opts.onAbandon);
+    if (step.done === true) break;
     seen++;
     if (seen > opts.max) {
+      opts.onAbandon?.();
       if (overflow === "stop") break;
       // Thrown BEFORE the item is mapped or pushed: the ceiling is the size of the container,
       // not one past it.
       throw new ImapBoundExceeded(opts.bound, opts.max, seen, opts.folder);
     }
-    out.push(opts.map(item));
+    out.push(opts.map(step.value));
   }
   return out;
+}
+
+/**
+ * The smallest element, or `empty` for an empty array — **without a spread.**
+ *
+ * `Math.min(...xs)` passes one ARGUMENT per element, and the JavaScript engine throws
+ * `RangeError: Maximum call stack size exceeded` at roughly 125 000 of them. That is comfortably
+ * below {@link IMAP_ENUM_MAX_UIDS}, so a server could over-answer well inside the enumeration
+ * ceiling and still crash the pass — a ceiling that admits arrays the code cannot then process is
+ * a promise it does not keep, and raising what is admissible is what made the shape reachable.
+ *
+ * A helper rather than an inline loop because the next spread over a server-sized array should
+ * have somewhere obvious to go.
+ */
+export function minOf(xs: readonly number[], empty: number): number {
+  if (xs.length === 0) return empty;
+  let m = xs[0]!;
+  for (let i = 1; i < xs.length; i++) if (xs[i]! < m) m = xs[i]!;
+  return m;
 }
 
 /** One entry of a LIST response, narrowed to what the bound reads. */
