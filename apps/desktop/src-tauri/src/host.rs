@@ -638,11 +638,21 @@ pub fn signal_of_line(line: &str) -> Option<HostSignal> {
     }
 }
 
-/// The engine's own account of its LAN door — `host_lan_listening`, `host_lan_listen_failed`,
-/// `host_lan_config_invalid` — read off the same diagnostic stream, into its own slot.
+/// The engine's own account of its LAN door — `host_lan_listening`, `host_lan_firewall_blocked`,
+/// `host_lan_listen_failed`, `host_lan_config_invalid` — read off the same diagnostic stream,
+/// into its own slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LanSignal {
     Listening { port: u16 },
+    /// Bound, serving, and this computer's own firewall is not admitting the port — so the door
+    /// is up and nothing on the network can reach it.
+    ///
+    /// **This arm has to exist or the state folds into a flattering default.** The engine emits
+    /// `host_lan_firewall_blocked` immediately AFTER `host_lan_listening`, and this slot holds one
+    /// signal; without an arm here the unknown line parses to `None`, the later read overwrites
+    /// nothing, and the pane keeps saying "serving" — the exact overclaim the engine went to the
+    /// trouble of detecting. Watched: deleting this arm reddens the shell case by name.
+    Blocked { port: u16 },
     Failed,
     ConfigInvalid,
 }
@@ -660,6 +670,13 @@ pub fn lan_signal_of_line(line: &str) -> Option<LanSignal> {
                 return None;
             }
             Some(LanSignal::Listening { port: port as u16 })
+        }
+        Some("host_lan_firewall_blocked") => {
+            let port = parsed.get("port").and_then(serde_json::Value::as_u64)?;
+            if port == 0 || port > u16::MAX as u64 {
+                return None;
+            }
+            Some(LanSignal::Blocked { port: port as u16 })
         }
         Some("host_lan_listen_failed") => Some(LanSignal::Failed),
         // A skip (armed with an address but no port) cannot happen from this shell's own spawn —
@@ -938,12 +955,18 @@ impl<R: tauri::Runtime> HostRuntime<R> {
     /// Whether the engine's LAN door holds its socket right now — read off the engine's own
     /// signal, like the loopback listener's tri-state input.
     fn lan_listening(&self) -> bool {
-        matches!(self.shell.engine().lan_signal(), Some(LanSignal::Listening { .. }))
+        // A blocked door IS holding its socket — the firewall is somebody else's rule, not a
+        // failure of this bind. The question this answers is "is the LAN listener up", and the
+        // honest answer over a closed firewall is still yes.
+        matches!(
+            self.shell.engine().lan_signal(),
+            Some(LanSignal::Listening { .. }) | Some(LanSignal::Blocked { .. })
+        )
     }
 
     /// The same-network half's own wire state, or `Null` when no LAN address is chosen (or host
-    /// mode is off). A closed vocabulary the window mirrors: serving / pending / failed /
-    /// invalid — the engine's LAN signal, told as it stands.
+    /// mode is off). A closed vocabulary the window mirrors: serving / blocked / pending /
+    /// failed / invalid — the engine's LAN signal, told as it stands.
     fn lan_state_json(&self) -> serde_json::Value {
         if !self.armed() || self.lan.lock().expect("host lan").is_none() {
             return serde_json::Value::Null;
@@ -954,6 +977,7 @@ impl<R: tauri::Runtime> HostRuntime<R> {
         }
         serde_json::json!(match engine.lan_signal() {
             Some(LanSignal::Listening { .. }) => "serving",
+            Some(LanSignal::Blocked { .. }) => "blocked",
             Some(LanSignal::Failed) => "failed",
             Some(LanSignal::ConfigInvalid) => "invalid",
             None => "pending",

@@ -784,8 +784,12 @@ export function DesktopDevices() {
      serving here — and it must still be able to MINT, because the bearer-only door's one public
      bootstrap is the pairing redeem. Without this, the pane would hand out an address nothing
      can ever authenticate against. */
-  const lanOnlyServing =
-    !serving && host.lan !== null && host.lanState === "serving" && host.port !== null;
+  /* `blocked` counts as up here, and deliberately: the door holds its socket, the address is the
+     right one, and the only thing missing is a firewall rule the operator opens in one command.
+     Hiding the mint behind that would make the pane a dead end at the exact moment it is telling
+     somebody how to get out of it — they would open the port and find nothing to pair with. */
+  const lanUp = host.lanState === "serving" || host.lanState === "blocked";
+  const lanOnlyServing = !serving && host.lan !== null && lanUp && host.port !== null;
 
   return (
     <SettingsSection className="acct">
@@ -895,14 +899,35 @@ export function DesktopDevices() {
           <SettingsSubhead>{t("lanTitle")}</SettingsSubhead>
           <p className="acct-lead">
             {host.lanState === "serving" && host.port !== null
-              ? t("lanServing", { address: `http://${host.lan}:${host.port}` })
-              : host.lanState === "failed"
-                ? t("lanFailed")
-                : host.lanState === "invalid"
-                  ? t("lanInvalid")
-                  : t("lanPending")}
+              ? t("lanServing", { address: `http://${host.lan}:${host.port}`, port: host.port })
+              : host.lanState === "blocked" && host.port !== null
+                ? t("lanBlocked", { address: `http://${host.lan}:${host.port}`, port: host.port })
+                : host.lanState === "failed"
+                  ? t("lanFailed")
+                  : host.lanState === "invalid"
+                    ? t("lanInvalid")
+                    : t("lanPending")}
           </p>
-          {host.lanState === "serving" && host.port !== null ? (
+          {/* THE HONEST-STATE ARM. The engine reached this state by READING the firewall's own
+              files — never by probing itself, which on Linux is routed over `lo` and answers
+              happily through a closed firewall (see `apps/sidecar/src/host-firewall.ts`). The
+              command is composed here rather than carried on the wire because `blocked` has
+              exactly one producer: the ufw reader. If a second firewall is ever read, the remedy
+              has to travel with the state instead of being assumed from it. */}
+          {host.lanState === "blocked" && host.port !== null ? (
+            <>
+              <p className="acct-warn" role="alert">
+                {t("lanBlockedFix")}
+              </p>
+              <pre className="acct-cmd">{`sudo ufw allow ${host.port}/tcp`}</pre>
+              <div className="acct-actions">
+                <Button onClick={() => void refresh()} disabled={busy !== null}>
+                  {t("checkAgain")}
+                </Button>
+              </div>
+            </>
+          ) : null}
+          {lanUp && host.port !== null ? (
             <>
               <p className="set-note-inline">{t("lanBrowserNote")}</p>
               <div className="acct-actions">

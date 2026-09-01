@@ -840,8 +840,32 @@ fn lan_signal_lines_parse_into_their_own_vocabulary() {
     );
     // Garbage ports and everything else stay None.
     assert_eq!(lan_signal_of_line(r#"{"event":"host_lan_listening","port":0}"#), None);
+    assert_eq!(lan_signal_of_line(r#"{"event":"host_lan_firewall_blocked","port":0}"#), None);
     assert_eq!(lan_signal_of_line(r#"{"event":"host_listening","port":3311}"#), None);
     assert_eq!(lan_signal_of_line("plain text"), None);
+}
+
+/// THE BLOCKED ARM — bound, serving, and the machine's own firewall admitting nothing.
+///
+/// Without this arm the line parses to `None`, the slot keeps the `host_lan_listening` that
+/// arrived a moment earlier, and the pane goes on saying "serving" over a door no phone can
+/// reach — the exact overclaim the engine went to the trouble of detecting, folded back into a
+/// flattering default. That is the same shape as `CredentialState::parse`'s `Unknown` mapping,
+/// and it is why a new engine state is never only a TypeScript change.
+#[test]
+fn a_firewalled_lan_door_parses_as_blocked_and_is_still_a_listening_socket() {
+    assert_eq!(
+        lan_signal_of_line(r#"{"event":"host_lan_firewall_blocked","port":6245,"reason":"…"}"#),
+        Some(LanSignal::Blocked { port: 6245 })
+    );
+    // It arrives AFTER the listening line and outranks it: the door is up either way, and this
+    // one carries the fact the earlier line could not know.
+    let listening = lan_signal_of_line(r#"{"event":"host_lan_listening","port":6245}"#);
+    let blocked = lan_signal_of_line(r#"{"event":"host_lan_firewall_blocked","port":6245}"#);
+    assert_eq!(listening, Some(LanSignal::Listening { port: 6245 }));
+    assert_ne!(listening, blocked);
+    // And it is NOT a bind failure. Nothing about the app went wrong.
+    assert_ne!(blocked, Some(LanSignal::Failed));
 }
 
 #[test]

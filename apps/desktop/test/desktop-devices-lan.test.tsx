@@ -180,6 +180,51 @@ describe("the serving LAN row and its honest copy", () => {
     expect(text()).toContain(enHost.lanBrowserNote!);
   });
 
+  /**
+   * ── THE HONESTY GUARD ────────────────────────────────────────────────────────────────────
+   *
+   * The shipped defect: on a default-deny distribution (Omarchy/Arch with ufw — the platform
+   * this feature is aimed at) arming same-network access binds the port and does not open the
+   * firewall. The pane said "The mail API is served at … for apps on your network" while nothing
+   * on the network could reach it, with nothing on screen saying why.
+   *
+   * `blocked` is the state the engine reaches by READING the firewall's own files. It cannot
+   * reach it by probing itself: a connection to an address this machine holds is routed over
+   * `lo`, which ufw accepts unconditionally, so the probe answers happily through a closed
+   * firewall. Measured, not reasoned — see `apps/sidecar/src/host-firewall.ts`.
+   *
+   * The three claims below are what "honest" means here, and each has a mutation that reddens it:
+   * the serving sentence must NOT appear, the reason must, and the exact command must.
+   */
+  it("a firewalled LAN door never claims it is serving — it says why and gives the command", async () => {
+    shell({
+      hostState: { ...BOTH, lanState: "blocked" },
+      tailscale: RUNNING,
+      routes: EMPTY_LISTS,
+    });
+    await mount();
+    // 1. THE CLAIM IS GONE. This is the assertion the defect would fail.
+    expect(text()).not.toContain("The mail API is served at");
+    // 2. The truth, naming the firewall and the port, in the operator's language.
+    expect(text()).toContain("this computer's firewall is not letting anything through to port 47800");
+    // 3. The remedy, verbatim and runnable — the command that made it work when measured.
+    expect(text()).toContain("sudo ufw allow 47800/tcp");
+    expect(button(enHost.checkAgain!)).toBeTruthy();
+    // The address is still shown and still copyable: it is the right address, and the operator
+    // is one command from it working. A blocked door must not become a dead end.
+    expect(text()).toContain("http://192.168.1.23:47800");
+    expect(button(enHost.lanCopy!)).toBeTruthy();
+  });
+
+  it("the serving sentence no longer promises reachability it has not checked", async () => {
+    // The other half of the same repair. `serving` is reported on every machine whose firewall
+    // this code cannot read — macOS, Windows, nftables, no firewall at all — so the sentence has
+    // to be true there too. It points at the firewall instead of guaranteeing past it.
+    shell({ hostState: BOTH, tailscale: RUNNING, routes: EMPTY_LISTS });
+    await mount();
+    expect(text()).toContain("check that this computer's firewall allows port 47800");
+  });
+
   it("a failed LAN door says so instead of showing an address nobody can dial", async () => {
     shell({
       hostState: { ...BOTH, lanState: "failed" },

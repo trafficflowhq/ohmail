@@ -10,6 +10,7 @@ import {
   type Admission,
   type HostState,
 } from "./host-listener.js";
+import { readUfwSources, ufwVerdict, type UfwSources } from "./host-firewall.js";
 import { HOST_CLIENT_CSP } from "./host-static.js";
 import type { Diagnostic } from "./log.js";
 
@@ -282,11 +283,19 @@ export interface LanDoor {
  *    boot without this knob is byte-identical to the loopback-only one's.
  *  · armed with an address but no port ⇒ `null` + `host_lan_skipped` naming the missing knob.
  *  · a bind failure ⇒ `null` + `host_lan_listen_failed`; every other door keeps serving.
+ *
+ * A SUCCESSFUL bind is followed by one more question, because binding is not reaching: if this
+ * computer's own firewall is holding the port shut, the door is up and useless and the pane must
+ * not claim otherwise. See `host-firewall.ts` — in particular why this is a FILE READ and not the
+ * self-probe everyone reaches for first. The listener is returned either way: the door is bound,
+ * the firewall is the operator's to open, and refusing to serve over it would help nobody.
  */
 export async function maybeStartLanListener(
   door: LanDoor,
   log: Diagnostic,
   admission?: Admission,
+  /** TEST SEAM — production reads the real files; a test supplies its own three bodies. */
+  firewallSources?: () => UfwSources,
 ): Promise<LanListener | null> {
   const { address } = door.lanState;
   if (!door.hostState.armed || door.handleLan === undefined || address === null) return null;
@@ -309,6 +318,26 @@ export async function maybeStartLanListener(
     // and the chosen interface address identifies the operator's network. The shell knows the
     // address anyway — it configured it.
     log("host_lan_listening", { port: listener.port });
+    // Bound is not reachable. `unitActive` is null in production deliberately: asking the service
+    // manager costs a subprocess on every armed boot, and `ufw disable` — the supported way off —
+    // writes `ENABLED=no` into the file this already reads. The seam stays for the cases a test
+    // needs to state.
+    const firewall = ufwVerdict({
+      port: listener.port,
+      address,
+      sources: (firewallSources ?? readUfwSources)(),
+      unitActive: null,
+    });
+    if (firewall.state === "blocks") {
+      // The remedy is the whole value of this line, and it names a PORT, never the interface —
+      // same rule as the listening line above.
+      log("host_lan_firewall_blocked", {
+        port: listener.port,
+        reason: "same-network access is bound, but this computer's firewall is not admitting the " +
+          "port, so nothing on the network can reach it; the operator opens it with " +
+          firewall.remedy,
+      });
+    }
     return listener;
   } catch (err) {
     log("host_lan_listen_failed", {

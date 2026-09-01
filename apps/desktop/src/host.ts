@@ -51,10 +51,14 @@ export const HOST_PROBLEMS = [
 /**
  * The same-network half's own state — the engine's LAN door as the shell reads it off the
  * engine's `host_lan_*` signals. `null` on the wire means "no LAN address is chosen".
+ *
+ * `blocked` is bound-but-unreachable: the door holds its socket and this computer's own firewall
+ * is not admitting the port. It is a distinct state from `failed` on purpose — nothing about the
+ * app went wrong, and the fix is one command the operator runs, not a retry.
  */
 export type LanState = (typeof LAN_STATES)[number];
 
-export const LAN_STATES = ["serving", "pending", "failed", "invalid"] as const;
+export const LAN_STATES = ["serving", "blocked", "pending", "failed", "invalid"] as const;
 
 /** Host mode as the shell reports it. */
 export interface HostState {
