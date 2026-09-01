@@ -44,28 +44,43 @@ quotes what the engine actually said. It suggests a second copy only when the
 engine stopped without saying anything at all, and then as one possibility rather
 than as the answer.
 
-### What this release still does not fix
+### Changing a connected mailbox's server, which 0.13.1 said was still broken
 
-Both of these were named in 0.13.1 and are unchanged. They are being fixed
-together, in the step that stores your settings rather than on the screen itself.
+0.13.1's notes named two problems on this path and said they were not fixed. They
+are fixed here, together, and both were the same wrong order.
 
-**Changing an already-connected mailbox to a different server still sends the
-password you had stored to the new server, before you are asked for a new one.** A
-*first* connect is fine — there is no stored password and nothing to send.
-Re-pointing an existing mailbox takes a different path, in the wrong order: the
-engine is restarted with the new server and the old password, and tries to log in
-before you have supplied anything. Correcting a typo in your own server's name
-costs nothing; moving a mailbox to a server somebody else runs offers that server
-your previous password. Only the person at the machine can reach it, and only for
-their own mailbox. Until it is fixed, change the password on the old server if you
-move a mailbox to a server you do not control.
+Choosing where your mail lives writes the server settings and restarts the mail
+engine behind them, and the password was offered afterwards. That order is right
+the first time a mailbox is connected: there is no mailbox to attach a password
+to, and no stored password that could be misused. It was wrong when the server of
+an already-connected mailbox changed, and it went wrong in both directions.
 
-**And an attempt that fails partway can leave a mailbox that was working offline.**
-The same two steps on the failing side: the server settings are written before the
-password is checked, so a refused password leaves the app holding the new server
-and the old password. The attempt reports the failure and you back out, but the
-settings are not put back, and the mailbox that worked this morning does not
-connect at the next launch. Re-entering the correct server and password fixes it.
+**When the change succeeded, the new server was offered the old password.** The
+restarted engine came up pointing at the new server while still holding the
+password stored for the old one, and it signed in with it — before you had been
+asked for the new one. Correcting a mistyped hostname cost nothing; moving a
+mailbox to a server you do not control handed that server your previous password.
+
+**When the password was refused, a working mailbox was left offline.** The
+settings already named the new server while the stored password still belonged to
+the old one, and nothing put them back. The next launch tried the new server with
+the old password, and a mailbox that had been working that morning stopped
+connecting.
+
+The password is now proved and stored first, and the settings are committed only
+once it has been accepted. A refusal writes nothing at all: the mailbox is left on
+the configuration that was working, and the app tells you what the mail server
+said. Changing the address as well as the server keeps the original order, because
+that is a different mailbox rather than a reconfiguration of this one — it starts
+with no stored password, so there is nothing to misuse there either. First
+connects are unchanged.
+
+One thing this does not close, said plainly: the fix is in the screen that changes
+the setting. An engine started some other way still trusts whatever password is
+stored without checking which server it was stored for. Saying so on screen needs
+wording that is not a lie — the existing message for an unusable password tells
+you your keychain will not open it, which would be false here — so it is left for
+its own release rather than half-done.
 
 ## [0.13.1] — 2026-09-01
 
