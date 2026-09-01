@@ -41,6 +41,10 @@ import {
 // nothing else. Mounted below ONLY when host mode is armed; see `desktopHostRoutes`' own header
 // for the exact in/out list and the obligations it puts on this composition root.
 import { desktopHostRoutes } from "@trafficflow/api/desktop-host";
+// The boot contract's one comparison. Its own file, with no imports, because the desktop shell's
+// install model has to apply the identical rule and `apps/desktop` declares no `@trafficflow/*`
+// dependency — see the header of `credential-host.ts` for why one definition rather than two.
+import { credentialIsForeign } from "./credential-host.js";
 import { hostPairRoutes } from "./host-pair-routes.js";
 // The static half of the host door — the built browser client the QR sends a phone to, served
 // beside the API out of one `handleHost`. The route table wins; this covers everything else.
@@ -125,7 +129,24 @@ export type CredentialState =
    * retired key version, a corrupt envelope. Recoverable by re-entering the password, which
    * re-seals the row under the current key. See {@link createSidecar}'s resolution.
    */
-  | "unreadable";
+  | "unreadable"
+  /**
+   * A stored credential exists, this install's key opens it, and it was PROVED AGAINST A
+   * DIFFERENT SERVER than this launch is configured for. The password is withheld — see
+   * {@link credentialIsForeign} — so the engine serves its mirror and dials nothing, on either
+   * transport.
+   *
+   * ── WHY THIS IS ITS OWN STATE AND NOT ONE OF THE THREE ABOVE ─────────────────────────────
+   *
+   * Every one of them would be a TRUE SENTENCE ABOUT THE WRONG THING, which is the failure mode
+   * this whole seam exists to end. `unreadable` tells the user their keystore will not open a
+   * credential it opens perfectly, and sends them to re-enter a password that was never the
+   * problem. `absent` says nothing is stored when something is. `ready` is the defect itself.
+   * The recovery is different from all three, which is the test for whether a state has earned
+   * its own name: the password is fine and the SERVER is what moved, so what the person has to do
+   * is finish the change of server or undo it.
+   */
+  | "foreign-host";
 
 export interface SidecarConfig {
   /** Where the local mirror lives. Created if absent; locked while open. */
@@ -1193,11 +1214,43 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * worker already follows for the same table — an environment variable seeds a credential
      * once and never overwrites a stored one. Without that precedence a stale variable left in a
      * launch script would silently outrank the password the user actually typed.
+     *
+     * ── THE BOOT CONTRACT — THE ONE COMPARISON, AND WHY IT LIVES HERE ────────────────────────
+     *
+     * A sealed credential is a password PROVED AGAINST ONE SERVER, and this is the single place
+     * that decides whether the current launch may have it. Both ways the mismatch is reachable
+     * end here, which is why one comparison closes both rather than two fences closing one each:
+     *
+     *  · THE BOOT. `start()` resolves this once and hands the result to the adapter it builds
+     *    (`login.state !== "ready"` is what stops the dial), so an install that comes up
+     *    configured for one server holding a credential proved against another serves its mirror
+     *    and authenticates to nothing. That is the case a CRASH leaves behind — between the
+     *    door's seal and the `engine_configure` that follows it, the credential names the new
+     *    host and the settings still name the old one, and a process that dies there has nobody
+     *    to tell.
+     *  · THE SEND. `openLocalSend` resolves this AFRESH for every send while holding the SMTP
+     *    coordinates the process booted with, so a send racing that same interval would offer the
+     *    new server's password to the old server's SMTP. Nothing in the door can prevent it — the
+     *    door is a modal over the whole app, but a scheduled send fires on the engine's own timer.
+     *
+     * BEFORE THE DECRYPT, DELIBERATELY. The comparison needs no key, so a credential this engine
+     * has no business using is never brought into memory as plaintext at all. It also settles the
+     * precedence between this and `unreadable` in the right direction: a row that is both foreign
+     * and unopenable is reported as foreign, because that is the fact the person can act on and
+     * the other one would send them to re-enter a password into the wrong server.
+     *
+     * NO ENVIRONMENT FALLBACK, unlike `unreadable`. `pass` is `null` outright. Carrying a
+     * password beside a state that forbids using it is the same half-state this contract exists
+     * to remove, and it costs nothing real: an install with no stored row never reaches this
+     * branch, and the desktop shell has no route for a password in the environment at all.
      */
     const resolveLogin = async (): Promise<{ state: CredentialState; pass: string | null }> => {
       const envPass = config.imap.auth.pass;
       const row = await storedLogin();
       if (!row) return envPass ? { state: "ready", pass: envPass } : { state: "absent", pass: null };
+      if (credentialIsForeign(row.meta, config.imap.host)) {
+        return { state: "foreign-host", pass: null };
+      }
       try {
         const secret = await keyProvider.decrypt(row.secretEnc, row.keyVersion);
         // Route the stored row through the SHARED builder, with NO token source. A password row
@@ -1353,6 +1406,20 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         reason: "a stored password exists and this install's key does not open it; the mirror is " +
           "intact and re-entering the password re-seals it. The mailbox on the server is " +
           "untouched, and deleting the data directory re-syncs it from scratch",
+      });
+    } else if (login.state === "foreign-host") {
+      // NEITHER HOST IS NAMED, and that is the same rule the two lines above obey. Which mail
+      // server a person's mailbox is on is the identifying signal this package's census keeps off
+      // a log line, and the pair of them is more identifying than either. `mailboxId` is what
+      // correlates this with everything else in the launch; the hosts are on screen, where the
+      // person who can act on them already is.
+      log("stored_login_foreign_host", {
+        mailboxId: world.mailboxId,
+        state: login.state,
+        reason: "the stored password was proved against a different server than this launch is " +
+          "configured for, so it was withheld and nothing was dialled. The mirror is intact and " +
+          "the mailbox on the server is untouched; finishing or undoing the change of server " +
+          "resolves it",
       });
     }
 

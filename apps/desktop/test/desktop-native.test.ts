@@ -247,6 +247,42 @@ describe("Settings → this install", () => {
   });
 
   /**
+   * THE BOOT CONTRACT'S SENTENCE — the half of that closure that is not the refusal.
+   *
+   * The engine withholds a password proved against a different server than it is configured for
+   * (`apps/sidecar/src/credential-host.ts`) and reports `foreign-host`. Whether it is REFUSED does
+   * not depend on this window at all; what depends on this window is whether the person is told
+   * something true about why their mail stopped.
+   *
+   * Two wrong answers are available and both are worse than saying nothing, which is why this is
+   * asserted negatively as well as positively:
+   *
+   *  · the `default` arm — "The mail engine did not say… Nothing is wrong." That is what a window
+   *    with no case for this state prints, because the Rust shell folds an unrecognised value into
+   *    `Unknown`. "Nothing is wrong" over a mailbox that has stopped syncing.
+   *  · the `unreadable` arm — "this install's key does not open it". The key opens it perfectly.
+   *    That sentence sends somebody to re-enter a password that was never the problem, into
+   *    whichever of the two servers the install happens to be pointing at, which is the exact
+   *    failure mode the credential-state seam exists to end.
+   */
+  it("says the SERVER changed, not that the password needs re-entering", async () => {
+    await mount({ ...SERVING, credentialState: "foreign-host" });
+    const text = hostEl.textContent ?? "";
+
+    expect(text).toContain("Server changed");
+    expect(text).toContain("different mail server");
+    // It says what was NOT done with the password, which is the reassurance that is actually true.
+    expect(text).toContain("has not been sent to either");
+
+    // Not the neighbour it would most plausibly be folded into…
+    expect(text).not.toContain("Needs re-entering");
+    expect(text).not.toContain("does not open it");
+    // …and not the "newer engine, carry on" default, which is the one a missing case produces.
+    expect(text).not.toContain("Nothing is wrong");
+    expect(text).not.toContain("Unknown");
+  });
+
+  /**
    * THE GUARD THIS FILE EXISTS FOR. "Sign out" asks first, and then calls the command — not a
    * toast, not local state, not a reload.
    */

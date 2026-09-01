@@ -1495,6 +1495,30 @@ fn an_engine_that_says_nothing_about_credentials_is_unknown_and_not_absent() {
 }
 
 #[test]
+fn the_boot_contracts_refusal_survives_the_trip_through_this_shell() {
+    // THE HALF OF THE BOOT CONTRACT THAT IS RUST. The engine withholds a credential proved against
+    // a different server than it was configured for and reports `foreign-host`; this shell is the
+    // only thing between that word and the window, and it re-emits what it parsed rather than
+    // forwarding the raw frame. So a missing arm here does not fail loudly — it degrades to
+    // `Unknown`, whose surface treatment is "the engine is newer than this window, nothing is
+    // wrong", printed over a mailbox that has stopped syncing.
+    //
+    // Both directions, because only the pair is the claim: `parse` recognises the word, and
+    // `as_str` gives back the SAME word the window switches on. A one-sided test would pass with a
+    // variant that parses correctly and re-emits under a spelling no surface has a case for.
+    assert_eq!(CredentialState::parse(Some("foreign-host")), CredentialState::ForeignHost);
+    assert_eq!(CredentialState::ForeignHost.as_str(), "foreign-host");
+    // Not folded into the neighbour it would most plausibly be confused with. `unreadable` says
+    // the keystore will not open the credential, which here it opens perfectly.
+    assert_ne!(CredentialState::parse(Some("foreign-host")), CredentialState::Unreadable);
+    assert_ne!(CredentialState::parse(Some("foreign-host")), CredentialState::Unknown);
+    // And the underscore spelling is NOT the wire spelling. Rust names it `ForeignHost` and the
+    // wire is hyphenated; an engine that ever sent the other one would be an unknown state, which
+    // is the correct answer to a word this shell was not taught.
+    assert_eq!(CredentialState::parse(Some("foreign_host")), CredentialState::Unknown);
+}
+
+#[test]
 fn the_status_the_window_can_read_carries_no_token() {
     // `engine_status` is the one thing a page may read about the engine, and the token is the one
     // thing it must never contain. Asserted on the serialization rather than on the struct, because

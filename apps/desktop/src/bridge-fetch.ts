@@ -285,8 +285,15 @@ export interface EngineStatus {
    * `absent` there means "signed out" — the sign-in surface is `POST /cloud/signin` over the bridge,
    * not a shell command, because the password and the code go to the engine and never through the
    * shell.
+   *
+   * `foreign-host` is the BOOT CONTRACT: a stored password this install can open, proved against a
+   * different server than the engine is configured for, and therefore withheld from both
+   * transports (`apps/sidecar/src/credential-host.ts`). It is a state about the CONFIGURATION and
+   * not about the credential, so a surface that folds it into `unreadable` sends somebody to
+   * re-enter a password that was never the problem. Local door only — a hosted session is not
+   * proved against a mail server.
    */
-  credentialState?: "ready" | "absent" | "unreadable" | "unknown";
+  credentialState?: "ready" | "absent" | "unreadable" | "unknown" | "foreign-host";
   /**
    * What a still-starting engine last said it was doing — `starting`/`restarting` only, and only
    * once the engine has said anything. An identifier the boot surface maps to a sentence

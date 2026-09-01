@@ -273,6 +273,16 @@ pub enum CredentialState {
     Absent,
     /// A password is stored and this install's key does not open it. Re-entering it re-seals it.
     Unreadable,
+    /// A password is stored and openable, and it was proved against a DIFFERENT server than the
+    /// engine is configured for, so the engine withheld it and dialled nothing.
+    ///
+    /// THE BOOT CONTRACT (`apps/sidecar/src/credential-host.ts`). This variant exists for the
+    /// SENTENCE, not for the refusal: the refusal happens in the engine whether or not this shell
+    /// can name it, but without a variant here `parse` would fold `foreign-host` into `Unknown`,
+    /// whose surface treatment is "carry on, nothing is wrong" — a mailbox that has stopped
+    /// syncing, described to its owner as fine. It is the reason this closure is not entirely
+    /// TypeScript.
+    ForeignHost,
     /// The engine sent a value this shell does not know. Newer engine, older shell.
     Unknown,
 }
@@ -283,6 +293,7 @@ impl CredentialState {
             Some("ready") => CredentialState::Ready,
             Some("absent") => CredentialState::Absent,
             Some("unreadable") => CredentialState::Unreadable,
+            Some("foreign-host") => CredentialState::ForeignHost,
             // ABSENT IS NOT THE FALLBACK, AND THAT IS DELIBERATE. An engine built before this field
             // existed sends nothing, and reading that as "no password" would put a password prompt
             // in front of somebody whose mailbox is working. Unknown says what is true — the shell
@@ -297,6 +308,11 @@ impl CredentialState {
             CredentialState::Ready => "ready",
             CredentialState::Absent => "absent",
             CredentialState::Unreadable => "unreadable",
+            // The wire spelling the engine sends and the window switches on, character for
+            // character. A mismatch here is invisible to both compilers: the engine's value would
+            // parse to `ForeignHost`, be re-emitted under a name the window has no case for, and
+            // fall to its "nothing is wrong" default.
+            CredentialState::ForeignHost => "foreign-host",
             CredentialState::Unknown => "unknown",
         }
     }

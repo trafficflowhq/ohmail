@@ -47,10 +47,10 @@ const DOOR_NAME: Record<string, string> = {
 /**
  * What the engine says about the credential, in words rather than in its own vocabulary.
  *
- * Four states and four different sentences, because the recoveries are different: nothing to do,
- * type it again, type it again for a different reason, and "this engine is newer than this
- * window, so carry on". Collapsing them into "connected / not connected" is how somebody is sent
- * to re-enter a password that was never the problem.
+ * Five states and five different sentences, because the recoveries are different: nothing to do,
+ * type it again, type it again for a different reason, finish the server change you started, and
+ * "this engine is newer than this window, so carry on". Collapsing them into "connected / not
+ * connected" is how somebody is sent to re-enter a password that was never the problem.
  */
 function credentialLine(status: EngineStatus): { value: string; description: string } {
   const cloud = status.mode === "cloud";
@@ -75,6 +75,20 @@ function credentialLine(status: EngineStatus): { value: string; description: str
         description:
           "Something is stored, and this install's key does not open it. Entering it again " +
           "seals it afresh; no mail is affected.",
+      };
+    /* THE BOOT CONTRACT, in words. The password is fine and the KEYSTORE is fine — what disagrees
+       is which server it was proved against and which one this install is set to use, so the
+       engine withheld it rather than offer one server's password to another. Saying "needs
+       re-entering" here would be true of the action and false about the cause, and it is the exact
+       sentence the credential-state seam exists to stop: a person re-typing a password that was
+       never wrong, into whichever of the two servers the install happens to be pointing at. */
+    case "foreign-host":
+      return {
+        value: "Server changed",
+        description:
+          "The stored password was set up for a different mail server than this install is now " +
+          "using, so it has not been sent to either. Open the mailbox settings and confirm the " +
+          "server you want; nothing has been lost and no mail is affected.",
       };
     default:
       return {

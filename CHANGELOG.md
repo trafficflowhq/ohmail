@@ -13,6 +13,37 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### A stored password is only ever used with the server it was set up for
+
+This closes the thing 0.13.2's notes said it did not close.
+
+0.13.2 fixed the order the connect screen uses, so changing a connected mailbox's
+server no longer offers the new server your old password. But that fix lives in
+the screen. The mail engine itself still trusted whatever password was stored
+without checking which server it had been stored for — so anything that changed
+the settings by another route, or an app that was interrupted midway through
+changing them, could still start up pointing at one server holding a password
+proved against another.
+
+The engine now checks. When a stored password was set up for a different server
+than the one it is now configured for, it is not used — not to fetch mail, and not
+to send it either. Nothing is deleted and nothing is re-typed: point the app back
+at the server that password belongs to, or finish the change you started, and it
+works again.
+
+This matters most in the moment the 0.13.2 fix cannot reach. Storing the new
+password and writing the new settings are two steps, and an app that is closed or
+crashes between them is left with the two disagreeing. When there is someone to
+tell, 0.13.2 tells them. When there is not — the app simply stopped — the next
+launch is the only thing left, and it now declines to sign in rather than guessing
+which of the two is right. A scheduled send firing in that same moment is declined
+for the same reason, instead of offering one server's password to another.
+
+**And it says so in words that are true.** Settings shows "Server changed", and
+explains that the password was set up for a different mail server and has not been
+sent to either one. It deliberately does not say your keychain will not open it —
+that message already exists, it means something else, and here it would be false.
+
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
