@@ -403,11 +403,23 @@ jobs:
             # `workflow_dispatch` with the tag, which regenerates and re-uploads
             # both feeds for a release that is already published.
             #
-            # Positional, like every other reader of this field: line 3 of a
-            # minisign file is the trusted comment, and line 1 is the UNTRUSTED
-            # one, which is signed by nothing and must never be read.
+            # DECODED FIRST, because the file is not minisign text. `tauri signer`
+            # writes the base64 ENVELOPE — one long line — which is also exactly
+            # what the manifest carries and what the client decodes before reading
+            # anything. Read undecoded it has no line 3 at all, so the check found
+            # an empty string and refused a signature that was in fact correct;
+            # that is how the first release run of this guard failed, on itself,
+            # after the release was already published.
+            #
+            # `openssl` rather than `base64 -d`: this job runs on macOS, where
+            # `base64` spells decode `-D`, and the same script has to work if it
+            # ever runs elsewhere. `-A` because the input is a single line.
+            #
+            # Positional after decoding, like every other reader of this field:
+            # line 3 is the trusted comment, and line 1 is the UNTRUSTED one,
+            # which is signed by nothing and must never be read.
             local trusted
-            trusted="$(sed -n '3p' "$signed_as.sig")"
+            trusted="$(openssl base64 -d -A -in "$signed_as.sig" | sed -n '3p')"
             case "$trusted" in
               "trusted comment: "*"file:${VERSION}@$(basename "$1")") ;;
               *)
