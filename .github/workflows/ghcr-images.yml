@@ -50,10 +50,13 @@
 # publish linux/arm64 in their own manifest lists, and the base these three are built from
 # (`node:22-bookworm-slim`) publishes arm64/v8. Checked against the registries, not assumed.
 # `npm ci` picks the matching native halves off the committed lockfile — it records every
-# platform's optional package with its `cpu`/`os` fields, so `@next/swc-linux-arm64-gnu`,
-# `lightningcss-linux-arm64-gnu` and esbuild's arm64 binary install on the arm runner from
-# the same lockfile the amd64 runner installs the x64 ones from. No Dockerfile here
-# downloads a platform-specific binary by URL; there is nothing to keep in step by hand.
+# platform's optional package with its `cpu`/`os` fields, so `@next/swc-linux-arm64-gnu` and
+# `lightningcss-linux-arm64-gnu` install on the arm runner from the same lockfile the amd64
+# runner installs the x64 ones from. The bundler is the one exception and is not a hole: the
+# two bundled recipes install `esbuild@0.24.0` explicitly beside the build rather than from
+# the lockfile, and npm resolves ITS platform package (`@esbuild/linux-arm64` here) the same
+# way — by the host it is running on, which on a native runner is the host we want. No
+# Dockerfile downloads a platform-specific binary by URL; nothing is kept in step by hand.
 
 name: ghcr-images
 
@@ -200,8 +203,8 @@ jobs:
   # image in the compose publishes arm64 (the header lists them), and the failures this
   # catches are exactly the ones a cross-build cannot: a native module that resolved to the
   # wrong platform half, a base layer with no arm64 variant, an entrypoint that starts and
-  # then dies. `matrix.arch` also selects the staging tag, so each run boots the pair of
-  # images this run staged for that architecture — never a promoted tag, which does not
+  # then dies. `matrix.arch` also selects the staging tag, so each leg boots the three
+  # images this run staged for its own architecture — never a promoted tag, which does not
   # exist yet.
   gate-boot:
     if: github.repository == 'trafficflowhq/ohmail'
