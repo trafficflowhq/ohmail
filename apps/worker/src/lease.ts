@@ -318,6 +318,140 @@ export const DEFAULT_PERMIT_TTL_MS = 60 * 1000;
 export const MIN_PERMIT_TTL_MS = 1000;
 
 /**
+ * IS ANOTHER PROCESS WEARING MY INSTALL ID RENEWING RIGHT NOW? — the operator CLI's own question.
+ *
+ * ── `lastNonce: null` MEANS "TRUST ANYTHING WEARING MY ID", AND THE CLIs MEANT THE OPPOSITE ────
+ *
+ * Found by a review round over the commits that introduced the permit, 2026-09-01. It is a
+ * caller-side defect with the engine behaving exactly as designed.
+ *
+ * `decideLease`'s `isOurs` reads (`organizer-lease.ts:603-610`):
+ *
+ *     if (c.installId !== self.installId) return false;
+ *     const clonedUs = self.lastNonce !== null && c.nonce !== self.lastNonce && election.live.includes(c);
+ *     return !clonedUs;
+ *
+ * With `lastNonce === null` the clone defence short-circuits, so **every** claim bearing our install
+ * id is ours — including one another live process wrote a second ago. That is deliberate and
+ * load-bearing: a worker that crashed and came back must recognise its own claim to resume its own
+ * role, and it has no memory of the nonce it wrote. `cloudInstallId()` is a STABLE literal for the
+ * same reason (see its docblock — a per-process id there would stand the fleet down on every deploy).
+ *
+ * Those two correct decisions compose into a wrong one in a tool that is neither the worker nor
+ * fenced against it. `run-junk-sweep.ts` and `run-redacted-restore.ts` claim with the LIVE WORKER'S
+ * OWN install id and no nonce, and they hold no leader lock — unlike `reconcile-cron.ts`, whose
+ * identical construction is safe precisely because it takes the shard's lock first and therefore
+ * only ever runs when no worker leads. So, against a live worker:
+ *
+ *  1. the CLI reads the worker's fresh claim W, matches it on install id, and `isOurs` says yes;
+ *  2. arm 3 answers `organize` with `renew: true`, which appends nonce C and expunges W —
+ *     **two organizers on one mailbox, the worst state in this system;**
+ *  3. the worker's next gate holds W in memory, so C is a same-id claim with a foreign nonce: a
+ *     restored clone. It stands ITSELF down, and a stand-down releases claims by install id, so it
+ *     deletes C on the way out — **the folder is left empty while the CLI keeps moving mail on a
+ *     TTL-cached permit, now with no claim at all.**
+ *
+ * ── THE FIX THAT LOOKED OBVIOUS, AND WHY IT IS WRONG ─────────────────────────────────────────
+ *
+ * Arming a SENTINEL nonce — a value we have provably never written, so `clonedUs` reduces to its
+ * liveness half — was tried first and **is recorded here because its test caught it**, not because
+ * it reasoned badly. The engine's liveness is **folder-relative**, measured from the newest
+ * heartbeat *present in the folder* rather than from `now`:
+ *
+ *     const rawIsLive = (c) => newestHeartbeat - clamped < staleAfterMs;
+ *
+ * A folder holding ONE claim therefore has `newestHeartbeat === c.heartbeat`, so the difference is
+ * zero and that claim is live **however old it is**. Under a sentinel, a worker's month-old claim on
+ * a mailbox nobody has organized since is still "a live claim wearing my id" → arm 7 `stand_down`,
+ * and the CLI refuses **exactly in the situation an operator runs it**: the worker is down and the
+ * mailbox needs repair. The sentinel closes the dual-organizer hole by making the tool useless.
+ *
+ * That folder-relative rule is not a bug — it is what lets a lone stale claim stay rankable so an
+ * authorized takeover has something to beat. It is simply not the question a one-shot tool is
+ * asking.
+ *
+ * ── SO ASK THE QUESTION DIRECTLY, IN ABSOLUTE TIME, BEFORE THE GATE RUNS ─────────────────────
+ *
+ * The CLI wants to know one thing the decision table deliberately never asks: *is a process wearing
+ * my install id renewing right now?* That is `now - heartbeat < staleAfterMs` — absolute, not
+ * folder-relative — and it is answerable from the same claims the gate is about to read, with the
+ * same parser (`parseClaim`, never a second header grep: a second parser here is how two readings of
+ * one folder come to disagree about a folded header).
+ *
+ * Called BEFORE `acquireLeasePermit`, it leaves `lastNonce: null` in place and therefore changes
+ * nothing about own-role resumption, the empty folder, or a foreign local claim — the gate decides
+ * all three exactly as it did. The only case it changes is the one that was broken.
+ *
+ * Deliberately NOT an engine edit, on the same reasoning as {@link MIN_PERMIT_TTL_MS}: the decision
+ * table is load-bearing and `compareStrength`'s total order was written to settle a real coin toss.
+ * The caller that creates the condition is the caller that refuses it.
+ *
+ * ── THE RESIDUAL, WHICH IS A RACE AND NOT A HOLE ─────────────────────────────────────────────
+ *
+ * This is a check-then-act: a worker that begins renewing in the round trip between this read and
+ * the gate's own is not seen, and two CLIs starting together do not see each other. The window is
+ * one IMAP round trip against a guaranteed adoption, and closing it properly means the engine
+ * answering absolute liveness itself — an architecture change to a decision table, not a caller's
+ * repair. Written down rather than left for the next reader to discover.
+ *
+ * @throws {OrganizerStandDownError} a claim bearing `installId` was renewed within the window.
+ * @throws {LeaseUnavailableError} the folder could not be read — NOT a stand-down.
+ */
+export async function assertNoLiveTwin(input: {
+  adapter: MailboxAdapter;
+  installId: string;
+  now: Date;
+  staleAfterMs?: number;
+}): Promise<void> {
+  const { adapter, installId, now } = input;
+  const staleAfterMs = input.staleAfterMs ?? DEFAULT_STALE_AFTER_MS;
+  if (!hasLeaseIo(adapter)) {
+    // The same refusal `readMailboxLease` gives, for the same reason: a gate whose absent dependency
+    // selects the permissive branch is a gate that stops existing the first time somebody composes
+    // the worker differently.
+    throw new LeaseUnavailableError(
+      `this mailbox's adapter cannot reach ${META_FOLDER}, so it cannot be checked for a live ` +
+      `organizer sharing this process's install id`,
+      { op: "no_lease_io" },
+    );
+  }
+
+  const messages = await adapter.leaseIo().listClaims();
+  const twin = messages
+    .map((m) => parseClaim(m.raw, m.ref))
+    .find((c): c is OrganizerClaim =>
+      c !== null && !isMalformed(c) && c.installId === installId
+      // ABSOLUTE — measured from `now`, not from the newest heartbeat in the folder. That is the
+      // entire difference between this and the engine's own liveness, and the reason this function
+      // exists.
+      //
+      // NO FORWARD CLAMP, and its absence is deliberate. One was written here first, mirroring
+      // `decideLease`'s `Math.min(heartbeat, now + MAX_FUTURE_SKEW_MS)`, and a mutation run proved it
+      // could not change an outcome: for any heartbeat `h`, `min(h, now) > now - stale` is TRUE
+      // exactly when `h > now - stale` is. It was redundant, and a redundant guard reads as a
+      // protection somebody is relying on. The engine needs its clamp because a future-dated claim
+      // could wrongly WIN an election there; here the untruthful direction is already the safe one.
+      //
+      // The cost of no clamp, stated rather than discovered: a claim stamped in 2099 wearing this
+      // install id makes this refuse for ever, so a machine with a broken clock can jam the operator
+      // CLIs. It is fail-SAFE (nothing writes to the mailbox) and it is the same exposure
+      // `decideLease` answers with its `plausible` gate, which a caller cannot reach. Not fixed here;
+      // named so the next reader does not have to find it.
+      && c.heartbeat.getTime() > now.getTime() - staleAfterMs);
+
+  if (!twin) return;
+  throw new OrganizerStandDownError({
+    organize: false,
+    // It IS a cloud organizer — it is wearing this process's own cloud install id. The closed set
+    // has no member for "another copy of me", and inventing one would widen a column's taxonomy
+    // from a CLI. `held` because we have just measured that it is still being renewed.
+    reason: "organized_elsewhere:cloud",
+    state: "held",
+    by: twin,
+  });
+}
+
+/**
  * A LEASE READ, WITH A DEADLINE ON IT — the thing a destructive pass carries instead of a boolean.
  *
  * ── WHY A PERMIT AND NOT A CHECK AT THE TOP ──────────────────────────────────────────────────

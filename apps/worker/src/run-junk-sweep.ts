@@ -24,7 +24,7 @@ import { loadMailboxCreds } from "./mailboxes.js";
 import { junkSweepPass } from "./junk-sweep.js";
 import {
   CLOUD_DISPLAY_NAME, LeaseUnavailableError, OrganizerStandDownError, acquireLeasePermit,
-  cloudInstallId, type LeasePermit,
+  assertNoLiveTwin, cloudInstallId, type LeasePermit,
 } from "./lease.js";
 
 const argv = process.argv.slice(2);
@@ -90,6 +90,20 @@ try {
   let permit: LeasePermit | null = null;
   if (execute) {
     try {
+      // ── FIRST: IS THE ALWAYS-ON WORKER RUNNING? ─────────────────────────────────────────────
+      //
+      // Asked BEFORE the gate, because the gate cannot answer it. This command shares the worker's
+      // install id (it must — see below) and arms no nonce, which tells `decideLease` to treat the
+      // worker's own fresh claim as this process's, adopt the mailbox and expunge the worker's
+      // claim. Two organizers, then a self-stand-down that empties `ohmail/_meta`. The whole
+      // sequence, and why a sentinel nonce is the wrong repair, is on `assertNoLiveTwin`.
+      await assertNoLiveTwin({
+        adapter,
+        installId: process.env.TF_ORGANIZER_INSTALL_ID
+          ?? cloudInstallId(process.env.TF_ENVIRONMENT ?? "production"),
+        now: new Date(),
+      });
+
       permit = await acquireLeasePermit({
         adapter,
         self: {
@@ -100,6 +114,12 @@ try {
             ?? cloudInstallId(process.env.TF_ENVIRONMENT ?? "production"),
           kind: "cloud",
           displayName: CLOUD_DISPLAY_NAME,
+          // `null` stands, and it is safe only because of the check above. A fresh process trusts
+          // its own install id exactly once, which is what lets this command repair a mailbox whose
+          // Cloud claim has gone stale — the case an operator actually runs it in. What must not
+          // happen is trusting a claim that is being renewed AS WE READ IT, and that is an
+          // absolute-time question `decideLease` deliberately does not ask (its liveness is
+          // folder-relative). `assertNoLiveTwin` asks it.
           lastNonce: null,
         },
         // NOT `authorized`. A takeover is a human decision recorded on the mailbox row; an

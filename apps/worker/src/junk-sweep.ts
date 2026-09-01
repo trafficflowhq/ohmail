@@ -250,10 +250,24 @@ export async function junkSweepPass(opts: {
    */
   afterId?: string;
   /**
-   * Called before EVERY chunk's IMAP mutation. The worker cycle hands in its fresh leadership
-   * read (`fenceImapMutation`) so a stale leader cannot move mail another worker has taken over;
-   * the operator runner passes none. A throw here aborts the sweep — the members not yet moved
+   * Called before EVERY IMAP mutation — once per chunk before the batched command, and once per
+   * MESSAGE on the per-message fallback. A throw here aborts the sweep: the members not yet moved
    * are left exactly where they were, and the stamp that requested the sweep is not consumed.
+   *
+   * TWO DIFFERENT QUESTIONS ARRIVE THROUGH THIS ONE SEAM, and the contract used to name only one of
+   * them — *"the operator runner passes none"*, which stopped being true the moment the runner grew
+   * a lease:
+   *
+   *  · the WORKER cycle passes its fresh LEADERSHIP read (`fenceImapMutation`), worker-to-worker, so
+   *    a stale leader cannot move mail another worker has taken over;
+   *  · the OPERATOR runner (`run-junk-sweep.ts`, under `--execute`) passes `permit.check()`, the
+   *    ORGANIZER lease, install-to-install — which is what stops it writing to a mailbox whose owner
+   *    has moved it to their own machine.
+   *
+   * A maintainer reasoning from the old sentence would have concluded that only worker leadership
+   * reaches this seam and that weakening it costs nothing outside the fleet. It costs the
+   * exactly-one-organizer invariant. A dry run passes none, which is the case the old wording was
+   * probably remembering.
    */
   guard?: () => Promise<void>;
 }): Promise<JunkSweepResult> {
@@ -340,9 +354,20 @@ export async function junkSweepPass(opts: {
    * The two are complementary and neither is redundant: this one stops the SERVER write, the
    * witness stops the DATABASE write.
    *
-   * Deliberately NOT a re-read of `messages.native_locator`: a locator that moved is the
-   * `MessageGoneError`/absent-from-batch path below, which is already a deferral rather than a
-   * refusal. This asks only about the DESIRE.
+   * ── AND IT IS NOT ONLY ABOUT THE DESIRE, WHICH THE SKIP REASON GETS WRONG ─────────────────
+   *
+   * This used to end *"deliberately NOT a re-read of `messages.native_locator` … this asks only
+   * about the DESIRE"*, and that was false: the predicate is `junkSweepCandidateWhere`, the SAME one
+   * the candidates came from, and it carries the Quarantine-folder test on the physical locator along
+   * with everything else. Being the same predicate is the point of it — a narrower one here would
+   * drift from the one that selected the work — so the fix is to the CLAIM, not the query.
+   *
+   * The consequence is a wrong sentence in an operator's log. Every row this re-read drops is
+   * reported below as *"the spam verdict was withdrawn after this sweep began"*, and a row dropped
+   * because its LOCATOR moved has had no verdict withdrawn: somebody moved the message out of
+   * Quarantine, which is a different event with a different remedy. Named here rather than fixed in
+   * the reason string, because splitting the two would mean asking which clause failed and that is a
+   * second query on a path this one exists to keep to one statement.
    */
   const stillDesired = async (chunk: readonly PendingFolderState[]): Promise<Set<string>> => {
     const ids = chunk.map((p) => p.messageId);
@@ -386,6 +411,20 @@ export async function junkSweepPass(opts: {
     // sits in the try: its refusal is what selects the fallback.
     let batched: MoveManyResult | null = null;
     if (typeof adapter.moveMany === "function") {
+      // ── AND AGAIN HERE, BECAUSE `stillDesired` SITS BETWEEN THE GUARD AND THIS WRITE ────────
+      //
+      // The `guard()` above is ordered before `stillDesired` on purpose (a process that has lost
+      // the lease must not spend a query either), but that ordering is exactly what left an
+      // UNBOUNDED database wait between the last fresh read and a single command that moves up to
+      // `FILING_BATCH_MAX` of somebody's messages. A `stillDesired` that blocks on a busy pool or a
+      // stalled connection for longer than the permit's TTL meant the deadline did not bound this
+      // path at all — the receipt was checked, then spent after it had expired. Both calls stay:
+      // the first refuses to spend a query, this one refuses to spend the WRITE.
+      //
+      // Nearly free by construction: inside the TTL `LeasePermit.check()` is a comparison, and the
+      // worker's `fenceImapMutation` is the one read it already performs per chunk. The cost is
+      // paid only when the wait actually outlived the receipt, which is the case worth paying for.
+      if (guard) await guard();
       try {
         const res = await adapter.moveMany(chunk.map((p) => p.nativeLocator!), junk);
         if (res.batched) batched = res;
@@ -407,11 +446,33 @@ export async function junkSweepPass(opts: {
       }
       continue;
     }
-    // The per-message fallback issues its own IMAP writes — the same fresh leadership read
-    // before them as before the batch it replaces.
-    if (guard) await guard();
+    // ── THE PER-MESSAGE FALLBACK GUARDS PER MESSAGE, NOT ONCE FOR THE RUN OF THEM ────────────
+    //
+    // This used to hold ONE `guard()` here and then issue up to `FILING_BATCH_MAX` separate
+    // `adapter.move()` commands beneath it, under a comment claiming "the same fresh leadership read
+    // before them as before the batch it replaces". It was one read before FIFTY writes: a takeover
+    // (or a lost leadership, or an expired permit) landing after the third move let the remaining
+    // forty-seven proceed on a receipt nobody re-checked. This module's own header states the rule
+    // — *"EVERY IMAP mutation is preceded by `fenceImapMutation`"* — and the batched arm above is
+    // one command for the chunk, so it is the one place where "before the batch" and "before every
+    // write" genuinely coincide. Here they do not, and the comment read as though they did.
+    //
+    // THE COST IS REAL AND IS THE RIGHT TRADE. Under the worker's fence each iteration is one fresh
+    // leadership read, so a fifty-message fallback chunk costs fifty indexed reads instead of one;
+    // under the CLI's permit it is a comparison until the TTL lapses. This is already the RARE path
+    // (an adapter with no `moveMany`, or a batch the server refused) and every iteration of it is a
+    // destructive move on somebody's real mailbox, which is the last place to amortize a safety
+    // check across writes.
     for (const p of chunk) {
       let newLoc: NativeLocator;
+      // OUTSIDE the `try`, and that placement is load-bearing rather than stylistic. The catch below
+      // ends in a generic arm that records the error against THIS MESSAGE in `result.skipped` and
+      // carries on to the next one. A `LeaderFencedError` or `OrganizerStandDownError` raised inside
+      // that `try` would therefore be filed as evidence about a message and the sweep would keep
+      // moving mail — turning the guard into its own opposite. The rule this module already states
+      // for the chunk-top call holds here for the same reason: "a refusal propagates, never caught
+      // into `skipped`".
+      if (guard) await guard();
       try {
         newLoc = await adapter.move(p.nativeLocator!, junk);
       } catch (err) {

@@ -19,7 +19,7 @@ import { loadMailboxCreds } from "./mailboxes.js";
 import { redactedRestorePass } from "./redacted-restore.js";
 import {
   CLOUD_DISPLAY_NAME, LeaseUnavailableError, OrganizerStandDownError, acquireLeasePermit,
-  cloudInstallId,
+  assertNoLiveTwin, cloudInstallId,
 } from "./lease.js";
 
 const argv = process.argv.slice(2);
@@ -81,13 +81,43 @@ try {
   // and the pass registry ALREADY CLAIMED this runner "takes the mailbox's lease for its fetches"
   // — it did not take one at all. The seam is the same one `run-junk-sweep.ts` had.
   //
-  // No permit and no `guard` beyond this point, and that is not an omission: `ensureFolders()` is
-  // the only server MUTATION this process performs, so there is no later write boundary for a
-  // permit to be re-verified at. A single check immediately before the single write is the whole
-  // requirement here — which is precisely why the permit's expiry matters for the sweep and not
-  // for this. The dry-run path returns before `connect()` and so never reaches the lease, keeping
-  // its promise to write nothing anywhere, `ohmail/_meta` included.
+  // No `guard` beyond this point and no `check()` call. **The acquisition IS the check** —
+  // `acquireLeasePermit` reads the lease before it returns and throws on a stand-down, and
+  // `ensureFolders()` is the very next statement — so a `check()` here would be served from inside
+  // the TTL and re-read nothing. Said explicitly because a reviewer read the discarded return value
+  // as a missing guard, which is a fair reading of a permit that is acquired and never consulted;
+  // what this needs is the read, and the permit type is used for its throwing shape.
+  //
+  // ── `ensureFolders()` IS NOT ONE WRITE, AND THIS USED TO SAY IT WAS ────────────────────────
+  //
+  // The sentence here was *"`ensureFolders()` is the only server MUTATION this process performs, so
+  // there is no later write boundary for a permit to be re-verified at"*. The first clause is true;
+  // the inference is not. `ensureFolders()` issues a `mailboxCreate` per missing `ohmail/*` folder —
+  // up to five separate commands — so there ARE later write boundaries, they are just all inside one
+  // call. A takeover landing after the second CREATE leaves this process creating folders in a
+  // mailbox it no longer organizes.
+  //
+  // NOT fixed here, and the reason is the seam rather than the effort: a check between those CREATEs
+  // has to live inside the adapter, which would put the organizer lease into
+  // `packages/core/src/adapters/imap.ts` — a shared surface with its own consumers and its own
+  // review. The same seam is what bounds `moveMany`'s preflights and `move`'s COPY-then-DELETE on a
+  // server without MOVE. Ledgered as one row rather than three half-fixes. **The residual here is
+  // materially milder than those two: creating a folder is additive and idempotent, where a move is
+  // destructive** — which is why this is a written-down bound and not a blocker.
+  //
+  // The dry-run path returns before `connect()` and so never reaches the lease, keeping its promise
+  // to write nothing anywhere, `ohmail/_meta` included.
   try {
+    // Before the gate, and for the reason `assertNoLiveTwin` sets out: this runner shares the
+    // always-on worker's install id and holds no leader lock, so `lastNonce: null` would let it
+    // adopt a live worker's claim as its own and expunge it.
+    await assertNoLiveTwin({
+      adapter,
+      installId: process.env.TF_ORGANIZER_INSTALL_ID
+        ?? cloudInstallId(process.env.TF_ENVIRONMENT ?? "production"),
+      now: new Date(),
+    });
+
     await acquireLeasePermit({
       adapter,
       self: {
@@ -95,6 +125,7 @@ try {
           ?? cloudInstallId(process.env.TF_ENVIRONMENT ?? "production"),
         kind: "cloud",
         displayName: CLOUD_DISPLAY_NAME,
+        // Safe only because of the check above — see `run-junk-sweep.ts`'s note at the same seam.
         lastNonce: null,
       },
       // A takeover is a human decision recorded on the mailbox row; an operator invoking a repair

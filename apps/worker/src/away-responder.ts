@@ -219,7 +219,23 @@ export async function awayResponderPass(
   db: Tx, deps: AwayResponderDeps, nowArg?: Date,
 ): Promise<AwayResponderResult> {
   const log = deps.log ?? silentLogger;
-  const now = nowArg ?? deps.now?.() ?? new Date();
+  /**
+   * THE CLOCK, READ AGAIN PER SEND — because a pass can outlive the window it started inside.
+   *
+   * `now` below is the pass-start instant and the right value for the pass-start decisions. It used
+   * to be the ONLY clock read, and the per-send re-check compared the responder's `endsAt` against
+   * it: time never advanced inside the pass, so a pass that began one minute before the away window
+   * closed went on sending its whole remaining budget after it had closed, and the stand-down
+   * reason `"the away window closed during this pass"` **could not be reached by the clock passing
+   * at all** — only by an edit, which the `updatedAt` branch above it catches first. A log branch no
+   * sequence can produce is not a guard.
+   *
+   * `nowArg` is honoured unchanged when supplied, so a test that pins one instant still gets one
+   * instant; a test that wants the window to close mid-pass supplies `deps.now` as the function it
+   * already is.
+   */
+  const clock = (): Date => nowArg ?? deps.now?.() ?? new Date();
+  const now = clock();
   const batch = deps.batch ?? AWAY_BATCH;
   const budget = deps.sendsPerCycle ?? AWAY_SENDS_PER_CYCLE;
   const { accountId } = deps;
@@ -381,17 +397,25 @@ export async function awayResponderPass(
     );
     if (headerVerdict !== null) { seen.add(sender); hold(headerVerdict); continue; }
 
+    // ── THE SEND PATH, RESOLVED BEFORE THE CLAIM ─────────────────────────────────────────
+    //
+    // Deliberately ahead of the claim, and it is the one ordering exception below. A mailbox this
+    // process does not hold is the ordinary case (another shard has it), and claiming for it would
+    // spend the account's one reply to this sender on a send that never happens.
+    const port = await deps.openSend(m.mailboxId);
+    const from = addressOf.get(m.mailboxId) ?? "";
+    if (!port || from.length === 0) { hold("no_send_path"); continue; }
+
     // ══════════════════════════════════════════════════════════════════════════════════════
     //  IS THE RESPONDER STILL ON? — asked before every send, not once before the batch
     // ══════════════════════════════════════════════════════════════════════════════════════
     //
-    // Everything above was decided from ONE row read at the top of this pass: enabled, the window,
-    // the subject and the body. Between that read and here the pass answers up to
+    // Everything above the loop was decided from ONE row read at the top of this pass: enabled, the
+    // window, the subject and the body. Between that read and here the pass answers up to
     // AWAY_SENDS_PER_CYCLE correspondents over as many SMTP round trips, and the person whose
     // account it is can switch the responder off, edit it, or have its window close in the middle.
-    // Until
-    // this check they kept getting replies — mail leaving THEIR OWN ADDRESS, in their name, after
-    // they had turned it off, with the pass reporting a clean run.
+    // Until this check they kept getting replies — mail leaving THEIR OWN ADDRESS, in their name,
+    // after they had turned it off, with the pass reporting a clean run.
     //
     // Unlike a folder move this is not recoverable: an away reply is delivered to a stranger and
     // cannot be taken back, which is why the check is per SEND rather than per page. One indexed PK
@@ -403,17 +427,52 @@ export async function awayResponderPass(
     // the responder deliberately starts a new episode in which everyone may be answered again. A
     // pass that carried on would send the OLD subject and body — read at the top — while stamping
     // claims for an episode the user has already replaced, so the new text would never reach the
-    // people answered in this window. Stopping here costs one cycle and the next one sends what
-    // they actually wrote.
+    // people answered in this window.
+    //
+    // ── WHAT STOPPING COSTS, CORRECTED ────────────────────────────────────────────────────
+    //
+    // This said "stopping here costs one cycle and the next one sends what they actually wrote",
+    // and **that was false in the case it describes.** The edit advances `updated_at`, and
+    // `updated_at` is also the EPISODE FLOOR (see the block at `const floor`): the next pass selects
+    // `created_at > floor`, so every correspondent whose mail arrived BEFORE the edit is no longer a
+    // candidate and is never answered at all — not by the old text, and not by the new one.
+    //
+    // Stopping is still right, and for the reason above rather than the one that was written here:
+    // sending the replaced wording under the replaced episode's claims is worse than not sending.
+    // But the cost is *those correspondents get no reply*, not *one cycle's delay*, and the
+    // difference is the whole of what a reader needs to know.
+    //
+    // Whether an edit SHOULD re-answer the mail that arrived before it is a product question, not a
+    // bug to be patched here: it is the same rule as "enabling a responder never answers the
+    // backlog", which this file's header states deliberately and which the floor exists to enforce.
+    // Ledgered rather than decided in this comment.
     //
     // It STOPS rather than skipping the candidate, and the reason is cost and meaning rather than
     // outcome — measured, not assumed: `away-responder-standdown.test.ts` watches this under
     // mutation, and replacing the break with a skip is the case that showed the two are equivalent
-    // in effect and differ only in cost. A
-    // `continue` here behaves identically: this check precedes the CLAIM, so a refused candidate
-    // claims nothing and sends nothing either way. What `break` avoids is re-reading one
-    // account-wide row once per remaining candidate to be told the same thing each time. The
-    // condition is a property of the account, not of the correspondent.
+    // in effect and differ only in cost. A `continue` here behaves identically: this check precedes
+    // the CLAIM, so a refused candidate claims nothing and sends nothing either way. What `break`
+    // avoids is re-reading one account-wide row once per remaining candidate to be told the same
+    // thing each time. The condition is a property of the account, not of the correspondent.
+    //
+    // ── IT SITS BELOW `openSend`, AND THAT IS THE POINT ──────────────────────────────────
+    //
+    // This check used to stand ABOVE `openSend`, which left the largest latency on the path OUTSIDE
+    // the thing it was guarding: `openSend` resolves a mailbox and opens a transport, and a responder
+    // switched off while that connection was being established was read as still on. The read is one
+    // indexed PK lookup and the transport open is a network round trip, so the guard was on the wrong
+    // side of the only slow step between it and the send.
+    //
+    // It cannot go BELOW the claim, and that boundary is deliberate: the claim is what makes this
+    // at-most-once, so a check that refused after claiming would mark this sender answered and never
+    // answer them — the reply silently lost instead of merely delayed. So the residual window is
+    // claim-insert plus message assembly, both local, and the irreducible one is that SMTP is not
+    // transactional. That is the honest bound: not "no window", but one with no network in it.
+    //
+    // `sendNow` and not the pass-start `now`: see {@link clock}. Comparing a live responder's
+    // `endsAt` against an instant captured before the batch began made the window check unable to
+    // observe time passing at all.
+    const sendNow = clock();
     const [live] = await db.select({
       enabled: awayResponders.enabled,
       startsAt: awayResponders.startsAt,
@@ -424,8 +483,8 @@ export async function awayResponderPass(
     const stillLive = live !== undefined
       && live.enabled
       && live.updatedAt.getTime() === responder.updatedAt.getTime()
-      && !(live.startsAt && now.getTime() < live.startsAt.getTime())
-      && !(live.endsAt && now.getTime() > live.endsAt.getTime());
+      && !(live.startsAt && sendNow.getTime() < live.startsAt.getTime())
+      && !(live.endsAt && sendNow.getTime() > live.endsAt.getTime());
 
     if (!stillLive) {
       log.info("away_responder_stood_down_mid_pass", {
@@ -438,15 +497,6 @@ export async function awayResponderPass(
       });
       break;
     }
-
-    // ── THE SEND PATH, RESOLVED BEFORE THE CLAIM ─────────────────────────────────────────
-    //
-    // Deliberately ahead of the claim, and it is the one ordering exception below. A mailbox this
-    // process does not hold is the ordinary case (another shard has it), and claiming for it would
-    // spend the account's one reply to this sender on a send that never happens.
-    const port = await deps.openSend(m.mailboxId);
-    const from = addressOf.get(m.mailboxId) ?? "";
-    if (!port || from.length === 0) { hold("no_send_path"); continue; }
 
     // ── CLAIM, THEN SEND. NEVER THE OTHER WAY ROUND ──────────────────────────────────────
     //
