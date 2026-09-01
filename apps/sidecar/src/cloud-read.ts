@@ -1,6 +1,8 @@
+import { and, eq, inArray } from "drizzle-orm";
+import { messageBodies, messages } from "@trafficflow/db/mail";
 import {
   messageService, threadService, searchService, mailboxService, tagsService, rulesService,
-  syncService, SEARCH_SORTS, isSearchSort,
+  syncService, SEARCH_SORTS, isSearchSort, ServiceError,
   type SearchFilters, type SearchOptions, type ServiceContext,
 } from "@trafficflow/services/mail";
 
@@ -41,6 +43,27 @@ import {
  * gives `GET /messages/:id/body` a fall-through in `cloud-engine.ts`: served from the mirror when
  * the message is mirrored, forwarded to the hosted account when it is a reach-past row the mirror
  * never held.
+ *
+ * ── AND A MIRRORED MESSAGE IS NOT THE SAME FACT AS A MIRRORED BODY ────────────────────────────
+ *
+ * That rule was applied to one half of the question and the other half is where the first load
+ * went wrong. A mirrored install fills in TWO passes — `cloud-mirror.ts`: bodies "are not a
+ * `/sync` entity", so `backfillBodies` runs only after `drainSync` has returned to the horizon —
+ * and the gap between them is not an edge case, it is every first launch, running for hours on a
+ * large account. In that gap `messages` holds the row and `message_bodies` does not.
+ *
+ * `MessageService.getBody` is written for the HOSTED server, where an absent body row can only
+ * mean "never ingested", and its documented answer is the honest one there: "a message with no
+ * ingested body yields an empty body" — `200 {text: "", html: null}`. Served out of a MIRROR the
+ * same bytes are a fabrication, because here an absent row means "not copied yet" about mail the
+ * hosted account is holding in full.
+ *
+ * The client cannot tell those apart and does not treat either as provisional: an answered body is
+ * `ready`, and `OhmailEngine.bodyPlan` never re-fetches a `ready` record. So one empty answer in
+ * that window is permanent — the desktop window's mirror is in memory, so quitting and reopening
+ * the app is what "fixes" it, which is why this reads as flakiness rather than as a defect.
+ * {@link mirroredBodyIds} is the distinction the read surface was missing, and both body routes
+ * now ask it before they answer.
  */
 
 export interface ReadRoute {
@@ -61,6 +84,30 @@ function boolParam(v: string | null): boolean | undefined {
   if (v === "true" || v === "1") return true;
   if (v === "false" || v === "0") return false;
   return undefined;
+}
+
+/**
+ * WHICH OF THESE MESSAGES THIS MIRROR ACTUALLY HOLDS A BODY FOR — the fact the body routes were
+ * answering without.
+ *
+ * A row's PRESENCE is the whole signal, and its contents are deliberately not consulted. A body
+ * the hosted account is withholding (`storage_cap`, `junk_filed`, `expunged`) is stored as a real
+ * row carrying its marker, and an ordinarily empty message is a real row too — both are settled
+ * answers the mirror genuinely holds, and both must keep being served from here. What must not be
+ * served is the case with no row at all, which in a mirror means the copy has not arrived.
+ *
+ * Scoped through `messages.account_id` for the reason `MessageService.getBody` gives about the
+ * same join: `message_bodies` has no account column, so the join IS the authorization, and asking
+ * this question about an id must not become a way to learn that somebody else's message exists.
+ */
+async function mirroredBodyIds(ctx: ServiceContext, ids: readonly string[]): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  const rows = await ctx.db
+    .select({ messageId: messageBodies.messageId })
+    .from(messageBodies)
+    .innerJoin(messages, eq(messages.id, messageBodies.messageId))
+    .where(and(eq(messages.accountId, ctx.accountId), inArray(messageBodies.messageId, [...ids])));
+  return new Set(rows.map((r) => r.messageId));
 }
 
 /**
@@ -127,13 +174,47 @@ export const READ_ROUTES: ReadRoute[] = [
    * answers `503 offline_read_only`, which the reach-past surface renders as its honest failed
    * state with a retry — a paused door, never a claim that the mail ends here.
    */
+  /**
+   * THE BATCH BODY READ — and it has TWO modes, which this door used to collapse into one.
+   *
+   * `MessageService.getBodies` selects its mode from the `ids` option: with ids it answers those
+   * messages, without them it keyset-pages the account. This handler read only `after` and `limit`,
+   * so `ids` was dropped on the floor and every `?ids=` ask — which is what `HttpAdapter.fetchBodies`
+   * sends, the door a thread open and the eager recent-window pass both use — was answered as the
+   * KEYSET WALK: a page of the account's bodies from the beginning, about other messages entirely.
+   * The client matches rows by `messageId` and never by position, so it found none of what it asked
+   * for and fell back to asking per message; the visible cost was a wasted page on every thread
+   * open, and the invisible one was that the batch door never worked on this door at all.
+   *
+   * ── AND THE IDS MODE OMITS WHAT THE MIRROR HAS NO BODY FOR ────────────────────────────────
+   *
+   * Same distinction as the single-body route above, expressed the way THIS route already
+   * expresses absence. Omission is not a new shape here: the ids mode omits ids the account does
+   * not own (deliberately, so the route is not an existence oracle), the wire rows carry their own
+   * `messageId`, and `HttpAdapter.fetchBodies`' contract says a short answer is normal and the
+   * engine "asks for what is missing per message". So a body the mirror has not copied yet drops
+   * out of the batch and the reader's next ask goes down the per-message door, which forwards.
+   * Answering `text: ""` for it instead is the fabrication the header describes, and it would be
+   * cached as a settled body exactly as the single-body one was.
+   *
+   * The KEYSET mode is left exactly as it was. It is a walk over what this database holds — its
+   * question is "what have you got", not "what does this message say" — and a caller paging it is
+   * asking about the mirror rather than about the mail.
+   */
   {
     method: "GET",
     pattern: "/messages/bodies",
     handler: async (req, ctx) => {
       const url = new URL(req.url);
+      const idsRaw = url.searchParams.get("ids");
       const after = url.searchParams.get("after");
       const limit = num(url.searchParams.get("limit"));
+      if (idsRaw !== null) {
+        const ids = idsRaw.split(",").map((v) => v.trim()).filter((v) => v !== "");
+        const page = await messageService.getBodies(ctx, { ids });
+        const held = await mirroredBodyIds(ctx, page.items.map((i) => i.messageId));
+        return json({ items: page.items.filter((i) => held.has(i.messageId)), nextCursor: null });
+      }
       const page = await messageService.getBodies(ctx, {
         ...(after ? { after } : {}),
         ...(limit !== undefined ? { limit } : {}),
@@ -146,10 +227,32 @@ export const READ_ROUTES: ReadRoute[] = [
     pattern: "/messages/:id",
     handler: async (_req, ctx, params) => json(await messageService.get(ctx, params.id!)),
   },
+  /**
+   * ONE BODY — from the mirror when the mirror has it, and NOT INVENTED when it does not.
+   *
+   * The `not_found` is what routes this to the hosted account: `cloud-engine.ts` already forwards
+   * exactly this route on exactly this code, for the reach-past row whose MESSAGE the mirror never
+   * held. A mirrored message whose BODY has not been copied yet is the same question wearing a
+   * different hat — "is this something the mirror can answer truthfully?" — and it takes the same
+   * answer, so it is expressed as the same signal rather than as a second forwarding path.
+   *
+   * The cost is one forwarded round trip per body the reader opens ahead of the walk, against a
+   * hosted account that holds the mail; the walk keeps filling the mirror behind it and later
+   * opens are local again. Offline, the proxy answers `503 offline_read_only`, which the reading
+   * pane renders as "couldn't load the full message" with a Retry — a stated failure the reader
+   * can act on, and one the engine re-asks on its next launch, rather than a blank message that
+   * looks like mail with nothing in it.
+   */
   {
     method: "GET",
     pattern: "/messages/:id/body",
-    handler: async (_req, ctx, params) => json(await messageService.getBody(ctx, params.id!)),
+    handler: async (_req, ctx, params) => {
+      const id = params.id!;
+      if (!(await mirroredBodyIds(ctx, [id])).has(id)) {
+        throw new ServiceError("not_found", 404, "message not found");
+      }
+      return json(await messageService.getBody(ctx, id));
+    },
   },
   {
     method: "GET",
