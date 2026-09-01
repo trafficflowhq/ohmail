@@ -10,7 +10,8 @@ import { foldersEnabled, userFolderById } from "./folders.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { materializeMessage } from "./dto/materialize.js";
 import {
-  clampLimit, clampPageLimit, decodeKeysetCursor, decodeListCursor, encodeListCursor,
+  clampLimit, clampPageLimit, decodeListCursor, decodeNullableKeysetCursor, encodeListCursor,
+  encodeNullableKeysetCursor,
 } from "./pagination.js";
 import { requireUuid } from "./ids.js";
 import type { Folder, MessageBodyBatchItem, MessageBodyDTO, MessageDTO, Page, WithheldMarker } from "./dto/types.js";
@@ -154,21 +155,67 @@ export interface PatchResult {
   seq: number | null;
 }
 
-// ── (date, id) keyset cursor. The list is ordered by `date desc, id desc`; the
-// cursor carries both components so the next page resumes exactly after the last
-// row under that composite order (the plain id-cursor helper only base64s the
-// opaque payload string). ──
+/**
+ * ── (date, id) KEYSET, AND THE THIRD POSITION THE TUPLE USED TO LOSE ──────────────────────────
+ *
+ * The list is ordered by `date desc NULLS LAST, id desc`; the cursor carries both components so
+ * the next page resumes exactly after the last row under that composite order.
+ *
+ * **`messages.date` IS NULLABLE and the null is a POSITION, not a missing value.** It is the
+ * sender's own `Date:` header — `mime.ts:503` writes `parsed.date ?? null`, so any stranger can
+ * produce one by omitting the header — and this encoder used to write epoch `0` for it. Two
+ * separate defects came out of that one substitution:
+ *
+ *  1. **The undated tail was unreachable.** `0` says "1970-01-01", so the next page asked for rows
+ *     strictly older than that. Every remaining undated row was skipped and the list simply ended
+ *     early, with no cursor and nothing said.
+ *  2. **The ORDER BY and the predicate disagreed inside this one class.** Drizzle's `desc()` emits
+ *     bare `ORDER BY … DESC`, which in PostgreSQL is `DESC NULLS FIRST` — so undated mail sorted
+ *     at the TOP of every view — while the `before` branch's predicate below (copied from
+ *     `sync-service.ts:807-811`) was written for NULLS LAST. Rows were selected under one order
+ *     and sorted under another.
+ *
+ * `nulls last` is not a new opinion: the snapshot bootstrap (`sync-service.ts:848`) already orders
+ * that way with an explicit-null cursor, the Screener collapses null to epoch 0 in its own sort key
+ * (`screener-service.ts:1137`), and the client mirror sorts a missing date last
+ * (`client-engine/src/engine.ts:1886`). Three of the four surfaces already treated undated mail as
+ * oldest; this one was the odd one out, and only because nobody wrote a `nulls` clause.
+ */
 function encodeMsgCursor(date: Date | null, id: string): string {
-  return encodeListCursor(`${date ? date.getTime() : 0}:${id}`);
+  return encodeNullableKeysetCursor(date === null ? null : date.getTime(), id);
 }
-function decodeMsgCursor(cursor: string): { date: Date; id: string } {
+function decodeMsgCursor(cursor: string): { date: Date | null; id: string } {
   // The KEYSET decoder, not the bare-id one: this family orders by (date, id). Using the shared
   // `decodeListCursor` for both made each shape valid on the other's routes, so a tuple sent to
   // `/contacts` bound `"1712…:<uuid>"` against a uuid column — the 22P02 the validator exists to
-  // stop, reintroduced by the validator being too generous.
-  const { millis, id } = decodeKeysetCursor(cursor);
-  return { date: new Date(millis), id };
+  // stop, reintroduced by the validator being too generous. The NULLABLE variant, because this is
+  // the only family whose sort column admits one.
+  const { millis, id } = decodeNullableKeysetCursor(cursor);
+  return { date: millis === null ? null : new Date(millis), id };
 }
+
+/**
+ * THE ONE KEYSET PREDICATE, so the cursor branch and the `before` branch cannot fork again.
+ *
+ * "Strictly after `(date, id)`" under `date desc nulls last, id desc`:
+ *  · a DATED position — older dates, then the same date with a smaller id, then the whole undated
+ *    tail, which sorts after every dated row;
+ *  · an UNDATED position — only the rest of that tail, since nothing sorts after it.
+ *
+ * Identical to `sync-service.ts:807-811`, which is where the shape was already correct.
+ */
+function afterKeyset(pos: { date: Date | null; id: string }): SQL {
+  return pos.date === null
+    ? and(isNull(messages.date), lt(messages.id, pos.id))!
+    : or(
+        lt(messages.date, pos.date),
+        and(eq(messages.date, pos.date), lt(messages.id, pos.id)),
+        isNull(messages.date),
+      )!;
+}
+
+/** `date desc NULLS LAST, id desc` — see {@link encodeMsgCursor} for why the clause is explicit. */
+const MSG_ORDER = [sql`${messages.date} desc nulls last`, desc(messages.id)];
 
 export interface GetBodiesOptions {
   /** Opaque keyset cursor — the last `messages.id` a previous page returned. */
@@ -224,6 +271,52 @@ export const BODIES_IDS_MAX = 20;
 export const BODIES_BYTE_BUDGET = 4 * 1024 * 1024;
 
 /**
+ * THE SIZE PROBE — how the byte budget bounds the TRANSFER and not merely the response.
+ *
+ * The budget used to be spent inside a loop over rows PostgreSQL had already sent and this process
+ * had already materialized: the response was correctly bounded and the cost was not, which is the
+ * definition of the class: a budget enforced after the read is not a budget. A sender chooses each body's size — the
+ * IMAP raw-message ceiling admits roughly 32 MiB — so an authenticated `?limit=100` could pull
+ * gigabytes over the wire and answer with a small page.
+ *
+ * `octet_length` is the reason a second query is cheaper than the first one was. For a `text`
+ * column PostgreSQL answers it from the varlena header (`toast_raw_datum_size`) — the stored
+ * length is read WITHOUT detoasting or transferring the value — so this projection costs a header
+ * read per row and returns two integers. The prefix that fits the budget is then fetched for real.
+ *
+ * `octet_length` and NOT `length`: the budget is bytes and `length()` counts CHARACTERS, which for
+ * any non-ASCII body (most mail) under-counts by up to a factor of four and would put the ceiling
+ * back above the transfer it exists to bound. It is the same UTF-8 byte count
+ * `Buffer.byteLength(x, "utf8")` produced when the accounting was done in JS, so the number the
+ * budget compares against has not changed — only when it is known.
+ */
+const BODY_BYTES = sql<number>`coalesce(octet_length(${messageBodies.text}), 0)
+  + coalesce(octet_length(${messageBodies.html}), 0)`;
+
+/**
+ * The longest prefix of `sized` whose cumulative bytes fit {@link BODIES_BYTE_BUDGET}, INCLUDING
+ * the row that crosses it.
+ *
+ * Including the crossing row is the old loop's behaviour kept verbatim, and it is load-bearing in
+ * both directions: at least one row is always returned, so a single oversized body cannot stall
+ * pagination for ever, and the transfer is therefore bounded by the budget PLUS one row rather
+ * than by the budget exactly. That "plus one row" is the honest statement of the bound.
+ */
+function prefixUnderBudget(sized: readonly { messageId: string; bytes: number | string | null }[]): string[] {
+  const take: string[] = [];
+  let bytes = 0;
+  for (const r of sized) {
+    take.push(r.messageId);
+    // `octet_length` is int4 and postgres.js hands back a number, but a driver that widened it to
+    // a string (bigint-safe modes do) would make `+=` a concatenation and the comparison always
+    // false — an unbounded transfer restored by a driver setting. Normalize before adding.
+    bytes += Number(r.bytes ?? 0) || 0;
+    if (bytes >= BODIES_BYTE_BUDGET) break;
+  }
+  return take;
+}
+
+/**
  * MessageService — the read/patch/move surface over `messages`.
  * Reads are account-scoped (a cross-account id is a 404). Every client-visible
  * mutation runs ONE short `db.transaction` that writes the entity + a `change_log`
@@ -267,11 +360,7 @@ export class MessageService {
         if (bd !== null && Number.isNaN(bd.getTime())) {
           throw new ServiceError("validation_failed", 400, "beforeDate must be an ISO instant");
         }
-        filters.push(
-          bd === null
-            ? and(isNull(messages.date), lt(messages.id, opts.before.id))!
-            : or(lt(messages.date, bd), and(eq(messages.date, bd), lt(messages.id, opts.before.id)), isNull(messages.date))!,
-        );
+        filters.push(afterKeyset({ date: bd, id: opts.before.id }));
       }
       return this.pageOf(ctx, {
         limit: clampLimit(opts.limit),
@@ -295,15 +384,15 @@ export class MessageService {
     ];
     if (unread !== undefined) filters.push(eq(messages.unread, unread));
     if (opts.cursor) {
-      const c = decodeMsgCursor(opts.cursor);
-      // Keyset for `date desc, id desc`: strictly "older" rows than the cursor tuple.
-      filters.push(or(lt(messages.date, c.date), and(eq(messages.date, c.date), lt(messages.id, c.id)))!);
+      // Keyset for `date desc nulls last, id desc`: strictly "older" rows than the cursor tuple,
+      // including the undated tail, which sorts after every dated row.
+      filters.push(afterKeyset(decodeMsgCursor(opts.cursor)));
     }
 
     const rows = await ctx.db.select({ id: messages.id, date: messages.date }).from(messages)
       .innerJoin(folderState, eq(folderState.messageId, messages.id))
       .where(and(...filters))
-      .orderBy(desc(messages.date), desc(messages.id))
+      .orderBy(...MSG_ORDER)
       .limit(limit + 1);
 
     const pageRows = rows.slice(0, limit);
@@ -326,14 +415,11 @@ export class MessageService {
     args: { limit: number; cursor?: string; filters: SQL[] },
   ): Promise<Page<MessageDTO>> {
     const filters = [...args.filters];
-    if (args.cursor) {
-      const c = decodeMsgCursor(args.cursor);
-      filters.push(or(lt(messages.date, c.date), and(eq(messages.date, c.date), lt(messages.id, c.id)))!);
-    }
+    if (args.cursor) filters.push(afterKeyset(decodeMsgCursor(args.cursor)));
     const rows = await ctx.db.select({ id: messages.id, date: messages.date }).from(messages)
       .innerJoin(folderState, eq(folderState.messageId, messages.id))
       .where(and(...filters))
-      .orderBy(desc(messages.date), desc(messages.id))
+      .orderBy(...MSG_ORDER)
       .limit(args.limit + 1);
     const pageRows = rows.slice(0, args.limit);
     const items: MessageDTO[] = [];
@@ -411,7 +497,24 @@ export class MessageService {
       filters.push(gt(messages.id, after));
     }
 
-    // `limit + 1`: the extra row is how a further page is detected without a second query.
+    // ── PASS 1: THE SIZES. `limit + 1` — the extra row is how a further page is detected. ──
+    // No body value is selected here, so the whole candidate window costs two integers a row
+    // however large the bodies are. See {@link BODY_BYTES}.
+    const sized = await ctx.db.select({ messageId: messages.id, bytes: BODY_BYTES }).from(messages)
+      .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
+      .where(and(...filters))
+      .orderBy(asc(messages.id))
+      .limit(limit + 1);
+
+    const underBudget = prefixUnderBudget(sized.slice(0, limit));
+    if (underBudget.length === 0) return { items: [], nextCursor: null };
+
+    // ── PASS 2: THE BODIES, for exactly the prefix that fits. ──
+    // Account-scoped AGAIN rather than trusting pass 1's ids: `message_bodies` has no
+    // `account_id`, so the join through `messages` with this predicate IS the authorization, and
+    // an authorization that holds only because an earlier query filtered correctly is one edit
+    // away from not holding. `underBudget.length` ≤ `limit` ≤ BODIES_MAX_LIMIT, so the `IN` list
+    // is bounded by the page ceiling, not by the account's size.
     const rows = await ctx.db.select({
       messageId: messages.id,
       text: messageBodies.text,
@@ -420,32 +523,28 @@ export class MessageService {
       withheldReason: messageBodies.withheldReason,
     }).from(messages)
       .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
-      .where(and(...filters))
+      .where(and(eq(messages.accountId, ctx.accountId), inArray(messages.id, underBudget)))
       .orderBy(asc(messages.id))
-      .limit(limit + 1);
+      .limit(underBudget.length);
 
-    const items: MessageBodyBatchItem[] = [];
-    let bytes = 0;
-    for (const r of rows.slice(0, limit)) {
-      const text = r.text ?? "";
-      const html = r.html ?? null;
-      items.push({
-        messageId: r.messageId, text, html, loadedRemoteContent: r.loadedRemoteContent ?? false,
-        // The marker rides the MIRROR mode deliberately: without it a withheld body mirrors as
-        // an empty complete one, the gap query never re-asks, and the desktop tells the same
-        // lie the web used to. A fact about the stored row, not a rehydrate.
-        ...withheldOf(r.withheldReason),
-      });
-      bytes += Buffer.byteLength(text, "utf8") + (html ? Buffer.byteLength(html, "utf8") : 0);
-      // Stop AFTER including the row that crossed the budget, so at least one row always makes
-      // progress; the cursor below carries the rest.
-      if (bytes >= BODIES_BYTE_BUDGET) break;
-    }
+    const items: MessageBodyBatchItem[] = rows.map((r) => ({
+      messageId: r.messageId,
+      text: r.text ?? "",
+      html: r.html ?? null,
+      loadedRemoteContent: r.loadedRemoteContent ?? false,
+      // The marker rides the MIRROR mode deliberately: without it a withheld body mirrors as
+      // an empty complete one, the gap query never re-asks, and the desktop tells the same
+      // lie the web used to. A fact about the stored row, not a rehydrate.
+      ...withheldOf(r.withheldReason),
+    }));
 
-    // A next page exists iff a fetched row sits beyond the last one included — either the
-    // `limit + 1` sentinel, or a row skipped when the byte budget stopped the loop early.
+    // A next page exists iff a CANDIDATE row sits beyond the last one included — either the
+    // `limit + 1` sentinel, or a row the byte budget stopped short of. Measured against `sized`
+    // and not against `items`: a row deleted between the two passes would otherwise end the walk.
     const last = items[items.length - 1];
-    const nextCursor = last && items.length < rows.length ? encodeListCursor(last.messageId) : null;
+    const nextCursor = last && underBudget.length < sized.length
+      ? encodeListCursor(last.messageId)
+      : null;
     return { items, nextCursor };
   }
 
@@ -501,6 +600,22 @@ export class MessageService {
       }
     }
 
+    // PASS 1 — the sizes of the ids this account actually owns, in the answer's own order. A
+    // twenty-message thread of newsletters is real, so this mode needs the byte-aware selection
+    // as much as the keyset one does; it just has no cursor to offer for the remainder.
+    const sized = await ctx.db.select({ messageId: messages.id, bytes: BODY_BYTES }).from(messages)
+      .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
+      .where(and(eq(messages.accountId, ctx.accountId), inArray(messages.id, ids)))
+      .orderBy(asc(messages.id))
+      .limit(BODIES_IDS_MAX);
+
+    const underBudget = prefixUnderBudget(sized);
+    if (underBudget.length === 0) return { items: [], nextCursor: null };
+
+    // PASS 2 — the bodies AND the headers for that prefix, account-scoped again for the reason
+    // the keyset mode gives. The budget covers `text` + `html`; the `headers` bag rides this mode
+    // only, is bounded by at most {@link BODIES_IDS_MAX} rows, and is the input to the derived
+    // posture below rather than something that crosses the wire.
     const rows = await ctx.db.select({
       messageId: messages.id,
       text: messageBodies.text,
@@ -510,31 +625,23 @@ export class MessageService {
       withheldReason: messageBodies.withheldReason,
     }).from(messages)
       .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
-      .where(and(eq(messages.accountId, ctx.accountId), inArray(messages.id, ids)))
+      .where(and(eq(messages.accountId, ctx.accountId), inArray(messages.id, underBudget)))
       .orderBy(asc(messages.id))
-      .limit(BODIES_IDS_MAX);
+      .limit(underBudget.length);
 
-    const items: MessageBodyBatchItem[] = [];
-    let bytes = 0;
-    for (const r of rows) {
-      const text = r.text ?? "";
-      const html = r.html ?? null;
+    const items: MessageBodyBatchItem[] = rows.map((r) => {
       const headers = (r.headers as Record<string, unknown>) ?? {};
       const unsubscribe = unsubscribeHeaderState(headers);
-      items.push({
+      return {
         messageId: r.messageId,
-        text,
-        html,
+        text: r.text ?? "",
+        html: r.html ?? null,
         loadedRemoteContent: r.loadedRemoteContent ?? false,
         unsubscribe,
         unsubscribeUrl: unsubscribe === "not_one_click" ? httpsUnsubscribeUri(headers) : null,
         ...withheldOf(r.withheldReason),
-      });
-      bytes += Buffer.byteLength(text, "utf8") + (html ? Buffer.byteLength(html, "utf8") : 0);
-      // Stop AFTER the row that crossed the budget, so one oversized body cannot starve the
-      // answer entirely. What is left out is asked for per message by the client.
-      if (bytes >= BODIES_BYTE_BUDGET) break;
-    }
+      };
+    });
     return { items, nextCursor: null };
   }
 

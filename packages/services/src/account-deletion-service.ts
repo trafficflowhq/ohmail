@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNotNull, or, sql } from "drizzle-orm";
 import {
   accountSettings,
   accountStorage,
@@ -233,16 +233,27 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
      */
     await drop("account_settings", tx.delete(accountSettings).where(eq(accountSettings.accountId, accountId)));
 
-    // The account's users and mailboxes, resolved once — several tables below key
-    // off the USER, not the account, and after the users are gone we cannot ask.
-    const userRows = await tx.select({ id: users.id, email: users.email })
+    /**
+     * THE USER- AND MAILBOX-KEYED PREDICATES ARE SUBQUERIES, NOT MATERIALIZED ID LISTS.
+     *
+     * Several tables below key off the USER or the MAILBOX rather than the account, and both
+     * parents are deleted at the END of this transaction — so these read rows that are still
+     * present at every line that uses them, exactly as the message subquery does.
+     *
+     * They are `select`s and not arrays for the reason written out at the message-keyed deletes
+     * below: an id list is one bind parameter per row against a collection with no product
+     * ceiling. A handful of users is not where that bites, but
+     * "it is small today" is not a bound, and the subquery form costs nothing to prefer.
+     *
+     * `userRows` is still READ, for two things an `IN` predicate cannot give: the erasure
+     * receipt's `usersErased` count, and nothing else — the addresses it used to carry are now
+     * derived inside PostgreSQL by the `auth_throttle` predicate.
+     */
+    const userRows = await tx.select({ id: users.id })
       .from(users).where(eq(users.accountId, accountId));
-    const userIds = userRows.map((u) => u.id);
-    const emails = userRows.map((u) => u.email);
-
-    const mailboxRows = await tx.select({ id: mailboxes.id })
+    const ownUserIds = tx.select({ id: users.id }).from(users).where(eq(users.accountId, accountId));
+    const ownMailboxIds = tx.select({ id: mailboxes.id })
       .from(mailboxes).where(eq(mailboxes.accountId, accountId));
-    const mailboxIds = mailboxRows.map((m) => m.id);
 
     // ── SERIALIZE AGAINST THE THREAD BACKFILL, before any lock this transaction takes. ──
     // See {@link ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS}: erasure and the backfill lock `threads`
@@ -303,20 +314,34 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     // BEFORE `mailboxes`, which it FKs `ON DELETE no action`. Content-free by design — a
     // coordinate and a code — but a coordinate into somebody's mailbox is still theirs.
     await drop("message_failures", tx.delete(messageFailures).where(eq(messageFailures.accountId, accountId)));
-    // message_bodies, folder_state and flag_state key off the MESSAGE, so they need the ids.
-    const messageIds = (await tx.select({ id: messages.id })
-      .from(messages).where(eq(messages.accountId, accountId))).map((m) => m.id);
-    if (messageIds.length) {
-      await drop("message_bodies", tx.delete(messageBodies).where(inArray(messageBodies.messageId, messageIds)));
-      await drop("folder_state", tx.delete(folderState).where(inArray(folderState.messageId, messageIds)));
-      // `folder_state`'s twin for the `\Seen` flag, and it has no `account_id` either — which is
-      // why the catalog sweep could never have seen it. Read state is user data.
-      await drop("flag_state", tx.delete(flagState).where(inArray(flagState.messageId, messageIds)));
-    } else {
-      deleted.message_bodies = 0;
-      deleted.folder_state = 0;
-      deleted.flag_state = 0;
-    }
+    // ── message_bodies, folder_state and flag_state key off the MESSAGE, not the account ──
+    //
+    // A SUBQUERY, and this used to be a materialized id list — the most damaging instance of
+    // "a stored collection with no cardinality ceiling reaching a statement with no page".
+    //
+    // `select messages.id where account_id = $1` into a JS array, then that array bound into
+    // three `IN` predicates, means one bind parameter PER MESSAGE, three times over. PostgreSQL
+    // refuses a statement carrying more than 65 535 parameters, so once an account holds enough
+    // mail for three id lists to exceed that,
+    // the statement is rejected and the whole erasure transaction aborts: **self-serve erasure
+    // stopped working exactly for the largest real accounts**, and it is an Art. 17 obligation,
+    // so the failure grew into the product rather than out of it. Nothing warned — a small
+    // mailbox erases fine and every test account is small.
+    //
+    // The ids now never leave PostgreSQL. There is no array, no parameter list and no
+    // cardinality to bound, so the statement is one statement whatever the account holds. It is
+    // also strictly less work: the planner joins rather than matching against a literal list.
+    //
+    // The `messages` delete itself is still by `account_id` and still runs AFTER these three
+    // (line order is FK order, children before parents), so the subquery resolves against rows
+    // that are still present.
+    const ownMessageIds = tx.select({ id: messages.id })
+      .from(messages).where(eq(messages.accountId, accountId));
+    await drop("message_bodies", tx.delete(messageBodies).where(inArray(messageBodies.messageId, ownMessageIds)));
+    await drop("folder_state", tx.delete(folderState).where(inArray(folderState.messageId, ownMessageIds)));
+    // `folder_state`'s twin for the `\Seen` flag, and it has no `account_id` either — which is
+    // why the catalog sweep could never have seen it. Read state is user data.
+    await drop("flag_state", tx.delete(flagState).where(inArray(flagState.messageId, ownMessageIds)));
 
     // ── 3. Notes, then their parents ────────────────────────────────────────────
     await drop("thread_notes", tx.delete(threadNotes).where(eq(threadNotes.accountId, accountId)));
@@ -330,19 +355,18 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     await drop("account_storage", tx.delete(accountStorage).where(eq(accountStorage.accountId, accountId)));
 
     // ── 4. Mailboxes — the credentials go with them ─────────────────────────────
-    if (mailboxIds.length) {
-      await drop("mailbox_credentials", tx.delete(mailboxCredentials).where(inArray(mailboxCredentials.mailboxId, mailboxIds)));
-      // The folder COMMANDS before the folder inventory they reference (mail 0074). The FK
-      // would CASCADE these with the inventory rows anyway; the delete is explicit so the
-      // erasure receipt counts them and the ruling is written where the census looks — a
-      // rename target is the user's own words, not residue to leave to a side effect.
-      await drop("folder_ops", tx.delete(folderOps).where(inArray(folderOps.mailboxId, mailboxIds)));
-      await drop("mailbox_folders", tx.delete(mailboxFolders).where(inArray(mailboxFolders.mailboxId, mailboxIds)));
-    } else {
-      deleted.mailbox_credentials = 0;
-      deleted.folder_ops = 0;
-      deleted.mailbox_folders = 0;
-    }
+    // Subqueries for the same reason the message-keyed deletes above use them: the SELF-HOST
+    // imposes no mailbox count limit at all (`SELF_HOST_MAILBOX_ALLOWANCE`), so a materialized
+    // list here has no ceiling either — smaller in practice than the message list and the same
+    // shape, which is the whole argument for preferring the subquery everywhere rather than
+    // only where a count is known to be large.
+    await drop("mailbox_credentials", tx.delete(mailboxCredentials).where(inArray(mailboxCredentials.mailboxId, ownMailboxIds)));
+    // The folder COMMANDS before the folder inventory they reference (mail 0074). The FK
+    // would CASCADE these with the inventory rows anyway; the delete is explicit so the
+    // erasure receipt counts them and the ruling is written where the census looks — a
+    // rename target is the user's own words, not residue to leave to a side effect.
+    await drop("folder_ops", tx.delete(folderOps).where(inArray(folderOps.mailboxId, ownMailboxIds)));
+    await drop("mailbox_folders", tx.delete(mailboxFolders).where(inArray(mailboxFolders.mailboxId, ownMailboxIds)));
     await drop("mailboxes", tx.delete(mailboxes).where(eq(mailboxes.accountId, accountId)));
 
     // ── 5. Automation, knowledge, preferences ───────────────────────────────────
@@ -419,33 +443,35 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     await drop("refresh_tokens", tx.delete(refreshTokens).where(eq(refreshTokens.accountId, accountId)));
     await drop("sessions", tx.delete(sessions).where(eq(sessions.accountId, accountId)));
     await drop("devices", tx.delete(devices).where(eq(devices.accountId, accountId)));
-    if (userIds.length) {
-      // Pairing tokens are CREDENTIALS THE USER MINTED (mail 0059): a live device-pair token
-      // still opens this account, a live invite token still opens this server, and the label is
-      // the user's own words. All of it goes — and it must go BEFORE the `users` delete below,
-      // whose FK (`created_by_user_id`) would otherwise refuse the erasure outright. First-boot
-      // tokens (creator NULL) belong to no user and are untouched.
-      await drop("pairing_tokens", tx.delete(pairingTokens).where(inArray(pairingTokens.createdByUserId, userIds)));
-      await drop("login_tokens", tx.delete(loginTokens).where(inArray(loginTokens.userId, userIds)));
-      await drop("oauth_auth_codes", tx.delete(oauthAuthCodes).where(inArray(oauthAuthCodes.userId, userIds)));
-      await drop("recovery_codes", tx.delete(recoveryCodes).where(inArray(recoveryCodes.userId, userIds)));
-      await drop("totp_secrets", tx.delete(totpSecrets).where(inArray(totpSecrets.userId, userIds)));
-      await drop("webauthn_credentials", tx.delete(webauthnCredentials).where(inArray(webauthnCredentials.userId, userIds)));
-      // Nullable userId and no FK — an unconsumed ceremony would otherwise outlive
-      // the user it was started for.
-      await drop("webauthn_challenges", tx.delete(webauthnChallenges)
-        .where(and(isNotNull(webauthnChallenges.userId), inArray(webauthnChallenges.userId, userIds))));
-      await drop("credentials", tx.delete(credentials).where(inArray(credentials.userId, userIds)));
-      // `auth_throttle.key` is "user:<id>" or "email:<addr>" — both are personal data.
-      await drop("auth_throttle", tx.delete(authThrottle).where(inArray(
-        authThrottle.key,
-        [...userIds.map((id) => `user:${id}`), ...emails.map((e) => `email:${e}`)],
-      )));
-    } else {
-      for (const t of ["pairing_tokens", "login_tokens", "oauth_auth_codes", "recovery_codes",
-        "totp_secrets", "webauthn_credentials", "webauthn_challenges", "credentials",
-        "auth_throttle"]) deleted[t] = 0;
-    }
+    // Pairing tokens are CREDENTIALS THE USER MINTED (mail 0059): a live device-pair token
+    // still opens this account, a live invite token still opens this server, and the label is
+    // the user's own words. All of it goes — and it must go BEFORE the `users` delete below,
+    // whose FK (`created_by_user_id`) would otherwise refuse the erasure outright. First-boot
+    // tokens (creator NULL) belong to no user and are untouched.
+    await drop("pairing_tokens", tx.delete(pairingTokens).where(inArray(pairingTokens.createdByUserId, ownUserIds)));
+    await drop("login_tokens", tx.delete(loginTokens).where(inArray(loginTokens.userId, ownUserIds)));
+    await drop("oauth_auth_codes", tx.delete(oauthAuthCodes).where(inArray(oauthAuthCodes.userId, ownUserIds)));
+    await drop("recovery_codes", tx.delete(recoveryCodes).where(inArray(recoveryCodes.userId, ownUserIds)));
+    await drop("totp_secrets", tx.delete(totpSecrets).where(inArray(totpSecrets.userId, ownUserIds)));
+    await drop("webauthn_credentials", tx.delete(webauthnCredentials).where(inArray(webauthnCredentials.userId, ownUserIds)));
+    // Nullable userId and no FK — an unconsumed ceremony would otherwise outlive
+    // the user it was started for.
+    await drop("webauthn_challenges", tx.delete(webauthnChallenges)
+      .where(and(isNotNull(webauthnChallenges.userId), inArray(webauthnChallenges.userId, ownUserIds))));
+    await drop("credentials", tx.delete(credentials).where(inArray(credentials.userId, ownUserIds)));
+    // `auth_throttle.key` is "user:<id>" or "email:<addr>" — both are personal data, and the two
+    // shapes are two predicates rather than one concatenated array. The strings are now BUILT IN
+    // POSTGRES from the `users` row, so no address is materialized in this process and neither
+    // list carries a bind parameter per user. `::text` is explicit: `id` is a uuid and `||`
+    // against a text literal has no implicit cast for it.
+    const throttleUserKeys = tx.select({ k: sql<string>`'user:' || ${users.id}::text` })
+      .from(users).where(eq(users.accountId, accountId));
+    const throttleEmailKeys = tx.select({ k: sql<string>`'email:' || ${users.email}` })
+      .from(users).where(eq(users.accountId, accountId));
+    await drop("auth_throttle", tx.delete(authThrottle).where(or(
+      inArray(authThrottle.key, throttleUserKeys),
+      inArray(authThrottle.key, throttleEmailKeys),
+    )));
     // auth_events carries ip + device per login. Account-scoped rows go with the
     // account; user-scoped rows that predate the account (unknown-email attempts)
     // are already anonymous, and there is no key to find them by.

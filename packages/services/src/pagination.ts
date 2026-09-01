@@ -67,6 +67,29 @@ const CURSOR_UUID = new RegExp("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}
 const CURSOR_KEYSET = new RegExp(
   "^(-?\\d{1,16}):([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$", "i",
 );
+/**
+ * THE THIRD SHAPE: a keyset whose SORT KEY IS NULL — `null:<uuid>`.
+ *
+ * `messages.date` is the sender's own header and is nullable, so the (date, id) walk over it has a
+ * position the numeric tuple cannot express. Encoding that position as epoch `0` — which is what
+ * {@link encodeListCursor}'s callers used to do — is not a near-miss, it is a DIFFERENT position:
+ * the list orders `date desc nulls last`, so a null row sorts AFTER every dated one, while epoch 0
+ * sorts among the 1970 mail. The page after an undated row therefore asked for rows older than
+ * 1970-01-01 and the undated tail — which is strictly after that point — was unreachable for ever.
+ * a null sort key the cursor grammar could not express.
+ *
+ * It is spelled `null` rather than given a punctuation sentinel because a cursor is decoded by
+ * hand when a page misbehaves, and `null:<uuid>` says what it is. 4 + 1 + 36 = 41 characters, well
+ * inside {@link LIST_CURSOR_MAX_CHARS}.
+ *
+ * **{@link decodeKeysetCursor} still REFUSES it**, and that is the point of two decoders rather
+ * than one generous grammar: `PrivacyService.listTrackerEvents` and `WorkflowsService.listRuns`
+ * page on `detected_at`/`created_at`, both `notNull`, so a null sort key is not a position their
+ * lists have. Accepting it there would build `is null` predicates that silently match nothing.
+ */
+const CURSOR_NULL_KEYSET = new RegExp(
+  "^null:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$", "i",
+);
 
 /**
  * THE RANGE THE SINK ACCEPTS, WHICH IS NOT THE RANGE THE PRODUCER CAN EMIT.
@@ -154,6 +177,34 @@ export function decodeKeysetCursor(cursor: string): { millis: number; id: string
   const millis = Number(m![1]);
   if (!Number.isFinite(millis) || millis > MAX_EPOCH_MS || millis < MIN_EPOCH_MS) invalidCursor();
   return { millis, id: m![2]! };
+}
+
+/**
+ * A NULLABLE keyset cursor: `(millis | null, id)` for a route ordered by
+ * `<nullable date> desc nulls last, id desc`.
+ *
+ * The numeric half is {@link decodeKeysetCursor}'s exactly — same grammar, same epoch range, same
+ * reasons — and the addition is the `null:` position described at {@link CURSOR_NULL_KEYSET}.
+ * Only `MessageService` issues these, because only its sort column is nullable.
+ *
+ * A cursor minted before this shape existed encodes an undated row as `0:<uuid>` and still
+ * decodes; it resumes at the 1970 boundary as it always did and the client is back on a correct
+ * cursor after one page. Cursors are ephemeral, so there is no migration to write.
+ */
+export function decodeNullableKeysetCursor(cursor: string): { millis: number | null; id: string } {
+  const decoded = decodedOr400(cursor);
+  const n = CURSOR_NULL_KEYSET.exec(decoded);
+  if (n) return { millis: null, id: n[1]! };
+  const m = CURSOR_KEYSET.exec(decoded);
+  if (!m) invalidCursor();
+  const millis = Number(m![1]);
+  if (!Number.isFinite(millis) || millis > MAX_EPOCH_MS || millis < MIN_EPOCH_MS) invalidCursor();
+  return { millis, id: m![2]! };
+}
+
+/** Mint a {@link decodeNullableKeysetCursor} cursor. `null` is a POSITION, not a missing value. */
+export function encodeNullableKeysetCursor(millis: number | null, id: string): string {
+  return encodeListCursor(`${millis === null ? "null" : millis}:${id}`);
 }
 
 export const DEFAULT_PAGE_LIMIT = 50;

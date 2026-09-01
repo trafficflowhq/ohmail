@@ -22,6 +22,7 @@ export {
 } from "./dto/materialize.js";
 export {
   clampLimit, clampPageLimit, encodeListCursor, decodeListCursor, decodeKeysetCursor,
+  decodeNullableKeysetCursor, encodeNullableKeysetCursor,
   LIST_CURSOR_MAX_CHARS,
   DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT,
 } from "./pagination.js";
