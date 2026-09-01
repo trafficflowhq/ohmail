@@ -65,3 +65,11 @@
     0 0 0 calc(var(--focus-w) * var(--teach)) var(--focus, var(--accent)),
     var(--lift-1);
 }
+/* A THREAD dissolves the reader tile into panels on the canvas (`.read-col:has(> .conv)`,
+   message.css: no panel, no shadow, margins pulled out to the deck edge). The ring still
+   belongs where the tile's edge would be, so it is drawn as an outline inset by the deck's
+   own edge gap — the same product of tokens, zero wide under paper. */
+:root[data-zone="reader"] .view .read-col:has(> .conv) {
+  outline: calc(var(--focus-w) * var(--teach)) solid var(--focus, var(--accent));
+  outline-offset: calc(-1 * var(--gap-edge));
+}
