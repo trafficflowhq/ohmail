@@ -176,18 +176,25 @@ export interface FolderOpRow {
  * every writer that has just been told where a message belongs. A completion is the opposite kind
  * of fact: the intent was decided minutes ago and possibly by someone else, and all the mover
  * knows is where the message physically IS now. So the desired folder appears here only as
- * `expectDesiredFolder` — the witness the write is conditional on — and never as a value to store.
+ * `expectDesiredFolder` — the WITNESS the physical move was computed against, read back live and
+ * compared, but never itself written.
  */
 export interface FolderCompletion {
   /**
-   * The desired folder this completion was COMPUTED AGAINST — the compare-and-set witness, not a
-   * value that gets written. The write applies only while the row still says this.
+   * The desired folder this completion was COMPUTED AGAINST. Never written — see
+   * {@link WorkerRepo.completeFolderState} — but always READ live and compared: it decides whether
+   * this call's caller gets credit for the row (a matched witness) or is recording a physical fact
+   * about a desire that has since moved on (a miss, which still writes {@link observedFolder}).
    */
   expectDesiredFolder: string;
-  /** Where the server now holds the message. The only placement fact a mover owns. */
+  /** Where the server now holds the message. Written unconditionally — a fact about the SERVER. */
   observedFolder: string;
   lastSetBy: "us" | "external";
-  /** See {@link FolderStateRow.satisfiedBy} — derives the status, never stored (there is no column). */
+  /**
+   * See {@link FolderStateRow.satisfiedBy} — derives the status, never stored (there is no
+   * column), and only ever credited when {@link expectDesiredFolder} still matches the row's live
+   * desire: a stale witness may not claim satisfaction of a desire it no longer describes.
+   */
   satisfiedBy?: string | null;
 }
 
@@ -207,14 +214,26 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    *
    * This method is the fix for the class rather than for one caller. `desired_folder` is not in
    * its `SET` list at all — it is structurally unable to clobber an intent, which is a stronger
-   * statement than "the predicate happens to be right" — and the `WHERE` carries the witness, so
-   * a row whose desire moved on is left ENTIRELY alone: the newer intent keeps its status, its
-   * attempts and its schedule, and the next cycle converges it from the locator this completion
-   * already repointed.
+   * statement than "a predicate happens to be right".
    *
-   * Returns TRUE when the desire still matched and the completion was written; FALSE when a newer
-   * intent (or an account erasure) owns the row and NOTHING was written. Callers that can observe
-   * it owe the fact to the audit log — silence here is how the defect stayed invisible.
+   * IT IS NOT A CONDITIONAL WRITE THAT DOES NOTHING ON A MISS, and an earlier version of this
+   * method was exactly that — a `WHERE` on the witness, writing nothing when it failed to match.
+   * That reopened a narrower defect: the mail had already physically moved (`updateLocator` runs
+   * before this is ever called), so a declined completion left the database describing a location
+   * that was no longer true, and a competing writer whose own new desire happened to equal the
+   * PRE-move location produced a `reconciled` row that would never be looked at again — on the
+   * spam path, feeding the instanceless reaper a message with no watched copy and no exemption.
+   * So `observed_folder` is now written on EVERY call — it is a fact about the server, owed
+   * regardless of whose intent wins — and `reconcile_status` is derived inside the same statement
+   * from the row's LIVE `desired_folder`, never assumed to be the witness. A miss therefore still
+   * records the truth and, when that truth still diverges from whatever the mailbox currently
+   * wants, leaves the row PENDING — which re-enters {@link listPendingFolderStates} on the very
+   * next read and self-heals from the locator this call already repointed.
+   *
+   * Returns TRUE when the desire still matched — the caller's OWN intent (a park, a husk, the
+   * backoff reset) may proceed — FALSE when a newer intent (or an account erasure) owns the row
+   * and only the physical fact was recorded. Callers that can observe it owe the fact to the audit
+   * log — silence here is how the class stayed invisible in the first place.
    */
   completeFolderState(messageId: string, c: FolderCompletion): Promise<boolean>;
   getMailbox(mailboxId: string): Promise<
@@ -1393,41 +1412,96 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   /**
-   * {@link WorkerRepo.completeFolderState} — the conditional half of {@link upsertFolderState}.
+   * {@link WorkerRepo.completeFolderState} — the physical-observation half of
+   * {@link upsertFolderState}, and NOT a conditional write that does nothing on a miss.
    *
-   * ONE statement, and the shape is the whole guarantee:
+   * ── THE FIRST VERSION OF THIS METHOD WAS WRONG, AND A REVIEW ROUND FOUND WHY ────────────────
    *
-   *  · `desired_folder` is absent from the `SET`. Not "written only when the predicate holds" —
-   *    ABSENT, so no future edit to this method can reintroduce the lost update by widening a
-   *    condition. The column is read in the `WHERE` and written nowhere.
-   *  · the `WHERE` carries the witness, so the read-decide-write is atomic against the six
-   *    writers that hold no mailbox row and are serialized by nothing else.
-   *  · zero rows matched ⇒ nothing was written. `observed_folder` is deliberately not written
-   *    either, even though the mover does own that fact: the newer intent's own writer supplied a
-   *    matching pair, and half-updating it would leave `reconcile_status` derived from one writer's
-   *    desire and another's observation. The locator repoint that precedes every call is what
-   *    carries the physical truth forward, and the next cycle files from there.
+   * It had a `WHERE` carrying the witness — `desired_folder = expectDesiredFolder` — and wrote
+   * NOTHING at all when that failed to match. That closed the lost-update defect this method
+   * exists for (a completion may never write back a desire it read before the network round
+   * trip), but it opened a narrower, worse one: `updateLocator` runs unconditionally, before this
+   * method is ever called, because the server HAS physically moved the mail by the time a
+   * completion is attempted. So a declined completion left `messages.native_locator` correctly
+   * pointing at the new physical folder while `folder_state.observed_folder` kept whatever value
+   * the COMPETING writer had left — which, when that writer's own new desire happened to equal
+   * what it believed the current location already was (the ordinary shape of "the user restores a
+   * message while its move is still in flight"), is a CONVERGED pair: `reconcile_status` reads
+   * `reconciled` for a row whose physical location the database is now simply wrong about, and
+   * nothing will ever look at it again — `reconciled` rows do not re-enter
+   * {@link WorkerRepo.listPendingFolderStates}. On the spam path specifically this could feed the
+   * instanceless reaper a message with no watched copy and no reconciled-while-divergent
+   * exemption, which is the row that gets silently deleted from the mirror while it still sits on
+   * the server.
    *
-   * The backoff reset is `upsertFolderState`'s, for its stated reason — but only on the arm that
-   * writes. A declined completion leaves the newer intent's schedule untouched, which is right: the
-   * schedule belongs to the intent it was earned against, and this completion is not that intent.
+   * ── THE FIX: THE PHYSICAL FACT IS ALWAYS RECORDED; THE DESIRE NEVER IS ──────────────────────
+   *
+   * `desired_folder` is STILL absent from the `SET` — that half of the original guarantee is
+   * unchanged and is what makes this safe to widen. What changes is `observed_folder`: it is now
+   * written on EVERY call, because it is a fact about the SERVER and not about anyone's intent,
+   * and the row's `reconcile_status` is derived inside the same statement from the LIVE
+   * `desired_folder` — read as part of the `UPDATE`, never assumed to be the witness — against
+   * this fresh observation:
+   *
+   *  · `desired_folder = observed_folder` (the value THIS call is writing) ⇒ reconciled, by plain
+   *    literal equality — covers every ordinary move and the coincidental-convergence case above,
+   *    which now self-heals instead of lying.
+   *  · the spam pile's own fulfilment shape — `satisfiedBy` non-null, `desired_folder` STILL equal
+   *    to the witness this call was computed against, and `satisfiedBy` equal to what is being
+   *    written — reconciled. Narrower than the first clause on purpose: crediting a stale witness
+   *    with satisfaction of a desire that has since changed would be the lost update again, one
+   *    layer down.
+   *  · anything else ⇒ pending. The row re-enters `listPendingFolderStates` on the very next read,
+   *    and the native locator this call already repointed is exactly where the next attempt reads
+   *    FROM — so a superseded spam park is not stranded, it is one more reconcile cycle away from
+   *    landing wherever the CURRENT desire actually points.
+   *
+   * The returned boolean answers a narrower question than "was anything written" — it is ALWAYS
+   * true that something was written, `messageId` existing. It answers "did this call's OWN witness
+   * match the row's live desire", which is what callers use to decide whether THEIR intent (the
+   * park, the husk, the backoff reset) may proceed: `last_set_by`, `attempts` and
+   * `next_attempt_at` are touched ONLY on that match, for {@link upsertFolderState}'s stated
+   * reason — a declined call's caller does not own this row's schedule or its authorship, only the
+   * fact of where the mail now is.
    */
   async completeFolderState(messageId: string, c: FolderCompletion): Promise<boolean> {
-    // Safe to derive from the witness: the `WHERE` below is what makes `desired_folder` equal to
-    // it at the instant of the write, so this status can never describe a desire the row lost.
-    const reconcileStatus = reconcileStatusFor({
-      desiredFolder: c.expectDesiredFolder, observedFolder: c.observedFolder,
-      lastSetBy: c.lastSetBy, satisfiedBy: c.satisfiedBy,
-    });
-    const written = await this.db.update(folderState).set({
-      observedFolder: c.observedFolder, lastSetBy: c.lastSetBy,
-      reconcileStatus, conflict: false, updatedAt: new Date(),
-      attempts: 0, nextAttemptAt: null,
-    }).where(and(
-      eq(folderState.messageId, messageId),
-      eq(folderState.desiredFolder, c.expectDesiredFolder),
-    )).returning({ id: folderState.id });
-    return written.length > 0;
+    const result = await this.db.execute<{ desiredFolder: string }>(sql`
+      UPDATE ${folderState} SET
+        observed_folder = ${c.observedFolder},
+        last_set_by = CASE WHEN desired_folder = ${c.expectDesiredFolder}
+          THEN ${c.lastSetBy} ELSE last_set_by END,
+        reconcile_status = CASE
+          WHEN desired_folder = ${c.observedFolder} THEN 'reconciled'
+          WHEN ${c.satisfiedBy ?? null}::text IS NOT NULL
+               AND desired_folder = ${c.expectDesiredFolder}
+               AND ${c.satisfiedBy ?? null}::text = ${c.observedFolder}
+            THEN 'reconciled'
+          ELSE 'pending'
+        END,
+        conflict = false,
+        updated_at = now(),
+        attempts = CASE WHEN desired_folder = ${c.expectDesiredFolder}
+          THEN 0 ELSE attempts END,
+        next_attempt_at = CASE WHEN desired_folder = ${c.expectDesiredFolder}
+          THEN NULL ELSE next_attempt_at END
+      WHERE message_id = ${messageId}::uuid
+      RETURNING desired_folder AS "desiredFolder"
+    `);
+    // THE TWO DRIVERS BEHIND `Db` DISAGREE ABOUT WHAT `execute` RETURNS — `consent-cutline.ts`
+    // already documents this and this method repeats its exact fix rather than a new one: the
+    // Postgres driver (postgres.js, real :5433) hands back an array subclass, PGlite an object
+    // with a `rows` property. Neither is iterable in a way that covers the other. Found the hard
+    // way here too: `RETURNING (desired_folder = $x) AS matched` read as a real JS `boolean`
+    // against real Postgres and every pg-guard test passed, but `junk-sweep.test.ts` — the one
+    // worker suite that drives this method through the REAL repo against PGlite rather than a
+    // hand-rolled fake — turned up `rows[0]` as `undefined` on PGlite, because `rows` was never
+    // an array to begin with. Comparing `desired_folder` itself (a string this module already
+    // owns) rather than a computed boolean removes one variable; reading the row shape correctly
+    // removes the other.
+    const rows = Array.isArray(result)
+      ? result
+      : ((result as unknown as { rows?: Array<{ desiredFolder: string }> }).rows ?? []);
+    return rows[0]?.desiredFolder === c.expectDesiredFolder;
   }
 
   /** {@link upsertFolderState}'s read-state twin, backoff reset included and for its reasons. */

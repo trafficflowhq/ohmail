@@ -55,11 +55,28 @@
  * completion, so a decision that committed during the move was reverted: the re-screen takes the
  * row, writes `desired_folder = 'ohmail/Screener'`, commits, and the completion puts `'INBOX'`
  * back over it. A lost update, not a stale read — both writers behaved as designed and nothing
- * errored. Every arm below therefore completes through
- * {@link WorkerRepo.completeFolderState}, which cannot write `desired_folder` at all and applies
- * only while the row still holds the value the move was computed against. A declined completion
- * records `reconcile.move.superseded` and leaves the newer intent standing, which the next cycle
- * converges from the locator this function has already repointed.
+ * errored. Every arm below therefore completes through {@link WorkerRepo.completeFolderState},
+ * which cannot write `desired_folder` AT ALL, matched witness or not.
+ *
+ * ── AND A DECLINED COMPLETION MAY NOT LEAVE `observed_folder` STALE EITHER ──────────────────
+ *
+ * A second-round finding, on the first version of this fix. The mail has ALREADY physically
+ * moved by the time a completion is attempted (`updateLocator`, above, runs unconditionally) — so
+ * a completion that writes nothing at all on a miss leaves `folder_state.observed_folder`
+ * describing wherever the row was BEFORE this move, which is now false. When the competing writer
+ * that superseded the desire happened to write a pair that was already converged (`desired ===
+ * observed`, the ordinary shape of "the user restores a message while the old move is still in
+ * flight"), that stale-but-converged row would never be looked at again — on the spam path
+ * specifically, feeding {@link WorkerRepo.tombstoneInstanceless} a message with no watched instance
+ * and no exemption, because the park had already run.
+ *
+ * So the park itself is now CONDITIONAL on the completion matching (see the spam branch below),
+ * and `completeFolderState` writes `observed_folder` — the physical fact — on every call
+ * regardless of outcome, deriving `reconcile_status` from the row's LIVE `desired_folder` rather
+ * than the witness. A declined completion therefore always records where the mail actually is and
+ * records `reconcile.move.superseded`; if the live desire still disagrees with that location the
+ * row is left PENDING, which is what lets the next cycle converge it from the locator this
+ * function already repointed. See `completeFolderState`'s own doc for the full mechanism.
  */
 
 import type {
@@ -149,18 +166,22 @@ export function junkAuditCode(
 }
 
 /**
- * THE ONE PLACE A COMPLETION TOUCHES `folder_state` — the compare-and-set plus the audit row a
- * refusal owes.
+ * THE ONE PLACE A COMPLETION TOUCHES `folder_state` — the physical-observation write plus the
+ * audit row a superseded intent owes.
  *
  * Every arm of {@link completeFiling} goes through here so the witness cannot be forgotten on one
  * of them: `expectDesiredFolder` is always `p.desiredFolder`, the value the move was computed
  * against, supplied here rather than by the caller.
  *
- * A DECLINED completion is recorded, not swallowed. `reconcile.move.superseded` says the move
- * landed and its bookkeeping deferred to a newer intent — which is a normal, correct outcome and
- * also the only way anybody can tell how often two writers meet on one row. Its `to` is the
- * PHYSICAL folder the mail actually reached, so the row is a truthful record of where the message
- * is even though `folder_state` now describes somewhere else.
+ * `completeFolderState` writes `observed_folder` on EVERY call, matched witness or not — see its
+ * own doc for why the earlier "write nothing on a miss" shape was itself a defect. A MISS is
+ * therefore recorded here, not because nothing happened, but because THIS caller's intent (a
+ * park, a husk, the backoff reset) did not win the row: `reconcile.move.superseded` says the move
+ * landed and the row's disposition now belongs to whatever set a newer desire, which is a normal,
+ * correct outcome and the only way anybody can tell how often two writers meet on one row. Its
+ * `to` is the PHYSICAL folder the mail actually reached, matching what was just written to
+ * `observed_folder` — the row is a truthful record of where the message is even when its
+ * `desired_folder` describes somewhere else, and self-heals from there on the next cycle.
  */
 async function settle(
   r: WorkerRepo,
@@ -169,10 +190,10 @@ async function settle(
   physical: string,
   c: Omit<FolderCompletion, "expectDesiredFolder">,
 ): Promise<boolean> {
-  const applied = await r.completeFolderState(p.messageId, {
+  const matched = await r.completeFolderState(p.messageId, {
     ...c, expectDesiredFolder: p.desiredFolder,
   });
-  if (applied) return true;
+  if (matched) return true;
   await r.recordAudit(
     accountId,
     "reconcile.move.superseded",
@@ -183,7 +204,8 @@ async function settle(
       filedAgainst: p.desiredFolder,
       to: physical,
       reason: "a newer desired folder was committed during the IMAP move (or the row was erased); " +
-        "the completion wrote nothing and the newer intent stands",
+        "the physical location was recorded but this pass's own intent for the row did not win, " +
+        "so the newer intent stands and converges on its own next cycle",
     },
     null,
   );
