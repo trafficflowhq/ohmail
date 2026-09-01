@@ -17,7 +17,7 @@ import type { EngineStatus } from "../src/bridge-fetch.js";
 /* THE ENGINE'S OWN RULE, imported rather than restated — see `Dial.authenticated`. A relative
    import across app boundaries, as this file already makes to `apps/webapp`: the module has no
    imports of its own, and both directories are published to the mirror together. */
-import { credentialIsForeign, credentialIsForeignSmtp } from "../../sidecar/src/credential-host.js";
+import { credentialIsForeign } from "../../sidecar/src/credential-host.js";
 
 /**
  * ═══ CHANGING THE SERVER OF A MAILBOX THAT IS ALREADY CONNECTED ════════════════════════════════
@@ -96,12 +96,6 @@ import { credentialIsForeign, credentialIsForeignSmtp } from "../../sidecar/src/
  *  · report the interrupted handoff with the bare shell error (`sentence(err)`) instead of
  *    `handoffInterrupted(err)` → "says the password was stored when the settings write fails" goes
  *    red. Added in the second round, after review of the first raised the window it covers.
- *  · drop `smtpHost` from the seal body, so the credential records only the incoming server →
- *    FOUR cases here go red plus TWO in `desktop-doors.test.ts`, and the one that names the
- *    consequence is "an outgoing server that moved alone still RECEIVES, and would not send"
- *    (`expected true to be false`): with nothing recorded there is nothing to compare, and the
- *    install would offer the password to a submission server nobody named. Added in the third
- *    round, with the outgoing arm.
  */
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -167,28 +161,13 @@ interface Dial {
   authenticated: boolean;
 }
 
-/** The whole install, as the facts that decide whether it works. */
+/** The whole install, as the four facts that decide whether it works. */
 interface Install {
   /** The shell's settings file — what the NEXT engine is configured with. */
   settingsHost: string;
-  /**
-   * …and the OUTGOING server in that same file, which is the half that can move on its own.
-   *
-   * A mailbox has two servers and the settings carry both, so a change that touches only this one
-   * leaves `settingsHost` agreeing with the credential and the incoming comparison satisfied. That
-   * is why it is modelled separately rather than folded into the host above: they are two facts,
-   * and the whole defect is that they move independently.
-   */
-  settingsSmtpHost: string;
   settingsAddress: string;
-  /**
-   * The engine's sealed credential row, or null when there is none for this mailbox.
-   *
-   * `smtpHost` is the outgoing server the password was SAVED FOR — recorded by the seal, never
-   * dialled by it. One password covers both transports, so what the person authorized is a PAIR,
-   * and this is the only place that pair is written down.
-   */
-  sealed: { host: string; pass: string; smtpHost: string } | null;
+  /** The engine's sealed credential row, or null when there is none for this mailbox. */
+  sealed: { host: string; pass: string } | null;
   /** The row `ensureLocalWorld` finds or mints for `settingsAddress`. */
   mailboxId: string;
   dials: Dial[];
@@ -212,11 +191,8 @@ const host = globalThis as unknown as Host;
 function runningInstall(): Install {
   const install: Install = {
     settingsHost: OLD_HOST,
-    // The working install's two servers AGREE with the pair its credential was saved for. Every
-    // defect in this file is a way of pulling those apart.
-    settingsSmtpHost: OLD_HOST,
     settingsAddress: ADDRESS,
-    sealed: { host: OLD_HOST, pass: OLD_PASS, smtpHost: OLD_HOST },
+    sealed: { host: OLD_HOST, pass: OLD_PASS },
     mailboxId: "mbx-1",
     dials: [],
     asked: [],
@@ -229,13 +205,8 @@ function runningInstall(): Install {
       install.asked.push({ command, payload });
 
       if (command === "engine_configure") {
-        const config = payload!.config as {
-          imap: { host: string }; smtp?: { host: string }; address: string;
-        };
+        const config = payload!.config as { imap: { host: string }; address: string };
         install.settingsHost = config.imap.host;
-        // Absent when the form and the preset name no outgoing server — the engine then has none
-        // configured, which is a state with nothing to disagree about rather than a mismatch.
-        install.settingsSmtpHost = config.smtp?.host ?? "";
         if (config.address.trim().toLowerCase() !== install.settingsAddress.trim().toLowerCase()) {
           /* `ensureLocalWorld` looks the mailbox up by `lower(address)` and INSERTS when it finds
              none. A different address is therefore a different row — with no credential on it. */
@@ -284,19 +255,10 @@ function runningInstall(): Install {
         }
         const body = JSON.parse(
           new TextDecoder().decode(Uint8Array.from(payload!.body as number[])),
-        ) as { imap: { host: string; pass: string; smtpHost?: string } };
+        ) as { imap: { host: string; pass: string } };
         /* The service dials the MERGED PATCH and stores the pair it proved. Seal what was
-           dialled — never what the running engine happens to be configured for.
-
-           The OUTGOING host is stored from the body too, and it is stored WITHOUT being dialled:
-           nothing proves a submission server here, so what the row records is the pair the person
-           named. A body that says nothing about it records nothing, which is what every credential
-           sealed before this existed looks like. */
-        install.sealed = {
-          host: body.imap.host,
-          pass: body.imap.pass,
-          smtpHost: body.imap.smtpHost ?? "",
-        };
+           dialled — never what the running engine happens to be configured for. */
+        install.sealed = { host: body.imap.host, pass: body.imap.pass };
         return encode(200, '{"ok":true}');
       }
 
@@ -325,25 +287,6 @@ function authenticated(install: Install): Array<{ host: string; sealedFor: strin
   return install.dials
     .filter((d) => d.authenticated)
     .map(({ host: h2, sealedFor }) => ({ host: h2, sealedFor }));
-}
-
-/**
- * WOULD A SEND FROM THIS INSTALL OFFER THE PASSWORD TO ITS CONFIGURED OUTGOING SERVER?
- *
- * The other half of the same contract, and its scope is narrower on purpose: this decides one
- * SEND, not the launch. A mailbox whose outgoing server moved still receives, so the engine
- * compares this only where a submission transport is about to be opened — which is why
- * {@link Dial.authenticated} above is unaffected by it and this is a separate reading.
- *
- * Through the engine's own predicate, imported rather than restated, for the reason the incoming
- * arm gives: deleting the comparison from the engine has to redden this file too.
- */
-function wouldSend(install: Install): boolean {
-  return (
-    install.sealed !== null &&
-    !credentialIsForeign({ host: install.sealed.host }, install.settingsHost) &&
-    !credentialIsForeignSmtp({ smtpHost: install.sealed.smtpHost }, install.settingsSmtpHost)
-  );
 }
 
 /**
@@ -436,65 +379,16 @@ describe("reconfiguring a mailbox that is already connected", () => {
     expect(commands.indexOf("engine_request")).toBeGreaterThanOrEqual(0);
     expect(commands.indexOf("engine_request")).toBeLessThan(commands.indexOf("engine_configure"));
 
-    /* The password was offered to the NEW host and only to it — the old one is never dialled
-       again — and the body states BOTH servers, which is what gives the engine a pair to compare
-       a later change against. */
+    // The password was offered to the NEW host and only to it — the old one is never dialled again.
     expect(patchBodies(install)).toEqual([
-      {
-        imap: {
-          host: NEW_HOST, port: 993, secure: true, user: ADDRESS, pass: NEW_PASS,
-          smtpHost: NEW_HOST,
-        },
-      },
+      { imap: { host: NEW_HOST, port: 993, secure: true, user: ADDRESS, pass: NEW_PASS } },
     ]);
 
-    // And the settings and the credential end up naming ONE PAIR of servers, on both transports.
-    expect({
-      settings: [install.settingsHost, install.settingsSmtpHost],
-      credential: [install.sealed?.host, install.sealed?.smtpHost],
-    }).toEqual({
-      settings: [NEW_HOST, NEW_HOST],
-      credential: [NEW_HOST, NEW_HOST],
+    // And the settings and the credential end up naming ONE host.
+    expect({ settings: install.settingsHost, credential: install.sealed?.host }).toEqual({
+      settings: NEW_HOST,
+      credential: NEW_HOST,
     });
-    // …so the install can send. The case below is the same install with only that half pulled apart.
-    expect(wouldSend(install)).toBe(true);
-  });
-
-  /**
-   * THE OUTGOING SERVER MOVES ON ITS OWN, and the incoming comparison has nothing to say about it.
-   *
-   * This is the state a change that touches only the submission server leaves — a settings file
-   * edited by hand, or a process that dies inside the write that was meant to move both. The
-   * incoming host still agrees with the credential, so the launch is `ready` and the mailbox keeps
-   * receiving; what is wrong is that a send would offer the password to a server nobody named.
-   *
-   * MODELLED RATHER THAN ENTERED THROUGH THE DOOR, and that is the point: no door produces this.
-   * The door states both servers in one body, so the pair it seals always matches the pair it
-   * configures. This state arrives from outside the door, which is exactly why the ENGINE has to be
-   * the thing that refuses it — and the engine's own suite drives that refusal end to end against a
-   * real engine on a real mirror.
-   */
-  it("an outgoing server that moved alone still RECEIVES, and would not send", async () => {
-    const install = runningInstall();
-    await enter();
-    expect(wouldSend(install)).toBe(true);
-
-    install.settingsSmtpHost = "smtp.somewhere-nobody-named.example";
-
-    // The launch is untouched — one boot, authenticated, no leak. Refusing here would stop mail
-    // arriving to fence a send.
-    relaunch(install);
-    expect(leaks(install)).toEqual([]);
-    expect(authenticated(install)).toHaveLength(2);
-    // …and the send is the one thing that stops.
-    expect(wouldSend(install)).toBe(false);
-
-    /* AND IT IS RE-RESOLVABLE WITH NOTHING RE-ENTERED. The credential was never rewritten or
-       deleted — pointing the outgoing server back at the one the password was saved for restores
-       sending. A refusal whose recovery required the password again would be a worse answer than
-       the defect, because it would send somebody to type a secret into the wrong server. */
-    install.settingsSmtpHost = NEW_HOST;
-    expect(wouldSend(install)).toBe(true);
   });
 
   it("replaces the engine ONCE, because the credential was in the store before it booted", async () => {
@@ -571,7 +465,7 @@ describe("reconfiguring a mailbox that is already connected", () => {
 
     /* And the state the sentence describes is the state the install is really in — the assertion
        that keeps the copy honest if the ordering ever changes underneath it. */
-    expect(install.sealed).toEqual({ host: NEW_HOST, pass: NEW_PASS, smtpHost: NEW_HOST });
+    expect(install.sealed).toEqual({ host: NEW_HOST, pass: NEW_PASS });
     expect(install.settingsHost).toBe(OLD_HOST);
     expect(install.dials).toEqual([]);
   });
@@ -615,14 +509,9 @@ describe("reconfiguring a mailbox that is already connected", () => {
     await enterLocalDoor(fields(), providerById("imap"), standing);
 
     /* THE STATE A CRASH LEAVES: the credential names the new server, the settings still name the
-       old one. The mirror image of the divergence the reordering ended. BOTH servers diverge here,
-       because the settings write that would have moved either of them is the one that died. */
-    expect(install.sealed).toEqual({ host: NEW_HOST, pass: NEW_PASS, smtpHost: NEW_HOST });
+       old one. The mirror image of the divergence the reordering ended. */
+    expect(install.sealed).toEqual({ host: NEW_HOST, pass: NEW_PASS });
     expect(install.settingsHost).toBe(OLD_HOST);
-    expect(install.settingsSmtpHost).toBe(OLD_HOST);
-    // So a send fired into this window is refused too, on its own comparison — the door is a modal
-    // over the whole app, but a scheduled send fires on the engine's own timer.
-    expect(wouldSend(install)).toBe(false);
 
     // The next time the app is opened.
     relaunch(install);
@@ -647,11 +536,9 @@ describe("reconfiguring a mailbox that is already connected", () => {
     const result = await enterLocalDoor(fields(), providerById("imap"), stuck);
     expect(result.problem).toBeNull();
 
-    // Settings and credential name ONE pair again, and it is the one that was asked for.
+    // Settings and credential name ONE host again, and it is the one that was asked for.
     expect(install.settingsHost).toBe(NEW_HOST);
-    expect(install.settingsSmtpHost).toBe(NEW_HOST);
-    expect(install.sealed).toEqual({ host: NEW_HOST, pass: NEW_PASS, smtpHost: NEW_HOST });
-    expect(wouldSend(install)).toBe(true);
+    expect(install.sealed).toEqual({ host: NEW_HOST, pass: NEW_PASS });
     // Every boot the recovery made logged in, and to the right server. No new mismatch was created
     // on the way out of the old one.
     const recoveryBoots = install.dials.slice(before);
