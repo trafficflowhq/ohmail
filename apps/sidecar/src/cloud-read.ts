@@ -100,6 +100,32 @@ function boolParam(v: string | null): boolean | undefined {
  * same join: `message_bodies` has no account column, so the join IS the authorization, and asking
  * this question about an id must not become a way to learn that somebody else's message exists.
  */
+/**
+ * BOTH QUESTIONS UNDER ONE SNAPSHOT — presence and content, or the fix reintroduces the defect.
+ *
+ * `MessageService.getBodies` already reads inside its own `repeatable read` transaction, so asking
+ * it for the bodies and then asking THIS database which ids have a row are two snapshots with a
+ * gap between them. The mirror's backfill runs in this same process, and it fills that gap: a body
+ * absent when `getBodies` read it (so the wire item carries the left join's `text: ""`) and present
+ * when the presence query ran (so the id is admitted) is answered as an ordinary empty body — and
+ * cached as a settled one, which is exactly the failure this file exists to prevent, in a narrower
+ * window. Review-caught.
+ *
+ * One transaction, `read only` and at the same isolation, so the two answers describe one instant.
+ */
+async function inSnapshot<T>(ctx: ServiceContext, fn: (snap: ServiceContext) => Promise<T>): Promise<T> {
+  const tx = ctx.db as unknown as {
+    transaction<R>(
+      run: (t: ServiceContext["db"]) => Promise<R>,
+      opts: { isolationLevel: "repeatable read"; accessMode: "read only" },
+    ): Promise<R>;
+  };
+  return tx.transaction(
+    async (t) => fn({ ...ctx, db: t }),
+    { isolationLevel: "repeatable read", accessMode: "read only" },
+  );
+}
+
 async function mirroredBodyIds(ctx: ServiceContext, ids: readonly string[]): Promise<Set<string>> {
   if (ids.length === 0) return new Set();
   const rows = await ctx.db
@@ -211,9 +237,12 @@ export const READ_ROUTES: ReadRoute[] = [
       const limit = num(url.searchParams.get("limit"));
       if (idsRaw !== null) {
         const ids = idsRaw.split(",").map((v) => v.trim()).filter((v) => v !== "");
-        const page = await messageService.getBodies(ctx, { ids });
-        const held = await mirroredBodyIds(ctx, page.items.map((i) => i.messageId));
-        return json({ items: page.items.filter((i) => held.has(i.messageId)), nextCursor: null });
+        const items = await inSnapshot(ctx, async (snap) => {
+          const page = await messageService.getBodies(snap, { ids });
+          const held = await mirroredBodyIds(snap, page.items.map((i) => i.messageId));
+          return page.items.filter((i) => held.has(i.messageId));
+        });
+        return json({ items, nextCursor: null });
       }
       const page = await messageService.getBodies(ctx, {
         ...(after ? { after } : {}),
@@ -248,10 +277,12 @@ export const READ_ROUTES: ReadRoute[] = [
     pattern: "/messages/:id/body",
     handler: async (_req, ctx, params) => {
       const id = params.id!;
-      if (!(await mirroredBodyIds(ctx, [id])).has(id)) {
-        throw new ServiceError("not_found", 404, "message not found");
-      }
-      return json(await messageService.getBody(ctx, id));
+      return json(await inSnapshot(ctx, async (snap) => {
+        if (!(await mirroredBodyIds(snap, [id])).has(id)) {
+          throw new ServiceError("not_found", 404, "message not found");
+        }
+        return messageService.getBody(snap, id);
+      }));
     },
   },
   {
