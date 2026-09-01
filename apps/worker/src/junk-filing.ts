@@ -71,12 +71,15 @@
  * and no exemption, because the park had already run.
  *
  * So the park itself is now CONDITIONAL on the completion matching (see the spam branch below),
- * and `completeFolderState` writes `observed_folder` — the physical fact — on every call
- * regardless of outcome, deriving `reconcile_status` from the row's LIVE `desired_folder` rather
+ * and `completeFolderState`, called from here with `physicalObservation: true` (this module is
+ * the ONLY caller with a genuine landed move to report), writes `observed_folder` — the physical
+ * fact — even on a miss, deriving `reconcile_status` from the row's LIVE `desired_folder` rather
  * than the witness. A declined completion therefore always records where the mail actually is and
  * records `reconcile.move.superseded`; if the live desire still disagrees with that location the
  * row is left PENDING, which is what lets the next cycle converge it from the locator this
- * function already repointed. See `completeFolderState`'s own doc for the full mechanism.
+ * function already repointed. See `completeFolderState`'s own doc — and `physicalObservation`'s —
+ * for the full mechanism, and for why the flag exists at all: a caller with no fresh physical fact
+ * (two exist, both in `sync.ts`) must default to writing nothing on a miss, exactly as before.
  */
 
 import type {
@@ -173,8 +176,11 @@ export function junkAuditCode(
  * of them: `expectDesiredFolder` is always `p.desiredFolder`, the value the move was computed
  * against, supplied here rather than by the caller.
  *
- * `completeFolderState` writes `observed_folder` on EVERY call, matched witness or not — see its
- * own doc for why the earlier "write nothing on a miss" shape was itself a defect. A MISS is
+ * `completeFolderState`, called with `physicalObservation: true` below, writes `observed_folder`
+ * on every call this module makes — matched witness or not — see its own doc for why the earlier
+ * "write nothing on a miss" shape was itself a defect, and for why that is opt-in rather than the
+ * default (a caller with no fresh physical fact must not overwrite a fresher writer's own record).
+ * A MISS is
  * therefore recorded here, not because nothing happened, but because THIS caller's intent (a
  * park, a husk, the backoff reset) did not win the row: `reconcile.move.superseded` says the move
  * landed and the row's disposition now belongs to whatever set a newer desire, which is a normal,
@@ -192,6 +198,12 @@ async function settle(
 ): Promise<boolean> {
   const matched = await r.completeFolderState(p.messageId, {
     ...c, expectDesiredFolder: p.desiredFolder,
+    // TRUE, always, here and ONLY here: `settle` is called exclusively from `completeFiling`,
+    // after `adapter.move`/`moveMany` returned a locator that landed — `physical` is the actual
+    // destination the server just confirmed, never a stale echo. See
+    // `FolderCompletion.physicalObservation`'s doc for why this must NOT be the default and why
+    // the two callers in `sync.ts` (a status repair, a gone-message void) must not set it.
+    physicalObservation: true,
   });
   if (matched) return true;
   await r.recordAudit(

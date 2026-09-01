@@ -182,12 +182,16 @@ export interface FolderOpRow {
 export interface FolderCompletion {
   /**
    * The desired folder this completion was COMPUTED AGAINST. Never written — see
-   * {@link WorkerRepo.completeFolderState} — but always READ live and compared: it decides whether
-   * this call's caller gets credit for the row (a matched witness) or is recording a physical fact
-   * about a desire that has since moved on (a miss, which still writes {@link observedFolder}).
+   * {@link WorkerRepo.completeFolderState} — but always READ live and compared: it decides
+   * whether this call's caller gets credit for the row (a matched witness) or whether
+   * {@link observedFolder} may STILL be recorded on a miss, per {@link physicalObservation}.
    */
   expectDesiredFolder: string;
-  /** Where the server now holds the message. Written unconditionally — a fact about the SERVER. */
+  /**
+   * Where the server now holds the message — OR, when {@link physicalObservation} is false, a
+   * value that only matters if this call turns out to MATCH (a miss ignores it entirely). Never
+   * write a stale echo here with `physicalObservation: true`; see that flag's own doc.
+   */
   observedFolder: string;
   lastSetBy: "us" | "external";
   /**
@@ -196,6 +200,29 @@ export interface FolderCompletion {
    * desire: a stale witness may not claim satisfaction of a desire it no longer describes.
    */
   satisfiedBy?: string | null;
+  /**
+   * Does {@link observedFolder} carry a FRESH PHYSICAL FACT — a location the server just
+   * confirmed, from a landed `adapter.move`/`moveMany` — or is it a value this call happens to be
+   * carrying that was NOT learned from any new network activity about THIS row (an
+   * already-converged status repair re-deriving `reconcile_status` from what the pass read
+   * before doing any I/O for this row; a gone-message void, which learned the message vanished
+   * and nothing about where it is)?
+   *
+   * `true` (junk-filing.ts's `settle`, the only caller with a genuine landed move) makes a MISS
+   * still write `observed_folder`/`reconcile_status`/`conflict` — see `completeFolderState`'s own
+   * doc for the class this closes: a superseded completion whose physical fact goes unrecorded
+   * can leave a stale-but-coincidentally-converged row that nothing ever looks at again.
+   *
+   * `false` (the default — every caller EXCEPT `settle`) keeps a miss writing NOTHING, because
+   * there is no fresh fact here to protect from a slower, equally-informed writer. Found by
+   * review, round 3: with `true` as the unconditional default, the status-repair call in
+   * `reconcileFolders` (`sync.ts`) and {@link voidGoneFiling} both pass a STALE echo of
+   * `PendingFolderState` as `observedFolder` — not a physical observation — and a miss on either
+   * would have overwritten whatever a genuinely fresher writer (ingest's `adopt_external`, an
+   * interleaved external move) had just committed for the SAME row, with a value that was already
+   * out of date when this call started.
+   */
+  physicalObservation?: boolean;
 }
 
 /** Worker-facing repo: everything the pipeline needs (RepoPort + RoutingPort) plus enumeration for sync/reconcile. */
@@ -216,24 +243,32 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * its `SET` list at all — it is structurally unable to clobber an intent, which is a stronger
    * statement than "a predicate happens to be right".
    *
-   * IT IS NOT A CONDITIONAL WRITE THAT DOES NOTHING ON A MISS, and an earlier version of this
-   * method was exactly that — a `WHERE` on the witness, writing nothing when it failed to match.
-   * That reopened a narrower defect: the mail had already physically moved (`updateLocator` runs
+   * IT IS NOT (ALWAYS) A CONDITIONAL WRITE THAT DOES NOTHING ON A MISS, and an earlier version of
+   * this method was — a `WHERE` on the witness, writing nothing when it failed to match. That
+   * reopened a narrower defect: the mail had already physically moved (`updateLocator` runs
    * before this is ever called), so a declined completion left the database describing a location
    * that was no longer true, and a competing writer whose own new desire happened to equal the
    * PRE-move location produced a `reconciled` row that would never be looked at again — on the
    * spam path, feeding the instanceless reaper a message with no watched copy and no exemption.
-   * So `observed_folder` is now written on EVERY call — it is a fact about the server, owed
-   * regardless of whose intent wins — and `reconcile_status` is derived inside the same statement
-   * from the row's LIVE `desired_folder`, never assumed to be the witness. A miss therefore still
-   * records the truth and, when that truth still diverges from whatever the mailbox currently
-   * wants, leaves the row PENDING — which re-enters {@link listPendingFolderStates} on the very
-   * next read and self-heals from the locator this call already repointed.
+   * So a caller carrying a FRESH PHYSICAL FACT (`c.physicalObservation: true` — junk-filing.ts's
+   * `settle`, the only one) gets `observed_folder` written on EVERY call, self-heal included; see
+   * {@link FolderCompletion.physicalObservation}'s own doc for the round that added the flag: two
+   * OTHER callers (`sync.ts`'s already-converged status repair, its gone-message void) carry no
+   * such fact — their `observedFolder` is a stale echo of a row read before any I/O — and for
+   * them a miss must still write NOTHING, exactly as the original design, or it would overwrite
+   * whatever a genuinely fresher writer had just committed for the same row.
+   *
+   * `reconcile_status` is derived inside the same statement from the row's LIVE `desired_folder`,
+   * never assumed to be the witness, whenever a write happens at all. A physical-observation miss
+   * therefore still records the truth and, when that truth diverges from what the mailbox
+   * currently wants, leaves the row PENDING — which re-enters {@link listPendingFolderStates} on
+   * the very next read and self-heals from the locator this call already repointed.
    *
    * Returns TRUE when the desire still matched — the caller's OWN intent (a park, a husk, the
-   * backoff reset) may proceed — FALSE when a newer intent (or an account erasure) owns the row
-   * and only the physical fact was recorded. Callers that can observe it owe the fact to the audit
-   * log — silence here is how the class stayed invisible in the first place.
+   * backoff reset, and the physical fact when the caller is not a physical-observation writer) may
+   * proceed — FALSE when a newer intent (or an account erasure) owns the row. Callers that can
+   * observe it owe the fact to the audit log — silence here is how the class stayed invisible in
+   * the first place.
    */
   completeFolderState(messageId: string, c: FolderCompletion): Promise<boolean>;
   getMailbox(mailboxId: string): Promise<
@@ -1456,30 +1491,71 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    *    FROM — so a superseded spam park is not stranded, it is one more reconcile cycle away from
    *    landing wherever the CURRENT desire actually points.
    *
+   * ── ROUND THREE: "ALWAYS RECORDED" WAS TOO WIDE, AND A SECOND REVIEW FOUND THE COST ────────
+   *
+   * The paragraph above still describes junk-filing.ts's `settle` correctly — its `observedFolder`
+   * IS a fresh physical fact, every time, because it only ever calls this method after
+   * `adapter.move`/`moveMany` returned a locator that landed. It does NOT describe `sync.ts`'s
+   * other two callers: the already-converged status repair in `reconcileFolders` (`p.desiredFolder
+   * === p.observedFolder`, re-deriving `reconcile_status` for a row it read before doing any I/O)
+   * and {@link voidGoneFiling} (recording "this message is gone", which is not a location). Both
+   * pass `observedFolder` values that are STALE ECHOES, not observations — and "always recorded"
+   * applied to a stale echo means a miss can overwrite whatever a genuinely fresher writer (an
+   * ingest-side `adopt_external`, an interleaved external move) had JUST committed for the same
+   * row, with a value that was already out of date before this call even started.
+   *
+   * So the unconditional write is now opt-in: {@link FolderCompletion.physicalObservation}, true
+   * ONLY from `settle`. Every other caller gets the ORIGINAL behaviour back — a miss writes
+   * nothing at all — which is exactly right for them, because they have no fresh fact to protect
+   * in the first place. See that flag's own doc for the full reasoning; the two designs are not in
+   * tension, they answer different questions ("do I know something new about where the mail is"),
+   * and the caller is the only one who can answer that.
+   *
    * The returned boolean answers a narrower question than "was anything written" — it is ALWAYS
-   * true that something was written, `messageId` existing. It answers "did this call's OWN witness
-   * match the row's live desire", which is what callers use to decide whether THEIR intent (the
-   * park, the husk, the backoff reset) may proceed: `last_set_by`, `attempts` and
-   * `next_attempt_at` are touched ONLY on that match, for {@link upsertFolderState}'s stated
-   * reason — a declined call's caller does not own this row's schedule or its authorship, only the
-   * fact of where the mail now is.
+   * true that something was written to the row (an UPDATE ran), even when every SET clause's `ELSE`
+   * fired and no column actually changed. It answers "did this call's OWN witness match the row's
+   * live desire", which is what callers use to decide whether THEIR intent (the park, the husk, the
+   * backoff reset, and — for a non-physical-observation caller — the observation itself) may
+   * proceed: `last_set_by`, `attempts` and `next_attempt_at` are touched ONLY on that match, for
+   * {@link upsertFolderState}'s stated reason — a declined call's caller does not own this row's
+   * schedule or its authorship, only the fact of where the mail now is, and only when it actually
+   * has that fact to give.
    */
   async completeFolderState(messageId: string, c: FolderCompletion): Promise<boolean> {
+    // `physical` gates whether a MISS may still touch `observed_folder`/`reconcile_status`/
+    // `conflict`/`updated_at` — see {@link FolderCompletion.physicalObservation}'s own doc for
+    // the round-3 finding this guards: a caller with no fresh physical fact (the status repair in
+    // `reconcileFolders`, `voidGoneFiling`) must not overwrite a fresher writer's observation with
+    // a stale echo just because ITS OWN witness happened to miss. `attempts`/`next_attempt_at`/
+    // `last_set_by` are gated on the match ALONE, on both arms, for the reason `upsertFolderState`
+    // states: that schedule and that authorship belong to whichever intent WON the row, never to
+    // an observation write, physical or not.
+    const physical = c.physicalObservation === true;
     const result = await this.db.execute<{ desiredFolder: string }>(sql`
       UPDATE ${folderState} SET
-        observed_folder = ${c.observedFolder},
+        observed_folder = CASE
+          WHEN desired_folder = ${c.expectDesiredFolder} OR ${physical}::boolean
+            THEN ${c.observedFolder}
+          ELSE observed_folder
+        END,
         last_set_by = CASE WHEN desired_folder = ${c.expectDesiredFolder}
           THEN ${c.lastSetBy} ELSE last_set_by END,
         reconcile_status = CASE
-          WHEN desired_folder = ${c.observedFolder} THEN 'reconciled'
-          WHEN ${c.satisfiedBy ?? null}::text IS NOT NULL
-               AND desired_folder = ${c.expectDesiredFolder}
-               AND ${c.satisfiedBy ?? null}::text = ${c.observedFolder}
-            THEN 'reconciled'
-          ELSE 'pending'
+          WHEN desired_folder = ${c.expectDesiredFolder} OR ${physical}::boolean THEN
+            CASE
+              WHEN desired_folder = ${c.observedFolder} THEN 'reconciled'
+              WHEN ${c.satisfiedBy ?? null}::text IS NOT NULL
+                   AND desired_folder = ${c.expectDesiredFolder}
+                   AND ${c.satisfiedBy ?? null}::text = ${c.observedFolder}
+                THEN 'reconciled'
+              ELSE 'pending'
+            END
+          ELSE reconcile_status
         END,
-        conflict = false,
-        updated_at = now(),
+        conflict = CASE WHEN desired_folder = ${c.expectDesiredFolder} OR ${physical}::boolean
+          THEN false ELSE conflict END,
+        updated_at = CASE WHEN desired_folder = ${c.expectDesiredFolder} OR ${physical}::boolean
+          THEN now() ELSE updated_at END,
         attempts = CASE WHEN desired_folder = ${c.expectDesiredFolder}
           THEN 0 ELSE attempts END,
         next_attempt_at = CASE WHEN desired_folder = ${c.expectDesiredFolder}
