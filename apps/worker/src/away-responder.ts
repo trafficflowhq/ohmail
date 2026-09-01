@@ -381,6 +381,64 @@ export async function awayResponderPass(
     );
     if (headerVerdict !== null) { seen.add(sender); hold(headerVerdict); continue; }
 
+    // ══════════════════════════════════════════════════════════════════════════════════════
+    //  IS THE RESPONDER STILL ON? — asked before every send, not once before the batch
+    // ══════════════════════════════════════════════════════════════════════════════════════
+    //
+    // Everything above was decided from ONE row read at the top of this pass: enabled, the window,
+    // the subject and the body. Between that read and here the pass answers up to
+    // AWAY_SENDS_PER_CYCLE correspondents over as many SMTP round trips, and the person whose
+    // account it is can switch the responder off, edit it, or have its window close in the middle.
+    // Until
+    // this check they kept getting replies — mail leaving THEIR OWN ADDRESS, in their name, after
+    // they had turned it off, with the pass reporting a clean run.
+    //
+    // Unlike a folder move this is not recoverable: an away reply is delivered to a stranger and
+    // cannot be taken back, which is why the check is per SEND rather than per page. One indexed PK
+    // read against a UNIQUE(account_id) row, bounded by the send budget, in exchange for that.
+    //
+    // ── AN EDIT STOPS THE PASS TOO, AND NOT ONLY A SWITCH-OFF ─────────────────────────────
+    //
+    // `updated_at` is the episode key: it is part of the at-most-once claim's UNIQUE, so changing
+    // the responder deliberately starts a new episode in which everyone may be answered again. A
+    // pass that carried on would send the OLD subject and body — read at the top — while stamping
+    // claims for an episode the user has already replaced, so the new text would never reach the
+    // people answered in this window. Stopping here costs one cycle and the next one sends what
+    // they actually wrote.
+    //
+    // It STOPS rather than skipping the candidate, and the reason is cost and meaning rather than
+    // outcome — measured, not assumed: `away-responder-standdown.test.ts` watches this under
+    // mutation, and replacing the break with a skip is the case that showed the two are equivalent
+    // in effect and differ only in cost. A
+    // `continue` here behaves identically: this check precedes the CLAIM, so a refused candidate
+    // claims nothing and sends nothing either way. What `break` avoids is re-reading one
+    // account-wide row once per remaining candidate to be told the same thing each time. The
+    // condition is a property of the account, not of the correspondent.
+    const [live] = await db.select({
+      enabled: awayResponders.enabled,
+      startsAt: awayResponders.startsAt,
+      endsAt: awayResponders.endsAt,
+      updatedAt: awayResponders.updatedAt,
+    }).from(awayResponders).where(eq(awayResponders.accountId, accountId)).limit(1);
+
+    const stillLive = live !== undefined
+      && live.enabled
+      && live.updatedAt.getTime() === responder.updatedAt.getTime()
+      && !(live.startsAt && now.getTime() < live.startsAt.getTime())
+      && !(live.endsAt && now.getTime() > live.endsAt.getTime());
+
+    if (!stillLive) {
+      log.info("away_responder_stood_down_mid_pass", {
+        accountId, examined, sent,
+        reason: live === undefined ? "the responder row was deleted during this pass"
+          : !live.enabled ? "the responder was switched off during this pass"
+            : live.updatedAt.getTime() !== responder.updatedAt.getTime()
+              ? "the responder was edited during this pass; the next cycle sends the new text"
+              : "the away window closed during this pass",
+      });
+      break;
+    }
+
     // ── THE SEND PATH, RESOLVED BEFORE THE CLAIM ─────────────────────────────────────────
     //
     // Deliberately ahead of the claim, and it is the one ordering exception below. A mailbox this
