@@ -16,6 +16,61 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.13.1] — 2026-09-01
+
+A fix release for the connect screen. Connecting your own mail server on a fresh
+install could not succeed: it refused every attempt with "imap host is required",
+however carefully you filled the form in. Three separate faults sat on that one
+screen — reported by [issue #5](https://github.com/trafficflowhq/ohmail/issues/5),
+which is the only reason any of them was found.
+
+### A first connect works
+
+**"imap host is required", on a form where you had typed the host.** Connecting on
+the desktop app is two requests: the server settings go to the app, which writes
+them to a file, and the password goes separately to the local mail engine, because
+the password deliberately never travels with the settings. The engine creates the
+mailbox when it starts, and at that moment it has no password, so it stores no
+server configuration. The password arriving a moment later was merged over a stored
+configuration that did not exist — which left no host, and that is the message you
+saw. The password request now carries the server settings with it.
+
+This was never specific to a custom server. A preset provider's host was equally
+absent from that request. It only ever *looked* like a custom-server problem
+because "any other IMAP mailbox" is the one option where you type the host
+yourself and can see it sitting in the field you are being told is empty.
+
+**The provider picker reported a choice that had not changed.** Clicking the
+provider tile you had already chosen, or pressing Space on it, counted as picking
+it again. Every connect screen answers a choice by filling in that provider's
+servers, and "any other IMAP mailbox" has none to fill in — so doing that quietly
+emptied the incoming and outgoing server fields further down the form. The error
+appears directly above the provider grid, which makes confirming your provider the
+natural next thing to do, so this could loop.
+
+**Mail did not start arriving until the app was restarted.** After a successful
+first connect the app sat empty, with no error and no explanation. The engine reads
+the password once, when it starts, and on a first connect it starts before there is
+one. The app now restarts it after storing the password, and waits for it to come
+back before reporting success.
+
+**A provider's server no longer carries into an attempt on a different one.**
+Choosing a provider fills in its servers; choosing "any other IMAP mailbox"
+afterwards used to keep them, so the manual fields could open already containing,
+say, Gmail's server, and the password you then entered for your own server would
+be tried against Gmail. Only servers you typed yourself are kept.
+
+### The settings file is replaced, not overwritten
+
+ohmail keeps one small file recording how you connected, and read it at every
+launch. It was written by truncating the old file and writing over it, so a crash,
+a power cut or a full disk during that write left the file unreadable — and an
+unreadable file is treated as "never configured", so the app came back asking how
+you want to connect with your mailbox and saved password both still there. The new
+contents are now written beside it and renamed into place, so the file on disk is
+always either the whole old configuration or the whole new one. The same applies to
+the file recording whether this install publishes your mail to your own network.
+
 ## [0.13.0] — 2026-09-01
 
 A feature release. ohmail has a second look — **ohmarchy**, a tiling, keyboard-first
@@ -2731,7 +2786,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.13.1...HEAD
+[0.13.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.1
 [0.13.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.0
 [0.12.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.12.2
 [0.12.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.12.1

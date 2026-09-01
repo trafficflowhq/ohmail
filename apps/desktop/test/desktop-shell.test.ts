@@ -75,7 +75,7 @@ describe("tauri.conf.json", () => {
     // therefore ten. It is kept as a literal rather than read from the file it
     // is asserting — an assertion that reads its own subject asserts nothing —
     // so it MUST be bumped by hand with the other nine. Every release.
-    expect(conf.version).toBe("0.13.0");
+    expect(conf.version).toBe("0.13.1");
     expect(conf.identifier).toBe("io.ohmail.desktop");
   });
 
@@ -1189,11 +1189,16 @@ describe("the Rust side", () => {
     const allowed = new Set([
       "fs::create_dir_all", // the app's data directory, on first run
       "fs::read_to_string", // the settings file
-      "fs::write", // the settings file
+      "fs::write", // named only in `write_private`'s prose now — see the assertion below
       "fs::set_permissions", // 0600 on it
       "fs::Permissions", // the mode it is set to
       "fs::PermissionsExt", // and the Unix trait that spells the mode
-      "fs::remove_file", // the settings file, and the cloud door's sealed session
+      "fs::remove_file", // the settings file, the cloud door's sealed session, a failed staging file
+      // ── The atomic replacement, which is four calls and not one ───────────────────────────
+      "fs::OpenOptions", // the staging file, created rather than truncated over the target
+      "fs::OpenOptionsExt", // the Unix trait that lets that create be 0600 from its first byte
+      "fs::File", // the parent directory, opened only to fsync the rename
+      "fs::rename", // the publish step: the whole old file or the whole new one, never a torn one
     ]);
     const used = [...config.matchAll(/\bfs::(\w+)/g)].map((m) => `fs::${m[1]}`);
     expect(used.length).toBeGreaterThan(0);
@@ -1202,6 +1207,18 @@ describe("the Rust side", () => {
     }
     // The mirror is frozen on a door switch, never deleted — no recursive removal exists to do it.
     expect(config).not.toMatch(/remove_dir/);
+
+    /* ── AND THE SETTINGS FILE IS NEVER TRUNCATED IN PLACE ──────────────────────────────────
+     * `fs::write` opens its target `O_TRUNC`, so for the width of that write the file is empty
+     * or partial — and `read` treats a file that does not parse as `None`, which is an install
+     * that has forgotten which door it came in by while its mailbox and sealed credential sit
+     * intact behind it. Every write in this module goes through `write_private`, which stages
+     * beside the target and renames over it. The name may still appear in PROSE (the header of
+     * `write_private` is largely about why it is not used), so this pins the CALL: `fs::write(`
+     * with an open parenthesis is the invocation, and there must be none.
+     *
+     * This is the guard that keeps the fix from being undone by a later "simplification". */
+    expect(config, "config.rs truncates a settings file in place again").not.toMatch(/fs::write\(/);
   });
 
   /**

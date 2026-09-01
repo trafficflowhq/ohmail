@@ -1,6 +1,6 @@
 {
   "name": "@ohmail/desktop",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "private": true,
   "type": "module",
   "description": "ohmail for macOS, Windows and Linux \u2014 a Tauri v2 shell around the ohmail client UI: a standalone client that carries its own mail engine and speaks IMAP to your own server. One directory also builds the served host-client bundle its host mode hands to phones.",
