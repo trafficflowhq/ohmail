@@ -198,6 +198,24 @@ jobs:
           gh release download "$RELEASE_TAG" --repo "$REPO" --dir assets --clobber
           echo "downloaded:"; ls -la assets
 
+          # ── THE METADATA FROM A PREVIOUS RUN IS DELETED, NOT KEPT ─────────
+          #
+          # `gh release download` takes EVERY asset, and on any second run of
+          # this job — a draft signed and then published, a re-dispatch, a
+          # recovery — that includes the `latest.json`, `appcast-macos.xml` and
+          # `SHA256SUMS` this run is about to replace. Keeping them is not
+          # harmless: the checksum file below hashes what is in this directory,
+          # so it would publish hashes of three files that no longer exist in
+          # that form, including a hash of its own previous self. The upload
+          # `--clobber`s all three, and the mismatch only appears to whoever
+          # runs `shasum --check` on the download — this job's own check runs
+          # before the replacement and stays green.
+          #
+          # Deleted rather than filtered out of the glob, so that nothing later
+          # in this job can read a stale feed by accident either.
+          rm -f assets/latest.json assets/appcast-macos.xml assets/SHA256SUMS
+          echo "assets to be signed and hashed:"; ls -la assets
+
           pick() { ls assets/$1 2>/dev/null | head -1 || true; }
           WIN_EXE="$(pick '*-setup.exe')"
           # ── THE TWO LINUX AppImages ARE PICKED BY NAME, NOT BY GLOB ────────
@@ -273,6 +291,9 @@ jobs:
           # point, and a checksum file that listed the file it is uploaded
           # beside would have to be written twice. Their integrity is the
           # signatures, which is a stronger claim than a hash on the same page.
+          # `assets/` holds only the binary payloads at this point — the three
+          # metadata files were deleted above — so the glob covers exactly what
+          # this release publishes and nothing this job is about to rewrite.
           ( cd assets && shasum -a 256 -- * > ../SHA256SUMS )
           echo "--- SHA256SUMS ---"; cat SHA256SUMS
           # It covers every attached binary, asserted rather than assumed: a
@@ -283,6 +304,10 @@ jobs:
           # And it verifies where it was made. `--check` reads the names
           # relative to the working directory, so it runs inside assets/.
           ( cd assets && shasum -a 256 --check ../SHA256SUMS )
+          # The FRESH file is placed beside the payloads so the offline verifier
+          # below reads the one this run is about to publish. Without this it
+          # would read whatever a previous run left there, and certify it.
+          cp SHA256SUMS assets/SHA256SUMS
 
           # ════════════════════════════════════════════════════════════════════
           # latest.json — the Tauri updater manifest, all three platforms.

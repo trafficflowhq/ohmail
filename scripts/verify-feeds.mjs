@@ -294,13 +294,31 @@ for (const [k, want] of Object.entries(LINUX_PAYLOAD)) {
  * bytes, a checksum lets a reader confirm the bytes they hold are the ones the release names,
  * without any key material at all.
  *
- * Absent rather than fatal, on purpose — releases before this one published none, and this
- * verifier is meant to be runnable against an old download. What is NOT optional is the coverage:
- * when the file is there, every payload a signature was verified over must appear in it, or the
- * checksum file is quietly narrower than the release it claims to describe. */
+ * REQUIRED at or above the version that started publishing it, optional below — the same shape as
+ * the arm64 key, and for the same reason. A verifier that shrugs at a missing checksum file
+ * certifies an incomplete current release: the file can be missing because an upload failed or a
+ * download was truncated, and both of those are exactly what a reader runs this to find out.
+ * What is NOT optional either way is the coverage: when the file is there, every payload a
+ * signature was verified over must appear in it, or the checksum file is quietly narrower than
+ * the release it claims to describe.
+ *
+ * CHECKSUM MATCHES ARE COUNTED SEPARATELY FROM SIGNATURES, and that is not bookkeeping. The
+ * closing line reports how many SIGNATURES were verified, and the last guard in this file refuses
+ * a run that verified none — a run that checked nothing must never read as a run that found
+ * nothing wrong. Folding hashes into that counter would let a release with no valid signature at
+ * all satisfy the guard on checksums alone, and would print a number that is not true. */
+const SUMS_FROM = [0, 13, 3];
+const sumsExpected = atLeast(feedVersion, SUMS_FROM);
 const sumsPath = path.join(assetsDir, "SHA256SUMS");
+let sumsOk = 0;
 if (!fs.existsSync(sumsPath)) {
-  console.log("\nSHA256SUMS — not attached to this release (published from 0.13.3 onward)");
+  if (sumsExpected) {
+    console.log("\nSHA256SUMS");
+    bad(`SHA256SUMS is not in the asset set, and every release from ${SUMS_FROM.join(".")} publishes one `
+      + "— an upload that failed or a download that did not finish looks exactly like this");
+  } else {
+    console.log(`\nSHA256SUMS — not attached at ${latest.version} (published from ${SUMS_FROM.join(".")} onward)`);
+  }
 } else {
   console.log("\nSHA256SUMS");
   const listed = new Set();
@@ -313,7 +331,7 @@ if (!fs.existsSync(sumsPath)) {
     const file = path.join(assetsDir, name);
     if (!fs.existsSync(file)) { bad(`SHA256SUMS names ${name}, which is not in the asset set`); continue; }
     const got = crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
-    if (got === want) { ok(`${name} — sha256 ${want.slice(0, 16)}…`); verified++; }
+    if (got === want) { ok(`${name} — sha256 ${want.slice(0, 16)}…`); sumsOk++; }
     else bad(`${name} — SHA256SUMS says ${want.slice(0, 16)}…, the file is ${got.slice(0, 16)}…`);
   }
   for (const k of WANT) {
@@ -384,7 +402,10 @@ if (!encUrl || !encLen || !encSig) {
  * green tick, and it is the reason a gate stops being evidence. */
 if (verified === 0) bad("no signature was verified at all — nothing here was actually checked");
 
+/* Reported apart from the signatures, for the reason the SHA256SUMS block gives at length: these
+ * are two different claims, and one number covering both would be true of neither. */
+const sumsNote = sumsOk ? ` · ${sumsOk} checksum(s) matched` : "";
 console.log(failures
-  ? `\n${failures} FAILURE(S) — ${verified} signature(s) verified\n`
-  : `\nboth feeds verify offline against the committed public keys (${verified} signatures)\n`);
+  ? `\n${failures} FAILURE(S) — ${verified} signature(s) verified${sumsNote}\n`
+  : `\nboth feeds verify offline against the committed public keys (${verified} signatures)${sumsNote}\n`);
 process.exit(failures ? 1 : 0);
