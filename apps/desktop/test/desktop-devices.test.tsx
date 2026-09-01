@@ -662,6 +662,41 @@ describe("off-state problems are honored — the ladder is not only the probe's"
     expect(probes).toBe(1);
   }, 30_000);
 
+  it("and StrictMode's effect replay does not stack a second one either", async () => {
+    /**
+     * The window mounts this pane under `StrictMode` (`apps/desktop/src/main.tsx`), which replays
+     * every effect in development. A bare `retrying.current = true` was therefore executed twice
+     * before the first probe settled: two `tailscale_status` subprocesses, and then whichever
+     * settled first cleared the flag for the one still hanging — releasing a lock it did not
+     * hold, and letting the timer stack a third on top.
+     *
+     * So the marker is ACQUIRED, and this mounts the real component the way the app does.
+     */
+    let probes = 0;
+    globe.__TAURI_INTERNALS__ = {
+      invoke: (command) => {
+        if (command === "host_state") return Promise.resolve(OFF);
+        if (command === "tailscale_status") {
+          probes += 1;
+          return new Promise(() => undefined); // never settles
+        }
+        return Promise.resolve(undefined);
+      },
+    };
+    hostEl = document.createElement("div");
+    document.body.append(hostEl);
+    root = createRoot(hostEl);
+    await act(async () => {
+      root.render(
+        h(React.StrictMode, null,
+          h(NextIntlClientProvider, { locale: "en", messages: en as never, timeZone: "Europe/Zurich" },
+            h(ThemeProvider, null, h(ToastHost, null, h(DesktopDevices))))),
+      );
+    });
+    await flush();
+    expect(probes).toBe(1);
+  }, 20_000);
+
 });
 
 describe("a live code stays revocable in every armed state", () => {

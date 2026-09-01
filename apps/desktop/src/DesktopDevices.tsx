@@ -333,8 +333,13 @@ export function DesktopDevices() {
   useEffect(() => {
     // The catch is the difference between a failed first read and an unhandled rejection: the
     // pane's answer to "the shell did not respond" is the retry below, not a console trace.
-    // It takes the SAME in-flight marker as the retry: this is the opening read's first attempt,
-    // and a probe that hangs here must not have a second one stacked on top of it by the timer.
+    // It ACQUIRES the same in-flight marker as the retry — `if` then set, never a bare set. This
+    // is the opening read's first attempt, and a probe that hangs here must not have a second one
+    // stacked on top of it, by the timer OR by this effect running twice. It does run twice: the
+    // window mounts this component under `StrictMode` (`main.tsx`), which replays every effect in
+    // development. A bare set launched two `tailscale_status` subprocesses, and then the first to
+    // settle cleared the flag for the one still hanging — releasing a lock it did not hold.
+    if (retrying.current) return;
     retrying.current = true;
     void refresh()
       .catch(() => undefined)
