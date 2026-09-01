@@ -148,9 +148,15 @@ export type CredentialState =
    * Every one of them would be a TRUE SENTENCE ABOUT THE WRONG THING, which is the failure mode
    * this whole seam exists to end. `unreadable` sends somebody to re-enter a password when what
    * moved is the SERVER — and it is not even known to apply, since nothing here tried the key.
-   * `absent` says nothing is stored when something is. `ready` is the defect itself. The recovery
-   * is different from all three, which is the test for whether a state has earned its own name:
-   * what the person has to do is finish the change of server or undo it, not retype anything.
+   * `absent` says nothing is stored when something is. `ready` is the defect itself. What earns
+   * this its own name is that the FAULT is different: the thing to settle is which server this
+   * install should be on, not whether a credential can be opened.
+   *
+   * That is a claim about the diagnosis and NOT about the effort. Both ways out — keeping the new
+   * server or going back to the old one — go through the local door, and the door refuses a blank
+   * password (`localProblem`), so either way the password is entered again. It is entered for a
+   * different reason than `unreadable` would give: entering it is what PROVES it against whichever
+   * server was chosen, not what re-seals an envelope this install could not open.
    */
   | "foreign-host";
 
