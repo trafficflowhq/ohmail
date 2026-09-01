@@ -318,11 +318,24 @@ export function DesktopDevices() {
   }, [refreshLists]);
 
   useEffect(() => {
-    void refresh();
+    // The catch is the difference between a failed first read and an unhandled rejection: the
+    // pane's answer to "the shell did not respond" is the retry below, not a console trace.
+    void refresh().catch(() => undefined);
   }, [refresh]);
 
-  /** Armed as the shell last said. Gates the background poll — see the effect below. */
+  /**
+   * When the background read should run: while host mode is ON, and while this window has not
+   * yet had a readable answer at all.
+   *
+   * The second half is a retry, not a poll, and it closes a dead end older than this screen's
+   * polling: the mount read has no catch, so a shell call that rejects leaves `host` at
+   * `undefined` and the pane sits on "Checking…" with no control to try again until it is
+   * remounted. The boundary that matters is a CONFIRMED off state — that is the one place a
+   * background read destroys information (see the effect below) — and "we have never heard
+   * back" is not that.
+   */
   const armed = host?.enabled === true;
+  const pollHostState = armed || host === undefined;
 
   /**
    * KEEP THE OPEN PANE HONEST — re-read host state while this screen is on the display.
@@ -349,8 +362,16 @@ export function DesktopDevices() {
    * acts; there is nothing here to discover between them.
    */
   useEffect(() => {
-    if (!armed) return undefined;
+    if (!pollHostState) return undefined;
     const tick = setInterval(() => {
+      // NEVER HEARD BACK ⇒ redo the WHOLE first read, not just the host half. The ladder below
+      // needs the tailnet probe too, and a retry that filled in only `host` would leave the pane
+      // reporting off while still saying it was checking — a different half-answer in place of
+      // the first one.
+      if (host === undefined) {
+        void refresh().catch(() => undefined);
+        return;
+      }
       void (async () => {
         try {
           const state = await hostState();
@@ -362,7 +383,7 @@ export function DesktopDevices() {
       })();
     }, HOST_POLL_MS);
     return () => clearInterval(tick);
-  }, [armed]);
+  }, [pollHostState, host, refresh]);
 
   /** The engine's enumeration of this machine's offerable addresses — read when the LAN option
    *  opens, because the choice must be OFFERED, never typed (a typo'd address is a socket that

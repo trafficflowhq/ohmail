@@ -575,6 +575,38 @@ describe("off-state problems are honored — the ladder is not only the probe's"
     });
     expect(text()).toContain(enHost.guideNotRunning!);
   }, 20_000);
+
+  it("a first read that fails is retried — 'Checking…' is not a dead end", async () => {
+    /**
+     * Older than this screen's polling and found while reviewing it: the mount read has no catch,
+     * so a shell call that rejects leaves the pane on "Checking…" with no control to try again
+     * until it is remounted. Gating the background read on "host mode is on" would have kept it
+     * that way, because a window that never got an answer does not know that it is off.
+     *
+     * The boundary is a CONFIRMED off state — the one place a background read destroys
+     * information. "We have never heard back" is not that, so it retries.
+     */
+    let attempts = 0;
+    globe.__TAURI_INTERNALS__ = {
+      invoke: (command) => {
+        if (command === "host_state") {
+          attempts += 1;
+          if (attempts === 1) return Promise.reject(new Error("bridge not ready"));
+          return Promise.resolve(OFF);
+        }
+        if (command === "tailscale_status") return Promise.resolve(RUNNING);
+        return Promise.resolve(undefined);
+      },
+    };
+    await mount();
+    expect(text()).toContain(enHost.checking!);
+    await act(async () => {
+      await new Promise((done) => setTimeout(done, 6000));
+    });
+    expect(attempts).toBeGreaterThan(1);
+    expect(text()).not.toContain(enHost.checking!);
+    expect(button(enHost.enable!)).toBeTruthy();
+  }, 20_000);
 });
 
 describe("a live code stays revocable in every armed state", () => {
