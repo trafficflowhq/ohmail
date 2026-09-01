@@ -366,13 +366,36 @@ export function enforceMirrorOwner(
   const priorRecord = priorRaw === null ? null : decodeMirrorRecord(priorRaw);
   const prior = priorRecord === null ? null : sameOwner(priorRecord.address);
   const addressChanged = prior !== null && prior !== served;
-  /* A record that EXISTS and names no server was written by a build that could only dial one, so
-     the absence is read as that one rather than as "cannot say" — see `recordedBaseOfExisting`,
-     which carries the migration-launch leak that reading it the other way created. A record that
-     does not exist is a fresh directory and is adopted, which is why this is only asked of one
-     that does. */
-  const serverChanged =
-    priorRecord !== null && baseIsForeign(recordedBaseOfExisting(priorRecord.base), cloudUrl);
+  /**
+   * ── WHICH SERVER THE STATE ALREADY IN THIS DIRECTORY BELONGS TO ────────────────────────────
+   *
+   * `null` means "there is nothing here to protect", and it is the ONLY reading that may skip the
+   * comparison. Everything else resolves to a base, because a Cloud directory that holds anything
+   * at all was filled by SOME server, and the question is only which.
+   *
+   *  · A RECORD THAT NAMES ONE — the ordinary case since this field existed.
+   *  · A RECORD THAT NAMES NONE — a one-line marker from an earlier build, which could dial exactly
+   *    one address. `recordedBaseOfExisting` supplies it.
+   *  · NO RECORD AT ALL, BUT STATE ON DISK — and this is the case the first fix missed. The seal
+   *    predates the marker in this repository's own history, so a Cloud profile with
+   *    `cloud-tokens.seal` and `pgdata` and NO `mirror-owner` is a real upgrade state rather than a
+   *    fabricated one. Gating the comparison on the record existing meant that profile reported
+   *    neither an address change nor a server change, kept its seal, and had the hosted bearer
+   *    activated against whatever server the door was then pointed at — the same leak as the
+   *    one-line case, through the door the first fix left open. Raised by the second review round.
+   *  · A GENUINELY EMPTY DIRECTORY — a fresh install, with no mirror and no session in existence.
+   *    Nothing to lose and nothing to compare, so it is adopted.
+   */
+  const holdsCloudState = ["pgdata", "cloud-cursor.json", "cloud-tokens.seal"].some((f) =>
+    existsSync(join(dataDir, f)),
+  );
+  const priorBase =
+    priorRecord !== null
+      ? recordedBaseOfExisting(priorRecord.base)
+      : holdsCloudState
+        ? MANAGED_CLOUD_BASE
+        : null;
+  const serverChanged = priorBase !== null && baseIsForeign(priorBase, cloudUrl);
   const foreign = addressChanged || serverChanged;
   if (foreign) {
     // The database, its cursor and the previous account's sealed session are all stale. Remove
@@ -1086,6 +1109,37 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         } catch {
           return json({ error: { code: "invalid_request", message: "the sign-in body is not JSON" } }, 400);
         }
+
+        /* ── AND THE CODE ITSELF IS REFUSED HERE, NOT ONLY THE CEREMONY THAT MINTS ONE ────────
+           Guarding `/cloud/signin/challenge` stops this install STARTING a hand-off on a
+           self-hosted door. It does not stop one being FINISHED: the browser path also accepts a
+           code somebody typed in by hand, and a code typed in came from the hosted service. Sent to
+           an operator's server that code is a live, spendable credential for the person's hosted
+           account — unbound, so worth less than the bound pair the challenge guard prevents, and
+           still theirs to spend within its couple of minutes. Raised by the second review round,
+           which found the retype path left open by the first fix.
+
+           So the CODE is what is refused, wherever it came from, on any base that is not the
+           hand-off's own. A password sign-in on this door is unaffected: that credential belongs to
+           the server being dialled. */
+        if (
+          typeof (body as { handoffCode?: unknown }).handoffCode === "string" &&
+          (body as { handoffCode: string }).handoffCode.trim() !== "" &&
+          baseIsForeign(cloudBase, config.handoffBase ?? MANAGED_CLOUD_BASE)
+        ) {
+          return json(
+            {
+              error: {
+                code: "handoff_not_available",
+                message:
+                  "That code is an ohmail Cloud sign-in code and this install opens a server you " +
+                  "run. Sign in with your password and authenticator code instead.",
+              },
+            },
+            409,
+          );
+        }
+
         let tokens: CloudTokens;
         try {
           tokens = await cloudSignIn(
