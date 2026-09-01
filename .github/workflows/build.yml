@@ -986,7 +986,14 @@ jobs:
     # jobs should move between Ubuntu releases together and deliberately, not
     # because one of their labels was re-pointed.
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 60
+    # 90 rather than the 60 the other jobs use, and it is not padding. Every other
+    # job in this file has a measured history — the whole workflow has been
+    # finishing in about fifteen minutes — and this one has none: it is the first
+    # aarch64 compile of the Rust half, from a cold cargo cache, on a machine class
+    # nothing here has run on. A timeout would kill it at the point where the
+    # measurement was about to exist, and the cost of guessing high is nothing.
+    # Once a few runs have been seen, bring it down to whatever they actually take.
+    timeout-minutes: 90
     defaults:
       run:
         shell: bash
