@@ -1034,18 +1034,29 @@ export function MailboxSection() {
           userCode: started.userCode,
           verificationUri: started.verificationUri,
           expiresAt: Date.parse(started.expiresAt),
-          // Stamped with the account that started it, so a later tab-reuse cannot restore it. An
-          // empty string when the session read has not landed, which `recallDevice` treats as an
-          // account it cannot establish and refuses — the fail-closed direction.
-          // The account is NOT stamped here — see the persistence effect below. A start can happen
-          // before the session read lands, and a record written with an empty account is one the
-          // restore would later delete as belonging to nobody it can name.
+          // Stamped with the account that started it, so a later tab-reuse cannot restore it.
+          // Empty only when the session read has not landed yet — and in that case NOTHING is
+          // written: both persistence paths below refuse an owner they cannot name, so the empty
+          // value never reaches storage and `recallDevice` never has to judge one.
           accountId: accountId ?? "",
           // The FIRST poll goes out immediately. The server's own fence is what enforces the
           // cadence from there — `last_polled_at` has not been written yet, so this one is allowed,
           // and every later one is scheduled from what the server says it will accept.
           retryAfterMs: 0,
         };
+        /*
+         * PERSISTED SYNCHRONOUSLY WHEN THE OWNER IS ALREADY KNOWN — the ordinary case.
+         *
+         * The effect below is the LATE-SESSION path and cannot be the only one: a passive effect
+         * runs after the browser has been yielded to, so a reload or an unload in that window would
+         * leave the grant live on the server with no handle in this tab — the exact recovery gap the
+         * persistence exists to close, reintroduced by moving the write out of here. Found by review
+         * on the fix that moved it.
+         *
+         * Both paths are gated on a real `accountId`, so neither can write the empty owner that the
+         * restore would later delete as unowned. Writing twice is harmless — same key, same value.
+         */
+        if (accountId) rememberDevice({ ...live, accountId });
         setDevice(live);
       } catch (err) {
         if (!alive.current) return;
