@@ -510,13 +510,23 @@ export class AttachmentsService {
               );
             } else if (isMessageGone(err)) {
               // NOT a mail-server fault, and the generic line below said it was. The message this
-              // part belongs to is not at the locator the mirror holds — it moved, or its folder
-              // was recreated — so the archive is missing this file for a reason the reader can
-              // actually clear, and one that clears itself: the next scan repoints the locator by
-              // Message-ID. Blaming the server sent people to check a server that is fine.
+              // part belongs to is not at the locator the mirror holds. Blaming the server sent
+              // people to check a server that is fine.
+              //
+              // ── AND IT SAYS "NO LONGER THERE", NOT "MOVED" ────────────────────────────────
+              //
+              // This line first read *"this message has moved … refresh and download again"*,
+              // which review was right to call an over-claim: the refusal establishes only that
+              // the locator no longer resolves. A message that was permanently deleted produces
+              // exactly the same refusal, and for that one no refresh will ever make the download
+              // work — so the sentence promised a recovery that does not exist, in the case where
+              // the reader most needs to be told the file is gone. The single-file download's
+              // wording was already correct because it allows both readings; this one now does
+              // too, and offers the refresh as the thing to try rather than as the fix.
               errors.push(
-                `${name}: skipped — this message has moved on the mail server since the list was ` +
-                  `built; refresh and download again`,
+                `${name}: skipped — this message is no longer where the mailbox recorded it. ` +
+                  `It may have moved, in which case refreshing and downloading again will work, ` +
+                  `or it may have been deleted`,
               );
             } else {
               errors.push(`${name}: could not be fetched from the mail server`);

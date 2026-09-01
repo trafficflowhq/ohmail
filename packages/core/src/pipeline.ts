@@ -63,9 +63,11 @@ export interface ApplyContext {
  * therefore reported a committed decision as a server error, and, at the two call sites that loop,
  * abandoned every row behind the one that refused.
  *
- * So the arm below persists the DESIRE and returns. The row is then exactly what a decision taken
- * with no adapter injected produces — `desired ≠ observed`, which is the reconciler's queue — and
- * the organizer applies it on its next cycle, against the locator adoption has by then repointed.
+ * So the arm below returns instead of throwing, and **writes no folder state at all** — the caller
+ * has already committed the intent, and a post-I/O write of a pre-I/O value is how a newer
+ * decision gets overwritten by an older one. The row is then exactly what a decision taken with no
+ * adapter injected produces — `desired ≠ observed`, which is the reconciler's queue — and the
+ * organizer applies it on its next cycle, against the locator adoption has by then repointed.
  *
  * **It deliberately does NOT re-resolve the locator and move again.** A read may do that; a
  * MUTATION may not. Re-resolving a UID and then moving what is found under it is the precise
@@ -101,16 +103,32 @@ export async function applyReconcileAction(
         newLocator = await adapter.move(locator, action.to);
       } catch (err) {
         if (!isMessageGone(err)) throw err;
-        // DEFERRED — see this function's header. The desire is persisted so the intent is durable
-        // and queued; `observedFolder` is left at what we last saw, which is what makes the row
-        // unconverged and therefore visible to the reconciler. `lastSetBy: "us"` because this IS
-        // our decision — the same value the success arm two lines down writes.
+        // ── DEFERRED, AND IT WRITES NOTHING. THAT IS THE POINT, NOT AN OMISSION ────────────────
+        //
+        // This arm used to `upsertFolderState` the desire it had been called with. Review found
+        // the hazard and it is the one this repository has paid for before: the value being
+        // written was computed BEFORE the IMAP round trip, so a newer decision committed by
+        // another device while the move was in flight was overwritten by the older one — and the
+        // reconciler would then carry the mail to the folder the person had already changed their
+        // mind about. A post-I/O write of a pre-I/O value is the shape; it does not stop being
+        // that shape because the write is on a failure path.
+        //
+        // Guarding it with a compare would have worked and is the wrong fix, because the write is
+        // not needed. **The intent belongs to the caller, and three of the four already persist
+        // it inside the transaction that took the decision** — the Screener's verdict and an
+        // approval both write `desired_folder` with `reconcile_status: 'pending'` before they ever
+        // reach this function, and the worker's runner has its own. The fourth (the rules-import
+        // re-route) now does the same, which is where it belonged: a pass that computes an intent
+        // owns recording it, and it can then record it BEFORE the network call rather than trying
+        // to reconstruct it afterwards.
+        //
+        // So a deferral leaves the row exactly as the caller committed it — `desired ≠ observed`,
+        // which is the reconciler's queue — and this function only reports what happened.
         const pending: FolderStateRow = {
           desiredFolder: action.to,
           observedFolder: state.observedFolder,
           lastSetBy: "us",
         };
-        await repo.upsertFolderState(messageId, pending);
         await repo.recordAudit(
           accountId,
           "move_deferred",

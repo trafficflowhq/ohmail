@@ -632,14 +632,30 @@ export class SendService {
     // every step in it has the identical property. `finalizeFailed` records the definite outcome,
     // the draft comes back to `draft`, and the reader is told the truth — including, for a stale
     // forward source, what it was and what fixes it.
+    // ── OPENING THE TRANSPORT IS INSIDE THIS WINDOW, AND THAT WAS A REVIEW FINDING ────────────
+    //
+    // The window first covered the two assembly steps only, and `openSendAdapter` sat one line
+    // below it. That is the same defect the window exists to close, one call later: decrypting the
+    // stored credential, dialling, and authenticating all happen before any envelope is offered,
+    // so a failure in any of them is a DEFINITE non-delivery — and it was leaving the reservation
+    // `pending`, which is the state that becomes `unverified` ten minutes later. Drawing the
+    // boundary at "assembly" rather than at "before anything was offered to a server" was an
+    // arbitrary line, and the arbitrary line is what the finding pointed at.
+    //
+    // `adapter.send` is deliberately still OUTSIDE it. That call is where the envelope goes to the
+    // server, so its failure is genuinely ambiguous — SMTP may have accepted before the error —
+    // and it keeps the verify-by-Sent recovery it has always had. The boundary is now exactly
+    // "has anything been offered to a server yet", which is the only line that makes `failed`
+    // honest.
+    let adapter: Awaited<ReturnType<OpenSendAdapter>>;
     try {
       await this.assemble(ctx, reservation, deps, input);
+      adapter = await deps.openSendAdapter(mailboxId);
     } catch (err) {
       await this.finalizeFailed(ctx, sendId, draftId);
       throw err;
     }
 
-    const adapter = await deps.openSendAdapter(mailboxId);
     try {
       let providerMessageId: string;
       /**

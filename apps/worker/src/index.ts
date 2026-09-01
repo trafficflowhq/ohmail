@@ -1814,7 +1814,9 @@ export async function startWorkerWithLock(
         // and TypeScript does not carry a `let`'s narrowing into a callback that runs later.
         const attachedAdapter: MailboxAdapter = adapter;
         /** The sweep's scan state for THIS attachment — see the `junkSweep.run` note below. */
-        let sweepScan: SweepScanState = { after: null, movedSinceTop: false };
+        let sweepScan: SweepScanState = {
+          after: null, movedSinceTop: false, deferredSinceTop: false, deferredScans: 0,
+        };
         const deps: SyncDeps = {
           repo, adapter, accountId: mb.accountId, mailboxId: mb.mailboxId,
           // ── THE LEADER FENCE OVER THIS MAILBOX'S MAIL-BEARING WRITES ─────────────────────
@@ -1939,15 +1941,26 @@ export async function startWorkerWithLock(
                 candidates: res.candidates.length,
                 lastId: res.candidates.at(-1)?.messageId ?? null,
                 junkFolder: res.junkFolder,
+                deferredCount: res.deferred,
               }, JUNK_SWEEP_PER_CYCLE);
               sweepScan = adopted.state;
               return {
                 moved: res.moved, skipped: res.skipped, junkFolder: res.junkFolder,
-                // Passed through UNCHANGED and deliberately not folded into `examinedAll`: they
-                // answer different questions. `examinedAll` is about how far the scan got;
-                // `deferred` is about whether the members it could not move said anything about
-                // the pile. `sync.ts` needs both to decide whether the user's press is spent.
-                deferred: res.deferred,
+                // ── THE SCAN'S DEFERRALS, NOT THIS WINDOW'S ──────────────────────────────────
+                //
+                // `res.deferred` is one window. The cursor moves past a deferred member, so the
+                // FINAL window of a multi-window scan can honestly report zero while a row it
+                // deferred earlier is still in the pile — and the retirement rule would then
+                // retire the command over exactly the mail the deferral was protecting. So what
+                // crosses this boundary is the accumulated fact, carried in `SweepScanState`
+                // beside `movedSinceTop` and for the same reason.
+                //
+                // `exhaustedDeferrals` is the termination bound: after three consecutive
+                // completed scans kept alive by deferrals alone, the exemption stops and the
+                // command may retire. Without it, a stale locator nothing will ever repoint keeps
+                // the command queued and the mailbox re-kicked for ever — which is the hole the
+                // retirement rule existed to close, re-opened through a different door.
+                deferred: adopted.deferredSinceTop && !adopted.exhaustedDeferrals ? 1 : 0,
                 examinedAll: adopted.examinedAll,
               };
             },

@@ -49,21 +49,74 @@ export interface SweepScanState {
   after: string | null;
   /** Whether the scan IN PROGRESS (since the last top) has moved anything. */
   movedSinceTop: boolean;
+  /**
+   * Whether the scan IN PROGRESS has deferred anything — a member skipped because its source
+   * locator was stale rather than because the server refused it.
+   *
+   * **Per SCAN, exactly like {@link movedSinceTop}, and for the same reason.** A deferral in an
+   * early window is a fact about the whole scan: the cursor moves past that message, so the FINAL
+   * window can honestly report zero deferrals while the row that was deferred is still sitting in
+   * the pile. Reading only the last window's count therefore retired the command over exactly the
+   * mail the deferral was protecting. Found by review, not by test — the existing cases all fit
+   * inside one window, where the two readings are identical.
+   */
+  deferredSinceTop: boolean;
+  /**
+   * How many CONSECUTIVE completed scans have been kept alive by deferrals alone.
+   *
+   * **This is the termination bound, and without it the exemption is unbounded.** The retirement
+   * rule exists because a pile the server will never accept must not be retried for ever; making
+   * deferrals exempt re-opened that hole through a different door. Review found the sequence: a
+   * folder is recreated, a message that no longer exists keeps a stale locator and an instance row
+   * the candidate predicate still admits, the old-epoch delete is deliberately never enumerated,
+   * so `remaining()` never reaches zero and every scan defers the same row — a command that is
+   * queued and re-kicks the mailbox for ever.
+   *
+   * So the exemption is allowed to hold for {@link SWEEP_MAX_DEFERRED_SCANS} completed scans and
+   * then stops. That is the same shape, and the same argument, as the bounded re-walks the
+   * sensitivity repair uses before it certifies an incomplete pass: give the self-healing path a
+   * real chance, then stop spending somebody's mail server on it and say so.
+   */
+  deferredScans: number;
 }
+
+/**
+ * How many completed scans may be kept alive by deferrals alone before the command retires anyway.
+ *
+ * Three, matching the bounded re-walks next door. One is too few — a deferral's whole premise is
+ * that the NEXT scan re-finds the message, and a single cycle may not include one. Unbounded is the
+ * defect above. Three consecutive full scans in which nothing moved and something was deferred is
+ * long enough to be evidence that the deferral is not going to clear.
+ */
+export const SWEEP_MAX_DEFERRED_SCANS = 3;
 
 export function adoptSweepWindow(
   state: SweepScanState,
-  window: { movedCount: number; candidates: number; lastId: string | null; junkFolder: string | null },
+  window: {
+    movedCount: number; candidates: number; lastId: string | null; junkFolder: string | null;
+    /** This window's stale-locator count — `JunkSweepResult.deferred`. */
+    deferredCount?: number;
+  },
   limit: number,
-): { state: SweepScanState; examinedAll: boolean } {
+): { state: SweepScanState; examinedAll: boolean; deferredSinceTop: boolean; exhaustedDeferrals: boolean } {
   const startedAtTop = state.after === null;
   const movedSinceTop = (startedAtTop ? false : state.movedSinceTop) || window.movedCount > 0;
+  const deferredSinceTop =
+    (startedAtTop ? false : state.deferredSinceTop) || (window.deferredCount ?? 0) > 0;
   const ranOffTheEnd = window.junkFolder === null || window.candidates < limit;
   const examinedAll = window.junkFolder === null || (ranOffTheEnd && !movedSinceTop);
+  // The counter advances only on a COMPLETED scan that moved nothing and deferred something —
+  // the exact state the exemption keeps alive. A scan that moved anything is progress and resets
+  // it, because the pile is draining and the deferrals are not what is holding the command open.
+  const completedBarrenDeferral = ranOffTheEnd && !movedSinceTop && deferredSinceTop;
+  const deferredScans = movedSinceTop
+    ? 0
+    : completedBarrenDeferral ? state.deferredScans + 1 : state.deferredScans;
+  const exhaustedDeferrals = deferredScans >= SWEEP_MAX_DEFERRED_SCANS;
   const next: SweepScanState = ranOffTheEnd
-    ? { after: null, movedSinceTop: false }
-    : { after: window.lastId, movedSinceTop };
-  return { state: next, examinedAll };
+    ? { after: null, movedSinceTop: false, deferredSinceTop: false, deferredScans }
+    : { after: window.lastId, movedSinceTop, deferredSinceTop, deferredScans };
+  return { state: next, examinedAll, deferredSinceTop, exhaustedDeferrals };
 }
 
 export interface JunkSweepCandidate { messageId: string; subject: string; ref: string }

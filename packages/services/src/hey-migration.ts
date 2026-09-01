@@ -252,6 +252,22 @@ export class HeyMigrationService {
       if (action.type !== "move") continue;
 
       const locator = (r.nativeLocator as NativeLocator | null) ?? { folder: r.observedFolder, ref: "0:0" };
+      // ── RECORD THE INTENT BEFORE THE NETWORK CALL, NOT AFTER IT ─────────────────────────────
+      //
+      // This pass is the only thing that persists the desires it computes, and it used to persist
+      // them as a side effect of `applyReconcileAction` — which meant AFTER the IMAP move, and on
+      // the failure path meant writing back a value read before it. Review named the consequence:
+      // a newer decision committed by another device during the move was overwritten by this
+      // older one.
+      //
+      // Writing first fixes both halves. The desire is durable before anything can go wrong, so a
+      // stale locator (or a refused move, or a lost connection) leaves a row the organizer drains
+      // rather than an intent nobody recorded; and because nothing is written after the round
+      // trip, there is no pre-I/O value left to overwrite a post-I/O one with. `observedFolder`
+      // stays what we last saw, which is what makes the row unconverged and therefore queued.
+      await repo.upsertFolderState(r.messageId, {
+        desiredFolder: dest, observedFolder: r.observedFolder, lastSetBy: "us",
+      });
       const applied = await applyReconcileAction(
         // mailboxId is unused by the move path (it goes through adapter.move + repo),
         // matching the established ScreenerService/ApprovalService call sites.
