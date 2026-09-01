@@ -33,13 +33,29 @@
  * passwords require security defaults to be off — which for many tenants means it will not
  * work, and saying so before someone types credentials is better than a failed connection.
  *
- * ── NO OAUTH ────────────────────────────────────────────────────────────────────────────
+ * ── OAUTH: MICROSOFT ONLY, AND ONLY WHERE IT IS ACTUALLY CONFIGURED ─────────────────────
  *
- * An OAuth auth kind is described in the mailbox API and nothing implements it. Gmail's and
- * Microsoft's OAuth apps need verification we have not done, so offering a "Sign in with
- * Google" button that cannot work would be the single most misleading thing this screen
- * could contain. App passwords are the honest path for the beta and are what the landing
- * already describes.
+ * This paragraph used to read "An OAuth auth kind is described in the mailbox API and nothing
+ * implements it". That stopped being true and is corrected here rather than left to mislead the
+ * next reader: the Microsoft consent ceremony IS implemented end to end
+ * (`packages/api/src/routes/mailbox-oauth.ts`), and Microsoft is the provider that most needs
+ * it — Microsoft has been switching basic authentication off, and on the tenants where it is
+ * already off the app-password row below cannot connect at all.
+ *
+ * The rule the old paragraph was really protecting is the one that survives, and it is
+ * unchanged: NO BUTTON THAT CANNOT WORK. The Outlook affordance is not rendered from this
+ * table. `MailboxSection` asks `GET /mailboxes/oauth/microsoft/availability` and shows it only
+ * when that answers `true`, which is the same predicate `POST …/start` enforces
+ * (`microsoftOAuthAvailable`) — so a deployment with no application registration shows no
+ * button, rather than a button that 503s. A failed availability read leaves it hidden.
+ *
+ * GMAIL STILL HAS NONE, and the original reasoning stands for it: Google's OAuth app needs a
+ * verification we have not done, so a "Sign in with Google" button would be exactly the
+ * misleading thing that paragraph refused. Gmail is app-password only.
+ *
+ * The `note` on each row below is the APP-PASSWORD path. It stays for every provider, including
+ * Microsoft, because plenty of tenants still allow it — but where the Outlook sign-in is
+ * available it is the better door, and the Microsoft note says so without promising it is there.
  */
 
 export interface ProviderPreset {
@@ -80,11 +96,22 @@ export const PROVIDERS: ProviderPreset[] = [
     label: "Microsoft 365 & Outlook.com",
     imap: { host: "outlook.office365.com", port: 993, secure: true },
     smtp: { host: "smtp.office365.com", port: 587, secure: false },
+    /*
+     * Every clause here is judged against the code, so each one is pinned to what it describes:
+     *  · "over IMAP" stays true for BOTH doors — the Microsoft sign-in authenticates the same IMAP
+     *    and SMTP connection with XOAUTH2 (`buildImapAuth`), it does not switch to Graph.
+     *  · The sign-in sentence is conditional ("when this deployment has …") because the button is
+     *    conditional. It promises nothing about whether it will be there.
+     *  · The app-password clauses are unchanged: still exactly true, and still the only path on a
+     *    deployment with no registration.
+     */
     note:
       "ohmail connects to Microsoft over IMAP, like every other mailbox — native Exchange sync " +
-      "over Microsoft Graph is on the roadmap and is not shipped. You will need an app password, " +
-      "which requires security defaults to be off on the account; on some work tenants an " +
-      "administrator has disabled IMAP entirely, and then it cannot connect at all.",
+      "over Microsoft Graph is on the roadmap and is not shipped. When this deployment has a " +
+      "Microsoft application registration, you can sign in with Microsoft instead and no password " +
+      "is stored; that option is offered only where it is actually configured. Otherwise you need " +
+      "an app password, which requires security defaults to be off on the account; on some work " +
+      "tenants an administrator has disabled IMAP entirely, and then it cannot connect at all.",
     helpUrl: "https://support.microsoft.com/account-billing/manage-app-passwords-for-two-step-verification-d6dc8c6d-4bf7-4851-ad95-6d07799387e9",
     helpLabel: "Microsoft app passwords",
   },

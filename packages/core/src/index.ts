@@ -27,5 +27,6 @@ export * from "./outbound-text.js";
 export * from "./migrate-hey.js";
 export * from "./crypto.js";
 export * from "./oauth/microsoft.js";
+export * from "./oauth/microsoft-device.js";
 export * from "./log.js";
 export * from "./privacy/tracker-blocker.js";

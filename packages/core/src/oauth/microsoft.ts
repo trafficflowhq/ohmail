@@ -80,6 +80,79 @@ export class OAuthConfigError extends Error {
 }
 
 /**
+ * WHICH KIND OF APPLICATION REGISTRATION IS ASKING — the one seam the three doors differ on, and
+ * the reason it is a discriminated value rather than "a secret, or the empty string".
+ *
+ * ohmail talks to Entra through three doors and they do not authenticate the same way:
+ *
+ *  · **managed cloud** — a CONFIDENTIAL registration. The secret lives only on ohmail's servers and
+ *    every token request carries it.
+ *  · **desktop** — a PUBLIC registration. There is no secret, because a secret shipped in a binary
+ *    is not a secret; PKCE on a loopback redirect is what authenticates the exchange instead
+ *    (RFC 8252, the model Thunderbird uses).
+ *  · **self-host, shared client** — the SAME public registration, driven through the device-code
+ *    flow so an operator's instance needs no redirect URI of its own.
+ *
+ * ── WHY THIS IS EXPLICIT AND NOT INFERRED FROM AN EMPTY SECRET ────────────────────────────
+ *
+ * The tempting shape is `clientSecret: string` where `""` means public. It is wrong in the
+ * direction that costs the most: a CONFIDENTIAL deployment whose secret failed to resolve — an
+ * unset variable, a decrypt that returned nothing, a rotation half-applied — would silently emit a
+ * PUBLIC token request. Entra answers that with `invalid_client`, which this client maps to
+ * {@link OAuthProviderUnavailableError} (deliberately: a rejected client is not the mailbox's
+ * fault). So the fleet would stop refreshing, nothing would quarantine, nothing would page, and the
+ * true cause — a missing secret — would be indistinguishable from Microsoft having a bad week.
+ *
+ * With the kind stated, that same deployment gets {@link OAuthConfigError} naming
+ * `MS_OAUTH_CLIENT_SECRET`, which is a sentence an operator can act on. And the inverse mistake —
+ * a secret handed to a public-client request — is refused too, because a caller that supplied one
+ * has mixed two doors up and the request it is about to make is not the one it thinks.
+ */
+export type MicrosoftClientKind = "confidential" | "public";
+
+/**
+ * The client-authentication fields of a token request, for one kind of registration.
+ *
+ * ONE function, called by the exchange, the refresh and the device flow, so "does a public client
+ * send a secret" has exactly one answer in this package. The public arm OMITS `client_secret`
+ * entirely rather than sending an empty one: an empty value is a present-but-blank credential to
+ * Entra, not an absent one.
+ *
+ * Both refusals are {@link OAuthConfigError} — the environment is wrong, the credential is not.
+ */
+export function clientAuthFields(
+  kind: MicrosoftClientKind, clientId: string, clientSecret: string | undefined,
+): Record<string, string> {
+  const secret = (clientSecret ?? "").trim();
+  if (kind === "public") {
+    if (secret) {
+      // A caller that supplied a secret for a public registration has mixed the doors up. Refusing
+      // is not pedantry: it would otherwise send this deployment's confidential secret to a token
+      // request the public client id cannot authenticate, and learn nothing from the rejection.
+      throw new OAuthConfigError(
+        "MS_OAUTH_CLIENT_SECRET",
+        "a public Microsoft client must not send a client secret",
+      );
+    }
+    return { client_id: clientId };
+  }
+  if (!secret) {
+    throw new OAuthConfigError(
+      MS_OAUTH_CLIENT_SECRET_VAR,
+      `OAuth mailbox requires ${MS_OAUTH_CLIENT_SECRET_VAR}, which is not set`,
+    );
+  }
+  return { client_id: clientId, client_secret: secret };
+}
+
+/**
+ * The env variable name the secret refusal quotes. A constant because three sites print it and an
+ * operator searching for the string has to find the same one everywhere — `packages/db`'s
+ * `MS_OAUTH_ENV.clientSecret` is the other half of the pair.
+ */
+export const MS_OAUTH_CLIENT_SECRET_VAR = "MS_OAUTH_CLIENT_SECRET";
+
+/**
  * The tenant segment may only be one of the reserved authorities or a GUID. Validated BEFORE
  * interpolation — see the header's first invariant. Anything else is a config error, never a
  * silent string in a URL.
@@ -260,7 +333,14 @@ export interface ExchangeParams {
   redirectUri: string;
   tenant: string;
   clientId: string;
-  clientSecret: string;
+  /** Required for `clientKind: "confidential"`; MUST be absent for `"public"`. */
+  clientSecret?: string;
+  /**
+   * Which registration is redeeming the code. Defaults to `"confidential"` — the managed cloud
+   * door, which is every caller that existed before the desktop one — so an omitted kind can never
+   * silently become a public request. See {@link MicrosoftClientKind}.
+   */
+  clientKind?: MicrosoftClientKind;
   scopes?: readonly string[];
   fetch: FetchLike;
 }
@@ -299,8 +379,7 @@ export async function exchangeAuthorizationCode(
 ): Promise<ExchangeResult> {
   const endpoint = microsoftTokenEndpoint(p.tenant);
   const form = new URLSearchParams({
-    client_id: p.clientId,
-    client_secret: p.clientSecret,
+    ...clientAuthFields(p.clientKind ?? "confidential", p.clientId, p.clientSecret),
     grant_type: "authorization_code",
     code: p.code,
     redirect_uri: p.redirectUri,
@@ -462,7 +541,18 @@ export interface RefreshParams {
   refreshToken: string;
   tenant: string;
   clientId: string;
-  clientSecret: string;
+  /** Required for `clientKind: "confidential"`; MUST be absent for `"public"`. */
+  clientSecret?: string;
+  /**
+   * Which registration holds this grant. Defaults to `"confidential"`.
+   *
+   * It must match the door the refresh token was ISSUED through: a token minted by the desktop's
+   * public client cannot be refreshed with the managed deployment's secret, and vice versa. Entra
+   * answers a mismatch with `invalid_client`, which this function maps to
+   * {@link OAuthProviderUnavailableError} rather than to a dead credential — correct, and silent.
+   * The kind therefore travels with the stored credential, not with the process.
+   */
+  clientKind?: MicrosoftClientKind;
   scope?: string;
   fetch: FetchLike;
 }
@@ -494,8 +584,7 @@ const REAUTH_AADSTS = ["AADSTS700082", "AADSTS70000", "AADSTS50076"];
 export async function refreshAccessToken(p: RefreshParams, now: () => number = Date.now): Promise<RefreshResult> {
   const endpoint = microsoftTokenEndpoint(p.tenant);
   const form = new URLSearchParams({
-    client_id: p.clientId,
-    client_secret: p.clientSecret,
+    ...clientAuthFields(p.clientKind ?? "confidential", p.clientId, p.clientSecret),
     grant_type: "refresh_token",
     refresh_token: p.refreshToken,
     scope: p.scope ?? MS_MAIL_SCOPE,
@@ -565,19 +654,32 @@ export type UpdateSecretPort = (mailboxId: string, ciphertextEnc: string, keyVer
 /** The application registration, as the provider needs it at the moment it mints a token. */
 export interface MicrosoftClientCredentials {
   clientId: string;
+  /** Empty for a `"public"` registration, which has none. */
   clientSecret: string;
   /** Used when the MAILBOX row carries no tenant of its own. */
   defaultTenant?: string;
+  /**
+   * Which door this deployment refreshes through. Defaults to `"confidential"` — the managed cloud
+   * — so a host that says nothing keeps the behaviour it had. The desktop and the self-host
+   * device-code install set `"public"`. See {@link MicrosoftClientKind}.
+   */
+  kind?: MicrosoftClientKind;
 }
 
 /** What a host wires once per process (worker) or once per invocation (API). */
 export interface MicrosoftOAuthRuntime {
   /** `MS_OAUTH_CLIENT_ID`. Empty ⇒ a token request is a {@link OAuthConfigError}. */
   clientId: string;
-  /** `MS_OAUTH_CLIENT_SECRET`. Empty ⇒ the NAMED refusal, not a retry loop. */
+  /** `MS_OAUTH_CLIENT_SECRET`. Empty ⇒ the NAMED refusal, not a retry loop — unless `kind` is `"public"`. */
   clientSecret: string;
   /** `MS_OAUTH_TENANT` fallback when a row carries none. */
   defaultTenant?: string;
+  /**
+   * Which door this HOST refreshes through, when `resolveClient` is not wired. Defaults to
+   * `"confidential"`. A `resolveClient` that returns its own `kind` wins, exactly as it does for
+   * the id and the secret.
+   */
+  kind?: MicrosoftClientKind;
   /**
    * RESOLVE THE REGISTRATION AT TOKEN TIME, rather than at construction. When present it WINS over
    * the three static fields above, which stay as the fallback for a host that has nothing to resolve
@@ -653,7 +755,12 @@ export class MicrosoftTokenProvider implements OAuthTokenProvider {
     // The resolver WINS over the static fields when one is wired — see `resolveClient`.
     const client: MicrosoftClientCredentials = this.rt.resolveClient
       ? await this.rt.resolveClient()
-      : { clientId: this.rt.clientId, clientSecret: this.rt.clientSecret, defaultTenant: this.rt.defaultTenant };
+      : {
+        clientId: this.rt.clientId,
+        clientSecret: this.rt.clientSecret,
+        defaultTenant: this.rt.defaultTenant,
+        ...(this.rt.kind ? { kind: this.rt.kind } : {}),
+      };
 
     // The NAMED refusals, still deferred to the moment a token is actually needed. They quote the
     // ENV variable because that is the name an operator can search for, and it remains the honest
@@ -662,15 +769,19 @@ export class MicrosoftTokenProvider implements OAuthTokenProvider {
     if (!client.clientId.trim()) {
       throw new OAuthConfigError("MS_OAUTH_CLIENT_ID", "OAuth mailbox requires MS_OAUTH_CLIENT_ID, which is not set");
     }
-    if (!client.clientSecret.trim()) {
-      throw new OAuthConfigError("MS_OAUTH_CLIENT_SECRET", "OAuth mailbox requires MS_OAUTH_CLIENT_SECRET, which is not set");
-    }
+    /* THE SECRET REFUSAL BELONGS TO THE CONFIDENTIAL DOOR ONLY. A public registration has no secret
+     * to be missing, and demanding one here would make the desktop and the self-host device-code
+     * install unable to refresh at all. `clientAuthFields` is what refuses an EMPTY confidential
+     * secret now — one place, reached by every grant — so this stays a single explicit branch and
+     * not a second copy of the rule. */
+    const kind: MicrosoftClientKind = client.kind ?? "confidential";
 
     const res = await refreshAccessToken({
       refreshToken,
       tenant: tenant.trim() || (client.defaultTenant ?? this.rt.defaultTenant ?? ""),
       clientId: client.clientId,
-      clientSecret: client.clientSecret,
+      clientKind: kind,
+      ...(kind === "confidential" ? { clientSecret: client.clientSecret } : {}),
       fetch: this.rt.fetch,
     }, this.rt.now ?? Date.now);
 
