@@ -30,9 +30,27 @@
  * process and calls no command. Buying one seam by moving both artifacts' window construction
  * into Rust, to add a browser-spawn to the one that must not have it, is the expensive way round.
  *
- * So the seam is here, and it is still ONE mechanism: one classifier, one handler, installed on
- * the two documents that exist. It is not a per-component patch — no link surface in the shell
- * knows this module exists, and a link added tomorrow is covered by having been rendered.
+ * So the seam is here, and it is still ONE mechanism: one handler, installed on the two
+ * documents that exist. It is not a per-component patch — no link surface in the shell knows
+ * this module exists, and a link added tomorrow is covered by having been rendered.
+ *
+ * ── THE WHOLE SCHEME TABLE, IN ONE PLACE ────────────────────────────────────────────────────
+ *
+ *   http:, https:     the shell's opener → the user's own browser. Never this window.
+ *                     {@link externalTargetOf} decides; `external_url` in `engine.rs` decides
+ *                     again, because the argument comes out of a message.
+ *   mailto:           THIS window → the compose form, through the one RFC 6068 parser.
+ *                     {@link mailtoTargetOf} decides, {@link setMailtoSink} is where it lands.
+ *                     Never the opener, never a process.
+ *   everything else   cancelled, and nothing happens. No dialog, no toast, no log — there is
+ *                     nothing a person could act on. `cid:` above all: it names a part of the
+ *                     message being read and must not leave this machine.
+ *
+ * The `mailto:` row was `everything else` for two releases, which is the second half of the
+ * defect this file was written for: the fix was reasoned about in terms of the browser, so the
+ * one scheme a MAIL CLIENT answers itself was swept into "refuse". Nothing had to be built to
+ * close it — `apps/desktop/src/mailto.ts` and the gate's compose seam were already there,
+ * reachable only by a link the operating system delivered.
  *
  * ── THE TWO DOCUMENTS, AND WHY EVENTS DO NOT REACH ACROSS ───────────────────────────────────
  *
@@ -73,6 +91,9 @@ export const OPEN_EXTERNAL_COMMAND = "open_external";
  * and anything the sanitizer would have removed — answers `null`, and `cid:` is the reason the
  * default for an unrecognised scheme is "refuse" rather than "pass through": it names a part of
  * the message being read, and it must not leave this machine.
+ *
+ * `mailto:` answering `null` here is not the end of its story — see {@link mailtoTargetOf}. It
+ * must answer `null` HERE regardless, because what this function feeds is a process spawn.
  */
 export function externalTargetOf(href: string, base: string): string | null {
   const raw = href.trim();
@@ -87,6 +108,52 @@ export function externalTargetOf(href: string, base: string): string | null {
   // `href`, not the input: the browser's own serialisation is what the shell's gate is written
   // against, and it percent-encodes every character that gate refuses.
   return url.href;
+}
+
+/**
+ * THE SECOND CLASSIFIER — pure, and the one scheme this app answers ITSELF.
+ *
+ * Answers the mailto string to open a compose form from, or `null` for "this is not one".
+ *
+ * ── WHY THIS EXISTS, WHICH IS THE SAME BUG AS THE FILE'S HEADER, ONE SCHEME LATER ───────────
+ *
+ * The header's fix was written about the BROWSER, so its rule became "http and https go out,
+ * everything else is cancelled". Cancelling is correct for `cid:` (it names a part of the
+ * message being read), for `javascript:`, `data:` and `file:`. It is WRONG for `mailto:`, and
+ * wrong in the one product where that is least excusable: **this app is the mail client.** An
+ * address clicked in a newsletter, in a signature, or on a receipt's "contact us" line got
+ * exactly what the original defect gave every link — nothing, silently.
+ *
+ * Nothing had to be built to answer it. `apps/desktop/src/mailto.ts` already reads a mailto
+ * into a bounded compose prefill, and the gate already seeds the compose form from it — but
+ * only for a link the OPERATING SYSTEM delivered. A link clicked inside the window never
+ * reached that parser, because this seam refused it two layers earlier.
+ *
+ * ── THE RAW HREF IS RETURNED, NOT A PARSED ANYTHING, AND THAT IS THE BOUNDARY ────────────────
+ *
+ * `URL.href` is deliberately NOT used. It normalises the opaque path of a `mailto:` — the
+ * WHATWG parser is entitled to re-encode it — and the one parser that reads these fields
+ * (`parseMailto`, RFC 6068, split-then-decode) is written against the bytes a link author
+ * wrote. Two normalisations in a row is how `%26` inside a subject becomes a new header. So
+ * this function only DECIDES; it hands the original string on untouched.
+ *
+ * That string is untrusted, and it stays untrusted: it goes to a parser whose stated contract
+ * is what its output can never contain, and it becomes text in a compose form. It never
+ * reaches {@link OPEN_EXTERNAL_COMMAND}, never reaches a process spawn, and the shell's own
+ * gate (`external_url` in `engine.rs`) refuses it a second time if it ever did.
+ */
+export function mailtoTargetOf(href: string, base: string): string | null {
+  const raw = href.trim();
+  if (raw === "") return null;
+  let url: URL;
+  try {
+    url = new URL(raw, base);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "mailto:") return null;
+  // The href as written, not `url.href` — see the header.
+  return raw;
 }
 
 /** Whether this document's own origin is somewhere a link may go without leaving the app. */
@@ -115,6 +182,31 @@ export function enableExternalLinks(): void {
 /** Whether {@link interceptLinkClicks} will do anything. Read by the suite, and by the frame. */
 export function externalLinksEnabled(): boolean {
   return enabled;
+}
+
+/**
+ * What this window does with a clicked `mailto:` — a compose form, or nothing.
+ *
+ * A registration rather than an argument to {@link enableExternalLinks}, because the two are
+ * armed at different moments and by different owners: the interceptor is armed once by the
+ * desktop entry point, before React mounts, while the thing that can open a compose form is a
+ * component's own state and does not exist until the gate has mounted. A sink that had to be
+ * supplied at arming time would have to be a mutable box anyway; this is that box, named.
+ *
+ * `null` — the default, and the web app's permanent state — means a mailto is CANCELLED and
+ * nothing else, which is the behaviour before this seam existed. It is also the desktop's
+ * state for the short window before the gate mounts, so the arm degrades to the old outcome
+ * rather than to an exception.
+ *
+ * Registering a sink does NOT arm anything on its own: no listener is installed unless
+ * {@link enableExternalLinks} has been called, so shared code may register one and the web app
+ * stays inert by construction.
+ */
+let mailtoSink: ((raw: string) => void) | null = null;
+
+/** Point the `mailto:` arm at a compose form, or pass `null` to take it away. */
+export function setMailtoSink(sink: ((raw: string) => void) | null): void {
+  mailtoSink = sink;
 }
 
 interface TauriInternals {
@@ -220,10 +312,26 @@ export function interceptLinkClicks(doc: Document, opts: InterceptOptions): () =
       return;
     }
 
-    // Not an address to open, and not this app's own. In a message frame that is every link the
-    // line above did not claim — `trustSameOrigin` is false there, so a sender cannot reach this
-    // point with a link to the app's origin either. Stopped, because the one outcome that must
-    // never happen is the webview leaving the app for a place a message chose.
+    // AN ADDRESS IS THIS APP'S OWN BUSINESS. Second, and never first: the ordering is what keeps
+    // the two classifiers from ever both claiming an href, and the http arm is the one with a
+    // process spawn behind it, so it is the one that gets to answer first. See
+    // `mailtoTargetOf` for why the raw href travels rather than `URL.href`.
+    const compose = mailtoTargetOf(href, base);
+    if (compose !== null) {
+      // Cancelled BEFORE the sink is called, and cancelled even when there is no sink. The
+      // webview's answer to a `mailto:` it cannot hand anywhere is its own business and is not
+      // one this window wants: on a machine with another mail app registered, leaving the
+      // default would hand the click to that app, from inside the mail client the person is
+      // reading in.
+      ev.preventDefault();
+      mailtoSink?.(compose);
+      return;
+    }
+
+    // Not an address to open, not a compose, and not this app's own. In a message frame that is
+    // every link the lines above did not claim — `trustSameOrigin` is false there, so a sender
+    // cannot reach this point with a link to the app's origin either. Stopped, because the one
+    // outcome that must never happen is the webview leaving the app for a place a message chose.
     ev.preventDefault();
   };
 

@@ -35,6 +35,13 @@
  * connected, the draft simply waits: connecting is the thing the person has to do first, and the
  * compose opens once it is done.
  *
+ * A CLICK INSIDE THIS WINDOW lands in the same place, and until recently it landed nowhere at
+ * all: the window's link seam (`shell/open-external.ts`) hands `http`/`https` to the platform's
+ * browser and used to cancel every other scheme, `mailto:` included — so an address clicked in a
+ * newsletter or a signature did nothing, silently, in the one app on the computer whose job it
+ * is. The same parser and the same `mailtoDraft` seam answer both origins now; the only
+ * difference is which side of the process the click came from.
+ *
  * ── AND THE NATIVE CHROME IS DRIVEN FROM HERE ───────────────────────────────────────────────
  *
  * The menu's navigation events, the dock badge and the new-mail notification are wired here
@@ -50,6 +57,7 @@ import { AppShell } from "../../webapp/app/shell/AppShell";
 import { setStorageOwner } from "../../webapp/app/shell/storage-owner";
 import { BootSkeleton } from "../../webapp/app/shell/BootSkeleton";
 import { go } from "../../webapp/app/shell/routing";
+import { setMailtoSink } from "../../webapp/app/shell/open-external";
 import { BootStatus } from "./BootStatus.js";
 import { bridgeAvailable, bridgeFetch } from "./bridge-fetch.js";
 import { DoorChooser } from "./DoorChooser.js";
@@ -145,14 +153,27 @@ export function DesktopGate() {
      install becomes the compose the moment a mailbox is. See the header. */
   const [mailtoDraft, setMailtoDraft] = useState<MailtoDraft | null>(null);
   useEffect(() => {
-    const claim = async (): Promise<void> => {
-      const raw = await claimMailto();
-      if (raw === null) return;
+    /* ONE READING OF A MAILTO, TWO ORIGINS. The OS hands one to the shell and this window
+       claims it; the window's own link seam hands one straight over. Both go through
+       `parseMailto` and both land in the same state, so a link clicked in a message and a link
+       clicked in another application cannot open different compose forms. */
+    const seed = (raw: string): void => {
       const draft = parseMailto(raw);
       if (draft) setMailtoDraft(draft);
     };
+    const claim = async (): Promise<void> => {
+      const raw = await claimMailto();
+      if (raw === null) return;
+      seed(raw);
+    };
     void onMailto(() => void claim());
     void claim();
+    /* THE IN-WINDOW HALF. Registered here rather than at the entry point because the compose
+       form is this component's state: `main.tsx` arms the interceptor before React exists and
+       has nothing to point it at. Taken away on unmount so a stale closure cannot hold a
+       setter for a gate that is gone. */
+    setMailtoSink(seed);
+    return () => setMailtoSink(null);
   }, []);
 
   const onStatus = useCallback((next: EngineStatus) => {
