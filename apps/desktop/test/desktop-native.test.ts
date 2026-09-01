@@ -271,8 +271,12 @@ describe("Settings → this install", () => {
 
     expect(text).toContain("Server changed");
     expect(text).toContain("different mail server");
-    // It says what was NOT done with the password, which is the reassurance that is actually true.
-    expect(text).toContain("has not been sent to either");
+    /* It says what was NOT done with the password, SCOPED to the only server that claim is true
+       about. Reaching this state by the ordinary route means the password was already proved
+       against the server the credential records — a real login — so "not sent to either" was a
+       false reassurance about credential handling and is asserted against below. */
+    expect(text).toContain("has not been sent to the server it is set to");
+    expect(text).not.toContain("not been sent to either");
 
     // Not the neighbour it would most plausibly be folded into…
     expect(text).not.toContain("Needs re-entering");

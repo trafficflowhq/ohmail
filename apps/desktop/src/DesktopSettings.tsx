@@ -81,14 +81,21 @@ function credentialLine(status: EngineStatus): { value: string; description: str
        engine withheld it rather than offer one server's password to another. Saying "needs
        re-entering" here would be true of the action and false about the cause, and it is the exact
        sentence the credential-state seam exists to stop: a person re-typing a password that was
-       never wrong, into whichever of the two servers the install happens to be pointing at. */
+       never wrong, into whichever of the two servers the install happens to be pointing at.
+
+       ── WHAT THIS SENTENCE MAY NOT SAY, AND WHY ─────────────────────────────────────────────
+       It said "it has not been sent to either" and that was FALSE. Reaching this state by the
+       ordinary route means `PATCH /mailboxes/:id` already PROVED the password against the server
+       it recorded — a real login to a real server — so the only true claim is about the server
+       this install is currently configured for, which is the one that was withheld from. A
+       reassurance about credential handling that is broader than the code is worse than none. */
     case "foreign-host":
       return {
         value: "Server changed",
         description:
           "The stored password was set up for a different mail server than this install is now " +
-          "using, so it has not been sent to either. Open the mailbox settings and confirm the " +
-          "server you want; nothing has been lost and no mail is affected.",
+          "using, so it has not been sent to the server it is set to. Open the mailbox settings, " +
+          "confirm the server you want and enter its password; no mail is affected.",
       };
     default:
       return {

@@ -27,9 +27,10 @@ proved against another.
 
 The engine now checks. When a stored password was set up for a different server
 than the one it is now configured for, it is not used — not to fetch mail, and not
-to send it either. Nothing is deleted and nothing is re-typed: point the app back
-at the server that password belongs to, or finish the change you started, and it
-works again.
+to send it either. Nothing is deleted: the stored password is still there and this
+computer can still read it. To get going again, open the mailbox settings, confirm
+the server you want and enter its password — the app asks for it because entering
+it is what proves it against whichever server you have chosen.
 
 This matters most in the moment the 0.13.2 fix cannot reach. Storing the new
 password and writing the new settings are two steps, and an app that is closed or
@@ -41,8 +42,14 @@ for the same reason, instead of offering one server's password to another.
 
 **And it says so in words that are true.** Settings shows "Server changed", and
 explains that the password was set up for a different mail server and has not been
-sent to either one. It deliberately does not say your keychain will not open it —
-that message already exists, it means something else, and here it would be false.
+sent to the server this computer is set to. It deliberately does not say your
+keychain will not open it — that message already exists, it means something else,
+and here it would be false. It is also careful about the other direction: getting
+into this state usually means the password was already proved against the server it
+was stored for, so the only honest claim is about the server it was withheld from.
+
+One limit worth stating: this check compares the incoming mail server. A change that
+moves only the outgoing server is not covered by it yet.
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
