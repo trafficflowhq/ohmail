@@ -1887,15 +1887,53 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // became, this authorization has been used and must not authorize a later seizure.
           // A row that was never stood down keeps its `connected`/NULL values, so this stays the
           // no-op it has always been for an install that simply organizes.
+          //
+          // ── AND THE WRITE'S OWN ANSWER DECIDES WHETHER THIS LAUNCH ORGANIZES AT ALL ────────
+          //
+          // Preserving the tombstone is not sufficient on its own: the lease has already said
+          // organize and already appended this install's claim, so without the branch below
+          // `start()` would go on to `ensureFolders()`, `drain()` and the poll timer against a
+          // mailbox the person removed — writing under a row every later launch excludes, and
+          // holding a claim that stands another organizer down. The read-back is free (the
+          // statement is already running) and it is the only place this launch can learn the
+          // removal, because `world` is a snapshot taken before the lease read.
+          //
+          // The response is the stand-down's own tail minus its row write, which the removal has
+          // already made: organize nothing, stop the timer, close the login. The claim we
+          // appended is left to age out of `ohmail/_meta` on its own — the same cost a crashed
+          // organizer imposes, and strictly better than expunging from a launch that has just
+          // discovered it should not be here.
+          //
+          // This does NOT close the general case: a `DELETE` landing mid-launch on an install
+          // that was never stood down reaches none of this, and that race predates this code —
+          // it belongs to the engine's `world` snapshot and wants a lifecycle mechanism, not a
+          // branch. What it closes is the window this arm opened.
           try {
-            await db.update(mailboxes)
+            const [after] = await db.update(mailboxes)
               .set({
                 status: sql`case when ${mailboxes.disabledReason} is not null then 'connected' else ${mailboxes.status} end`,
                 disabledReason: null,
                 takeoverAuthorizedAt: null,
               })
-              .where(eq(mailboxes.id, world.mailboxId));
+              .where(eq(mailboxes.id, world.mailboxId))
+              .returning({ status: mailboxes.status });
             takeoverAuthorized = false;
+            if (!after || after.status === "disabled") {
+              log("organizer_takeover_row_removed", {
+                reason: "this mailbox was removed while the organizer lease was being read, so " +
+                  "this install organizes nothing and serves the mirror it already has; the " +
+                  "claim it appended ages out of the mailbox on its own",
+              });
+              organizer = { organizing: false, reason: null, heldBy: null };
+              stopped = true;
+              if (timer) clearTimeout(timer);
+              try {
+                await adapter.close();
+              } catch (closeErr) {
+                log("adapter_close_failed", { err: closeErr });
+              }
+              return false;
+            }
           } catch (err) {
             // The gate already said organize and the claim is already written. Failing to spend
             // the stamp costs one more cycle in which it is still spendable, never correctness.
