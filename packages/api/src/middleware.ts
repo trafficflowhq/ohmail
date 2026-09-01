@@ -216,7 +216,7 @@ function mayRetry(
   // RESOLVED booleans, not the optional-field interface: `dbBusyResponse` narrows the caller's
   // partial knowledge to definite values first, so "absent" cannot reach here still meaning
   // "unknown" and then be read as permissive by accident.
-  protection: { routeIsIdempotent: boolean; hasAccount: boolean },
+  protection: { routeIsIdempotent: boolean; hasAccount: boolean; routeRequiresSession: boolean },
 ): boolean {
   if (SAFE_METHODS.has(req.method.toUpperCase())) return true;
   // The SAME three conditions `withIdempotency` itself checks, in the same order, so this answers
@@ -224,9 +224,28 @@ function mayRetry(
   // approximation and it is wrong twice: an EMPTY `Idempotency-Key` satisfies `has()` while
   // `withIdempotency` does `const key = …get("idempotency-key"); if (!key) return next(…)` and
   // skips, and a request with no resolved account is skipped at the next line for the same reason.
-  return protection.routeIsIdempotent
-    && (req.headers.get("idempotency-key") ?? "") !== ""
-    && protection.hasAccount;
+  if (!protection.routeIsIdempotent) return false;
+  if ((req.headers.get("idempotency-key") ?? "") === "") return false;
+  /**
+   * ── AND `hasAccount` ALONE WOULD THROW THE MUTATION AWAY ───────────────────────────────────
+   *
+   * `withSession` resolving the token is the FIRST database query on every authenticated request,
+   * which makes it the likeliest query to be starved — and if the ceiling fires there, `deps.session`
+   * has not been assigned yet, so `hasAccount` is false. Refusing a retry in that state is not a
+   * conservative choice, it is a destructive one: `OhmailEngine` treats a non-retryable rejection
+   * as an EXPLICIT REFUSAL and rolls the mutation back — `overlays.delete`, `awaitingEcho.delete`,
+   * `dropOutbox(p.id)` (`client-engine/src/engine.ts`). The user's write is discarded because the
+   * server was briefly busy.
+   *
+   * `routeRequiresSession` closes it without weakening anything, because on a protected route both
+   * possible states are safe:
+   *   · the session DID resolve ⇒ `withIdempotency` ran and a replay is deduplicated;
+   *   · the session did NOT resolve ⇒ neither it nor the handler ran, so nothing happened at all.
+   * The only genuinely unprotected shape is an `idempotent` route that resolves no session — for
+   * which `withIdempotency` short-circuits on its `accountId` guard — and that is exactly what
+   * this leaves at `false`.
+   */
+  return protection.hasAccount || protection.routeRequiresSession;
 }
 
 /**
@@ -238,6 +257,13 @@ export interface IdempotencyProtection {
   routeIsIdempotent?: boolean;
   /** A session was resolved — `withIdempotency` needs an `accountId` and skips without one. */
   hasAccount?: boolean;
+  /**
+   * The route is PROTECTED, so `withSession` would have answered 401 rather than run the handler
+   * without a session. On such a route a refusal means either the session resolved (and
+   * `withIdempotency` applies) or the session query itself was starved (and nothing ran) — both
+   * safe to retry. See { mayRetry}.
+   */
+  routeRequiresSession?: boolean;
 }
 
 /**
@@ -254,12 +280,14 @@ export function dbBusyResponse(
   const known = {
     routeIsIdempotent: protection.routeIsIdempotent === true,
     hasAccount: protection.hasAccount === true,
+    routeRequiresSession: protection.routeRequiresSession === true,
   };
   return dbBusyResponseFor(req, known);
 }
 
 function dbBusyResponseFor(
-  req: Request, protection: { routeIsIdempotent: boolean; hasAccount: boolean },
+  req: Request,
+  protection: { routeIsIdempotent: boolean; hasAccount: boolean; routeRequiresSession: boolean },
 ): Response {
   return errorResponse(
     "db_busy", 503,
@@ -334,6 +362,7 @@ export const withErrorEnvelope: Middleware = (next, route) => async (req, deps, 
       return dbBusyResponse(req, {
         routeIsIdempotent: route.options?.idempotent === true,
         hasAccount: Boolean(deps.session?.accountId),
+        routeRequiresSession: route.options?.public !== true,
       });
     }
     if (err instanceof ServiceError) {
