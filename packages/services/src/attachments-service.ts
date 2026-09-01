@@ -1,7 +1,10 @@
 import JSZip from "jszip";
 import { and, asc, eq, gt, gte, inArray } from "drizzle-orm";
 import { attachments, messages } from "@trafficflow/db";
-import { CALENDAR_FALLBACK_FILENAME, isCalendarMime, type NativeLocator, type EmailAddress } from "@trafficflow/core/mail";
+import {
+  CALENDAR_FALLBACK_FILENAME, isCalendarMime, isMessageGone,
+  type NativeLocator, type EmailAddress,
+} from "@trafficflow/core/mail";
 import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
@@ -196,12 +199,10 @@ function isTooLarge(err: unknown): boolean {
   return typeof err === "object" && err !== null && (err as { code?: unknown }).code === TOO_LARGE_CODE;
 }
 
-/** `MessageGoneError`'s code — duck-typed for the reason {@link isTooLarge} states. */
-const MESSAGE_GONE_CODE = "EMSGGONE";
-
-function isMessageGone(err: unknown): boolean {
-  return typeof err === "object" && err !== null && (err as { code?: unknown }).code === MESSAGE_GONE_CODE;
-}
+// `isMessageGone` used to be a second copy of this predicate, spelled out here with its own
+// literal `"EMSGGONE"`. It now comes from `core/gone.ts`, which is the one leaf both this file and
+// the error class are built from — see {@link isTooLarge} for why it is duck-typed at all, and
+// that module's header for the three readings of a gone locator and which seam may take which.
 
 /**
  * Why a mailbox's parts are missing from an archive, in words the reader can act on.
@@ -506,6 +507,16 @@ export class AttachmentsService {
               errors.push(
                 `${name}: skipped — the mail server sent more than this archive had room for ` +
                   `(the whole archive may hold ${Math.round(DOWNLOAD_ALL_MAX_BYTES / 1048576)} MiB)`,
+              );
+            } else if (isMessageGone(err)) {
+              // NOT a mail-server fault, and the generic line below said it was. The message this
+              // part belongs to is not at the locator the mirror holds — it moved, or its folder
+              // was recreated — so the archive is missing this file for a reason the reader can
+              // actually clear, and one that clears itself: the next scan repoints the locator by
+              // Message-ID. Blaming the server sent people to check a server that is fine.
+              errors.push(
+                `${name}: skipped — this message has moved on the mail server since the list was ` +
+                  `built; refresh and download again`,
               );
             } else {
               errors.push(`${name}: could not be fetched from the mail server`);

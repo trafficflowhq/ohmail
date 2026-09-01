@@ -862,8 +862,19 @@ export async function rescueJunk(
       // happen, and never a different message moved in this one's name. With the second verb
       // the allow was written BEFORE this, and stands — carried in `details` so the client can
       // say both halves.
+      //
+      // THE SENTENCE NAMES ALL THREE CAUSES AND THEN THE FIX. It used to read "it may have been
+      // deleted there", which picks the most alarming of the three and is the least likely: the
+      // guard fires on ANY epoch mismatch, and a provider rebuilding the Junk folder renumbers
+      // every message in it without deleting one. Naming a deletion that usually did not happen,
+      // and offering nothing to do about it, is the over-claim living in the reassuring half of a
+      // refusal. The recovery is real — the next scan re-finds the message by Message-ID and
+      // repoints it, after which the same press works.
       throw new ServiceError(
-        "junk_message_gone", 410, "this message is no longer in the Junk folder — it may have been deleted there",
+        "junk_message_gone", 410,
+        "this message is no longer where the mailbox recorded it — it may have moved, been "
+          + "deleted in another mail app, or your provider may have rebuilt the Junk folder. "
+          + "Refresh and try again.",
         allowed !== undefined ? { allowed } : undefined,
       );
     }
