@@ -143,7 +143,7 @@ export function credentialIsForeignSmtp(
 /**
  * The submission host a stored credential was sealed for.
  *
- * THREE ANSWERS, NOT TWO, AND THE THIRD IS THE ONE A REVIEW ROUND FOUND MISSING:
+ * THREE ANSWERS, NOT TWO, AND THE THIRD IS THE ONE THAT IS EASY TO LOSE:
  *
  *  · `null` — THE ROW SAYS NOTHING. The key is absent, or holds something that is not a string.
  *    This is the answer for every credential sealed before the key existed, which is why the
@@ -181,9 +181,9 @@ export function sealedSmtpHost(meta: unknown): string | null {
  * decides whether to withhold a working password.
  *
  * A `sealed` of `""` is therefore compared rather than excused, and the plain `!==` at the end is
- * what makes "no outgoing server was authorized" disagree with every real host. That is deliberate
- * and it is the whole of the fix a review round asked for: the two callers differ only in which
- * key they read and in whether an empty stored value can mean anything.
+ * what makes "no outgoing server was authorized" disagree with every real host. That is deliberate:
+ * the two callers differ only in which key they read and in whether an empty stored value can mean
+ * anything, and this function is where that second difference has its effect.
  */
 function disagrees(sealed: string | null, configuredHost: string | undefined | null): boolean {
   if (sealed === null) return false;

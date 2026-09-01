@@ -100,8 +100,7 @@ import { credentialIsForeign, credentialIsForeignSmtp } from "../../sidecar/src/
  *    FOUR cases here go red plus TWO in `desktop-doors.test.ts`, and the one that names the
  *    consequence is "an outgoing server that moved alone still RECEIVES, and would not send"
  *    (`expected true to be false`): with nothing recorded there is nothing to compare, and the
- *    install would offer the password to a submission server nobody named. Added in the third
- *    round, with the outgoing arm.
+ *    install would offer the password to a submission server nobody named.
  */
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

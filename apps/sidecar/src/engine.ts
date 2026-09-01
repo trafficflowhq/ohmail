@@ -1340,8 +1340,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       const row = await storedLogin();
       if (!row) return envPass ? { state: "ready", pass: envPass } : { state: "absent", pass: null };
       /**
-       * WHICH COMPARISON FAILED RIDES OUT WITH THE STATE, and that is a review finding rather than
-       * a convenience. `foreign-host` is one state with two causes, and the send path has to say
+       * WHICH COMPARISON FAILED RIDES OUT WITH THE STATE, and it is load-bearing rather than a
+       * convenience. `foreign-host` is one state with two causes, and the send path has to say
        * which in words a person can act on: told the OUTGOING server is wrong when the incoming one
        * moved, they would go and change a setting that was already right, and following the
        * instruction cannot recover the install. A true sentence about the wrong server is the exact
@@ -1360,8 +1360,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       // and settling it is what makes the outgoing question meaningful.
       if (opts !== undefined && credentialIsForeignSmtp(row.meta, opts.smtpHost)) {
         /**
-         * TWO OUTGOING CAUSES, NOT ONE, and this split is also a review finding rather than a
-         * refinement. The credential can disagree because it names a DIFFERENT submission server,
+         * TWO OUTGOING CAUSES, NOT ONE, and the split is not a refinement — it decides what the
+         * person is told to do. The credential can disagree because it names a DIFFERENT server,
          * or because it names NONE — and those have different recoveries. "Point the outgoing
          * server back" is an instruction with no referent for the second: there was never a
          * previous submission server to return to, and the only way out is to save the password
@@ -1445,9 +1445,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * the server the refusal exists to keep it away from. What is wrong is which pair of servers
        * this install is pointed at.
        *
-       * AND IT NEEDS THREE OF THEM, which two review rounds had to point out one at a time. One
-       * state, three causes, and each has a DIFFERENT recovery — which is the only test that
-       * matters for whether a sentence has earned its own branch:
+       * AND IT NEEDS THREE OF THEM. One state, three causes, and each has a DIFFERENT recovery —
+       * which is the only test that matters for whether a sentence has earned its own branch:
        *
        *  · the INCOMING server moved. A send reaches here too, and naming the outgoing server
        *    would send somebody to change a setting that was already correct.
