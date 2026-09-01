@@ -32,6 +32,7 @@ import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { avatarOf, rowStamp, hueOf, rowAddress, senderName, tagsOfMessage } from "../shell/format";
 import { folderLeafOf, folderParentOf } from "../shell/folders";
 import { useZoneNav } from "../shell/zone-nav";
+import { useMessageVerbs } from "../shell/message-verbs";
 import { readColumnHidden } from "../shell/narrow";
 import { useListWindow } from "../shell/list-window";
 import type { OlderMail } from "../shell/older-mail";
@@ -51,6 +52,9 @@ export function FolderView({
   hydrateBody,
   onAction,
   onAddTag,
+  onScreen,
+  canDelete,
+  canReplyAll,
 }: {
   folder: FolderEntity;
   /** The folder's mail, newest first — filtered by the shell on (mailboxId, name). */
@@ -81,6 +85,11 @@ export function FolderView({
   hydrateBody: (id: string, opts?: { retry?: boolean }) => void;
   onAction: (action: MessageAction, message: EngineMessage) => void;
   onAddTag: (messageId: string, anchor: HTMLElement | null) => void;
+  /* THE THREE SEAMS THE MESSAGE VERBS NEED, resolved by the shell — see
+     `useMessageVerbs`' header for why none of them is derived in a view. */
+  onScreen: (messageId: string, anchor: HTMLElement | null) => void;
+  canDelete: (message: EngineMessage) => boolean;
+  canReplyAll: (message: EngineMessage) => boolean;
 }) {
   const t = useTranslations("folder");
   const to = useTranslations("ohbox");
@@ -104,9 +113,21 @@ export function FolderView({
     if (shown) hydrateBody(shown.id);
   }, [shown?.id, hydrateBody]);
 
+  /**
+   * OPENING A ROW MOVES THE CURSOR, ON BOTH LAYOUTS.
+   *
+   * The cursor is set FIRST and unconditionally. Before the message verbs were declared here it
+   * did not have to be: on the NARROW layout opening a row raised the reader and set no cursor,
+   * which was invisible because nothing read the cursor there. Every verb in `useMessageVerbs`
+   * reads it, so leaving it unset would make `d`, `⇧F` and the filing keys act on the FIRST row
+   * of the list while the reader showed the tapped one — the defect `TriageView` documents
+   * having already paid for.
+   */
   const openRow = (m: EngineMessage) => {
+    setSelectedId(m.id);
+    // Where the column is hidden the sheet is the only reading surface; where it is standing the
+    // selection above is the whole open, and nothing leaves the screen.
     if (readColumnHidden()) onOpen(m);
-    else setSelectedId(m.id);
   };
 
   // The standard grouping, the Ohbox's own labels: unread is what is unhandled here, read is
@@ -165,6 +186,14 @@ export function FolderView({
         ?.scrollIntoView?.({ block: "nearest" }),
     );
   };
+  /* THE NINE MESSAGE VERBS, over this view's own cursor. Without this declaration the
+     shell's bindings register `disabled` here (they act on `focused`, which has no arm for
+     a split view's local cursor) while the action bar goes on printing their keycaps —
+     nine keys that print a cap and do nothing. See `message-verbs.ts`. */
+  useMessageVerbs({
+    shown, scope: ".view-folder", onAction, onAddTag, onScreen, canDelete, canReplyAll,
+  });
+
   useZoneNav({
     list: {
       followId: shown?.id ?? null,

@@ -3591,6 +3591,30 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
   }, []);
 
   /**
+   * ── THE TWO GATES THE SPLIT VIEWS' MESSAGE VERBS BORROW ────────────────────────────────
+   *
+   * Folder, Tag and History declare the nine message verbs over their OWN cursor
+   * (`useMessageVerbs`), because the bindings below act on `focused` and a split view's cursor
+   * is state this shell cannot see. Two of those verbs are gated on facts that live here and
+   * nowhere else, so they are resolved here and passed down rather than re-derived in three view
+   * files — which is how the `?` sheet comes to advertise a delete the bar refuses to draw.
+   *
+   * `canDeleteMessage` is the delete strip's OWN render gates, verbatim from the `d` binding
+   * below: the folders consent, and the mirror actually holding the row. `canReplyAllTo` is
+   * `replyAllRecipients` against the account's addresses — the same call the bar's button and
+   * the `⇧R` binding both make, and the one `sendReply` resolves again at send time.
+   */
+  const canDeleteMessage = useCallback(
+    (m: EngineMessage): boolean =>
+      consent.foldersEnabled === true && reader.get<EngineMessage>("message", m.id) != null,
+    [consent.foldersEnabled, reader],
+  );
+  const canReplyAllTo = useCallback(
+    (m: EngineMessage): boolean => replyAllRecipients(m, ownAddresses) !== null,
+    [ownAddresses],
+  );
+
+  /**
    * WRITE THE TWO-TERM RULE, AND SAY ONLY WHAT THE SERVER CONFIRMED.
    *
    * The plan comes from `subject-rule.ts`; this dispatches it. The RULE mutation is awaited and the
@@ -6342,6 +6366,10 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
                 hydrateBody={hydrateBody}
                 onAction={onMessageAction}
                 onAddTag={openTagPicker}
+                /* The verbs this view declares for itself — see `useMessageVerbs`. */
+                onScreen={openSenderMenu}
+                canDelete={canDeleteMessage}
+                canReplyAll={canReplyAllTo}
                 /* The same rename/delete verbs Settings uses — a tag is managed from its page. */
                 admin={tagAdmin}
               />
@@ -6373,6 +6401,10 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
                 hydrateBody={hydrateBody}
                 onAction={onMessageAction}
                 onAddTag={openTagPicker}
+                /* The verbs this view declares for itself — see `useMessageVerbs`. */
+                onScreen={openSenderMenu}
+                canDelete={canDeleteMessage}
+                canReplyAll={canReplyAllTo}
               />
             ) : null}
 
@@ -6412,6 +6444,10 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
                 hydrateBody={hydrateBody}
                 onAction={onMessageAction}
                 onAddTag={openTagPicker}
+                /* The verbs this view declares for itself — see `useMessageVerbs`. */
+                onScreen={openSenderMenu}
+                canDelete={canDeleteMessage}
+                canReplyAll={canReplyAllTo}
                 onMarkAllRead={markAllRead}
               />
             ) : null}
