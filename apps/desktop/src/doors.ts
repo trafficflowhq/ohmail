@@ -1094,9 +1094,13 @@ async function refused(res: Response): Promise<{ problem: string; code: string |
     /* nothing readable — the status line below is the whole answer */
   }
   try {
-    const parsed = JSON.parse(body) as { error?: { message?: string; code?: string } };
+    const parsed = JSON.parse(body) as {
+      error?: { message?: string; code?: string; details?: unknown };
+    };
     const code = parsed.error?.code ?? null;
-    const message = parsed.error?.message ?? parsed.error?.code;
+    /* The probe can say more than its own sentence does — see {@link probeTlsSentence}. */
+    const sharper = probeTlsSentence(parsed.error?.details);
+    const message = sharper ?? parsed.error?.message ?? parsed.error?.code;
     if (message) return { problem: message, code };
   } catch {
     /* not JSON */
@@ -1105,6 +1109,60 @@ async function refused(res: Response): Promise<{ problem: string; code: string |
     problem: res.statusText ? `${res.status} ${res.statusText}` : `The request was refused (${res.status}).`,
     code: null,
   };
+}
+
+/**
+ * THE PROBE ALREADY KNOWS THE ANSWER — SAY IT, INSTEAD OF SENDING THE PERSON TO THEIR PROVIDER.
+ *
+ * `mailbox_probe_failed` carries `details.tls` on a TLS refusal, and on a HOSTNAME MISMATCH that
+ * detail may name the host the certificate actually covers (`suggestedHost` — the vanity-name
+ * shape: someone types `mail.<their-domain>` and the server there presents a certificate for
+ * `<their-domain>`). The service's own `message` is deliberately generic, because it is one
+ * sentence for every TLS failure; the detail beside it is where the specifics live.
+ *
+ * Until this existed the door read `error.message` and nothing else, so a person on their own
+ * mail server was told *"Check the IMAP host with your provider"* while the engine, in the same
+ * response, was holding the exact host to use. Measured against a real mailbox during the
+ * onboarding drill: typing `mail.trafficflow.ch` produced
+ * `{kind:"hostname_mismatch", expectedHost:"mail.trafficflow.ch", certHost:"trafficflow.ch",
+ * suggestedHost:"trafficflow.ch"}` — the answer, one field away from the screen it belonged on.
+ * The hosted web app has rendered this since the detail was added; only the desktop door dropped
+ * it, which made the STANDALONE customer — the one with no support channel — the worst served.
+ *
+ * The wording is the hosted app's, verbatim (`probe_tls_hostname_suggest` /
+ * `probe_tls_hostname` in `apps/webapp/messages/en.json`), so the two flavors of the same
+ * product do not describe the same refusal in two different ways.
+ *
+ * NOT a trust change, and this is the line worth naming: the sentence is only ever SHOWN. The
+ * person retypes the host and the next probe dials it and verifies strictly against it, exactly
+ * as before — see `suggestedHostFor` in `packages/api/src/imap-probe.ts`, which explains why a
+ * spoofed DNS answer can steer this suggestion but never past validation.
+ *
+ * Returns null for every shape it does not fully recognise, so an unknown or newer detail falls
+ * back to the service's own sentence rather than to a worse one.
+ */
+export function probeTlsSentence(details: unknown): string | null {
+  if (typeof details !== "object" || details === null) return null;
+  const d = details as { reason?: unknown; transport?: unknown; tls?: unknown };
+  if (d.reason !== "tls") return null;
+  if (typeof d.tls !== "object" || d.tls === null) return null;
+  const tls = d.tls as { kind?: unknown; certHost?: unknown; expectedHost?: unknown; suggestedHost?: unknown };
+  if (tls.kind !== "hostname_mismatch") return null;
+
+  const str = (v: unknown): string | null => (typeof v === "string" && v.trim() !== "" ? v : null);
+  const certHost = str(tls.certHost);
+  const expectedHost = str(tls.expectedHost);
+  if (!certHost || !expectedHost) return null;
+
+  const protocol = d.transport === "smtp" ? "SMTP" : "IMAP";
+  const opening =
+    `That server's certificate is for ${certHost}, not ${expectedHost}, ` +
+    "so we stopped before sending the password.";
+
+  const suggestedHost = str(tls.suggestedHost);
+  return suggestedHost
+    ? `${opening} It answers to ${suggestedHost} — use that as the ${protocol} host.`
+    : `${opening} Check the ${protocol} host with your provider.`;
 }
 
 /** Whatever was thrown, as something a person can read. */

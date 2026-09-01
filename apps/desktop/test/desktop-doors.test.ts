@@ -11,6 +11,7 @@ import {
   handoffProblem,
   implicitTls,
   localProblem,
+  probeTlsSentence,
   cloudProblem,
   portOr,
   settle,
@@ -344,6 +345,81 @@ describe("the local door", () => {
     expect(result.problem).toBe("the mail server refused that password");
     // The settings still landed: the door is chosen, and only the password has to be retyped.
     expect(result.status?.state).toBe("serving");
+  });
+
+  /**
+   * THE VANITY-HOST REFUSAL, WHICH THE DOOR USED TO THROW AWAY.
+   *
+   * Measured against a real mailbox during the onboarding drill: a person on their own mail
+   * server types `mail.<their-domain>`, the server there presents a certificate for
+   * `<their-domain>`, and the engine refuses with `details.tls.suggestedHost` naming the host
+   * that would have worked. The door read `error.message` only, so what reached the screen was
+   * the service's generic sentence — "Check the IMAP host with your provider" — while the answer
+   * sat unread in the same response. The body below is the real one, field for field.
+   *
+   * To watch this fail, drop the `suggestedHost` branch in `probeTlsSentence`: the assertion
+   * that the person is told the host goes red, and the assertion that they are NOT sent to their
+   * provider goes red with it.
+   */
+  it("names the host the certificate covers instead of sending the person to their provider", async () => {
+    shellThatWorks(SERVING, 400);
+    host.__TAURI_INTERNALS__!.invoke = async (command) => {
+      if (command === "engine_configure") return { state: "starting", mode: "local" };
+      if (command === "engine_status") return SERVING;
+      return encode(400, JSON.stringify({
+        error: {
+          code: "mailbox_probe_failed",
+          message: "That mail server's certificate does not match the host you entered, "
+            + "so we stopped before sending the password. Check the IMAP host with your provider.",
+          details: {
+            reason: "tls",
+            transport: "imap",
+            tls: {
+              kind: "hostname_mismatch",
+              expectedHost: "mail.trafficflow.ch",
+              certHost: "trafficflow.ch",
+              suggestedHost: "trafficflow.ch",
+            },
+          },
+        },
+      }), "Bad Request");
+    };
+
+    const result = await enterLocalDoor(filled, providerById("fastmail"));
+    expect(result.problem).toBe(
+      "That server's certificate is for trafficflow.ch, not mail.trafficflow.ch, "
+      + "so we stopped before sending the password. It answers to trafficflow.ch — "
+      + "use that as the IMAP host.",
+    );
+    // The whole point: the person is told the host, not told to go and ask someone.
+    expect(result.problem).not.toMatch(/with your provider/);
+  });
+
+  /**
+   * The same refusal with nothing to suggest — the certificate names a host, but none that
+   * `suggestedHostFor` would stand behind. The person still learns which name was presented,
+   * which the generic sentence never told them, and only THEN is sent to their provider.
+   */
+  it("still names both hosts when the probe has no suggestion to make", () => {
+    expect(probeTlsSentence({
+      reason: "tls", transport: "smtp",
+      tls: { kind: "hostname_mismatch", expectedHost: "mail.example.org", certHost: "*.hosting.example" },
+    })).toBe(
+      "That server's certificate is for *.hosting.example, not mail.example.org, "
+      + "so we stopped before sending the password. Check the SMTP host with your provider.",
+    );
+  });
+
+  /** Every shape it does not fully recognise falls back to the service's own sentence. */
+  it("declines to rewrite a refusal it does not fully recognise", () => {
+    expect(probeTlsSentence(null)).toBeNull();
+    expect(probeTlsSentence({ reason: "auth", transport: "imap" })).toBeNull();
+    expect(probeTlsSentence({ reason: "tls", transport: "imap", tls: { kind: "expired" } })).toBeNull();
+    // A mismatch missing either host cannot be phrased, so it is not attempted.
+    expect(probeTlsSentence({
+      reason: "tls", transport: "imap",
+      tls: { kind: "hostname_mismatch", certHost: "trafficflow.ch" },
+    })).toBeNull();
   });
 
   it("refuses an incomplete form before it touches the shell", async () => {
