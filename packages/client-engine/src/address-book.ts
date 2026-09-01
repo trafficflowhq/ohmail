@@ -191,25 +191,38 @@ interface Acc extends AddressBookEntry {
 const SKEW = 86_400_000;
 /** Below every value `Date` can hold (±8.64e15), so no real timestamp can lose to a rejected one. */
 const NO_EVIDENCE = Number.NEGATIVE_INFINITY;
-function evidenceAt(at: number, now: number): number {
-  if (at === 0) return NO_EVIDENCE; // undated, or a `Date:` that would not parse
+/**
+ * `null` is "there was no date", and it is a SEPARATE INPUT rather than a number this function
+ * recognises. Reading absence off the value itself is what the previous version did — `at === 0`
+ * — and `Date.parse("1970-01-01T00:00:00.000Z")` is exactly `0`, so a message legitimately dated
+ * at the epoch was classified as having no date at all and lost to a 1968 one. `stamp()` is where
+ * "did this parse" is known, so that is where it stays.
+ */
+function evidenceAt(at: number | null, now: number): number {
+  if (at === null) return NO_EVIDENCE;
   return at > now + SKEW ? NO_EVIDENCE : at;
 }
 
 function addTo(
   into: Map<string, Acc>,
   who: EmailAddress | null | undefined,
-  at: number,
+  /** The message's parsed `Date:`, or `null` where it had none or it would not parse. */
+  dated: number | null,
   tier: number,
   now: number,
 ): void {
+  /* `lastAt`'s own contract is unchanged: `0` where nothing carrying this address was dated,
+     which {@link rankOf} reads as "no recency bonus". That collapses the epoch with the absent
+     date exactly as it always has — a pre-existing property of the RANKING, deliberately left
+     alone here, because the name rule is what this slice is about. */
+  const at = dated ?? 0;
   const raw = who?.address?.trim();
   if (!raw || !raw.includes("@")) return;
   const address = raw.toLowerCase();
   if (isRobotAddress(address)) return;
 
   const name = (who?.name ?? "").trim();
-  const nameAt = evidenceAt(at, now);
+  const nameAt = evidenceAt(dated, now);
   const prev = into.get(address);
   if (!prev) {
     // An empty name claims nothing, so it holds no tier either — see {@link NONE}.
@@ -244,10 +257,18 @@ function addTo(
   prev.nameAt = nameAt;
 }
 
-const stamp = (iso: string | null | undefined): number => {
-  if (!iso) return 0;
+/**
+ * The parsed `Date:`, or `null` where there was none or it would not parse.
+ *
+ * `null` and not `0`: `Date.parse("1970-01-01T00:00:00.000Z")` IS `0`, so a sentinel inside the
+ * number cannot tell a message dated at the epoch from one carrying no date at all — and once
+ * {@link evidenceAt} started ranking "no date" below every real one, that collision stopped being
+ * harmless and started demoting a legitimate timestamp. Callers that want the old `0` say so.
+ */
+const stamp = (iso: string | null | undefined): number | null => {
+  if (!iso) return null;
   const t = Date.parse(iso);
-  return Number.isNaN(t) ? 0 : t;
+  return Number.isNaN(t) ? null : t;
 };
 
 /**
