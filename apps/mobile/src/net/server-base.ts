@@ -283,23 +283,47 @@ async function probeCandidate(
       controller?.abort();
     }, deadlineMs);
   });
+  /**
+   * THIS PROMISE ALWAYS HAS A HANDLER, EVEN IF NOTHING EVER RACES IT — review round 5.
+   *
+   * `fetchImpl` is a seam, and a seam can throw SYNCHRONOUSLY: a transport that rejects a malformed
+   * URL by throwing, a test double, a platform binding that has not been installed. The throw
+   * propagates to the caller correctly — but the timer is already armed, and when it fires it
+   * rejects a promise nobody is waiting on. In React Native that is an unhandled rejection, which
+   * is a red box in development and, on some runtimes, a good deal worse.
+   *
+   * The `finally` clears the timer for every path that gets INTO the try; this covers the one path
+   * that never does. Attaching a no-op rejection handler is enough — it does not swallow the
+   * rejection the race sees, because that race attaches its own.
+   *
+   * REDUNDANT WITH THE FETCH'S PLACEMENT INSIDE THE TRY, deliberately and in the same way the
+   * reject-before-abort ordering is redundant with the `expired` reclassification: with the call
+   * inside, a synchronous throw already reaches the `finally`, so a mutation runner reports this
+   * line as unnecessary. What must hold is that AT LEAST ONE is present, which is a property of the
+   * pair: removing either alone changes nothing, and removing both leaves an unhandled rejection,
+   * so the two are only meaningful when tested together.
+   */
+  void timedOut.catch(() => undefined);
 
   /* `redirect: "manual"` — see {@link answeredByApi}'s redirect note. Honoured where the platform
-     honours it; the guards there are what hold when it is not. */
-  const inFlight = fetchImpl(requested, {
-    redirect: "manual",
-    ...(controller ? { signal: controller.signal } : {}),
-  });
-  /* THE ABANDONED RESPONSE IS STILL LET GO. If the platform ignores the abort, this fetch outlives
-     the race it lost; when it eventually resolves, nothing was going to consume its body. Attached
-     here rather than in a `finally`, because the whole point is that it may land long after this
-     function has returned. */
-  void inFlight.then(
-    (res) => { if (settled) letGo(res); },
-    () => undefined,
-  );
+     honours it; the guards there are what hold when it is not.
 
+     INSIDE the try below rather than before it, for the same round-5 finding: a synchronous throw
+     from the seam must still reach the `finally` that clears the timer. */
   try {
+    const inFlight = fetchImpl(requested, {
+      redirect: "manual",
+      ...(controller ? { signal: controller.signal } : {}),
+    });
+    /* THE ABANDONED RESPONSE IS STILL LET GO. If the platform ignores the abort, this fetch outlives
+       the race it lost; when it eventually resolves, nothing was going to consume its body. Attached
+       here rather than in a `finally`, because the whole point is that it may land long after this
+       function has returned. */
+    void inFlight.then(
+      (res) => { if (settled) letGo(res); },
+      () => undefined,
+    );
+
     const res = await Promise.race([inFlight, timedOut]);
     headed = res;
     try {
@@ -460,16 +484,29 @@ function answeredFromRequest(finalUrl: string, requested: string): boolean {
  * deliberately: a platform that reports no final URL for ORDINARY responses would otherwise have
  * every server refused, which is a total breakage traded for a partial guard.
  *
- * What that residual can and cannot do is worth stating exactly, because it is smaller than it
- * looks. The base stored is always `candidate` — `<origin>` or `<origin>/api`, the address the
- * person named — and NEVER the redirect's target, which this function does not carry anywhere. So
- * the reachable harm is choosing the wrong PATH on the right ORIGIN: the same bounded outcome as
- * the forged-refusal residual above.
+ * ── AND THE RESIDUAL HAS TWO HALVES. AN EARLIER VERSION OF THIS NOTE NAMED ONLY ONE. ───────────
  *
- * The larger-sounding worry — a bearer reaching the redirect's target — is not this probe's to
- * close and is not created by it: any authenticated request to an origin that redirects does that,
- * because the engine's own transport follows redirects too. That is a pre-existing property of
- * `HttpAdapter`, named here so it is not mistaken for something this file introduced or fixed.
+ * It said "the reachable harm is choosing the wrong PATH on the right ORIGIN", which is true of the
+ * BASE and false as a summary — the paragraph above it had already said the request goes out. A
+ * comment that contradicts itself two paragraphs apart is worse than one that overstates, because
+ * each half looks checked. Review round 6 called it, correctly. Both halves, then:
+ *
+ *  1. **THE ANSWER IS NOT ACCEPTED.** The base stored is always `candidate` — `<origin>` or
+ *     `<origin>/api`, the address the person named — and NEVER a redirect's target, which this
+ *     function does not carry anywhere. That half is closed.
+ *  2. **THE REQUEST IS STILL ISSUED**, and rejecting the response cannot un-issue it. On a platform
+ *     that follows the redirect, a hostile origin can make this phone send a credential-free GET to
+ *     an address of its choosing — including one only this phone's network can resolve. That is
+ *     blind request forgery against whatever is on that network, and no check after the fact
+ *     touches it.
+ *
+ * WHAT BOUNDS THE SECOND HALF IS THAT IT IS NOT A NEW CAPABILITY. Reaching this line means the
+ * origin has ALREADY been dialled by `negotiate` (`/hello`), whose fetch follows redirects on the
+ * same platform under the same rules, and the engine's own transport does too on every
+ * authenticated request afterwards. An origin that can do this through the probe could already do
+ * it through the handshake that let it get this far. So this file makes the primitive two requests
+ * cheaper and does not create it — which is the honest size of it, and is not the same as saying
+ * it does not exist.
  */
 async function answeredByApi(res: Response, requested: string): Promise<boolean> {
   /* Every rejection below lets the body go — see {@link letGo}. Only the arm that READS the body
@@ -485,10 +522,32 @@ async function answeredByApi(res: Response, requested: string): Promise<boolean>
     return false;
   }
   try {
-    const body = (await res.json()) as { error?: { code?: unknown } };
-    return body.error?.code === "unauthorized";
-  } catch {
-    return false;
+    /* `?.` ON THE BODY ITSELF, not only on `error` — review round 7. `null` is valid JSON, so a
+       401 whose body is literally `null` (or a number, or a string) parses fine and then throws a
+       `TypeError` on the property access. Under the discrimination below a thrown TypeError is a
+       TRANSPORT failure, so two fully received responses could produce "could not reach that
+       server". A body that parsed and is not the envelope is a DISPROOF, which is what this now
+       answers. */
+    const body = (await res.json()) as { error?: { code?: unknown } } | null;
+    return body?.error?.code === "unauthorized";
+  } catch (err) {
+    /**
+     * A PARSE FAILURE IS AN ANSWER. A TRANSFER FAILURE IS NOT — review round 6.
+     *
+     * Both used to land here and both became `false`, i.e. "definitively not the API". They are not
+     * the same fact. Body bytes that arrived and did not parse ARE a disproof: whatever that was,
+     * it is not the API's envelope. A connection that RESET while the body was being read disproves
+     * nothing — the API may well be exactly here — and calling it a disproof let a transient
+     * failure on the right candidate produce the sentence saying both addresses had been ruled out,
+     * which sends an operator to change proxy routing that was already correct.
+     *
+     * `SyntaxError` is the discrimination and it is the platform's own: `Response.json()` rejects
+     * with one for malformed JSON and with a network error (a `TypeError`) for a transfer that
+     * failed. Anything that is not a parse error is re-thrown, so the caller classifies it as the
+     * transport failure it is.
+     */
+    if (err instanceof SyntaxError) return false;
+    throw err;
   }
 }
 
@@ -622,9 +681,9 @@ export async function resolveApiBase(
   }
 
   /* A STALL IS ITS OWN ANSWER — see {@link stalled}. Below the transport arm because a run that had
-     both a hard failure and a stall was, at least once, genuinely unable to connect; above the
-     generic one because "something answered and was not the API" is false of a route that never
-     answered at all. */
+     both a hard failure and a stall was, at least once, genuinely unable to connect; above the two
+     below because a route that never answered has not been disproved, and both of those sentences
+     are about candidates that were. */
   if (stalled) {
     return {
       kind: "refused",
@@ -636,6 +695,30 @@ export async function resolveApiBase(
     };
   }
 
+  /**
+   * A MIXED RESULT MUST NOT CLAIM BOTH CANDIDATES WERE DISPROVED — review round 5's second finding.
+   *
+   * One candidate answering definitively (and not as the API) while the other fails at the transport
+   * used to reach the generic sentence below, which says the API was found "neither at the address
+   * itself nor under /api". That is false: the failed candidate was never CLASSIFIED at all, and it
+   * may be exactly where the API is. A transient reset would have been reported as a proxy
+   * misconfiguration, sending an operator to change routing that was already right.
+   *
+   * Reaching here means `reached` is true (or the arm above would have fired), so this is precisely
+   * the mixed case: one address answered, one did not, and the sentence says both halves.
+   */
+  if (transportFailures.length > 0) {
+    return {
+      kind: "refused",
+      reason:
+        "One of the two addresses ohmail tried answered and was not its mail API, and the other " +
+        `could not be reached — ${transportFailures[0]!}. If you run this server, check that it ` +
+        "is passing /api through to the ohmail API.",
+    };
+  }
+
+  /* BOTH CANDIDATES WERE CLASSIFIED AND NEITHER WAS THE API — the only state in which "neither" is
+     a true word, which is what the two arms above exist to protect. */
   return {
     kind: "refused",
     reason:
