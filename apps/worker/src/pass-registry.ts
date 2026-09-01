@@ -106,8 +106,15 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     // runner takes a `LeasePermit` under `--execute` and re-verifies it at every chunk boundary —
     // and the two fences are named separately because they answer different questions: the leader
     // fence is worker-to-worker, the organizer lease is install-to-install.
-    fence: "visit: the leased adapter + fenced writes + a fresh leader read per chunk; CLI: an "
-      + "organizer-lease permit, re-verified per chunk, and the same per-chunk desire re-read both get",
+    // AND THE PRECONDITION, added 2026-09-01 — the entry named the permit and stopped there, which
+    // was true and incomplete in the way this line has now been wrong twice. The permit alone is not
+    // what makes it safe for this CLI to wear the always-on worker's install id: without the live-twin
+    // check the gate reads the running worker's own claim as this process's, adopts the mailbox and
+    // expunges it. The check is the thing that has to happen FIRST, so it is named first.
+    fence: "visit: the leased adapter + fenced writes + a fresh leader read per chunk; CLI: a "
+      + "live-twin refusal (`assertNoLiveTwin`) BEFORE the gate, then an organizer-lease permit "
+      + "re-verified per chunk and before every individual move, and the same per-chunk desire "
+      + "re-read both get",
   },
   {
     name: "sensitive_fp_backfill",
@@ -353,8 +360,13 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     // Also a line that was not true when written: the runner took no lease at all. The FETCHES
     // never needed one — they read — but `ensureFolders()` on the way in CREATES the `ohmail/*`
     // tree, and that is a write into somebody else's mailbox. One check before the one mutation.
-    fence: "an organizer-lease check before `ensureFolders()` (its only server write); the fetches "
-      + "and body writes are reads plus our own database, and the dry run never connects",
+    // Same addition as `junk_sweep`'s, for the same reason: this runner shares the always-on
+    // worker's install id too, so the twin refusal is what makes the lease check safe rather than
+    // an extra layer on top of it.
+    fence: "a live-twin refusal (`assertNoLiveTwin`) and then an organizer-lease check before "
+      + "`ensureFolders()` (its only server write — up to five `mailboxCreate` commands, with no "
+      + "re-check between them, which is written down at the call site); the fetches and body "
+      + "writes are reads plus our own database, and the dry run never connects",
   },
   {
     name: "sender_name_backfill",
