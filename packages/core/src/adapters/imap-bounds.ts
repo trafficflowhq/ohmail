@@ -415,9 +415,19 @@ export class ImapDeadline {
    * The timer is always cleared, including on the success path — a dangling 180 s timer per read
    * would keep the process alive past its work.
    */
-  async race<T>(op: Promise<T>, folder?: string, onAbandon?: () => void): Promise<T> {
+  async race<T>(
+    op: Promise<T>, folder?: string,
+    onAbandon?: (because: ImapBoundExceeded) => void,
+  ): Promise<T> {
     const remaining = this.remainingMs();
-    if (remaining < 0) { onAbandon?.(); this.check(folder); }
+    if (remaining < 0) {
+      // Build the refusal FIRST so the retirement carries the same one the caller will see.
+      const because = new ImapBoundExceeded(
+        this.bound, this.budgetMs, this.budgetMs - remaining, folder,
+      );
+      onAbandon?.(because);
+      throw because;
+    }
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       return await Promise.race([
@@ -438,8 +448,11 @@ export class ImapDeadline {
               // So the connection is retired HERE, by the code that decided to stop reading,
               // rather than left to a convention. A deadline breach means this connection is
               // finished.
-              onAbandon?.();
-              reject(new ImapBoundExceeded(this.bound, this.budgetMs, this.budgetMs, folder));
+              const because = new ImapBoundExceeded(
+                this.bound, this.budgetMs, this.budgetMs, folder,
+              );
+              onAbandon?.(because);
+              reject(because);
             },
             remaining,
           );
@@ -499,12 +512,15 @@ export async function boundedCollect<T, R>(
     /**
      * Retire the connection — the stream is being abandoned mid-command.
      *
+     * `because` is the refusal the caller is about to see (absent for a truncating stop, which
+     * raises nothing), so a retired adapter can keep answering with the SAME bound.
+     *
      * The argument is `notify`: TRUE when this function will NOT throw, so nothing else is going
      * to report the retirement and the connection's owner has to be told directly. FALSE when it
      * is about to throw, because then the throw IS the report — and a second, synthetic one
      * would reset the caller's failure accounting instead of adding to it.
      */
-    onAbandon?: (notify: boolean) => void;
+    onAbandon?: (notify: boolean, because?: ImapBoundExceeded) => void;
     map: (item: T) => R;
   },
 ): Promise<R[]> {
@@ -515,16 +531,19 @@ export async function boundedCollect<T, R>(
   for (;;) {
     const step = opts.deadline === undefined
       ? await it.next()
-      : await opts.deadline.race(it.next(), opts.folder, () => opts.onAbandon?.(false));
+      : await opts.deadline.race(
+        it.next(), opts.folder, (because) => opts.onAbandon?.(false, because),
+      );
     if (step.done === true) break;
     seen++;
     if (seen > opts.max) {
-      // `stop` returns a value; `throw` does not. That is exactly the distinction.
-      opts.onAbandon?.(overflow === "stop");
-      if (overflow === "stop") break;
       // Thrown BEFORE the item is mapped or pushed: the ceiling is the size of the container,
       // not one past it.
-      throw new ImapBoundExceeded(opts.bound, opts.max, seen, opts.folder);
+      const because = new ImapBoundExceeded(opts.bound, opts.max, seen, opts.folder);
+      // `stop` returns a value; `throw` does not. That is exactly the distinction.
+      opts.onAbandon?.(overflow === "stop", overflow === "stop" ? undefined : because);
+      if (overflow === "stop") break;
+      throw because;
     }
     out.push(opts.map(step.value));
   }
