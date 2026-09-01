@@ -384,12 +384,11 @@ export async function ohboxTidyPass(
   const owed = isOwed(settings, deps.force ?? false);
   if (!deps.assumePolicy && (policy !== "people_only" || !owed)) return EMPTY();
 
-  // Rules, contacts and the account's own addresses — read ONCE. This pass is the only writer of the
-  // state it decides against, so a per-page re-read would cost queries to observe a change that
-  // cannot happen and would make two pages of one run decide under different knowledge.
-  const repo = makeDrizzleRepo(db as unknown as Parameters<typeof makeDrizzleRepo>[0]);
-  const rules: Rule[] = await repo.listRules(accountId);
-  const known: ReadonlySet<string> = await repo.knownSenders(accountId);
+  // ── THE ACCOUNT'S OWN ADDRESSES — READ ONCE, AND THAT ONE IS DELIBERATE ──────────────────────
+  //
+  // These shape the candidate QUERY (they are what "not from myself" excludes), and the set changes
+  // only when a mailbox is connected or removed — an act that restarts this pass's world anyway. It
+  // is read once and named as such, rather than swept along with the two reads below.
   const ownRows = await db.select({ address: mailboxes.address }).from(mailboxes)
     .where(eq(mailboxes.accountId, accountId));
   const ownAddresses = ownRows.map((r) => r.address.toLowerCase());
@@ -434,6 +433,28 @@ export async function ohboxTidyPass(
             destinations: {}, basis: {}, sensitivityExcluded: 0, capped: false, done: false,
           };
         }
+
+        // ── THE KNOWLEDGE THE DECISION RESTS ON, RE-ASKED PER PAGE ───────────────────────────
+        //
+        // These used to be read ONCE per run, above the loop, behind a comment claiming *"this pass
+        // is the only writer of the state it decides against, so a per-page re-read would cost
+        // queries to observe a change that cannot happen"*. **It can happen and there are six
+        // writers.** `rules` is written by the API's rule editor (`routes/rules.ts`), and the
+        // `contacts` set behind `knownSenders` by the Screener's decide path
+        // (`screener-service.ts`), the Junk window (`junk-window.ts`), the profile import, the
+        // consent seed and the ingest pipeline's own contact learning. So a run that started before
+        // a user deleted a rule went on tidying mail out of the Ohbox under it, page after page,
+        // and the comment was the reason nobody looked.
+        //
+        // Read INSIDE the page transaction and bound to `tx`, after the settings row is locked, so
+        // the knowledge is exactly as fresh as the posture check above it and the candidate set
+        // below it. The old comment's counter-argument — that two pages of one run would then decide
+        // under different knowledge — is not a cost, it is the REQUIREMENT: the settings row is
+        // already re-read per page for precisely that reason, and cached rules made the decision
+        // half-fresh in a way no reader could see. Two indexed reads per hundred rows.
+        const pageRepo = makeDrizzleRepo(tx as unknown as Parameters<typeof makeDrizzleRepo>[0]);
+        const rules: Rule[] = await pageRepo.listRules(accountId);
+        const known: ReadonlySet<string> = await pageRepo.knownSenders(accountId);
 
         const candidates = await selectCandidates(tx, { accountId, ownAddresses, limit: batch, afterId });
 

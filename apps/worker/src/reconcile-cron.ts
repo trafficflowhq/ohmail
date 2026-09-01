@@ -13,7 +13,8 @@ import { LeaderFencedError, runSyncCycle, type SyncDeps } from "./sync.js";
 import { OrganizerProfileSync } from "./profile.js";
 import { makeStorageCapResolver } from "./storage-cap.js";
 import {
-  CLOUD_DISPLAY_NAME, LeaseUnavailableError, cloudInstallId, readMailboxLease,
+  CLOUD_DISPLAY_NAME, LeaseUnavailableError, OrganizerStandDownError, acquireLeasePermit,
+  cloudInstallId, type LeasePermit,
 } from "./lease.js";
 import { isCliEntry } from "./entry.js";
 import { cronEvent, runCronCli } from "./cron-log.js";
@@ -74,9 +75,14 @@ const RECONCILE_INSTANCE_PREFIX = "reconcile-cron";
  *     BEFORE `ensureFolders()`, because `ensureFolders` already writes (it creates the `ohmail/*`
  *     tree in somebody else's mailbox).
  *
- *     ONCE per run, not once per cycle, and that is not a weakening: the worker re-verifies every
- *     cycle because it stays attached indefinitely and a mailbox can change hands under it. This
- *     process holds the shard lock for one bounded sweep and then exits.
+ *     RE-ASKED AT EVERY WRITE BOUNDARY THIS PASS OWNS, through a {@link LeasePermit}. It read the
+ *     lease ONCE per run until 2026-09-01, under a note here arguing that was "not a weakening"
+ *     because "this process holds the shard lock for one bounded sweep and then exits". **The bound
+ *     was the problem, and the shard lock is not the relevant one.** One sweep is `ensureFolders()`
+ *     plus two full cycles over a whole mailbox, and the shard lock coordinates Cloud workers with
+ *     each other — it is invisible to a desktop install, which is precisely the organizer this pass
+ *     would be writing beside. See the block at `ensureFolders()` for the boundaries and for the
+ *     residual (the writes inside one `runSyncCycle`, which the permit does not reach).
  *
  *  2. **THE LEADER FENCE.** `SyncDeps.fence` is a no-op when absent, and this pass built
  *     its `SyncDeps` without one while `LeaderLock.lost` — which exists precisely to expose the
@@ -205,9 +211,9 @@ export async function runReconcileCron(
     // sites: "somebody else holds this" and "I could not look" must not be reachable from one
     // another (`ORGANIZER-LEASE-RESUME.md` §3.4). A lease we cannot read means we do not organize
     // and the mailbox is NOT recorded as stood down — there is nothing to record.
-    let outcome;
+    let permit: LeasePermit;
     try {
-      outcome = await readMailboxLease({
+      permit = await acquireLeasePermit({
         adapter,
         self: {
           // The SAME identity the always-on worker claims with — a per-process id here would make
@@ -221,12 +227,45 @@ export async function runReconcileCron(
           // Cloud claim has gone stale.
           lastNonce: null,
         },
-        now: new Date(),
+        // A FUNCTION, not an instant. The permit re-reads past its TTL and needs the clock at the
+        // moment it asks, not the clock at the moment this pass started.
+        now: () => new Date(),
         takeover: row.takeoverAuthorizedAt ? "authorized" : "none",
         ...(config.organizer?.staleAfterMs !== undefined ? { staleAfterMs: config.organizer.staleAfterMs } : {}),
         log: (event, detail) => { log.info(event, { ...detail, mailboxId, accountId: row.accountId }); },
       });
     } catch (err) {
+      if (err instanceof OrganizerStandDownError) {
+        log.warn(cronEvent("reconcile", "organizer_stand_down"), {
+          mailboxId, accountId: row.accountId,
+          disabledReason: err.reason,
+          // WHETHER THE OTHER ORGANIZER IS STILL RENEWING — `held` is a live foreign claim,
+          // `stopped` is one nobody has renewed since. Same two incidents, same `disabled_reason`.
+          // `state` and not `organizerState`: `ALLOWED_FIELDS` carries the former.
+          state: err.state,
+          heldBy: err.heldBy,
+          reason: "another organizer holds this mailbox; this sweep writes nothing and mutates " +
+            "nothing — exactly one active organizer per mailbox is the invariant this enforces",
+        });
+        // The durable half, through the SAME fenced lifecycle write the worker's stand-down uses.
+        // A fenced-out write still stands the mailbox down IN THIS PROCESS: the decision not to
+        // organize is ours and is not contingent on recording it.
+        try {
+          const written = await markMailboxStoodDown(db, mailboxId, err.reason, { fence });
+          if (!written) {
+            log.info(cronEvent("reconcile", "stand_down_write_fenced"), {
+              mailboxId, accountId: row.accountId,
+              reason: "the mailbox is already disabled or this process no longer leads the shard",
+            });
+          }
+        } catch (writeErr) {
+          log.error(cronEvent("reconcile", "stand_down_write_failed"), {
+            mailboxId, accountId: row.accountId, err: writeErr,
+            reason: "this sweep has organized nothing regardless; the row could not record why",
+          });
+        }
+        return { ran: false, reason: "stood-down" };
+      }
       if (!(err instanceof LeaseUnavailableError)) throw err;
       log.warn(cronEvent("reconcile", "lease_unreadable"), {
         mailboxId, accountId: row.accountId, err,
@@ -234,38 +273,6 @@ export async function runReconcileCron(
           "an unreadable lease is not a stand-down and is not the mailbox's fault",
       });
       return { ran: false, reason: "lease-unreadable" };
-    }
-
-    if (!outcome.organize) {
-      log.warn(cronEvent("reconcile", "organizer_stand_down"), {
-        mailboxId, accountId: row.accountId,
-        disabledReason: outcome.reason,
-        // WHETHER THE OTHER ORGANIZER IS STILL RENEWING — `held` is a live foreign claim,
-        // `stopped` is one nobody has renewed since. Same two incidents, same `disabled_reason`.
-        // `state` and not `organizerState`: `ALLOWED_FIELDS` carries the former.
-        state: outcome.state,
-        heldBy: outcome.by?.displayName ?? null,
-        reason: "another organizer holds this mailbox; this sweep writes nothing and mutates " +
-          "nothing — exactly one active organizer per mailbox is the invariant this enforces",
-      });
-      // The durable half, through the SAME fenced lifecycle write the worker's stand-down uses.
-      // A fenced-out write still stands the mailbox down IN THIS PROCESS: the decision not to
-      // organize is ours and is not contingent on recording it.
-      try {
-        const written = await markMailboxStoodDown(db, mailboxId, outcome.reason, { fence });
-        if (!written) {
-          log.info(cronEvent("reconcile", "stand_down_write_fenced"), {
-            mailboxId, accountId: row.accountId,
-            reason: "the mailbox is already disabled or this process no longer leads the shard",
-          });
-        }
-      } catch (err) {
-        log.error(cronEvent("reconcile", "stand_down_write_failed"), {
-          mailboxId, accountId: row.accountId, err,
-          reason: "this sweep has organized nothing regardless; the row could not record why",
-        });
-      }
-      return { ran: false, reason: "stood-down" };
     }
 
     // ONE-SHOT, as at `index.ts#mayOrganize`. The authorization bought this becoming and no
@@ -283,6 +290,30 @@ export async function runReconcileCron(
       }
     }
 
+    // ── EVERY WRITE BOUNDARY THIS PASS OWNS, RE-ASKED ─────────────────────────────────────────
+    //
+    // This pass used to read the lease ONCE and then write for a whole sweep, and the comment at the
+    // top of this file defended it: *"ONCE per run, not once per cycle, and that is not a weakening:
+    // … This process holds the shard lock for one bounded sweep and then exits."* **The bound was the
+    // problem.** "One bounded sweep" is `ensureFolders()` plus TWO full `runSyncCycle` calls over a
+    // whole mailbox — minutes on a large one — and a takeover landing anywhere inside it was
+    // unobserved until the process exited. The shard lock does not help: it coordinates Cloud workers
+    // with each other and is invisible to a desktop install, which is the organizer this pass would
+    // be writing beside.
+    //
+    // So the lease read carries a deadline (`LeasePermit`) and is asked at each boundary this pass
+    // controls: here, before `ensureFolders()` CREATEs anything, and before each cycle. Inside the
+    // TTL the ask is a comparison; past it, one `runLeaseGate` — which also RENEWS, so a long sweep
+    // keeps its own claim fresh instead of ageing into staleness while it works. A stand-down throws
+    // and the `catch` below reports it as the handover it is.
+    //
+    // WHAT THIS DOES NOT BOUND, because the honest bound is worth more than a tidy claim: the writes
+    // INSIDE a `runSyncCycle` are gated by that cycle's own leader fence and not by this permit, so
+    // the residual window is one cycle rather than one sweep. Closing it means threading the
+    // organizer lease through `SyncDeps` alongside the leader fence — the same seam the always-on
+    // worker needs and does not have either. Ledgered as one row for both callers rather than fixed
+    // halfway here.
+    await permit.check();
     await adapter.ensureFolders();
     // ── THE IMPORT HOLD, ARMED FROM THE MAILBOX ITSELF (TAKEOVER-RESCREEN, rounds 4 and 6) ────
     //
@@ -335,7 +366,12 @@ export async function runReconcileCron(
       // under a question that has closed — and a document this pass itself just took over (the
       // cron executes authorized takeovers) is seen by the evaluation, marker or no marker. A
       // faulted read costs one stale cycle, retried at the second pass.
+      await permit.check();
       await runSyncCycle({ ...deps, importDecisionOpen: await profileSync.importDecisionOpenNow() });
+      // The second cycle is where the once-per-run read was weakest: the FIRST cycle has just spent
+      // however long it took draining a mailbox, so this is the ask most likely to find the lease
+      // actually gone rather than to be served from the receipt.
+      await permit.check();
       await runSyncCycle({ ...deps, importDecisionOpen: await profileSync.importDecisionOpenNow() });
     } catch (err) {
       if (!(err instanceof LeaderFencedError)) throw err;

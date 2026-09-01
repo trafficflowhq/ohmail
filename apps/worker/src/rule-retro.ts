@@ -239,32 +239,38 @@ export async function ruleRetroPass(
   };
   if (owed.length === 0) return result;
 
-  // Rules and contacts are read ONCE PER ACCOUNT. This pass is the only writer of the state it
-  // decides against, so re-reading per page would cost two queries per hundred rows to observe a
-  // change that cannot happen — and would make two pages of one run decide under different
-  // knowledge, which is a worse property than the staleness it avoids. Cached per account
-  // because `deps.accountId` may be omitted (the CLI/test shape) and one account's rule set must
-  // never decide another's.
-  const repo = makeDrizzleRepo(db as unknown as Parameters<typeof makeDrizzleRepo>[0]);
-  const knowledge = new Map<string, { rules: Rule[]; known: ReadonlySet<string>; own: string[] }>();
-  const knowledgeFor = async (accountId: string) => {
-    const hit = knowledge.get(accountId);
-    if (hit) return hit;
-    const ownRows = await db.select({ address: mailboxes.address }).from(mailboxes)
-      .where(eq(mailboxes.accountId, accountId));
-    const fresh = {
-      rules: await repo.listRules(accountId),
-      known: await repo.knownSenders(accountId),
-      own: ownRows.map((r) => r.address.toLowerCase()),
+  // ── THE ACCOUNT'S OWN ADDRESSES — CACHED PER ACCOUNT, AND THAT ONE IS DELIBERATE ─────────────
+  //
+  // These shape the candidate QUERY (`ownAddresses` is what "not from myself" excludes) and change
+  // only when a mailbox is connected or removed. Cached per account rather than per run because
+  // `deps.accountId` may be omitted (the CLI/test shape), so one run can walk several accounts and
+  // one account's address set must never decide another's.
+  //
+  // **`rules` and `knownSenders` used to be cached here too, and that was the defect.** The comment
+  // that stood in this place claimed *"this pass is the only writer of the state it decides
+  // against, so re-reading per page would cost two queries per hundred rows to observe a change
+  // that cannot happen"*. **It can happen and there are six writers**: the API's rule editor
+  // (`routes/rules.ts`) writes `rules`, and the `contacts` set behind `knownSenders` is written by
+  // the Screener's decide path (`screener-service.ts`), the Junk window (`junk-window.ts`), the
+  // profile import, the consent seed and the ingest pipeline's own contact learning. The reads moved
+  // INTO the page transaction (see there); this cache holds only what the query shape needs.
+  const ownFor = (() => {
+    const cache = new Map<string, string[]>();
+    return async (accountId: string): Promise<string[]> => {
+      const hit = cache.get(accountId);
+      if (hit) return hit;
+      const ownRows = await db.select({ address: mailboxes.address }).from(mailboxes)
+        .where(eq(mailboxes.accountId, accountId));
+      const fresh = ownRows.map((r) => r.address.toLowerCase());
+      cache.set(accountId, fresh);
+      return fresh;
     };
-    knowledge.set(accountId, fresh);
-    return fresh;
-  };
+  })();
 
   for (const row of owed) {
     if (result.moved >= budget) { result.capped = true; break; }
     result.rules++;
-    const { rules, known, own } = await knowledgeFor(row.accountId);
+    const own = await ownFor(row.accountId);
 
     let pages = 0;
     let exhausted = false;
@@ -301,6 +307,25 @@ export async function ruleRetroPass(
         if (!live) return { gone: true, rows: 0, moved: 0, kept: 0, cursor: null, done: false };
 
         const rule = live as OwedRule;
+
+        // ── THE KNOWLEDGE THE DECISION RESTS ON, RE-ASKED PER PAGE ───────────────────────────
+        //
+        // The pass already re-reads its OWN rule `FOR UPDATE` above, so its own half of the decision
+        // was always fresh — which is exactly what made the cached half hard to see. `evaluateRules`
+        // below reads the account's WHOLE rule set and its known senders, and those were cached for
+        // the life of the run (see the block above the loop for the six writers that falsified the
+        // comment which justified it). A user who deleted a DIFFERENT rule, or screened a sender in,
+        // during a long retro walk had every later page decided under the rule set as it stood when
+        // the run began.
+        //
+        // Bound to `tx` and taken after the rule row is locked, so the knowledge is exactly as fresh
+        // as the rule that admitted this page and the candidates selected below it. The lock order is
+        // unchanged: these are plain reads of `rules`/`contacts`, no row lock, taken between the
+        // owned-rule lock and `folder_state`.
+        const pageRepo = makeDrizzleRepo(tx as unknown as Parameters<typeof makeDrizzleRepo>[0]);
+        const rules: Rule[] = await pageRepo.listRules(rule.accountId);
+        const known: ReadonlySet<string> = await pageRepo.knownSenders(rule.accountId);
+
         const candidates = await selectCandidates(tx, {
           rule, ownAddresses: own, limit: batch, afterId: rule.cursor,
         });
