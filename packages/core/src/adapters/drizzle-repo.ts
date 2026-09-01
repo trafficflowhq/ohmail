@@ -168,8 +168,55 @@ export interface FolderOpRow {
   attempts: number;
 }
 
+/**
+ * What a landed IMAP move is allowed to write back — {@link WorkerRepo.completeFolderState}'s
+ * argument, and deliberately NOT a {@link FolderStateRow}.
+ *
+ * A `FolderStateRow` states an INTENT (desired + observed together), which is the right shape for
+ * every writer that has just been told where a message belongs. A completion is the opposite kind
+ * of fact: the intent was decided minutes ago and possibly by someone else, and all the mover
+ * knows is where the message physically IS now. So the desired folder appears here only as
+ * `expectDesiredFolder` — the witness the write is conditional on — and never as a value to store.
+ */
+export interface FolderCompletion {
+  /**
+   * The desired folder this completion was COMPUTED AGAINST — the compare-and-set witness, not a
+   * value that gets written. The write applies only while the row still says this.
+   */
+  expectDesiredFolder: string;
+  /** Where the server now holds the message. The only placement fact a mover owns. */
+  observedFolder: string;
+  lastSetBy: "us" | "external";
+  /** See {@link FolderStateRow.satisfiedBy} — derives the status, never stored (there is no column). */
+  satisfiedBy?: string | null;
+}
+
 /** Worker-facing repo: everything the pipeline needs (RepoPort + RoutingPort) plus enumeration for sync/reconcile. */
 export interface WorkerRepo extends RepoPort, RoutingPort {
+  /**
+   * ── THE COMPLETION WRITE, AND WHY IT IS NOT {@link RepoPort.upsertFolderState} ─────────────
+   *
+   * Every filing the reconciler performs reads a pending row, goes to the network, and comes back
+   * to write down what happened. The read and the write are minutes apart on a slow host, and the
+   * value read in between — `desired_folder` — has SIX other writers that take no mailbox row and
+   * are therefore serialized against nothing: the API's move, the Screener's apply, `rule-retro`,
+   * `ohbox-tidy`, `screener-auto`, and the one-time sensitive re-screen. Completing through
+   * `upsertFolderState` writes the desire back as part of the completion, so a decision that
+   * committed during the move is REVERTED — a lost update, not a stale read: both writers behaved
+   * exactly as designed, nothing errors, and the message ends up where the older decision said.
+   *
+   * This method is the fix for the class rather than for one caller. `desired_folder` is not in
+   * its `SET` list at all — it is structurally unable to clobber an intent, which is a stronger
+   * statement than "the predicate happens to be right" — and the `WHERE` carries the witness, so
+   * a row whose desire moved on is left ENTIRELY alone: the newer intent keeps its status, its
+   * attempts and its schedule, and the next cycle converges it from the locator this completion
+   * already repointed.
+   *
+   * Returns TRUE when the desire still matched and the completion was written; FALSE when a newer
+   * intent (or an account erasure) owns the row and NOTHING was written. Callers that can observe
+   * it owe the fact to the audit log — silence here is how the defect stayed invisible.
+   */
+  completeFolderState(messageId: string, c: FolderCompletion): Promise<boolean>;
   getMailbox(mailboxId: string): Promise<
     { id: string; accountId: string; address: string; kickstartAt: Date | null } | null
   >;
@@ -186,9 +233,11 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * Two predicates carry the whole "never override a user decision" rule, and both are in the
    * statement rather than in the caller:
    *
-   *  · the sender (or its domain) has NO enabled rule. `rules` is the record of the user's
-   *    screener decisions (`screener-service.ts` writes one per decide), so a sender with a rule
-   *    has been ruled on and is not ours to re-route.
+   *  · the sender (or its domain) has NO enabled, UN-NARROWED rule. `rules` is the record of the
+   *    user's screener decisions (`screener-service.ts` writes one per decide), so a sender with a
+   *    rule has been ruled on and is not ours to re-route — but a rule carrying
+   *    `subject_contains`/`body_contains` is a CONJUNCTION about a subset of that sender's mail
+   *    (mail 0050, 0052), so it rules on nothing else. See the statement itself.
    *  · `last_set_by = 'us'`. A row set `external` is a placement the user performed in their own
    *    mail client, and the folder reconciler already refuses to revert those.
    *
@@ -1343,6 +1392,44 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     });
   }
 
+  /**
+   * {@link WorkerRepo.completeFolderState} — the conditional half of {@link upsertFolderState}.
+   *
+   * ONE statement, and the shape is the whole guarantee:
+   *
+   *  · `desired_folder` is absent from the `SET`. Not "written only when the predicate holds" —
+   *    ABSENT, so no future edit to this method can reintroduce the lost update by widening a
+   *    condition. The column is read in the `WHERE` and written nowhere.
+   *  · the `WHERE` carries the witness, so the read-decide-write is atomic against the six
+   *    writers that hold no mailbox row and are serialized by nothing else.
+   *  · zero rows matched ⇒ nothing was written. `observed_folder` is deliberately not written
+   *    either, even though the mover does own that fact: the newer intent's own writer supplied a
+   *    matching pair, and half-updating it would leave `reconcile_status` derived from one writer's
+   *    desire and another's observation. The locator repoint that precedes every call is what
+   *    carries the physical truth forward, and the next cycle files from there.
+   *
+   * The backoff reset is `upsertFolderState`'s, for its stated reason — but only on the arm that
+   * writes. A declined completion leaves the newer intent's schedule untouched, which is right: the
+   * schedule belongs to the intent it was earned against, and this completion is not that intent.
+   */
+  async completeFolderState(messageId: string, c: FolderCompletion): Promise<boolean> {
+    // Safe to derive from the witness: the `WHERE` below is what makes `desired_folder` equal to
+    // it at the instant of the write, so this status can never describe a desire the row lost.
+    const reconcileStatus = reconcileStatusFor({
+      desiredFolder: c.expectDesiredFolder, observedFolder: c.observedFolder,
+      lastSetBy: c.lastSetBy, satisfiedBy: c.satisfiedBy,
+    });
+    const written = await this.db.update(folderState).set({
+      observedFolder: c.observedFolder, lastSetBy: c.lastSetBy,
+      reconcileStatus, conflict: false, updatedAt: new Date(),
+      attempts: 0, nextAttemptAt: null,
+    }).where(and(
+      eq(folderState.messageId, messageId),
+      eq(folderState.desiredFolder, c.expectDesiredFolder),
+    )).returning({ id: folderState.id });
+    return written.length > 0;
+  }
+
   /** {@link upsertFolderState}'s read-state twin, backoff reset included and for its reasons. */
   async upsertFlagState(messageId: string, s: FlagStateRow): Promise<void> {
     const reconcileStatus = flagStatusFor(s);
@@ -1810,10 +1897,31 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       eq(folderState.lastSetBy, "us"),
       // THE USER'S DECISIONS ARE OFF LIMITS. A `rules` row for this sender (or its domain) is
       // exactly what `POST /screener/:id` writes when somebody screens them in or out.
+      //
+      // UN-NARROWED RULES ONLY, and the schema is what settles that rather than a preference:
+      // `subject_contains`/`body_contains` (mail 0050, 0052) are CONJUNCTIONS — *from this address
+      // AND with this in the subject/text* — and their column comments state the invariant that a
+      // present term "can only make a rule fire LESS often than it did". Matching on `kind`/
+      // `match` alone therefore let one narrow rule remove every OTHER message from that sender
+      // from this backlog, which is a rule changing an outcome for mail it does not match. Those
+      // messages now reach `evaluateRules`, the one implementation of what a rule matches; if the
+      // rule fires it wins there exactly as before. This site was found by sweeping every
+      // `kind = 'sender'` predicate in the tree after the same defect was fixed in
+      // `packages/services/src/sensitive-rescreen.ts` and `apps/worker/src/screener-auto.ts`.
+      //
+      // AND IT MOVES NO MAIL TODAY, which is stated rather than left to be assumed from the fix's
+      // presence: this method's one caller was the connect-time Screener re-route, and that pass
+      // was RETIRED — attaching a mailbox now decides nothing and moves nothing. Nothing in
+      // `apps/` or `packages/` calls this method. It is corrected anyway, because a wrong
+      // predicate on a live interface is a trap for its next caller, and it has a test of its own
+      // so the correction is not decorative — but whether the method should exist at all is a
+      // separate question, and this change did not answer it.
       sql`not exists (
         select 1 from ${rulesTbl} r
          where r.account_id = ${messages.accountId}
            and r.enabled = true
+           and r.subject_contains is null
+           and r.body_contains is null
            and (
              (r.kind = 'sender' and lower(r.match) = lower(${messages.fromAddress}))
              or (r.kind = 'domain' and lower(r.match) = split_part(lower(${messages.fromAddress}), '@', 2))

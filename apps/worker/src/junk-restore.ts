@@ -111,6 +111,35 @@ export const AT_CAP_RETRY_MS = 60 * 60 * 1000;
  */
 export const JUNK_RESTORE_MAX_BYTES = 8 * 1024 * 1024;
 
+/* ════════════════════════════════════════════════════════════════════════════════════════════
+   THE THREE SHELVES BELOW ARE PER-PROCESS, AND THE RULE THAT MAKES THAT CORRECT
+
+   Stated here as a rule rather than left as three separate coincidences, because the sibling pass
+   that broke it cost somebody's mail. `sensitive-backfill.ts` kept exactly this kind of shelf AND
+   was gated by a DURABLE completion marker, so one dropped connection refused a message for the
+   life of the process, the walk then finished, the marker landed, and that message stayed
+   redacted for ever. Fixed 2026-09-01 by splitting refusals the classifier DECIDED from refusals
+   it could not decide, and refusing to certify over the second kind.
+
+   THE RULE: process-scoped progress state is safe exactly while it cannot be LAUNDERED INTO A
+   DURABLE CLAIM. Losing it must cost work, never correctness.
+
+   This pass satisfies it structurally, and the reason is worth naming because it is not luck:
+   THERE IS NO COMPLETION MARKER HERE. Nothing durable ever says "this mailbox's junk restores are
+   done", so a restart clears all three shelves together and the next visit walks from the top and
+   re-learns them. The direction of every loss is towards MORE looking:
+
+     · `refusedByMailbox` — a restart re-attempts what it had declined. Safe direction.
+     · `capDeferredByMailbox` — a retry CLOCK, so a restart costs one wasted fetch.
+     · `resumeAfterByMailbox` — a rotation cursor whose WALL (`refusedByMailbox`) is per-process
+       too, so the two are lost together and a walk from the top makes real progress. That
+       pairing is the whole argument: a durable cursor over a per-process wall would resume PAST
+       rows nothing remembers refusing, which is the shape that starves.
+
+   A future change that gives this pass a durable "done" marker must move these three to disk in
+   the same commit, or it re-creates the sibling's defect one file over.
+   ════════════════════════════════════════════════════════════════════════════════════════════ */
+
 const refusedByMailbox = new Map<string, Set<string>>();
 /** The per-process memory of rows a new BUILD might change — see the header's two shelves. */
 export function refusedFor(mailboxId: string): Set<string> {

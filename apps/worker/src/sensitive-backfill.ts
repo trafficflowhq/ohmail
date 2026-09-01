@@ -195,21 +195,83 @@ export const SENSITIVE_FP_MAX_BYTES = 4 * 1024 * 1024;
  * make a one-shot repair's bookkeeping permanent in everybody's schema for ever, which is a much
  * larger thing to carry than a `Set` that lives as long as the mailbox is attached.
  *
- * A TRANSIENT fetch failure therefore costs a repair: it is refused for the rest of this
- * process's life and the walk may complete and mark before it is retried. That is a deliberate
- * trade against re-reading a permanently-gone message every cycle for ever, and it is
- * recoverable by the documented route — clear `sensitive_fp_backfill_at` and the pass runs again
- * from scratch.
+ * ── THE PARAGRAPH THAT USED TO STAND HERE WAS A TRADE NOBODY WOULD HAVE ACCEPTED IF ASKED ──
+ *
+ * It read: *"A TRANSIENT fetch failure therefore costs a repair: it is refused for the rest of
+ * this process's life and the walk may complete and mark before it is retried."* Every clause is
+ * true and the conclusion is not survivable, because of the word MARK. The marker
+ * (`mailboxes.sensitive_fp_backfill_at`) is DURABLE and it is what stops the pass ever looking at
+ * this mailbox again — so a single dropped connection during one fetch left one message redacted
+ * FOR EVER, with nothing anywhere recording that a decision had not been reached about it. An
+ * in-memory shelf is a cost; an in-memory shelf laundered through a durable certificate is a
+ * permanent loss of somebody's mail, and the second is what this was.
+ *
+ * So the refusals are split by WHAT WE KNOW, and only one half may be certified:
+ *
+ *  · {@link decidedRefusals} — the classifier READ the original and declined to clear it
+ *    (`stillSensitive`, `stillWithheld`). The message is correctly where it is, the pass has done
+ *    its job on it, and losing this set to a restart costs a re-read and nothing else. The marker
+ *    may certify over these, because they are answers.
+ *  · {@link undecidedRefusals} — the original could not be read AT ALL (gone, unparseable, no
+ *    locator) or resolved to a different message. These are not answers, they are absences of
+ *    one, and a completed walk that holds any of them DOES NOT STAMP: see the marker block at the
+ *    end of {@link sensitiveBackfillPass}.
+ *
+ * ── AND THE BOUND, BECAUSE "NEVER STAMP" IS ALSO NOT SURVIVABLE ─────────────────────────────
+ *
+ * A message that is permanently unreadable — expunged from the server, its row not yet reaped —
+ * would keep this pass walking for ever, spending up to {@link SENSITIVE_FP_FETCHES_PER_CYCLE}
+ * fetches per cycle against somebody's mail host in perpetuity for a repair that can never
+ * happen. So a blocked walk is COUNTED, the undecided set is cleared at the end of each completed
+ * walk (the next one genuinely re-tries them rather than skipping them), and after
+ * {@link SENSITIVE_FP_MAX_BLOCKED_WALKS} full walks the pass stamps and says exactly what it is
+ * stamping over — a warn per message and the count on the pass's own audit row, so "these N were
+ * never decided" is a fact an operator can select rather than a silence.
+ *
+ * That counter is process-scoped ON PURPOSE, and the direction is what makes it safe: losing it
+ * to a restart resets it to zero, which means MORE looking, never a premature certificate. It is
+ * the same distinction the split above draws — in-memory state is fine exactly while it cannot be
+ * laundered into a durable claim.
  */
-const refusedByMailbox = new Map<string, Set<string>>();
+const decidedRefusals = new Map<string, Set<string>>();
 
-/** The refusal set for one mailbox, created on first use. */
-function refusedFor(mailboxId: string): Set<string> {
-  const hit = refusedByMailbox.get(mailboxId);
+/** Candidates this walk could not decide about — cleared at the end of every completed walk. */
+const undecidedRefusals = new Map<string, Set<string>>();
+
+/** Completed walks this process has left unstamped for this mailbox. See the block above. */
+const blockedWalks = new Map<string, number>();
+
+/**
+ * Completed walks that may end undecided before the pass certifies anyway.
+ *
+ * Three, and the unit is a WALK rather than a cycle: a walk is a full traversal of the mailbox's
+ * damaged set, which under the fetch budget takes many cycles on the account this pass exists for.
+ * So three walks is a genuinely fair re-attempt for a transient fault and a bounded one for a
+ * permanent absence, which is the whole shape of the trade.
+ */
+export const SENSITIVE_FP_MAX_BLOCKED_WALKS = 3;
+
+/** The set for one mailbox, created on first use. */
+function setFor(m: Map<string, Set<string>>, mailboxId: string): Set<string> {
+  const hit = m.get(mailboxId);
   if (hit) return hit;
   const fresh = new Set<string>();
-  refusedByMailbox.set(mailboxId, fresh);
+  m.set(mailboxId, fresh);
   return fresh;
+}
+
+/**
+ * DROP THIS PROCESS'S SHELVES FOR ONE MAILBOX — a restart, expressed as a function call.
+ *
+ * The whole hazard this file now guards against is process-scoped state deciding a durable
+ * outcome, and the only way to test that claim from outside is to simulate the restart: run the
+ * pass, drop the state, run it again, and assert what survives and what does not. Exported for
+ * that, and used by nothing in production — the pass clears its own shelves when it stamps.
+ */
+export function resetSensitiveBackfillProgress(mailboxId: string): void {
+  decidedRefusals.delete(mailboxId);
+  undecidedRefusals.delete(mailboxId);
+  blockedWalks.delete(mailboxId);
 }
 
 /**
@@ -243,12 +305,17 @@ export interface SensitiveBackfillDeps {
   /** Test seam. Default {@link SENSITIVE_FP_MAX_BYTES}. */
   maxBytes?: number;
   /**
-   * Test seam for {@link refusedByMailbox} — the messages already re-read and declined.
+   * Test seam for {@link decidedRefusals} — the messages re-read and DECIDED against.
    *
    * Injectable so a test can drive two cycles and assert the SECOND one reads different
    * messages, which is the only way to see the termination property from outside.
    */
   refused?: Set<string>;
+  /**
+   * Test seam for {@link undecidedRefusals} — the messages this walk could not decide about.
+   * Separate from {@link refused} because only one of the two may be certified by the marker.
+   */
+  undecided?: Set<string>;
 }
 
 export interface SensitiveBackfillResult {
@@ -292,11 +359,24 @@ export interface SensitiveBackfillResult {
   capped: boolean;
   /** The marker was stamped by this call. */
   marked: boolean;
+  /**
+   * Candidates this walk could not decide about — see {@link undecidedRefusals}. Non-zero on a
+   * COMPLETED walk is what withholds the marker, so this is the number the guard suite asserts on.
+   */
+  undecided: number;
+  /**
+   * Completed walks this process has now left unstamped for this mailbox, after this call.
+   *
+   * Zero on a walk that stamped or did not finish. It is the bound's own counter, surfaced so a
+   * test can watch the third blocked walk certify rather than having to reach into module state.
+   */
+  blockedWalks: number;
 }
 
 const EMPTY: SensitiveBackfillResult = {
   ran: false, examined: 0, candidates: 0, fetched: 0, skipped: 0, cleared: 0, clearedFromStored: 0,
   stillSensitive: 0, stillWithheld: 0, unreadable: 0, mismatched: 0, capped: false, marked: false,
+  undecided: 0, blockedWalks: 0,
 };
 
 /** One candidate, as it sits on disk — every field the pre-filter and the identity check read. */
@@ -358,7 +438,11 @@ export async function sensitiveBackfillPass(
   }
 
   const result: SensitiveBackfillResult = { ...EMPTY, ran: true };
-  const refused = deps.refused ?? refusedFor(mailboxId);
+  // TWO shelves, and only the first may ever be certified — see the block above
+  // {@link decidedRefusals}. Both are consulted by the same skip below, because either way this
+  // walk has already spent a fetch on the message.
+  const decided = deps.refused ?? setFor(decidedRefusals, mailboxId);
+  const undecided = deps.undecided ?? setFor(undecidedRefusals, mailboxId);
   let cursor: string | null = null;
   let exhausted = false;
   let pages = 0;
@@ -374,8 +458,10 @@ export async function sensitiveBackfillPass(
     for (const row of page) {
       if (result.fetched >= fetchBudget) { result.capped = true; break; }
 
-      // ── ALREADY TRIED AND REFUSED. SEE {@link refusedFor} FOR WHY THIS IS TERMINATION ──
-      if (refused.has(row.messageId)) { result.skipped++; continue; }
+      // ── ALREADY TRIED AND REFUSED. SEE {@link decidedRefusals} FOR WHY THIS IS TERMINATION ──
+      // Either shelf skips: this walk has spent its fetch on the message whichever way it went.
+      // They part company at the MARKER, not here.
+      if (decided.has(row.messageId) || undecided.has(row.messageId)) { result.skipped++; continue; }
 
       // ── THE PRE-FILTER. NO NETWORK BELOW THIS LINE UNLESS IT PASSES ────────────────────
       //
@@ -396,7 +482,9 @@ export async function sensitiveBackfillPass(
       if (storedVerdict.verdict !== "ordinary") continue;
       result.candidates++;
 
-      if (!row.locator) { refused.add(row.messageId); result.unreadable++; continue; }
+      // NO LOCATOR — nothing to re-read from. UNDECIDED, not decided: the classifier never saw
+      // this message's original, and a row whose locator ingest later repoints becomes repairable.
+      if (!row.locator) { undecided.add(row.messageId); result.unreadable++; continue; }
 
       let fresh: NormalizedMessage;
       try {
@@ -436,8 +524,11 @@ export async function sensitiveBackfillPass(
         // Gone, or a parse that failed. NEVER fatal: this message keeps the body it has, which is
         // the state it was already in, and the marker is not written for a walk that did not finish
         // — so a transient failure is retried on a later cycle.
+        // UNDECIDED. This is the arm the whole split exists for: a dropped connection and a
+        // permanently-expunged message are indistinguishable here, so neither may be certified
+        // by a marker that stops the pass looking for ever.
         result.unreadable++;
-        refused.add(row.messageId);
+        undecided.add(row.messageId);
         log.warn("sensitive_fp_backfill_unreadable", {
           mailboxId, accountId, messageId: row.messageId, err,
           reason: "the original could not be re-read, so this message keeps its redacted body",
@@ -447,8 +538,10 @@ export async function sensitiveBackfillPass(
 
       // ── IS THIS THE SAME MESSAGE? ─────────────────────────────────────────────────────
       if (!isSameMessage(row, fresh)) {
+        // UNDECIDED for the same reason: the original of THIS message was never read. The
+        // locator is stale, and a later sync repointing it makes the row repairable again.
         result.mismatched++;
-        refused.add(row.messageId);
+        undecided.add(row.messageId);
         log.warn("sensitive_fp_backfill_identity_mismatch", {
           mailboxId, accountId, messageId: row.messageId,
           reason: "the locator no longer resolves to this message — nothing is written, because " +
@@ -475,8 +568,10 @@ export async function sensitiveBackfillPass(
       // classifier says the message is clean" is the whole safety rule of this pass; an
       // indeterminate verdict is the classifier declining to say that.
       const verdict = classifySensitivity(fresh);
+      // DECIDED — the classifier read the original and declined to clear it. This is an answer,
+      // and the marker may certify over it.
       if (verdict.verdict !== "ordinary") {
-        refused.add(row.messageId);
+        decided.add(row.messageId);
         if (verdict.sensitive) result.stillSensitive++;
         else result.stillWithheld++;
         continue;
@@ -512,6 +607,60 @@ export async function sensitiveBackfillPass(
   // mutation testing said so.
   if (!exhausted) return result;
 
+  // ══════════════════════════════════════════════════════════════════════════════════════════
+  //  THE WALK REACHED THE END. THAT IS NOT THE SAME THING AS HAVING DECIDED EVERYTHING.
+  // ══════════════════════════════════════════════════════════════════════════════════════════
+  //
+  // Reaching the end of the walk means every candidate was VISITED. A candidate whose original
+  // could not be read was visited and not decided, and the marker below is durable and final —
+  // it is the only thing that stops this pass ever looking at the mailbox again. Stamping over an
+  // undecided message therefore converts a dropped TCP connection into a message that stays
+  // redacted for the rest of its life, with no record anywhere that a decision was owed. That is
+  // the defect this block exists to close; see the split above {@link decidedRefusals}.
+  //
+  // So a completed walk holding undecided refusals does NOT stamp. It clears them — the next
+  // walk must genuinely re-try them rather than skip them off the shelf — counts itself, and
+  // returns. The DECIDED shelf is deliberately kept across walks: those are answers, and losing
+  // them would only buy a re-read of mail the classifier has already ruled on.
+  result.undecided = undecided.size;
+  // Captured before the shelves are cleared below, so the audit row can name what the certificate
+  // does not cover. The IDS go on the durable audit row and NOT on a log line: `messageId`
+  // (singular) is allowlisted for a ROW-SCOPED line, and an unbounded list of uuids on one line is
+  // a size problem the jsonb payload does not have.
+  const undecidedIds = [...undecided];
+  const blocked = (blockedWalks.get(mailboxId) ?? 0);
+  if (result.undecided > 0 && blocked + 1 < SENSITIVE_FP_MAX_BLOCKED_WALKS) {
+    blockedWalks.set(mailboxId, blocked + 1);
+    result.blockedWalks = blocked + 1;
+    undecided.clear();
+    log.warn("sensitive_fp_backfill_undecided", {
+      mailboxId, accountId, undecided: result.undecided,
+      walk: result.blockedWalks, maxWalks: SENSITIVE_FP_MAX_BLOCKED_WALKS,
+      reason: "the walk finished but could not read some originals, so the completion marker is " +
+        "NOT written and the next walk re-tries them — a marker written here would make a " +
+        "transient read failure a permanent redaction",
+    });
+    return result;
+  }
+
+  // ── THE BOUND, AND WHAT IT CERTIFIES OVER (see {@link SENSITIVE_FP_MAX_BLOCKED_WALKS}) ────
+  //
+  // Three full walks have now visited these messages and none could read them, so the honest
+  // reading is a permanent absence rather than a blip, and continuing to walk would spend a fetch
+  // budget against somebody's mail host in perpetuity for a repair that cannot happen. The pass
+  // stamps — and says so. The count rides the audit row below, which is what makes "N messages
+  // were never decided" a fact an operator can select rather than the silence it used to be.
+  if (result.undecided > 0) {
+    result.blockedWalks = blocked;
+    log.warn("sensitive_fp_backfill_certified_incomplete", {
+      mailboxId, accountId, undecided: result.undecided,
+      maxWalks: SENSITIVE_FP_MAX_BLOCKED_WALKS,
+      reason: "every walk re-tried these and none could read the original; the marker is written " +
+        "so the pass stops re-reading a mailbox it cannot repair. Clearing " +
+        "`sensitive_fp_backfill_at` re-runs the whole pass, which is the documented recovery",
+    });
+  }
+
   // ── THE MARKER IS WRITTEN LAST, AND THE PREDICATE MAKES IT THE DATABASE'S ANSWER ─────────
   //
   // Claiming it first would make a crash permanent: a mailbox marked repaired with most of its
@@ -526,7 +675,9 @@ export async function sensitiveBackfillPass(
   result.marked = stamped.length > 0;
   // The walk is finished, so nothing will ask about this mailbox again unless an operator clears
   // the marker — at which point re-trying everything is exactly what they asked for.
-  refusedByMailbox.delete(mailboxId);
+  decidedRefusals.delete(mailboxId);
+  undecidedRefusals.delete(mailboxId);
+  blockedWalks.delete(mailboxId);
 
   // ONE audit row for the pass, not one per message. The per-message record a client can act on
   // is the `change_log` delta each repair writes; this is the operator's account of a one-shot
@@ -540,6 +691,13 @@ export async function sensitiveBackfillPass(
       clearedFromStored: result.clearedFromStored,
       stillSensitive: result.stillSensitive, stillWithheld: result.stillWithheld,
       unreadable: result.unreadable, mismatched: result.mismatched,
+      // WHAT THIS CERTIFICATE DOES NOT COVER. Zero on an ordinary completion; non-zero means the
+      // marker was written after the bounded re-walks with these messages never decided, and the
+      // ids are here so the account of the repair names what it could not repair. A certificate
+      // that cannot express its own gaps is how the marker came to launder a dropped connection
+      // into a permanent redaction in the first place.
+      undecided: result.undecided,
+      ...(result.undecided > 0 ? { undecidedMessageIds: undecidedIds } : {}),
     },
     inverse: null,
   });

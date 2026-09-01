@@ -1452,7 +1452,14 @@ async function reconcileFolders(deps: SyncDeps): Promise<boolean> {
   for (const p of work) {
     if (p.lastSetBy !== "us") continue;                       // user-wins: never revert an external move
     if (p.desiredFolder === p.observedFolder) {
-      await fencedWrite(deps, (r) => r.upsertFolderState(p.messageId, { desiredFolder: p.desiredFolder, observedFolder: p.desiredFolder, lastSetBy: "us" }));
+      // A status repair, not an intent: the pair already agrees and only `reconcile_status` is
+      // stale. `completeFolderState` and not `upsertFolderState` for the reason the method's own
+      // doc gives — this write is derived from a row read before the pass's network work, so it
+      // may not put `p.desiredFolder` back over a decision committed since. Nothing is written
+      // when the desire moved on; the row is then genuinely pending and the next loop files it.
+      await fencedWrite(deps, (r) => r.completeFolderState(p.messageId, {
+        expectDesiredFolder: p.desiredFolder, observedFolder: p.desiredFolder, lastSetBy: "us",
+      }));
       continue;
     }
     if (!p.nativeLocator) continue;
@@ -1660,9 +1667,26 @@ async function recordAudits(
  */
 async function voidGoneFiling(repo: WorkerRepo, accountId: string, p: PendingFolderState): Promise<void> {
   if (!(await repo.primaryInstanceVanished(p.messageId))) return;
-  await repo.upsertFolderState(p.messageId, {
-    desiredFolder: p.desiredFolder, observedFolder: p.desiredFolder, lastSetBy: "us",
-  });
+  // CONDITIONAL, for `completeFolderState`'s stated reason: `p` was read before this pass's IMAP
+  // work, so voiding through `upsertFolderState` would write a superseded desire back over a
+  // decision committed since — and a VOID is the worst place to do it, because the row leaves the
+  // reconciler's queue and the newer intent would never be attempted at all. A declined void
+  // leaves the new intent pending; the next cycle raises `MessageGoneError` against it and voids
+  // that one, so the convergence still terminates, one cycle later and against the right value.
+  if (!await repo.completeFolderState(p.messageId, {
+    expectDesiredFolder: p.desiredFolder, observedFolder: p.desiredFolder, lastSetBy: "us",
+  })) {
+    await repo.recordAudit(
+      accountId, "reconcile.move.superseded",
+      {
+        messageId: p.messageId, filedAgainst: p.desiredFolder, to: p.desiredFolder,
+        reason: "the gone-message void was computed against a desired folder that has since " +
+          "changed (or the row was erased); nothing was written and the newer intent stands",
+      },
+      null,
+    );
+    return;
+  }
   await repo.recordAudit(
     accountId, "reconcile.move.voided",
     { messageId: p.messageId, from: p.nativeLocator, to: p.desiredFolder },

@@ -3245,6 +3245,11 @@ export async function startWorkerWithLock(
                 stillSensitive: repaired.stillSensitive, unreadable: repaired.unreadable,
                 mismatched: repaired.mismatched, capped: repaired.capped,
                 marked: repaired.marked,
+                // `marked: false` with `capped: false` used to be unexplained on this line. It now
+                // has exactly one cause worth reporting: the walk finished and could not READ
+                // some originals, so the completion marker was withheld rather than certifying
+                // over them. `walk` is which re-attempt that was, against the pass's bound.
+                undecided: repaired.undecided, walk: repaired.blockedWalks,
               });
             }
           } catch (err) {

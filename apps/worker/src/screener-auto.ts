@@ -300,11 +300,24 @@ async function selectCandidates(
       select 1 from ${mailboxes} mb
        where mb.id = ${messages.mailboxId} and mb.status = 'disabled'
     )`,
-    // 1 — the user has ruled on this sender.
+    // 1 — the user has ruled on this sender. UN-NARROWED RULES ONLY.
+    //
+    // `subject_contains`/`body_contains` (mail 0050, 0052) are CONJUNCTIONS — *from this address
+    // AND with this in the subject/text* — and their column comments state the invariant that a
+    // present term "can only make a rule fire LESS often than it did". A rule narrowed to
+    // `invoice` is therefore a statement about that sender's invoices, not about the sender, and
+    // excluding all their other mail here would let a rule change an outcome for mail it does not
+    // match. The narrowed sender's messages now reach `evaluateRules`, which is the one
+    // implementation of what a rule matches: if the rule fires the evaluator answers
+    // `source: "rule"` and this pass leaves the message alone, which is what the exclusion was
+    // always claiming to do. Fixed in the same commit at `sensitive-rescreen.ts` (where it was
+    // found) and `drizzle-repo.ts#listScreenerBacklog`.
     sql`not exists (
       select 1 from ${rulesTbl} r
        where r.account_id = ${messages.accountId}
          and r.enabled = true
+         and r.subject_contains is null
+         and r.body_contains is null
          and (
            (r.kind = 'sender' and lower(r.match) = lower(${messages.fromAddress}))
            or (r.kind = 'domain' and lower(r.match) = split_part(lower(${messages.fromAddress}), '@', 2))

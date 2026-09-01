@@ -313,6 +313,22 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // about. Structurally an integer accumulated by `++`, so it carries no content, same as the eight.
   "candidates", "fetched", "cleared", "clearedFromStored", "stillSensitive", "unreadable",
   "mismatched", "capped", "marked",
+  // `undecided`, `walk` and `maxWalks` are the tenth, eleventh and twelfth, added WITH the marker-
+  // honesty ruling and not after it — the paragraph three entries up is about this pass and it was
+  // read before these were added.
+  //
+  // They exist because the completion marker used to certify over messages the pass could not
+  // READ: a dropped connection refused a message for the life of the process, the walk finished,
+  // the durable marker landed, and that message stayed redacted for ever with nothing anywhere
+  // recording that a decision was owed. `undecided` is the `Set.size` of those, `walk` is which
+  // re-attempt this was and `maxWalks` the bound — three integers derived from counters and a
+  // module constant, none of them from a message, a sender or a subject.
+  //
+  // The message IDS deliberately do NOT appear on a log line and are on the pass's jsonb audit row
+  // instead. `messageId` (singular) one section up is allowlisted for a ROW-SCOPED line about one
+  // row; a `messageIds` entry would license an unbounded list of uuids on a single line, which is a
+  // size problem the audit payload does not have and a widening of that entry's justification.
+  "undecided", "walk", "maxWalks",
   // `tripped` is the inbound-quiet pass's half of a pair whose other half (`cleared`) is already
   // above: how many mailboxes ENTERED a quiet episode this pass (`apps/worker/src/inbound-quiet.ts`,
   // mail 0078) versus how many episodes ended because genuine inbound resumed. A `+= 1` counter

@@ -65,6 +65,27 @@ export const REDACTED_RESTORE_MAX_PAGES = 500;
  * one thing we could not read). 8 MiB — sensitive mail can carry an attachment. */
 export const REDACTED_RESTORE_MAX_BYTES = 8 * 1024 * 1024;
 
+/**
+ * Messages this PROCESS re-read and declined, per mailbox — and why per-process is CORRECT here
+ * where it was not correct in `sensitive-backfill.ts`.
+ *
+ * The rule, and it is the same one `junk-restore.ts` now states over its three shelves: a
+ * process-scoped shelf is safe exactly while it cannot be LAUNDERED INTO A DURABLE CLAIM. Losing
+ * it must cost work, never correctness.
+ *
+ * This pass has NO completion marker — it is an operator CLI (`run-redacted-restore.ts`) that runs
+ * until the operator stops running it, and nothing on disk ever says "this mailbox is done". So a
+ * restart re-attempts every refusal, which is the safe direction: the cost is a re-read, and the
+ * message it re-reads is one that is still sitting redacted.
+ *
+ * The sibling that broke the rule is the reason this paragraph exists rather than nothing:
+ * `sensitive-backfill` kept the identical shelf and WAS gated by a durable marker, so a single
+ * transient fetch failure refused a message for the life of the process, the walk completed, the
+ * marker landed, and that message stayed redacted permanently
+ * — fixed 2026-09-01 by splitting decided refusals from undecided ones and refusing to certify
+ * over the second kind. Giving THIS pass a durable "done" marker
+ * without moving this set to disk would re-create that defect one file over.
+ */
 const refusedByMailbox = new Map<string, Set<string>>();
 function refusedFor(mailboxId: string): Set<string> {
   const hit = refusedByMailbox.get(mailboxId);

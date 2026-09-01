@@ -46,9 +46,25 @@
  * reconciler calls ONLY after `adapter.move`/`moveMany` returned the new locator. A verdict
  * whose IMAP move failed leaves the row pending and unhusked; the guard suite reddens on any
  * ordering that writes the claim first.
+ *
+ * ── AND THE COMPLETION MAY NOT WRITE THE DESIRE IT READ ─────────────────────────────────────
+ *
+ * The other half of the same rule, and the one that cost a real placement. `p` is the pending row
+ * read at the TOP of the reconcile pass — before the IMAP round trip, which on a slow host is
+ * minutes. Completing through `upsertFolderState` wrote `p.desiredFolder` back as part of the
+ * completion, so a decision that committed during the move was reverted: the re-screen takes the
+ * row, writes `desired_folder = 'ohmail/Screener'`, commits, and the completion puts `'INBOX'`
+ * back over it. A lost update, not a stale read — both writers behaved as designed and nothing
+ * errored. Every arm below therefore completes through
+ * {@link WorkerRepo.completeFolderState}, which cannot write `desired_folder` at all and applies
+ * only while the row still holds the value the move was computed against. A declined completion
+ * records `reconcile.move.superseded` and leaves the newer intent standing, which the next cycle
+ * converges from the locator this function has already repointed.
  */
 
-import type { WorkerRepo, PendingFolderState } from "@trafficflow/core/adapters/drizzle-repo";
+import type {
+  WorkerRepo, PendingFolderState, FolderCompletion,
+} from "@trafficflow/core/adapters/drizzle-repo";
 
 /** One native locator, as the adapter mints it. Structural, to keep this module's imports flat. */
 interface Locator { folder: string; ref: string }
@@ -133,6 +149,47 @@ export function junkAuditCode(
 }
 
 /**
+ * THE ONE PLACE A COMPLETION TOUCHES `folder_state` — the compare-and-set plus the audit row a
+ * refusal owes.
+ *
+ * Every arm of {@link completeFiling} goes through here so the witness cannot be forgotten on one
+ * of them: `expectDesiredFolder` is always `p.desiredFolder`, the value the move was computed
+ * against, supplied here rather than by the caller.
+ *
+ * A DECLINED completion is recorded, not swallowed. `reconcile.move.superseded` says the move
+ * landed and its bookkeeping deferred to a newer intent — which is a normal, correct outcome and
+ * also the only way anybody can tell how often two writers meet on one row. Its `to` is the
+ * PHYSICAL folder the mail actually reached, so the row is a truthful record of where the message
+ * is even though `folder_state` now describes somewhere else.
+ */
+async function settle(
+  r: WorkerRepo,
+  accountId: string,
+  p: PendingFolderState,
+  physical: string,
+  c: Omit<FolderCompletion, "expectDesiredFolder">,
+): Promise<void> {
+  const applied = await r.completeFolderState(p.messageId, {
+    ...c, expectDesiredFolder: p.desiredFolder,
+  });
+  if (applied) return;
+  await r.recordAudit(
+    accountId,
+    "reconcile.move.superseded",
+    {
+      messageId: p.messageId,
+      // What this completion was computed against, and where the mail physically went — the pair
+      // an operator needs to read the row without joining anything.
+      filedAgainst: p.desiredFolder,
+      to: physical,
+      reason: "a newer desired folder was committed during the IMAP move (or the row was erased); " +
+        "the completion wrote nothing and the newer intent stands",
+    },
+    null,
+  );
+}
+
+/**
  * The completion write for one landed move — the ONE place the database learns a message
  * reached its destination, shared by `fileChunk`, `fileOne` and the explicitly-invoked sweep.
  *
@@ -160,9 +217,7 @@ export async function completeFiling(
   const physical = newLoc.folder;
   await r.updateLocator(p.messageId, newLoc);
   if (!parksLocator(p, physical, special)) {
-    await r.upsertFolderState(p.messageId, {
-      desiredFolder: p.desiredFolder, observedFolder: p.desiredFolder, lastSetBy: "us",
-    });
+    await settle(r, accountId, p, physical, { observedFolder: p.desiredFolder, lastSetBy: "us" });
     return false;
   }
   // The park — see the header. `forgetInstanceAt` on the locator just written removes the
@@ -212,13 +267,13 @@ export async function completeFiling(
   const survivorActionable =
     promoted != null && (special.sentFolder === null || promoted.folder !== special.sentFolder);
   if (deletePark && promoted != null && survivorActionable) {
-    await r.upsertFolderState(p.messageId, {
-      desiredFolder: p.desiredFolder, observedFolder: promoted.folder, lastSetBy: "us",
-    });
+    // The re-open is reported to the caller whether or not the completion applied: a superseded
+    // row is pending under its NEW desire, so there is more due filing work either way, and
+    // reporting it is what re-kicks the scheduler instead of waiting a poll.
+    await settle(r, accountId, p, physical, { observedFolder: promoted.folder, lastSetBy: "us" });
     return true;
   }
-  await r.upsertFolderState(p.messageId, {
-    desiredFolder: p.desiredFolder,
+  await settle(r, accountId, p, physical, {
     observedFolder: physical,
     lastSetBy: "us",
     ...(p.desiredFolder === physical ? {} : { satisfiedBy: physical }),

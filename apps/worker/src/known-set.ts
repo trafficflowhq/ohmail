@@ -138,8 +138,13 @@ export function estimateWireBytes(rows: ReadonlyArray<KnownLocator>): number {
  *    `claimMessageFailures`, `resolveMessageFailure`), `audit_log`, `change_log`, `threads`,
  *    `routing_decisions`, `approvals`, `contacts`, `message_bodies`, `attachments` — different
  *    tables entirely;
- *  · `upsertFolderState` / `setFolderConflict` / `deferFolderReconcile` — `folder_state`, which
- *    this projection does not join;
+ *  · `upsertFolderState` / `completeFolderState` / `setFolderConflict` / `deferFolderReconcile` —
+ *    `folder_state`, which this projection does not join. `completeFolderState` is the conditional
+ *    completion write (the compare-and-set that cannot overwrite a desire committed during an IMAP
+ *    move); it names the same table and the same columns as `upsertFolderState` and touches no
+ *    instance row, so it is neutral for the same reason. It is on the reconciler's hot path, which
+ *    is exactly why it must be named: unclassified it would drop the memo on EVERY completed
+ *    filing and re-read `listKnownLocators` for the whole mailbox each time;
  *  · `deferFlagReconcile` — `flag_state`, but only `attempts` and `next_attempt_at`; it is the one
  *    statement in the file that deliberately does NOT touch `observed_seen`;
  *  · `setMessageThread` / `upgradeDedupKey` — `messages`, but `thread_id` and `dedup_key`, neither
@@ -163,7 +168,8 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   // writes to tables this projection does not read
   "markKickstarted", "upsertContacts", "upsertMailboxFolder", "recordMessageFailure",
   "claimMessageFailures", "resolveMessageFailure", "upgradeDedupKey", "insertMessageBody",
-  "insertAttachments", "upsertFolderState", "setFolderConflict", "deferFolderReconcile",
+  "insertAttachments", "upsertFolderState", "completeFolderState", "setFolderConflict",
+  "deferFolderReconcile",
   "deferFlagReconcile", "recordAudit", "recordAuditMany", "recordChange", "upsertThread",
   "mergeThreadMessage", "setMessageThread", "recordRoutingDecision", "enqueueApproval",
   // the mail-0065 wave's writes, none of which touch a projected field (the projection is

@@ -612,13 +612,22 @@ export async function runSensitiveRescreen(
   //
   // The concrete sequence, found by review of this very change: the worker's reconciler reads a
   // pending `folder_state` row whose desired folder is still the Ohbox, starts its IMAP move, and
-  // completes with `upsertFolderState(desiredFolder: p.desiredFolder)` — the value it read BEFORE
-  // the move (`apps/worker/src/junk-filing.ts#completeFiling`). If this pass moved that row in
-  // between, the completion writes the Ohbox back over the Screener intent and the row is a
-  // candidate again, now behind the cursor. Before the resume point existed a TRUNCATED run
-  // happened to re-read it; a run that completed always hid it exactly as this one would. So the
-  // hole is older than the cursor and the cursor removes its one accidental recovery — which is
-  // why the recovery is made deliberate here rather than left to luck.
+  // completes with the value it read BEFORE the move. If this pass moved that row in between, the
+  // completion writes the Ohbox back over the Screener intent and the row is a candidate again,
+  // now behind the cursor. Before the resume point existed a TRUNCATED run happened to re-read it;
+  // a run that completed always hid it exactly as this one would. So the hole is older than the
+  // cursor and the cursor removes its one accidental recovery — which is why the recovery is made
+  // deliberate here rather than left to luck.
+  //
+  // THAT PARTICULAR WRITER HAS SINCE BEEN FIXED, and the check stays anyway.
+  // `apps/worker/src/junk-filing.ts#completeFiling` now completes through
+  // `WorkerRepo.completeFolderState`, whose `SET` list does not contain `desired_folder` and whose
+  // `WHERE` carries the desire the move was computed against — so the reconciler can no longer be
+  // the writer that disturbs this walk. This check is NOT narrowed on the strength of that,
+  // because it was never a defence against one module: `folder_state` has five other writers that
+  // take no mailbox row (the API's move, the Screener's apply, `rule-retro`, `ohbox-tidy`,
+  // `screener-auto`), any of which can make a row behind the cursor a candidate again. The
+  // detector is about the TABLE, and the table still has them.
   //
   // The detector is `folder_state.updated_at`: every writer of that table stamps it, so a
   // candidate carrying a stamp from after the WALK began is a row that became eligible under it.
@@ -663,8 +672,10 @@ export async function runSensitiveRescreen(
   // lock this isolation level does not offer — SERIALIZABLE for the completion transaction is the
   // shape, and it is not worth a serialization failure on an operator one-shot. It is the same
   // residual as a restoration arriving just AFTER the stamp, which no lock here can reach either;
-  // both belong to the writers, and the ledger row for the reconciler's stale-intent write-back
-  // is where the actual fix lives.
+  // both belong to the writers. The reconciler — the one of them that RESTORED a stale desire
+  // rather than merely writing a fresh one — has been fixed at its own seam
+  // (`WorkerRepo.completeFolderState`), so this residual is now about writers expressing NEW
+  // intents, which is a race a user can win legitimately rather than a lost update.
   const stamped = await tx.transaction(async (t) => {
     // …AND THE LOCKED READ'S RESULT IS USED, NOT DISCARDED. The mailbox can be GONE by now: an
     // account erasure deletes `folder_state` and then `mailboxes` in one transaction, so a pass
@@ -873,20 +884,40 @@ async function moveDestinations(
  *
  *  1. `folder_state.last_set_by = 'us'` — a row set `external` is a placement the USER performed
  *     in their own mail client, and the folder reconciler already refuses to revert those.
- *  2. no enabled `rules` row for the sender or its domain — `POST /screener/:id` writes one per
- *     decide, so a sender carrying one has been ruled on and is not ours to re-route.
+ *  2. no enabled, UN-NARROWED `rules` row for the sender or its domain — `POST /screener/:id`
+ *     writes one per decide, so a sender carrying one has been ruled on and is not ours to
+ *     re-route.
  *
- *     **THIS IS NOT REDUNDANT AND THE COMMENT USED TO SAY IT WAS.** The claim was that a rule
- *     also wins inside `evaluateRules`, so the SQL only saved the read. That held while a sender
- *     rule meant "all mail from this sender"; it stopped holding when rules gained
- *     `subject_contains` and `body_contains` (mail 0050, 0052). A rule NARROWED to `invoice` now
- *     takes every OTHER message from that sender out of the candidate set here, in SQL, before
- *     the evaluator can answer `screener` for it — so a stranger's verification code from a
- *     sender the user wrote one narrow rule about stays misrouted, permanently, and the
- *     completion marker covers it. Found by review; ledgered rather than changed in the slice
- *     that found it, because widening this predicate changes WHICH MAIL A PASS MOVES in
- *     somebody's mailbox and that needs its own proof, not a one-line edit at the end of another
- *     slice.
+ *     **THE WORD "UN-NARROWED" IS THE FIX, AND IT IS NOT A JUDGEMENT CALL — the schema settles
+ *     it.** This predicate matched on `kind`/`match` alone, and its comment called that redundant
+ *     ("a rule ALSO wins inside `evaluateRules`"). That held while a sender rule meant *all mail
+ *     from this sender*. It stopped holding when rules gained `subject_contains` and
+ *     `body_contains` (mail 0050, 0052), whose column comments state the semantics as an
+ *     invariant: the term is a CONJUNCTION — *from this address AND with this in the subject/text*
+ *     — and *"a present term can only make a rule fire LESS often than it did"*. A predicate that
+ *     excluded every message from a narrowed sender therefore did the one thing that contract
+ *     forbids: it let a rule change an outcome for mail it does not match. So a stranger's
+ *     verification code from a sender the user wrote one narrow rule about was taken out of the
+ *     candidate set in SQL, `evaluateRules` never saw it, and the completion marker certified the
+ *     mailbox as corrected over it — permanently, because the marker is what stops the pass ever
+ *     looking again.
+ *
+ *     The edit narrows the SQL rather than dropping it: bare rules are the overwhelming majority
+ *     and the cost saving is real, while a narrowed sender's mail now reaches `evaluateRules`,
+ *     which is the ONE implementation of what a rule matches. If the rule does fire for the
+ *     message the evaluator answers `source: "rule"` and this pass ignores it — exactly what the
+ *     old comment claimed and could not deliver. Putting the term match into SQL would be a
+ *     second implementation of the matcher in a language that cannot run it, which is the thing
+ *     the candidate query's own header refuses.
+ *
+ *     THE SWEEP, because the first list of affected sites was wrong in both directions. Every
+ *     `kind = 'sender'` predicate in the repo was read. `apps/worker/src/screener-auto.ts` has the
+ *     defect and is fixed in the same commit. `drizzle-repo.ts#listScreenerBacklog` has it too,
+ *     was NOT in the row, and is fixed — but it moves no mail today: its one caller was the
+ *     connect-time re-route, which is retired. `ohbox-tidy.ts` WAS named in the row and does not
+ *     carry this predicate at all. `consent-cutline.ts` matches sender rules for a different
+ *     question — "has this person engaged with this sender" for a consent COUNT — where a narrowed
+ *     rule genuinely is evidence of engagement, so it is deliberately unchanged.
  *  3. no `message_states` row in a state other than `none` — reply-later, set-aside, bubbled-up
  *     and muted are the four ways the product lets someone TRIAGE a message, and yanking one out
  *     of a pile they built is the failure this predicate exists to prevent.
@@ -969,11 +1000,15 @@ async function selectCandidates(
     eq(folderState.desiredFolder, OHBOX),
     eq(folderState.lastSetBy, "us"),
     sql`${messages.sensitivityCategory} is not null`,
-    // 2 — the user has ruled on this sender.
+    // 2 — the user has ruled on this sender. UN-NARROWED RULES ONLY: see the numbered list above
+    // and `rules.subject_contains`' own contract — a rule carrying a term is a statement about a
+    // SUBSET of that sender's mail, so it has not ruled on the rest of it.
     sql`not exists (
       select 1 from ${rulesTbl} r
        where r.account_id = ${messages.accountId}
          and r.enabled = true
+         and r.subject_contains is null
+         and r.body_contains is null
          and (
            (r.kind = 'sender' and lower(r.match) = lower(${messages.fromAddress}))
            or (r.kind = 'domain' and lower(r.match) = split_part(lower(${messages.fromAddress}), '@', 2))
