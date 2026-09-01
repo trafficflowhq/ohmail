@@ -1090,77 +1090,47 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * rather than an out-of-band death, so the connection-error listener stays quiet about a
    * decision we took on purpose.
    */
-  /**
-   * The breach this adapter was retired for, or `null` while it is usable.
-   *
-   * ── THREE DESIGNS WERE TRIED HERE. THIS IS THE FOURTH, AND THE OTHERS ARE WHY ──────────────
-   *
-   * The question is what a ceiling breach should do to the mailbox it came from, and the answer
-   * has to satisfy two things at once: the connection must really end (an abandoned command holds
-   * ImapFlow's queue, so the NEXT command on it waits behind a response nobody is reading), and
-   * the mailbox must be MARKED, or a server that breaches every cycle is reconnected for ever.
-   *
-   *  1. Close, and say nothing. The connection ended cleanly and the mailbox was never marked:
-   *     the cycle's own failure tally is discarded when the runtime is replaced.
-   *  2. Close, and report it as a connection that ENDED. That detaches without marking — a closed
-   *     socket is blameless by design — so the tally reset instead of accumulating.
-   *  3. Do NOT close; refuse every later command so the next two cycles are counted. Worse in
-   *     three separate ways, each found by review: the lease read runs BEFORE the cycle and on a
-   *     raw client, so it queued behind the abandoned command instead of reaching the refusal; a
-   *     socket the server then closed reported itself as a blameless disconnect and reset the
-   *     tally anyway; and teardown's polite `logout()` queues behind the same hung command, so
-   *     detaching — and therefore the status write that quarantine depends on — could hang for
-   *     ever.
-   *
-   * So: **close, and report the BREACH ITSELF.** The consumer's handler reads an error that is not
-   * a connection-ended as this mailbox's fault, and detaches AND quarantines it on the spot. The
-   * count problem disappears because there is nothing to count — one breach is the decision.
-   *
-   * **That is stricter than a consecutive-failure threshold, deliberately.** A threshold exists
-   * for faults that are flaky and recover; a ceiling breach is not one. Reaching it means the
-   * server sent an unreasonable amount, lied about a size, or took minutes over one command — and
-   * quarantine is a marked status plus an exponential backoff, not a door closed for good: the
-   * status returns to connected after a verified recovery. Waiting for a third breach would mean
-   * two more cycles of a mailbox that cannot sync, and the shard paying for each one.
-   *
-   * `retiredBecause` remains as the fast-refusal belt: anything still holding this adapter gets
-   * the same error immediately rather than a confusing failure from a dead client.
-   */
-  private retiredBecause: ImapBoundExceeded | null = null;
-
-  /**
-   * Refuse immediately if this adapter has been retired. Called by every method that would
-   * otherwise reach for a connection that is gone.
-   *
-   * A belt, not the mechanism: the connection is already destroyed, so a call that got past this
-   * would fail anyway — just less legibly, and one layer further from the cause.
-   */
-  private assertUsable(): void {
-    if (this.retiredBecause !== null) throw this.retiredBecause;
-  }
-
-  /**
-   * End this connection because a command was abandoned while the server may still be filling it,
-   * and tell whoever owns the adapter what happened.
-   *
-   * `forceClose` and not `close`: the polite path issues a LOGOUT, imapflow serialises commands,
-   * and the abandoned command is exactly what a LOGOUT would queue behind — so the courteous
-   * teardown would hang for precisely as long as the hang it is escaping. Destroying the socket is
-   * also the only thing that actually ends the abandoned command.
-   */
-  private retireConnection(because?: ImapBoundExceeded): void {
-    const breach = because
-      ?? new ImapBoundExceeded("read_deadline", 0, 0, undefined);
-    const first = this.retiredBecause === null;
-    this.retiredBecause ??= breach;
+  private retireConnection(notify = false): void {
     this.closing = true;
     try { this.forceClose(); } catch { /* the socket is going away regardless */ }
-    // Once only. A second report for the same dead connection would be a second detach for a
-    // mailbox already gone — harmless, because the consumer's handler is de-duplicated, and still
-    // not worth emitting.
-    if (!first) return;
-    try { this.opts.onConnectionError?.(breach); }
-    catch { /* a handler that throws here is the crash that listener exists to prevent */ }
+    // ── AND IT IS SILENT UNLESS NOTHING ELSE WILL SPEAK ──────────────────────────────────────
+    //
+    // The first version notified UNCONDITIONALLY and that broke the quarantine contract, which
+    // is that a configured number of consecutive RUNTIME failures quarantines a mailbox that
+    // attached cleanly and then went bad — `TF_MAX_SYNC_FAILURES` is the count.
+    //
+    // The mechanism is worth writing down because nothing about it is visible at either end. A
+    // breach that THROWS is already counted: the cycle catches it and increments this mailbox's
+    // consecutive-failure tally. Notifying as well queues a DETACH, the detach deletes the
+    // runtime, and the next roster pass attaches a fresh one with `failures: 0`. So the tally
+    // could never reach the threshold: a server breaching every single cycle would be
+    // reconnected every roster interval, for ever, and never quarantined — the isolation this
+    // whole file exists for, defeated by the line meant to strengthen it.
+    //
+    // So `notify` is opt-in and belongs ONLY to retirements that nothing else reports:
+    //  · a TRUNCATING ceiling, which returns a good answer and raises nothing at all;
+    //  · `rearmWatch`, whose failure the worker deliberately swallows *because* it expects this
+    //    listener to do the detaching.
+    // Everywhere else the throw is the report, and it must be the only one.
+    if (!notify) return;
+    // ── AND THE OWNER HAS TO BE TOLD, BECAUSE `closing` IS WHAT SILENCES THE LISTENER ────────
+    //
+    // `forceClose()` sets `closing` first, which is exactly what stops `guardAsyncErrors` from
+    // reporting a teardown we asked for as an out-of-band death. Correct in general, and wrong
+    // here: some retirements are NOT accompanied by a throw the caller propagates. A `"stop"`
+    // truncation does not throw at all, and `rearmWatch`'s failures are deliberately SWALLOWED by
+    // the worker precisely because it expects the close listener to detach. So the connection
+    // would be dead, marked closed, and still held by the runtime until an unrelated timeout
+    // noticed — minutes of a mailbox that syncs nothing while looking attached.
+    //
+    // Reported as {@link ImapConnectionClosedError} rather than the bounds error on purpose: a
+    // consumer's handler reads that class as "the connection ENDED", detaches, and does NOT
+    // quarantine — which is right, because a retired socket is not a broken mailbox, and the
+    // breach that caused it is separately quarantining through the cycle's own failure count. The
+    // handler is also explicitly de-duplicated, so a retirement that DOES also throw costs
+    // nothing.
+    try { this.opts.onConnectionError?.(new ImapConnectionClosedError()); }
+    catch { /* a handler that throws here is the crash this listener exists to prevent */ }
   }
 
   /**
@@ -1175,10 +1145,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * one of them never reaches a single `deadline.check()`.
    */
   private async bounded<T>(op: Promise<T>, folder?: string): Promise<T> {
-    // Silent: `race` rejects, so the caller propagates and the failure is counted there — and
-    // the adapter stays retired, so the NEXT cycle's refusal is counted too.
-    this.assertUsable();
-    return this.readDeadline().race(op, folder, (because) => this.retireConnection(because));
+    // Silent: `race` rejects, so the caller propagates and the failure is counted there.
+    return this.readDeadline().race(op, folder, () => this.retireConnection(false));
   }
 
   /**
@@ -1335,11 +1303,6 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   async close(): Promise<void> {
     // BEFORE the logout, because `logout()` itself emits `close` — see {@link closing}.
     this.closing = true;
-    // A RETIRED adapter is already destroyed, and its LOGOUT would queue behind the very command
-    // that retired it — so a caller tearing down after a breach would wait out the hang it was
-    // escaping. On the quarantine path that matters twice over: the status write happens AFTER
-    // the detach, so a teardown that never returns is a mailbox that is never marked.
-    if (this.retiredBecause !== null) { this.transporter?.close(); this.established = false; return; }
     try { await this.client?.logout(); } catch { this.client?.close(); }
     this.transporter?.close();
     this.established = false;
@@ -1397,7 +1360,6 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
 
   /** Canonical paths of every selectable folder on the server. */
   async listFolders(): Promise<string[]> {
-    this.assertUsable();
     const list = await this.listBounded();
     return list
       .filter((f) => !(f.flags?.has("\\Noselect") ?? false))
@@ -1565,7 +1527,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         sampleDeadline.check(folder);
         // Truncating a sample is still an honest answer — but the FETCH behind it keeps
         // running, so the connection cannot be handed on. See `retireConnection`.
-        if (++examined > IMAP_SAMPLE_MAX_ROWS) { this.retireConnection(); break; }
+        if (++examined > IMAP_SAMPLE_MAX_ROWS) { this.retireConnection(true); break; }
         const addr = m.envelope?.from?.[0]?.address?.trim().toLowerCase();
         if (!addr || seen.has(addr)) continue;
         seen.add(addr);
@@ -1612,13 +1574,6 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       // connection — propagates, so the caller's honest states can tell "this mailbox has no
       // Junk folder" from "the mailbox could not be read just now" (the §16.2 rule; a review
       // caught the first version folding both into the first sentence, the misleading one).
-      // A CEILING BREACH IS NOT "THIS MAILBOX HAS NO SUCH WINDOW", and this arm would have said
-      // so. The rule below turns a SELECT refusal into the honest `null` degrade — right for a
-      // missing or `\Noselect` folder, and wrong for a deadline or a retired connection, which
-      // would be rendered to the person as "you have no Junk folder". It is also not covered by
-      // the `usable` check: a throwing retirement deliberately leaves the socket for the caller
-      // to close, so the client still reports itself usable.
-      if (err instanceof ImapBoundExceeded) throw err;
       if (!(this.client as unknown as { usable?: boolean }).usable) throw err;
       return null;
     }
@@ -1663,7 +1618,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         pageDeadline.check(folder);
         // Reached only when the server answers a bounded range with MORE rows than it names;
         // the FETCH is still running, so the connection is retired rather than reused.
-        if (rows.length >= limit) { this.retireConnection(); break; }
+        if (rows.length >= limit) { this.retireConnection(true); break; }
         const from = m.envelope?.from?.[0];
         const date = m.envelope?.date ?? m.internalDate;
         rows.push({
@@ -1712,13 +1667,6 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     try {
       lock = await this.bounded(this.client.getMailboxLock(this.toServerPath(folder)));
     } catch (err) {
-      // A CEILING BREACH IS NOT "THIS MAILBOX HAS NO SUCH WINDOW", and this arm would have said
-      // so. The rule below turns a SELECT refusal into the honest `null` degrade — right for a
-      // missing or `\Noselect` folder, and wrong for a deadline or a retired connection, which
-      // would be rendered to the person as "you have no Junk folder". It is also not covered by
-      // the `usable` check: a throwing retirement deliberately leaves the socket for the caller
-      // to close, so the client still reports itself usable.
-      if (err instanceof ImapBoundExceeded) throw err;
       if (!(this.client as unknown as { usable?: boolean }).usable) throw err;
       return null;
     }
@@ -1753,7 +1701,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         pageDeadline.check(folder);
         // Reached only when the server answers a bounded range with MORE rows than it names;
         // the FETCH is still running, so the connection is retired rather than reused.
-        if (rows.length >= limit) { this.retireConnection(); break; }
+        if (rows.length >= limit) { this.retireConnection(true); break; }
         const from = m.envelope?.from?.[0];
         const date = m.envelope?.date ?? m.internalDate;
         rows.push({
@@ -1809,7 +1757,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       outer:
       for await (const m of this.client.fetch(`${start}:*`, { envelope: true })) {
         scanDeadline.check(folder);
-        if (++examined > IMAP_SAMPLE_MAX_ROWS) { this.retireConnection(); break outer; }
+        if (++examined > IMAP_SAMPLE_MAX_ROWS) { this.retireConnection(true); break outer; }
         // TRUNCATED PER LIST, not after the spread. The docblock above says `limit` "bounds BOTH
         // the messages scanned and the addresses returned, so a single mail with a 4 000-address
         // To: header cannot turn a bounded scan into an unbounded result" — true of the RESULT,
@@ -2007,11 +1955,6 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * the delimiter discovered at login.
    */
   leaseIo(): LeaseIo {
-    // The lease and profile reads run BEFORE the cycle and on the raw client, so without this a
-    // retired adapter's next visit would reach for a destroyed connection here — and that failure
-    // is wrapped as a lease fault, which is deliberately not this mailbox's fault. Refuse with the
-    // breach instead, so the cause survives the trip.
-    this.assertUsable();
     return makeLeaseIo(this.client as unknown as LeaseImapClient, (c) => this.toServerPath(c));
   }
 
@@ -2027,11 +1970,6 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * with the profile document's size.
    */
   profileIo(): ProfileIo {
-    // The lease and profile reads run BEFORE the cycle and on the raw client, so without this a
-    // retired adapter's next visit would reach for a destroyed connection here — and that failure
-    // is wrapped as a lease fault, which is deliberately not this mailbox's fault. Refuse with the
-    // breach instead, so the cause survives the trip.
-    this.assertUsable();
     return makeProfileIo(this.client as unknown as ProfileImapClient, (c) => this.toServerPath(c));
   }
 
@@ -2048,11 +1986,6 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * It also never CREATEs `ohmail/_meta`. See {@link makeLeasePeekIo}.
    */
   leasePeekIo(): LeasePeekIo {
-    // The lease and profile reads run BEFORE the cycle and on the raw client, so without this a
-    // retired adapter's next visit would reach for a destroyed connection here — and that failure
-    // is wrapped as a lease fault, which is deliberately not this mailbox's fault. Refuse with the
-    // breach instead, so the cause survives the trip.
-    this.assertUsable();
     return makeLeasePeekIo(this.client as unknown as LeaseImapClient, (c) => this.toServerPath(c));
   }
 
@@ -2096,7 +2029,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       max: IMAP_ENUM_MAX_UIDS, bound: "enumerate_uids",
       deadline: this.readDeadline(), folder,
       // `notify` is true only for the non-throwing ("stop") disposition.
-      onAbandon: (_notify, because) => this.retireConnection(because),
+      onAbandon: (notify) => this.retireConnection(notify),
       map: (m) => m.uid,
     });
   }
@@ -2118,7 +2051,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       max: IMAP_ENUM_MAX_UIDS, bound: "enumerate_uids",
       deadline: this.readDeadline(), folder,
       // `notify` is true only for the non-throwing ("stop") disposition.
-      onAbandon: (_notify, because) => this.retireConnection(because),
+      onAbandon: (notify) => this.retireConnection(notify),
       map: (m) => m.uid,
     });
   }
@@ -2144,7 +2077,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       max: IMAP_ENUM_MAX_UIDS, bound: "enumerate_uids",
       deadline: this.readDeadline(), folder,
       // `notify` is true only for the non-throwing ("stop") disposition.
-      onAbandon: (_notify, because) => this.retireConnection(because),
+      onAbandon: (notify) => this.retireConnection(notify),
       map: (m) => { if (m.uid >= fromUid) kept.push(m.uid); return 0; },
     });
     return kept;
@@ -2355,17 +2288,15 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       const declared = sizes.get(m.uid);
       // Throwing out of a `for await` leaves the FETCH outstanding — see `retireConnection`.
       if (arrived > bodyOverrunCeiling(declared)) {
-        const because = new ImapBoundExceeded(
+        this.retireConnection(false);
+        throw new ImapBoundExceeded(
           "body_overrun", bodyOverrunCeiling(declared), arrived, folder,
         );
-        this.retireConnection(because);
-        throw because;
       }
       streamedBytes += arrived;
       if (streamedBytes > batchCeiling) {
-        const because = new ImapBoundExceeded("body_overrun", batchCeiling, streamedBytes, folder);
-        this.retireConnection(because);
-        throw because;
+        this.retireConnection(false);
+        throw new ImapBoundExceeded("body_overrun", batchCeiling, streamedBytes, folder);
       }
       fetched.push({
         folder, uidValidity: curUidValidity, uid: m.uid,
@@ -2461,17 +2392,15 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         const arrivedRetry = ((m.source ?? Buffer.alloc(0)) as Buffer).length;
         const declaredRetry = sizes.get(m.uid);
         if (arrivedRetry > bodyOverrunCeiling(declaredRetry)) {
-          const becauseRetry = new ImapBoundExceeded(
+          this.retireConnection(false);
+          throw new ImapBoundExceeded(
             "body_overrun", bodyOverrunCeiling(declaredRetry), arrivedRetry, folder,
           );
-          this.retireConnection(becauseRetry);
-          throw becauseRetry;
         }
         streamedBytes += arrivedRetry;
         if (streamedBytes > batchCeiling) {
-          const becauseBatch = new ImapBoundExceeded("body_overrun", batchCeiling, streamedBytes, folder);
-          this.retireConnection(becauseBatch);
-          throw becauseBatch;
+          this.retireConnection(false);
+          throw new ImapBoundExceeded("body_overrun", batchCeiling, streamedBytes, folder);
         }
         const raw = (m.source ?? Buffer.alloc(0)) as Buffer;
         answered.add(m.uid);
@@ -2636,7 +2565,6 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * instantly. That would turn one hostile cycle into a permanently broken mailbox.
    */
   async changesSince(cursor: ImapCursor): Promise<ChangeBatch> {
-    this.assertUsable();
     this.cycleDeadline = ImapDeadline.in(
       IMAP_CYCLE_DEADLINE_MS, "cycle_deadline", () => this.now(),
     );
@@ -2997,11 +2925,10 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
             // stops after at most a few hundred rows of a response the server is finishing
             // normally, which is a different event from a flood.
             if (++examined > IMAP_FLAG_SCAN_MAX_ROWS) {
-              const becauseFlags = new ImapBoundExceeded(
+              this.retireConnection(false);
+              throw new ImapBoundExceeded(
                 "flag_scan_rows", IMAP_FLAG_SCAN_MAX_ROWS, examined, folder,
               );
-              this.retireConnection(becauseFlags);
-              throw becauseFlags;
             }
             // NOT A SKIP — an unknown UID was EXAMINED, and unknown-ness is the answer. It is a
             // create, sourced by the known-set diff above with its flags attached, so this pass
@@ -4117,7 +4044,6 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    */
   async rearmWatch(): Promise<void> {
     if (!this.watchArmed) return;
-    this.assertUsable();
     // ── THE ONE THROWING PATH THAT STILL HAS TO NOTIFY, BECAUSE ITS CALLER SWALLOWS ──────────
     //
     // `retireConnection` is silent for throwing paths, on the rule that the throw is the report.
@@ -4136,7 +4062,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     try {
       lock = await this.bounded(this.client.getMailboxLock(this.toServerPath("INBOX")));
     } catch (err) {
-      if (err instanceof ImapBoundExceeded) this.retireConnection();
+      if (err instanceof ImapBoundExceeded) this.retireConnection(true);
       throw err;
     }
     let grew = false;
