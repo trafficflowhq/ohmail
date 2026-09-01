@@ -332,13 +332,48 @@ jobs:
           # and nothing else — there is no fallback to another architecture's
           # entry, and there must not be one: the payload would not run.
           # ════════════════════════════════════════════════════════════════════
+          # ── THE VERSION IS SIGNED, AND THIS IS WHERE IT BECOMES SIGNED ─────
+          #
+          # `latest.json`'s own `version` field is UNSIGNED metadata. Every
+          # payload is minisign-verified before the client will install it, but
+          # nothing signs the manifest that says which payload is which — so
+          # whoever can write this feed could otherwise advertise `99.0.0` and
+          # point it at an OLD release's genuine, genuinely-signed artifact.
+          # Every byte would verify, because the bytes are ours; the client would
+          # compare 99.0.0 against what it is running, call it newer, and install
+          # a build whose fixed vulnerabilities are in the changelog. That is a
+          # downgrade of every install, available to anyone who can write one
+          # file, without the signing key.
+          #
+          # minisign signs its own TRUSTED COMMENT as well as the payload — the
+          # global signature covers `signature || trusted_comment` and
+          # minisign-verify checks it on the same call — and the signer writes
+          # `file:<name>` in there, taking `<name>` from the file it was handed.
+          # So signing a COPY named `<version>@<asset>` puts the version inside
+          # signed material at no cost: no new key, no second file, no schema
+          # change, and the PUBLISHED asset names are untouched (the manifest's
+          # urls below are still built from the original paths, and the AUR
+          # PKGBUILD, the download page and SHA256SUMS never see this name).
+          #
+          # `updater.rs::signed_release` is the consumer, and it refuses a
+          # payload it cannot read a version out of. That makes this step
+          # load-bearing in a way that fails QUIETLY if it regresses — a client
+          # that refuses every update reports "up to date" — so the offline
+          # verifier at the end of this job asserts the trusted comment names
+          # this release, and fails the publish rather than shipping a feed that
+          # would stall every install.
           sign_tauri() {
             # Reads TAURI_SIGNING_PRIVATE_KEY(+_PASSWORD) from the environment.
             # </dev/null so a password-required key fails fast instead of
             # blocking on a prompt; the signer's own chatter goes to stderr so
             # this function's stdout is ONLY the .sig content the manifest needs.
-            npx --yes @tauri-apps/cli@2 signer sign "$1" < /dev/null 1>&2
-            cat "$1.sig"
+            mkdir -p signing
+            # The copy is what gets signed; "$1" is what gets published. Same
+            # bytes, so the signature verifies against the published asset.
+            local signed_as="signing/${VERSION}@$(basename "$1")"
+            cp "$1" "$signed_as"
+            npx --yes @tauri-apps/cli@2 signer sign "$signed_as" < /dev/null 1>&2
+            cat "$signed_as.sig"
           }
           WIN_SIG="$(sign_tauri "$WIN_EXE")"
           LIN_X64_SIG="$(sign_tauri "$LIN_X64_APPIMAGE")"

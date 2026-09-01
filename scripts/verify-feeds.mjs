@@ -109,6 +109,35 @@ function minisignVerify(pubB64, sigB64, payload) {
   };
 }
 
+/* ── WHAT THE SIGNATURE SAYS THE PAYLOAD IS ───────────────────────────────────────────────────
+ *
+ * `minisignVerify` proves a signature over some bytes. It says nothing about WHICH RELEASE those
+ * bytes are, and the manifest's own `version` field cannot answer that either, because the
+ * manifest is not signed. That gap is a downgrade of every install available to anyone who can
+ * write `latest.json` without holding the key: advertise a high version over an old release's
+ * genuine artifact and every signature here still verifies.
+ *
+ * The release closes it by signing each artifact under the name `<version>@<asset>`, which puts
+ * the version in the minisign TRUSTED COMMENT — covered by the global signature, so it is signed
+ * metadata. `updater.rs::signed_release` reads it and refuses any payload it cannot read a
+ * version out of.
+ *
+ * This is the check that keeps that arrangement honest, and it exists because the failure is
+ * SILENT IN THE WRONG DIRECTION: if the signing step ever stops naming the version, clients do
+ * not error, they refuse every update for ever and report "up to date". Nobody files that. So the
+ * publish fails here instead.
+ *
+ * The name is compared as a whole string, restated rather than derived from the same expression
+ * the workflow uses — a check that rebuilds the value the same way the producer did agrees with
+ * the producer by construction. */
+function signedName(sigB64) {
+  const text = Buffer.from(sigB64, "base64").toString("utf8");
+  const line = text.split(/\r?\n/).find((l) => l.startsWith("trusted comment: "));
+  if (!line) return null;
+  const field = line.slice("trusted comment: ".length).split("\t").find((f) => f.startsWith("file:"));
+  return field ? field.slice("file:".length) : null;
+}
+
 /* The plist sits at the repository root in the published tree and under the templates directory
  * in the workspace it is published FROM. Both are tried so one script serves both trees — a
  * verifier that runs in only one of them is one that gets skipped in the other. */
@@ -197,6 +226,16 @@ for (const k of WANT) {
   if (!fs.existsSync(file)) { bad(`${k}: ${path.basename(file)} is not in the asset set`); continue; }
   const r = minisignVerify(tauriPub, entry.signature, fs.readFileSync(file));
   if (r.ok) { ok(`${k}: ${path.basename(file)} — ${r.why}`); verified++; } else bad(`${k}: ${path.basename(file)} — ${r.why}`);
+  /* And the signed name, which is the only place the version is not a bare assertion by
+   * whoever wrote the feed. Both halves are checked: the version, so a client's downgrade
+   * guard has something to compare against, and the asset, so a signature made over one
+   * platform's payload cannot be presented under another platform's key. */
+  const want = `${latest.version}@${path.basename(file)}`;
+  const got = signedName(entry.signature);
+  if (got === want) ok(`${k}: signed as ${got} — the version is inside the signature`);
+  else if (got === null) bad(`${k}: the signature carries no file name in its trusted comment`);
+  else bad(`${k}: signed as ${JSON.stringify(got)}, expected ${JSON.stringify(want)} — `
+    + `a client reading the version out of the signature would refuse this payload`);
 }
 /* The count is asserted rather than inferred from "no failures": a manifest carrying extra keys
  * and none of the four would produce no failures above and nothing verified. */

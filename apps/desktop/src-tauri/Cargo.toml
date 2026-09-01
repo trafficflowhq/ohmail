@@ -156,6 +156,14 @@ tauri-plugin-dialog = "2"
 # graph (the plugin uses it); MIT OR Apache-2.0.
 semver = "1"
 
+# SHIPPING, and it was dev-only until the downgrade guard grew teeth. tauri wraps a
+# minisign signature as base64 over the whole .sig file text, and `updater.rs`'s
+# `signed_release` has to open that envelope to read the version out of the signed
+# trusted comment — the guard's entire input. So this is now compiled into the binary
+# rather than only into the tests. Already in the graph (the updater plugin decodes the
+# same envelope with the same crate); MIT OR Apache-2.0.
+base64 = "0.22"
+
 # A DIRECT dependency, not an optional one, since the updater's config lives in
 # tauri.conf.json: `tauri::generate_context!` embeds every `plugins` entry as a
 # `serde_json::Value`, so the macro references `::serde_json` at the crate root
@@ -274,11 +282,11 @@ tauri-plugin-single-instance = { version = "2", features = ["deep-link"], option
 # a committed fixture (`test/fixtures/updater/payload.bin{,.sig}`) against the
 # SAME public key shipped in `tauri.conf.json`, using the SAME primitive
 # `tauri-plugin-updater` verifies with. Flip one byte of the payload and the
-# verification refuses; that is the test. `base64` unwraps tauri's key/signature
-# envelope exactly as the plugin does before handing the inner minisign bytes to
-# `minisign-verify`. Both are dev-only — neither ships in the binary.
+# verification refuses; that is the test. It reaches for `base64` too, but that is a
+# real dependency now (see above) rather than a dev-only one — only `minisign-verify`
+# is test-scoped, and it is the one primitive the tests must hold independently of the
+# plugin in order to be evidence about it rather than a restatement of it.
 minisign-verify = "0.2"
-base64 = "0.22"
 
 [profile.release]
 codegen-units = 1

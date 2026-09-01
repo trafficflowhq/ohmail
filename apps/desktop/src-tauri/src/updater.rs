@@ -51,12 +51,17 @@
 //!     payload never becomes bytes this module could install. That verification,
 //!     and the committed key material it runs against, is exercised in
 //!     `updater_tests.rs`.
-//!   * A DOWNGRADE (or a reinstall of the same version) is refused. The plugin
-//!     already applies that rule when it decides whether to offer an update at
-//!     all; `should_offer` re-applies it, on the exact version we are about to
-//!     install, because an updater is a remote-code path and the comparison is
-//!     ours to get right. A feed that offers one is treated as "nothing to
-//!     offer" rather than reported — it is not a fact a user can act on.
+//!   * A DOWNGRADE (or a reinstall of the same version) is refused, and refused
+//!     against a version THE SIGNING KEY VOUCHES FOR rather than one the feed
+//!     asserts. This distinction is the whole guard: `latest.json` is unsigned,
+//!     so a feed writer who holds no key could otherwise advertise `99.0.0`
+//!     over an old release's genuinely signed artifact and every install would
+//!     take the downgrade. `signed_release` reads the version out of the
+//!     payload's own minisign trusted comment — signed material — and
+//!     `should_offer` compares THAT. A feed whose claim disagrees with what was
+//!     signed, or that offers a payload with no signed version at all, is
+//!     treated as "nothing to offer" rather than reported: it is not a fact a
+//!     user can act on. `signed_release`'s own comment carries the mechanism.
 //!   * NO ERROR DEAD ENDS. A failed check or a failed download says one plain
 //!     sentence, and only when the user asked for the check; the dialog's other
 //!     button tries again. A check nobody asked for fails silently and leaves the
@@ -347,24 +352,18 @@ async fn run<R: Runtime>(app: AppHandle<R>, user_initiated: bool) {
         Err(_) => return failed(&app, user_initiated),
     };
 
-    // Defense-in-depth downgrade guard. If either version fails to parse we do
-    // NOT fall through to installing — a feed advertising an unparseable version
-    // is exactly the kind of thing an updater must not act on. Reported as "up to
-    // date" rather than as an error: a feed that offers the wrong version is not
-    // something the person at the keyboard can do anything about, and the honest
-    // user-facing fact is that nothing is going to be installed.
-    let offer = matches!(
-        (
-            semver::Version::parse(&update.current_version),
-            semver::Version::parse(&update.version),
-        ),
-        (Ok(installed), Ok(candidate)) if should_offer(&installed, &candidate)
-    );
-    if !offer {
+    // THE DOWNGRADE GUARD. Every reason it is shaped the way it is lives on
+    // `should_install`; this is the one call site, and it is the only thing standing
+    // between a feed and an install.
+    let Some(offered) = should_install(&update.current_version, &update.version, &update.signature)
+    else {
         return nothing_to_offer(&app, user_initiated);
-    }
+    };
 
-    let version = update.version.clone();
+    // The SIGNED version is what the rest of the flow reports, not the advertised one.
+    // They are equal here by construction — `should_install` refuses otherwise — so this
+    // is a statement about which one is authoritative rather than a change of value.
+    let version = offered.to_string();
     signal(&app, Signal::Offered(version.clone()));
 
     /* THE PROGRESS WINDOW, and only for a check the user asked for. A tiny, bundled, offline page
@@ -576,6 +575,151 @@ fn show_progress_window<R: Runtime>(app: &AppHandle<R>) -> Option<tauri::Webview
 /// pre-release suffix left to make the ordering subtle.
 pub fn should_offer(installed: &semver::Version, candidate: &semver::Version) -> bool {
     candidate > installed
+}
+
+/// The whole install decision, as a pure function of what the feed said and what the
+/// signature says. Returns the version to install, or `None` for "offer nothing".
+///
+/// `run` holds an `AppHandle` and cannot be driven from a test, so the decision lives
+/// here instead of inline — the same reason `Flow` is a value. `the_advertised_version_…`
+/// and `the_attack_this_guard_exists_for` drive THIS, so the rule under test is the rule
+/// that ships rather than a copy of it in a table.
+///
+/// Three refusals, and the middle one is the new one:
+///
+///   1. Either version unparseable → `None`. A feed advertising an unparseable version is
+///      exactly the kind of thing an updater must not act on.
+///   2. The advertised version disagrees with the SIGNED one → `None`. The feed is not
+///      serving what it says it is serving, and only the signature can reveal that.
+///   3. The signed version is not strictly newer → `None`. A downgrade, or a reinstall.
+///
+/// All three are reported as "up to date" rather than as an error: a feed that offers the
+/// wrong version is not something the person at the keyboard can do anything about, and
+/// the honest user-facing fact is that nothing is going to be installed.
+pub fn should_install(
+    installed: &str,
+    advertised: &str,
+    signature_b64: &str,
+) -> Option<semver::Version> {
+    let installed = semver::Version::parse(installed).ok()?;
+    let advertised = semver::Version::parse(advertised).ok()?;
+    let signed = signed_release(signature_b64)?;
+    // The ordering is applied to the SIGNED version, never the advertised one. That
+    // substitution is the fix — see `signed_release`.
+    //
+    // THE TWO CONDITIONS ARE INDEPENDENTLY SUFFICIENT AGAINST THE DOWNGRADE, and that is
+    // recorded here because a mutation run says so and because it makes the second one
+    // look dead to anybody tidying up. Measured: removing the equality alone leaves the
+    // attack refused (the ordering sees the signed 0.9.0 and says no); swapping the
+    // ordering's operand back to `advertised` alone leaves it refused too (the equality
+    // sees 99.0.0 against 0.9.0 and says no). Removing BOTH is the pre-slice code, and
+    // `the_attack_this_guard_exists_for` goes red on exactly that.
+    //
+    // A consequence worth knowing: because the equality holds whenever the ordering runs,
+    // `should_offer(&installed, &advertised)` here would be an EQUIVALENT mutant — no test
+    // can distinguish it. `&signed.version` is written anyway, because it is the operand
+    // the invariant is about, and it is the one that stays correct if the equality is ever
+    // relaxed. Do not "simplify" either half on the grounds that mutating it changes
+    // nothing.
+    if advertised != signed.version || !should_offer(&installed, &signed.version) {
+        return None;
+    }
+    Some(signed.version)
+}
+
+/// What the SIGNING KEY says a payload is: the version, and the asset it was signed as.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignedRelease {
+    pub version: semver::Version,
+    pub asset: String,
+}
+
+/// The version the signing key vouches for, read out of the payload's own minisign
+/// signature.
+///
+/// ── WHY THE FEED'S OWN `version` FIELD CANNOT BE THE CANDIDATE ────────────────────
+///
+/// `latest.json` is UNSIGNED METADATA. Every byte of every payload is minisign-verified
+/// before `download` will hand it back, but nothing signs the manifest that says which
+/// payload is which — `tauri-plugin-updater` 2.10.1 parses it with plain serde
+/// (`parse_version`) and there is no signature over it anywhere in the crate. So the
+/// version the feed ADVERTISES is a claim by whoever can write the feed, and the
+/// artifacts of every past release are public, permanently downloadable, and genuinely
+/// signed.
+///
+/// That is a downgrade for everyone, without the signing key: publish a manifest saying
+/// `99.0.0` and point it at an old release's real artifact with that release's real
+/// signature. The payload verifies, because it IS ours. Comparing `99.0.0` against the
+/// installed version says "newer", and one "Restart now" installs a build whose known
+/// vulnerabilities are in the changelog. Nothing stops it happening again next launch.
+///
+/// ── WHAT IS ACTUALLY SIGNED, AND HOW THE VERSION GETS IN THERE ────────────────────
+///
+/// minisign signs the payload AND its own TRUSTED COMMENT: the global signature covers
+/// `signature || trusted_comment`, and `minisign-verify` checks it unconditionally
+/// (0.2.5, `PublicKey::verify_ed25519`) on the same call that checks the payload. The
+/// trusted comment is therefore the one place a release can put a fact about a payload
+/// that a feed writer cannot forge.
+///
+/// The signer writes `timestamp:<unix>\tfile:<name>` there, where `<name>` is the file it
+/// was handed. So the release pipeline signs each artifact under the name
+/// `<version>@<published asset>` — see the `sign_tauri` call in `release-feeds.yml` — and
+/// the version becomes signed metadata at no cost: no new key, no new file, no schema
+/// change, and the published asset names are untouched.
+///
+/// ── WHERE THE AUTHENTICATION COMES FROM (this is the subtle part) ─────────────────
+///
+/// This function does NOT verify anything, and it is called BEFORE `download`. That is
+/// deliberate and it is sound, but not for a reason worth guessing at:
+///
+///   * A payload whose trusted comment was EDITED never reaches an install, and this
+///     guard is not what stops it — `download` is. Verification covers the trusted
+///     comment, so a forged version claim in it fails the global signature check and
+///     `download` returns an error. The app reports that it could not fetch the update.
+///     `forged_version_claim_is_refused` watches exactly that happen.
+///   * What this guard stops is the case where EVERYTHING VERIFIES because every byte is
+///     genuine, and only the feed is lying about which release it is serving. No
+///     signature check can catch that; a comparison against the signed name is the only
+///     thing that can.
+///
+/// So running it first costs a downgrade attempt its download instead of granting it one,
+/// and the string it reads is the same string `download` then proves authentic.
+///
+/// An artifact signed WITHOUT a version — every release up to and including 0.13.2 —
+/// yields `None`, and `None` refuses. That is the intended reading: bytes this client
+/// cannot establish a version for do not get installed. It costs nothing legitimate,
+/// because updates only ever move forward onto releases signed after this shipped, and
+/// `verify-feeds.mjs` fails the release rather than publish a feed that would stall every
+/// client on `None`.
+pub fn signed_release(signature_b64: &str) -> Option<SignedRelease> {
+    use base64::Engine as _;
+
+    // tauri wraps the whole .sig file text in base64; the manifest carries that envelope.
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(signature_b64.trim())
+        .ok()?;
+    let text = std::str::from_utf8(&decoded).ok()?;
+
+    // `trusted comment: timestamp:<unix>\tfile:<name>` — tab-separated fields, and only
+    // the `file:` one is read. The timestamp is signed too, but it is not a version and
+    // this guard does not pretend otherwise.
+    let comment = text
+        .lines()
+        .find_map(|line| line.strip_prefix("trusted comment: "))?;
+    let name = comment
+        .split('\t')
+        .find_map(|field| field.strip_prefix("file:"))?;
+
+    // `<version>@<asset>`. `split_once` rather than `split`, so an asset name containing
+    // an `@` cannot move where the version is read from.
+    let (version, asset) = name.split_once('@')?;
+    if asset.is_empty() {
+        return None;
+    }
+    Some(SignedRelease {
+        version: semver::Version::parse(version).ok()?,
+        asset: asset.to_string(),
+    })
 }
 
 #[cfg(test)]

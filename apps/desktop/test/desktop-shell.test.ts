@@ -1448,8 +1448,15 @@ describe("the auto-updater", () => {
 
     // And the payload is held in memory, never written down: an update nobody consented to must
     // leave nothing on the machine when the app quits.
+    //
+    // Matched as CALLS and not as the bare word `write`, which is the same rule the blocking-show
+    // assertion above already follows. The word spelling fired on the prose in `signed_release`
+    // ("whoever can write the feed", "a feed writer cannot forge") — a guard that goes red when a
+    // security comment explains who the attacker is teaches people to delete the comment. Every
+    // API that could put these bytes on disk is still named, and one that is not can be added; the
+    // list is the assertion, and it must stay exhaustive rather than convenient.
     expect(updater).toMatch(/bytes: Vec<u8>/);
-    expect(updater).not.toMatch(/write|File::create|tempfile/);
+    expect(updater).not.toMatch(/File::create|fs::write|tempfile|OpenOptions|\.write(_all)?\(|write!\(/);
   });
 
   /**
@@ -1553,13 +1560,31 @@ describe("the auto-updater", () => {
     expect(updater).toMatch(/pub fn should_offer\(/);
     expect(updater).toMatch(/candidate > installed/);
 
-    /* FAILS CLOSED. The gate is one `matches!` requiring BOTH versions to parse and `should_offer`
-       to hold; every other shape — an unparseable candidate, an unparseable installed version, a
-       downgrade — falls to the `!offer` return. A refactor that turned this into an `if let` with
-       an `else` that installed would be the whole updater's security gone, so the closed shape is
-       pinned rather than described. */
-    expect(updater).toMatch(/\(Ok\(installed\), Ok\(candidate\)\) if should_offer\(&installed, &candidate\)/);
-    expect(updater).toMatch(/if !offer \{\s*return nothing_to_offer\(&app, user_initiated\);/);
+    /* THE CANDIDATE COMES OUT OF THE SIGNATURE, NOT OUT OF THE FEED. `latest.json` is unsigned,
+       so comparing the version it ADVERTISES answers a question the attacker wrote: point the
+       feed at an old release's genuine artifact, claim 99.0.0, and every byte verifies while the
+       machine is downgraded to a build with published vulnerabilities. `signed_release` reads the
+       version out of the payload's minisign TRUSTED COMMENT — signed material, covered by the
+       global signature — and `should_install` compares that. Both halves are pinned: reading the
+       trusted comment specifically (the untrusted one is not covered and would prove nothing), and
+       the ordering being applied to the signed version. */
+    expect(updater).toMatch(/pub fn should_install\(/);
+    expect(updater).toMatch(/strip_prefix\("trusted comment: "\)/);
+    expect(updater).not.toMatch(/strip_prefix\("untrusted comment: "\)/);
+    expect(updater).toMatch(/advertised != signed\.version \|\| !should_offer\(&installed, &signed\.version\)/);
+
+    /* FAILS CLOSED, in all four ways it can refuse: either version unparseable, no signed version
+       at all, the advertised version disagreeing with the signed one, or the signed one not being
+       newer. Each is a `?` or an early `return None` in `should_install`, and the call site turns
+       `None` into "nothing to offer" with a `let … else`. A refactor that gave that `else` an
+       install path would be the whole updater's security gone, so the closed shape is pinned
+       rather than described. */
+    expect(updater).toMatch(/let installed = semver::Version::parse\(installed\)\.ok\(\)\?;/);
+    expect(updater).toMatch(/let advertised = semver::Version::parse\(advertised\)\.ok\(\)\?;/);
+    expect(updater).toMatch(/let signed = signed_release\(signature_b64\)\?;/);
+    expect(updater).toMatch(
+      /let Some\(offered\) = should_install\(&update\.current_version, &update\.version, &update\.signature\)\s*else \{\s*return nothing_to_offer\(&app, user_initiated\);/,
+    );
 
     // Verification is the plugin's and is reached the same way it always was: the ONLY bytes this
     // module can install are the ones `download` returned.
