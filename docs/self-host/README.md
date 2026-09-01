@@ -57,15 +57,15 @@ Plainly, so you can decide with open eyes:
   `OHMAIL_IMAGE_TAG`. Every release builds each image twice, once on each
   architecture's own hardware. **From 0.13.3 on**, a release also boots the
   whole stack twice before any public tag moves — the same proxy, web app,
-  API, organizer, Postgres and staging store, on amd64 and on arm64. Be
-  exact about the two things that leaves open. Images from **earlier**
-  releases were built for arm64 but only ever booted on amd64, so if you
-  have pinned an older `OHMAIL_IMAGE_TAG`, that is what you have. And no
-  release at all, new or old, has run on a Raspberry Pi or an arm64 server
-  for a week of real mail, because there is no arm64 machine in this
-  project. If you run one,
-  [report how it went](https://github.com/trafficflowhq/ohmail/issues) —
-  hardware reports are the only thing that closes that gap.
+  API, organizer, Postgres and staging store, on amd64 and on arm64. Two
+  things that leaves open, stated rather than implied. Images from
+  **earlier** releases were built for arm64 but only ever booted on amd64,
+  so if you have pinned an older `OHMAIL_IMAGE_TAG`, that is what you have.
+  And no release at all, new or old, has run on a Raspberry Pi or an arm64
+  server for a week of real mail, because there is no arm64 machine in this
+  project — if you run one,
+  [report how it went](https://github.com/trafficflowhq/ohmail/issues),
+  because hardware reports are the only thing that closes that gap.
   If a pull answers "not found", that tag's images have
   not finished publishing — pin `OHMAIL_IMAGE_TAG` to the previous release,
   or build the three images from a clone and tag them with the names the
