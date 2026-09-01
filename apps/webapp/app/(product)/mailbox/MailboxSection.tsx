@@ -635,6 +635,19 @@ export function MailboxSection() {
    */
   const [accountId, setAccountId] = useState<string | null>(null);
   /**
+   * The same value, readable from an ASYNC CLOSURE that outlives the render it was created in.
+   *
+   * `startDeviceFlow` awaits a network round trip. If the session read resolves during that await —
+   * which is exactly the ordering this whole guard exists for, since the Outlook affordance is
+   * enabled by a DIFFERENT read — React re-renders with the account id while the in-flight closure
+   * still holds the `null` it captured. The synchronous write would then be skipped on the very
+   * path it was added to cover, leaving only the passive effect and the unload gap with it.
+   *
+   * A ref because it must be readable at WRITE time rather than at render time. Found by review,
+   * one layer under the fix that added the synchronous write.
+   */
+  const accountIdRef = useRef<string | null>(null);
+  /**
    * A device poll's own transient failure, kept SEPARATE from the pane-wide `error`.
    *
    * Sharing one field looked harmless and is not: a resync or a probe failure writes `error`, and
@@ -828,7 +841,10 @@ export function MailboxSection() {
         const { user, scope } = await auth.session();
         if (!alive.current || scope !== "full") return;
         setEmail(user.email);
-        // For the persisted-ceremony owner check only — see `StoredDevice.accountId`.
+        // For the persisted-ceremony owner check only — see `StoredDevice.accountId`. The ref is
+        // written FIRST so an in-flight `startDeviceFlow` can read it the moment it lands, without
+        // waiting for the re-render that `setAccountId` schedules.
+        accountIdRef.current = user.accountId;
         setAccountId(user.accountId);
         // `withSpendGate` refuses `POST /mailboxes` for an unproven address before the
         // allowance gate is reached; this is the same fact, one screen earlier.
@@ -1038,7 +1054,7 @@ export function MailboxSection() {
           // Empty only when the session read has not landed yet — and in that case NOTHING is
           // written: both persistence paths below refuse an owner they cannot name, so the empty
           // value never reaches storage and `recallDevice` never has to judge one.
-          accountId: accountId ?? "",
+          accountId: accountIdRef.current ?? "",
           // The FIRST poll goes out immediately. The server's own fence is what enforces the
           // cadence from there — `last_polled_at` has not been written yet, so this one is allowed,
           // and every later one is scheduled from what the server says it will accept.
@@ -1056,7 +1072,8 @@ export function MailboxSection() {
          * Both paths are gated on a real `accountId`, so neither can write the empty owner that the
          * restore would later delete as unowned. Writing twice is harmless — same key, same value.
          */
-        if (accountId) rememberDevice({ ...live, accountId });
+        const owner = accountIdRef.current;
+        if (owner) rememberDevice({ ...live, accountId: owner });
         setDevice(live);
       } catch (err) {
         if (!alive.current) return;
