@@ -207,29 +207,50 @@ export function baseIsForeign(recorded: string | null | undefined, configured: s
 /**
  * THE MIRROR-OWNER RECORD, AS IT IS WRITTEN TO DISK.
  *
- * Two lines — the address, then the base — in ONE file and therefore ONE write. Two files would be
- * two writes with a tear between them, and the existing marker goes to some trouble to make a torn
- * write unmistakable (an EMPTY file reads as an owner that cannot be established and matches
- * nothing, rather than as an absent marker, which is adopted). A second file would reintroduce
- * precisely the state that distinction exists to refuse.
+ * ONE file and therefore ONE write. Two files would be two writes with a tear between them, and the
+ * marker goes to some trouble to make a torn write unmistakable — an EMPTY file reads as an owner
+ * that cannot be established and matches nothing, rather than as an absent marker, which is
+ * adopted. A second file would reintroduce exactly the state that distinction exists to refuse.
  *
- * The address stays on the FIRST line so a reader that wants only it — the sign-in owner check —
- * reads the same value it always read, and so an install written by an older engine parses
- * without a version field: one line is an address with no server recorded.
+ * ── JSON, AND NOT TWO LINES, BECAUSE THE FRAMING MUST NOT DEPEND ON THE VALUES ────────────────
+ *
+ * This was `address + "\n" + base`, which is fine for every value either field can hold today and
+ * is a latent hazard rather than a bug: both arrive from the engine's environment
+ * (`OHMAIL_MAILBOX_ADDRESS`, `OHMAIL_CLOUD_URL`) or from a hand-edited settings file, and an
+ * environment variable may contain a line break. One in the ADDRESS pushes the real base off the
+ * line the reader looks at, so the recorded server reads as absent — and an absent server is
+ * ADOPTED, which is the one answer that silently switches this protection off. A delimiter a value
+ * can contain is a delimiter the value can move.
+ *
+ * JSON has no such property, so nothing about the framing depends on what the fields hold. It is
+ * also self-describing, which is what lets the legacy shape be told apart without a version field:
+ * anything that is not a JSON object is a marker written before the server joined the record — one
+ * bare address, no server, adopted.
  */
-export function encodeMirrorRecord(address: string, base: string): string {
-  return `${address}\n${base}`;
+export function encodeMirrorRecord(address: string, base: string | null): string {
+  return JSON.stringify({ address, base });
 }
 
 /**
  * The record as its two facts. Never throws; every unreadable shape degrades to "no server".
  *
- * `address` is the first line VERBATIM apart from its own trimming, including the empty string —
- * see {@link encodeMirrorRecord} and `readMirrorOwner` for why an empty owner must never be
- * collapsed into an absent one.
+ * `address` is preserved VERBATIM apart from trimming, the empty string included — see
+ * `readMirrorOwner` for why an empty owner must never be collapsed into an absent one. A file that
+ * is not JSON is the LEGACY shape and its whole trimmed content is the address, which is what makes
+ * an install written before this parse correctly rather than as an owner of "".
  */
 export function decodeMirrorRecord(raw: string): { address: string; base: string | null } {
-  const [first = "", second = ""] = raw.split("\n");
-  const base = second.trim();
-  return { address: first.trim(), base: base === "" ? null : base };
+  const text = raw.trim();
+  if (text.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(text) as { address?: unknown; base?: unknown };
+      const address = typeof parsed.address === "string" ? parsed.address.trim() : "";
+      const base = typeof parsed.base === "string" && parsed.base.trim() !== "" ? parsed.base.trim() : null;
+      return { address, base };
+    } catch {
+      /* A torn or truncated write. Falls through to the legacy read, which yields an address that
+         matches nothing — the same answer an empty file gives, and the safe one. */
+    }
+  }
+  return { address: text, base: null };
 }

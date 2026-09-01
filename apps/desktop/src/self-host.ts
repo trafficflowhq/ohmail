@@ -42,8 +42,8 @@
  * browser and no new shell capability, and says nothing about a handoff at all.
  */
 
-import { engineConfigure, engineStatus, bridgeFetch, type EngineStatus } from "./bridge-fetch.js";
-import { cloudProblem, sentence, settle, signInToCloud, stalled, type DoorResult } from "./doors.js";
+import { engineConfigure, bridgeFetch, type EngineStatus } from "./bridge-fetch.js";
+import { sentence, settle, signInToCloud, stalled, type DoorResult } from "./doors.js";
 import {
   apiBaseFor,
   normalizeOrigin,
@@ -193,23 +193,14 @@ export async function signInToSelfHost(
   return signInToCloud(address, password, totp, known);
 }
 
-/**
- * BOTH STEPS, for a caller that has an address and credentials in hand at once.
+/*
+ * THERE IS DELIBERATELY NO `enterSelfHostDoor` DOING BOTH STEPS IN ONE CALL.
  *
- * `enterCloudDoor`'s shape with the probe inserted between the configure and the sign-in, so a
- * mistyped server is reported as a mistyped server rather than as a failed sign-in.
+ * `enterCloudDoor` has that shape because the hosted door genuinely collects everything at once —
+ * its server is a constant, so there is nothing to prove before asking for a password. This door's
+ * whole argument is that the two steps are SEPARATE: the address is proved while the person has
+ * typed no secret, so a machine that is not running ohmail is reported as the wrong address rather
+ * than as a failed sign-in. A convenience wrapper that ran them back to back would be an invitation
+ * to a caller that collects all four fields first, which is the shape this door exists to avoid —
+ * and it was written, called by nothing, and removed for that reason.
  */
-export async function enterSelfHostDoor(
-  typedOrigin: string,
-  address: string,
-  password: string,
-  totp: string,
-): Promise<DoorResult> {
-  const credentials = cloudProblem(address, password, totp);
-  if (credentials) return { status: null, problem: credentials };
-
-  const configured = await configureSelfHostDoor(typedOrigin, address);
-  if (configured.problem !== null) return { status: configured.status, problem: configured.problem };
-
-  return signInToSelfHost(address, password, totp, configured.status ?? await engineStatus());
-}

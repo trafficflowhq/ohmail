@@ -342,7 +342,12 @@ export function enforceMirrorOwner(
   log?: Diagnostic,
 ): boolean {
   const served = sameOwner(address);
-  const servedBase = normalizeBase(cloudUrl) ?? cloudUrl.trim();
+  /* NULL WHEN IT DOES NOT PARSE, never the raw value. A base that is not a URL cannot be compared
+     with anything, so recording it would be recording a fact this file's own predicate must then
+     ignore — and it would put an arbitrary string into the record for no reader. `null` says
+     exactly what is true: this launch's server could not be established, so no future launch is
+     told it disagreed with one. `baseIsForeign`'s one-sided default is the same answer. */
+  const servedBase = normalizeBase(cloudUrl);
   const ownerPath = join(dataDir, MIRROR_OWNER_FILE);
   const priorRaw = readMirrorRecordRaw(dataDir);
   const priorRecord = priorRaw === null ? null : decodeMirrorRecord(priorRaw);
