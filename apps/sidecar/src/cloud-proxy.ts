@@ -83,6 +83,29 @@ export interface WriteThroughProxyConfig {
  */
 export const HANDOFF_CLAIM_PATHS = ["/auth/desktop-claim", "/auth/desktop-link"] as const;
 
+/**
+ * A request path reduced to what this refusal may compare — the spellings that reach the SAME
+ * hosted route must not reach different answers here.
+ *
+ * A bare `includes(url.pathname)` was the first version and it is one character from useless: the
+ * hosted API answers `/auth/desktop-claim/` and `/auth/desktop-claim` the same way, so a trailing
+ * slash would have walked straight past the guard and been relayed. Case is folded for the same
+ * reason and costs nothing. Repeated slashes collapse.
+ *
+ * WHAT IS DELIBERATELY NOT DONE: percent-decoding. `new URL` leaves `%2F` encoded in `pathname`,
+ * and the hosted router sees that as one literal segment rather than as a path separator — so
+ * decoding here would invent a match the server would never make, and refusing on it would be
+ * refusing a request that does not reach the route this is about. Traversal needs no handling: the
+ * URL standard resolves `..` before `pathname` is read, so `/x/../auth/desktop-claim` arrives
+ * already normalised and is caught by the plain comparison.
+ */
+export function normalizeRefusalPath(pathname: string): string {
+  const collapsed = pathname.replace(/\/{2,}/g, "/").toLowerCase();
+  return collapsed.length > 1 ? collapsed.replace(/\/+$/, "") : collapsed;
+}
+
+const REFUSED_PATHS = new Set<string>(HANDOFF_CLAIM_PATHS.map(normalizeRefusalPath));
+
 export interface WriteThroughProxy {
   /** Relay one request to Cloud (or 503 while offline), echo-awaiting a 2xx mutation. */
   forward(req: Request): Promise<Response>;
@@ -133,7 +156,7 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
        {@link HANDOFF_CLAIM_PATHS} — the credential these carry is the HOSTED service's, and this
        relay would hand it to whoever runs the configured one. Matched on the PATHNAME, so a query
        string cannot slip past it. */
-    if (cfg.handoffForeign === true && (HANDOFF_CLAIM_PATHS as readonly string[]).includes(url.pathname)) {
+    if (cfg.handoffForeign === true && REFUSED_PATHS.has(normalizeRefusalPath(url.pathname))) {
       return new Response(
         JSON.stringify({
           error: {
