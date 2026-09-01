@@ -227,6 +227,16 @@ export async function junkSweepPass(opts: {
     // ORGANIZER LEASE), not evidence about a message.
     // …and the decision check, in the same breath and for the same reason: both ask "may this
     // write still happen?", one about the mailbox, one about the message.
+    //
+    // BOTH, AND THE LEADERSHIP ONE FIRST. This call went missing while the decision check was
+    // being added, and the loss is not visible by reading the block: the per-message fallback
+    // below still had its own `guard()`, so the only unguarded path was the BATCHED one — which is
+    // the path that issues a single `messageMove` for a whole chunk. A stale leader could
+    // therefore move up to `FILING_BATCH_MAX` of somebody's messages in one command with no fresh
+    // read, which is the same shape as the finding that made the epoch guard unconditional.
+    // Ordered before `stillDesired` deliberately: a process that has lost the lease must not spend
+    // a query on the mailbox either.
+    if (guard) await guard();
     const desired = await stillDesired(wholeChunk);
     const chunk = wholeChunk.filter((p) => desired.has(p.messageId));
     for (const p of wholeChunk) {
