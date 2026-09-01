@@ -22,7 +22,8 @@
 -- row is the one place a read-only injection could stand between the ceremony and somebody's
 -- mailbox. `user_code` and `verification_uri` are the values the person is SHOWN, stored in clear
 -- deliberately — it adds no exposure the start response did not already have, and it lets a poll
--- re-supply them so reloading the settings page does not strand a live grant.
+-- re-supply them after a reload; the browser keeps only the ceremony HANDLE (per tab), and the
+-- poll it makes with that handle is what puts the code back on screen.
 --
 -- ══ ADDITIVE, IDEMPOTENT, NO DATA ══════════════════════════════════════════════════════════
 --

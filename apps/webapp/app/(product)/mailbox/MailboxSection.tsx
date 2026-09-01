@@ -832,7 +832,22 @@ export function MailboxSection() {
         // The device-code door, from the same payload. `?? false` rather than a truthiness read of a
         // possibly-absent field: an older server that predates this key answers without it, and the
         // honest reading of a missing capability is that the deployment does not have it.
-        setDeviceAvailable(deviceDoor ?? false);
+        const armed = deviceDoor ?? false;
+        setDeviceAvailable(armed);
+        /*
+         * PICK UP A CEREMONY THIS TAB WAS ALREADY RUNNING. A reload inside the fifteen minutes
+         * somebody spends approving a code used to lose the handle and strand the grant; the handle
+         * is kept in `sessionStorage` and restored here, after which the ordinary poll loop takes
+         * over and re-supplies the code and the URI from the server.
+         *
+         * Gated on the door still being armed, and only when nothing is already on screen: an
+         * operator who unset the variable mid-ceremony should not be handed a code that can no
+         * longer be completed.
+         */
+        if (armed) {
+          const resumed = recallDevice(Date.now());
+          if (resumed) setDevice((cur) => cur ?? resumed);
+        }
       } catch {
         /* unreadable ⇒ leave it hidden; a dead config read must not offer a button that 503s */
       }
@@ -998,7 +1013,7 @@ export function MailboxSection() {
         if (!alive.current) return;
         setOauthBusy(null);
         setOutlookOffer(false);
-        setDevice({
+        const live = {
           state: started.state,
           userCode: started.userCode,
           verificationUri: started.verificationUri,
@@ -1007,7 +1022,9 @@ export function MailboxSection() {
           // cadence from there — `last_polled_at` has not been written yet, so this one is allowed,
           // and every later one is scheduled from what the server says it will accept.
           retryAfterMs: 0,
-        });
+        };
+        rememberDevice(live);
+        setDevice(live);
       } catch (err) {
         if (!alive.current) return;
         setOauthBusy(null);
@@ -1017,7 +1034,7 @@ export function MailboxSection() {
   };
 
   /** Put the pane back where it was before a ceremony, without touching the mailbox list. */
-  const clearDeviceFlow = (): void => { setDevice(null); setDeviceEnded(null); };
+  const clearDeviceFlow = (): void => { forgetDevice(); setDevice(null); setDeviceEnded(null); };
 
   /**
    * THE POLL LOOP — one timer, cadence from the SERVER, and it stops on the first terminal answer.
@@ -1048,7 +1065,16 @@ export function MailboxSection() {
       try {
         const r = await mailboxApi.deviceOAuthPoll({ state: device.state });
         if (stopped || !alive.current) return;
+        /*
+         * A VALID ANSWER CLEARS A PREVIOUS TRANSIENT FAILURE. The catch below shows the server's
+         * "Microsoft could not be reached" sentence — correctly, because a silent pause reads as a
+         * hung screen — but nothing used to take it down again, so a ceremony that recovered and
+         * then succeeded rendered the red error beside the green "connected" notice. Cleared here
+         * rather than in each branch so no future status can forget to.
+         */
+        setError(null);
         if (r.status === "granted") {
+          forgetDevice();
           setDevice(null);
           /*
            * THE SAME TWO SENTENCES the redirect ceremony's landing uses, with the address from the
@@ -1065,13 +1091,14 @@ export function MailboxSection() {
           return;
         }
         if (r.status === "declined" || r.status === "expired") {
+          forgetDevice();
           setDevice(null);
           setDeviceEnded(r.status);
           return;
         }
-        // Still pending. Re-arm at the cadence the server just stated, and carry the deadline and
-        // the display values forward — the poll re-supplies them, so a reload mid-ceremony can
-        // still render the code rather than stranding a live grant.
+        // Still pending. Re-arm at the cadence the server just stated. The deadline and the display
+        // values come back on every poll, which is what lets a reload re-render the code: the tab
+        // keeps only the handle (see `recallDevice`) and this answer supplies the rest.
         const next = typeof r.retryAfterMs === "number" ? Math.max(0, r.retryAfterMs) : device.retryAfterMs;
         timer = setTimeout(() => { void poll(); }, next || DEVICE_POLL_FLOOR_MS);
       } catch (err) {
@@ -1089,6 +1116,7 @@ export function MailboxSection() {
          */
         setError(messageOf(err));
         if (codeOf(err) === "oauth_device_state_invalid" || codeOf(err) === "forbidden") {
+          forgetDevice();
           setDevice(null);
           return;
         }
@@ -2372,3 +2400,79 @@ const TICK_MS = 10_000;
  * against an application shared with other people's installs.
  */
 const DEVICE_POLL_FLOOR_MS = 5_000;
+
+/**
+ * WHERE A LIVE DEVICE CEREMONY'S HANDLE SURVIVES A RELOAD — `sessionStorage`, per tab.
+ *
+ * ── WHY THIS EXISTS, AND WHY IT IS NOT OPTIONAL POLISH ─────────────────────────────────────
+ *
+ * The ceremony lives for about fifteen minutes on the server and the person is being asked to go to
+ * another device and type a code. A reload in that window — an accidental refresh, a restored tab,
+ * a phone rotating — used to lose the browser's ONLY copy of the handle, and nothing could recover
+ * it: the code and the URI are re-supplied by a poll, but there was no handle left to poll with. The
+ * grant then sat at Microsoft until it expired while the pane offered to start a new one.
+ *
+ * A review caught that the comments in this file already PROMISED reload recovery, which made them
+ * false rather than merely optimistic. Comments here are the claim under test, so the promise is
+ * implemented instead of softened.
+ *
+ * ── WHY `sessionStorage`, AND WHY STORING THIS IS SAFE ─────────────────────────────────────
+ *
+ * Per TAB and cleared when the tab closes, which matches the ceremony's own lifetime far better than
+ * `localStorage` would: an abandoned ceremony should not greet somebody a week later.
+ *
+ * The handle is NOT a credential. The `device_code` — the bearer value that redeems the grant — is
+ * sealed in the database and never reaches the browser at all. This is a 43-character lookup key
+ * whose every use is re-checked against the session's own account server-side, so a reader who could
+ * take it out of this tab's storage already holds the session that makes it useless to them.
+ *
+ * Every access is wrapped: a private window, a browser configured to refuse site data, or a
+ * thumbnail capture can make the accessor itself throw, and a settings pane must not fail to render
+ * because a storage read did.
+ */
+const DEVICE_STORE_KEY = "ohmail.deviceCeremony";
+
+interface StoredDevice {
+  state: string; userCode: string; verificationUri: string;
+  expiresAt: number; retryAfterMs: number;
+}
+
+function rememberDevice(d: StoredDevice): void {
+  try {
+    sessionStorage.setItem(DEVICE_STORE_KEY, JSON.stringify(d));
+  } catch { /* storage refused — the ceremony still runs, it just will not survive a reload */ }
+}
+
+function forgetDevice(): void {
+  try {
+    sessionStorage.removeItem(DEVICE_STORE_KEY);
+  } catch { /* nothing to do; a stale entry is discarded on read by the expiry check below */ }
+}
+
+/**
+ * The stored ceremony, or null — and it REFUSES an expired one rather than restoring it.
+ *
+ * A handle whose grant has already run out would otherwise put a dead code on screen with a
+ * countdown reading zero, and cost one pointless poll to be told what the deadline already said.
+ * The shape is validated field by field because this value survives a reload and a browser upgrade,
+ * so "it is whatever we wrote last time" is not something to assume.
+ */
+function recallDevice(now: number): StoredDevice | null {
+  try {
+    const raw = sessionStorage.getItem(DEVICE_STORE_KEY);
+    if (!raw) return null;
+    const d = JSON.parse(raw) as Partial<StoredDevice>;
+    if (typeof d.state !== "string" || !/^[A-Za-z0-9._~-]{1,512}$/.test(d.state)) return null;
+    if (typeof d.userCode !== "string" || typeof d.verificationUri !== "string") return null;
+    if (typeof d.expiresAt !== "number" || !Number.isFinite(d.expiresAt) || d.expiresAt <= now) return null;
+    return {
+      state: d.state, userCode: d.userCode, verificationUri: d.verificationUri,
+      expiresAt: d.expiresAt,
+      // Zero, so the first poll after a reload goes out at once: the server's own fence is what
+      // decides whether it is too soon, and it knows when the last poll actually was.
+      retryAfterMs: 0,
+    };
+  } catch {
+    return null;
+  }
+}

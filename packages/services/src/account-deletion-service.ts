@@ -62,6 +62,7 @@ import {
   credentials,
   loginTokens,
   mailboxOauthCeremonies,
+  mailboxOauthDeviceCeremonies,
   oauthAuthCodes,
   pushSubscriptions,
   recoveryCodes,
@@ -400,7 +401,7 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     // global order every settings writer takes (see the note at the top).
 
     // ── 6b. The HOSTED-ONLY account-scoped rows ─────────────────────────────────
-    // Five Cloud tables key off `accounts`, which erasure does NOT delete — so none of these
+    // Six Cloud tables key off `accounts`, which erasure does NOT delete — so none of these
     // raises a foreign-key error and none of them was ever visible as a failure. They are the
     // quiet half of this fix and they are all personal data.
     //
@@ -409,6 +410,14 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     // users left to finish it.
     await drop("mailbox_oauth_ceremonies",
       tx.delete(mailboxOauthCeremonies).where(eq(mailboxOauthCeremonies.accountId, accountId)));
+    // Its DEVICE-CODE sibling (cloud 0027), for the identical reason and with a sharper edge: this
+    // row holds the KEK-wrapped `device_code`, which is a BEARER CREDENTIAL for the whole ceremony
+    // rather than a PKCE verifier that buys nothing on its own. Same `accounts` FK, same absent
+    // cascade, so the same silence — and the opportunistic prune only runs when somebody starts
+    // ANOTHER device ceremony on this deployment, which on an account that has just erased itself
+    // may be never.
+    await drop("mailbox_oauth_device_ceremonies",
+      tx.delete(mailboxOauthDeviceCeremonies).where(eq(mailboxOauthDeviceCeremonies.accountId, accountId)));
     // `source` is `classify:screener:<message_id>` — a message id of the account being erased.
     // The FK is `ON DELETE cascade`, which would have taken these with `accounts`; `accounts`
     // survives, so the cascade never fires and the claims outlive the mail they name.

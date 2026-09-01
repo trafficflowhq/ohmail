@@ -80,6 +80,18 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // excluded for the same reason.
   ["mailbox_oauth_ceremonies", "consumed_at"],
   ["oauth_provider_config", "client_secret_enc"],
+  // cloud 0027_oauth_device_ceremonies — ONE marker, for the device-code door's own table.
+  //
+  // Without it, `POST …/oauth/microsoft/device/start` 42P01s on the insert AFTER it has already
+  // asked Microsoft for a grant — so the person is never shown the code for a ceremony that now
+  // exists at Microsoft's end and will sit there until it expires. The failure is a 500 on a route
+  // whose availability read said the door was armed, which is precisely the "too-early code"
+  // shape these markers exist to turn into a `/health` answer instead.
+  //
+  // `poll_interval_ms` and not the PK: `state` exists the moment the table does, so it cannot tell
+  // a complete table from a half-applied one. The interval is what the poll lease's predicate
+  // reads, which is the rule every marker above follows — pick the column a QUERY touches.
+  ["mailbox_oauth_device_ceremonies", "poll_interval_ms"],
   // cloud 0010_desktop_link_pkce — ONE marker, because the migration adds ONE column. It is the
   // column the desktop handoff CLAIM predicates on, which is the rule every marker above follows:
   // pick what a query touches. A database missing it does not merely lose the deep-link path — the
@@ -381,7 +393,7 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * The tag moves for its own reason: what this constant asserts is "the markers were reconciled
  * against the newest entry", and a stale tag beside an unchanged list is the state the assertion
  * exists to refuse — it cannot tell "nothing needed adding" from "nobody looked". */
-export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0026_alert_claim_lease";
+export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0027_oauth_device_ceremonies";
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
 export const SCHEMA_MARKER_JOURNAL_TAG =

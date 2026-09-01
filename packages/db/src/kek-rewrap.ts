@@ -4,7 +4,7 @@ import { PgColumn, type PgTable } from "drizzle-orm/pg-core";
 import type { Tx, LedgerTx } from "./change-log.js";
 import { mailboxCredentials } from "./schema-mail.js";
 import {
-  totpSecrets, staffUsers, mailboxOauthCeremonies, oauthProviderConfig,
+  totpSecrets, staffUsers, mailboxOauthCeremonies, mailboxOauthDeviceCeremonies, oauthProviderConfig,
 } from "./schema-cloud.js";
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
@@ -212,6 +212,20 @@ export const WRAPPED_SECRET_SITES: readonly WrappedSecretSite[] = [
     site: "mailbox_oauth_ceremonies.code_verifier_enc",
     table: mailboxOauthCeremonies,
     ciphertext: "codeVerifierEnc", keyVersion: "codeVerifierKeyVersion",
+    key: ["state"], keyIsSecret: true,
+  },
+  {
+    // The DEVICE-CODE ceremony's bearer credential (cloud 0027), and it is here for the PKCE row's
+    // reason verbatim: short-lived is not a retirement criterion for a key you are trying to prove
+    // nothing references. A live device ceremony lasts about fifteen minutes, and a rotation that
+    // skipped it would let an operator observe zero old-key references, retire the old KEK, and
+    // leave somebody mid-sign-in holding a `device_code` this deployment can no longer open —
+    // which presents as the ceremony simply never completing.
+    //
+    // `keyIsSecret` because the key IS the ceremony handle, exactly as `state` is next door.
+    site: "mailbox_oauth_device_ceremonies.device_code_enc",
+    table: mailboxOauthDeviceCeremonies,
+    ciphertext: "deviceCodeEnc", keyVersion: "deviceCodeKeyVersion",
     key: ["state"], keyIsSecret: true,
   },
   {

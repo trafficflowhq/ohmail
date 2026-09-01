@@ -383,20 +383,40 @@ export async function leaseDeviceCeremonyPoll(
  * can live is the row: a caller holding it in memory is a caller that forgets it between requests,
  * and a client asked to carry it is a client that can simply not.
  *
- * The value is computed by the token client (which owns the RFC's rule and the ceiling) and written
- * here verbatim. Writes `poll_interval_ms` only — never `consumed_at`, because a `slow_down` is not
- * a terminal verdict, it is an instruction to keep going more slowly.
+ * ── THE INCREMENT IS APPLIED IN SQL, NOT COMPUTED AND ASSIGNED ────────────────────────────
+ *
+ * An earlier version took an absolute `pollIntervalMs` from the caller, which the caller had
+ * derived from the interval it read at the start of its own poll. That LOSES INCREMENTS under
+ * concurrency, and the case is ordinary rather than exotic: two polls one interval apart, the first
+ * still waiting on Microsoft, both read 5 000, both are told `slow_down`, and both assign 10 000 —
+ * so two `slow_down` responses produce one five-second increase instead of two. The next poll is
+ * then permitted earlier than Microsoft's cumulative answers require, against a client id shared
+ * with every other install using the public registration.
+ *
+ * `poll_interval_ms = LEAST(poll_interval_ms + step, ceiling)` makes it read-modify-write inside one
+ * statement, so Postgres serializes the two on the row and the second increments the first's
+ * committed value. The RETURNING clause hands the effective interval back, so the route reports what
+ * the row now actually holds rather than what it guessed.
+ *
+ * The step and the ceiling are the caller's (the token client owns RFC 8628 §3.5's five seconds and
+ * the upper bound); the ARITHMETIC is the database's. Writes `poll_interval_ms` only — never
+ * `consumed_at`, because a `slow_down` is not a terminal verdict, it is an instruction to keep going
+ * more slowly.
  */
 export async function noteDeviceCeremonySlowDown(
-  tx: Tx, input: { state: string; pollIntervalMs: number },
-): Promise<void> {
-  if (!input.state) return;
-  await tx.update(mailboxOauthDeviceCeremonies)
-    .set({ pollIntervalMs: input.pollIntervalMs })
+  tx: Tx, input: { state: string; stepMs: number; ceilingMs: number },
+): Promise<{ pollIntervalMs: number } | null> {
+  if (!input.state) return null;
+  const [row] = await tx.update(mailboxOauthDeviceCeremonies)
+    .set({
+      pollIntervalMs: sql`LEAST(${mailboxOauthDeviceCeremonies.pollIntervalMs} + ${input.stepMs}, ${input.ceilingMs})`,
+    })
     .where(and(
       eq(mailboxOauthDeviceCeremonies.state, input.state),
       isNull(mailboxOauthDeviceCeremonies.consumedAt),
-    ));
+    ))
+    .returning();
+  return row ? { pollIntervalMs: row.pollIntervalMs } : null;
 }
 
 /**

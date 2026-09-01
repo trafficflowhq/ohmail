@@ -156,7 +156,7 @@ export interface DeviceCodeGrant {
  * huge value would strand a ceremony that had actually been approved.
  */
 const MIN_POLL_INTERVAL_MS = 5_000;
-const MAX_POLL_INTERVAL_MS = 60_000;
+export const MAX_POLL_INTERVAL_MS = 60_000;
 
 /**
  * BOUND ON THE CEREMONY ITSELF. Microsoft's `expires_in` is normally 900 s.
@@ -347,7 +347,7 @@ export interface DevicePollParams {
 }
 
 /** RFC 8628 §3.5: `slow_down` increases the interval by five seconds. */
-const SLOW_DOWN_STEP_MS = 5_000;
+export const SLOW_DOWN_STEP_MS = 5_000;
 
 /** The device grant's `grant_type`, spelled once. */
 export const DEVICE_CODE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";

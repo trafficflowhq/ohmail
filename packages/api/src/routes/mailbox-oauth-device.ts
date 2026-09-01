@@ -3,6 +3,7 @@ import {
   requestDeviceCode, pollDeviceCodeOnce, deviceFlowAvailable,
   addressFromIdToken, oauthState, silentLogger,
   MS_AUTHORIZE_SCOPES, MS_DEVICE_ENV, DEVICE_CLIENT_KIND,
+  SLOW_DOWN_STEP_MS, MAX_POLL_INTERVAL_MS,
   OAuthConfigError, OAuthProviderUnavailableError,
   type FetchLike, type MicrosoftDeviceClient,
 } from "@trafficflow/core";
@@ -148,6 +149,40 @@ const deviceUnconfigured = (): ServiceError => new ServiceError(
   { gap: "device_client_missing" },
 );
 
+/**
+ * The OTHER way the door can be dark, and it needs its own sentence.
+ *
+ * `deviceFlowAvailable` is false for two different configurations: no client id at all, and a client
+ * id present beside a tenant that could not be a tenant. Reporting both as `device_client_missing`
+ * tells an operator who HAS set the client id to go and set the client id — a remedy that is not
+ * merely unhelpful but actively misleading, because they will look at the one variable that is
+ * already correct and conclude the feature is broken.
+ *
+ * So the two are distinguished, and this one names the variable that is actually wrong. (The URL
+ * builders in `packages/core` throw their own `OAuthConfigError` on a bad tenant quoting
+ * `MS_OAUTH_TENANT` — the confidential door's name — which is why the gate here is checked BEFORE
+ * anything reaches them: this is the door whose tenant variable is `MS_DEVICE_TENANT`.)
+ */
+const deviceTenantInvalid = (): ServiceError => new ServiceError(
+  "oauth_device_unconfigured", 503,
+  `This server's Microsoft sign-in is configured with an unusable authority. `
+  + `An operator has to correct ${MS_DEVICE_ENV.tenant} (or unset it, which means "common").`,
+  { gap: "device_tenant_invalid" },
+);
+
+/**
+ * Both refusals in one place, so the two routes cannot disagree about which is which.
+ *
+ * Returns the `ServiceError` to throw, or `null` when the door is armed. A function rather than two
+ * inline checks per route because "which of these two gaps is it" is exactly the kind of question
+ * that gets answered one way in `start` and another way in `poll`.
+ */
+function deviceGate(client: MicrosoftDeviceClient | undefined): ServiceError | null {
+  if (!client || client.clientId.trim().length === 0) return deviceUnconfigured();
+  if (!deviceFlowAvailable(client)) return deviceTenantInvalid();
+  return null;
+}
+
 /** The three refusals a poll can make about the ceremony value itself. One sentence each. */
 const ceremonyUnknown = (): ServiceError => new ServiceError(
   "oauth_device_state_invalid", 400,
@@ -176,7 +211,8 @@ export const mailboxDeviceOAuthRoutes: Route[] = [
     cost: "work",
     handler: async (req, deps) => {
       const client = deps.msDevice;
-      if (!microsoftDeviceAvailable(client)) throw deviceUnconfigured();
+      const gate = deviceGate(client);
+      if (gate) throw gate;
       const cfg = client!;
 
       const ctx = serviceContext(deps, req);
@@ -259,7 +295,8 @@ export const mailboxDeviceOAuthRoutes: Route[] = [
     cost: "work",
     handler: async (req, deps) => {
       const client = deps.msDevice;
-      if (!microsoftDeviceAvailable(client)) throw deviceUnconfigured();
+      const gate = deviceGate(client);
+      if (gate) throw gate;
       const cfg = client!;
 
       const ctx = serviceContext(deps, req);
@@ -358,16 +395,27 @@ export const mailboxDeviceOAuthRoutes: Route[] = [
 
         case "slow_down": {
           /*
-           * NOT a terminal verdict — it claims nothing. The already-incremented interval comes from
-           * the token client (which owns RFC 8628 §3.5's five-second step and the ceiling) and is
-           * persisted so the increase is CUMULATIVE across requests. A client that ignored the
-           * `retryAfterMs` below would simply be denied the lease until the widened interval has
-           * passed, which is the same answer arrived at without a request to Microsoft.
+           * NOT a terminal verdict — it claims nothing.
+           *
+           * The increment is applied IN THE DATABASE (`LEAST(poll_interval_ms + step, ceiling)`)
+           * rather than computed here and assigned, because computing it here loses increments and
+           * the losing case is ordinary: two polls one interval apart, the first still waiting on
+           * Microsoft, both read the same interval, both are told `slow_down`, and both write the
+           * same widened value — two instructions to slow down producing one five-second increase.
+           * RFC 8628 §3.5 requires the increase to be CUMULATIVE, and the client id it protects is
+           * shared with every other install using the public registration.
+           *
+           * The step and the ceiling are the token client's constants, passed in rather than
+           * restated, so there is one definition of "five seconds, up to a minute". What comes back
+           * is what the ROW now holds, which is what the client is told to wait — not this
+           * process's guess at it.
            */
-          await noteDeviceCeremonySlowDown(deps.db, { state, pollIntervalMs: verdict.nextIntervalMs });
+          const widened = await noteDeviceCeremonySlowDown(deps.db, {
+            state, stepMs: SLOW_DOWN_STEP_MS, ceilingMs: MAX_POLL_INTERVAL_MS,
+          });
           return jsonResponse({
             status: "pending",
-            retryAfterMs: verdict.nextIntervalMs,
+            retryAfterMs: widened?.pollIntervalMs ?? verdict.nextIntervalMs,
             expiresAt: row.grantExpiresAt.toISOString(),
             userCode: row.userCode,
             verificationUri: row.verificationUri,
