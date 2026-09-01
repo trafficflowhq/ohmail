@@ -1122,11 +1122,16 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
            So the CODE is what is refused, wherever it came from, on any base that is not the
            hand-off's own. A password sign-in on this door is unaffected: that credential belongs to
            the server being dialled. */
-        if (
-          typeof (body as { handoffCode?: unknown }).handoffCode === "string" &&
-          (body as { handoffCode: string }).handoffCode.trim() !== "" &&
-          baseIsForeign(cloudBase, config.handoffBase ?? MANAGED_CLOUD_BASE)
-        ) {
+        /* PRESENT AT ALL, not "present and a non-empty string". The narrower test would have to
+           agree with `cloudSignIn`'s own branch predicate (`trimmed(req.handoffCode) !== ""`, which
+           yields "" for any non-string) across two files, and a later change to either — a coercion
+           added there, a shape widened here — would separate them silently. Refusing on presence
+           cannot diverge from anything, and it is the correct answer for every value: a request
+           naming this field on a self-hosted door is a hand-off attempt whatever the field holds. */
+        const namesHandoff =
+          (body as { handoffCode?: unknown }).handoffCode !== undefined &&
+          (body as { handoffCode?: unknown }).handoffCode !== null;
+        if (namesHandoff && baseIsForeign(cloudBase, config.handoffBase ?? MANAGED_CLOUD_BASE)) {
           return json(
             {
               error: {
