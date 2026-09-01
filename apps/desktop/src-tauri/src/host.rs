@@ -1362,10 +1362,11 @@ pub fn tailscale_serve_arm<R: tauri::Runtime>(
     // ordinary restart for it, which is the same cost as choosing a door. The assets path is the
     // same resolution the launch detection performs — this bundle's packaged host-client, or
     // None on a build that carries none (the engine then serves API-only and says why).
-    let assets = {
-        use tauri::Manager;
-        packaged_host_client(app.path().resource_dir().ok().as_deref())
-    };
+    // Through `engine::resource_dir_of`, not `app.path().resource_dir()` directly: on Windows the
+    // framework answers with an extended-length `\\?\` path, and this one ends up in the engine's
+    // environment as the host client's assets root. One spelling with `ShellPaths`, so the two
+    // independent resolutions of the same directory cannot disagree.
+    let assets = packaged_host_client(engine::resource_dir_of(&app).as_deref());
     host.shell.set_host_spawn(Some(HostSpawn {
         port,
         origin: identity.as_ref().map(|i| i.origin.clone()),

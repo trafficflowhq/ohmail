@@ -23,6 +23,26 @@ const APP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (rel: string) => fs.readFileSync(path.join(APP, rel), "utf8");
 const readJson = (rel: string) => JSON.parse(read(rel)) as Record<string, never>;
 
+/**
+ * Rust source with its PROSE removed, so a capability census reads code rather than comments.
+ *
+ * This file's modules are commented at length, and those comments name the very things the
+ * censuses below ban — a header explaining why two `#[tauri::command(async)]` handlers can overlap
+ * is documentation, not a command declaration. Reading the raw file made one census red for a doc
+ * comment and taught nobody anything.
+ *
+ * Block comments go whole; a line whose first non-space characters are `//` goes whole, which
+ * covers `///` and `//!` too. A comment TRAILING code on a shared line is deliberately left in
+ * place: removing it would need a scanner that understands Rust string literals, and leaving it
+ * can only make a census fail on a mention — conservative, and the direction to fail in.
+ */
+const rustCode = (rs: string): string =>
+  rs
+    .replace(/\/\*[\s\S]*?\*\//g, "\n")
+    .split("\n")
+    .filter((line) => !/^\s*\/\//.test(line))
+    .join("\n");
+
 /** "a b; c d" → { a: ["b"], c: ["d"] } */
 function directives(csp: string): Record<string, string[]> {
   const out: Record<string, string[]> = {};
@@ -75,7 +95,7 @@ describe("tauri.conf.json", () => {
     // therefore ten. It is kept as a literal rather than read from the file it
     // is asserting — an assertion that reads its own subject asserts nothing —
     // so it MUST be bumped by hand with the other nine. Every release.
-    expect(conf.version).toBe("0.13.1");
+    expect(conf.version).toBe("0.13.2");
     expect(conf.identifier).toBe("io.ohmail.desktop");
   });
 
@@ -781,8 +801,65 @@ describe("the Rust side", () => {
     expect(main).not.toMatch(/keyring|getrandom/);
     // The settings module reaches neither the keystore nor the webview: it composes an environment
     // and reads and writes one file, which is the whole of it.
-    const config = read("src-tauri/src/config.rs");
-    expect(config).not.toMatch(/keyring|getrandom|tauri::command|std::process/);
+    //
+    // NARROWED 2026-09-01 FROM PROSE TO CODE, with both new consumers named rather than the
+    // assertion dropped. It had been RED since the change that gave each settings write its own
+    // staging file, and for neither of the capabilities it exists to ban: `std::process` caught
+    // the `std::process::id()` that makes the staging name unique per process, and
+    // `tauri::command` caught a DOC COMMENT quoting `#[tauri::command(async)]` while explaining
+    // why two of those writes can overlap. A pid is not a spawn and quoting an attribute is not
+    // declaring one — but a guard that fails for a reason it does not care about is a guard on
+    // its way to being deleted, so the fix is a SHARPER pattern, not a shorter one.
+    //
+    // ── AND SHARPER MEANS THE IDIOMS, NOT JUST THE FULLY QUALIFIED SPELLING ──────────────────
+    //
+    // The first attempt at that narrowing banned the literals `std::process::Command` and
+    // `#[tauri::command`, which a review took thirty seconds to walk around: `use
+    // std::process::{Command, id};` then `Command::new(…)`, or `use tauri::command;` then
+    // `#[command]`, are ordinary Rust and matched neither. A capability guard that only sees one
+    // way of writing the capability is worse than none, because it reports green.
+    //
+    // So the comments are removed first — which is what the false hits were — and the check is on
+    // the NAMESPACE rather than on the spelling of the call.
+    //
+    // ── THE NAMESPACE, BECAUSE CHASING SPELLINGS DOES NOT CONVERGE ───────────────────────────
+    //
+    // Banning `process::Command` and `#[tauri::command` was walked around by a second review in
+    // one line each: `use tauri as runtime; #[runtime::command]`, and `use std::process as p;
+    // p::Command::new(…)`. Both legal Rust, both green. Chasing the next spelling loses that race
+    // for ever, because Rust can rename anything on the way in.
+    //
+    // What it cannot rename is something it never imported. `config.rs` imports `std::ffi`,
+    // `std::fs`, `std::path`, `std::io` and two `std::os::unix` traits — nothing else — so the
+    // invariant is stated directly: this module brings NEITHER namespace into scope, and its one
+    // legitimate touch of `std::process` is the fully qualified `std::process::id()` naming a
+    // staging file. Every alias and every glob has to pass through a `use`.
+    //
+    // ── AND THE WHOLE STATEMENT, BECAUSE A PREFIX IS STILL A SPELLING ────────────────────────
+    //
+    // Anchoring that ban to `use std::process` was walked around a THIRD time, by a third review:
+    // `use std::{process::{Command}};` puts a brace where the pattern wanted a colon. Rust's use
+    // trees nest arbitrarily, so no prefix pattern finishes this. What does finish it is that
+    // whatever a module imports must appear, textually, somewhere inside a `use … ;` — so the
+    // statement is taken WHOLE and the two namespaces are banned from appearing anywhere in it.
+    // Nesting, grouping, globs, aliases and leading colons all fall to the same line.
+    //
+    // Deliberately stricter than the invariant's letter: a future `use std::process::id;` would
+    // fail here too, and should — the module's one touch of that namespace stays qualified, which
+    // is what makes this check possible to state in one sentence.
+    const config = rustCode(read("src-tauri/src/config.rs"));
+    expect(config).not.toMatch(/keyring|getrandom/);
+    const imports = config.match(/\buse\b[^;]*;/g) ?? [];
+    expect(imports.length, "config.rs has imports to check").toBeGreaterThan(0);
+    for (const statement of imports) {
+      const flat = statement.replace(/\s+/g, " ");
+      expect(flat, "config.rs must not import the framework").not.toMatch(/\btauri\b/);
+      expect(flat, "config.rs must not import the process namespace").not.toMatch(/\bprocess\b/);
+    }
+    // And the fully qualified spellings, which need no import at all: a spawn, and a command
+    // declared through any path — `#[command]`, `#[tauri::command]`, `#[runtime::command]`.
+    expect(config).not.toMatch(/\bprocess\s*::\s*Command\b/);
+    expect(config).not.toMatch(/#\s*\[\s*(?:::)?(?:\w+\s*::\s*)*command\b/);
   });
 
   /**

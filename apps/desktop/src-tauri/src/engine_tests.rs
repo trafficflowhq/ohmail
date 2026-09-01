@@ -82,6 +82,30 @@ const ready = () => frame({
 
 if (mode === "die") { process.exit(1); }
 
+// A RUNTIME THAT DIES BEFORE THE ENGINE'S LOGGER EXISTS — the shape of the Windows main-module
+// failure, and the one the give-up message has to quote. Nothing reaches the frame stream, so the
+// shell never sees `ready`; all it has is these lines. The order matters to the test: the useful
+// line is neither the first nor the last.
+//
+// `fs.writeSync` rather than `process.stderr.write`, because stderr is a PIPE here and a pipe
+// write is asynchronous — `process.exit` immediately after one truncates it, which would make this
+// a test that passes or fails on scheduling.
+if (mode === "die-loudly") {
+  fs.writeSync(2, "node:fs:2749\n");
+  fs.writeSync(2, "    const out = binding.lstat(base, false, undefined, true);\n");
+  fs.writeSync(2, "                        ^\n\n");
+  fs.writeSync(2, "Error: EISDIR: illegal operation on a directory, lstat 'C:'\n");
+  fs.writeSync(2, "    at Object.realpathSync (node:fs:2749:25)\n");
+  fs.writeSync(2, "    at resolveMainPath (node:internal/modules/run_main:39:23)\n");
+  // A SECOND line that also names an error, AFTER the one that matters. This is what makes
+  // "the first, not the last" a property with teeth rather than a claim: a process falling over
+  // reports the consequences of its first failure too, and quoting the last of them diagnoses the
+  // symptom. Without this line the two rules are indistinguishable.
+  fs.writeSync(2, "Error: the connection closed while the first error was being reported\n");
+  fs.writeSync(2, "Node.js v22.23.2\n");
+  process.exit(1);
+}
+
 // A boot that narrates itself, the way the real engine does while it opens its store: `phase`
 // frames strictly before `ready`. One malformed on purpose — the shell's reader must refuse it —
 // then a real one, then a beat before `ready` so a test can read the status of an engine that is
@@ -583,6 +607,144 @@ fn with_no_resource_directory_at_all_nothing_is_started() {
     }
 }
 
+// ── The Windows path the shell hands to Node ─────────────────────────────────────────────────
+//
+// ohmail 0.13.0 and 0.13.1 could not start their engine on Windows at all, and nothing in this
+// file noticed. The whole chain is written out on `without_verbatim_prefix`; the short version is
+// that Tauri's `resource_dir()` answers with `canonicalize`'s extended-length form,
+// `\\?\C:\Users\…`, every Rust-side guard here accepts it happily, and Node then splits the root
+// off it as the two characters `C:` and dies `EISDIR` before it has loaded a line of the engine.
+//
+// THESE RUN ON LINUX, ON PURPOSE. The transformation is over the path's TEXT rather than behind
+// `#[cfg(windows)]`, because a `#[cfg(windows)]` version — or `dunce::simplified`, which is
+// already linked in — is inert on the CI that exists, so a test feeding it a Windows path would
+// pass whether or not the fix was there. That is the shape of guard this repository keeps finding
+// out about the expensive way.
+
+/// The exact string Tauri's `resource_dir()` returned inside a Windows 11 guest, measured from the
+/// spawned process's own command line rather than reasoned about.
+const WINDOWS_RESOURCES: &str = r"\\?\C:\Users\ohmail\AppData\Local\ohmail";
+const VERBATIM: &str = r"\\?\";
+
+#[test]
+fn windows_verbatim_paths_lose_their_prefix() {
+    assert_eq!(
+        without_verbatim_prefix(Path::new(WINDOWS_RESOURCES)),
+        PathBuf::from(r"C:\Users\ohmail\AppData\Local\ohmail"),
+    );
+    // The other prefix that has an ordinary spelling.
+    assert_eq!(
+        without_verbatim_prefix(Path::new(r"\\?\UNC\fileserver\apps\ohmail")),
+        PathBuf::from(r"\\fileserver\apps\ohmail"),
+    );
+}
+
+#[test]
+fn simplifying_an_ordinary_path_changes_nothing() {
+    // Every shape that must survive untouched, including the POSIX ones this runs on.
+    for path in [
+        r"C:\Program Files\ohmail",
+        r"\\fileserver\apps\ohmail",
+        "/usr/lib/ohmail",
+        "/opt/homebrew/bin/node",
+        "relative/engine/bin",
+        "",
+    ] {
+        assert_eq!(without_verbatim_prefix(Path::new(path)), PathBuf::from(path), "{path}");
+    }
+    // Idempotent — which is what makes applying it at the boundary AND in `engine_path_in` a
+    // no-op rather than a second transformation to reason about.
+    let once = without_verbatim_prefix(Path::new(WINDOWS_RESOURCES));
+    assert_eq!(without_verbatim_prefix(&once), once);
+}
+
+/// A verbatim prefix with no ordinary spelling is LEFT ALONE. Rewriting it would invent a path
+/// that names a different thing, which is worse than the one Node cannot open.
+#[test]
+fn a_verbatim_prefix_that_cannot_be_simplified_is_kept() {
+    for path in [
+        r"\\?\Volume{b75e2c83-0000-0000-0000-602f00000000}\ohmail",
+        r"\\?\C:relative-to-the-drive",
+        r"\\?\",
+    ] {
+        assert_eq!(without_verbatim_prefix(Path::new(path)), PathBuf::from(path), "{path}");
+    }
+}
+
+/// THE GUARD THAT WOULD HAVE CAUGHT IT: the two paths that become the child's program and its
+/// `argv[1]`, composed from the resource directory Windows actually hands this shell.
+///
+/// Not a test of `without_verbatim_prefix` — a test of `engine_path_in` and `vendored_node_in`,
+/// the functions the shipped shell calls. Removing the simplification from either one turns this
+/// red on Linux.
+#[test]
+fn the_windows_engine_path_is_one_node_can_resolve() {
+    let resources = Path::new(WINDOWS_RESOURCES);
+
+    let engine = engine_path_in(resources);
+    let engine = engine.to_str().expect("a path composed from ASCII");
+    assert!(!engine.starts_with(VERBATIM), "Node cannot resolve this as a main module: {engine}");
+    assert!(engine.starts_with(r"C:\Users\ohmail\"), "the drive letter must survive: {engine}");
+    assert!(engine.ends_with(ENGINE_FILE_NAME), "{engine}");
+
+    let node = vendored_node_in(resources);
+    let node = node.to_str().expect("a path composed from ASCII");
+    assert!(!node.starts_with(VERBATIM), "{node}");
+    assert!(node.starts_with(r"C:\Users\ohmail\"), "{node}");
+}
+
+/// And the same property through the whole decision, because the plan is what actually reaches
+/// the spawn. A `Plan::Spawn` composed from a Windows resource directory must carry no verbatim
+/// path in either half of the launch.
+#[test]
+fn a_plan_made_from_a_windows_resource_directory_spawns_ordinary_paths() {
+    let env = full_env();
+    let resources = Path::new(WINDOWS_RESOURCES);
+    let installed = vec![engine_path_in(resources), vendored_node_in(resources)];
+    // Bound before the match: the injected filesystem borrows `installed`, and a match scrutinee's
+    // temporaries outlive the locals the block declares.
+    let decided = plan(
+        &|k| env.get(k).cloned(),
+        Some(resources),
+        Some(Path::new(r"C:\Users\ohmail\AppData\Roaming\io.ohmail.desktop")),
+        &fs_with(&installed),
+    );
+    match decided {
+        Plan::Spawn(launch) => {
+            let program = launch.program.to_string_lossy().into_owned();
+            assert!(!program.starts_with(VERBATIM), "the runtime: {program}");
+            let arg = launch.args[0].to_string_lossy().into_owned();
+            assert!(!arg.starts_with(VERBATIM), "the engine bundle: {arg}");
+        }
+        other => panic!("expected a spawn plan, got {other:?}"),
+    }
+}
+
+/// The line the give-up message quotes. Both eras of the child's life: a bare runtime dying before
+/// the engine's logger exists, and the engine's own structured record afterwards.
+#[test]
+fn the_error_line_recogniser_picks_the_line_that_names_the_cause() {
+    // The real Windows failure, verbatim from the guest, and the lines around it that must lose.
+    assert_eq!(error_line("node:fs:2749"), None);
+    assert_eq!(error_line("    const out = binding.lstat(base, false, undefined, true);"), None);
+    assert_eq!(error_line("                        ^"), None);
+    assert_eq!(error_line("   "), None);
+    assert_eq!(
+        error_line("Error: EISDIR: illegal operation on a directory, lstat 'C:'").as_deref(),
+        Some("Error: EISDIR: illegal operation on a directory, lstat 'C:'"),
+    );
+    // The engine's own logger, both spacings its serialiser can emit.
+    assert!(error_line(r#"{"level":"error","event":"start_failed"}"#).is_some());
+    assert!(error_line(r#"{"level": "error", "event": "start_failed"}"#).is_some());
+    assert_eq!(error_line(r#"{"level":"info","msg":"serving"}"#), None);
+
+    // Bounded, and bounded by characters — a byte slice would panic mid-codepoint here.
+    let long = format!("Error: {}", "é".repeat(400));
+    let quoted = error_line(&long).expect("names an error");
+    assert_eq!(quoted.chars().count(), ERROR_LINE_MAX + 1, "{ERROR_LINE_MAX} chars and an ellipsis");
+    assert!(quoted.ends_with('…'));
+}
+
 /// The real probe, against a real file, in both directions. Everything above injects a filesystem;
 /// this is the one test that pins what the SHIPPED predicate actually answers — without it the
 /// injected tests would all be consistent with a `look` that was wrong.
@@ -860,7 +1022,12 @@ fn an_engine_that_dies_is_noticed_and_restarted_a_bounded_number_of_times() {
             assert!(exit.served, "each run did serve before dying");
             assert_eq!(exit.code, Some(9));
             assert!(reason.contains("stopped restarting"), "the reason says it gave up: {reason}");
-            assert!(reason.contains("another copy"), "the reason names the likely cause: {reason}");
+            // This mode dies QUIETLY — one INFO line on stderr and an exit — so the shell has
+            // nothing of the child's to quote. That is the branch where the duplicate-copy guess
+            // is still offered, and it is offered as one thing that does this rather than as the
+            // cause. `giving_up_quotes_what_the_engine_actually_said` holds the other branch.
+            assert!(reason.contains("wrote nothing that named a cause"), "{reason}");
+            assert!(reason.contains("another copy"), "the fallback still offers the guess: {reason}");
         }
         other => panic!("expected a failed state, got {other:?}"),
     }
@@ -869,6 +1036,45 @@ fn an_engine_that_dies_is_noticed_and_restarted_a_bounded_number_of_times() {
     // restart loop with extra steps.
     thread::sleep(Duration::from_millis(400));
     assert_eq!(fixture.starts(), MAX_STARTS as usize);
+    engine.stop();
+}
+
+/// THE SENTENCE THE USER GETS NAMES THE CAUSE THE CHILD NAMED, AND GUESSES NOTHING.
+///
+/// For two releases this message asserted that another running copy of ohmail *was* the cause of
+/// any crash loop. On Windows the cause was a main module Node could not resolve — the child said
+/// so, four times, on a stream this shell was already teeing to its log file — and the app told
+/// the user to go looking for a second copy that did not exist.
+#[test]
+fn giving_up_quotes_what_the_engine_actually_said() {
+    let fixture = Fixture::new("loud-crashloop");
+    let engine = Engine::spawn_with(fixture.launch("die-loudly"), quick());
+
+    wait_for(
+        || matches!(engine.state(), EngineState::Failed { .. }),
+        Duration::from_secs(30),
+        "the restart budget to run out",
+    );
+    assert_eq!(fixture.starts(), MAX_STARTS as usize, "{:?}", fixture.lines());
+
+    match engine.state() {
+        EngineState::Failed { reason, .. } => {
+            assert!(
+                reason.contains("Error: EISDIR: illegal operation on a directory, lstat 'C:'"),
+                "the child's own words: {reason}"
+            );
+            assert!(
+                !reason.contains("another copy"),
+                "a cause was known, so nothing is guessed: {reason}"
+            );
+            // The FIRST line that named an error, not the last one — the child also reported the
+            // consequence of its failure, and quoting that would diagnose the symptom.
+            assert!(!reason.contains("the connection closed"), "the first error, not the last: {reason}");
+            assert!(!reason.contains("Node.js v22"), "not the sign-off banner: {reason}");
+            assert!(!reason.contains("binding.lstat"), "not the source echo either: {reason}");
+        }
+        other => panic!("expected a failed state, got {other:?}"),
+    }
     engine.stop();
 }
 

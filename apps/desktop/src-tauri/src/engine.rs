@@ -659,13 +659,106 @@ pub fn plan_with(
 
 /// Where the packaged engine bundle is, given the app's resource directory. One spelling, so the
 /// plan and anything that wants to report the layout cannot disagree about it.
+///
+/// **These two functions produce the exact strings that become the child's program and `argv[1]`,
+/// so each ends in [`without_verbatim_prefix`] — the guarantee belongs where the value is made.**
+/// [`Shell::paths`] already normalises the directory on the way in, which makes this a second
+/// application to an ordinary path; that is a no-op, held by
+/// `simplifying_an_ordinary_path_changes_nothing`. It is here anyway because it is what makes the
+/// property TESTABLE: the boundary needs a live Tauri app and CI has none, while these take a path
+/// and return a path, so `the_windows_engine_path_is_one_node_can_resolve` runs on Linux and goes
+/// red the moment the call is removed.
 pub fn engine_path_in(resources: &Path) -> PathBuf {
-    resources.join(ENGINE_RESOURCE_DIR.iter().collect::<PathBuf>()).join(ENGINE_FILE_NAME)
+    let composed =
+        resources.join(ENGINE_RESOURCE_DIR.iter().collect::<PathBuf>()).join(ENGINE_FILE_NAME);
+    without_verbatim_prefix(&composed)
 }
 
-/// Where the vendored runtime is, given the app's resource directory.
+/// Where the vendored runtime is, given the app's resource directory. See [`engine_path_in`] for
+/// why this ends in [`without_verbatim_prefix`].
 pub fn vendored_node_in(resources: &Path) -> PathBuf {
-    resources.join(RUNTIME_RESOURCE_DIR).join(node_file_name())
+    without_verbatim_prefix(&resources.join(RUNTIME_RESOURCE_DIR).join(node_file_name()))
+}
+
+/// A path with Windows' extended-length `\\?\` prefix taken off, so it can be handed to another
+/// program. Everything else — every POSIX path, and every Windows path that is already ordinary —
+/// comes back byte-identical.
+///
+/// ── WHY THIS EXISTS: IT IS THE WHOLE WINDOWS PLATFORM, NOT A TIDINESS ───────────────────────
+///
+/// ohmail 0.13.0 and 0.13.1 could not start their mail engine on Windows AT ALL — no mailbox could
+/// be connected in any mode — and this function is the fix. The chain, measured in a Windows 11
+/// guest rather than read:
+///
+///  1. `tauri-utils`' `StartingBinary` caches `std::env::current_exe()?.canonicalize()` in a
+///     `#[ctor]` static, before `main`. **`Path::canonicalize` on Windows is
+///     `GetFinalPathNameByHandleW`, which ALWAYS returns the extended-length form** — there is no
+///     flag to ask it for an ordinary path.
+///  2. `resource_dir()` is that path's parent, returned unchanged on Windows.
+///  3. `Path::join` PRESERVES a verbatim prefix, so `engine_path_in` composes
+///     `\\?\C:\…\engine\bin\ohmail-engine.mjs`, and `resolve_node` the matching `\\?\C:\…\node.exe`.
+///  4. Rust is perfectly happy with that — the probe's metadata call resolves it, `CreateProcess`
+///     accepts it as the program — so [`look`] returns `Found::File`, the plan says Spawn, and
+///     **every guard in this file passes**. The observed command line was
+///     `"\\?\C:\…\node.exe" \\?\C:\…\ohmail-engine.mjs`.
+///  5. **Node is not.** Resolving its main module it reaches `fs.realpathSync`, which splits the
+///     root off the path to check it exists; `\\?\C:\…` splits as the two characters `C:`, and
+///     `lstat('C:')` fails `EISDIR`. Four attempts, four identical deaths, then the shell gave up.
+///
+/// Nothing about macOS or Linux changes: `canonicalize` there returns an ordinary absolute path,
+/// which is exactly why this shipped twice.
+///
+/// ── WHY IT IS PLATFORM-INDEPENDENT, WHICH LOOKS WRONG AND IS THE POINT ──────────────────────
+///
+/// The obvious spelling is `#[cfg(windows)]` — or `dunce::simplified`, which is already in the
+/// dependency tree and does this correctly. Both were refused for ONE reason: they are inert on
+/// Linux, so a test that feeds them `\\?\C:\Users\…` on CI would pass whether or not the fix
+/// works. That is a guard nobody can watch fail. This function is a pure transformation of the
+/// path's text, so `windows_verbatim_paths_lose_their_prefix` runs on the CI that exists and
+/// reddens when the transformation is removed.
+///
+/// The cost of that choice is a POSIX path whose first four characters are literally `\\?\` —
+/// backslashes are legal in Unix filenames — being rewritten. It is not reachable: the only
+/// callers are the app's own resource and data directories, which come from the platform.
+///
+/// Two residuals, named rather than left to be found:
+///  · **Only the two prefixes that HAVE an ordinary spelling are removed** — `\\?\C:\` and
+///    `\\?\UNC\server\share\`. A volume-GUID or device path (`\\?\Volume{…}`) has none, so it is
+///    left exactly as it is and Node would still refuse it. That install shape does not exist for
+///    a per-user or Program Files install.
+///  · **A path longer than `MAX_PATH` needs the verbatim form to be usable by non-Unicode-aware
+///    APIs**, and this takes it off. That is the right trade here: Node cannot use the verbatim
+///    form at all, so such an install is broken either way, and Rust's own std re-adds the prefix
+///    internally when it needs to.
+pub fn without_verbatim_prefix(path: &Path) -> PathBuf {
+    // A path that is not valid Unicode is left alone. It could not have survived the trip to Node
+    // in any spelling, and re-encoding one here would be a second way to get it wrong.
+    let Some(text) = path.to_str() else { return path.to_path_buf() };
+    let Some(rest) = text.strip_prefix(r"\\?\") else { return path.to_path_buf() };
+
+    // `\\?\UNC\server\share\…` is the verbatim spelling of `\\server\share\…`.
+    if let Some(share) = rest.strip_prefix(r"UNC\") {
+        return PathBuf::from(format!(r"\\{share}"));
+    }
+
+    // `\\?\C:\…` is the verbatim spelling of `C:\…`. The trailing separator is part of the test:
+    // `\\?\C:relative` is not a form `canonicalize` produces and is not one to invent a
+    // simplification for.
+    let mut chars = rest.chars();
+    match (chars.next(), chars.next(), chars.next()) {
+        (Some(drive), Some(':'), Some('\\')) if drive.is_ascii_alphabetic() => PathBuf::from(rest),
+        _ => path.to_path_buf(),
+    }
+}
+
+/// The app's resource directory, as a path another program can be handed.
+///
+/// ONE spelling for both readers — this file's plan and `host.rs`'s packaged host client — because
+/// they resolve the same directory independently and both hand what they find to the same Node
+/// child. Two copies of [`without_verbatim_prefix`] applied by hand is one copy that eventually
+/// is not.
+pub fn resource_dir_of<R: tauri::Runtime, M: tauri::Manager<R>>(app: &M) -> Option<PathBuf> {
+    app.path().resource_dir().ok().map(|dir| without_verbatim_prefix(&dir))
 }
 
 // ── The supervisor ───────────────────────────────────────────────────────────────────────────
@@ -702,6 +795,25 @@ struct Shared {
     last_exit: Option<Exit>,
     /// Set by the frame reader when the stream stops being readable as frames. Unrecoverable.
     fault: Option<String>,
+    /// The FIRST line of this run's diagnostics that named an error, bounded — the child's own
+    /// account of why it is about to die.
+    ///
+    /// **It exists so the give-up message can stop guessing.** For its whole life that sentence
+    /// asserted that another running copy of ohmail *was* the cause, which is a claim this file
+    /// has never had evidence for and which was flatly wrong for the one failure that took the
+    /// whole Windows platform down: the engine's stderr said
+    /// `Error: EISDIR: illegal operation on a directory, lstat 'C:'` on all four attempts, the
+    /// log file had it, and the sentence the user got named a second copy instead.
+    ///
+    /// FIRST rather than last, because that is where the cause is. A runtime that dies on startup
+    /// prints its error and then a stack trace and then its own version banner; keeping the last
+    /// line would report `Node.js v22.23.2`.
+    ///
+    /// Per RUN, like `ready` and the host signals — an error belongs to the child that wrote it.
+    /// Nothing new reaches a person that was not already going to this process's stderr and the
+    /// log file verbatim; what changes is that one line of it is also put where the failure is
+    /// read.
+    last_error: Option<String>,
     /// The engine's own account of its host-mode listener, read off its diagnostic stream —
     /// `host_listening`, `host_listener_skipped`, `host_listen_failed`, `host_config_invalid`.
     /// Per RUN, like `ready`: cleared when a new child starts, because a signal belongs to the
@@ -749,6 +861,7 @@ fn new_shared(state: EngineState, finished: bool) -> Shared {
         boot_phase: None,
         last_exit: None,
         fault: None,
+        last_error: None,
         host_signal: None,
         lan_signal: None,
         stop: false,
@@ -1093,11 +1206,22 @@ impl Shell {
         }
     }
 
+    /// THE BOUNDARY WHERE THE FRAMEWORK'S PATHS BECOME ORDINARY ONES.
+    ///
+    /// Both of these end up as arguments or environment values of a Node child, and on Windows the
+    /// resource directory arrives in the extended-length `\\?\` form that Node cannot resolve —
+    /// see [`without_verbatim_prefix`] for the whole chain. Normalising HERE, once, is what keeps
+    /// every consumer below from needing to know: the plan, the layout report, the host client's
+    /// assets, and the data directory the engine opens its mirror in.
+    ///
+    /// The data directory is included even though it has never been observed in the verbatim form
+    /// — it comes from `dirs`' known-folder lookup, which does not canonicalise. It is normalised
+    /// anyway because it travels the same way and the cost of covering it is one call.
     pub fn paths(app: &tauri::App) -> ShellPaths {
         use tauri::Manager;
         ShellPaths {
-            app_data: app.path().app_data_dir().ok(),
-            resources: app.path().resource_dir().ok(),
+            app_data: app.path().app_data_dir().ok().map(|d| without_verbatim_prefix(&d)),
+            resources: resource_dir_of(app),
         }
     }
 
@@ -1474,8 +1598,18 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
                 break;
             }
             Err(err) => {
+                // NAME BOTH HALVES OF THE LAUNCH, because `program` is the RUNTIME and this
+                // sentence used to call it "the engine". The two are different files in different
+                // directories and a spawn failure is usually about which one is missing or
+                // unreadable; reporting the runtime's path under the engine's name sends the
+                // reader to the wrong file.
+                let ran = launch
+                    .args
+                    .first()
+                    .map(|a| format!("{} {}", launch.program.display(), Path::new(a).display()))
+                    .unwrap_or_else(|| launch.program.display().to_string());
                 inner.set_state(EngineState::Failed {
-                    reason: format!("the engine at {} could not be started: {err}", launch.program.display()),
+                    reason: format!("the engine could not be started: {err} — the shell ran: {ran}"),
                     last: None,
                 });
                 break;
@@ -1498,9 +1632,11 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
             s.boot_phase = None;
             s.fault = None;
             // A host signal belongs to one run — a restart must not report the last child's
-            // listener as this one's. The LAN slot follows the same rule.
+            // listener as this one's. The LAN slot follows the same rule, and so does the error
+            // line: the give-up message must quote the attempt that actually just failed.
             s.host_signal = None;
             s.lan_signal = None;
+            s.last_error = None;
             // THE DEADLINE BELONGS TO ONE RUN, AND CARRYING IT INTO THE NEXT KILLS THE NEXT.
             //
             // Found by the crash-loop tests rather than reasoned about: a run torn down for a
@@ -1530,7 +1666,7 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
         let _ = forwarder.join();
 
         let ran = started.elapsed();
-        let (served, fault) = {
+        let (served, fault, last_error) = {
             let mut s = inner.shared.lock().expect("engine state");
             // THE SENDER GOES BEFORE THE JOIN, AND THE OTHER ORDER DEADLOCKS.
             //
@@ -1541,7 +1677,11 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
             // engine had died, which is precisely the failure the drain exists to prevent.
             s.stdin = None;
             s.pid = None;
-            (s.ready.is_some(), s.fault.take())
+            // `last_error` is CLONED rather than taken: its documented lifetime is "cleared when a
+            // new child starts", and emptying it here would quietly make it "cleared when a run
+            // ends" — which reads the same until something asks about the engine between the two.
+            // The forwarder thread has already joined, so this is the whole of what it saw.
+            (s.ready.is_some(), s.fault.take(), s.last_error.clone())
         };
         let _ = writer.join();
         // EVERY WAITER, FAILED, BEFORE ANYTHING ELSE IS DECIDED.
@@ -1579,14 +1719,31 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
         }
         attempt += 1;
         if attempt > MAX_STARTS {
-            inner.set_state(EngineState::Failed {
-                reason: format!(
+            // WHAT THE ENGINE SAID, NOT WHAT THIS FILE WOULD GUESS.
+            //
+            // This sentence used to end "— if another copy of ohmail is already running, that is
+            // the cause", asserted flat, about a cause the shell had never checked for. It was
+            // wrong for the failure that took Windows down for two releases: the child printed
+            // `Error: EISDIR: illegal operation on a directory, lstat 'C:'` four times, the log
+            // file had it, and the person reading the app was sent to look for a duplicate copy
+            // that did not exist. A wrong diagnosis costs more than no diagnosis, because it is
+            // acted on.
+            //
+            // So: quote the child when it named something, and when it named nothing, say that —
+            // and demote the duplicate-copy guess to what it always was, one thing that does this.
+            let reason = match &last_error {
+                Some(said) => format!(
                     "the engine failed {MAX_STARTS} starts in a row, so the shell stopped restarting it. \
-                     Quit ohmail and open it again once the cause is fixed — if another copy of ohmail \
-                     is already running, that is the cause."
+                     Each time it said: {said} — quit ohmail and open it again once that is fixed."
                 ),
-                last: Some(exit),
-            });
+                None => format!(
+                    "the engine failed {MAX_STARTS} starts in a row, so the shell stopped restarting it, \
+                     and it wrote nothing that named a cause — ohmail's log file has its full output. \
+                     Quit ohmail and open it again once the cause is fixed; another copy of ohmail \
+                     already running is one thing that does this."
+                ),
+            };
+            inner.set_state(EngineState::Failed { reason, last: Some(exit) });
             break;
         }
 
@@ -2125,6 +2282,42 @@ impl Engine {
 /// A read can land mid-line, and this deliberately does not reassemble: the file is a copy of the
 /// stream, so a chunk boundary inside a JSON object is written exactly where it fell and the next
 /// chunk completes it. Reordering cannot happen — one reader, one writer, in order.
+/// The most this shell will quote from one line the engine wrote. A stack frame, a JSON log
+/// record and a thrown `Error`'s first line all fit; a 64 KB line does not become a dialog.
+const ERROR_LINE_MAX: usize = 240;
+
+/// One diagnostic line, if it names an error — trimmed and bounded — or `None`.
+///
+/// TWO SHAPES, because the child can die in two eras. Once the engine's own logger is up it emits
+/// one JSON record per line and marks failures `"level":"error"`. Before that it is a bare Node
+/// process, and a runtime that cannot even resolve its main module prints a plain stack trace
+/// whose first useful line is `Error: …` (or `TypeError:`, `SyntaxError:`, …). The second shape is
+/// the one that matters most: it is the era in which a broken install fails, and the era this
+/// shell used to have nothing at all to say about.
+///
+/// Deliberately NOT a parse. This is a substring test over a line that another program wrote, used
+/// only to choose which line to quote — never to decide behaviour — so a line it misjudges costs a
+/// less useful sentence and nothing else.
+fn error_line(line: &str) -> Option<String> {
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
+    }
+    let looks_like_an_error = line.contains("Error")
+        || line.contains(r#""level":"error""#)
+        || line.contains(r#""level": "error""#);
+    if !looks_like_an_error {
+        return None;
+    }
+    // Bounded by CHARACTERS, not bytes — the engine's output is UTF-8 and slicing it by byte
+    // count would panic mid-codepoint on the first non-ASCII mailbox name that reached a log.
+    let mut out: String = line.chars().take(ERROR_LINE_MAX).collect();
+    if line.chars().count() > ERROR_LINE_MAX {
+        out.push('…');
+    }
+    Some(out)
+}
+
 fn forward_diagnostics(mut stderr: ChildStderr, inner: &Arc<Inner>) {
     let mut buf = [0u8; 8 * 1024];
     // The engine's diagnostics are one JSON object per line, and FOUR of those lines are also
@@ -2151,6 +2344,12 @@ fn forward_diagnostics(mut stderr: ChildStderr, inner: &Arc<Inner>) {
                             if let Some(signal) = crate::host::lan_signal_of_line(line) {
                                 inner.shared.lock().expect("engine state").lan_signal =
                                     Some(signal);
+                            }
+                            if let Some(named) = error_line(line) {
+                                let mut s = inner.shared.lock().expect("engine state");
+                                if s.last_error.is_none() {
+                                    s.last_error = Some(named);
+                                }
                             }
                         }
                         carry.clear();
