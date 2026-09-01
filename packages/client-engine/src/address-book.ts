@@ -154,7 +154,7 @@ interface Acc extends AddressBookEntry {
 }
 
 /**
- * A message's date, AS EVIDENCE OF RECENCY — `0` for anything dated in the future.
+ * A message's date, AS EVIDENCE OF RECENCY — or {@link NO_EVIDENCE}.
  *
  * `EngineMessage.date` is the `Date:` HEADER, which the sender writes and nobody checks; the
  * mirror holds no arrival clock to use instead (`updatedAt` is the mirror row's own stamp and
@@ -163,10 +163,21 @@ interface Acc extends AddressBookEntry {
  * message dated 2099 — a broken client, an import, or somebody who wanted the last word — would
  * make its display name unbeatable by every correctly dated message that ever follows.
  *
- * A future date is not evidence that a claim is NEWER, so it stops being counted as any. `0` is
- * the same value an undated message gets, which is the honest reading: the date says nothing.
- * The name is still a candidate — it may be the only one this address has — it just cannot
- * outrank a dated one.
+ * TWO inputs carry no usable evidence, and they are told apart from a real date rather than
+ * folded into a number that happens to be small:
+ *
+ *   · a date in the FUTURE — not evidence that a claim is NEWER, so it is not counted as any;
+ *   · `stamp()`'s `0`, which is "no `Date:` header, or one that would not parse".
+ *
+ * Both become `-Infinity`, and that value rather than `0` is the whole of the second version of
+ * this function. **`0` is not below the range of a real date.** `pagination.ts` sets this out at
+ * length for the same header: a message dated before 1970 is *"ordinary in imported archives"*
+ * and gives a NEGATIVE millisecond value. Ranking a rejected 2099 claim at `0` therefore left it
+ * beating a legitimate 1968 one — the defect this function exists to close, still open for the
+ * one population where a bogus date is most likely to turn up.
+ *
+ * The name is still a candidate either way — it may be the only one this address has — it just
+ * cannot outrank a dated one.
  *
  * `SKEW` because a `Date:` a few minutes ahead of the reader's clock is ordinary mail, not a
  * forgery, and a device with a slow clock must not have every fresh name demoted. A day is far
@@ -178,8 +189,11 @@ interface Acc extends AddressBookEntry {
  * into a fix about names. Worth doing; not worth doing quietly.
  */
 const SKEW = 86_400_000;
+/** Below every value `Date` can hold (±8.64e15), so no real timestamp can lose to a rejected one. */
+const NO_EVIDENCE = Number.NEGATIVE_INFINITY;
 function evidenceAt(at: number, now: number): number {
-  return at > now + SKEW ? 0 : at;
+  if (at === 0) return NO_EVIDENCE; // undated, or a `Date:` that would not parse
+  return at > now + SKEW ? NO_EVIDENCE : at;
 }
 
 function addTo(
@@ -202,7 +216,7 @@ function addTo(
     into.set(address, {
       address, name, count: 1, lastAt: at,
       nameTier: name === "" ? NONE : tier,
-      nameAt: name === "" ? 0 : nameAt,
+      nameAt: name === "" ? NO_EVIDENCE : nameAt,
     });
     return;
   }
