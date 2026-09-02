@@ -144,6 +144,11 @@ export async function ensureLocalWorld(db: LocalDb, input: EnsureLocalWorldInput
         // because `status` no longer knows.
         organizerRole: mailboxes.organizerRole,
         organizedByKind: mailboxes.organizedByKind,
+        // …and the CONSENT, because `reader` is the pre-consent state as well as the demoted one
+        // and only this column tells them apart (`schema-mail.ts#organizerRole` says so). Without
+        // it `standDownMemory` reads a mailbox nobody has been asked to organize as one somebody
+        // took away.
+        organizeConsentedAt: mailboxes.organizeConsentedAt,
         takeoverAuthorizedAt: mailboxes.takeoverAuthorizedAt,
       })
       .from(mailboxes)

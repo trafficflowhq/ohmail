@@ -130,7 +130,10 @@ export function organizerDisplayName(raw: string | null | undefined): string | n
  * (`disabled` + a reason is a PAUSE this install must not resume from; `disabled` + none is a
  * TOMBSTONE the user asked for).
  *
- * The second arm is the live one. A reader is `connected`, on its own roster, and its
+ * The second arm is the live one, and it asks TWO questions because `reader` carries two states:
+ * a mailbox nobody has consented to organize is a reader too. See the guard in the body.
+ *
+ * A reader is `connected`, on its own roster, and its
  * `organized_by_kind` is the same closed three the reason's suffix carries — which is exactly
  * what migration 0083's backfill relied on when it split the one column into the other two, so
  * recomposing the string here is reading back what that migration wrote rather than inventing a
@@ -142,12 +145,34 @@ export function standDownMemory(row: {
   status: string;
   organizerRole: string | null;
   organizedByKind: string | null;
+  organizeConsentedAt: Date | null;
   disabledReason: string | null;
 }): MailboxDisabledReason | null {
   if (row.status === "disabled") {
     return isMailboxDisabledReason(row.disabledReason) ? row.disabledReason : null;
   }
   if (row.organizerRole !== "reader") return null;
+  /* -- A READER WITH NEITHER A HOLDER NOR A CONSENT NEVER STOOD DOWN --------------------------
+   *
+   * `reader` is the PRE-CONSENT state as well as the lost-the-lease one, and `schema-mail.ts`
+   * says so in as many words: *"What separates the two is `organizeConsentedAt`, not this
+   * column."* Reading the role alone conflated them, and the common Cloud path is the one that
+   * suffered: `POST /mailboxes` creates a reader with no consent and no holder so a fresh connect
+   * mirrors and moves nothing, and this reported `organized_elsewhere:unknown` for it — so the
+   * FIRST press of "organize here" answered that the mailbox had been taken back from another
+   * organizer, on a mailbox nobody had ever organized. That is the contract
+   * `MailboxTakeoverResult.previousReason` states (a consent-less mailbox answers `null`), broken
+   * by the function that was supposed to serve it.
+   *
+   * THE TEST IS `holder OR consent`, NOT CONSENT ALONE, and the second term is the one a reader
+   * of `schema-mail.ts` would leave out. A stand-down writes `organized_by_kind` in the SAME
+   * statement as the role (`markMailboxStoodDown`, and the sidecar's inline write) but writes no
+   * consent — so on a desktop row whose consent predates the stamp `ensureLocalWorld` now sets, a
+   * consent-only test would read a genuine stand-down as "never asked" and let the install
+   * auto-resume. Either fact present means somebody has been organizing this mailbox; only a row
+   * with neither is untouched.
+   */
+  if (row.organizedByKind === null && row.organizeConsentedAt === null) return null;
   const kind = isOrganizerKind(row.organizedByKind) ? row.organizedByKind : "unknown";
   const reason = `organized_elsewhere:${kind}`;
   /* Composed and then CHECKED rather than cast — and the check is UNREACHABLE from today's tree,
