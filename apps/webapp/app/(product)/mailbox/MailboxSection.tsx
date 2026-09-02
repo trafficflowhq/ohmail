@@ -1676,6 +1676,12 @@ export function MailboxSection() {
     setOutlookOffer(false);
     setEditing(m);
     setEdited(emptyEdit());
+    /* EVERYTHING LEARNED ABOUT THE LAST HOST GOES WITH THE FORM. `emptyEdit()` resets the fields,
+       and the TLS offer and the certificate's host suggestion are NOT fields — they are shared
+       state, so opening a DIFFERENT mailbox's edit form used to show the previous mailbox's
+       plaintext offer and a hostname proved about a different server entirely. A change of
+       MAILBOX is a change of host by definition. */
+    retireHostEvidence();
     setStage("edit");
   };
 
@@ -1827,6 +1833,14 @@ export function MailboxSection() {
     setInsecureOffer(false);
     setSuggestion(null);
     setTyped((v) => (v.allowInsecure ? { ...v, allowInsecure: false } : v));
+    /* AND THE EDIT FORM'S CONSENT, because the two forms share ONE `insecureOffer` and one
+       `suggestion` and only one of them is on screen at a time. The edit arm retired none of this
+       until 2026-09-02: server A reports it has no TLS, the person ticks the opt-in, changes the
+       host to B, and the save sends `allowInsecure` for B — a password in the clear to a server
+       nobody was asked about, which is the connect arm's own defect on the second surface.
+       One function rather than two, so the rule that a consent belongs to the host it was granted
+       about has one place to live. */
+    setEdited((v) => (v.allowInsecure ? { ...v, allowInsecure: false } : v));
     // The failed write's sentence goes with it, through `clearVerdict` above — which retires it on
     // EVERY field edit, not only on a host change.
   }, [clearVerdict]);
@@ -2554,7 +2568,12 @@ export function MailboxSection() {
           <input
             id="mb-edit-host" className="join-input" autoComplete="off" spellCheck={false}
             placeholder={t("keepCurrent")}
-            value={edited.host} onChange={(e) => setEdited((v) => ({ ...v, host: e.target.value }))}
+            value={edited.host}
+            onChange={(e) => {
+              setEdited((v) => ({ ...v, host: e.target.value }));
+              // The edit arm's half of the connect arm's rule — see `retireHostEvidence`.
+              retireHostEvidence();
+            }}
           />
 
           <label className="join-label" htmlFor="mb-edit-port">{t("imapPortLabel")}</label>
@@ -2580,7 +2599,13 @@ export function MailboxSection() {
             id="mb-edit-smtp" className="join-input" autoComplete="off" spellCheck={false}
             placeholder={t("keepCurrent")}
             value={edited.smtpHost}
-            onChange={(e) => setEdited((v) => ({ ...v, smtpHost: e.target.value }))}
+            onChange={(e) => {
+              setEdited((v) => ({ ...v, smtpHost: e.target.value }));
+              /* THE SECOND HOST-CHANGING SITE ON THIS FORM. An SMTP failure mints a suggestion
+                 about the SMTP host, so leaving it after the field changes lets one press replace
+                 the new host with a name proved about the old one. */
+              retireHostEvidence();
+            }}
           />
 
           <label className="join-label" htmlFor="mb-edit-smtp-port">{t("smtpPortLabel")}</label>
