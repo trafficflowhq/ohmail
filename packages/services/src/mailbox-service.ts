@@ -354,7 +354,20 @@ export interface ProvenEndpoint {
  * A parallel vocabulary here would mean two sets of sentences for one set of failures.
  */
 export type MailboxProbeVerdict =
-  | { verdict: "ok"; proven?: ProvenEndpoint }
+  | {
+    verdict: "ok"; proven?: ProvenEndpoint;
+    /**
+     * HOW MANY FOLDERS the account can see, counted on the rung that answered — present only when
+     * the probe was built to ask for it (the TEST action; never the create path, which has no use
+     * for the number and should not pay a LIST for it).
+     *
+     * It is the CHECKABLE half of a success sentence. "Connected" is a claim a person cannot
+     * verify; "signed in as you, 14 folders" is one they can recognise as their mailbox or not,
+     * which is the same job the model count does in the AI pane's verdict. Absent means nobody
+     * counted, and no reader may substitute a zero for that.
+     */
+    folders?: number;
+  }
   | { verdict: "store_unverified"; code: MailboxErrorCode; proven?: ProvenEndpoint }
   | { verdict: "refuse"; code: MailboxErrorCode; tls?: ProbeTlsDetail };
 
@@ -1040,6 +1053,94 @@ export class MailboxService {
    * working mailbox. Where no `smtpProbe` is injected the old behaviour stands, stated by the
    * option's own docblock.
    */
+  /**
+   * TRY A LOGIN AND SAY WHAT HAPPENED. Writes nothing, stores nothing, creates no mailbox.
+   *
+   * ── WHY THIS EXISTS AT ALL, WHEN `create` ALREADY PROBES ─────────────────────────────────
+   *
+   * Because until now the ONLY way to find out whether a set of mail-server details worked was to
+   * submit them and watch the mailbox either appear or not. Every failure taxonomy, every
+   * certificate detail and all fourteen `probe_*` sentences were reachable only as the by-product
+   * of a create that did not happen. There was no test action on any mailbox form, and no success
+   * copy anywhere in the product — the affirmative half of the verdict had never been written,
+   * because nothing could produce it.
+   *
+   * ── IT SHARES `create`'s REFUSAL BY CONSTRUCTION, NOT BY RESEMBLANCE ─────────────────────
+   *
+   * A failure here throws exactly what a failing `create` throws — {@link probeRefused}, the same
+   * `mailbox_probe_failed` code, the same seven-member `details.reason` taxonomy, the same
+   * {@link ProbeTlsDetail}. That is the whole reason this method lives in this file rather than in
+   * the route: every client that can already render a connect failure renders a test failure with
+   * no new copy and no new branch, and the two can never drift into two vocabularies for one set
+   * of failures. Only SUCCESS is new, and only success needed a new sentence.
+   *
+   * ── WHAT "OK" MEANS HERE INCLUDES THE FOLDER COUNT ───────────────────────────────────────
+   *
+   * A greeting and an accepted LOGIN prove the host, the port, the TLS mode and the password. They
+   * do not prove that this account can READ anything, and "connected" over a mailbox whose folders
+   * are unreadable is the kind of true-but-useless answer this codebase keeps refusing to give. So
+   * the probe lists folders on the rung that succeeded and the count rides the verdict: it is the
+   * checkable half of the sentence, the same role the model count plays in the AI pane's verdict.
+   * A LIST that throws is classified by the ordinary taxonomy rather than reported as success.
+   *
+   * NO OWNERSHIP CHECK, because there is no mailbox yet — this is a PRE-create action. What bounds
+   * it is the probe closure the caller injects: the SSRF/port guard on the hosted deployment, the
+   * per-address admission counter, and the deadline. Those are the reason the probe is passed in
+   * rather than dialled here, and a call site that built its own adapter would silently have none
+   * of them.
+   */
+  async probeConnection(
+    ctx: ServiceContext,
+    input: { address: string; imap: { host: string; port?: number; secure?: boolean; user?: string; pass: string } },
+    opts: { probe: MailboxProbe },
+  ): Promise<{ ok: true; host: string; user: string; folders: number | null }> {
+    const address = canonicalAddress(input.address ?? "");
+    if (!address) throw new ServiceError("validation_failed", 400, "address is required");
+    const host = (input.imap?.host ?? "").trim();
+    if (!host) throw new ServiceError("validation_failed", 400, "imap.host is required");
+    if (!input.imap?.pass) throw new ServiceError("validation_failed", 400, "imap.pass is required");
+    // The username defaults to the address, which is what every provider preset does and what the
+    // connect form fills in. Defaulted HERE rather than at the route so the test and the create
+    // that follows it dial the same identity — a test that quietly proved a different username
+    // than the create would use is worse than no test.
+    const user = (input.imap.user ?? "").trim() || address;
+
+    const verdict = await opts.probe({
+      accountId: ctx.accountId,
+      address,
+      imap: { host, port: input.imap.port, secure: input.imap.secure, user, pass: input.imap.pass },
+    });
+
+    if (verdict.verdict === "refuse") throw probeRefused(verdict.code, verdict.tls);
+    // `store_unverified` is REPORTED AS A FAILURE HERE, and that is the one place this method
+    // deliberately parts company with `create`.
+    //
+    // There, the verdict means "the server was reached and declined to serve right now", which is
+    // positive evidence about the host, the port and the TLS mode and no evidence about the
+    // password — so the credential is stored and the mailbox reads as "connecting". That is the
+    // right answer when the person's goal is to ADD the mailbox: refusing would lock out anyone
+    // whose provider caps concurrent connections.
+    //
+    // The goal here is the opposite. The question this method answers is "did this work", and the
+    // honest answer to that when the server said `NO [UNAVAILABLE]` is no — nothing about the
+    // password has been established. Reporting it as ok would put a green verdict naming a folder
+    // count it never read on screen. It carries `connect`, whose sentence already says the server
+    // could not be reached properly and to try again.
+    if (verdict.verdict === "store_unverified") throw probeRefused(verdict.code);
+
+    return {
+      ok: true,
+      // The PROVEN host, not the typed one where they differ — the verdict names the rung that
+      // actually answered, and the sentence on screen should name what answered.
+      host: verdict.proven?.host ?? host,
+      user,
+      // `null` when the ok verdict carries no count: a probe built without the folder-listing
+      // option, or an adapter that cannot list. The COPY decides what to do with that; inventing a
+      // zero here would render "0 folders" over a mailbox nobody counted.
+      folders: verdict.folders ?? null,
+    };
+  }
+
   async create(
     ctx: ServiceContext, body: CreateMailboxBody, opts: CreateMailboxOptions,
   ): Promise<MailboxDTO> {

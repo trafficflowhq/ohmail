@@ -179,7 +179,7 @@ function probeHostGuardFor(deps: ApiDeps): ProbeHostGuard {
 
 /** The verdict, structurally identical to `MailboxProbeVerdict` in `packages/services`. */
 export type ImapProbeVerdict =
-  | { verdict: "ok"; proven?: ProvenEndpoint }
+  | { verdict: "ok"; proven?: ProvenEndpoint; folders?: number }
   | { verdict: "store_unverified"; code: MailboxErrorCode; proven?: ProvenEndpoint }
   | { verdict: "refuse"; code: MailboxErrorCode; tls?: ProbeTlsDetail };
 
@@ -638,9 +638,29 @@ async function withDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
 }
 
 /** What a probe needs of an adapter — the seam the ladder tests dial through. */
-export interface ProbeDialer { connect(): Promise<void>; close(): Promise<void> }
+export interface ProbeDialer {
+  connect(): Promise<void>;
+  close(): Promise<void>;
+  /**
+   * OPTIONAL, and optional is the point: every existing caller of {@link makeImapProbe} injects a
+   * two-method double, and requiring a third would break them all to serve one new option. The
+   * real `ImapAdapter` has it; a double that does not simply yields an ok verdict with no count,
+   * which the copy layer already has to handle (a probe built without {@link
+   * ImapProbeOptions.countFolders} never counts either).
+   */
+  listFolders?(): Promise<string[]>;
+}
 
 export interface ImapProbeOptions {
+  /**
+   * COUNT THE FOLDERS on the rung that answers, for the TEST action's verdict.
+   *
+   * OFF BY DEFAULT, and deliberately: the create and claim paths have no use for the number, and a
+   * LIST on those paths would spend a round trip inside the probe deadline to produce something
+   * nobody reads. Only the test action — whose whole output is a sentence a person checks against
+   * their own mailbox — turns it on.
+   */
+  countFolders?: boolean;
   maxPerAddress?: number;
   deadlineMs?: number;
   /**
@@ -663,6 +683,7 @@ export interface ImapProbeOptions {
  * shape `routes/attachments.ts` injects `makeOpenAdapter(deps)`.
  */
 export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: ImapProbeInput) => Promise<ImapProbeVerdict> {
+  const countFolders = opts.countFolders === true;
   const max = opts.maxPerAddress ?? MAX_PROBES_PER_ADDRESS;
   const deadlineMs = opts.deadlineMs ?? PROBE_DEADLINE_MS;
 
@@ -710,7 +731,7 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
      */
     const dialOnce = async (
       attempt: ProbeAttempt, allowInsecure: boolean,
-    ): Promise<{ ok: true } | { ok: false; err: unknown; timedOut: boolean }> => {
+    ): Promise<{ ok: true; folders?: number } | { ok: false; err: unknown; timedOut: boolean }> => {
       const adapter = makeAdapter({
         host: input.imap.host,
         port: attempt.port,
@@ -726,6 +747,30 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
         const close = adapter.close().catch(() => { /* a connection that never came up has nothing to close */ });
         if (!timedOut) await close;
         return { ok: false, err, timedOut };
+      }
+      /**
+       * THE FOLDER COUNT, INSIDE THE SAME CONNECTION AND THE SAME DEADLINE.
+       *
+       * Between the accepted LOGIN and the close, because a second dial to count would be a second
+       * login against the provider — outside the admission slot's one-login-at-a-time property and
+       * charged again against providers that rate-limit authentication.
+       *
+       * A LIST THAT THROWS IS NOT A SUCCESS. It falls through to the same `verdictFor` ladder every
+       * other failure on this rung takes, so "signed in but your folders could not be read" gets a
+       * named refusal rather than a green verdict with no number on it. A LIST that runs out of
+       * BUDGET is reported as a timeout, because that is what it is.
+       */
+      if (countFolders && typeof adapter.listFolders === "function") {
+        try {
+          const names = await withDeadline(adapter.listFolders(), Math.max(1, budgetLeft()));
+          await adapter.close().catch(() => { /* the count is in hand; a noisy logout is not */ });
+          return { ok: true, folders: names.length };
+        } catch (err) {
+          const timedOut = err instanceof ProbeDeadlineExceeded;
+          const close = adapter.close().catch(() => { /* already failing; the close is best-effort */ });
+          if (!timedOut) await close;
+          return { ok: false, err, timedOut };
+        }
       }
       await adapter.close().catch(() => { /* the greeting was the evidence; a noisy logout is not */ });
       return { ok: true };
@@ -747,7 +792,13 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
         if (budgetLeft() < 250) { sawTimeout = true; break; }
         const r = await dialOnce(attempt, false);
         if (r.ok) {
-          return { verdict: "ok", proven: { host: input.imap.host, port: attempt.port, secure: attempt.secure } };
+          return {
+            verdict: "ok",
+            proven: { host: input.imap.host, port: attempt.port, secure: attempt.secure },
+            // Spread, never `folders: r.folders` — the key must be genuinely ABSENT when nobody
+            // counted, because absent and `0` are different answers and the copy tells them apart.
+            ...(r.folders === undefined ? {} : { folders: r.folders }),
+          };
         }
         if (r.timedOut) { sawTimeout = true; continue; }
 
