@@ -1,0 +1,289 @@
+/**
+ * WHERE THE FIRST-RUN FLOW OPENS — derived from truth-conditions, never from a step counter.
+ *
+ * ── THE RULING THIS FILE IS ────────────────────────────────────────────────────────────────
+ *
+ * Onboarding state is DERIVED. There is no
+ * `onboarding_step` column and there must never be one, because a counter and the facts it
+ * claims to summarise drift the moment anything happens outside the flow — a mailbox connected
+ * from Settings, a Screener decision taken in the app, an install that organizes the mailbox
+ * from another machine. Every one of those moves the person forward, and a counter would not
+ * know. So the step is recomputed from what the product actually stored, every render:
+ *
+ *   current step = the FIRST unmet condition.
+ *
+ * That single rule is what makes the flow resumable across restarts, re-runnable from Settings
+ * pre-filled, and correct on a door where somebody else did half the work.
+ *
+ * ── WHY THIS IS A PURE FUNCTION IN ITS OWN FILE ────────────────────────────────────────────
+ *
+ * The inputs come from four places (a polled `GET /mailboxes` row, `GET /consent`, the door's AI
+ * posture, the Screener queue) and three doors compose them differently — Cloud reads a REST DTO,
+ * the standalone desktop reads the sidecar, the self-host reads both plus `/hello`. Keeping the
+ * DECISION separate from all three is what makes the state→condition table testable as a table:
+ * every row below is one test with no React, no fetch and no clock. The alternative — the
+ * decision spread across the component's render — is the shape in which a table like this stops
+ * being checkable, and this one has thirteen rows.
+ *
+ * ── THE ORDER, AND ONE DIVERGENCE THAT IS DELIBERATE ───────────────────────────────────────
+ *
+ * The order below is the one the flow's own progress rail shows and the one its screens are
+ * numbered in: mailbox → organize → history → AI → pull → decide → done. An alternative ordering
+ * was considered that puts the import ahead of the AI question. The two disagree only on RESUME,
+ * and only in one state: quit during the first pull with AI still unanswered.
+ *
+ * The rail wins there, and the reason is what the two screens are. The AI step is an unanswered
+ * QUESTION and takes a second; the pull step is a progress bar that needs no input and continues
+ * whether or not anybody is looking at it (the status bar carries its counters — {@link
+ * ONBOARDING_STATUS_COUNTERS}). Resuming onto the progress bar would park the person in front of
+ * a screen that wants nothing from them while an actual question waits behind it.
+ */
+
+/**
+ * THE SCREENS. Named for what they ask, not numbered — a number in a type is a step counter
+ * wearing a different hat, and it would have to be renumbered every time a step is inserted.
+ *
+ * `welcome` and `pair` are the two that are not conditions: `welcome` is shown once at the top of
+ * a run that has nothing behind it, and `pair` is offered after the flow is otherwise finished.
+ * Both are in the union because the stage renders them; neither is ever RETURNED by
+ * {@link deriveOnboardingStep}, which answers only with steps a truth-condition selects.
+ */
+export type OnboardingStep =
+  | "welcome"
+  | "mailbox"
+  | "elsewhere"
+  | "consent"
+  | "window"
+  | "ai"
+  | "provider"
+  | "pull"
+  | "decide"
+  | "summary"
+  | "pair";
+
+/**
+ * WHICH DOOR IS ASKING. Not cosmetic: it changes which steps exist at all.
+ *
+ *  · `local`    — the standalone desktop. The only door with an AI PROVIDER step, because it is
+ *                 the only one where the model is a property of the install (`ai-provider.ts`).
+ *  · `cloud`    — the managed service. AI is on/off against ohmail's own key; the provider step
+ *                 is informational. On this door setup begins only after the account's own email
+ *                 address has been verified — a mailbox may not be connected before that — and
+ *                 that rule is enforced by the ENTRY POINT, not here: this function is never asked
+ *                 about an account that has not verified.
+ *  · `selfhost` — like cloud, with the provider step read-only from `/hello`.
+ */
+export type OnboardingDoor = "local" | "cloud" | "selfhost";
+
+/**
+ * THE AI POSTURE, as the four states that select different screens — not a boolean.
+ *
+ * A boolean cannot express the difference between "nobody has been asked" and "asked, and the
+ * answer was no", and those two need opposite behaviour: the first stops the flow to ask, the
+ * second walks past. That distinction is the reason this is a union, and collapsing it is how
+ * the AI step would either nag somebody who already declined or silently skip somebody who was
+ * never asked.
+ *
+ *  · `unset`          — never answered. The flow asks.
+ *  · `off`            — answered no. A COMPLETE answer; the flow continues without AI, and the
+ *                       provider step does not exist for this run.
+ *  · `on-unconfigured` — answered yes, but no usable provider yet (a local install with no model
+ *                       chosen). The provider step is the unmet condition.
+ *  · `on`             — answered yes and usable. Nothing left to ask.
+ */
+export type OnboardingAi = "unset" | "off" | "on-unconfigured" | "on";
+
+/**
+ * THE MAILBOX FACTS THE DERIVATION READS — the four fields of the polled `GET /mailboxes` row
+ * that carry onboarding truth, and nothing else.
+ *
+ * Every field is OPTIONAL and every absent field reads as the state a server too old to send it
+ * would actually be in. That rule is not politeness, it is the deploy-skew contract the rest of
+ * this codebase keeps (`MailboxFacts.initialImportCompletedAt` carries the long version): a
+ * bundle talking to an API deployed before mail 0083 must degrade to a coherent flow, not to a
+ * crash and not to a wrong branch.
+ */
+export interface OnboardingMailbox {
+  /**
+   * Absent reads as `organizer` — every install was one before the column existed, so a host
+   * that cannot say has not demoted anybody. The dangerous default is the other one: it would
+   * put the "somebody else organizes this" screen over a mailbox this install organizes.
+   */
+  organizerRole?: "organizer" | "reader";
+  /** Who holds it, when somebody else does. `null`/absent ⇒ nobody is named. */
+  organizedBy?: { kind: string | null; name: string | null; since: string | null } | null;
+  /** Whether that holder is still renewing. Read by the SCREEN, not by this derivation. */
+  organizerState?: "held" | "stopped" | null;
+  /**
+   * WHEN somebody agreed to let ohmail organize this mailbox. Absent and `null` both mean
+   * "nobody has", which is what makes the consent step the unmet condition — the safe direction,
+   * because the cost of being wrong is a consent screen shown twice, and the cost of the inverse
+   * is organizing somebody's mailbox without having asked.
+   */
+  organizeConsentedAt?: string | null;
+  /**
+   * WHEN the first import finished. `null` is "still importing"; ABSENT is an API that predates
+   * the column and must NOT read as null — the pre-0038 behaviour is "this build cannot tell",
+   * and a build that cannot tell must not park somebody on a progress bar for ever. This is the
+   * one field where absent and null genuinely differ, and `mail-state.ts` documents the measured
+   * failure that established it.
+   */
+  initialImportCompletedAt?: string | null;
+}
+
+/** The account-level facts, from `GET /consent`. */
+export interface OnboardingAccount {
+  /**
+   * WHEN the flow was last LEFT — finished or cancelled. Non-null closes the flow: it is the one
+   * fact that is about the flow rather than about the mailbox, and it is what stops a finished
+   * account re-opening setup on every boot.
+   */
+  onboardingCompletedAt?: string | null;
+}
+
+/** Everything the derivation is allowed to read. */
+export interface OnboardingFacts {
+  door: OnboardingDoor;
+  /** The mailbox the flow is about — `null` when the account has none yet. */
+  mailbox: OnboardingMailbox | null;
+  account: OnboardingAccount;
+  ai: OnboardingAi;
+  /**
+   * HOW MANY SENDERS ARE WAITING in the Screener queue. `0` skips the guided decision SILENTLY —
+   * a guided "take your first decision" screen with nothing on it is worse than no screen, and
+   * on a mailbox whose backlog was all known senders it is the ordinary case.
+   */
+  queuedSenders: number;
+}
+
+/**
+ * WHERE THE FLOW OPENS, or `null` when it must not open at all.
+ *
+ * `null` is a real answer and the most common one: every boot of every account that has been
+ * through setup returns it. The caller renders nothing.
+ *
+ * ── THE TABLE, IN ORDER. Each arm is one row, and one test. ────────────────────────────────
+ *
+ *  1. completed          → null       the flow has been left; never re-opens by itself
+ *  2. no mailbox         → "mailbox"  nothing to organize; the door's first real question
+ *  3. reader + a holder  → "elsewhere" somebody else organizes it — the choice, never a dead end
+ *     + no consent
+ *  4. no consent         → "consent"  the re-arrangement statement, then the window
+ *  5. AI unset           → "ai"       an unanswered question, ahead of the progress bar
+ *  6. AI on, no provider → "provider" local door only; elsewhere "on" needs no configuring
+ *  7. import not done    → "pull"     the progress bar; leaving it is allowed and expected
+ *  8. queue non-empty    → "decide"   the guided first decision
+ *  9. otherwise          → "summary"  what ohmail did
+ *
+ * `welcome` and `pair` are never returned — see {@link OnboardingStep}.
+ */
+export function deriveOnboardingStep(facts: OnboardingFacts): OnboardingStep | null {
+  // ROW 1 — THE FLOW HAS BEEN LEFT. First, and before every other arm, because it is the only
+  // condition that can be true while conditions further down are ALSO unmet: somebody who
+  // cancelled on the consent screen has no consent stamp for ever, and without this arm ahead of
+  // row 4 the flow would re-open on that same screen at every boot. Cancel and finish write the
+  // same stamp precisely so that one arm covers both (`setOnboardingCompleted`'s docblock).
+  if (facts.account.onboardingCompletedAt) return null;
+
+  // ROW 2 — NOTHING TO ORGANIZE. The only state in which the flow has no mailbox to talk about.
+  if (facts.mailbox === null) return "mailbox";
+
+  const mb = facts.mailbox;
+  // ABSENT ⇒ `organizer`. See {@link OnboardingMailbox.organizerRole} for why this direction.
+  const isReader = mb.organizerRole === "reader";
+  const consented = Boolean(mb.organizeConsentedAt);
+  // A HOLDER IS NAMED — not merely "the object exists". `organizedBy` is null as a whole when
+  // nobody is named (the DTO guarantees that rather than an object of three nulls), and a reader
+  // with no holder is an ordinary un-consented mailbox, which is row 4's business and not row
+  // 3's. Testing `kind`/`name` rather than the object is what keeps a server that starts sending
+  // `{null,null,null}` from routing everybody through the wrong screen.
+  const heldByOther = Boolean(mb.organizedBy && (mb.organizedBy.kind || mb.organizedBy.name));
+
+  // ROW 3 — SOMEBODY ELSE ORGANIZES IT. Ahead of consent because the consent screen would be a
+  // lie here: agreeing would not start organizing anything until the claim is taken, and the
+  // claim is what this screen is for. Gated on `!consented` so a mailbox this account HAS
+  // consented to, and that another install later took, is not asked for consent a second time —
+  // its banner and its "Organize here instead" button live in Settings, not in first-run setup.
+  if (isReader && heldByOther && !consented) return "elsewhere";
+
+  // ROW 4 — NO CONSENT. The re-arrangement statement and, on its heels, the window: they are two
+  // screens and ONE write (`POST /mailboxes/:id/organize` carries consent, baseline, window and
+  // scope in one transaction), so the derivation names only the first of them. Reaching "window"
+  // is forward navigation inside a run, never a resume target — there is no truth-condition
+  // between them to resume ON, which is exactly what "one write" means.
+  if (!consented) return "consent";
+
+  // ROW 5 — THE AI QUESTION IS UNANSWERED. Ahead of the pull deliberately; the divergence from
+  // the plan's summary sentence, and why, is argued in this file's header.
+  if (facts.ai === "unset") return "ai";
+
+  // ROW 6 — YES, BUT NOTHING TO RUN IT WITH. Only the standalone door can be in this state and
+  // only it has a provider step: on Cloud the provider is ohmail's own key and on self-host it is
+  // the operator's, so neither has anything for a person to configure here. Guarding on the door
+  // as well as the posture keeps a Cloud account that somehow reports `on-unconfigured` — a
+  // deploy skew, a bug — out of a screen that door does not have, rather than into a dead end.
+  if (facts.ai === "on-unconfigured" && facts.door === "local") return "provider";
+
+  // ROW 7 — THE FIRST PULL IS STILL RUNNING. `=== null` and NOT falsy: `undefined` is an API that
+  // predates the column and cannot answer, and a build that cannot tell must not park somebody in
+  // front of a progress bar with no end. This is `mail-state.ts`'s import-floor rule, and the
+  // measured failure behind it is a permanent "Syncing your mail" over a finished mirror.
+  if (mb.initialImportCompletedAt === null) return "pull";
+
+  // ROW 8 — SOMEBODY IS WAITING IN THE SCREENER. Skipped SILENTLY at zero: the guided decision
+  // needs a sender to decide about, and an empty queue is an ordinary outcome (every sender in
+  // the backlog already had a rule). A screen that says "take your first decision" over nothing
+  // is a dead end the plan forbids.
+  if (facts.queuedSenders > 0) return "decide";
+
+  // ROW 9 — EVERYTHING IS DONE AND NOBODY HAS SEEN THE SUMMARY. `pair` follows it inside the run;
+  // it is optional and skippable, so it is never a resume target of its own.
+  return "summary";
+}
+
+/**
+ * THE STEPS THE PERSON WALKS, in rail order — the stage's forward/back path.
+ *
+ * Separate from {@link deriveOnboardingStep} because they answer different questions: that one
+ * says where a run RESUMES, this one says what comes next inside a run. They must not be the same
+ * list, because two of these are never resume targets ({@link OnboardingStep}) and two more are
+ * conditional on the door.
+ */
+export function onboardingPath(facts: OnboardingFacts): OnboardingStep[] {
+  const out: OnboardingStep[] = ["welcome", "mailbox"];
+  const mb = facts.mailbox;
+  // The elsewhere screen is in the PATH only when it is actually the situation. Walking somebody
+  // through "somebody else organizes this" when nobody does would be a screen with no content.
+  if (mb && mb.organizerRole === "reader"
+      && Boolean(mb.organizedBy && (mb.organizedBy.kind || mb.organizedBy.name))) {
+    out.push("elsewhere");
+  }
+  out.push("consent", "window", "ai");
+  // The provider step exists on the standalone door alone (ruling 2(d)); on the other two doors
+  // it is a sentence on the AI screen, not a step.
+  if (facts.door === "local" && facts.ai !== "off") out.push("provider");
+  out.push("pull");
+  if (facts.queuedSenders > 0) out.push("decide");
+  out.push("summary", "pair");
+  return out;
+}
+
+/**
+ * WHETHER THE STATUS BAR CARRIES THE PULL'S TWO COUNTERS — true exactly while the flow's own
+ * progress screen would be showing them and the person is somewhere else.
+ *
+ * The plan's promise is that leaving the pull screen does not lose the pull: "the person may
+ * leave this screen; the pull continues and the status bar carries the counters". This is the
+ * predicate behind that sentence, kept here rather than in the strip so that the flow and the
+ * strip cannot disagree about when the import is finished.
+ */
+export function ONBOARDING_STATUS_COUNTERS(facts: OnboardingFacts): boolean {
+  const mb = facts.mailbox;
+  if (mb === null) return false;
+  // Consent first: before it there is no organizing to report on, and the mirror that is building
+  // is the reader mirror, which the ordinary sync strip already narrates.
+  if (!mb.organizeConsentedAt) return false;
+  // `=== null`, on row 7's rule: absent is "cannot tell", and a build that cannot tell must not
+  // put a permanent pair of counters on the strip.
+  return mb.initialImportCompletedAt === null;
+}

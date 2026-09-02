@@ -1269,6 +1269,30 @@ export interface ConsentStateWire {
    * instruction that overrides the detection (mail 0082's header).
    */
   themeFace?: string | null;
+  /**
+   * WHEN THE FIRST-RUN FLOW WAS LAST LEFT — finished or cancelled — or `null` for "never"
+   * (mail 0083). The last of the onboarding truth-conditions, and the only one about the flow
+   * itself rather than about the mailbox.
+   *
+   * Optional, and `null` and `undefined` collapse to the SAME branch — open the flow — which is
+   * the correct direction rather than the convenient one. An API too old to carry the column and
+   * an account that has never been through the flow leave the reader in the same place, and the
+   * cost of being wrong that way is an overlay with a Cancel on it. Resolving an unknown to
+   * "completed" would be the expensive mistake: it hides first-run setup from an account that has
+   * never seen it, and there is no other route into consent on the standalone door.
+   */
+  onboardingCompletedAt?: string | null;
+  /**
+   * THE SCREENING MODE — `'window'` (the cutline is `screeningBaselineAt − dormancyDays`) or
+   * `'all_time'` (no cutline; nothing is filed to History unscreened). Mail 0083.
+   *
+   * Optional, and `undefined` reads as `'window'`: an API deployed before the column serves
+   * exactly the windowed behaviour every client had before the mode existed, so the absent case
+   * is not a guess. It is the THIRD half of the cutline arithmetic and must be read with
+   * {@link dormancyDays} and {@link screeningBaselineAt} — a client holding two of the three
+   * partitions its mirror differently from the server that counted for it.
+   */
+  screeningScope?: "window" | "all_time";
   counts: {
     decidedSenders: number;
     activeUndecidedSenders: number;
@@ -1380,6 +1404,24 @@ export const consent = {
     api<{ blockRemoteImagesAt: string | null }>("/consent/settings", {
       method: "PATCH",
       body: { blockRemoteImages: blocked },
+    }),
+  /**
+   * THE FIRST-RUN FLOW HAS BEEN LEFT — finished or cancelled (mail 0083), on the same route with
+   * `onboardingCompleted` in the body (field-present ⇒ acted-on).
+   *
+   * It takes NO argument because the wire accepts only `true`: there is no un-complete
+   * instruction, so a boolean parameter would be a control with an unreachable position. Both
+   * endings call it, which is the ruling — the stamp answers "should this open by itself again",
+   * and both answers to that are no.
+   *
+   * It is deliberately NOT the consent write. Consent, the baseline, the window and the scope
+   * land together inside `POST /mailboxes/:id/organize`'s transaction; this is the flow's own
+   * bookkeeping, so a cancel BEFORE consent records the cancel and authorises nothing.
+   */
+  completeOnboarding: () =>
+    api<{ onboardingCompletedAt: string }>("/consent/settings", {
+      method: "PATCH",
+      body: { onboardingCompleted: true },
     }),
   /**
    * BLOCK TRACKING PIXELS (the default), OR LET THEM LOAD — mail 0072, the same route. `blocked:

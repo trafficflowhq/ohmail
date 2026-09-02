@@ -673,6 +673,25 @@ export async function consentSettings(
   foldersEnabledAt: string | null;
   locale: string | null;
   themeFace: string | null;
+  /**
+   * mail 0083 — WHEN the first-run flow was last left, by finishing it or by cancelling it.
+   *
+   * It is the LAST of the onboarding truth-conditions and the only one the flow writes about
+   * itself; every other step reads a fact the product already stored (consent, baseline, import,
+   * AI). Cancel and finish both stamp it because the question it answers is "should the flow
+   * open by itself again", and both answers to that are no. NULL is "never been through it",
+   * which is what makes a fresh install open the flow.
+   */
+  onboardingCompletedAt: string | null;
+  /**
+   * mail 0083 — `'window'` (the cutline is `screening_baseline_at − dormancy_days`) or
+   * `'all_time'` (no cutline at all, so nothing is filed to History unscreened).
+   *
+   * A MODE beside the dial rather than a magic value inside it: `dormancy_days` is bounded 1–365
+   * by its own writer, so "all time" has no number to be. Read together with `dormancyDays` by
+   * both cutlines (`consent-cutline.ts` server-side, the client's parity test).
+   */
+  screeningScope: "window" | "all_time";
 }> {
   const [row] = await ctx.db.select().from(accountSettings)
     .where(eq(accountSettings.accountId, ctx.accountId)).limit(1);
@@ -731,6 +750,21 @@ export async function consentSettings(
     // restore) sending it on would stamp a face nothing renders onto every boot. Null means
     // "no account-wide choice" and each device resolves its own default (consent-state.ts).
     themeFace: SUPPORTED_THEME_FACES.includes(row?.themeFace ?? "") ? row!.themeFace : null,
+    // NULL and an absent row both mean "this account has never left the first-run flow", which is
+    // the state that OPENS it. That is the safe direction here in the sense that matters: the
+    // worst case of a wrongly-null read is a flow that offers itself again to somebody who has
+    // already been through it — a screen with a Cancel on it — whereas a wrongly-stamped read
+    // hides the flow from an account that has never seen it. No default invents a stamp.
+    onboardingCompletedAt: row?.onboardingCompletedAt
+      ? row.onboardingCompletedAt.toISOString()
+      : null,
+    // The column is NOT NULL DEFAULT 'window', so an absent ROW is the only null this can see and
+    // it resolves to the same default the column carries. An UNSUPPORTED value answers 'window'
+    // too — `locale`'s rule, for `locale`'s reason (the CHECK closes the set, so a value outside
+    // it can only come from a hand-run UPDATE) with the direction chosen deliberately: 'window'
+    // is the posture in which OLD mail is filed rather than screened, which is what every account
+    // that has never touched this has been getting.
+    screeningScope: row?.screeningScope === "all_time" ? "all_time" : "window",
   };
 }
 
@@ -1454,6 +1488,60 @@ export async function setThemeFace(
     await recordSettingsChange(tx, ctx.accountId); // AFTER the settings row — the global lock order
   });
   return { themeFace };
+}
+
+/**
+ * STAMP `account_settings.onboarding_completed_at` — the first-run flow has been LEFT (mail 0083).
+ *
+ * ── WHY THIS IS A STAMP AND NOT A STEP COUNTER ──────────────────────────────────────────────
+ *
+ * Onboarding state is derived from truth-conditions the product already stores — consent, the
+ * screening baseline, the import stamp, the AI posture — and the derivation (`onboarding.ts` on
+ * the client) walks them in order and renders the first unmet one. Exactly one fact about the
+ * flow itself is not derivable from those, and it is this: whether the person has already been
+ * offered the flow and left it. Without the stamp a finished account re-opens the flow on every
+ * boot, and an account that cancelled it is asked again forever.
+ *
+ * ── CANCEL AND FINISH WRITE THE SAME THING, AND THAT IS THE POINT ───────────────────────────
+ *
+ * The stamp answers "should this open by itself again", and both endings answer no. Recording
+ * them differently would invite a reader to treat a cancel as an unfinished flow and re-open it,
+ * which is the behaviour the stamp exists to prevent — a person who pressed Cancel pressed it.
+ * What was actually completed stays legible in the truth-conditions themselves: an account that
+ * cancelled before consenting has no `organize_consented_at`, and every surface that cares reads
+ * that rather than this.
+ *
+ * ── AND WHY IT RE-STAMPS RATHER THAN COALESCING ─────────────────────────────────────────────
+ *
+ * `organize_consented_at` COALESCEs (`organizeHere`) because it records a one-time authorisation
+ * and moving it would relocate consent. This one records the LAST time the flow was left, and
+ * Settings → "Run setup again" re-runs it deliberately, so a fresh instant is the true answer.
+ * Nothing reads it as a duration or an age, only as null / not-null, so the re-stamp costs
+ * nothing and keeps the column meaning one thing.
+ *
+ * WHAT THIS WRITE AUTHORISES: NOTHING. It spends nothing, moves no mail and files nothing
+ * differently — it decides whether one overlay opens unbidden. The consent, the window and the
+ * scope are written by `organizeHere` in ITS transaction (the single-write ruling); this is the
+ * flow's own bookkeeping and is deliberately not on that path, so a cancel before consent
+ * records the cancel and authorises nothing.
+ */
+export async function setOnboardingCompleted(
+  ctx: ServiceContext,
+): Promise<{ onboardingCompletedAt: string }> {
+  const at = ctx.now();
+  await (ctx.db as unknown as Tx).transaction(async (tx) => {
+    // Erasure fence FIRST — the single lock chain (accounts → settings → sequence row) every
+    // settings writer keeps; `erasure-fence.ts` carries the two-sided argument.
+    await fenceErasedAccount(tx, ctx.accountId);
+    await tx.insert(accountSettings)
+      .values({ accountId: ctx.accountId, onboardingCompletedAt: at, updatedAt: at })
+      .onConflictDoUpdate({
+        target: accountSettings.accountId,
+        set: { onboardingCompletedAt: at, updatedAt: at },
+      });
+    await recordSettingsChange(tx, ctx.accountId); // AFTER the settings row — the global lock order
+  });
+  return { onboardingCompletedAt: at.toISOString() };
 }
 
 /* `assertNotConfirmed` used to live here: a helper that turned a non-null `seed_confirmed_at`

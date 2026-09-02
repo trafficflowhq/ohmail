@@ -85,6 +85,7 @@ export {
   buildSeedReview, confirmSeed, consentSettings, setAutoSuggest, setBlockAutoUnsubscribe,
   setBlockRemoteImages, setBlockTrackingPixels, setDormancyDays, setFoldersEnabled,
   setLocale, setMailboxFoldersEnabled, setMailboxSignature, setThemeFace,
+  setOnboardingCompleted,
   mailboxSignatures, MAILBOX_SIGNATURE_MAX_CHARS,
   isMachineSent, isRobotAddress, parseAddressList,
   type SeedCandidate, type SeedConfirmResult, type SeedExclusionReason, type SeedReview,

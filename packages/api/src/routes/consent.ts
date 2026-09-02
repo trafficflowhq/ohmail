@@ -4,7 +4,7 @@ import {
   resetScreeningState, setAutoSuggest, setBlockAutoUnsubscribe, setBlockRemoteImages,
   setBlockTrackingPixels,
   setDormancyDays, setFoldersEnabled, setLocale, setMailboxFoldersEnabled, setMailboxSignature,
-  setThemeFace,
+  setOnboardingCompleted, setThemeFace,
   unmovedReport,
   DEFAULT_DORMANCY_DAYS, SEED_MAX_ADDRESSES, SUPPORTED_LOCALES, SUPPORTED_THEME_FACES,
   ServiceError,
@@ -146,6 +146,12 @@ interface ConsentSettingsBody {
   signatures?: unknown;
   locale?: unknown;
   themeFace?: unknown;
+  /**
+   * `true` — the first-run flow has been LEFT, by finishing it or by cancelling it (mail 0083).
+   * The only accepted value is `true`: there is no "un-complete onboarding" instruction, and a
+   * `false` that silently did nothing would be a control that lies about having acted.
+   */
+  onboardingCompleted?: unknown;
 }
 
 /**
@@ -182,7 +188,7 @@ async function applyConsentSettings(
   loadTrackingPixelsAt?: string | null;
   blockAutoUnsubscribeAt?: string | null; foldersEnabledAt?: string | null;
   folderMailboxesOff?: Record<string, string>; signatures?: Record<string, string>;
-  locale?: string | null; themeFace?: string | null;
+  locale?: string | null; themeFace?: string | null; onboardingCompletedAt?: string;
 }> {
   const hasAuto = "autoSuggest" in body;
   const hasDormancy = "dormancyDays" in body;
@@ -194,13 +200,14 @@ async function applyConsentSettings(
   const hasSignatures = "signatures" in body;
   const hasLocale = "locale" in body;
   const hasThemeFace = "themeFace" in body;
+  const hasOnboarding = "onboardingCompleted" in body;
   if (!hasAuto && !hasDormancy && !hasImages && !hasPixels && !hasAutoUnsub && !hasFolders
-      && !hasFolderMailboxes && !hasSignatures && !hasLocale && !hasThemeFace) {
+      && !hasFolderMailboxes && !hasSignatures && !hasLocale && !hasThemeFace && !hasOnboarding) {
     throw new ServiceError(
       "validation_failed", 400,
       "at least one of autoSuggest, dormancyDays, blockRemoteImages, blockTrackingPixels, " +
-      "blockAutoUnsubscribe, foldersEnabled, folderMailboxes, signatures, locale or themeFace " +
-      "is required",
+      "blockAutoUnsubscribe, foldersEnabled, folderMailboxes, signatures, locale, themeFace or " +
+      "onboardingCompleted is required",
     );
   }
 
@@ -407,12 +414,26 @@ async function applyConsentSettings(
     themeFace = f;
   }
 
+  /**
+   * THE ONE-VALUE KNOB — `true` and nothing else, not even `false`.
+   *
+   * Every other boolean on this route takes both booleans because both are meaningful states.
+   * This one has no opposite: nothing in the product un-completes onboarding, and Settings →
+   * "Run setup again" re-opens the flow WITHOUT clearing the stamp (the flow is entered on
+   * purpose there, not because the stamp was missing). Accepting `false` as a silent no-op would
+   * put a control on the wire that reports success and changes nothing; accepting it as a CLEAR
+   * would invent a state transition no screen asks for. So the wire says `true` or it is a 400.
+   */
+  if (hasOnboarding && body.onboardingCompleted !== true) {
+    throw new ServiceError("validation_failed", 400, "onboardingCompleted must be true");
+  }
+
   const out: {
     autoSuggestAt?: string | null; dormancyDays?: number; blockRemoteImagesAt?: string | null;
     loadTrackingPixelsAt?: string | null;
     blockAutoUnsubscribeAt?: string | null; foldersEnabledAt?: string | null;
     folderMailboxesOff?: Record<string, string>; signatures?: Record<string, string>;
-    locale?: string | null; themeFace?: string | null;
+    locale?: string | null; themeFace?: string | null; onboardingCompletedAt?: string;
   } = {};
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
     const txCtx = { ...ctx, db: tx as unknown as typeof ctx.db };
@@ -462,6 +483,13 @@ async function applyConsentSettings(
     }
     if (hasThemeFace) {
       out.themeFace = (await setThemeFace(txCtx, themeFace as string | null)).themeFace;
+    }
+    if (hasOnboarding) {
+      // Inside the SHARED transaction like every knob above it, which is what makes the flow's
+      // last act atomic with anything it writes alongside — a cancel that also parks a dial
+      // either records both or records neither.
+      out.onboardingCompletedAt =
+        (await setOnboardingCompleted(txCtx)).onboardingCompletedAt;
     }
   });
   return out;
@@ -599,6 +627,23 @@ export const consentRoutes: Route[] = [
         // null defers to the DEVICE, whose default is not a constant (a Linux device resolves
         // it to ohmarchy — the Option B detection the client owns).
         themeFace: settings.themeFace,
+        // WHEN THE FIRST-RUN FLOW WAS LAST LEFT, or `null` for "never" (mail 0083). It rides THIS
+        // response rather than a route of its own for `dormancyDays`'s reason: the flow's step is
+        // DERIVED from truth-conditions and a client that had to ask two endpoints to place
+        // itself would render the wrong step first on every slow connection. The three other
+        // conditions it is read beside — the consent stamp, the baseline, the import stamp — are
+        // already reachable in one round trip each from state the shell holds, and this is the
+        // fourth. Sent as `null` rather than omitted so a client can tell a server that read the
+        // row from one too old to have the column; both open the flow, which is the safe
+        // direction (the worst case is a screen with a Cancel on it).
+        onboardingCompletedAt: settings.onboardingCompletedAt,
+        // THE SCREENING MODE — `'window'` or `'all_time'` (mail 0083). Half of the same cutline
+        // arithmetic `dormancyDays` and `screeningBaselineAt` are the other halves of, and it must
+        // travel with them for the reason stated there: a client holding the dial without the mode
+        // partitions its mirror differently from the server that just counted for it, and the
+        // disagreement is a Screener queue whose length does not match its contents. Always one of
+        // the two strings — the column is NOT NULL with a default, so there is no unknown to send.
+        screeningScope: settings.screeningScope,
         counts,
       });
     },

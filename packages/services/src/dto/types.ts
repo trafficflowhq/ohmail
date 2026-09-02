@@ -415,6 +415,27 @@ export interface MailboxDTO {
    * collapsed into two anywhere they reach a person.
    */
   organizerState: "held" | "stopped" | null;
+  /**
+   * WHEN somebody agreed to let ohmail organize THIS mailbox, or `null` for "nobody has".
+   *
+   * ── WHY IT IS ON THE WIRE AT ALL, given `organizerRole` is right above it ─────────────────
+   *
+   * Because they answer different questions and the pair is not derivable from either half.
+   * `organizerRole` says who is organizing it NOW; this says whether the permission to organize
+   * it has ever been given. A mailbox freshly connected on the web is `reader` with a null here
+   * ("connected, nothing has moved"); a mailbox whose organizer was displaced by another install
+   * is `reader` with a stamp ("consented, someone else holds it"). The first needs the consent
+   * screen, the second must NEVER be shown it again — re-asking for a permission already granted
+   * is how a flow teaches people to click through consent.
+   *
+   * That distinction is the whole of the onboarding derivation's consent step (`onboarding.ts`,
+   * `first unmet condition`), and `organizeHere` already treats the two as independent — its
+   * precondition is `role = 'reader' OR consent IS NULL`, which cannot be written with one field.
+   *
+   * UNCONDITIONAL, on the three fields above it: a mailbox awaiting consent is `connected`, so a
+   * status gate would blank the field on exactly the rows it describes.
+   */
+  organizeConsentedAt: ISODateTime | null;
   id: string;
   provider: string;              // 'imap' today; 'exchange' planned
   address: string;

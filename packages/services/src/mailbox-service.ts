@@ -2543,6 +2543,11 @@ export class MailboxService {
         }
         : null,
       organizerState: isOrganizerState(m.organizerState) ? m.organizerState : null,
+      // THE CONSENT STAMP, beside the role rather than derived from it — the two are independent
+      // and the DTO's own doc carries the argument. Projected UNCONDITIONALLY like its three
+      // neighbours, and as a plain instant: no coercion is possible or needed, since the only
+      // writer is `organizeHere`'s COALESCE.
+      organizeConsentedAt: m.organizeConsentedAt ? m.organizeConsentedAt.toISOString() : null,
       // WHAT THIS MAILBOX'S SUBMISSION SERVER SAID IT WILL ACCEPT (mail 0055). UNCONDITIONAL, for
       // the reason the two lines above are: it is meaningful in every lifecycle state, and it is
       // read by the compose surface rather than by any error copy. `null` is "not known" — no
