@@ -13,6 +13,65 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.13.8] — 2026-09-02
+
+An install that only reads a mailbox now says so, and stops offering decisions it
+cannot carry out. The desktop notification switch reflects what the app is actually
+doing. Around those: removing your last mailbox clears the door it came in by,
+servers that keep their folders under a prefix are recognised, and notification
+registration survives signing out and signing back in. Most of this release is the
+same shape of correction — a screen that stated something the code did not do.
+
+### Notifications come back when you sign back in
+
+Signing out correctly took this browser's notification registration down. Nothing
+put it back. Signing in again left every switch in Settings showing ON over a
+registration that no longer existed, so new-mail notices with the browser closed
+were silently off until you happened to open Settings — the one screen that
+re-established them.
+
+They are re-established when the app starts instead.
+
+One consequence worth stating plainly, because it is a deliberate choice rather
+than an oversight: the app now confirms with the server that the registration is
+this browser's before it allows notices to be drawn. On a poor connection that
+confirmation can time out, and when it does, closed-browser notices stay off
+until the next time you open the app. Being quiet for one session is the better
+failure. The alternative is the one below.
+
+### A shared computer no longer announces the previous person's mail
+
+If a sign-out could not reach the server — a captive portal, a dropped
+connection, a window closed mid-way — the notification registration survived on
+the server, and the only thing keeping it silent was a local flag saying "do not
+draw". The next person to sign in on that computer set that flag back to "draw",
+because the app decided from the switches on screen rather than from whose
+registration was actually live. The next new-mail notice for the previous
+account then appeared on their screen.
+
+Both places that could do this — starting the app, and opening Settings — now
+turn drawing back on only for a registration the server has confirmed belongs to
+the current session. Turning notifications OFF is unchanged and still takes
+effect immediately, without waiting for the network.
+
+### Mailboxes that keep folders under a prefix
+
+Some servers file everything under a prefix such as `INBOX.`. On those, the app
+did not recognise its own folders and asked the server to create all five again
+on every single connection. The server refused each one as already existing, so
+nothing broke and nothing showed — it was five wasted round trips every time the
+app connected. It recognises them now.
+
+The same blind spot had a sharper form: when another installation was actively
+organizing the mailbox, the check that asks "is anyone organizing this?" could
+answer "nobody" on those servers. Two installations could then both believe they
+were in charge of the same mailbox.
+
 ### An install that reads a mailbox stops acting as though it organizes it
 
 Two installs never organize one mailbox at once: one holds the lease, the other
@@ -85,64 +144,6 @@ and was refused. It now says that mail still arrives and is readable and searcha
 here, that nothing is filed from here, and where the control is that moves organizing
 to this install — after which the other one reads the mailbox. The mailbox row adds
 what this install does, and the line under it names the button directly beneath it.
-
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
-
-## [0.13.8] — 2026-09-02
-
-Notifications that survive signing out and back in, and mailboxes that keep their
-folders under a prefix. Both are corrections rather than new ground, and in each one
-the app had a case where it was confidently wrong: announcing the previous person's
-mail on a shared computer, or reporting that nobody was organizing a mailbox that
-somebody was.
-
-### Notifications come back when you sign back in
-
-Signing out correctly took this browser's notification registration down. Nothing
-put it back. Signing in again left every switch in Settings showing ON over a
-registration that no longer existed, so new-mail notices with the browser closed
-were silently off until you happened to open Settings — the one screen that
-re-established them.
-
-They are re-established when the app starts instead.
-
-One consequence worth stating plainly, because it is a deliberate choice rather
-than an oversight: the app now confirms with the server that the registration is
-this browser's before it allows notices to be drawn. On a poor connection that
-confirmation can time out, and when it does, closed-browser notices stay off
-until the next time you open the app. Being quiet for one session is the better
-failure. The alternative is the one below.
-
-### A shared computer no longer announces the previous person's mail
-
-If a sign-out could not reach the server — a captive portal, a dropped
-connection, a window closed mid-way — the notification registration survived on
-the server, and the only thing keeping it silent was a local flag saying "do not
-draw". The next person to sign in on that computer set that flag back to "draw",
-because the app decided from the switches on screen rather than from whose
-registration was actually live. The next new-mail notice for the previous
-account then appeared on their screen.
-
-Both places that could do this — starting the app, and opening Settings — now
-turn drawing back on only for a registration the server has confirmed belongs to
-the current session. Turning notifications OFF is unchanged and still takes
-effect immediately, without waiting for the network.
-
-### Mailboxes that keep folders under a prefix
-
-Some servers file everything under a prefix such as `INBOX.`. On those, the app
-did not recognise its own folders and asked the server to create all five again
-on every single connection. The server refused each one as already existing, so
-nothing broke and nothing showed — it was five wasted round trips every time the
-app connected. It recognises them now.
-
-The same blind spot had a sharper form: when another installation was actively
-organizing the mailbox, the check that asks "is anyone organizing this?" could
-answer "nobody" on those servers. Two installations could then both believe they
-were in charge of the same mailbox.
 
 ## [0.13.7] — 2026-09-02
 
