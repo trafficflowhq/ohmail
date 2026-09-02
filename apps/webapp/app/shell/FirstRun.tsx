@@ -144,6 +144,28 @@ export interface FirstRunProps {
    */
   rerun?: boolean;
   /**
+   * IS THIS AN "ADD A MAILBOX" RUN — `#/first-run/add`. See {@link Route.firstRunAdd}, which
+   * carries the whole argument, and {@link onboardingPath}, which drops four screens for it.
+   *
+   * It is also where {@link FirstRunHost.connect}'s required mode comes from: `add` posts to the
+   * door's own add route, `seed` reconfigures the install. Passed down rather than derived,
+   * because the two write to different places and the wrong one seals a password onto the
+   * mailbox this install was already opening.
+   */
+  add?: boolean;
+  /**
+   * A MAILBOX WAS JUST CONNECTED BY THIS RUN — the id, the moment the create answers.
+   *
+   * The stage cannot follow the row it just made without help. `AppShell` resolves "the mailbox
+   * this run is about" from the ROUTE's `?mailbox=<id>`, and an add run begins with no id in the
+   * hash at all (there is no row yet). Told here, the caller re-points the route at the new row
+   * and every later screen — consent, window, pull, summary — is about the mailbox that was
+   * added rather than about whichever row happens to be first.
+   *
+   * Absent on the doors and the runs where it is not needed: a first run's row IS the first row.
+   */
+  onConnected?: (mailboxId: string) => void;
+  /**
    * WHAT THE ACCOUNT ALREADY STORED, so a re-run is pre-filled from truth rather than from the
    * product default. Absent on a first run, where there is nothing stored to show.
    *
@@ -162,6 +184,7 @@ export interface FirstRunProps {
  */
 export function firstRunStep(
   facts: OnboardingFacts, at: OnboardingStep | null, rerun = false, claimAnswered = false,
+  add = false,
 ): OnboardingStep | null {
   const derived = deriveOnboardingStep(facts);
   /**
@@ -183,7 +206,7 @@ export function firstRunStep(
   const claimPending = mb !== null
     && Boolean(mb.organizedBy && (mb.organizedBy.kind || mb.organizedBy.name))
     && !mb.organizeConsentedAt;
-  const flowIsOpen = rerun || derived !== null;
+  const flowIsOpen = rerun || add || derived !== null;
   /* ── THE CLAIM QUESTION IS NOT SKIPPABLE, AND THE CURSOR USED TO SKIP IT SILENTLY ────────
    *
    * MEASURED on the released 0.13.6, on a fresh standalone connect to a mailbox ohmail Cloud
@@ -231,6 +254,42 @@ export function firstRunStep(
     if (at !== null) return at;
     return facts.mailbox === null ? "mailbox" : "consent";
   }
+  /* ── AN ADD IS AN INTENT TOO, AND IT OPENS ON THE CONNECT FORM ───────────────────────────
+   *
+   * Same argument as the re-run above and one difference. The stamp closes the flow for an
+   * install that has been set up, which is right for every boot and wrong for the press beside a
+   * list of mailboxes that says "Add mailbox"; the intent therefore rides the route.
+   *
+   * WHERE IT OPENS is the difference. A re-run is about a mailbox that exists, so it opens on
+   * the consent statement. An add is about one that does not, so it opens on the form — and it
+   * keeps opening there until the create has answered, which is what `facts.mailbox === null`
+   * means on this run: `AppShell` withholds the mailbox while the route names none, precisely so
+   * that this screen is a form and not the statement it becomes once a row exists.
+   *
+   * AFTER the create the cursor carries the run forward (`onConnected` re-points the route, the
+   * facts arrive, and `at` is whatever `forward()` set). The derivation is consulted for the
+   * resume, so quitting mid-add and coming back through this route lands on the first thing the
+   * new mailbox still needs — consent, the window, or the pull.
+   */
+  if (add) {
+    if (at !== null) return at;
+    /* THE TWO FACTS THIS RUN IS NOT ABOUT ARE WITHHELD, and each for its own reason.
+     *
+     *  · `account.onboardingCompletedAt` is about the INSTALL. It is set — this install has been
+     *    through setup, which is precisely why "Add mailbox" is a control somebody can see — and
+     *    row 1 would therefore answer `null` for every add run, at every resume.
+     *  · `ai` is about the install too (`ai-provider.ts`, "a property of the INSTALL"), and rows
+     *    5 and 6 would put the AI question and the provider form into a walk that does not
+     *    contain them (`onboardingPath`'s `add` arm) — a step the path cannot navigate away from.
+     *    Reported as `on` rather than skipped afterwards, so the derivation flows on to rows 7-9
+     *    instead of being clamped to one of them.
+     *
+     * What is left is the mailbox's own truth-conditions, which is the resume this run needs:
+     * quit halfway through adding a mailbox, come back through the same route, and land on the
+     * first thing THAT mailbox still needs — the claim question, consent, the pull, a decision.
+     */
+    return deriveOnboardingStep({ ...facts, account: {}, ai: "on" }) ?? "mailbox";
+  }
   // THE DERIVATION CLOSES THE FLOW AND THE CURSOR MAY NOT REOPEN IT. `null` means the
   // completion stamp is set — cancelled or finished — and a cursor left over from the press
   // that stamped it would keep the stage on screen after the person asked to leave.
@@ -244,7 +303,7 @@ export function firstRunStep(
 
 export function FirstRun({
   host, facts: wireFacts, onRefresh, onLeave, pull, serverMessageCount, decide, resumed,
-  mailboxId, organizedSince, rerun, screening, mailboxAddress,
+  mailboxId, organizedSince, rerun, add, screening, mailboxAddress, onConnected,
 }: FirstRunProps) {
   const t = useTranslations("onboarding");
   const tm = useTranslations("mailboxes");
@@ -309,8 +368,9 @@ export function FirstRun({
 
   const step = firstRunStep(
     facts, at, rerun === true, mailboxId !== null && claimAnsweredFor === mailboxId,
+    add === true,
   );
-  const path = useMemo(() => onboardingPath(facts), [facts]);
+  const path = useMemo(() => onboardingPath(facts, add === true), [facts, add]);
 
   /**
    * EVERY WRITE GOES THROUGH HERE, and every write clears the cursor.
@@ -724,11 +784,24 @@ export function FirstRun({
             if (facts.mailbox !== null) { forward(); return; }
             if (!tested) return;
             void run(async () => {
-              await host.connect(mailboxInput());
+              /* ── THE MODE IS STATED, NEVER DEFAULTED ────────────────────────────────────────
+               * `seed` reconfigures the INSTALL — on the standalone door it writes the shell's
+               * settings file and replaces the engine — and `add` posts to the door's own add
+               * route, which writes a further row beside the ones already running. They are not
+               * variants of one call: a `seed` connect pressed from "Add mailbox" would replace
+               * the engine and then seal the typed password onto the mailbox this install was
+               * already opening, because the id it seals onto is the one the replaced engine
+               * settles on. That is why the parameter is required at the seam and why the word
+               * comes off the route rather than out of a fallback here. */
+              const { id } = await host.connect(mailboxInput(), add === true ? "add" : "seed");
               /* AND THE VERDICT IS RETIRED WITH THE FORM IT DESCRIBED. It proved a login that has
                * since been stored; leaving it standing would arm this screen's primary again the
                * moment somebody walked back onto it. */
               retireTest();
+              /* WHICH ROW THE REST OF THIS RUN IS ABOUT. The caller resolves that from the route,
+                 and an add run's route names no mailbox until this moment — there was no row to
+                 name. Without this every later screen would be about whichever row came first. */
+              onConnected?.(id);
             });
           },
           (

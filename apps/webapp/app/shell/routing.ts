@@ -166,10 +166,69 @@ export interface Route {
    * left — the same ending as a first run.
    */
   firstRunRerun: boolean;
+  /**
+   * IS THIS AN "ADD A MAILBOX" RUN — `#/first-run/add`, from Settings → Mailboxes.
+   *
+   * The third intent, and it exists for the same reason {@link firstRunRerun} does: it cannot be
+   * derived. An install that has been through setup carries the completion stamp for ever, so
+   * `deriveOnboardingStep` answers `null` for it — right for a boot, and wrong for somebody who
+   * just pressed "Add mailbox" beside a list of the mailboxes they already have.
+   *
+   * ── AND IT IS NOT THE SAME INTENT AS A RE-RUN, WHICH IS WHY IT IS NOT A FLAG ON ONE ────────
+   *
+   * A re-run opens on the consent statement for a mailbox that EXISTS and walks the window and
+   * the AI question again. An add opens on the connect form for a mailbox that does not exist
+   * yet, and walks neither AI screen — the model is a property of the INSTALL
+   * (`ai-provider.ts`), and this install answered that question when it was set up. They select
+   * different opening screens and different paths, so one boolean could not express both.
+   *
+   * IT ALSO CARRIES THE CONNECT MODE. `FirstRunHost.connect` takes a required
+   * `"seed" | "add"` — `seed` reconfigures the install's own door, `add` posts to
+   * `POST /local/mailboxes` — and this field is where that word comes from. The two paths write
+   * to different places and a default would pick the destructive one: a "seed" connect from the
+   * Add-mailbox screen replaces the engine and then seals the typed password onto the mailbox
+   * the install was already opening.
+   */
+  firstRunAdd: boolean;
+  /**
+   * WHICH MAILBOX THIS RUN IS ABOUT — `?mailbox=<id>`, or `null` when the hash did not say.
+   *
+   * A standalone install can hold more than one mailbox, so "the mailbox the flow is about" stopped
+   * being answerable by taking the first row: `AppShell` reads this id out of `GET /mailboxes` and
+   * falls back to the first row only when the hash names none (or names one this install no longer
+   * has — an id the list does not hold falls back in the shell, exactly as {@link messageId} does).
+   *
+   * `null` and not `""`: the hash either names a mailbox or it does not, and an empty string would
+   * be a third state that both readers would have to know about.
+   */
+  firstRunMailboxId: string | null;
+}
+
+/**
+ * THE MAILBOX A FIRST-RUN HASH NAMES — `?mailbox=<id>`, or `null`.
+ *
+ * The hash gained a query because a standalone install can hold more than one mailbox and the
+ * flow has to say which one it is about. Only the first-run branch reads it; every other route
+ * ignores whatever follows the `?`, which is what it did before this existed (the query was part
+ * of the path segment and simply failed to match any view).
+ *
+ * Blank is `null`, not `""`. `#/first-run?mailbox=` is a hash that names no mailbox, and the
+ * caller's fallback is the same one it uses for a hash with no query at all.
+ */
+function firstRunMailboxOf(query: string): string | null {
+  if (query === "") return null;
+  const named = (new URLSearchParams(query).get("mailbox") ?? "").trim();
+  return named === "" ? null : named;
 }
 
 export function parseHash(hash: string): Route {
-  const rawWithTail = hash.replace(/^#\/?/, "");
+  // THE QUERY COMES OFF FIRST, ahead of the open-message tail, so every branch below reads the
+  // same place-path it always did. Splitting it after the tail would leave `?mailbox=…` glued to
+  // a message id on the one route that can carry both.
+  const rawWithQuery = hash.replace(/^#\/?/, "");
+  const queryAt = rawWithQuery.indexOf("?");
+  const query = queryAt === -1 ? "" : rawWithQuery.slice(queryAt + 1);
+  const rawWithTail = queryAt === -1 ? rawWithQuery : rawWithQuery.slice(0, queryAt);
   // The open-message tail comes off FIRST, so every branch below reads the same place-path it
   // always did. Whether the view may CARRY the id is decided at the end — a tail on a
   // message-less view (settings, compose, drafts, the Screener's sender rows) drops, and
@@ -178,12 +237,12 @@ export function parseHash(hash: string): Route {
   const withMsg = (route: Route): Route =>
     messageId !== null && MESSAGE_VIEWS.includes(route.view) ? { ...route, messageId } : route;
   if (raw.startsWith("tag/") && raw.slice(4)) {
-    return withMsg({ view: "tag", tagId: raw.slice(4), folderId: null, screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false });
+    return withMsg({ view: "tag", tagId: raw.slice(4), folderId: null, screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false, firstRunAdd: false, firstRunMailboxId: null });
   }
   // `#/folder/<entityId>` — one of the mailbox's own folders (FOLDERS-SPEC.md §3, the rail).
   // The tag branch's shape exactly: an id the mirror does not hold falls back in the shell.
   if (raw.startsWith("folder/") && raw.slice(7)) {
-    return withMsg({ view: "folder", tagId: null, folderId: raw.slice(7), screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false });
+    return withMsg({ view: "folder", tagId: null, folderId: raw.slice(7), screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false, firstRunAdd: false, firstRunMailboxId: null });
   }
   if (raw === "screener" || raw.startsWith("screener/")) {
     const sub = raw.split("/")[1];
@@ -197,6 +256,8 @@ export function parseHash(hash: string): Route {
       messageId: null,
       firstRun: false,
       firstRunRerun: false,
+      firstRunAdd: false,
+      firstRunMailboxId: null,
     };
   }
   // `#/triage`, `#/triage/aside`, `#/triage/resurface`. An unknown sub-path falls to the first
@@ -215,6 +276,8 @@ export function parseHash(hash: string): Route {
       messageId: null,
       firstRun: false,
       firstRunRerun: false,
+      firstRunAdd: false,
+      firstRunMailboxId: null,
     });
   }
   // `#/settings`, `#/settings/devices`, … A named pane is validated against `PANE_IDS`; an
@@ -233,20 +296,25 @@ export function parseHash(hash: string): Route {
       messageId: null,
       firstRun: false,
       firstRunRerun: false,
+      firstRunAdd: false,
+      firstRunMailboxId: null,
     };
   }
   // `#/first-run` — the setup stage, OVER whatever the shell would otherwise show. The view is
   // the Ohbox because that is where leaving the stage lands, and because a route must name one;
   // the flag is what puts the dialog on top of it. See {@link Route.firstRun}.
-  if (raw === "first-run" || raw === "first-run/again") {
+  if (raw === "first-run" || raw === "first-run/again" || raw === "first-run/add") {
     return {
       view: "ohbox", tagId: null, folderId: null, screenerSegment: "waiting",
       triagePile: "reply", settingsPane: null, messageId: null, firstRun: true,
       firstRunRerun: raw === "first-run/again",
+      firstRunAdd: raw === "first-run/add",
+      // The one route that reads the query. See {@link Route.firstRunMailboxId}.
+      firstRunMailboxId: firstRunMailboxOf(query),
     };
   }
   const view = (VIEWS as readonly string[]).includes(raw) ? (raw as ViewId) : "ohbox";
-  return withMsg({ view, tagId: null, folderId: null, screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false });
+  return withMsg({ view, tagId: null, folderId: null, screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false, firstRunAdd: false, firstRunMailboxId: null });
 }
 
 /**
@@ -258,7 +326,17 @@ export function canonicalHash(route: Route): string {
   // FIRST, and before the tail: the stage's hash names no view and carries no open message, so
   // every branch below would spell it as something else and `normalizedHash` would then rewrite
   // `#/first-run` to `#/ohbox` on the first render — closing the flow by correcting the bar.
-  if (route.firstRun) return route.firstRunRerun ? "#/first-run/again" : "#/first-run";
+  if (route.firstRun) {
+    const base = route.firstRunRerun
+      ? "#/first-run/again"
+      : route.firstRunAdd ? "#/first-run/add" : "#/first-run";
+    // THE NAMED MAILBOX IS PART OF THE CANONICAL FORM. Without it `normalizedHash` would rewrite
+    // `#/first-run?mailbox=<id>` to the bare hash on the first render — dropping, in the address
+    // bar, the one fact that says which mailbox the flow in front of somebody is about.
+    return route.firstRunMailboxId === null
+      ? base
+      : `${base}?mailbox=${encodeURIComponent(route.firstRunMailboxId)}`;
+  }
   // The open-message tail rides any place-path whose view can show one — `parseHash` already
   // refused it everywhere else, so the guard here is for routes built by hand.
   const tail =
@@ -325,8 +403,36 @@ export function go(view: Exclude<ViewId, "tag" | "folder">): void {
  * OPEN THE FIRST-RUN STAGE. A hash ASSIGNMENT, so it stacks in history: Back walks out of setup
  * the way it walks out of a reading, which is what a person who opened it from Settings expects.
  */
-export function goFirstRun(opts: { rerun?: boolean } = {}): void {
-  window.location.hash = opts.rerun ? "#/first-run/again" : "#/first-run";
+export function goFirstRun(
+  opts: { rerun?: boolean; add?: boolean; mailboxId?: string } = {},
+): void {
+  const base = opts.rerun
+    ? "#/first-run/again"
+    : opts.add ? "#/first-run/add" : "#/first-run";
+  window.location.hash = opts.mailboxId
+    ? `${base}?mailbox=${encodeURIComponent(opts.mailboxId)}`
+    : base;
+}
+
+/**
+ * NAME THE MAILBOX AN ADD RUN JUST MADE, WITHOUT ADDING A HISTORY ENTRY.
+ *
+ * `replaceState` rather than a hash assignment, and the difference is the Back press. The create
+ * is not a place somebody navigated to; it is a thing that happened on the screen they are on. An
+ * assignment would stack an entry, and Back would then land on `#/first-run/add` with no mailbox
+ * named — which renders the connect FORM again, for a mailbox that now exists.
+ *
+ * `replaceState` fires no `hashchange`, so the event is dispatched by hand: `useHashRoute`
+ * subscribes to exactly that event and would otherwise keep rendering the old route until
+ * something else moved the hash. A plain `Event` and not a `HashChangeEvent` — the listener reads
+ * `window.location.hash` rather than the event's fields, and the narrower constructor is the one
+ * every environment this bundle runs in has.
+ */
+export function nameFirstRunMailbox(mailboxId: string): void {
+  const next = `#/first-run/add?mailbox=${encodeURIComponent(mailboxId)}`;
+  if (window.location.hash === next) return;
+  window.history.replaceState(window.history.state, "", next);
+  window.dispatchEvent(new Event("hashchange"));
 }
 
 export function goTag(tagId: string): void {

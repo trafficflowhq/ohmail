@@ -78,9 +78,19 @@ interface Asked { method: string; url: string; body: string }
 let asked: Asked[] = [];
 let answer: { status: number; body: string } = { status: 200, body: "{}" };
 
+/**
+ * EVERY SHELL COMMAND, in order — not only the bridge requests.
+ *
+ * `engine_configure` is the one the add path must never send: it rewrites the settings file and
+ * replaces the engine, and the settings file names the ONE mailbox this process dials at launch.
+ * A test that watched only `asked` could not tell the two connect modes apart at all.
+ */
+let commands: string[] = [];
+
 function installShell(): void {
   shellHost.__TAURI_INTERNALS__ = {
     invoke: async (command, payload) => {
+      commands.push(command);
       if (command !== "engine_request") return {};
       const p = payload as { method: string; url: string; body: number[] };
       asked.push({
@@ -118,6 +128,7 @@ let mounted: Root | null = null;
 
 beforeEach(() => {
   asked = [];
+  commands = [];
   answer = { status: 200, body: "{}" };
   installShell();
   window.localStorage.clear();
@@ -477,17 +488,41 @@ describe("the guided flow's way back in, on the desktop", () => {
     "utf8",
   );
 
-  it("offers the re-run row, on the re-run route", () => {
-    expect(pane).toMatch(/goFirstRun\(\{ rerun: true \}\)/);
+  it("offers the re-run ON EACH ROW, naming that row's mailbox in the route", () => {
+    /* ── IT WAS ONE ROW AT THE FOOT OF THE PANE, AND THE PLACE STOPPED BEING RIGHT ───────────
+     *
+     * The gates were `firstRunDoorFor(statusOf(door)) === "local" && facts.length > 0` and the
+     * route was the bare `#/first-run/again`. Both were correct while a standalone install held
+     * one mailbox. The flow writes a consent stamp and a screening window for a NAMED mailbox, so
+     * over two rows a control at the foot of the list named neither — it re-ran setup for
+     * whichever row `facts[0]` happened to be, which on an install whose seed had been removed is
+     * not the one anybody was looking at.
+     *
+     * `facts.length > 0` went with it and lost nothing: a row control cannot render without a row.
+     */
+    expect(pane).toMatch(/goFirstRun\(\{ rerun: true, mailboxId: shown\.id \}\)/);
     // The bare hash would open, find the completion stamp, and close on the same render.
     expect(pane).not.toMatch(/goFirstRun\(\)/);
-    for (const key of ["setupAgain", "setupAgainWhy", "setupAgainAction"]) {
-      expect(pane, key).toContain(`t("${key}")`);
-    }
+    expect(pane).toContain('t("setupAgainAction")');
   });
 
-  it("gates it on the door that HAS a stage, and on a mailbox existing", () => {
-    expect(pane).toMatch(/firstRunDoorFor\(statusOf\(door\)\) === "local" && facts\.length > 0/);
+  it("gates BOTH flow entry points on the door that HAS a stage", () => {
+    /* Two entry points now — the row's re-run and the pane's "Add mailbox" — and each would be a
+       button navigating somewhere blank on the hosted door, where this window gives the stage no
+       host at all. Counted rather than matched once, so a third one added without the gate reds. */
+    const gates = pane.match(/firstRunDoorFor\(statusOf\(door\)\) === "local"/g) ?? [];
+    expect(gates.length, "a first-run entry point is ungated on the hosted door")
+      .toBeGreaterThanOrEqual(2);
+  });
+
+  it("offers ADD MAILBOX at the add route, which is the only intent that opens the form", () => {
+    /* `#/first-run/add`, never the bare hash and never the re-run's. A finished install derives
+       to "nothing to do"; the re-run opens on the consent statement for a mailbox that EXISTS;
+       only the add intent opens on the connect form. */
+    expect(pane).toMatch(/goFirstRun\(\{ add: true \}\)/);
+    for (const key of ["desktopAdd", "desktopAddWhy", "desktopAddAction"]) {
+      expect(pane, key).toContain(`t("${key}")`);
+    }
   });
 
   it("asks the shared door rule instead of re-spelling it", () => {
@@ -499,8 +534,273 @@ describe("the guided flow's way back in, on the desktop", () => {
 
   it("the copy it promises exists in the catalogue", () => {
     const mailboxes = (en as Record<string, Record<string, string>>).mailboxes!;
-    for (const key of ["setupAgain", "setupAgainWhy", "setupAgainAction"]) {
+    for (const key of [
+      "setupAgainAction",
+      "desktopAdd", "desktopAddWhy", "desktopAddAction",
+      // The role line the rows carry now, and the sixth removal consequence.
+      "desktopRoleOrganizer", "removeLastDoor",
+    ]) {
       expect(mailboxes, key).toHaveProperty(key);
     }
+  });
+});
+
+/**
+ * ═══ THE TWO CONNECTS — A SEED IS NOT AN ADD, AND THE SEAM MAKES THAT SAYABLE ══════════════
+ *
+ * `FirstRunHost.connect` takes a REQUIRED `mode`. It is the whole of risk 3 in the multi-mailbox
+ * ruling — *"injected dependency, default branch untested"* — and the two branches write to
+ * different places:
+ *
+ *  · `seed` reconfigures the INSTALL. `engine_configure` writes the shell's settings file and
+ *    replaces the engine; the engine composes its IMAP dial from that file at every launch, so a
+ *    first mailbox created any other way would be a row nothing ever connects to.
+ *  · `add` writes a FURTHER row beside the ones already running: `POST /local/mailboxes`, which
+ *    proves the password against its own server and attaches a runtime. It must not touch the
+ *    settings file, because that file names one mailbox — the seed.
+ *
+ * What a default costs, in the direction that was measured on the shape of this defect: with
+ * `seed` as the fallback, "Add mailbox" replaces the engine, and the first-connect order that
+ * follows seals the newly typed password onto whatever mailbox the REPLACED engine settles on —
+ * the install's original row. Mailbox #1 acquires mailbox #2's password.
+ */
+describe("the two connect modes", () => {
+  const INPUT = {
+    address: "second@example.org",
+    provider: "imap",
+    imap: { host: "imap.example.org", port: 993, secure: true, pass: "pw-2" },
+    smtp: { host: "smtp.example.org", port: 465, secure: true },
+  };
+
+  it("ADD posts to the local add route and never reconfigures the install", async () => {
+    answer = { status: 201, body: JSON.stringify({ id: "mbx-2", address: INPUT.address }) };
+    const made = (await makeHost())!;
+
+    const result = await made.connect(INPUT, "add");
+    expect(result).toEqual({ id: "mbx-2" });
+
+    expect(asked.map((a) => `${a.method} ${a.url}`)).toEqual(["POST /local/mailboxes"]);
+    /* THE ASSERTION THE MODE EXISTS FOR. Not "the right URL was used" — no settings file was
+       rewritten and no engine was replaced, so the mailbox this install was already opening is
+       untouched and cannot acquire the password just typed. */
+    expect(commands, "adding a mailbox reconfigured the install")
+      .not.toContain("engine_configure");
+
+    /* BOTH TRANSPORTS TRAVEL. The send path reads the MAILBOX's own `smtp` credential row; a
+       process-wide submission setting cannot describe two mailboxes, so a row created without
+       one would submit through the FIRST mailbox's server carrying this one's password. */
+    const body = JSON.parse(asked[0]!.body) as {
+      address: string;
+      imap: Record<string, unknown>;
+      smtp?: Record<string, unknown>;
+    };
+    expect(body.address).toBe("second@example.org");
+    expect(body.imap).toEqual({
+      host: "imap.example.org", port: 993, secure: true,
+      // Absent in the input, so it defaults to the address — the same rule the seed path and the
+      // hosted create both apply, so all three dial one identity.
+      user: "second@example.org",
+      pass: "pw-2",
+    });
+    expect(body.smtp).toEqual({
+      host: "smtp.example.org", port: 465, secure: true,
+      user: "second@example.org", pass: "pw-2",
+    });
+  });
+
+  it("ADD carries the route's own refusal, so 409 same_login reaches the screen", async () => {
+    /* Two rows over one physical mailbox write two claims into one `ohmail/_meta` under one
+       install identity, and the lease's clone defence stands them down alternately — so the
+       route refuses, and the sentence it refuses with is the one the person has to read. */
+    answer = {
+      status: 409,
+      body: JSON.stringify({
+        error: {
+          code: "same_login",
+          message: "this machine already has that mailbox. The server and username you entered "
+            + "open a mailbox that is already connected here.",
+        },
+      }),
+    };
+    const made = (await makeHost())!;
+    await expect(made.connect(INPUT, "add")).rejects.toThrow(/already has that mailbox/);
+    expect(commands).not.toContain("engine_configure");
+  });
+
+  it("ADD refuses a 201 that named no mailbox rather than returning an empty id", async () => {
+    // The consent call two screens later addresses this id. An empty one would be sent to
+    // `/local/mailboxes//organize`, which is a 404 reported as a failed consent.
+    answer = { status: 201, body: "{}" };
+    const made = (await makeHost())!;
+    await expect(made.connect(INPUT, "add")).rejects.toThrow(/has not been told its name/);
+  });
+
+  it("SEED reconfigures the install — the branch `add` must never take", async () => {
+    const made = (await makeHost())!;
+    // The stand-in shell answers `{}` to `engine_configure`, so the door stalls at `settle`. That
+    // is fine and is not what is under test: what is under test is that the settings file was
+    // written at all, which is the act `add` is forbidden from performing.
+    await made.connect(INPUT, "seed").catch(() => undefined);
+    expect(commands, "the seed connect never reconfigured the install")
+      .toContain("engine_configure");
+    expect(asked.map((a) => a.url), "the seed connect used the add route")
+      .not.toContain("/local/mailboxes");
+  });
+});
+
+/**
+ * ═══ THE ADD RUN, DRIVEN ═══════════════════════════════════════════════════════════════════
+ *
+ * A standalone install can hold more than one mailbox, and the second one is not a first run.
+ * Three things have to be true at once and none of them is derivable from the facts alone:
+ *
+ *  1. THE STAGE OPENS AT ALL. The account carries a completion stamp — this install has been set
+ *     up, which is precisely why "Add mailbox" is a control somebody can see — and
+ *     `deriveOnboardingStep` answers `null` for that, correctly, at every boot. The intent rides
+ *     the route (`Route.firstRunAdd`), exactly as the re-run's does.
+ *  2. IT OPENS ON THE FORM. A re-run opens on the consent statement because its mailbox exists;
+ *     an add's does not, so its first screen is the connect form.
+ *  3. IT CONNECTS THROUGH THE ADD ROUTE. `host.connect(input, "add")` — the mode has no default,
+ *     and a `seed` connect here would rewrite the settings file and then seal the newly typed
+ *     password onto the mailbox this install was already opening.
+ *
+ * Driven through the real component with the real catalogue, because 2 and 3 are both invisible
+ * to a source-level assertion: the first is a derivation over a stamp, the second is one argument.
+ */
+describe("adding a further mailbox to a standalone install", () => {
+  const ADD_FACTS: OnboardingFacts = {
+    door: "local",
+    // No mailbox: the route names none until the create answers, and `AppShell` withholds the
+    // row for exactly that window so this screen is a form rather than a statement.
+    mailbox: null,
+    // THE INSTALL HAS BEEN THROUGH SETUP. This is the fact that closes the flow for a boot.
+    account: { onboardingCompletedAt: "2026-08-01T09:00:00.000Z" },
+    ai: "on",
+    queuedSenders: 0,
+  };
+
+  /** Mount the stage with a host whose `connect` records what it was asked for. */
+  async function driveAdd(): Promise<{
+    el: HTMLElement;
+    modes: string[];
+    connected: string[];
+  }> {
+    const made = (await makeHost())!;
+    const modes: string[] = [];
+    const connected: string[] = [];
+    const host: FirstRunHost = {
+      ...made,
+      probe: async () => ({ host: "imap.example.org", user: "second@example.org", folders: 7 }),
+      connect: async (input, mode) => {
+        modes.push(mode);
+        return { id: `mbx-for-${input.address}` };
+      },
+    };
+
+    const el = document.createElement("div");
+    document.body.append(el);
+    const root = createRoot(el);
+    mounted = root;
+    await act(async () => {
+      root.render(
+        h(ThemeProvider, null,
+          h(NextIntlClientProvider, { locale: "en", messages: en as never },
+            h(KeymapProvider, null,
+              h(FirstRun, {
+                host,
+                facts: ADD_FACTS,
+                mailboxId: null,
+                add: true,
+                onConnected: (id: string) => { connected.push(id); },
+                pull: { screened: 0, history: 0, mirrorCount: 0 },
+                decide: null,
+                onRefresh: () => {},
+                onLeave: () => {},
+              })))));
+    });
+    return { el, modes, connected };
+  }
+
+  /* BY PREFIX, because every verb in this flow wears its keycap: the primary's text content is
+     "Connect and continue\u21b5", and an exact match would find nothing. */
+  const button = (el: HTMLElement, label: string): HTMLButtonElement | undefined =>
+    [...el.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim().startsWith(label));
+
+  it("OPENS, on the connect form, over an install that has finished setup", async () => {
+    const { el } = await driveAdd();
+    const text = el.textContent ?? "";
+    /* THE STAGE IS ON SCREEN. Without the add intent this render is `null`: row 1 of the
+       derivation returns null for any account carrying the completion stamp. */
+    expect(text.length, "the stage drew nothing over a set-up install").toBeGreaterThan(80);
+    // The connect form's own heading and its two fields — a statement about an existing mailbox
+    // would carry neither.
+    expect(text).toContain("Add a mailbox");
+    expect(el.querySelector('input[type="email"]'), "the mailbox step is not a form").not.toBeNull();
+    expect(el.querySelector('input[type="password"]')).not.toBeNull();
+    /* AND NO WELCOME. "One sentence about what ohmail does" to somebody who has been using it is
+       the screen an add run exists without. */
+    expect(text).not.toContain("Welcome to ohmail");
+  });
+
+  it("walks 1-2-3-4-7-8-9: no welcome, no AI question, no provider form, no pairing", () => {
+    /* The install's answers, not the mailbox's. The model is a property of the install
+       (`ai-provider.ts`) and so is the paired phone; asking again per mailbox would imply a
+       per-mailbox answer that nothing stores. */
+    const walk = onboardingPath(ADD_FACTS, true);
+    expect(walk).toEqual(["mailbox", "consent", "window", "pull", "summary"]);
+    // The claim question joins it when the peek finds a holder — step 2 of the plan.
+    expect(onboardingPath(
+      {
+        ...ADD_FACTS,
+        mailbox: { organizedBy: { kind: "cloud", name: "ohmail Cloud", since: null } },
+      },
+      true,
+    )).toEqual(["mailbox", "elsewhere", "consent", "window", "pull", "summary"]);
+    // And a FIRST run is untouched — the four screens are dropped for the add intent alone.
+    expect(onboardingPath(ADD_FACTS)).toContain("welcome");
+    expect(onboardingPath(ADD_FACTS)).toContain("ai");
+    expect(onboardingPath(ADD_FACTS)).toContain("pair");
+  });
+
+  it("CONNECTS IN `add` MODE, and hands the new mailbox's id back to the route", async () => {
+    const { el, modes, connected } = await driveAdd();
+
+    const address = el.querySelector('input[type="email"]') as HTMLInputElement;
+    const pass = el.querySelector('input[type="password"]') as HTMLInputElement;
+    const set = (input: HTMLInputElement, value: string): void => {
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype, "value",
+      )!.set!;
+      setter.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    await act(async () => {
+      set(address, "second@example.org");
+      set(pass, "pw-2");
+    });
+    // The primary is disarmed until a verdict exists — the form's own rule, not this test's.
+    await act(async () => {
+      button(el, "Test connection")!.click();
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+    });
+    const connect = button(el, "Connect and continue");
+    expect(
+      connect,
+      `the form never armed its primary — buttons on screen: ${
+        [...el.querySelectorAll("button")].map((b) => (b.textContent ?? "").trim()).join(" | ")
+      }`,
+    ).toBeDefined();
+    await act(async () => {
+      connect!.click();
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+    });
+
+    /* THE WORD, and it has no default. `seed` here would rewrite the shell's settings file and
+       replace the engine, and the first-connect order that follows seals the typed password onto
+       whatever mailbox the replaced engine settles on — this install's ORIGINAL row. */
+    expect(modes, "the add run connected as a seed").toEqual(["add"]);
+    /* AND THE ROUTE LEARNS WHICH ROW. Without it every later screen — consent, the window, the
+       pull, the summary — would be about whichever mailbox `GET /mailboxes` returns first. */
+    expect(connected).toEqual(["mbx-for-second@example.org"]);
   });
 });

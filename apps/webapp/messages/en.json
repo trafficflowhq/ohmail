@@ -2079,8 +2079,8 @@
     "organizerDisconnected": "This mailbox is disconnected. Reconnect it instead of taking it over.",
     "superseded": "An earlier entry for this address is no longer in use.",
     "desktopModeLocal": "Local mailboxes on this computer",
-    "desktopLoading": "Asking the mail engine which mailbox this install opens…",
-    "desktopNoneLocal": "This install has no mailbox yet — choose one in the Desktop settings pane.",
+    "desktopLoading": "Asking the mail engine which mailboxes this install opens…",
+    "desktopNoneLocal": "This install has no mailbox yet — “Add mailbox” connects one.",
     "desktopNoneCloud": "This account has no mailbox connected yet. Connecting one happens in ohmail on the web.",
     "desktopLastChecked": "Last checked {when}",
     "desktopUnknownCode": "unknown",
@@ -2108,7 +2108,7 @@
     "removeCredential": "The password ohmail stored for this mailbox is deleted.",
     "removeScheduled": "Scheduled sends from this mailbox are closed rather than sent. Each goes back to Drafts saying why.",
     "removeCopyStays": "The mail ohmail has already copied stays in your account and stops being updated. Deleting your account removes it.",
-    "removeCopyLocal": "This computer's copy of the mail is deleted. Your mail server keeps every message.",
+    "removeCopyLocal": "This computer's copy of this mailbox's mail is deleted. Your mail server keeps every message.",
     "removeReconnect": "You can connect this mailbox again later.",
     "removeConfirm": "Remove mailbox",
     "removeCancel": "Keep it",
@@ -2135,7 +2135,12 @@
     "stateReading": "Reading only",
     "setupAgain": "Run setup again",
     "setupAgainWhy": "Walks through what ohmail files, how far back it screens, and AI — with what is set now filled in. Nothing moves until you agree.",
-    "setupAgainAction": "Run setup"
+    "setupAgainAction": "Run setup",
+    "desktopAdd": "Add a mailbox",
+    "desktopAddWhy": "This computer can open more than one. Setup asks for the server and the password, tests them, and asks how far back to screen — nothing moves until you agree.",
+    "desktopAddAction": "Add mailbox",
+    "desktopRoleOrganizer": "Organized on this computer",
+    "removeLastDoor": "This is the only mailbox on this computer, so ohmail returns to its setup screen afterwards."
   },
   "onboarding": {
     "rail_mailbox": "Mailbox",

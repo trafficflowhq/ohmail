@@ -2262,13 +2262,26 @@ describe("the UI bundle's build config", () => {
     const gate = read("src/DesktopGate.tsx");
     expect(gate).toMatch(/mailboxSection: \([\s\S]{0,600}?<DesktopMailboxes\b/);
     expect(gate).toMatch(/door=\{status\?\.mode \?\? null\}/);
-    /* AND WHICH MAILBOX THE ENGINE IS OPENING, which the pane cannot learn any other way.
-       It gates the Remove control: the local removal route releases the organizer claim and wipes
-       this machine's copy of the mail only for the engine's OWN mailbox, so a Remove offered on
-       any other row would state a consequence the request does not perform. Withheld when the
-       shell did not say, which is the safe direction and is why this is a spread. */
-    expect(gate, "the pane cannot tell which row the removal would actually wipe")
-      .toMatch(/\{\.\.\.\(status\?\.mailboxId \? \{ servedMailboxId: status\.mailboxId \} : \{\}\)\}/);
+    /* ── `servedMailboxId` IS GONE, AND THIS GUARD ASSERTS ITS ABSENCE ────────────────────────
+     *
+     * It used to require the spread `{...(status?.mailboxId ? { servedMailboxId: … } : {})}`,
+     * because the pane gated Remove on the one mailbox the engine said it was opening: the local
+     * removal route released the claim and wiped this machine's copy of the mail only for that
+     * row, so offering the control anywhere else would have stated a consequence the request does
+     * not perform.
+     *
+     * The route keys on the ROSTER now — every live row has a runtime and the DELETE wipes
+     * whichever row it names — while `status.mailboxId` has NARROWED to meaning "the seed".
+     * Passing it would hide the removal on every mailbox but one, chosen by which address the
+     * install happened to be configured with. */
+    expect(gate, "the pane is still gated on the one mailbox the engine calls its seed")
+      .not.toMatch(/servedMailboxId/);
+    /* WHAT IT NEEDS INSTEAD. Removing the LAST mailbox leaves the install configured for a
+       mailbox it no longer has, so the pane runs the shell's own sign-out afterwards — and the
+       gate has to re-read its routing from the engine state that comes back, or the window keeps
+       rendering the app over an install with no door until the next launch. */
+    expect(gate, "the last removal cannot tell the gate the install has no door left")
+      .toMatch(/onStatus=\{onStatus\}/);
     expect(gate).toMatch(/aboutSection: <DesktopAbout status=/);
     expect(gate).toMatch(/mailboxFacts: readMailboxFacts/);
 

@@ -70,6 +70,59 @@ export function localMailboxPath(mailboxId: string): string {
   return `/local/mailboxes/${mailboxId}`;
 }
 
+/** Where this door adds a FURTHER mailbox — see {@link addMailboxBody} and the header's point 3. */
+export const LOCAL_MAILBOXES_PATH = "/local/mailboxes";
+
+/**
+ * THE CREATE BODY FOR A FURTHER MAILBOX, in the shared service's own vocabulary.
+ *
+ * `MailboxService.create` is what serves this route, so the body is `CreateMailboxBody` and not a
+ * shape of this door's own: provider, address, and a transport block per transport. Both blocks
+ * carry the password, because one password covers both servers on a mailbox somebody typed into
+ * a form — and the service probes each block it is given, so what gets stored is what answered.
+ *
+ * ── THE SMTP BLOCK IS SENT, AND SENDING IT IS THE WHOLE REASON #2 CAN REPLY TO ANYTHING ─────
+ *
+ * A standalone install used to read its submission server out of the process configuration, which
+ * describes ONE server. With a second mailbox that is no longer a description of anything: the
+ * send adapter reads the mailbox's own `smtp` credential row, and a mailbox created without one
+ * would send through the FIRST mailbox's server carrying the SECOND mailbox's password. So the
+ * outgoing coordinates travel with the create, exactly as they do on the hosted door.
+ *
+ * `port`/`secure` are passed through as typed — including ABSENT, which is a request rather than
+ * an omission: the service's probe then walks the standard ladder and stores the combination it
+ * proved. A default here would silently withdraw that.
+ *
+ * The USERNAME defaults to the address on the incoming side, which is what `doorFields` does on
+ * the seed path and what `createBody` does on the hosted one — three call sites, one rule, so the
+ * probe and the stored credential name the same identity whichever door was used.
+ */
+export function addMailboxBody(input: FirstRunMailboxInput): Record<string, unknown> {
+  const user = (input.imap.user ?? "").trim() || input.address.trim();
+  return {
+    provider: input.provider,
+    address: input.address.trim(),
+    imap: {
+      host: input.imap.host,
+      ...(input.imap.port === undefined ? {} : { port: input.imap.port }),
+      ...(input.imap.secure === undefined ? {} : { secure: input.imap.secure }),
+      user,
+      pass: input.imap.pass,
+    },
+    ...(input.smtp?.host
+      ? {
+          smtp: {
+            host: input.smtp.host,
+            ...(input.smtp.port === undefined ? {} : { port: input.smtp.port }),
+            ...(input.smtp.secure === undefined ? {} : { secure: input.smtp.secure }),
+            user: (input.smtp.user ?? "").trim() || user,
+            pass: input.smtp.pass ?? input.imap.pass,
+          },
+        }
+      : {}),
+  };
+}
+
 /**
  * WHERE THIS INSTALL'S ANSWER TO THE AI QUESTION IS KEPT.
  *
@@ -282,9 +335,48 @@ export function useLocalFirstRun(opts: LocalFirstRunOptions): FirstRunHost | und
     );
   }, []);
 
-  const connect = useCallback(async (input: FirstRunMailboxInput): Promise<{ id: string }> => {
+  const connect = useCallback(async (
+    input: FirstRunMailboxInput, mode: "seed" | "add",
+  ): Promise<{ id: string }> => {
+    /* ── A FURTHER MAILBOX IS A REQUEST, AND IT MUST NOT TOUCH THE INSTALL ──────────────────
+     *
+     * `POST /local/mailboxes` — the door's own add route. It writes the row and its credential
+     * through the SAME `MailboxService.create` the hosted door uses, with both probes injected,
+     * then attaches a runtime so the mailbox is running by the time this returns.
+     *
+     * IT NEVER CALLS `engine_configure`, and that is the whole difference between the two modes.
+     * `engine_configure` rewrites the shell's settings file and replaces the engine; the settings
+     * file names ONE mailbox — the seed the process dials at launch — so configuring it from here
+     * would re-point the install at the mailbox being added and leave the one it was opening to
+     * be found again by a predicate. Worse, the first-connect order that follows a configure
+     * seals the typed password onto whatever mailbox the replaced engine settles on, which on
+     * this path is the install's ORIGINAL row: mailbox #1 would acquire mailbox #2's password.
+     *
+     * The 409 this route can answer (`same_login`) travels as an ordinary refusal — the stage
+     * renders the server's own sentence, which names the situation exactly ("this machine already
+     * has that mailbox").
+     */
+    if (mode === "add") {
+      const dto = await jsonOf<{ id?: string }>(
+        await bridgeFetch(LOCAL_MAILBOXES_PATH, {
+          method: "POST",
+          headers: JSON_HEADERS,
+          body: JSON.stringify(addMailboxBody(input)),
+        }),
+      );
+      /* A 201 THAT NAMED NO MAILBOX HAS NOT ADDED ONE. Saying so beats returning an empty id
+         that the consent call two screens later would then address. */
+      if (!dto.id) {
+        throw new LocalWireError(
+          "The mailbox was added and this install has not been told its name yet. "
+            + "Reopen ohmail and setup will continue where it left off.",
+          null, null,
+        );
+      }
+      return { id: dto.id };
+    }
     /**
-     * CONNECT IT — and on this door that is `engine_configure` plus a sealed password, never
+     * THE SEED — and on this door that is `engine_configure` plus a sealed password, never
      * `POST /mailboxes`.
      *
      * The shared create writes a row into the engine's database. It does NOT write the shell's

@@ -275,6 +275,24 @@ function runningInstall(): Install {
 
       if (command === "engine_request") {
         const url = String(payload!.url ?? "");
+        /* ── THE ROW READ, which the FIRST-CONNECT order makes before it seals ────────────────
+         *
+         * `GET /mailboxes/:id` on the shared route table (a plain read, no step-up). The door
+         * refuses to seal unless the row the engine settled on carries the address that was
+         * typed — an install can hold several mailboxes now, and the engine reports the SEED's
+         * id, so a first connect over a populated install can settle on somebody else's row and
+         * the seal would put the newly typed password onto it.
+         *
+         * This install serves ONE row, so the read answers `settingsAddress` — the address the
+         * configure above resolved, including the freshly minted row an address change produces.
+         */
+        if ((payload!.method ?? "GET") === "GET") {
+          return url === `/mailboxes/${install.mailboxId}`
+            ? encode(200, JSON.stringify({
+                id: install.mailboxId, address: install.settingsAddress,
+              }))
+            : encode(404, '{"error":{"code":"not_found","message":"no such mailbox"}}', "Not Found");
+        }
         /* `/local/…`, because that is the route the door seals through. The shared
            `PATCH /mailboxes/:id` is `stepUp: true`, and on this door the launch session's
            second-factor stamp goes stale five minutes after boot and never refreshes — so the
@@ -384,9 +402,11 @@ function state(install: Install): Record<string, unknown> {
 
 const order = (install: Install): string[] => install.asked.map((a) => a.command);
 
+/* PATCHES ONLY. The first-connect order also READS the settled row (`GET /mailboxes/:id`), and a
+   GET carries no body — decoding one as JSON throws rather than failing an assertion. */
 const patchBodies = (install: Install): Array<{ imap: Record<string, unknown> }> =>
   install.asked
-    .filter((a) => a.command === "engine_request")
+    .filter((a) => a.command === "engine_request" && a.payload!.method === "PATCH")
     .map(
       (a) =>
         JSON.parse(new TextDecoder().decode(Uint8Array.from(a.payload!.body as number[]))) as {
@@ -449,6 +469,14 @@ describe("reconfiguring a mailbox that is already connected", () => {
         imap: {
           host: NEW_HOST, port: 993, secure: true, user: ADDRESS, pass: NEW_PASS,
           smtpHost: NEW_HOST,
+        },
+        /* AND THE OUTGOING BLOCK, which the witness above cannot stand in for. `smtpHost` says
+           which server the password was saved for; this is the server the mailbox SUBMITS
+           through, stored as its own credential row. An install that holds two mailboxes reads
+           each one's submission server out of its own row — a process-wide setting cannot
+           describe two — so without this a second mailbox would send through the first's. */
+        smtp: {
+          host: NEW_HOST, port: 587, secure: false, user: ADDRESS, pass: NEW_PASS,
         },
       },
     ]);

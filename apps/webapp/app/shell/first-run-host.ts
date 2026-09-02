@@ -108,11 +108,31 @@ export interface FirstRunHost {
   probe: (input: FirstRunMailboxInput) => Promise<FirstRunProbeOk>;
 
   /**
-   * CONNECT IT — `POST /mailboxes`, which creates a CONSENT-LESS READER: the mirror starts
-   * building, nothing is moved, and `ohmail/*` is never created. The stage may say "connected"
-   * truthfully at this point and may not say "organizing".
+   * CONNECT IT — creates a CONSENT-LESS READER: the mirror starts building, nothing is moved, and
+   * `ohmail/*` is never created. The stage may say "connected" truthfully at this point and may
+   * not say "organizing".
+   *
+   * ── `mode` IS REQUIRED, AND THE DEFAULT IT DOES NOT HAVE IS THE POINT ─────────────────────
+   *
+   *  · `"seed"` — the FIRST mailbox of an install. On the standalone door this is not a request
+   *    at all but a reconfiguration: the shell's settings file is what the engine composes its
+   *    IMAP dial from at every launch, so a row created any other way would be a row nothing
+   *    ever connects to.
+   *  · `"add"` — a FURTHER mailbox on an install that already has one. It is a request:
+   *    `POST /local/mailboxes`, which writes the row and its credential beside the ones already
+   *    running and attaches a runtime for it. It must never reconfigure the install.
+   *
+   * A default would pick one of those for a caller that did not say, and both directions are
+   * wrong in a way that costs a mailbox. Defaulted to `seed`, "Add mailbox" replaces the engine
+   * and the first-connect order then seals the newly typed password onto the row the REPLACED
+   * engine settles on — the install's original mailbox. Defaulted to `add`, a first connect
+   * writes a row the shell has never heard of and the install dials nothing.
+   *
+   * On the hosted door both words select the same call (`POST /mailboxes`), because there is no
+   * settings file and no engine to reconfigure; the parameter is still required there, so that
+   * the seam has one shape and a caller cannot learn a habit that is wrong on the other door.
    */
-  connect: (input: FirstRunMailboxInput) => Promise<{ id: string }>;
+  connect: (input: FirstRunMailboxInput, mode: "seed" | "add") => Promise<{ id: string }>;
 
   /**
    * AGREE AND START ORGANIZING — `POST /mailboxes/:id/organize`, and the ONE call the consent

@@ -2079,8 +2079,8 @@
     "organizerDisconnected": "Dieses Postfach ist getrennt. Verbinde es neu, statt es zu übernehmen.",
     "superseded": "Ein älterer Eintrag für diese Adresse ist nicht mehr in Gebrauch.",
     "desktopModeLocal": "Lokale Postfächer auf diesem Computer",
-    "desktopLoading": "Frage die Mail-Engine, welches Postfach diese Installation öffnet…",
-    "desktopNoneLocal": "Diese Installation hat noch kein Postfach — wähle eines im Bereich „Desktop“.",
+    "desktopLoading": "Frage die Mail-Engine, welche Postfächer diese Installation öffnet…",
+    "desktopNoneLocal": "Diese Installation hat noch kein Postfach — „Postfach hinzufügen“ verbindet eines.",
     "desktopNoneCloud": "Mit diesem Konto ist noch kein Postfach verbunden. Verbinden geht in ohmail im Web.",
     "desktopLastChecked": "Zuletzt geprüft {when}",
     "desktopUnknownCode": "unbekannt",
@@ -2108,7 +2108,7 @@
     "removeCredential": "Das von ohmail gespeicherte Passwort für dieses Postfach wird gelöscht.",
     "removeScheduled": "Geplante Sendungen aus diesem Postfach werden abgebrochen statt gesendet. Jede kehrt mit einer Begründung in die Entwürfe zurück.",
     "removeCopyStays": "Die von ohmail bereits kopierten E-Mails bleiben in Ihrem Konto und werden nicht mehr aktualisiert. Beim Löschen Ihres Kontos werden sie entfernt.",
-    "removeCopyLocal": "Die Kopie der E-Mails auf diesem Computer wird gelöscht. Ihr Mailserver behält jede Nachricht.",
+    "removeCopyLocal": "Die Kopie der E-Mails dieses Postfachs auf diesem Computer wird gelöscht. Ihr Mailserver behält jede Nachricht.",
     "removeReconnect": "Sie können dieses Postfach später wieder verbinden.",
     "removeConfirm": "Postfach entfernen",
     "removeCancel": "Behalten",
@@ -2135,7 +2135,12 @@
     "stateReading": "Liest nur",
     "setupAgain": "Einrichtung nochmal durchlaufen",
     "setupAgainWhy": "Geht durch, was ohmail einsortiert, wie weit zurück es sortiert und KI — mit dem, was jetzt eingestellt ist, vorausgefüllt. Es bewegt sich nichts, bis du zustimmst.",
-    "setupAgainAction": "Einrichtung starten"
+    "setupAgainAction": "Einrichtung starten",
+    "desktopAdd": "Ein Postfach hinzufügen",
+    "desktopAddWhy": "Dieser Computer kann mehr als eines öffnen. Die Einrichtung fragt nach Server und Passwort, testet beides und fragt, wie weit zurück gescreent wird — es bewegt sich nichts, bis du zustimmst.",
+    "desktopAddAction": "Postfach hinzufügen",
+    "desktopRoleOrganizer": "Auf diesem Computer organisiert",
+    "removeLastDoor": "Dies ist das einzige Postfach auf diesem Computer, deshalb kehrt ohmail danach zu seiner Einrichtung zurück."
   },
   "onboarding": {
     "rail_mailbox": "Postfach",

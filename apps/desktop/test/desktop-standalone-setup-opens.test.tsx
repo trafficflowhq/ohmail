@@ -115,6 +115,15 @@ function freshInstall(): { urls: string[] } {
         }
         if (url === "/cloud/signin") return encode(200, '{"status":"signed_in"}');
         if (url.startsWith("/sync/snapshot")) return encode(200, EMPTY_SNAPSHOT);
+        /* THE SETTLED ROW, read by the first-connect order before it seals. It has to carry the
+           ADDRESS that was configured: the door refuses to seal onto a row that names a different
+           mailbox, which is what stops a first connect over a populated install from putting a
+           newly typed password on the mailbox that install was already opening. */
+        if (/^\/mailboxes\/[^/]+$/.test(url) && (payload!.method ?? "GET") === "GET") {
+          return encode(200, JSON.stringify({
+            id: "mbx-fresh", address: (status as { address?: string }).address ?? "",
+          }));
+        }
         // The credential seal, and every read the mounted client makes. A permissive 200 here is
         // right: this file is about the ROUTE the window ends on, and a refusal anywhere would
         // only ever make the assertion easier to pass by accident.

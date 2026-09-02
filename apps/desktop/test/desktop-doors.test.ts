@@ -77,18 +77,73 @@ const SERVING: EngineStatus = {
  * engine, and the replacement has not announced itself yet. The `engine_status` that follows is
  * the settle loop.
  */
-function shellThatWorks(status: EngineStatus = SERVING, requestStatus = 200): Asked[] {
+function shellThatWorks(
+  status: EngineStatus = SERVING,
+  requestStatus = 200,
+  /**
+   * WHAT `GET /mailboxes/:id` SAYS THE SETTLED ROW'S ADDRESS IS.
+   *
+   * The first-connect order READS the row before it seals: an install can hold several mailboxes
+   * now, and the engine reports the SEED's id — the row matching the configured address, else the
+   * OLDEST live one — so a first connect over a populated install can settle on somebody else's
+   * row. Sealing there would put the newly typed password onto it.
+   *
+   * Defaults to the status's own address, which is the ordinary case and the one every existing
+   * case in this file is about: the engine came up on the mailbox that was just configured. A
+   * case that wants the mismatch passes a different address, and one that wants "the read failed"
+   * passes `null`.
+   */
+  rowAddress?: string | null,
+): Asked[] {
   const asked: Asked[] = [];
+  /* WHAT THE INSTALL WAS LAST CONFIGURED FOR — the default answer to the row read. A real engine
+     settles on the row matching the address it was configured with (`ensureLocalWorld` looks it
+     up by `lower(address)` and inserts one when it finds none), so modelling the read as "the
+     address that was just configured" is the ordinary case rather than a convenience. Cases that
+     want the MISMATCH the guard exists for pass `rowAddress` explicitly. */
+  let configuredAddress: string | null = null;
   host.__TAURI_INTERNALS__ = {
     invoke: async (command, payload) => {
       asked.push({ command, payload });
-      if (command === "engine_configure") return { state: "starting", mode: status.mode };
+      if (command === "engine_configure") {
+        const cfg = (payload as { config?: { address?: string } } | undefined)?.config;
+        configuredAddress = cfg?.address ?? null;
+        return { state: "starting", mode: status.mode };
+      }
       if (command === "engine_status") return status;
-      if (command === "engine_request") return encode(requestStatus, '{"ok":true}');
+      if (command === "engine_request") {
+        const req = payload as { method?: string; url?: string } | undefined;
+        if ((req?.method ?? "GET") === "GET" && (req?.url ?? "").startsWith("/mailboxes/")) {
+          const answer = rowAddress === undefined ? configuredAddress : rowAddress;
+          return answer === null
+            ? encode(404, '{"error":{"message":"no such mailbox"}}', "Not Found")
+            : encode(200, JSON.stringify({ id: status.mailboxId, address: answer }));
+        }
+        return encode(requestStatus, '{"ok":true}');
+      }
       throw new Error(`unexpected command ${command}`);
     },
   };
   return asked;
+}
+
+/**
+ * THE SEAL, out of everything the door put down the bridge.
+ *
+ * `asked.find(a => a.command === "engine_request")` used to be enough because the door made one
+ * request. The first-connect order makes two now — it READS the settled row before it seals, so
+ * that a populated install cannot have a newly typed password put on the mailbox it was already
+ * opening — and the first of them is a GET. Finding by command alone would decode the read's
+ * empty body and assert against nothing.
+ */
+function sealPatch(asked: Asked[]): Record<string, unknown> {
+  const req = asked.find(
+    (a) => a.command === "engine_request" && (a.payload as { method?: string }).method === "PATCH",
+  );
+  if (!req) throw new Error("the door sealed no password");
+  return JSON.parse(
+    new TextDecoder().decode(Uint8Array.from(req.payload!.body as number[])),
+  ) as Record<string, unknown>;
 }
 
 afterEach(() => {
@@ -186,10 +241,15 @@ describe("the local door", () => {
        second factor expires five minutes after launch for the life of the process, so the
        shared path is a permanent refusal for every reconnect; `/local/…` is the same service
        and the same probes on the per-launch bearer. `sealLocalPassword` carries the argument. */
-    const request = asked.find((a) => a.command === "engine_request")!;
-    expect(request.payload!.method).toBe("PATCH");
-    expect(request.payload!.url).toBe("/local/mailboxes/mbx-1");
-    const body = new TextDecoder().decode(Uint8Array.from(request.payload!.body as number[]));
+    /* THE READ COMES FIRST, and it is not a detail of this assertion — it is the guard that
+       keeps a first connect over a POPULATED install from sealing the newly typed password onto
+       the mailbox that install was already opening. `GET /mailboxes/:id`, then the PATCH. */
+    const [read, request] = asked.filter((a) => a.command === "engine_request");
+    expect(read!.payload!.method).toBe("GET");
+    expect(read!.payload!.url).toBe("/mailboxes/mbx-1");
+    expect(request!.payload!.method).toBe("PATCH");
+    expect(request!.payload!.url).toBe("/local/mailboxes/mbx-1");
+    const body = new TextDecoder().decode(Uint8Array.from(request!.payload!.body as number[]));
     /* THE TRANSPORT TRAVELS WITH THE PASSWORD. This used to be `{ imap: { pass } }` alone; see
        the reproduction below for why a body carrying only the secret cannot be acted on.
 
@@ -199,6 +259,13 @@ describe("the local door", () => {
        reads its outgoing coordinates from the settings file, which can be changed without the
        credential moving — so without this the engine has nothing to compare a changed outgoing
        server against, and the stored password stays offerable to a server nobody named. */
+    /* ── AND THE OUTGOING BLOCK IS A BLOCK NOW, NOT ONLY THE WITNESS ────────────────────────
+       `smtpHost` records which server the password was SAVED FOR and nothing dials it. That was
+       enough while an install held one mailbox and read its submission coordinates out of the
+       process configuration; a process setting cannot describe two servers, and the send path
+       reads the MAILBOX's own `smtp` credential row now. Without this block mailbox #2 would
+       submit through mailbox #1's server carrying #2's password — a failure that reads as a
+       wrong password rather than as a wrong server. */
     expect(JSON.parse(body)).toEqual({
       imap: {
         host: "imap.fastmail.com",
@@ -207,6 +274,14 @@ describe("the local door", () => {
         user: "mila@example.com",
         pass: "app-password-1234",
         smtpHost: "smtp.fastmail.com",
+      },
+      smtp: {
+        host: "smtp.fastmail.com",
+        port: 465,
+        secure: true,
+        // One form, one identity: the person typed one username and it covers both transports.
+        user: "mila@example.com",
+        pass: "app-password-1234",
       },
     });
   });
@@ -229,15 +304,18 @@ describe("the local door", () => {
     );
 
     const config = asked.find((a) => a.command === "engine_configure")!.payload!.config as
-      { smtp?: { host: string } };
-    const patch = JSON.parse(
-      new TextDecoder().decode(
-        Uint8Array.from(asked.find((a) => a.command === "engine_request")!.payload!.body as number[]),
-      ),
-    ) as { imap: { smtpHost?: string } };
+      { smtp?: { host: string; port: number; secure: boolean } };
+    const patch = sealPatch(asked) as
+      { imap: { smtpHost?: string }; smtp?: { host: string; port: number; secure: boolean } };
 
     expect(patch.imap.smtpHost).toBe(config.smtp!.host);
     expect(patch.imap.smtpHost).toBe(providerById("fastmail").smtp.host);
+    /* THE STORED BLOCK COMES OFF THE SAME VALUE, so a mailbox's own submission credential and the
+       settings the engine sends through cannot name different servers either. Three spellings of
+       one host would be worse than the two this case was written for. */
+    expect(patch.smtp!.host).toBe(config.smtp!.host);
+    expect(patch.smtp!.port).toBe(config.smtp!.port);
+    expect(patch.smtp!.secure).toBe(config.smtp!.secure);
   });
 
   /**
@@ -264,11 +342,7 @@ describe("the local door", () => {
     // Nothing to configure, so the settings carry no outgoing block at all…
     expect(config.smtp).toBeUndefined();
 
-    const patch = JSON.parse(
-      new TextDecoder().decode(
-        Uint8Array.from(asked.find((a) => a.command === "engine_request")!.payload!.body as number[]),
-      ),
-    ) as { imap: Record<string, unknown> };
+    const patch = sealPatch(asked) as { imap: Record<string, unknown> };
     // …and the credential says so, in a value the engine can tell apart from silence.
     expect(Object.hasOwn(patch.imap, "smtpHost")).toBe(true);
     expect(patch.imap.smtpHost).toBe("");
@@ -316,10 +390,7 @@ describe("the local door", () => {
     const result = await enterLocalDoor(own, providerById("imap"));
     expect(result.problem).toBeNull();
 
-    const request = asked.find((a) => a.command === "engine_request")!;
-    const patch = JSON.parse(
-      new TextDecoder().decode(Uint8Array.from(request.payload!.body as number[])),
-    ) as { imap: Record<string, unknown> };
+    const patch = sealPatch(asked) as { imap: Record<string, unknown> };
 
     // The host is the whole point: without it the service has nothing to merge and answers 400.
     expect(patch.imap.host).toBe("mail.my-own-server.example");
@@ -346,11 +417,7 @@ describe("the local door", () => {
 
     const config = asked.find((a) => a.command === "engine_configure")!.payload!.config as
       { imap: Record<string, unknown> };
-    const patch = JSON.parse(
-      new TextDecoder().decode(
-        Uint8Array.from(asked.find((a) => a.command === "engine_request")!.payload!.body as number[]),
-      ),
-    ) as { imap: Record<string, unknown> };
+    const patch = sealPatch(asked) as { imap: Record<string, unknown> };
 
     for (const field of ["host", "port", "secure", "user"] as const) {
       expect(patch.imap[field], field).toEqual(config.imap[field]);
@@ -397,6 +464,71 @@ describe("the local door", () => {
     expect(JSON.stringify(second!.payload)).not.toContain("app-password-1234");
   });
 
+  /**
+   * ── THE FIRST CONNECT SEALS ONTO THE ROW IT TYPED, OR IT SEALS ONTO NOTHING ────────────────
+   *
+   * `settled.mailboxId` is whatever the replacement engine reports it is opening, and the
+   * first-connect arm then seals a password onto it. That was safe while an install held ONE
+   * mailbox: the seed predicate either found the row for the typed address or made one, and there
+   * was no other row it could have named.
+   *
+   * An install that holds several ends it. The engine reports the SEED's mailbox — the active row
+   * matching the configured address, else the OLDEST active row, else `""` — so a first connect
+   * made while other mailboxes are live can settle on somebody else's row. The reachable walk is
+   * the one the ruling names: remove the seed while #2 remains, and the door is offered again over
+   * an install whose oldest surviving row is #2.
+   *
+   * MUTATION WATCHED RED: delete the guard and the two cases below both go green with a PATCH in
+   * `asked` — a password sealed onto a mailbox nobody typed.
+   */
+  it("REFUSES TO SEAL when the engine settled on a DIFFERENT mailbox", async () => {
+    // The engine came up on somebody else's row: the oldest surviving mailbox on this install.
+    const asked = shellThatWorks(SERVING, 200, "someone-else@example.com");
+
+    const result = await enterLocalDoor(filled, providerById("fastmail"));
+
+    expect(result.problem, "a mismatched row was sealed anyway").toMatch(
+      /already opening a different mailbox/,
+    );
+    /* AND NOTHING WAS WRITTEN. Not "the sentence was right" — no PATCH left this process, so no
+       credential can have landed on the wrong row. */
+    expect(
+      asked.filter((a) => a.command === "engine_request" && a.payload!.method === "PATCH"),
+      "the password was sealed onto a mailbox nobody typed",
+    ).toEqual([]);
+    // The refusal is about the INSTALL, not about the password — the password is not what is wrong.
+    expect(result.problem).not.toMatch(/password.*(refused|incorrect|wrong)/i);
+  });
+
+  it("REFUSES on a read it could not make, because 'we could not check' is not 'it matched'", async () => {
+    // A 404, a refusal, a body that is not JSON, a row with no address: every one of them means
+    // this is not provably the right row. Spelling that the same as a match is the direction that
+    // costs a credential.
+    const asked = shellThatWorks(SERVING, 200, null);
+
+    const result = await enterLocalDoor(filled, providerById("fastmail"));
+
+    expect(result.problem).toMatch(/already opening a different mailbox/);
+    expect(asked.filter((a) => a.command === "engine_request" && a.payload!.method === "PATCH"))
+      .toEqual([]);
+  });
+
+  it("the RECONFIGURE order does not read the row — it already knows which one it is", async () => {
+    /* The guard is the FIRST-CONNECT order's. A reconfigure is entered only when
+       `reconfiguresLocalDoor` has already established that the standing engine serves a `local`
+       door with a ready credential AT THE SAME ADDRESS — the row is the one being reconfigured by
+       construction, and the seal happens before anything about the install changes. A read there
+       would be asking a question its own precondition has answered. */
+    const standing: EngineStatus = { ...SERVING, credentialState: "ready" };
+    const asked = shellThatWorks(standing);
+    await enterLocalDoor(filled, providerById("fastmail"), standing);
+
+    const reads = asked.filter(
+      (a) => a.command === "engine_request" && (a.payload!.method ?? "GET") === "GET",
+    );
+    expect(reads, "the reconfigure order read a row it had already identified").toEqual([]);
+  });
+
   it("waits for the reconfigured engine before addressing anything to it", async () => {
     /* `engine_configure` answers `starting`, and a `starting` engine has no mailbox id and no
        bridge. Sending the password against that answer would address `/mailboxes/undefined`. */
@@ -413,6 +545,13 @@ describe("the local door", () => {
       asked.push({ command, payload });
       if (command === "engine_configure") return { state: "starting", mode: "local" };
       if (command === "engine_status") return SERVING;
+      /* THE ROW READ IS SERVED, so the refusal under test is the mail server's and not the
+         first-connect address guard's. An override that answered 401 to everything would make
+         every case in this file pass for the wrong reason once that guard existed. */
+      const req = payload as { method?: string; url?: string } | undefined;
+      if ((req?.method ?? "GET") === "GET") {
+        return encode(200, JSON.stringify({ id: "mbx-1", address: "mila@example.com" }));
+      }
       return encode(401, '{"error":{"code":"imap_auth","message":"the mail server refused that password"}}', "Unauthorized");
     };
 
@@ -438,9 +577,14 @@ describe("the local door", () => {
    */
   it("names the host the certificate covers instead of sending the person to their provider", async () => {
     shellThatWorks(SERVING, 400);
-    host.__TAURI_INTERNALS__!.invoke = async (command) => {
+    host.__TAURI_INTERNALS__!.invoke = async (command, payload) => {
       if (command === "engine_configure") return { state: "starting", mode: "local" };
       if (command === "engine_status") return SERVING;
+      // The row read, so the refusal under test is the probe's. See the case above.
+      const req = payload as { method?: string; url?: string } | undefined;
+      if ((req?.method ?? "GET") === "GET") {
+        return encode(200, JSON.stringify({ id: "mbx-1", address: "mila@example.com" }));
+      }
       return encode(400, JSON.stringify({
         error: {
           code: "mailbox_probe_failed",

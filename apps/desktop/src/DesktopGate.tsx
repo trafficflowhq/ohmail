@@ -685,21 +685,13 @@ export function DesktopGate() {
            `mailbox` entities, which only the invented world has — so on a real install it was an
            empty pane; that fallback is deleted now. This one reads the same facts the sync line
            does, and names its mode from the door (Cloud on the hosted door, local on the other). */
+        /* THE PANE IS NO LONGER TOLD WHICH ONE MAILBOX THE ENGINE OPENS, and that absence is the
+           multi-mailbox change on this seam — the pane's own header carries the argument.
+           `onStatus` is what replaced it: removing the LAST mailbox leaves the install configured
+           for a mailbox it no longer has, so the pane runs the shell's sign-out afterwards and
+           this gate re-reads its routing from the engine state that comes back. */
         {...(engine ? { mailboxSection: (
-          /* `servedMailboxId` is what the ENGINE is actually opening. The removal route
-             releases the claim and wipes this machine's mirror only for that one mailbox
-             (`if (mailboxId === world.mailboxId)`), so the pane may only state that
-             consequence about that row — see its own note on the confirmation. */
-          <DesktopMailboxes
-            door={status?.mode ?? null}
-            {...(status?.mailboxId ? { servedMailboxId: status.mailboxId } : {})}
-            /* REMOVING THE LAST MAILBOX ENDS THE INSTALL'S DOOR, and this is how the pane says
-               so. `onStatus` is the same sink the sign-out in Settings → This install feeds:
-               it re-keys the gate on the new engine state, and a `NotConfigured` shell routes
-               to the door chooser rather than to a mail client with nothing behind it. See
-               `DesktopMailboxes#remove` for what the released build did instead. */
-            onShellStatus={onStatus}
-          />
+          <DesktopMailboxes door={status?.mode ?? null} onShellStatus={onStatus} />
         ) } : {})}
         /* SETTINGS → SCREENER. The shared shell's own section reaches an API client that is not
            in this build, so it drew nothing and the pane was blank. This is the same three

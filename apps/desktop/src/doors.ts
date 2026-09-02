@@ -643,6 +643,27 @@ async function sealLocalPassword(
   imap: LocalTransport,
   password: string,
   /**
+   * THE OUTGOING TRANSPORT, AS A BLOCK THE SERVICE CAN STORE — not only the witness below.
+   *
+   * `smtpHost` records which submission server this password was SAVED FOR; it is a string on the
+   * incoming credential's meta and nothing dials it. That was enough while an install held one
+   * mailbox and read its submission coordinates out of the process configuration.
+   *
+   * It stopped being enough the moment an install could hold two. A process setting describes one
+   * server, and the send path now reads the MAILBOX's own `smtp` credential row
+   * (`makeSendAdapter`: the smtp row, else the imap host on 587). A mailbox with no such row
+   * would fall back to a host that belongs to a different mailbox — so #2 would submit through
+   * #1's server, authenticating with #2's password, and the failure would look like a wrong
+   * password rather than a wrong server.
+   *
+   * So the block travels with the seal and the service writes an `smtp` credential row for it,
+   * probing it first exactly as the hosted `PATCH /mailboxes/:id` does (the local route injects
+   * the same `makeSmtpProbe`). `null` where the form and the preset name no outgoing server at
+   * all: nothing is written, and `smtpHost: ""` below still records that the password was saved
+   * for a pair with nothing on the outgoing side.
+   */
+  smtp: LocalTransport | null,
+  /**
    * THE OUTGOING SERVER THIS PASSWORD IS BEING SAVED FOR — recorded with the credential, never
    * dialled by this request.
    *
@@ -688,11 +709,37 @@ async function sealLocalPassword(
     const res = await bridgeFetch(`/local/mailboxes/${encodeURIComponent(mailboxId)}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ imap: { ...imap, pass: password, smtpHost } }),
+      body: JSON.stringify({
+        imap: { ...imap, pass: password, smtpHost },
+        // The same password on both blocks: one form, one secret, two servers the person named.
+        ...(smtp ? { smtp: { ...smtp, pass: password } } : {}),
+      }),
     });
     return res.ok ? null : await refusal(res);
   } catch (err) {
     return sentence(err);
+  }
+}
+
+/**
+ * WHICH ADDRESS A MAILBOX ROW CARRIES, or `null` when this install cannot say.
+ *
+ * `GET /mailboxes/:id` on the engine's own route table — `cost: "read"`, no step-up, so it is
+ * reachable at any point in a launch. Exported so the first-connect guard above it can be driven
+ * without a shell.
+ *
+ * EVERY FAILURE ANSWERS `null`: a refusal, a 404, a body that is not JSON, a row with no address.
+ * The one caller reads `null` as "this is not provably the right row" and refuses, which is the
+ * safe direction — the alternative is sealing a password onto a row nobody has identified.
+ */
+export async function localMailboxAddress(mailboxId: string): Promise<string | null> {
+  try {
+    const res = await bridgeFetch(`/mailboxes/${encodeURIComponent(mailboxId)}`);
+    if (!res.ok) return null;
+    const row = (await res.json()) as { address?: unknown };
+    return typeof row.address === "string" && row.address.trim() !== "" ? row.address : null;
+  } catch {
+    return null;
   }
 }
 
@@ -776,20 +823,35 @@ export async function enterLocalDoor(
     secure: implicitTls(imapPort),
   };
 
+  /**
+   * THE OUTGOING TRANSPORT, resolved once for the same reason {@link imap} is: the settings file
+   * and the stored credential each take it, and two spellings of it produce an install that
+   * refuses its own sends.
+   *
+   * `null` where nothing names a submission server. It is the ABSENCE that is meaningful there —
+   * `sealLocalPassword` writes no `smtp` credential row, and `smtpHost: ""` still records that the
+   * password was saved for a pair with nothing on the outgoing side.
+   *
+   * The USER is the incoming login. One form, one identity: the person typed one username, and a
+   * mailbox whose submission server wants a different one is a case this door has never offered
+   * a field for.
+   */
+  const smtp: LocalTransport | null = smtpHost
+    ? { host: smtpHost, user, port: smtpPort, secure: implicitTls(smtpPort) }
+    : null;
+
   /** The settings, as ONE value for the same reason `imap` is one: two spellings would drift. */
   const config: EngineConfig = {
     mode: "local",
     imap,
-    ...(smtpHost
-      ? { smtp: { host: smtpHost, port: smtpPort, secure: implicitTls(smtpPort) } }
-      : {}),
+    ...(smtp ? { smtp: { host: smtp.host, port: smtp.port, secure: smtp.secure } } : {}),
     address,
   };
 
   if (reconfiguresLocalDoor(standing, address)) {
     /* SEAL, THEN COMMIT. Nothing about this install has changed yet, so a refusal here returns
        with the mailbox still on the configuration that was working. */
-    const refused = await sealLocalPassword(standing.mailboxId, imap, f.password, smtpHost);
+    const refused = await sealLocalPassword(standing.mailboxId, imap, f.password, smtp, smtpHost);
     if (refused !== null) return { status: standing, problem: refused };
 
     /**
@@ -847,9 +909,43 @@ export async function enterLocalDoor(
     return { status: settled, problem: stalled(settled) };
   }
 
+  /**
+   * ── AND THE ROW THE ENGINE SETTLED ON HAS TO BE THE ONE THAT WAS TYPED ─────────────────────
+   *
+   * `settled.mailboxId` is whatever the replacement engine reports it is opening, and this arm
+   * then seals a password onto it. That was safe while an install held ONE mailbox: the seed
+   * predicate either found the row for the typed address or made one, and there was no other row
+   * it could have named.
+   *
+   * An install that holds several ends that. The engine reports the SEED's mailbox — the active
+   * row matching the configured address, else the OLDEST active row, else `""` — so a first
+   * connect made while other mailboxes are live can settle on somebody else's row and this seal
+   * would put the newly typed password onto it. The reachable shape is the one the ruling names:
+   * remove the seed while #2 remains, and the door is offered again over an install whose oldest
+   * surviving row is #2.
+   *
+   * So the id is CHECKED against the address that was typed, over the engine's own
+   * `GET /mailboxes/:id` — a plain read, no step-up, served by the local route table. A mismatch
+   * is refused rather than sealed, and refused with a sentence about the install rather than
+   * about the password, because the password is not what is wrong.
+   *
+   * IT REFUSES ON AN UNREADABLE ANSWER TOO. A read that fails, or a row that names no address,
+   * cannot establish that this is the right row — and "we could not check" must not be spelled
+   * the same as "it matched", which is the direction that costs a credential.
+   */
+  const settledAddress = await localMailboxAddress(settled.mailboxId);
+  if (!sameAddress(settledAddress ?? undefined, address)) {
+    return {
+      status: settled,
+      problem:
+        "This copy of ohmail is already opening a different mailbox, so the password you typed "
+        + "was not saved. Add this mailbox from Settings → Mailboxes instead.",
+    };
+  }
+
   /* THE PASSWORD, AND THE ONLY PLACE IT IS WRITTEN DOWN IS THE ENGINE'S OWN STORE. See
      {@link sealLocalPassword} for what the body carries and why it carries all of it. */
-  const refused = await sealLocalPassword(settled.mailboxId, imap, f.password, smtpHost);
+  const refused = await sealLocalPassword(settled.mailboxId, imap, f.password, smtp, smtpHost);
   if (refused !== null) return { status: settled, problem: refused };
 
   /**

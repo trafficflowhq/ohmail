@@ -145,7 +145,14 @@ export function useCloudFirstRun(demo: boolean, pairNode?: ReactNode): FirstRunH
     return { host: r.host, user: r.user, folders: r.folders };
   }, []);
 
-  const connect = useCallback(async (input: FirstRunMailboxInput) => {
+  const connect = useCallback(async (input: FirstRunMailboxInput, _mode: "seed" | "add") => {
+    /* THE MODE IS ACCEPTED AND IGNORED, and that is the honest implementation on this door rather
+       than a stub. `seed` and `add` name the two things a STANDALONE connect can be — a
+       reconfiguration of the install, or a further row beside the running ones — and a hosted
+       account has neither: there is no settings file to rewrite and no local engine to replace,
+       so every mailbox this door connects is the same `POST /mailboxes`. The parameter is
+       required at the seam so the two hosts have one shape and the stage cannot forget to state
+       it on the door where it decides something. */
     const dto = await mailboxApi.create(createBody(input));
     return { id: dto.id };
   }, []);

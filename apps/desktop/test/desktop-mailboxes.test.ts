@@ -87,27 +87,50 @@ let bridgeReply: () => Response = () => new Response(null, { status: 202 });
 /** Every request the pane put down the pipe, in order. */
 let bridged: { url: string; method: string }[] = [];
 
+/** Shell commands the pane sent, in order. Today that is the sign-out and nothing else. */
+let shellCommands: string[] = [];
 /**
- * WHAT THE SHELL'S SIGN-OUT COMMAND DID, when the pane reached for it.
+ * ── THE SAME EVENTS, IN THE VOCABULARY THE EARLIER CASES SPEAK ────────────────────────────────
  *
- * `engine_logout` is a Tauri command, not a request down the pipe, so it is its own counter and
- * its own reply — and `logoutFails` is what lets a case drive the arm where the removal landed
- * and the door configuration could not be cleared.
+ * The single-mailbox sign-out cases were written against `loggedOut` / `shellStatuses` /
+ * `logoutFails`, and every one of them still asserts something true: the door is cleared when the
+ * last mailbox goes, it is NOT cleared while one remains, a failed clear is reported and is not
+ * published as an engine state, and a shell with no sink is degraded rather than broken.
+ *
+ * They are DERIVED here rather than re-implemented, so there is one mock and one truth. Rewriting
+ * four working cases to a second spelling of the same events would have been churn with a chance
+ * of losing one of them; a second mock beside the first would be two things that can disagree
+ * about what the pane did.
+ *
+ * What changed underneath them is only WHICH removal is the last one — `isLastLive` over the
+ * roster instead of "the row the engine serves" — and that is asserted by the multi-mailbox cases
+ * further down. `SERVED` is gone with the prop it stood for.
  */
-let loggedOut = 0;
+const loggedOutCount = (): number => shellCommands.filter((c) => c === "engine_logout").length;
 let logoutFails: string | null = null;
-/** The statuses the pane handed the gate, in order. */
-let shellStatuses: unknown[] = [];
+/** Whether the gate wired its status sink — false stands in for a shell that cannot be told. */
+let SHELL_SINK = true;
+/** What the sign-out answers with, or the error it throws. Set by the cases that press it. */
+let logoutReply: () => Promise<{ state: string; mode?: string | null }> =
+  async () => ({ state: "not_configured", mode: null });
+/** The engine states the pane published upward — the gate's `onStatus`. */
+let published: { state: string; mode?: string | null }[] = [];
 
 vi.mock("../src/bridge-fetch.js", () => ({
   bridgeFetch: async (url: string, init?: { method?: string }) => {
     bridged.push({ url, method: init?.method ?? "GET" });
     return bridgeReply();
   },
+  /* THE SHELL'S OWN SIGN-OUT, which the pane runs after removing the LAST mailbox. Mocked here
+     rather than through `__TAURI_INTERNALS__` because that is where the real one lives — the
+     module is already replaced for `bridgeFetch`, and a partial mock would leave this export
+     `undefined`, which fails as a TypeError rather than as the assertion under test. */
   engineLogout: async () => {
-    loggedOut += 1;
+    shellCommands.push("engine_logout");
+    /* `logoutFails` is the earlier cases' way of driving the arm where the removal landed and the
+       door configuration could not be cleared — the same arm `logoutReply` can throw for. */
     if (logoutFails !== null) throw new Error(logoutFails);
-    return { state: "not_configured", mode: null };
+    return logoutReply();
   },
 }));
 
@@ -146,19 +169,6 @@ function addressRows(el: HTMLElement): HTMLElement[] {
   ) as HTMLElement[];
 }
 
-/**
- * WHICH MAILBOX THE ENGINE SAYS IT IS OPENING — `engine_status.mailboxId`, forwarded by the gate.
- *
- * The Remove control is gated on it, because the local removal route releases the claim and wipes
- * this machine's mirror only for the engine's OWN mailbox; on any other row it tombstones and
- * deletes the credential and nothing else, so the confirmation's fifth consequence would be a
- * promise the request does not keep. Defaults to the fixture's row — the ordinary case, one
- * mailbox, the one the engine serves.
- */
-let SERVED: string | undefined = "mbx-1";
-/** Whether the gate wired its status sink — false stands in for a shell that cannot be told. */
-let SHELL_SINK = true;
-
 async function render(door: string | null): Promise<HTMLElement> {
   /* Imported inside, so the module graph is built after `vi.mock` is registered. */
   const { DesktopMailboxes } = await import("../src/DesktopMailboxes.js");
@@ -174,10 +184,16 @@ async function render(door: string | null): Promise<HTMLElement> {
           ThemeProvider,
           { storageKey: "ohmail.theme" },
           h(ToastHost, null, h(DesktopMailboxes, {
-            door, ...(SERVED === undefined ? {} : { servedMailboxId: SERVED }),
-            /* The gate's own sink. Withheld by the ONE case that drives an older shell — see
-               "a shell that cannot be told". */
-            ...(SHELL_SINK ? { onShellStatus: (n: unknown) => { shellStatuses.push(n); } } : {}),
+            door,
+            /* The gate's own sink. Withheld by the ONE case that drives a shell which cannot be
+               told — see "a shell that cannot be told". */
+            ...(SHELL_SINK
+              ? {
+                  onShellStatus: (next: { state: string; mode?: string | null }) => {
+                    published.push(next);
+                  },
+                }
+              : {}),
           })),
         ),
       ),
@@ -208,16 +224,16 @@ function buttonExactly(el: HTMLElement, label: string): HTMLButtonElement | null
 
 beforeEach(() => {
   FACTS = [MAILBOX];
-  SERVED = "mbx-1";
   MIRRORED = 0;
+  shellCommands = [];
+  published = [];
+  logoutReply = async () => ({ state: "not_configured", mode: null });
   MAIL_STATE = { key: "quiet", clock: false, settled: true };
   FRESHNESS = { state: "current" };
   refreshed = 0;
   bridged = [];
   bridgeReply = () => new Response(null, { status: 202 });
-  loggedOut = 0;
   logoutFails = null;
-  shellStatuses = [];
   SHELL_SINK = true;
   invoked = [];
   host.__TAURI_INTERNALS__ = {
@@ -380,10 +396,67 @@ describe("the desktop mailbox pane on the standalone door", () => {
     expect(invoked).toEqual([]);
   });
 
-  it("keeps its own empty state, which names the local way to fix it", async () => {
+  it("keeps its own empty state, and it names the control this pane now has", async () => {
+    /* IT USED TO SAY "choose one in the Desktop settings pane", which was the truth while the
+       only way to connect a mailbox was the door chooser behind that pane. This pane connects
+       them itself now, so the sentence points at its own button — and the button is on screen
+       with no mailbox connected, which is the state it is most needed in. */
     FACTS = [];
-    const text = (await render("local")).textContent ?? "";
-    expect(text).toContain("Desktop settings pane");
+    const el = await render("local");
+    const text = el.textContent ?? "";
+    expect(text).not.toContain("Desktop settings pane");
+    expect(text).toContain("“Add mailbox” connects one");
+    expect(buttonExactly(el, "Add mailbox"), "the empty pane names a control it does not offer")
+      .not.toBeNull();
+  });
+
+  /* ══ ADD MAILBOX — the capability the sidecar grew and the window could not reach ═════════
+   *
+   * `POST /local/mailboxes` writes a further row, proves its password against its own server and
+   * attaches a runtime for it. Without a control it is the shape this pane has been in before:
+   * a route nothing calls, and a product claim with nothing behind it.
+   *
+   * Mutations watched red: drop the `firstRunDoorFor` gate → the hosted case reds (a button that
+   * navigates somewhere blank); navigate to the bare `#/first-run` → the intent case reds, and
+   * that is the one that matters, because a finished install derives to "nothing to do" and the
+   * stage would open and close on the same render.
+   */
+  it("OFFERS ADD MAILBOX above the list, on the standalone door, at the add route", async () => {
+    const el = await render("local");
+    const add = buttonExactly(el, "Add mailbox");
+    expect(add, "a standalone install cannot connect a second mailbox from this pane").not.toBeNull();
+
+    await act(async () => { add!.click(); });
+    /* `#/first-run/add`, NEVER the bare hash. The install has been through setup, so
+       `deriveOnboardingStep` answers null for it — correctly — and the intent has to ride the
+       route or the stage opens, finds the completion stamp and closes again on the same render. */
+    expect(window.location.hash).toBe("#/first-run/add");
+    expect(bridged, "the press connected something instead of opening the flow").toEqual([]);
+  });
+
+  it("does not offer Add mailbox on the hosted door", async () => {
+    // Mailboxes are the ACCOUNT's there and this window has no first-run host for that door, so
+    // the button would navigate to a route that renders nothing at all.
+    const el = await render("cloud");
+    expect(buttonExactly(el, "Add mailbox")).toBeNull();
+  });
+
+  it("RUN SETUP AGAIN is a row control and it names its own mailbox", async () => {
+    /* It was one row at the foot of the pane. The flow writes a consent stamp and a screening
+       window for a NAMED mailbox, so a control at the foot of a list of two named neither — it
+       re-ran setup for whichever row `facts[0]` happened to be. */
+    FACTS = [
+      { ...MAILBOX, id: "mbx-1", address: "first@example.test" },
+      { ...MAILBOX, id: "mbx-2", address: "second@example.test" },
+    ];
+    const el = await render("local");
+    const rows = addressRows(el);
+    expect(rows.length).toBe(2);
+    const second = [...rows[1]!.querySelectorAll("button")]
+      .find((b) => (b.textContent ?? "").trim() === "Run setup");
+    expect(second, "the second mailbox has no way to re-run its own setup").toBeDefined();
+    await act(async () => { second!.click(); });
+    expect(window.location.hash).toBe("#/first-run/again?mailbox=mbx-2");
   });
 
   /* ══ REMOVE — THE DOOR OUT, WHICH THIS PANE DID NOT HAVE ═════════════════════════════════
@@ -423,6 +496,10 @@ describe("the desktop mailbox pane on the standalone door", () => {
   });
 
   it("STATES FIVE CONSEQUENCES, and the fifth is this door's and not the account's", async () => {
+    /* TWO LIVE MAILBOXES, so this is the removal that is ONLY the route: the install stays
+       configured, keeps organizing the other one, and the sixth consequence below would be
+       false. The single-mailbox case is its own test. */
+    FACTS = [MAILBOX, { ...MAILBOX, id: "mbx-2", address: "second@example.test" }];
     const el = await render("local");
     await act(async () => { buttonExactly(el, "Remove")!.click(); });
     const items = [...el.querySelectorAll(".mbx-remove-list li")].map((li) => li.textContent ?? "");
@@ -437,10 +514,27 @@ describe("the desktop mailbox pane on the standalone door", () => {
     /* AND THE ONE THAT DIFFERS. On the hosted door the copy already synced STAYS, because erasure
        there is account-scoped and there is no per-mailbox purge. On THIS door the route wipes the
        local mirror in the same request — that is the wipe the doubling fix added — so the hosted
-       sentence would be false here, pointing the wrong way. */
-    expect(items[4]).toContain("This computer's copy of the mail is deleted");
+       sentence would be false here, pointing the wrong way.
+
+       IT NAMES THE MAILBOX NOW. "This computer's copy of the mail" was true of an install that
+       held one; over two it reads as the whole machine's copy, which would be a panel promising
+       an act four times the size of the one the request performs. */
+    expect(items[4]).toContain("This computer's copy of this mailbox's mail is deleted");
     expect(el.textContent ?? "", "the hosted sentence is on a machine with no account")
       .not.toContain("stays in your account");
+    expect(el.textContent ?? "", "the last-mailbox consequence is stated over a mailbox that remains")
+      .not.toContain("returns to its setup screen");
+  });
+
+  it("STATES A SIXTH when it is the LAST mailbox, because the install loses its door", async () => {
+    // One live row. Removing it leaves nothing for this install to open, so the pane signs the
+    // door out afterwards — a bigger consequence than the five above, stated before the press.
+    const el = await render("local");
+    await act(async () => { buttonExactly(el, "Remove")!.click(); });
+    const items = [...el.querySelectorAll(".mbx-remove-list li")].map((li) => li.textContent ?? "");
+    expect(items).toHaveLength(6);
+    expect(items[5]).toContain("only mailbox on this computer");
+    expect(items[5]).toContain("returns to its setup screen");
   });
 
   it("THE FIRST BULLET SAYS WHAT THIS INSTALL ACTUALLY DID — 'reads', on a reader", async () => {
@@ -496,7 +590,7 @@ describe("the desktop mailbox pane on the standalone door", () => {
        whole surface, so asking the poller to re-read a pane that is going away says nothing. The
        re-read is asserted where it is still reachable — "A SECOND LIVE MAILBOX keeps the door",
        which removes one of two and stays in the app. */
-    expect(loggedOut, "the last mailbox went and the door configuration stayed").toBe(1);
+    expect(loggedOutCount(), "the last mailbox went and the door configuration stayed").toBe(1);
   });
 
   /* ══════════════════════════════════════════════════════════════════════════════════════
@@ -541,11 +635,11 @@ describe("the desktop mailbox pane on the standalone door", () => {
     /* THE REMOVAL FIRST, AND ON THE LOCAL ROUTE — unchanged. Then the shell command that clears
        `config.json`, which is the half the removal cannot reach. */
     expect(bridged).toEqual([{ url: "/local/mailboxes/mbx-1", method: "DELETE" }]);
-    expect(loggedOut, "the door configuration was left naming a mailbox nobody has").toBe(1);
+    expect(loggedOutCount(), "the door configuration was left naming a mailbox nobody has").toBe(1);
     /* AND THE GATE IS HANDED THE NEW STATE. Without this the window keeps a mail client mounted
        over an engine that is `NotConfigured`; with it, the gate re-keys and routes to the door
        chooser — the same sink Settings → This install's sign-out feeds. */
-    expect(shellStatuses).toEqual([{ state: "not_configured", mode: null }]);
+    expect(published).toEqual([{ state: "not_configured", mode: null }]);
     expect(el.querySelector('[role="alertdialog"]'), "the panel stayed open on success").toBeNull();
   });
 
@@ -562,8 +656,8 @@ describe("the desktop mailbox pane on the standalone door", () => {
       buttonExactly(el, "Remove mailbox")!.click();
       for (let i = 0; i < 12; i++) await Promise.resolve();
     });
-    expect(loggedOut, "the door was cleared for a mailbox that is still connected").toBe(0);
-    expect(shellStatuses).toEqual([]);
+    expect(loggedOutCount(), "the door was cleared for a mailbox that is still connected").toBe(0);
+    expect(published).toEqual([]);
   });
 
   it("A SECOND LIVE MAILBOX keeps the door — there is still something to open", async () => {
@@ -576,7 +670,7 @@ describe("the desktop mailbox pane on the standalone door", () => {
       for (let i = 0; i < 12; i++) await Promise.resolve();
     });
     expect(bridged).toEqual([{ url: "/local/mailboxes/mbx-1", method: "DELETE" }]);
-    expect(loggedOut, "the install was signed out of a mailbox the person still has").toBe(0);
+    expect(loggedOutCount(), "the install was signed out of a mailbox the person still has").toBe(0);
     expect(refreshed, "the pane did not re-read after removing one of two").toBeGreaterThan(0);
   });
 
@@ -594,7 +688,7 @@ describe("the desktop mailbox pane on the standalone door", () => {
       buttonExactly(el, "Remove mailbox")!.click();
       for (let i = 0; i < 12; i++) await Promise.resolve();
     });
-    expect(loggedOut).toBe(1);
+    expect(loggedOutCount()).toBe(1);
   });
 
   it("A LOGOUT THAT FAILED says so — and does not claim the removal failed with it", async () => {
@@ -610,9 +704,9 @@ describe("the desktop mailbox pane on the standalone door", () => {
       for (let i = 0; i < 12; i++) await Promise.resolve();
     });
     expect(bridged).toEqual([{ url: "/local/mailboxes/mbx-1", method: "DELETE" }]);
-    expect(loggedOut).toBe(1);
+    expect(loggedOutCount()).toBe(1);
     expect(el.textContent ?? "").toContain("The engine refused to clear the stored login");
-    expect(shellStatuses, "a failed logout was reported to the gate as a new engine state")
+    expect(published, "a failed logout was reported to the gate as a new engine state")
       .toEqual([]);
   });
 
@@ -628,7 +722,7 @@ describe("the desktop mailbox pane on the standalone door", () => {
       for (let i = 0; i < 12; i++) await Promise.resolve();
     });
     expect(bridged).toEqual([{ url: "/local/mailboxes/mbx-1", method: "DELETE" }]);
-    expect(loggedOut, "the pane signed the install out with nowhere to report it").toBe(0);
+    expect(loggedOutCount(), "the pane signed the install out with nowhere to report it").toBe(0);
     expect(refreshed).toBeGreaterThan(0);
   });
 
@@ -658,45 +752,91 @@ describe("the desktop mailbox pane on the standalone door", () => {
     expect(bridged).toEqual([]);
   });
 
-  it("THE HOSTED DOOR OFFERS NO REMOVE, so no door configuration is ever cleared there", async () => {
-    /* A hosted install's "door configuration" is the account's session, and its removal is the
-       account's own ceremony behind a fresh second factor in a browser. This pane sends such an
-       install to ohmail.app instead. The case exists because `remove`'s own `door !== "cloud"`
-       clause is DEFENSIVE — dropping it was watched green, since the control below is where the
-       hosted door is actually turned away — and this is the layer that keeps that true. */
-    const el = await render("cloud");
-    expect(buttonExactly(el, "Remove"), "the hosted door was offered a local removal").toBeNull();
-    expect(openButton(el), "the hosted door lost its hand-off to the browser").not.toBeNull();
-    expect(loggedOut).toBe(0);
-  });
-
-  it("a row the ENGINE DOES NOT SERVE offers no Remove — the wipe would not happen", async () => {
-    /* The local route releases the claim and wipes this machine's copy of the mail only
-       `if (mailboxId === world.mailboxId)`; on any other row it tombstones and deletes the
-       credential and nothing else. The confirmation states the wipe as one of its five
-       consequences, so offering it there would be a panel promising an act the request does not
-       perform. Reachable rather than theoretical: reconfiguring the door to a different address
-       mints a new row and leaves the old one `connected` behind it. */
+  it("EVERY LIVE ROW OFFERS REMOVE, and the route wipes the row it names", async () => {
+    /* ── THIS CASE USED TO ASSERT THE OPPOSITE, AND BOTH VERSIONS WERE RIGHT AT THE TIME ────
+     *
+     * It read: *"a row the ENGINE DOES NOT SERVE offers no Remove — the wipe would not happen"*,
+     * and gated on `servedMailboxId`. The local route released the claim and wiped this machine's
+     * copy of the mail only `if (mailboxId === world.mailboxId)`; on any other row it tombstoned
+     * and deleted the credential and nothing else, so offering the control there would have been
+     * a panel promising an act the request does not perform.
+     *
+     * The route keys on the ROSTER now. Every live row has a runtime, and the DELETE releases,
+     * wipes and stops whichever row it names — so the confirmation's consequences are true of
+     * every row and the control belongs on every one of them. `status.mailboxId` still exists and
+     * has NARROWED to meaning "the seed": gating on it would now hide the removal on every
+     * mailbox but one, chosen by which address this install happened to be configured with.
+     */
     FACTS = [
-      { ...MAILBOX, id: "mbx-old", address: "previous@example.test" },
-      { ...MAILBOX, id: "mbx-1", address: "someone@example.test" },
+      { ...MAILBOX, id: "mbx-1", address: "first@example.test" },
+      { ...MAILBOX, id: "mbx-2", address: "second@example.test" },
     ];
     const el = await render("local");
-    expect(addressRows(el).length).toBe(2);
-    // Exactly one Remove, and it is on the row the engine is opening.
+    const rows = addressRows(el);
+    expect(rows.length).toBe(2);
     expect([...el.querySelectorAll("button")]
-      .filter((b) => (b.textContent ?? "").trim() === "Remove").length).toBe(1);
-    await act(async () => { buttonExactly(el, "Remove")!.click(); });
+      .filter((b) => (b.textContent ?? "").trim() === "Remove").length).toBe(2);
+
+    /* AND THE ROUTE NAMES THE ROW THE PRESS WAS ON. The second row's verb, not the first's —
+       one confirmation, whose subject is the mailbox under it, addressed to that mailbox's id. */
+    const secondVerb = [...rows[1]!.querySelectorAll("button")]
+      .find((b) => (b.textContent ?? "").trim() === "Remove");
+    await act(async () => { secondVerb!.click(); });
+    expect(el.querySelectorAll('[role="alertdialog"]').length,
+      "one press opened a confirmation on more than one row").toBe(1);
     expect(el.querySelector('[role="alertdialog"]')!.textContent ?? "")
-      .toContain("Remove someone@example.test?");
+      .toContain("Remove second@example.test?");
+
+    bridgeReply = () => new Response(null, { status: 200 });
+    await act(async () => {
+      buttonExactly(el, "Remove mailbox")!.click();
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+    });
+    expect(bridged).toEqual([{ url: "/local/mailboxes/mbx-2", method: "DELETE" }]);
+    /* AND NO SIGN-OUT. A mailbox remains, so the install is still correctly configured for it;
+       signing the door out here would take away a mailbox nobody asked to remove. */
+    expect(shellCommands, "removing one of two signed the whole install out").toEqual([]);
   });
 
-  it("and an engine that did not say which mailbox it serves offers none at all", async () => {
-    // Absent is "the shell did not say", and the control is withheld — the safe direction, on the
-    // rule every optional field on this surface follows.
-    SERVED = undefined;
+  it("REMOVING THE LAST ONE SIGNS THE DOOR OUT, so it survives a relaunch", async () => {
+    /* ── `REMOVE-DOES-NOT-SURVIVE-A-RELAUNCH`, closed here ───────────────────────────────────
+     *
+     * The route's three acts are all about the ENGINE's store; none of them touches the SHELL's
+     * settings file, and the settings file is what the engine composes its dial from at every
+     * launch. Measured on the real sidecar over two launches: the removed address came back as a
+     * consent-less reader row with no credential — nothing dialled, nothing organized, and a
+     * person who had removed their mailbox found it listed again.
+     *
+     * The shell's own sign-out is what clears the door, and it runs AFTER the route: a stopped
+     * engine cannot release a claim or wipe a mirror. */
+    bridgeReply = () => new Response(null, { status: 200 });
     const el = await render("local");
-    expect(buttonExactly(el, "Remove")).toBeNull();
+    await act(async () => { buttonExactly(el, "Remove")!.click(); });
+    await act(async () => {
+      buttonExactly(el, "Remove mailbox")!.click();
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+    });
+    expect(bridged).toEqual([{ url: "/local/mailboxes/mbx-1", method: "DELETE" }]);
+    expect(shellCommands, "the install stayed configured for a mailbox it no longer has")
+      .toEqual(["engine_logout"]);
+    /* AND THE GATE IS TOLD. Without this the window would go on rendering the app over an install
+       with no door, and only a relaunch would show the door chooser. */
+    expect(published.map((p) => p.state)).toEqual(["not_configured"]);
+  });
+
+  it("a sign-out that fails still reports it, because the removal already happened", async () => {
+    // The mailbox is gone either way; what failed is the tidying that keeps it gone. Silence here
+    // would leave the stale door to be discovered on the next launch.
+    bridgeReply = () => new Response(null, { status: 200 });
+    logoutReply = async () => { throw new Error("the shell would not sign out"); };
+    const el = await render("local");
+    await act(async () => { buttonExactly(el, "Remove")!.click(); });
+    await act(async () => {
+      buttonExactly(el, "Remove mailbox")!.click();
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+    });
+    expect(el.textContent ?? "").toContain("the shell would not sign out");
+    expect(refreshed, "the pane went on showing a mailbox it had just removed").toBeGreaterThan(0);
   });
 
   it("a DISCONNECTED row offers no Remove — there is nothing left to remove", async () => {

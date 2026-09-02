@@ -182,7 +182,8 @@ import { planSubjectRule, subjectRuleContext, subjectRuleToast, type TermField }
 import { senderHitOf } from "./sender-hit";
 import { forwardEnvelopePlan, forwardSend } from "./forward-send";
 import {
-  go, goFolder, goScreener, goSettings, goTag, goTriage, reflectMessage, useHashRoute,
+  go, goFolder, goScreener, goSettings, goTag, goTriage, nameFirstRunMailbox, reflectMessage,
+  useHashRoute,
   type Route, type ScreenerSegmentId, type TriagePileId,
 } from "./routing";
 import { HistoryView } from "../views/HistoryView";
@@ -1888,14 +1889,27 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
    * and the Screener queue. It is composed unconditionally — it is three field reads and a
    * length — and consumed only where the stage renders.
    *
-   * THE MAILBOX IS `facts[0]`, and that is a decision rather than an oversight. The flow is
-   * about getting ONE mailbox organized; an account with several has been through it, and the
-   * re-run from Settings arrives pre-filled from whatever the account already stored. Reading
-   * the first row keeps "no mailbox" (`null`) distinguishable from "we cannot see" — `facts`
-   * itself is null then, and the guard at the mount site refuses to render over it rather than
-   * treating "cannot see" as "none connected".
+   * WHICH MAILBOX — the one the ROUTE names (`#/first-run?mailbox=<id>`), and the first row only
+   * when it names none. `facts[0]` alone was the whole rule and it stopped being true the day a
+   * standalone install could hold more than one mailbox: the flow for the SECOND one would have
+   * rendered the FIRST one's state on every screen — its consent stamp, its holder, its address —
+   * and the consent press two screens in addresses `mailboxId`, so it would have organized the
+   * wrong mailbox.
+   *
+   * An id the list does not hold falls back to the first row rather than to `null`, on the
+   * router's own rule for every other id it carries: the URL is a claim about what is on screen,
+   * and a claim the data does not support is corrected in the shell, never 404'd in the router.
+   *
+   * `null` STILL MEANS "NONE CONNECTED" AND NOT "WE CANNOT SEE": `facts` itself is null then, and
+   * the guard at the mount site refuses to render over it. The one deliberate exception is an ADD
+   * run before its create has answered — see below.
    */
-  const firstRunMailbox = facts === null ? null : facts[0] ?? null;
+  const firstRunMailbox = facts === null
+    ? null
+    : (route.firstRunMailboxId === null
+        ? null
+        : facts.find((m) => m.id === route.firstRunMailboxId) ?? null)
+      ?? facts[0] ?? null;
   /** The holder's "since" instant as a DATE in the app's own language — see the mount below. */
   const holderSince = useMemo(() => {
     const iso = firstRunMailbox?.organizedBy?.since;
@@ -1906,11 +1920,25 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
       dateStyle: "medium", timeZone: activeFormatZone(),
     });
   }, [firstRunMailbox]);
+  /**
+   * AN ADD RUN HAS NO MAILBOX UNTIL ITS CREATE ANSWERS, AND THE FLOW HAS TO BE TOLD SO.
+   *
+   * `#/first-run/add` opens on the connect FORM, and the form is withheld the moment
+   * `facts.mailbox` is non-null — the mailbox step becomes a statement about the mailbox this run
+   * is about, which is right for a Back press and wrong here. On an install that already holds
+   * mailboxes the fallback above would hand the stage row #1, so the person who pressed "Add
+   * mailbox" would be shown a statement about a mailbox they already have and a Continue button.
+   *
+   * The condition is the route's own: an add run whose hash names no mailbox has not made one
+   * yet. The moment the create answers, `FirstRun`'s `onConnected` puts the new id in the hash
+   * and this stops applying — from that render on the run is about the row that was just added.
+   */
+  const addPending = route.firstRunAdd && route.firstRunMailboxId === null;
   const onboardingFacts: OnboardingFacts | null = useMemo(() => {
     if (!firstRun || facts === null) return null;
     return {
       door: firstRun.door,
-      mailbox: firstRunMailbox === null ? null : {
+      mailbox: firstRunMailbox === null || addPending ? null : {
         organizerRole: firstRunMailbox.organizerRole,
         organizedBy: firstRunMailbox.organizedBy,
         organizerState: firstRunMailbox.organizerState,
@@ -1924,7 +1952,7 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
       ai: firstRun.ai,
       queuedSenders: screener.waitingCount,
     };
-  }, [firstRun, facts, firstRunMailbox, consent.onboardingCompletedAt, screener.waitingCount]);
+  }, [addPending, firstRun, facts, firstRunMailbox, consent.onboardingCompletedAt, screener.waitingCount]);
   /**
    * THE ONE SENDER THE GUIDED DECISION IS ABOUT — the head of the real queue, decided through
    * the real `ScreenerState`.
@@ -7326,11 +7354,13 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
         <FirstRun
           host={firstRun}
           facts={onboardingFacts}
-          mailboxId={firstRunMailbox?.id ?? null}
+          mailboxId={addPending ? null : firstRunMailbox?.id ?? null}
           /* WHICH mailbox this run is about, for the one screen that has to name it — the
              mailbox step once a mailbox exists, where the form is withheld and a statement
              stands in its place. */
-          {...(firstRunMailbox?.address ? { mailboxAddress: firstRunMailbox.address } : {})}
+          {...(!addPending && firstRunMailbox?.address
+            ? { mailboxAddress: firstRunMailbox.address }
+            : {})}
           /* ── WHEN THE HOLDER BECAME THE ORGANIZER, IN WORDS — AND NOTHING PASSED IT ────────
              `FirstRunProps.organizedSince` is interpolated into `mailboxes.readerSince*` by two
              screens (the claim question's banner, and now a reader's summary), and this mount —
@@ -7360,6 +7390,17 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
              because a finished account derives to "nothing to do" — which is right for a boot
              and wrong for somebody who just asked to run setup again. */
           rerun={route.firstRunRerun}
+          /* THE ADD INTENT, off the route for the same reason the re-run's is: an install that
+             has been through setup derives to "nothing to do", which is right for a boot and
+             wrong for the press beside a list of mailboxes. It also carries the connect MODE —
+             see `FirstRunHost.connect`, where the word is required and has no default. */
+          add={route.firstRunAdd}
+          /* WHICH ROW THE ADD RUN JUST MADE. The route is where "the mailbox this run is about"
+             is written down, and an add run's hash names none until this fires — so the id goes
+             into the hash and every later screen reads the mailbox that was added. A REPLACE
+             rather than an assignment: the create is not a place somebody navigated to, and a
+             history entry there would make Back walk into a form for a mailbox that now exists. */
+          onConnected={nameFirstRunMailbox}
           /* WHAT THE ACCOUNT ALREADY STORED, so a re-run shows the state it is about to change.
              `dormancyDays` is always a number on this object; `screeningScope` rests `window`,
              which is what every build did before the mode existed.

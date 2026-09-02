@@ -274,8 +274,32 @@ export function deriveOnboardingStep(facts: OnboardingFacts): OnboardingStep | n
  * list, because two of these are never resume targets ({@link OnboardingStep}) and two more are
  * conditional on the door.
  */
-export function onboardingPath(facts: OnboardingFacts): OnboardingStep[] {
-  const out: OnboardingStep[] = ["welcome", "mailbox"];
+export function onboardingPath(
+  facts: OnboardingFacts,
+  /**
+   * IS THIS AN "ADD A MAILBOX" RUN — the third intent, off the route (`Route.firstRunAdd`).
+   *
+   * A standalone install can hold more than one mailbox, and the second one is not a first run.
+   * Four screens come out of the walk and each for its own reason, not as a shortening:
+   *
+   *  · `welcome` — "one sentence about what ohmail does" to somebody who has been using it;
+   *  · `ai` and `provider` — the model is a property of the INSTALL (`ai-provider.ts`), answered
+   *    once when it was set up. Asking again per mailbox would imply a per-mailbox answer that
+   *    nothing stores, and answering "no" here would look like it turned AI off for the install;
+   *  · `pair` — the phone is paired to the install, not to a mailbox, for the same reason.
+   *
+   * What is left is 1, 2, 3, 4, 7, 8, 9: connect it, say who organizes it if somebody does,
+   * agree, choose the window, watch the pull, take a decision, read the summary. The window IS
+   * asked again because it is written by the consent transaction this run performs — it is
+   * pre-filled from `GET /consent` and it writes the ACCOUNT row, which is where the standalone
+   * door's window lives (ruling (a): "a per-mailbox window is REFUSED").
+   *
+   * DEFAULTED FALSE, and that default is the pre-existing behaviour rather than a choice about a
+   * new one: every caller that predates multi-mailbox is a first run or a re-run.
+   */
+  add = false,
+): OnboardingStep[] {
+  const out: OnboardingStep[] = add ? ["mailbox"] : ["welcome", "mailbox"];
   const mb = facts.mailbox;
   // The elsewhere screen is in the PATH only when it is actually the situation. Walking somebody
   // through "somebody else organizes this" when nobody does would be a screen with no content.
@@ -305,13 +329,20 @@ export function onboardingPath(facts: OnboardingFacts): OnboardingStep[] {
       && (!mb.organizeConsentedAt || mb.organizerRole === "reader")) {
     out.push("elsewhere");
   }
-  out.push("consent", "window", "ai");
-  // The provider step exists on the standalone door alone (ruling 2(d)); on the other two doors
-  // it is a sentence on the AI screen, not a step.
-  if (facts.door === "local" && facts.ai !== "off") out.push("provider");
+  out.push("consent", "window");
+  // THE AI PAIR IS THE INSTALL'S QUESTION, ASKED ONCE. See the `add` parameter.
+  if (!add) {
+    out.push("ai");
+    // The provider step exists on the standalone door alone (ruling 2(d)); on the other two doors
+    // it is a sentence on the AI screen, not a step.
+    if (facts.door === "local" && facts.ai !== "off") out.push("provider");
+  }
   out.push("pull");
   if (facts.queuedSenders > 0) out.push("decide");
-  out.push("summary", "pair");
+  out.push("summary");
+  // Pairing is per INSTALL, not per mailbox — offered at the end of the run that set the install
+  // up, and never again for each further mailbox added to it.
+  if (!add) out.push("pair");
   return out;
 }
 
