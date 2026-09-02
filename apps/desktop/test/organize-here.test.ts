@@ -347,6 +347,56 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
       .not.toBeNull();
   });
 
+  /**
+   * AND IT DESCRIBES THAT ROW AS FROZEN, NOT AS READING.
+   *
+   * The modern reader is connected and syncing, which is what every other banner sentence is
+   * about. A pre-role engine's stand-down closed the IMAP handle and stopped the poll timer, so
+   * the row is reading nothing — and its own state column says "Handed over to another install"
+   * three lines to the right. The general fallback claimed the opposite of both.
+   */
+  it("does not tell a frozen legacy row that it is reading the mailbox", async () => {
+    FACTS = [LEGACY_STAND_DOWN];
+    const el = await render(null);
+    const text = el.textContent ?? "";
+    expect(text).toContain("stopped opening the mailbox");
+    expect(text, "a frozen legacy row was described as a live reader")
+      .not.toContain("This computer reads the mailbox");
+    // It also has no holder columns at all, so there is no name to announce.
+    expect(text).not.toContain("ohmail Cloud");
+  });
+
+  /**
+   * THE ONE ROW THAT NEEDS THE RESTART IS THE ONE THAT COULD NOT SEE IT.
+   *
+   * The acknowledgement was gated on `organizerRole === "reader"`, and the mapper coerces a legacy
+   * row's ABSENT role to `organizer` — so on exactly the rows the legacy arm exists for, pressing
+   * the button made it disappear and put nothing in its place, with the takeover unapplied. A
+   * pre-role engine spends the stamp at its next process assembly, not on a tick, so the restart
+   * sentence this lane retired is the true one HERE and nowhere else.
+   */
+  it("tells a legacy install to relaunch, which is the mechanism on that engine", async () => {
+    FACTS = [LEGACY_STAND_DOWN];
+    const el = await render(null);
+    await act(async () => { organizeButton(el)!.click(); });
+    await act(async () => { confirmButton(el)!.click(); });
+    const text = el.textContent ?? "";
+    expect(text, "the row the legacy arm exists for got no acknowledgement at all")
+      .toContain("Quit and reopen ohmail");
+    expect(text).toContain("it keeps the mailbox and this one stands down again");
+    // …and NOT the modern sentence, which promises a pass this engine will not make.
+    expect(text).not.toContain("takes over on its next pass");
+  });
+
+  it("and a MODERN reader is never told to relaunch", async () => {
+    const el = await render(null);
+    await act(async () => { organizeButton(el)!.click(); });
+    await act(async () => { confirmButton(el)!.click(); });
+    expect(el.textContent).toContain("takes over on its next pass");
+    expect(el.textContent, "the retired restart instruction reached the engine that reads on a tick")
+      .not.toContain("Quit and reopen");
+  });
+
   it("is NOT offered on a TOMBSTONE — the handler refuses that row and so does the pane", async () => {
     FACTS = [REMOVED];
     const el = await render(null);

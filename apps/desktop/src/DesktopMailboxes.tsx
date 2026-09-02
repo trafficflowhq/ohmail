@@ -591,9 +591,25 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
           so it gets its own sentence rather than a variant of the calm one. */}
       {claimTarget ? (
         <SettingsBanner
-          label={t("readerLabel", { name: holderOf(claimTarget) })}
+          label={
+            /* A legacy row carries no holder columns at all — the pre-role engine recorded only
+               `disabled_reason` — so there is no name to put in `readerLabel`. */
+            claimTarget.legacyStandDown === true
+              ? t("readerLabelLegacy")
+              : t("readerLabel", { name: holderOf(claimTarget) })
+          }
           description={
-            claimTarget.organizerState === "stopped"
+            /* ── A LEGACY STAND-DOWN IS FROZEN, AND SAYING IT READS WOULD CONTRADICT ITS OWN ROW ──
+               The modern reader is CONNECTED AND SYNCING, which is what every sentence below is
+               about. A pre-role engine's stand-down did the opposite: it closed the IMAP handle and
+               stopped the poll timer (`engine.ts:1991-1997`, the path that became the
+               tombstone-only branch), so that row is not reading anything — and its own state
+               column says "Handed over to another install" three lines to the right. It also needs
+               the restart, which the sentence says, because that engine spends the stamp at its
+               next process assembly rather than on a tick. */
+            claimTarget.legacyStandDown === true
+              ? t("readerLegacyStandDown")
+              : claimTarget.organizerState === "stopped"
               /* NO AGE, because there is no timestamp that would make one true. It said "last
                  checked in {when}" and was handed `organizedBy.since` — which is when that install
                  BECAME the organizer, and the heartbeat is deliberately not persisted
@@ -722,7 +738,21 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
               has not been told the mailbox moved, and a tick would say it had. */}
           {reclaimed.has(shown.id) ? (
             reclaimed.get(shown.id) === "authorized" ? (
-              shown.organizerRole === "reader" ? (
+              /* ── THE LEGACY ROW COULD NOT REACH THE ANSWER AT ALL ─────────────────────────
+                 The gate below tests `organizerRole === "reader"`, and the mapper coerces a legacy
+                 row's ABSENT role to `organizer` — so on precisely the rows the legacy arm exists
+                 for, this rendered nothing: the button vanished and no acknowledgement replaced it,
+                 with the takeover still unapplied.
+
+                 And the sentence it needs is the one this lane retired. That was right for the
+                 modern engine, which reads the lease on its next tick; a pre-role engine STOPPED
+                 its poll loop at the stand-down and spends the stamp at its next process assembly,
+                 so there a restart is not a superstition, it is the mechanism. The sentence is back
+                 under a name that says when it applies, and it persists until the relaunch clears
+                 the row — because the instruction is outstanding until then. */
+              shown.legacyStandDown === true ? (
+                <SettingsVerdict state="off" headline={t("organizeHereQueuedLegacy")} />
+              ) : shown.organizerRole === "reader" ? (
                 <SettingsVerdict state="off" headline={t("organizeHereQueued")} />
               ) : null
             ) : (
