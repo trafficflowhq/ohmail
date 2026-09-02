@@ -4,6 +4,7 @@ import {
   mailboxes, mailboxCredentials, mailboxFolders, folderState, messages, accountSettings,
   isMailboxDisabledReason, isMailboxSyncBlockReason,
   isOrganizerRole, isOrganizerKind, isOrganizerState,
+  standDownMemory,
   closeRemovedMailboxAppointments,
   type LedgerTx, type MailboxErrorCode, type Tx,
 } from "@trafficflow/db";
@@ -45,10 +46,11 @@ export type MailboxTakeoverResult =
   /**
    * One organizing is authorized. The worker decides on its next pass.
    *
-   * `previousReason` is the stand-down reason the row carried, or `null` since mail 0083 — a
-   * reader row written by this build carries no `disabled_reason` at all (the ROLE is the record
-   * now), and a consent-less mailbox never had one. Kept as a field because rows written before
-   * 0083 still have one and the log line is worth its evidence; nothing decides on it.
+   * `previousReason` is the stand-down reason the row carried — DERIVED, since mail 0083, by
+   * `standDownMemory`: a reader row written by this build carries no `disabled_reason` at all,
+   * because the ROLE is the record now, and reading the column returned `null` for every one of
+   * them. A consent-less mailbox genuinely has none, and answers `null` here for a reason rather
+   * than by omission. Nothing decides on it; it is the sentence the person is shown.
    */
   | { outcome: "authorized"; previousReason: string | null }
   /** This install already organizes it, and consent is already recorded. Nothing written. */
@@ -2252,7 +2254,19 @@ export class MailboxService {
         .returning({ id: mailboxes.id });
 
       if (rows.length === 0) return { outcome: "already_organizing" as const };
-      return { outcome: "authorized" as const, previousReason: current.disabledReason };
+      /* -- DERIVED FROM THE ROLE, BECAUSE THE COLUMN HAS HAD NO WRITER SINCE MAIL 0083 --------
+       *
+       * This read `current.disabledReason` and the field's own note above already said what that
+       * now returns: `null`, for every reader row this build writes. So the one sentence the
+       * takeover gives the person — what they have just claimed this mailbox back FROM — was
+       * blank on exactly the door that exists to tell them.
+       *
+       * `standDownMemory` recomposes it from `organizer_role` and `organized_by_kind`, which is
+       * where migration 0083 put the same two facts, and still answers the legacy column for a
+       * row that carries one. It is the same derivation the desktop's two arms use, in the same
+       * module, so Cloud and a standalone install cannot drift into two answers.
+       */
+      return { outcome: "authorized" as const, previousReason: standDownMemory(current) };
     }).catch((err: unknown) => {
       // Kept from the `disabled → connected` era: this statement no longer moves `status`, so it
       // no longer inserts into the active-address index and 23505 is unreachable from here. It

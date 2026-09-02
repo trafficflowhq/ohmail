@@ -1,5 +1,5 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { accounts, mailboxes, sessions, users } from "@trafficflow/db";
+import { accounts, mailboxes, sessions, users, standDownMemory } from "@trafficflow/db";
 import { generateToken, hashToken } from "@trafficflow/services/mail";
 import type { LocalDb } from "./db.js";
 
@@ -40,13 +40,21 @@ export interface LocalWorld {
   userId: string;
   mailboxId: string;
   /**
-   * The lease reason on this mailbox's row, when there is one — `organized_elsewhere:*`.
+   * The lease reason this mailbox's row remembers, when it remembers one — `organized_elsewhere:*`.
    *
    * Present iff this install previously STOOD DOWN from the mailbox. It is what keeps a lapsed
    * Cloud subscription from auto-resuming the desktop across a relaunch, and the lease alone
    * cannot do it: once Cloud releases its claim the folder is empty, and an empty folder
    * correctly reads as "nobody has ever organized this mailbox", which organizes. The row is the
    * memory the mailbox cannot hold.
+   *
+   * ── IT IS DERIVED, NOT READ (mail 0083) ─────────────────────────────────────────────────
+   *
+   * This was `disabled_reason`, one column, until 0083 split the CONNECTION from the ROLE and
+   * left that column with no writer. The derivation is {@link standDownMemory} — shared with the
+   * four other call sites that asked the same question of the same dead column, two of them on the
+   * hosted side — and the value is still the same closed set, so every reader downstream of this
+   * field is unchanged.
    */
   standDownReason: string | null;
   /**
@@ -80,18 +88,24 @@ export interface EnsureLocalWorldInput {
  *
  * ── A LEASE STAND-DOWN IS NOT A TOMBSTONE ─────────────────────────────────────────────────
  *
- * `disabled` covers two completely different events and the reason column is what tells them
- * apart. A REMOVAL ("Remove from this Mac…", `disabled_reason` NULL) is a tombstone: re-adding the
- * address is a new mailbox and must not be blocked. A LEASE STAND-DOWN
- * (`disabled_reason = 'organized_elsewhere:*'`) is the SAME mailbox, paused, and it has to be
- * found on the next launch — otherwise relaunching the app mints a fresh `connected` row and the
- * install silently resumes organizing a mailbox it stood down from. That is the forbidden
- * auto-resume: a forgotten install on an office machine quietly becoming the thing that moves
- * someone's mail. Restarting an app is not an explicit human action about who organizes a
- * mailbox.
+ * A stood-down mailbox has to be FOUND on the next launch — otherwise relaunching the app mints a
+ * fresh `connected` row and the install silently resumes organizing a mailbox it stood down from.
+ * That is the forbidden auto-resume: a forgotten install on an office machine quietly becoming
+ * the thing that moves someone's mail. Restarting an app is not an explicit human action about
+ * who organizes a mailbox.
  *
- * A stood-down row is therefore returned as-is, still `disabled`, with its reason — never
- * re-enabled here. Only an explicit action clears it.
+ * Since mail 0083 a stand-down leaves the row `connected` with `organizer_role = 'reader'`, so
+ * the ordinary `status <> 'disabled'` arm of the WHERE below finds it with nothing added — a
+ * reader IS a live mailbox, which is the whole point of the role. The `or disabled_reason is not
+ * null` arm is what still finds the OTHER shape: a row 0083's backfill deliberately left
+ * `disabled` because a live sibling already held its address, and any row an older binary wrote.
+ *
+ * `disabled` on its own has therefore gone back to meaning one thing, and the reason column is
+ * what tells its two events apart for the rows that carry it. A REMOVAL ("Remove from this Mac…",
+ * `disabled_reason` NULL) is a tombstone: re-adding the address is a new mailbox and must not be
+ * blocked, so it is excluded here and a fresh row is minted. A row `disabled` WITH a reason is
+ * the same mailbox, paused, and is returned as-is — never re-enabled here. Only an explicit
+ * action clears either shape.
  */
 export async function ensureLocalWorld(db: LocalDb, input: EnsureLocalWorldInput): Promise<LocalWorld> {
   const existingAccount = (await db.select({ id: accounts.id }).from(accounts).limit(1))[0];
@@ -125,6 +139,11 @@ export async function ensureLocalWorld(db: LocalDb, input: EnsureLocalWorldInput
         id: mailboxes.id,
         status: mailboxes.status,
         disabledReason: mailboxes.disabledReason,
+        // Mail 0083 — the stand-down's record moved onto these two, and `standDownMemory` is the
+        // one place that reads all four together. Selected here rather than derived from `status`
+        // because `status` no longer knows.
+        organizerRole: mailboxes.organizerRole,
+        organizedByKind: mailboxes.organizedByKind,
         takeoverAuthorizedAt: mailboxes.takeoverAuthorizedAt,
       })
       .from(mailboxes)
@@ -143,7 +162,7 @@ export async function ensureLocalWorld(db: LocalDb, input: EnsureLocalWorldInput
       accountId,
       userId,
       mailboxId: existingMailbox.id,
-      standDownReason: existingMailbox.status === "disabled" ? existingMailbox.disabledReason ?? null : null,
+      standDownReason: standDownMemory(existingMailbox),
       takeoverAuthorizedAt: existingMailbox.takeoverAuthorizedAt ?? null,
     };
   }
@@ -157,6 +176,24 @@ export async function ensureLocalWorld(db: LocalDb, input: EnsureLocalWorldInput
         address: input.address,
         ...(input.displayName ? { displayName: input.displayName } : {}),
         status: "connected",
+        /* -- ADDING THE MAILBOX *IS* THE CONSENT ON THIS DOOR (mail 0083) -------------------
+         *
+         * `organize_consented_at` NULL means "nobody has asked this install to organize this
+         * mailbox", the state `POST /mailboxes` creates on Cloud so a fresh connect builds a
+         * mirror and moves nothing until a human says yes on the consent screen. **There is no
+         * such screen and no such second step here**: a standalone install is launched with one
+         * address, by the person who owns the machine, and organizing it is the entire reason
+         * they ran the app. This is migration 0083's own backfill (2) argument — *"connecting a
+         * mailbox WAS the consent … so the record is true"* — applied to the rows this function
+         * creates AFTER that migration, which the backfill can never reach.
+         *
+         * Left NULL it was not inert: `authorizeOrganizerTakeover` reads the pair
+         * (`role !== 'reader' && consentedAt !== null`) to answer "you already organize this",
+         * so a healthy standalone install answered `authorized` to a press on a mailbox it was
+         * already organizing — writing a one-shot seizure stamp that then sat on the row waiting
+         * to be spent against whoever held the mailbox next.
+         */
+        organizeConsentedAt: input.now,
       })
       .returning({ id: mailboxes.id })
   )[0]!.id;

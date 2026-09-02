@@ -1,5 +1,5 @@
 import { and, eq, ne, sql } from "drizzle-orm";
-import { mailboxes } from "@trafficflow/db";
+import { mailboxes, standDownMemory } from "@trafficflow/db";
 import { isCliEntry } from "@trafficflow/worker/entry";
 import { openLocalDb, type LocalDb } from "./db.js";
 
@@ -117,6 +117,10 @@ export async function authorizeOrganizerTakeover(
       // build writes; and a mailbox NOBODY has consented to organize is the second state this
       // ceremony serves, which `status` could never express at all.
       organizerRole: mailboxes.organizerRole,
+      // Mail 0083 — and it is here for `previousReason`, not for the preconditions above. The
+      // stand-down's WHO moved onto this column when `disabled_reason` lost its writer, so it is
+      // what `standDownMemory` recomposes the reason from.
+      organizedByKind: mailboxes.organizedByKind,
       organizeConsentedAt: mailboxes.organizeConsentedAt,
     })
     .from(mailboxes)
@@ -162,7 +166,15 @@ export async function authorizeOrganizerTakeover(
     })
     .where(and(eq(mailboxes.id, row.id), ne(mailboxes.status, "disabled")));
 
-  return { outcome: "authorized", previousReason: row.disabledReason, mailboxId: row.id };
+  /* -- `previousReason` IS DERIVED, AND READING THE COLUMN RETURNED NULL FOR A YEAR OF ROWS --
+   *
+   * This was `row.disabledReason`. Mail 0083 stopped writing that column — the demotion records
+   * the ROLE and leaves the row `connected` — so from that migration onward every authorized
+   * reclaim reported "no previous reason" for a mailbox that had very obviously been handed to
+   * somebody. It is what the CLI prints and what the Settings press shows the person, so the one
+   * sentence they get about what they just took the mailbox back FROM was blank.
+   */
+  return { outcome: "authorized", previousReason: standDownMemory(row), mailboxId: row.id };
 }
 
 /**
@@ -211,6 +223,10 @@ export async function requestOrganizerTakeover(
       // build writes; and a mailbox NOBODY has consented to organize is the second state this
       // ceremony serves, which `status` could never express at all.
       organizerRole: mailboxes.organizerRole,
+      // Mail 0083 — and it is here for `previousReason`, not for the preconditions above. The
+      // stand-down's WHO moved onto this column when `disabled_reason` lost its writer, so it is
+      // what `standDownMemory` recomposes the reason from.
+      organizedByKind: mailboxes.organizedByKind,
       organizeConsentedAt: mailboxes.organizeConsentedAt,
     })
     .from(mailboxes)
@@ -238,7 +254,8 @@ export async function requestOrganizerTakeover(
     })
     .where(and(eq(mailboxes.id, row.id), ne(mailboxes.status, "disabled")));
 
-  return { outcome: "authorized", previousReason: row.disabledReason, mailboxId: row.id };
+  // Derived, for the reason the CLI arm above gives — this is the half the Settings button uses.
+  return { outcome: "authorized", previousReason: standDownMemory(row), mailboxId: row.id };
 }
 
 /** What the command says for each outcome. One line each; nothing needs a paragraph. */

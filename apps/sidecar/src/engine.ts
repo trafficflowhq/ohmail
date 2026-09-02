@@ -1760,7 +1760,25 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * told which install kept it.
      */
     const takeoverRequested = world.takeoverAuthorizedAt !== null;
-    const priorStandDown = takeoverRequested ? null : world.standDownReason;
+    /**
+     * THE STAND-DOWN THIS PROCESS REMEMBERS — and it is a `let` because the process now OUTLIVES
+     * the stand-down that sets it.
+     *
+     * It was a `const` read once from the row, which was exactly right while a demoted install
+     * STOPPED: the timer was cleared and the login closed, so the next reader of this value was
+     * the next launch, and the row it read was the record. Mail 0083 made the loser a READER —
+     * connected, poll timer running — and that turns a snapshot into a hole. The gate stands down
+     * mid-life, the poll fires a minute later, `priorStandDown` is still the NULL it was at
+     * assembly, and the gate reads the lease again; find the foreign claim gone (the other
+     * organizer released cleanly, so `ohmail/_meta` is empty) and `decideLease`'s "nobody has
+     * ever organized this mailbox" arm ORGANIZES. That is the auto-resume this whole mechanism
+     * exists to prevent, reached without any human action, on a machine somebody left running.
+     *
+     * So the two arms of the gate maintain it: standing down writes the memory, and the promotion
+     * — which only ever runs behind an explicit press — clears it. The value is deliberately the
+     * same one the ROW carries, so a relaunch and a poll answer the question identically.
+     */
+    let priorStandDown: string | null = takeoverRequested ? null : world.standDownReason;
     /**
      * WHAT THE WINDOW REPORTS, and it is the ROW's answer rather than the gate's optimism: a
      * stood-down install with a request outstanding is still stood down until the lease says
@@ -1948,6 +1966,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       if (outcome.organize) {
         leaseNonce = outcome.nonce;
         organizer = { organizing: true, reason: null, heldBy: null };
+        // THE MEMORY IS SPENT WITH THE STAMP. Reaching here past a remembered stand-down means a
+        // human pressed the button and the lease agreed; leaving the memory set would make the
+        // very next poll return false for an install that IS the organizer — it would drain as a
+        // reader against a row that says `organizer`, which is the two halves disagreeing in the
+        // other direction. See {@link priorStandDown}.
+        priorStandDown = null;
         if (takeoverAuthorized) {
           // SPEND IT. One becoming, not a standing right: leaving the stamp set would let this
           // install seize the mailbox back on some later launch, after a human had deliberately
@@ -2065,6 +2089,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       // Standing down voids any unspent authorization, in memory and on the row below. We are not
       // the organizer, so becoming one again is a new becoming and needs a new explicit request.
       takeoverAuthorized = false;
+      // …AND IT IS REMEMBERED FOR THE REST OF THIS PROCESS, not only on the row. A reader keeps
+      // polling, so without this line the next cycle would ask the lease again and take the
+      // mailbox back the moment the other organizer released it. See {@link priorStandDown}.
+      priorStandDown = outcome.reason;
       log("organizer_stand_down", {
         disabledReason: outcome.reason,
         heldBy: organizer.heldBy,

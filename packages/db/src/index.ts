@@ -62,10 +62,16 @@ export {
 // The ONE spelling of "somebody else organizes this mailbox" (mail 0083) — the same argument as
 // the two lines above: the worker may not import services at runtime, the sidecar's gate and the
 // hosted gate both write the holder columns, and eleven service write doors share one refusal.
-// Reaches `schema-mail.js` and `change-log.js` alone, so the closure rule holds.
+// Reaches `schema-mail.js`, `change-log.js` and `mailbox-errors.js` alone, so the closure rule
+// holds — `mailbox-errors.js` for `standDownMemory`, which composes the same closed set
+// `disabled_reason` carries and checks its own answer against it rather than casting.
 export {
   assertOrganizerRole, assertAccountOrganizes, readOrganizerRole, organizerDisplayName,
   OrganizedElsewhereError, MailboxNotFoundError,
+  // The ONE spelling of "this row remembers standing down, and to whom". Three desktop readers
+  // asked it of `disabled_reason`, which mail 0083 left with no writer, so all three answered
+  // NULL and nothing failed. See the function.
+  standDownMemory,
   ORGANIZER_ROLES, ORGANIZER_KINDS, ORGANIZER_STATES, ORGANIZED_BY_NAME_MAX,
   isOrganizerRole, isOrganizerKind, isOrganizerState,
   type OrganizerRole, type OrganizerKind, type OrganizerState,
