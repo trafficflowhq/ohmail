@@ -3,14 +3,14 @@ import {
   attachments, drafts, mailboxes, messageBodies, messages, outboundSends, recordChange, threads, type Tx,
 } from "@trafficflow/db";
 import {
-  createLogger, isMessageGone, mintMessageId, normalizeMessageId, recordSentMessage,
+  createLogger, isMessageGone, mintMessageId, recordSentMessage,
   type AppendedSent, type EmailAddress, type Logger, type NativeLocator, type OutboundMessage,
   type OpenSendAdapter, type RepoPort, type RoutingPort, type SendAdapter, type StorageCap,
 } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { ServiceContext } from "./context.js";
 import type { AttachmentAdapter, OpenAdapter } from "./attachments-service.js";
-import { ServiceError, SettleFailed, TransientDialRefusal } from "./errors.js";
+import { ServiceError } from "./errors.js";
 import { sanitizeOutboundHtml } from "./outbound-html.js";
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
@@ -1903,24 +1903,11 @@ export class SendService {
     onMiss: "unverified" | "defer" = "unverified",
   ): Promise<ResolveStaleOutcome> {
     // ── 1. The mirror arm. Account-scoped like every read in this service.
-    //
-    // NORMALIZED, and this is the whole arm: `mintedMessageId` is `<uuid@domain>` WITH the angle
-    // brackets (`mintMessageId`), while `messages.message_id_header` is written through
-    // `normalizeMessageId`, which STRIPS them — `record-at-send.pg.test.ts` pins that column as
-    // `providerMessageId.replace(/[<>]/g, "")`. Comparing the two spellings matches zero rows for
-    // every real send, so the arm silently never fired: every row paid a LOGIN, and — far worse —
-    // on the no-dial branches the mirror is the ONLY evidence there is, so a `disabled` mailbox
-    // or a give-up would write terminal `unverified` over a message the mirror was holding all
-    // along. That is the exact wrong write this whole slice exists to prevent.
-    //
-    // It shipped green because the first version of the test seeded the header WITH brackets,
-    // which no writer in this codebase does.
-    const mintedKey = normalizeMessageId(row.mintedMessageId);
-    const mirrored = mintedKey === null ? [] : await ctx.db.select({ id: messages.id })
+    const mirrored = await ctx.db.select({ id: messages.id })
       .from(messages)
       .where(and(
         eq(messages.accountId, ctx.accountId),
-        eq(messages.messageIdHeader, mintedKey),
+        eq(messages.messageIdHeader, row.mintedMessageId),
       ))
       .limit(1);
     if (mirrored.length > 0) return this.settleSent(ctx, row, mailboxId, "mirror");
@@ -1939,13 +1926,6 @@ export class SendService {
     try {
       adapter = await openAdapter(mailboxId);
     } catch (err) {
-      // A REFUSAL THE FACTORY CALLS TRANSIENT IS NOT EVIDENCE ABOUT THE MESSAGE. It propagates
-      // untouched, so the caller defers this row and asks again next cycle. Checked FIRST and
-      // kept a distinct class rather than folded into the branch below, because the two are
-      // opposite conclusions from a superficially identical event — see {@link
-      // TransientDialRefusal}, which records what treating a busy mailbox as a permanent one
-      // would write.
-      if (err instanceof TransientDialRefusal) throw err;
       // See the docblock: a mailbox that can never be dialled again is decided now, not left to
       // page for ever. Anything that is not a typed refusal is a fault, and propagates.
       if (err instanceof ServiceError) return this.settleUnverified(ctx, row, "undialable");
@@ -1957,17 +1937,7 @@ export class SendService {
         ? await this.settleSent(ctx, row, mailboxId, "probe")
         : await this.settleUnverified(ctx, row, "probe");
     } finally {
-      // SWALLOWED, and it is not defensive tidying. This `finally` REPLACES whatever the try
-      // produced, so a close that rejects on an already-broken socket would (a) throw away the
-      // `SettleFailed` tag the reconciling pass uses to decide never to give up on a row whose
-      // probe had already answered, and (b) on the client door — where this is a real connection,
-      // not the pass's no-op wrapper — turn a send that was just committed as `sent` into a 500.
-      // The send path's own abandoned-submission close (`send`'s `finally`) is guarded the same
-      // way. NOT every close in this file is: the forward-attachment fetch above still awaits a
-      // bare `adapter.close()` in its `finally`, where a rejection would fail a forward whose
-      // attachments had already been read. Outside this lane's scope, and named rather than
-      // implied by a sentence claiming they all are.
-      await adapter.close().catch(() => { /* the connection is already broken */ });
+      await adapter.close();
     }
   }
 
@@ -1976,35 +1946,18 @@ export class SendService {
     ctx: ServiceContext, row: typeof outboundSends.$inferSelect, mailboxId: string,
     by: ResolveStaleBy,
   ): Promise<ResolveStaleOutcome> {
-    // A THROW HERE IS A WRITE FAILURE, NOT A PROBE FAILURE — tagged so the reconciling pass
-    // cannot apply its give-up to it and record `unverified` for a message the Sent folder had
-    // just confirmed. See {@link SettleFailed}.
-    // `answerWinner` IS INSIDE THE TRY, not after it. Its re-read is part of settling: a pool
-    // fault there is still "the mailbox answered and the database could not record it", and
-    // leaving it untagged would let the reconciling pass apply its give-up to a row whose probe
-    // had already spoken.
-    try {
-      const seq = await this.finalizeSent(ctx, row.id, row.mintedMessageId, row.draftId, mailboxId);
-      if (seq === null) return await this.answerWinner(ctx, row);
-      return { status: "sent", providerMessageId: row.mintedMessageId, draftId: row.draftId, seq, by };
-    } catch (err) {
-      throw new SettleFailed("sent", err);
-    }
+    const seq = await this.finalizeSent(ctx, row.id, row.mintedMessageId, row.draftId, mailboxId);
+    if (seq === null) return this.answerWinner(ctx, row);
+    return { status: "sent", providerMessageId: row.mintedMessageId, draftId: row.draftId, seq, by };
   }
 
   /** `finalizeUnverified`, plus the CAS-loser re-read. See {@link SendService.resolveStale}. */
   private async settleUnverified(
     ctx: ServiceContext, row: typeof outboundSends.$inferSelect, by: ResolveStaleBy,
   ): Promise<ResolveStaleOutcome> {
-    // See {@link SettleFailed} — the evidence was in; only the write failed.
-    // `answerWinner` inside the try, for `settleSent`'s reason.
-    try {
-      const seq = await this.finalizeUnverified(ctx, row.id, row.draftId);
-      if (seq === null) return await this.answerWinner(ctx, row);
-      return { status: "unverified", providerMessageId: null, draftId: row.draftId, seq, by };
-    } catch (err) {
-      throw new SettleFailed("unverified", err);
-    }
+    const seq = await this.finalizeUnverified(ctx, row.id, row.draftId);
+    if (seq === null) return this.answerWinner(ctx, row);
+    return { status: "unverified", providerMessageId: null, draftId: row.draftId, seq, by };
   }
 
   /**

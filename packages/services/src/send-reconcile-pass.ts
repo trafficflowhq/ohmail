@@ -45,7 +45,7 @@ import { sendService, SEND_STALE_AFTER_MS, type SendService } from "./send-servi
  *
  * ── WHY NOTHING HERE CAN SEND ──────────────────────────────────────────────────────────────
  *
- * Invariant #2 — never resend on ambiguity — is the whole subject of this file, so the guarantee
+ * NEVER RESEND ON AMBIGUITY is the whole subject of this file, so the guarantee
  * is structural rather than a rule somebody follows:
  *
  *  · {@link SendService.resolveStale} contains no call to `send`, and this pass calls nothing
