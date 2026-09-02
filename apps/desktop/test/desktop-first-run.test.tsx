@@ -456,3 +456,51 @@ describe("the shared stage, mounted on the local host", () => {
     expect(text.length).toBeGreaterThan(80);
   });
 });
+
+/**
+ * THE WAY BACK IN — Settings → Mailboxes → "Run setup again".
+ *
+ * This is a CLAIM UNDER TEST rather than a feature with a test beside it. The released changelog
+ * says of the guided flow that "it can be run again later from Settings", and until this row
+ * existed that sentence was true of the browser and false of the app the changelog ships with:
+ * `goFirstRun({ rerun: true })` was wired in the web client's mailbox pane and nowhere else, so on
+ * the desktop the only way back into setup was to type the route.
+ *
+ * Asserted over the SOURCE rather than by mounting the pane, and deliberately: the pane needs the
+ * mail-state provider, a facts poll and an engine, and what can go wrong here is not rendering —
+ * it is the two gates. A row without them is a button that navigates to a blank overlay on the
+ * hosted door, or offers to re-run a setup that has never run.
+ */
+describe("the guided flow's way back in, on the desktop", () => {
+  const pane = fs.readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "../src/DesktopMailboxes.tsx"),
+    "utf8",
+  );
+
+  it("offers the re-run row, on the re-run route", () => {
+    expect(pane).toMatch(/goFirstRun\(\{ rerun: true \}\)/);
+    // The bare hash would open, find the completion stamp, and close on the same render.
+    expect(pane).not.toMatch(/goFirstRun\(\)/);
+    for (const key of ["setupAgain", "setupAgainWhy", "setupAgainAction"]) {
+      expect(pane, key).toContain(`t("${key}")`);
+    }
+  });
+
+  it("gates it on the door that HAS a stage, and on a mailbox existing", () => {
+    expect(pane).toMatch(/firstRunDoorFor\(statusOf\(door\)\) === "local" && facts\.length > 0/);
+  });
+
+  it("asks the shared door rule instead of re-spelling it", () => {
+    // Two spellings of "which door has a setup flow" is how this row and the mount in the gate
+    // come to disagree, which is the failure that ships a button to nowhere.
+    expect(pane).toMatch(/import \{ firstRunDoorFor \} from "\.\/doors\.js"/);
+    expect(pane).not.toMatch(/door === "local" \?/);
+  });
+
+  it("the copy it promises exists in the catalogue", () => {
+    const mailboxes = (en as Record<string, Record<string, string>>).mailboxes!;
+    for (const key of ["setupAgain", "setupAgainWhy", "setupAgainAction"]) {
+      expect(mailboxes, key).toHaveProperty(key);
+    }
+  });
+});

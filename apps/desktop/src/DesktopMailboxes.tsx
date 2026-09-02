@@ -85,7 +85,9 @@ import { addressKey } from "../../webapp/app/shell/address-key";
 import { agoStamp } from "../../webapp/app/shell/format";
 import { activeFormatLocale, activeFormatZone } from "../../webapp/app/shell/locale";
 import { useMailState } from "../../webapp/app/shell/MailStateProvider";
-import { bridgeFetch } from "./bridge-fetch.js";
+import { goFirstRun } from "../../webapp/app/shell/routing";
+import { bridgeFetch, type EngineStatus } from "./bridge-fetch.js";
+import { firstRunDoorFor } from "./doors.js";
 import { openWeb } from "./native.js";
 
 /** What `GET /mailboxes` answers with, narrowed to the fields these two surfaces read. */
@@ -358,6 +360,20 @@ export function takeoverOutcome(wire: unknown): TakeoverOutcome {
   return (TAKEOVER_OUTCOMES as readonly string[]).includes(wire as string)
     ? (wire as TakeoverOutcome)
     : "authorized";
+}
+
+/**
+ * THE PANE'S `door` STRING AS THE DOOR RULES READ IT.
+ *
+ * `firstRunDoorFor` takes an `EngineStatus` because every other door rule does, and asking it the
+ * question here rather than re-spelling `door === "local"` is what keeps this row and the mount in
+ * `DesktopGate` from ever disagreeing about which door has a setup flow. The pane is handed only
+ * the mode, which is the whole of what the rule reads.
+ */
+function statusOf(door?: string | null): EngineStatus | null {
+  return door === "local" || door === "cloud"
+    ? ({ state: "serving", mode: door } as EngineStatus)
+    : null;
 }
 
 export function DesktopMailboxes({ door }: { door?: string | null }) {
@@ -977,6 +993,34 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
           </p>
         );
       })()}
+
+      {/* ── RUN SETUP AGAIN ────────────────────────────────────────────────────────────────
+          The guided flow's way back, and the entry point its own description promises: "with what
+          is set now filled in".
+
+          TWO GATES, and neither is decoration.
+
+          `firstRunDoorFor` — the STANDALONE door alone, because that is the only door this window
+          gives the flow a host on (`local-first-run.ts`). On the hosted door `#/first-run` renders
+          nothing at all, so a button here would be a control that navigates somewhere blank: the
+          exact shape this pane's own comments spend three paragraphs refusing elsewhere.
+
+          `facts.length > 0` — the browser pane's rule verbatim. With no mailbox connected the row
+          would open a re-run that is immediately a first run, which the door chooser already is,
+          said once instead of twice.
+
+          `#/first-run/again`, never the bare hash: a finished install derives to "nothing to do",
+          correctly, so the RE-RUN INTENT has to ride the route or the stage would open, find the
+          completion stamp and close again on the same render. */}
+      {firstRunDoorFor(statusOf(door)) === "local" && facts.length > 0 ? (
+        <SettingsRow
+          label={t("setupAgain")}
+          description={t("setupAgainWhy")}
+          control={
+            <Button onClick={() => goFirstRun({ rerun: true })}>{t("setupAgainAction")}</Button>
+          }
+        />
+      ) : null}
 
       <SettingsNote>
         {/* WHERE THE MAIL ACTUALLY IS, said on the screen that lists it. The claim is the
