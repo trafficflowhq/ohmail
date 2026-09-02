@@ -106,6 +106,19 @@ const BASE_MESSAGE_NAMESPACES = [
   // with a file and every real HTML body in an engine-bearing build. A German reader of the shipped
   // binary is exactly the person who would have found them still in English.
   "attachments", "mailBody",
+  // `columns` is the two drag handles between the sidebar, the message list and the reading pane
+  // (`shell/ColumnHandles.tsx`, rendered by `AppShell`) — the accessible label each separator
+  // carries, which is the whole of what a person operating them by keyboard is told they are
+  // holding. Shared-shell code compiled into BOTH bundles, so it belongs here and not in the
+  // window-only list.
+  //
+  // It was MISSED when the resizable columns landed, and the cost is worth recording because it is
+  // the exact failure this array exists to prevent and it still reached a release build: the
+  // namespace filter dropped `columns` out of the catalogue while the code kept reading it, so
+  // `useTranslations("columns")` threw `MISSING_MESSAGE` on the first render and the window smoke
+  // failed on all four platforms. `desktop-messages.test.ts` was RED at that commit and named the
+  // missing entry exactly — nothing ran it before the push.
+  "columns",
   // `folder` is the folder VIEW's namespace (the folders foundation, FOLDERS-SPEC.md) — three
   // sentences: a count and the empty state naming where the folder list comes from. It is NOT
   // the marketing "folders" namespace, which stays excluded below with the other site copy.
