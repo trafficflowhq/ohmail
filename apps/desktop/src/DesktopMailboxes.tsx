@@ -76,13 +76,14 @@
 
 import { Fragment, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Button, SettingsNote, SettingsRow, SettingsSection } from "@ohmail/ui";
+import { Button, SettingsActions, SettingsBanner, SettingsNote, SettingsRow, SettingsSection, SettingsVerdict } from "@ohmail/ui";
 
 import {
   deviceHoldings, holdingsSpeak, showInboundQuiet, type MailboxFacts,
 } from "../../webapp/app/shell/mail-state";
 import { addressKey } from "../../webapp/app/shell/address-key";
 import { agoStamp } from "../../webapp/app/shell/format";
+import { activeFormatLocale, activeFormatZone } from "../../webapp/app/shell/locale";
 import { useMailState } from "../../webapp/app/shell/MailStateProvider";
 import { bridgeFetch } from "./bridge-fetch.js";
 import { openWeb } from "./native.js";
@@ -96,6 +97,18 @@ interface MailboxWire {
   disabledReason?: string | null;
   syncBlockedReason?: string | null;
   syncBlockedSince?: string | null;
+  /**
+   * WHO ORGANIZES THIS MAILBOX, and whether that is this install.
+   *
+   * Unconditional on the polled row, so a reader is visible while `status` is `connected` —
+   * which is the whole point of the split: a reader is CONNECTED AND SYNCING, not disabled.
+   * Optional here because an engine older than the field is an ordinary state on a desktop that
+   * updates on its own schedule; absent reads as `organizer`, which is what every install was
+   * before the field existed.
+   */
+  organizerRole?: "organizer" | "reader";
+  organizedBy?: { kind?: string | null; name?: string | null; since?: string | null } | null;
+  organizerState?: "held" | "stopped" | null;
   lastSyncAt: string | null;
   initialImportCompletedAt?: string | null;
   smtpMaxSizeBytes?: number | null;
@@ -153,6 +166,19 @@ export async function readMailboxFactsVia(
     disabledReason: m.disabledReason ?? null,
     syncBlockedReason: m.syncBlockedReason ?? null,
     syncBlockedSince: m.syncBlockedSince ?? null,
+    /* ABSENT READS AS `organizer`, deliberately: every install was one before the column existed,
+       and an engine that predates it cannot have demoted anybody. The dangerous default is the
+       other one — a window that assumed `reader` would put a claim banner on a mailbox this
+       machine is already organizing. */
+    organizerRole: m.organizerRole === "reader" ? "reader" : "organizer",
+    organizedBy: m.organizedBy
+      ? {
+          kind: m.organizedBy.kind ?? null,
+          name: m.organizedBy.name ?? null,
+          since: m.organizedBy.since ?? null,
+        }
+      : null,
+    organizerState: m.organizerState ?? null,
     lastSyncAt: m.lastSyncAt,
     ...("initialImportCompletedAt" in m
       ? { initialImportCompletedAt: m.initialImportCompletedAt }
@@ -226,11 +252,34 @@ async function reasonOf(res: Response): Promise<string> {
 }
 
 /** A timestamp as something a person reads, or the em dash when there is none. */
+/**
+ * A stamp in THE APP'S OWN LANGUAGE, not the browser's.
+ *
+ * `toLocaleString()` with no locale reads the BROWSER's, which is the defect `agoStamp` was
+ * written to end — a German session rendered "Synchronisiert 1 minute ago", half a sentence in
+ * each language. `activeFormatLocale()` is the choice the language row actually made, and the zone
+ * comes from the same register for the same reason.
+ */
 function when(iso: string | null | undefined): string {
   if (!iso) return "—";
   const at = new Date(iso);
   if (Number.isNaN(at.getTime())) return "—";
-  return at.toLocaleString();
+  return at.toLocaleString(activeFormatLocale(), { timeZone: activeFormatZone() });
+}
+
+/**
+ * THE DAY SOMETHING BECAME TRUE — a DATE, with no clock on it.
+ *
+ * "Organized by ohmail Cloud since 31 Aug 2026" is a standing fact somebody reads once. Putting a
+ * timestamp in it ("since 8/31/2026, 3:28:43 AM") makes it look like an event log and invites
+ * watching, which is the same reason the DTO deliberately carries when an install BECAME the
+ * organizer rather than when it was last seen: a heartbeat on a screen is a thing people stare at.
+ */
+function day(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return "—";
+  return at.toLocaleDateString(activeFormatLocale(), { dateStyle: "medium", timeZone: activeFormatZone() });
 }
 
 /**
@@ -295,8 +344,9 @@ export function foldByAddress<T extends { id: string; address: string; status: s
  * verbatim: an outcome this build does not know — an engine newer than this window, which the
  * desktop's own update flow makes an ordinary state — would otherwise compose a key that does not
  * exist and throw inside a render. `authorized` is the fallback because it is the outcome that
- * changed something, and its sentence ("quit and reopen") is the one that is still useful when we
- * cannot tell which of the four we were given.
+ * changed something, and it is now the one that composes NO key at all: it renders
+ * `organizeHereQueued` through the verdict block, so an unrecognised outcome cannot reach the
+ * template either. The other three keep their own sentences.
  */
 const TAKEOVER_OUTCOMES = ["authorized", "already_organizing", "removed", "no_mailbox"] as const;
 type TakeoverOutcome = (typeof TAKEOVER_OUTCOMES)[number];
@@ -328,6 +378,9 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
   const [reclaimed, setReclaimed] = useState<ReadonlyMap<string, TakeoverOutcome>>(() => new Map());
   /** Mailboxes whose takeover request is in flight, so the button debounces. */
   const [reclaiming, setReclaiming] = useState<ReadonlySet<string>>(() => new Set());
+  /* Resting, or asked whether you meant it. One value rather than two booleans, for the reason
+     the tag rows give: two booleans can both be true and there is no rendering for that. */
+  const [claim, setClaim] = useState<"rest" | "confirm">("rest");
   const cloud = door === "cloud";
   const heading = cloud ? t("modeCloud") : t("desktopModeLocal");
 
@@ -456,6 +509,41 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
   }
 
   /**
+   * WHICH ROWS MAY BE CLAIMED, and this predicate is the fix for a control that was offered on
+   * exactly the set the handler refuses.
+   *
+   * The button used to be gated on `status === "disabled" && disabledReason` — a stand-down as the
+   * OLD schema encoded it. The role is its own column now, and the backfill moved every stood-down
+   * row to `status='connected', organizer_role='reader'`, so that arm names a state nothing writes
+   * any more AND the one `organizeHere` declines: a `disabled` row is a tombstone, and offering a
+   * claim on one would resurrect a mailbox somebody deliberately took off this machine.
+   *
+   * A reader is CONNECTED AND SYNCING. That is the whole point of the split, and it is why the
+   * test is on the role rather than on the status.
+   *
+   * NOT COMPLETE, and the missing half is named rather than guessed: the server's predicate is
+   * `status <> 'disabled' AND (organizer_role = 'reader' OR organize_consented_at IS NULL)`, and
+   * `organizeConsentedAt` is not on the DTO. `organizedBy` cannot stand in for it — its own
+   * contract says `null` means "this install organizes it" OR "nobody ever has", which are the two
+   * cases that would have to be told apart. So the reader half is served here and the
+   * consent-less half waits for the field.
+   */
+  const claimable = (m: MailboxFacts): boolean =>
+    !cloud && m.status !== "disabled" && m.organizerRole === "reader";
+
+  /**
+   * THE ONE ROW THE BANNER IS ABOUT. A standalone install opens one mailbox, so a list of readers
+   * would be a list of one — and a banner per row would repeat the same sentence down the pane.
+   * The first claimable row is the subject; the rows below still each say "Reading only".
+   */
+  const claimTarget = facts.find(claimable) ?? null;
+
+  /** The holder's own name for a sentence, or the kind when it did not send one. */
+  const holderOf = (m: MailboxFacts): string =>
+    m.organizedBy?.name
+    ?? (m.organizedBy?.kind === "cloud" ? "ohmail Cloud" : t("desktopUnknownCode"));
+
+  /**
    * What each mailbox is doing, in one line. A closure rather than a module function so it reads
    * the same translator the rest of the pane does; there is nothing to share it with.
    */
@@ -466,6 +554,7 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
     if (m.status === "disabled") {
       return m.disabledReason ? t("desktopStateHandedOver") : t("desktopStateDisconnected");
     }
+    if (m.organizerRole === "reader") return t("stateReading");
     if (m.syncBlockedSince) return t("desktopStatePaused");
     if (m.lastSyncAt === null) return t("desktopStateFirstOpen");
     if (m.initialImportCompletedAt === null) return t("desktopStateCatchingUp");
@@ -477,6 +566,70 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
       <h2 className="acct-h">{heading}</h2>
       {facts.length === 0 ? (
         <p className="set-note-inline">{cloud ? t("desktopNoneCloud") : t("desktopNoneLocal")}</p>
+      ) : null}
+      {/* ── ORGANIZED SOMEWHERE ELSE, SAID ONCE AND WITH ITS ONE VERB ────────────────────────
+          A reader is connected and syncing, so nothing else on the row says this — the mailbox
+          looks healthy because it IS healthy, and what is missing is that this machine moves
+          nothing and screens nothing. `SettingsBanner` is the composite for a standing condition
+          about the pane's subject: the fact, since when and from where, and the single action.
+
+          `organizerState === "stopped"` is the arm that turns the fact into a problem — the
+          holder stopped renewing and new mail is waiting in the inbox with nobody to file it —
+          so it gets its own sentence rather than a variant of the calm one. */}
+      {claimTarget ? (
+        <SettingsBanner
+          label={t("readerLabel", { name: holderOf(claimTarget) })}
+          description={
+            claimTarget.organizerState === "stopped"
+              ? t("readerStopped", {
+                  name: holderOf(claimTarget),
+                  /* RELATIVE, because the question this sentence answers is "how long has nothing
+                     been organizing my mail" — an absolute stamp makes the reader do the
+                     subtraction, and this is the one banner state that is a problem. */
+                  when: claimTarget.organizedBy?.since
+                    ? agoStamp(claimTarget.organizedBy.since, Date.now()).rel
+                    : "—",
+                })
+              : t(
+                  claimTarget.organizedBy?.kind === "local" ? "readerSinceLocal" : "readerSinceCloud",
+                  {
+                    name: holderOf(claimTarget),
+                    since: day(claimTarget.organizedBy?.since ?? null),
+                  },
+                )
+          }
+          {...(claim === "rest" && !reclaimed.has(claimTarget.id)
+            ? {
+                action: (
+                  <Button variant="primary" onClick={() => setClaim("confirm")}>
+                    {t("organizeHere")}
+                  </Button>
+                ),
+              }
+            : {})}
+        />
+      ) : null}
+      {/* THE CEREMONY, AND WHAT IT COSTS THE OTHER SIDE, BEFORE IT IS TAKEN. The other install is
+          not killed: it becomes a reader on its next pass and keeps its copy of the mail. Saying
+          so here is the difference between a button somebody presses and one they hesitate over
+          for the wrong reason. */}
+      {claimTarget && claim === "confirm" ? (
+        <SettingsActions>
+          <span className="set-note-inline">
+            {t("organizeHereWhat", { name: holderOf(claimTarget) })}
+          </span>
+          <Button
+            variant="primary"
+            disabled={reclaiming.has(claimTarget.id)}
+            onClick={() => {
+              setClaim("rest");
+              reclaim(claimTarget.id);
+            }}
+          >
+            {t("organizeHereConfirm")}
+          </Button>
+          <Button variant="ghost" onClick={() => setClaim("rest")}>{t("cancel")}</Button>
+        </SettingsActions>
       ) : null}
 
       {/* Above the rows rather than inside one: both things that can fail here — a refused resync
@@ -506,23 +659,19 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
             description={t("desktopLastChecked", { when: when(shown.lastSyncAt) })}
             value={stateOf(shown)}
             control={
-              /* ── THE STOOD-DOWN ROW GETS THE ONE ACTION THAT ENDS A STAND-DOWN ────────────
-                 On the LOCAL door and only there, and only for a stand-down — `disabledReason`
-                 is the discriminator the whole product uses: `disabled` with a reason is a
-                 mailbox another organizer holds, `disabled` with none is a REMOVAL, and offering
-                 a takeover on a removal would resurrect a mailbox somebody deliberately took off
-                 this machine (`authorizeOrganizerTakeover` refuses it too, with `outcome:
-                 "removed"` — this is the surface half of the same rule). */
-              !cloud && shown.status === "disabled" && shown.disabledReason ? (
-                <Button
-                  className="mbx-btn"
-                  onClick={() => reclaim(shown.id)}
-                  disabled={reclaiming.has(shown.id) || reclaimed.has(shown.id)}
-                >
-                  {t("desktopOrganizeHere")}
-                </Button>
-              ) : /* Not offered on a DISCONNECTED mailbox: nothing is opening it, so a pass over it is
-                 not a thing that can be asked for. The browser pane withholds it on the same test. */
+              /* ── THE CLAIM IS NOT A ROW CONTROL ANY MORE, AND THE ROW IT WAS ON WAS THE WRONG
+                 ONE ────────────────────────────────────────────────────────────────────────────
+                 It was offered here on `status === "disabled" && disabledReason` — a stand-down as
+                 the OLD schema encoded it. Two things ended that. The role is its own column now
+                 and the backfill moved every stood-down row to `connected` + `organizer_role =
+                 'reader'`, so this arm named a state nothing writes; and `organizeHere` REFUSES a
+                 `disabled` row, because a `disabled` row is a tombstone and resurrecting a mailbox
+                 somebody took off this machine is not what the button is for. The control was
+                 therefore offered on exactly the set the handler declines.
+
+                 It lives in the banner above now, where the fact it acts on is stated. See
+                 `claimable`. What stays here is Sync now, withheld on a disconnected mailbox for
+                 its own reason: nothing is opening it, so a pass over it cannot be asked for. */
               shown.status === "disabled" ? undefined : (
                 <Button
                   className="mbx-btn"
@@ -534,13 +683,19 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
               )
             }
           />
-          {/* WHAT THE ANSWER WAS, in its own note under the row it is about. `authorized` is the
-              only outcome that changed anything, and its sentence is an INSTRUCTION rather than a
-              confirmation: the stamp is durable and the engine reads the lease at launch, so the
-              mailbox moves on the next start and not on this press. The other three outcomes are
-              answers about the row, not failures, and each says its own true thing. */}
+          {/* WHAT THE ANSWER WAS, under the row it is about.
+              `authorized` NO LONGER SAYS "QUIT AND REOPEN". That sentence was true when the engine
+              only read the lease at launch; the gate spends the stamp on its next tick now, so the
+              mailbox moves within a pass and telling somebody to restart the app is an instruction
+              to do something that is not needed and does not help. `organizeHereQueued` says what
+              actually happens and when. The other three outcomes are answers about the row rather
+              than failures, and each keeps its own true sentence. */}
           {reclaimed.has(shown.id) ? (
-            <SettingsNote>{t(`desktopOrganizeHere_${reclaimed.get(shown.id)!}`)}</SettingsNote>
+            reclaimed.get(shown.id) === "authorized" ? (
+              <SettingsVerdict state="wait" headline={t("organizeHereQueued")} />
+            ) : (
+              <SettingsNote>{t(`desktopOrganizeHere_${reclaimed.get(shown.id)!}`)}</SettingsNote>
+            )
           ) : null}
           {superseded > 0 ? <SettingsNote>{t("superseded")}</SettingsNote> : null}
           {/* ── THE FORWARDING-DETECTION NOTICE (mail 0078), the browser pane's twin ─────────

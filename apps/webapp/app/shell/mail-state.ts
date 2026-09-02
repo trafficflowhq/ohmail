@@ -239,6 +239,22 @@ export interface MailboxFacts {
    */
   initialImportCompletedAt?: string | null;
   /**
+   * WHO ORGANIZES THIS MAILBOX — `organizer` is this install, `reader` is somebody else's.
+   *
+   * OPTIONAL, and absent reads as `organizer` at every site: every install was one before the
+   * column existed, and a host that does not send it cannot have demoted anybody. The dangerous
+   * default is the other one, which would put a claim banner over a mailbox this machine is
+   * already organizing.
+   *
+   * `organizedBy.since` is when that install BECAME the organizer, not when it was last seen —
+   * a banner says "since Tuesday", never "last seen 40 seconds ago", because a heartbeat on a
+   * screen invites somebody to watch it. `organizerState` is whether the holder is still
+   * renewing; `stopped` is what turns the banner from a fact into a problem.
+   */
+  organizerRole?: "organizer" | "reader";
+  organizedBy?: { kind: string | null; name: string | null; since: string | null } | null;
+  organizerState?: "held" | "stopped" | null;
+  /**
    * HOW MANY OF THE USER'S OWN FILINGS THIS MAILBOX HAS NOT APPLIED YET.
    *
    * The API never opens IMAP: a Screener decision writes `folder_state` and the WORKER moves the

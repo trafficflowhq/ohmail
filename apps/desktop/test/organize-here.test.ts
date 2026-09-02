@@ -9,7 +9,7 @@ import messages from "../../webapp/messages/en.json";
 import type { MailboxFacts } from "../../webapp/app/shell/mail-state";
 
 /**
- * ═══ "ORGANIZE FROM THIS MACHINE" — THE EXIT FROM A STAND-DOWN ════════════════════════════
+ * ═══ "ORGANIZE HERE INSTEAD" — THE EXIT FROM READING SOMEBODY ELSE'S MAILBOX ══════════════
  *
  * `QAR-DESKTOP-CANNOT-RECLAIM-MAILBOX`. Measured on the released 0.13.2 AppImage against a real
  * mailbox whose `ohmail/_meta` carried a 25-minute-stale local claim: the install stood down
@@ -35,14 +35,29 @@ import type { MailboxFacts } from "../../webapp/app/shell/mail-state";
  * for a STAND-DOWN and not for a removal, that it is the local door's alone, and that it says what
  * actually has to happen next.
  *
+ * ── AND THE ROW IT WAS OFFERED ON WAS THE WRONG ONE, WHICH IS WHY THIS FILE MOVED ───────────
+ *
+ * The control was gated on `status === "disabled" && disabledReason` — a stand-down as the OLD
+ * schema encoded it, and the shape these fixtures used to carry. The role is its own column now:
+ * the migration's backfill moved every stood-down row to `status='connected',
+ * organizer_role='reader'`, because **a reader is connected and syncing** — that is the whole
+ * point of splitting the connection from the role. So the old guard named a state nothing writes
+ * any more, AND `organizeHere` REFUSES a `disabled` row, which is a tombstone. The control was
+ * offered on exactly the set the handler declines.
+ *
+ * It is the banner's action now, stated where the fact is. The fixtures below carry the shape the
+ * server actually sends.
+ *
  * ── THE MUTATIONS THESE CASES WERE WATCHED AGAINST ──────────────────────────────────────────
  *
- *  · drop `!cloud` from the control's guard         → the hosted case goes red (a takeover offered
- *    on a mirror this install does not own, whose route the hosted door does not even serve);
- *  · drop `&& shown.disabledReason`                 → the removal case goes red, which is the one
- *    that matters: a removal is a tombstone and offering to take it over resurrects a mailbox
- *    somebody deliberately took off this machine;
- *  · post to `/mailboxes/:id/takeover` instead      → the route case goes red (that is the
+ *  · drop `!cloud` from `claimable`                 → the hosted case goes red (a claim offered on
+ *    a mirror this install does not own, whose route the hosted door does not even serve);
+ *  · drop `m.status !== "disabled"`                 → the tombstone case goes red, which is the one
+ *    that matters: offering a claim on a removal resurrects a mailbox somebody deliberately took
+ *    off this machine, and the handler refuses it anyway;
+ *  · make `claimable` test `organizerRole !== "reader"` → the organizer case goes red (a claim
+ *    banner over a mailbox this machine already organizes);
+ *  · post to `/mailboxes/:id/organize` instead      → the route case goes red (that is the
  *    ACCOUNT's ceremony; this door's authority is the machine's own login).
  */
 
@@ -84,22 +99,34 @@ interface Host {
 }
 const host = globalThis as unknown as Host;
 
-/** A mailbox this install stood down from — `disabled` WITH a reason, which is the pause. */
-const STOOD_DOWN: MailboxFacts = {
-  id: "mbx-stood-down",
+/**
+ * A mailbox ANOTHER INSTALL ORGANIZES, in the shape the server sends: `connected` — because a
+ * reader reads, searches and marks seen exactly like any other mail client — with the role and the
+ * holder in their own columns.
+ */
+const READER: MailboxFacts = {
+  id: "mbx-reader",
   address: "owner@example.test",
-  status: "disabled",
+  status: "connected",
   errorCode: null,
-  disabledReason: "organized_elsewhere:local",
+  disabledReason: null,
   syncBlockedReason: null,
   syncBlockedSince: null,
   lastSyncAt: "2026-09-01T13:05:00.000Z",
   initialImportCompletedAt: "2026-08-01T09:00:00.000Z",
   createdAt: "2026-08-01T08:00:00.000Z",
+  organizerRole: "reader",
+  organizedBy: { kind: "local", name: "zorin-9950", since: "2026-08-28T09:00:00.000Z" },
+  organizerState: "held",
 };
 
-/** The other `disabled`: a REMOVAL. Same status, different fact, and the reason is what says so. */
-const REMOVED: MailboxFacts = { ...STOOD_DOWN, id: "mbx-removed", disabledReason: null };
+/** This install organizes it. Nothing to claim, and a banner here would be a lie about the row. */
+const ORGANIZER: MailboxFacts = {
+  ...READER, id: "mbx-mine", organizerRole: "organizer", organizedBy: null, organizerState: null,
+};
+
+/** A TOMBSTONE — removed from this machine. The handler refuses it and so must the pane. */
+const REMOVED: MailboxFacts = { ...READER, id: "mbx-removed", status: "disabled", organizerRole: "reader" };
 
 let root: Root | null = null;
 let mountPoint: HTMLElement | null = null;
@@ -131,10 +158,11 @@ function buttonSaying(el: HTMLElement, label: string): HTMLButtonElement | null 
   );
 }
 
-const organizeButton = (el: HTMLElement) => buttonSaying(el, "Organize from this machine");
+const organizeButton = (el: HTMLElement) => buttonSaying(el, "Organize here instead");
+const confirmButton = (el: HTMLElement) => buttonSaying(el, "Organize here");
 
 beforeEach(() => {
-  FACTS = [STOOD_DOWN];
+  FACTS = [READER];
   refreshed = 0;
   bridged = [];
   bridgeReply = () =>
@@ -155,39 +183,53 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-describe("a stood-down desktop install can ask for its mailbox back", () => {
-  it("offers the action on the stood-down row, and the row still says what happened", async () => {
+describe("an install that only READS a mailbox can ask to organize it", () => {
+  it("names the holder and how long, and offers the one verb", async () => {
     const el = await render(null);
-    expect(el.textContent).toContain("owner@example.test");
-    // The state sentence is unchanged — the control is added beside the diagnosis, not instead
-    // of it, so the person can still tell WHY before deciding.
-    expect(el.textContent).toContain("Handed over to another install");
-    expect(organizeButton(el), "a stood-down row still offers nothing to press").not.toBeNull();
+    const text = el.textContent ?? "";
+    expect(text).toContain("owner@example.test");
+    // WHO, AND SINCE WHEN — the holder's own machine name, not "another install".
+    expect(text).toContain("Organized by zorin-9950");
+    // WHAT THIS MACHINE IS AND IS NOT DOING. The row looks healthy because it IS healthy; what is
+    // missing is that nothing here moves or screens anything, and only this sentence says so.
+    expect(text).toContain("This computer reads the mailbox; it moves nothing and screens nothing.");
+    expect(text).toContain("Reading only");
+    expect(organizeButton(el), "a reader row offers nothing to press").not.toBeNull();
   });
 
-  it("pressing it authorizes ONE becoming through the local door, and says what happens next", async () => {
+  it("says the other side stands down rather than dies, before the press that does it", async () => {
     const el = await render(null);
     await act(async () => { organizeButton(el)!.click(); });
+    const text = el.textContent ?? "";
+    // The cost to the other install, stated BEFORE the confirm — it becomes a reader and keeps
+    // its copy. A ceremony that only said "are you sure" would make somebody guess at that.
+    expect(text).toContain("zorin-9950 stands down the next time it checks");
+    expect(text).toContain("Its copy of your mail is left alone.");
+    expect(bridged, "the first press wrote something instead of asking").toEqual([]);
+  });
+
+  it("confirming authorizes ONE becoming through the local door, and says when it happens", async () => {
+    const el = await render(null);
+    await act(async () => { organizeButton(el)!.click(); });
+    await act(async () => { confirmButton(el)!.click(); });
 
     // THE ROUTE. The local door's own action, keyed on the mailbox id — not the account's
-    // `POST /mailboxes/:id/takeover`, which is a different ceremony with a different authority
+    // `POST /mailboxes/:id/organize`, which is a different ceremony with a different authority
     // and is not served on this door at all.
     expect(bridged).toHaveLength(1);
     expect(bridged[0]!.url).toBe("/local/organizer/takeover");
     expect(bridged[0]!.method).toBe("POST");
-    expect(JSON.parse(bridged[0]!.body!)).toEqual({ mailboxId: "mbx-stood-down" });
+    expect(JSON.parse(bridged[0]!.body!)).toEqual({ mailboxId: "mbx-reader" });
 
-    // THE SENTENCE. It is an instruction, not a confirmation: the stamp is durable and the engine
-    // reads the lease at launch, so the mailbox moves on the next start and not on this press.
-    // And it says the honest caveat — an organizer still renewing keeps the mailbox.
+    // THE SENTENCE, AND IT NO LONGER SENDS ANYBODY TO RESTART THE APP. "Quit and reopen" was true
+    // when the engine read the lease only at launch; the gate spends the stamp on its next tick
+    // now, so the instruction was to do something neither needed nor helpful.
     const text = el.textContent ?? "";
-    expect(text).toContain("Quit and reopen ohmail to organize this mailbox from this machine");
-    expect(text).toContain("If another install is still active, it keeps the mailbox");
+    expect(text).toContain("This computer takes over on its next pass");
+    expect(text, "the retired restart instruction is still on screen").not.toContain("Quit and reopen");
 
-    // The row's own state moved, so the pane re-reads rather than keeping the stand-down on screen.
+    // The row's own state moved, so the pane re-reads rather than keeping the banner on screen.
     expect(refreshed).toBe(1);
-    // And it debounces: the authorization is one-shot and a second press is not a second becoming.
-    expect(organizeButton(el)!.disabled).toBe(true);
   });
 
   it("quotes the engine's OWN answer when nothing was written", async () => {
@@ -199,20 +241,31 @@ describe("a stood-down desktop install can ask for its mailbox back", () => {
         { status: 200, headers: { "content-type": "application/json" } });
     const el = await render(null);
     await act(async () => { organizeButton(el)!.click(); });
+    await act(async () => { confirmButton(el)!.click(); });
     expect(el.textContent).toContain("This machine already organizes that mailbox");
-    expect(el.textContent).not.toContain("Quit and reopen ohmail");
+    expect(el.textContent).not.toContain("This computer takes over on its next pass");
   });
 
-  it("is NOT offered for a REMOVAL — same status, and the reason is the discriminator", async () => {
+  it("is NOT offered on a TOMBSTONE — the handler refuses that row and so does the pane", async () => {
     FACTS = [REMOVED];
     const el = await render(null);
     expect(el.textContent).toContain("Disconnected");
     expect(organizeButton(el),
-      "offering a takeover on a removal resurrects a mailbox somebody took off this machine")
+      "offering a claim on a removal resurrects a mailbox somebody took off this machine, and " +
+        "`organizeHere` declines it anyway")
       .toBeNull();
   });
 
-  it("is NOT offered on the HOSTED door — the takeover there is the account's ceremony", async () => {
+  it("is NOT offered on a mailbox this machine already organizes", async () => {
+    FACTS = [ORGANIZER];
+    const el = await render(null);
+    expect(el.textContent).not.toContain("Organized by");
+    expect(organizeButton(el), "a claim banner was drawn over a mailbox this machine organizes")
+      .toBeNull();
+    expect(buttonSaying(el, "Sync now")).not.toBeNull();
+  });
+
+  it("is NOT offered on the HOSTED door — the claim there is the account's ceremony", async () => {
     const el = await render("cloud");
     expect(el.textContent).toContain("owner@example.test");
     expect(organizeButton(el),
@@ -220,10 +273,83 @@ describe("a stood-down desktop install can ask for its mailbox back", () => {
       .toBeNull();
   });
 
-  it("a healthy row still gets Sync now and nothing else", async () => {
-    FACTS = [{ ...STOOD_DOWN, id: "mbx-live", status: "connected", disabledReason: null }];
+  /**
+   * AN ENGINE THAT PREDATES THE COLUMN IS AN ORGANIZER, NOT A READER.
+   *
+   * The desktop updates on its own schedule, so a window newer than its engine is an ordinary
+   * state rather than an error. The absent field has to read as `organizer`: the other default
+   * would put a claim banner over every mailbox on every older install.
+   */
+  it("treats an absent role as this install organizing, never as reading", async () => {
+    const { organizerRole: _role, organizedBy: _by, organizerState: _st, ...older } = READER;
+    FACTS = [older as MailboxFacts];
     const el = await render(null);
-    expect(buttonSaying(el, "Sync now")).not.toBeNull();
+    expect(el.textContent).not.toContain("Organized by");
     expect(organizeButton(el)).toBeNull();
+  });
+
+  it("a holder that stopped renewing gets its own sentence, not the calm one", async () => {
+    FACTS = [{ ...READER, organizerState: "stopped" }];
+    const el = await render(null);
+    const text = el.textContent ?? "";
+    expect(text).toContain("has not since");
+    expect(text).toContain("new mail waits in the inbox");
+    expect(text, "a stopped holder was described with the steady-state sentence")
+      .not.toContain("it moves nothing and screens nothing");
+    expect(organizeButton(el), "the one state that most needs the claim did not offer it").not.toBeNull();
+  });
+});
+
+/**
+ * THE WIRE → FACTS MAPPER, driven directly.
+ *
+ * The cases above inject `MailboxFacts` through the mocked provider, so they exercise the PANE and
+ * never reach `readMailboxFactsVia` — which is where the "absent reads as organizer" default
+ * lives. Inverting that default left every case above green, which is how this block came to
+ * exist: the component's own test could not see the mapper at all.
+ *
+ * The default matters more than it looks. A desktop updates on its own schedule, so a window newer
+ * than its engine is ordinary, and every install predating the column sends no role. Reading that
+ * as `reader` would put a claim banner over every mailbox on every one of them.
+ */
+describe("the mailbox wire is mapped with the safe default for an engine that predates the role", () => {
+  const answer = (row: Record<string, unknown>) =>
+    async (url: string): Promise<Response> => {
+      expect(url).toBe("/mailboxes");
+      return new Response(JSON.stringify({ items: [row] }), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    };
+  const base = { id: "m1", address: "a@example.test", status: "connected", lastSyncAt: null };
+
+  it("an absent role is an ORGANIZER, never a reader", async () => {
+    const { readMailboxFactsVia } = await import("../src/DesktopMailboxes.js");
+    const [row] = await readMailboxFactsVia(answer(base) as never);
+    expect(row!.organizerRole, "an engine that predates the column demoted this install").toBe("organizer");
+    expect(row!.organizedBy).toBeNull();
+    expect(row!.organizerState).toBeNull();
+  });
+
+  it("a role the wire does send is carried through, holder and all", async () => {
+    const { readMailboxFactsVia } = await import("../src/DesktopMailboxes.js");
+    const [row] = await readMailboxFactsVia(
+      answer({
+        ...base,
+        organizerRole: "reader",
+        organizedBy: { kind: "local", name: "zorin-9950", since: "2026-08-28T09:00:00.000Z" },
+        organizerState: "held",
+      }) as never,
+    );
+    expect(row!.organizerRole).toBe("reader");
+    expect(row!.organizedBy).toEqual({ kind: "local", name: "zorin-9950", since: "2026-08-28T09:00:00.000Z" });
+    expect(row!.organizerState).toBe("held");
+  });
+
+  it("a role the wire sends that this build does not know is an ORGANIZER too", async () => {
+    // The same argument in the other direction: a value from a NEWER engine must not be guessed
+    // into the demoting branch.
+    const { readMailboxFactsVia } = await import("../src/DesktopMailboxes.js");
+    const [row] = await readMailboxFactsVia(answer({ ...base, organizerRole: "custodian" }) as never);
+    expect(row!.organizerRole).toBe("organizer");
   });
 });
