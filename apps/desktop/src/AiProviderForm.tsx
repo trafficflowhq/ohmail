@@ -190,7 +190,11 @@ export function verdictOf(
           return {
             state: "bad",
             headline: t("verdictModelAbsent"),
-            detail: t("verdictModelAbsentDetail", { count, said: status.probe?.detail ?? "" }).trim(),
+            /* The engine's sentences end WITHOUT punctuation, so the joiner is copy rather than a
+               full stop hardcoded here — two keys, both translated, one for each case. */
+            detail: status.probe?.detail
+              ? t("verdictModelAbsentSaid", { count, said: status.probe.detail })
+              : t("verdictModelAbsentDetail", { count }),
             ...stamped,
           };
         case "bad_response":

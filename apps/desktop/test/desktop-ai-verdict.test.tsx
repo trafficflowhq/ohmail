@@ -180,9 +180,32 @@ describe("verdictOf — one sentence per outcome, and they are the endpoint's ow
     // OURS, translated, and true of a provider that has no key.
     expect(v.headline).toBe(en.aiProvider.verdictModelAbsent);
     expect(v.headline, "an Ollama user was told their key works").not.toMatch(/key/i);
-    // The engine's own words, whole, plus the pointer that repairs it.
-    expect(v.detail).toContain(said);
+    /* `model_absent` COVERS TWO CAUSES and the headline must be true of both. `ai-openai.ts:329-338`
+       raises it for a model that EXISTS and cannot chat (`text-embedding-3-small`), so a headline
+       saying the endpoint does not HAVE it contradicts the engine's own detail underneath it. */
+    expect(v.headline, "the headline claims absence, which is false of an unusable-but-present model")
+      .not.toMatch(/does not have|not on its list|nicht hat|hat das angeforderte/i);
+    // The engine's own words, WHOLE and terminated, plus the pointer that repairs it. The engine
+    // writes no full stop of its own, so an unjoined "{said} Pick one…" ran two sentences together.
+    expect(v.detail).toContain(`${said}. Pick`);
     expect(v.detail).toContain("3");
+  });
+
+  it("…and the same headline is true when the model EXISTS and merely cannot chat", () => {
+    const said = '"text-embedding-3-small" is not a chat model, so it cannot answer suggestions or drafts';
+    const v = verdictOf(
+      statusOf({
+        provider: "openai",
+        reason: "unreachable",
+        probe: probe({ reason: "model_absent", detail: said, models: ["gpt-4.1-mini", "gpt-4.1"] }),
+      }),
+      t, NOW, null,
+    );
+    expect(v.state).toBe("bad");
+    expect(v.headline).toBe(en.aiProvider.verdictModelAbsent);
+    // The block may not contradict itself: the detail says the model is present and unusable.
+    expect(v.detail).toContain("is not a chat model");
+    expect(v.detail).toContain(`${said}. Pick`);
   });
 
   it("…and says something sensible when the engine sent no sentence", () => {
