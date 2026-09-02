@@ -5,7 +5,6 @@ import {
 import { silentLogger } from "@trafficflow/core/mail";
 // The reader refusal, from the package that throws it — see the envelope arm below for why it
 // cannot live beside `ServiceError`.
-import { OrganizedElsewhereError, MailboxNotFoundError } from "@trafficflow/db";
 import { csrfTokenFor } from "./csrf.js";
 import { errorResponse, jsonResponse } from "./responses.js";
 import { lookupIdempotent, type StoredIdempotent } from "./idempotency.js";
@@ -355,6 +354,34 @@ export function isDbBusy(err: unknown): boolean {
     && (err as { name?: unknown }).name === DB_ACQUIRE_TIMEOUT_ERROR;
 }
 
+/**
+ * THE TWO ORGANIZER REFUSALS `@trafficflow/db` THROWS, by name — {@link DB_ACQUIRE_TIMEOUT_ERROR}'s
+ * rule applied to the second family that reached this file from that package.
+ *
+ * `organizer-role.ts` is imported by eleven service write doors and by the worker, and it lives
+ * in `@trafficflow/db` because the dependency cannot run the other way. Naming its ENTRY POINT
+ * from here is what breaks the closure — not the classes themselves, which are harmless — so the
+ * refusal is matched the way the timeout above is.
+ *
+ * `test/db-busy.test.ts` imports the real classes and asserts these strings still name them.
+ */
+const ORGANIZER_REFUSAL_ERRORS = ["OrganizedElsewhereError", "MailboxNotFoundError"] as const;
+
+/**
+ * A refusal thrown by the organizer-role helper, structurally: it carries the same `code`,
+ * `httpStatus` and `message` a `ServiceError` does, which is what lets one arm answer both.
+ *
+ * The SHAPE is checked as well as the name. A name match alone would hand `errorResponse` an
+ * `undefined` status from anything that happened to be called `MailboxNotFoundError` — and this
+ * middleware's whole job is that an unrecognised throw becomes a 500 rather than a malformed 200.
+ */
+export function isOrganizerRefusal(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const e = err as { name?: unknown; code?: unknown; httpStatus?: unknown };
+  return (ORGANIZER_REFUSAL_ERRORS as readonly string[]).includes(String(e.name))
+    && typeof e.code === "string" && typeof e.httpStatus === "number";
+}
+
 export const withErrorEnvelope: Middleware = (next, route) => async (req, deps, params) => {
   try {
     return await next(req, deps, params);
@@ -399,20 +426,36 @@ export const withErrorEnvelope: Middleware = (next, route) => async (req, deps, 
      * refusal has to live in the db package because eleven service write doors AND the worker
      * need one spelling of it (`organizer-role.ts`'s header carries the argument).
      *
-     * They carry the same four fields `ServiceError` does, so this arm is the same call. It is
-     * ABOVE the `ServiceError` arm only because it is the narrower test; nothing depends on the
-     * order. Handled HERE rather than in each route because the alternative is eleven per-route
+     * Handled HERE rather than in each route because the alternative is eleven per-route
      * catches, and the one that gets forgotten turns a 409 the client knows how to render into a
-     * 500 it does not.
+     * 500 it does not. It is ABOVE the `ServiceError` arm only because it is the narrower test;
+     * nothing depends on the order.
      *
      * `details` carries `{ by: { kind, name, since } }` so every door composes ONE sentence —
      * "ohmail Cloud organizes this mailbox, since Tuesday" — instead of eleven.
+     *
+     * ── MATCHED BY NAME, LIKE ITS NEIGHBOUR, AND FOR THE NEIGHBOUR'S EXACT REASON ───────────
+     *
+     * This arm arrived as `err instanceof OrganizedElsewhereError`, with the classes IMPORTED
+     * from `@trafficflow/db` — and that import is the thing {@link DB_ACQUIRE_TIMEOUT_ERROR}
+     * thirty lines up exists to avoid. `packages/api` sits inside the desktop engine's import
+     * closure (the rule at the top of `packages/db/src/index.ts`), so naming that entry point
+     * here pulls the COMBINED schema — every Cloud table — into a shipped .app. It compiles, it
+     * passes every behavioural test, and the only thing that objects is the guard in
+     * `db-busy.test.ts`, which was red in HEAD from the moment the import landed.
+     *
+     * So: the same spelling as `isDbBusy`. The names are declared as constants, and the fields
+     * are read structurally — both classes carry `code`, `httpStatus` and `message`, and only
+     * the 409 carries `details`.
+     *
+     * THE COST OF THIS SPELLING IS A RENAME THAT SILENTLY UN-MAPS THE 409, which is exactly the
+     * cost the neighbour pays and answers the same way: a cross-file pin in `db-busy.test.ts`
+     * asserts these two strings are still the classes' real `name`s. That test imports the
+     * classes, and may — it is a test, not the shipped closure.
      */
-    if (err instanceof OrganizedElsewhereError || err instanceof MailboxNotFoundError) {
-      return errorResponse(
-        err.code, err.httpStatus, err.message,
-        err instanceof OrganizedElsewhereError ? err.details : undefined,
-      );
+    if (isOrganizerRefusal(err)) {
+      const e = err as { code: string; httpStatus: number; message: string; details?: unknown };
+      return errorResponse(e.code, e.httpStatus, e.message, e.details);
     }
     if (err instanceof ServiceError) {
       if (err.httpStatus >= 500) {

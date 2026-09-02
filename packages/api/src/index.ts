@@ -95,6 +95,10 @@ export {
   // FULL_PIPELINE only — a raw or anonymous route's throw never reaches it, so the HOST needs the
   // same answer as a backstop rather than a second, differently-worded one.
   isDbBusy, dbBusyResponse,
+  // The organizer refusals' predicate, exported for its cross-file pin: the middleware matches
+  // these two by NAME rather than importing the classes (the closure rule), so a test has to be
+  // able to hand the real ones to the matcher and check the spelling has not drifted.
+  isOrganizerRefusal,
   withCsrf, withIdempotency,
   type Middleware,
 } from "./middleware.js";
