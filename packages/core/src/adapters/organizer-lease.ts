@@ -176,24 +176,36 @@ export function personalNamespacesOf(client: MetaNamespaceSource | undefined): r
 }
 
 /**
- * The delimiter `bare` is SPELLED IN — which is the only one that matters here, because a prefix
- * is concatenated onto `bare` and a path may not mix alphabets.
+ * ONE ALPHABET FOR THE WHOLE RESOLUTION — the delimiter, and `ohmail/_meta` re-spelled in it.
  *
- * Read from `bare` itself first, and that is not a trick: `toServerPath` IS the live connection's
- * delimiter mapping, and `META_FOLDER` is two segments, so whatever it put between them is this
- * server's delimiter, discovered rather than guessed. NAMESPACE and the LIST rows are the
- * fallbacks for a seam that mapped it to something else — a fake, or a future canonical name with
- * a different shape.
+ * A namespace prefix is CONCATENATED onto the mapped name, so the two must be spelled the same
+ * way. When they are not, the result is a folder name in two alphabets — and it is not
+ * hypothetical: `ImapAdapter.connect` falls back to `delimiter = "/"` when the LIST carries no
+ * INBOX row and no delimiter of its own, while NAMESPACE still reports `.`, which produced
+ * `INBOX./ohmail/_meta` — a name `ensureMetaFolder` would then CREATE.
+ *
+ * So the FIRST personal namespace's delimiter wins, because it is the one the prefix is written
+ * in and the prefix is the half that cannot be re-spelled. `bare` can be, and is:
+ * {@link META_FOLDER} is exactly two segments, so re-joining them costs nothing and leaves the
+ * comparison and the concatenation in the same alphabet.
+ *
+ * Below that, `bare`'s own separator — `toServerPath` IS the live connection's delimiter mapping,
+ * so whatever it put between the two segments is this server's delimiter, discovered rather than
+ * guessed. Then a LIST row's. Then `/`.
  */
-function metaDelimiter(bare: string, list: readonly MetaFolderRow[], ns: readonly MetaNamespaceEntry[]): string {
-  const between = bare.slice(META_HEAD.length, bare.length - META_TAIL.length);
-  if (between.length === 1) return between;
-  for (const entry of ns) {
-    if (typeof entry.delimiter === "string" && entry.delimiter.length === 1) return entry.delimiter;
-  }
+function metaAlphabet(
+  bare: string,
+  list: readonly MetaFolderRow[],
+  ns: readonly MetaNamespaceEntry[],
+): { delimiter: string; bare: string } {
+  const one = (d: unknown): string | undefined => (typeof d === "string" && d.length === 1 ? d : undefined);
+  const between = one(bare.slice(META_HEAD.length, bare.length - META_TAIL.length));
   const row = list.find((f) => f.path.toUpperCase() === "INBOX") ?? list[0];
-  if (typeof row?.delimiter === "string" && row.delimiter.length === 1) return row.delimiter;
-  return "/";
+  const delimiter = one(ns[0]?.delimiter) ?? between ?? one(row?.delimiter) ?? "/";
+  return {
+    delimiter,
+    bare: between !== undefined && between !== delimiter ? `${META_HEAD}${delimiter}${META_TAIL}` : bare,
+  };
 }
 
 /**
@@ -231,9 +243,9 @@ export function resolveMetaFolder(input: {
   bare: string;
   namespaces?: readonly MetaNamespaceEntry[];
 }): MetaFolderLocation {
-  const { list, bare } = input;
+  const { list } = input;
   const ns = input.namespaces ?? [];
-  const delimiter = metaDelimiter(bare, list, ns);
+  const { delimiter, bare } = metaAlphabet(input.bare, list, ns);
   // A CLIENT THAT ANSWERED IS AUTHORITATIVE EVEN WHEN ITS ANSWER IS "no prefix", and reading
   // this off "are there any NON-EMPTY prefixes" instead would be a hole in exactly the servers
   // most people use. Gmail and Fastmail declare ONE personal namespace whose prefix is empty;
