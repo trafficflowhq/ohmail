@@ -16,6 +16,90 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.13.5] — 2026-09-02
+
+Losing a mailbox to another install no longer stops this one. Beside that: the
+window frame is handed to tiling Wayland compositors, a mailbox can be removed,
+Test connection answers, and the settings panes are one system.
+
+### An install that no longer organizes a mailbox keeps reading it
+
+Exactly one install organizes a mailbox at a time — that is what keeps two copies
+of ohmail from filing the same mail twice. When another install takes that role,
+this one stands down.
+
+Standing down used to mean stopping. The mailbox froze at the moment of the
+handover: no new mail, and — because the read-state write-back runs in the same
+loop — mail you marked as read here never became read in the mailbox itself.
+
+Now standing down means becoming a reader. The mailbox stays connected, the
+mirror keeps growing, you can still search it, still mark mail read, still send.
+What a reader does not do is re-arrange your mail; that belongs to whichever
+install holds the role.
+
+**Organize here instead** takes the role back, and it now takes effect while the
+app is open rather than at the next launch. The button says what it is doing —
+asking, since the mailbox itself grants the role — and it is not offered at all
+when the mailbox would refuse it.
+
+### The window frame belongs to the compositor on tiling Wayland desktops
+
+On Hyprland and its relatives the app drew its own title bar and menu bar inside
+a window the compositor was already framing, so every window had two borders and
+a menu bar nothing else on the desktop has. On those compositors ohmail now hands
+the frame over and draws neither.
+
+Ordinary stacking desktops — GNOME, KDE, Windows, macOS — are unchanged and keep
+both. If the detection is wrong for your setup, `OHMAIL_DECORATIONS=1` restores
+the title bar and the menu bar.
+
+Because the menu bar is where **Check for updates** lived, it has moved into
+Settings → About, where it is reachable on every desktop.
+
+### A mailbox can be removed
+
+Settings → Mailboxes has a remove action, with a confirmation that says what
+removal actually does: ohmail stops syncing and forgets the credentials; the mail
+itself stays in your mailbox, in the folders it is already in. Nothing is deleted
+from the server.
+
+### Test connection answers where you pressed it
+
+The mailbox form's connection test reported nothing at all. It now gives a verdict
+next to the button for every outcome — connected, with the server it reached and
+how many folders it found, or the specific reason it could not: the password, the
+host or port, the encryption, or a server that never answered.
+
+Three things the test learned after that, each of which had let a verdict describe
+a form you were no longer looking at: editing a field cancels a test that is still
+running, a sign-in option that appears mid-form clears the result belonging to the
+old one, and permission to reach one server without encryption does not follow you
+to another.
+
+### One settings system
+
+Every settings pane now uses the same form grammar — one column, labelled rows,
+the same spacing and the same controls — instead of each pane having grown its
+own. The model settings became a form of their own rather than a panel of
+scattered controls, and they read the mail engine once per pane rather than on
+every keystroke.
+
+On the ohmarchy face the focused tile now carries a ring, so arrow navigation says
+where you are.
+
+### Also
+
+- Keyboard shortcuts work in the Folder, Tag and History views, where they used to
+  do nothing.
+- A screening suggestion run asks how many senders to cover, and buys them in
+  bounded batches instead of one at a time.
+- When an install stands down, the scheduled sends it can no longer deliver are
+  closed rather than left to expire silently.
+- The first load of a cloud-connected window stops showing empty message bodies
+  while its local copy is still filling.
+- The update pane registers one listener for the app, survives a stale read, and a
+  refused check no longer leaves its button stuck.
+
 ## [0.13.4] — 2026-09-01
 
 Four fixes to the Linux packaging, one of them the difference between an app that
@@ -3059,7 +3143,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.13.4...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.13.5...HEAD
+[0.13.5]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.5
 [0.13.4]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.4
 [0.13.3]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.3
 [0.13.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.2
