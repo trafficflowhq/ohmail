@@ -291,6 +291,15 @@ export function FirstRun({
   const [smtpPort, setSmtpPort] = useState(String(PROVIDERS[0]!.smtp.port));
   const [verdict, setVerdict] = useState<null | { ok: FirstRunProbeOk } | { reason: string | null; message: string | null }>(null);
   const [testing, setTesting] = useState(false);
+  /**
+   * WHICH TEST IS THE NEWEST. Clearing the verdict when a field changes is only half the rule —
+   * a test already IN FLIGHT resolves later and does not know the form has moved. Start a test
+   * against A, edit the address to B (the verdict clears, correctly), A's answer lands, and A's
+   * green tick is sitting over B, having reappeared with nothing pressed. Worse here than on the
+   * settings pane, because on this screen the verdict AUTHORISES: "Connect and continue" is gated
+   * on it, so a stale green would arm a submit for a configuration nobody proved.
+   */
+  const testSeq = useRef(0);
   const preset = providerById(providerId);
 
   /**
@@ -342,14 +351,18 @@ export function FirstRun({
   }, [address, imapHost, imapPort, pass, preset, smtpHost, smtpPort]);
 
   const test = useCallback(async () => {
+    const mine = ++testSeq.current;
     setTesting(true);
     setVerdict(null);
     try {
-      setVerdict({ ok: await host.probe(mailboxInput()) });
+      const ok = await host.probe(mailboxInput());
+      if (testSeq.current !== mine) return;
+      setVerdict({ ok });
     } catch (err) {
+      if (testSeq.current !== mine) return;
       setVerdict({ reason: host.probeReason(err), message: host.probeMessage(err) });
     } finally {
-      setTesting(false);
+      if (testSeq.current === mine) setTesting(false);
     }
   }, [host, mailboxInput]);
 
@@ -549,11 +562,12 @@ export function FirstRun({
                   </SettingsField>
                   <SettingsField htmlFor={`${ids}-smtp`} label={t("smtpHost")}>
                     <input id={`${ids}-smtp`} className="set-mono" value={smtpHost}
-                      onChange={(e) => setSmtpHost(e.target.value)} />
+                      onChange={(e) => { setSmtpHost(e.target.value); setVerdict(null); }} />
                   </SettingsField>
                   <SettingsField htmlFor={`${ids}-smtp-port`} label={t("smtpPort")}>
                     <input id={`${ids}-smtp-port`} className="set-mono" inputMode="numeric"
-                      value={smtpPort} onChange={(e) => setSmtpPort(e.target.value)} />
+                      value={smtpPort}
+                      onChange={(e) => { setSmtpPort(e.target.value); setVerdict(null); }} />
                   </SettingsField>
                 </div>
               ) : null}
