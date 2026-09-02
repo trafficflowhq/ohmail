@@ -149,6 +149,26 @@ export interface ScreenerSuggestDeps extends ScreenerDeps {
    */
   credits?: (db: Tx, accountId: string) => AiCreditGate;
   /**
+   * THE WALL-CLOCK CEILING THIS HOST KILLS A REQUEST AT — declared by the composition root,
+   * ABSENT for a host that has none.
+   *
+   * `suggest` admits lanes only while there is time left to finish the work it is about to start;
+   * see {@link admissionDeadline}. That window is `this − the model call's own ceiling − the store
+   * that follows it`, and it only means anything where a platform actually kills the request.
+   *
+   * Three hosts compose this service and ONE of them is killed by a platform: the serverless API,
+   * whose route declares `maxDuration = 60`. The self-hosted server and the standalone desktop's
+   * own engine are ordinary processes, and the desktop's provider deliberately permits a SIXTY
+   * SECOND model call because a local model on a laptop is slow — a window sized for the
+   * serverless host would refuse every sender after the first round there, enforcing a ceiling
+   * that host does not have.
+   *
+   * So it is stated rather than inferred, in the shape `trustedAuthservIds` and `storageCap`
+   * established: absent means "nothing kills a request here", which is a claim a deployment makes
+   * about itself and not a default this file guesses.
+   */
+  invocationBudgetMs?: number;
+  /**
    * THE BALANCE READ that answers "how much is left", beside the gate that spends it.
    *
    * A separate dep and not a method on {@link AiCreditGate}, because the gate is a PORT — the
@@ -365,25 +385,67 @@ const SUGGEST_MODEL_CALL_CEILING_MS = 40_000;
 /** The verdict's own transaction and the response after it. */
 const SUGGEST_STORE_MARGIN_MS = 3_000;
 
-/** What is left to admit lanes in. See the block above. */
+/** What is left to admit lanes in, on a host whose ceiling is {@link SUGGEST_INVOCATION_BUDGET_MS}. */
 const SUGGEST_ADMISSION_WINDOW_MS =
   SUGGEST_INVOCATION_BUDGET_MS - SUGGEST_MODEL_CALL_CEILING_MS - SUGGEST_STORE_MARGIN_MS;
+
+/**
+ * THE WINDOW FOR A HOST THAT STATES ITS OWN CEILING — and the reason this is a dependency rather
+ * than the constant above.
+ *
+ * `ScreenerService` is composed by THREE hosts, and only one of them is killed by a platform: the
+ * serverless API. The self-hosted server and the standalone desktop's own engine run in ordinary
+ * processes with no invocation cutoff, and the desktop's provider deliberately permits a SIXTY
+ * SECOND call because a local model on a laptop is slow. Applying the serverless window there
+ * would refuse every sender after the first round of a slow local batch — a deadline enforcing a
+ * ceiling that host does not have.
+ *
+ * So the ceiling is DECLARED by the host that has one, and an absent value means "nothing kills a
+ * request here". That is the same shape as `trustedAuthservIds` and `storageCap`: a fact about the
+ * deployment, stated by the composition root, never inferred from a default.
+ */
+export function admissionDeadline(invocationBudgetMs: number | undefined): number {
+  if (invocationBudgetMs === undefined) return Number.POSITIVE_INFINITY;
+  return Date.now()
+    + Math.max(0, invocationBudgetMs - SUGGEST_MODEL_CALL_CEILING_MS - SUGGEST_STORE_MARGIN_MS);
+}
+
+/**
+ * The per-sender wall time this build sizes a request against — the measured ~2 s of model round
+ * trip with a third on top, so an ordinary slow answer does not push a request past its own
+ * admission window.
+ */
+const SUGGEST_PER_SENDER_BUDGET_MS = 3_000;
 
 /**
  * WHAT THIS SERVER TELLS A CLIENT TO PUT IN ONE REQUEST — published on `GET /screener` as
  * `suggestable.recommendedPerRequest`, and it is a fact about THIS BUILD rather than a constant a
  * client may assume.
  *
- * Forty senders in five lanes is ~16 s of model time at the measured ~2 s per sender: a quarter of
- * the 60 s invocation, with room for a cold start and a slow sender. The serial build this
- * replaced would have taken 80 s for the same forty and been killed by the deadline — which is
- * precisely why the number is published rather than hardcoded in the client. See the DTO field.
+ * ── DERIVED, FOR THE SAME REASON THE WINDOW IS ──────────────────────────────────────────────
+ *
+ * Every sender in a request has to be ADMITTED inside {@link SUGGEST_ADMISSION_WINDOW_MS}, and
+ * lanes admit in rounds: `SUGGEST_LANES` at a time, each round costing one sender's wall time. So
+ * the largest request that reliably finishes is
+ *
+ *     lanes × floor(window / per-sender)  =  5 × floor(17 s / 3 s)  =  25
+ *
+ * and a number chosen instead of derived gets this wrong in the direction that hurts. Forty was
+ * chosen — ~16 s of admissions against a 17 s window, which fits only while every sender answers
+ * at the measured 2 s. A model half a second slower pushes the tail of the request past the
+ * window, those senders come back `spend_unavailable`, and the client HALTS its whole chunk
+ * sequence on `stopped`: a four-hundred-sender purchase would stop at thirty-something and say so.
+ * Honest, and a worse product than sixteen requests that each complete.
+ *
+ * The win is smaller than forty's and it is real: sixteen requests for the largest purchase the
+ * ladder offers, where the serial build needed twenty-seven.
  *
  * Deliberately BELOW {@link MAX_SUGGEST_SENDERS}: the cap is the 413 boundary and this is the
  * latency budget, and a build that set them equal would leave nothing in reserve for the client
  * that has not yet read either.
  */
-export const SUGGEST_RECOMMENDED_PER_REQUEST = 40;
+export const SUGGEST_RECOMMENDED_PER_REQUEST =
+  SUGGEST_LANES * Math.floor(SUGGEST_ADMISSION_WINDOW_MS / SUGGEST_PER_SENDER_BUDGET_MS);
 
 /**
  * The admission arithmetic, exported so a test can recompute it from the real
@@ -395,6 +457,8 @@ export const SUGGEST_ADMISSION = {
   modelCallCeilingMs: SUGGEST_MODEL_CALL_CEILING_MS,
   storeMarginMs: SUGGEST_STORE_MARGIN_MS,
   windowMs: SUGGEST_ADMISSION_WINDOW_MS,
+  lanes: SUGGEST_LANES,
+  perSenderBudgetMs: SUGGEST_PER_SENDER_BUDGET_MS,
 } as const;
 
 /**
@@ -441,13 +505,19 @@ export class LaneGate {
    * REFUSAL, reported per sender, that spent nothing.
    */
   async acquire(deadline: number): Promise<boolean> {
+    // A NON-FINITE DEADLINE IS "THIS HOST HAS NO INVOCATION CEILING" — see
+    // `ScreenerDeps.invocationBudgetMs`. It waits, and it waits without a timer: `setTimeout`
+    // refuses a non-finite delay (it warns and fires on the next tick), which would turn "no
+    // deadline" into "every deadline has already passed".
+    const bounded = Number.isFinite(deadline);
     // THE DEADLINE IS CHECKED FIRST, and the order is the whole point. It used to test capacity
     // first, so once a run passed its budget the very next lane to finish handed its slot
     // straight to another sender — admitted, debited and started AFTER the window that exists to
     // stop exactly that. A free slot is not a reason to begin work there is no time to finish.
     const left = deadline - Date.now();
-    if (left <= 0) return false;
+    if (bounded && left <= 0) return false;
     if (this.live < this.ceiling) { this.live++; return true; }
+    if (!bounded) return new Promise<boolean>((resolve) => { this.waiting.push({ resolve }); });
     return new Promise<boolean>((resolve) => {
       let timer: ReturnType<typeof setTimeout>;
       const entry = {
@@ -1572,13 +1642,16 @@ export class ScreenerService extends ScreenerReadService {
   private readonly credits?: (db: Tx, accountId: string) => AiCreditGate;
   /** The balance READ. Destructured out for the same reason as the two above. */
   private readonly remaining?: (db: Tx, accountId: string) => Promise<number>;
+  /** This host's own invocation ceiling, or absent. See {@link ScreenerSuggestDeps}. */
+  private readonly invocationBudgetMs?: number;
 
   constructor(deps: ScreenerSuggestDeps) {
-    const { classifier, credits, remaining, ...readOnly } = deps;
+    const { classifier, credits, remaining, invocationBudgetMs, ...readOnly } = deps;
     super(readOnly);
     this.classifier = classifier;
     this.credits = credits;
     this.remaining = remaining;
+    this.invocationBudgetMs = invocationBudgetMs;
   }
 
   /**
@@ -1668,7 +1741,7 @@ export class ScreenerService extends ScreenerReadService {
        preference read, the held-rows query and the stored-suggestion snapshot. Anchoring it after
        those makes the window longer than the invocation allows by exactly however long they took,
        which is the shape the review found. See {@link SUGGEST_ADMISSION_WINDOW_MS}. */
-    const laneDeadline = Date.now() + SUGGEST_ADMISSION_WINDOW_MS;
+    const laneDeadline = admissionDeadline(this.invocationBudgetMs);
     const senders = parseSenderSet(body);
     const dryRun = body?.dryRun === true;
     const classifier = this.classifier;

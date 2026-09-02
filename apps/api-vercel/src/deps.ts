@@ -309,6 +309,16 @@ function buildServices(cfg: HostConfig): ApiServices {
   // for the revert.
   if (anthropicApiKey && cfg.billingPlane) assertWeightedScheduleActive();
   lazily(bag, "screener", () => makeScreenerService({
+    /* -- THIS HOST IS KILLED BY A PLATFORM, AND IT IS THE ONLY ONE THAT IS -------------------
+     *
+     * `maxDuration = 60` on the catch-all route this bag serves. `ScreenerService.suggest` admits
+     * a sender's purchase only while there is time left to finish the model call and the write
+     * that follows it, and that window means nothing without this number — so it is stated here,
+     * beside the route that declares it, rather than assumed inside the service. The self-hosted
+     * server and the desktop's own engine state nothing and are admitted without a deadline,
+     * which is correct: nothing kills a request in either of them.
+     */
+    invocationBudgetMs: 60_000,
     // `exclusive: true` — closes the concurrent double-purchase race a money review found,
     // and the ONE option this gate takes.
     //
