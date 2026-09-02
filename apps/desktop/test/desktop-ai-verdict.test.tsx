@@ -292,6 +292,23 @@ describe("verdictOf — one sentence per outcome, and they are the endpoint's ow
    * one provider sets both on the same pass, so they cannot disagree; in a test they can, and this
    * case sets the register on purpose so a German verdict is asserted whole rather than half.
    */
+  it("joins the same way in German, both templates", () => {
+    setActiveCatalog("de", de as never);
+    try {
+      const unterminated = 'the model server is running and does not have "llama3.2"';
+      const terminated = "Nicht gefunden.";
+      const of = (said: string) =>
+        verdictOf(
+          statusOf({ reason: "unreachable", probe: probe({ reason: "model_absent", detail: said, models: ["a"] }) }),
+          tDe, NOW, null,
+        ).detail ?? "";
+      expect(of(unterminated)).toBe(`${unterminated}. Wähl unten eines der 1 Modelle.`);
+      expect(of(terminated)).toBe(`${terminated} Wähl unten eines der 1 Modelle.`);
+    } finally {
+      setActiveCatalog("en", en as never);
+    }
+  });
+
   it("speaks German when the catalogue is German — sentence and stamp both", () => {
     setActiveCatalog("de", de as never);
     try {
