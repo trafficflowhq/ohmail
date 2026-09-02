@@ -28,9 +28,33 @@ interface CredMeta extends CredMetaAuth {
  * If the mailbox has no dedicated `smtp` row we fall back to the imap host + the
  * imap secret (the single-credential generic-IMAP convention) rather than error —
  * many providers use one password for both transports.
+ *
+ * ── `newAdapter`: THE ONE TEST SEAM, AND WHY IT IS A PARAMETER RATHER THAN A SECOND FUNCTION ──
+ *
+ * The standalone desktop engine used to build its own send transport, because it had no stored
+ * `smtp` row to read: its submission server was an environment variable. An install that holds
+ * SEVERAL mailboxes ends that — each mailbox stores its own credential pair, which is exactly what
+ * this function already reads — so the desktop takes this implementation instead of keeping a
+ * second one beside it.
+ *
+ * What it loses in the move is the ability to OBSERVE which server a send dialled. That matters
+ * more here than it sounds: the failure being guarded against is a send from the second mailbox
+ * going out through the FIRST one's submission server with the second one's password, and against
+ * a test server that accepts every login, the only way to tell that apart from a correct send is
+ * to look at the configuration the transport was constructed with. So the construction is
+ * injectable, defaulting to the real adapter — one line, no branch in the production path, and no
+ * second implementation of the credential resolution above it.
+ *
+ * It is deliberately NOT on `ApiDeps`: a field on the shared dependency bag would be reachable
+ * from every host and every route, and this is a seam for one function.
  */
 export async function makeSendAdapter(
-  deps: ApiDeps, mailboxId: string, opts: { timeouts?: Partial<NetTimeouts> } = {},
+  deps: ApiDeps,
+  mailboxId: string,
+  opts: { timeouts?: Partial<NetTimeouts> } = {},
+  /* FOURTH, not third, so every existing caller keeps the position it passes `opts` in. */
+  newAdapter: (cfg: ConstructorParameters<typeof ImapAdapter>[0]) => ImapAdapter =
+    (cfg) => new ImapAdapter(cfg),
 ): Promise<SendAdapter> {
   const rows = await deps.db.select().from(mailboxCredentials)
     .where(eq(mailboxCredentials.mailboxId, mailboxId));
@@ -77,7 +101,7 @@ export async function makeSendAdapter(
     };
   }
 
-  const adapter = new ImapAdapter({
+  const adapter = newAdapter({
     host: imapMeta.host ?? "",
     port: imapMeta.port ?? 993,
     secure: imapMeta.secure ?? true,

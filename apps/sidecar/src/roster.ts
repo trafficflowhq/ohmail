@@ -113,7 +113,7 @@ export interface LocalMailboxRuntime {
    * against. It is the same source the hosted worker uses and the same one this door already used
    * for attachment fetches, so a second mailbox is not a second convention.
    */
-  readonly imap: ImapConfig;
+  readonly imap: Omit<ImapConfig, "auth"> & { auth: { user: string; pass?: string } };
 
   // ── THE THIRTEEN ─────────────────────────────────────────────────────────────────────────────
   /** The connected IMAP adapter for this mailbox. One login per row. */
@@ -232,68 +232,4 @@ export class LocalRoster {
     }
     return this.byId.values().next().value;
   }
-}
-
-/**
- * ═══ SHOULD THE SEED ROW BE CREATED? ═══════════════════════════════════════════════════════════
- *
- * The one predicate in this file, and it is a pure function with a table test because getting it
- * wrong is the sharpest hazard in the whole in-place upgrade.
- *
- * Until now the answer was "the environment names a user, so make sure there is a row for it",
- * and that was correct while an install had exactly one mailbox: a launch with `OHMAIL_IMAP_USER`
- * set either found its row or made it. With N rows the same rule RESURRECTS a mailbox somebody
- * removed. `config.json` still carries the seed address after a removal — the shell's sign-out is
- * what clears it, and removing ONE mailbox of several is not a sign-out — so the next launch would
- * find no active row for that address and helpfully mint a fresh one: a credential-less reader row
- * for a mailbox the person deliberately took off this machine, listed in their pane, with no way
- * to tell it from a mailbox they had just added.
- *
- * So the question is asked with the roster in view. Six cases, all of them reachable:
- *
- *  1. FRESH INSTALL — no rows at all, the environment names an address → SEED. This is the only
- *     path onto the first mailbox and it must keep working exactly as it did.
- *  2. 0.13.x UPGRADE — one active row for the seed address → NOTHING. The row is already there;
- *     this is the whole of "nothing moves".
- *  3. REMOVE-THEN-RE-ADD THROUGH THE OLD DOOR — the roster is empty and the address has a
- *     tombstone → SEED. `ensureLocalWorld` correctly does not reuse a tombstone, so this mints a
- *     second row, and that is the 0.13.x behaviour kept deliberately: an install with no mailboxes
- *     at all is an install at first-run, and refusing here would strand it.
- *  4. SEED REMOVED WHILE OTHERS REMAIN — a tombstone for the seed address and ≥1 other live row →
- *     NOTHING. This is the case the old rule got wrong, and the one this predicate exists for.
- *  5. RE-ADD OF A REMOVED ADDRESS THROUGH "Add mailbox" → NOTHING here; the route makes the row,
- *     with a probed credential, which is the only way a mailbox should arrive after the first.
- *  6. NO ADDRESS AT ALL (no `OHMAIL_IMAP_USER`, no `config.address`) → NOTHING. There is nothing
- *     to name a row after, and inventing one is how an install acquires a mailbox nobody asked
- *     for.
- *
- * Note which way cases 3 and 4 differ: the SAME tombstone, and the answer turns on whether any
- * other live row exists. That is the whole rule, and it is why "is the roster empty" is an
- * argument rather than something inferred from the address.
- */
-export interface SeedDecisionInput {
-  /** `config.address ?? config.imap.auth.user`, trimmed by the caller or not — this normalizes. */
-  seedAddress: string | null | undefined;
-  /** Is there a live (non-tombstoned) row for the seed address? */
-  activeSeedRow: boolean;
-  /** Does the store hold a tombstone for the seed address? */
-  tombstonedSeed: boolean;
-  /** Are there NO live rows at all — not merely none for this address? */
-  rosterEmpty: boolean;
-}
-
-/** Whether this launch should create the seed mailbox row. See the header's six cases. */
-export function shouldSeedMailbox(input: SeedDecisionInput): boolean {
-  const address = (input.seedAddress ?? "").trim();
-  // Case 6 — nothing to name a row after.
-  if (!address) return false;
-  // Case 2 — the row is already there. This is every ordinary launch after the first.
-  if (input.activeSeedRow) return false;
-  /* Cases 3 and 4, which are the same tombstone and different answers. An empty roster is an
-     install at first-run whatever the store remembers, so the seed is made; a roster with anything
-     live in it is an install whose seed was REMOVED, and re-minting it is the resurrection. */
-  if (input.tombstonedSeed) return input.rosterEmpty;
-  // Case 1 — a fresh install, or an address this store has never heard of. Case 5 never reaches
-  // here: the route's row is active, so `activeSeedRow` answered above.
-  return true;
 }

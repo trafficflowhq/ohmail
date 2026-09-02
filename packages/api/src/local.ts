@@ -32,12 +32,26 @@ export {
   // sidecar's `PATCH /local/mailboxes/:id` is that caller; it exists because the shared route is
   // `stepUp: true` and this door's second factor expires five minutes after launch, for ever.
   makeImapProbe, makeSmtpProbe,
+  // The probe's own dial seam. An engine configured to reach its mail server through a double must
+  // reach the PROBE through it too — a probe is a login against the server somebody just typed, so
+  // a composition that intercepted the sync adapter and not this one would still open a real
+  // socket on the one path whose entire job is to try a password.
+  type ProbeDialer, type SmtpProbeOptions,
 } from "./imap-probe.js";
 export {
   matchRoute, UNVERIFIED_MAY_REACH, unverifiedMayReach,
   type CostClass, type Route, type RouteOptions, type RouteParams, type Handler, type MatchResult,
 } from "./router.js";
 export { jsonResponse, errorResponse, type JsonResponseInit } from "./responses.js";
+// THE SEND TRANSPORT, on the probe factories' own argument. The standalone engine used to build
+// its own, because it had no stored `smtp` row to read — its submission server was a process
+// setting. An install holding several mailboxes ends that: each mailbox stores its own credential
+// pair, which is exactly what this function already reads, and a process-wide setting cannot
+// describe two servers. Exported here rather than reached through the package barrel, which
+// would pull the hosted route table's whole module graph into the desktop bundle; this module
+// names only the credential table, the adapter and the shared errors, all of which the engine
+// already carries.
+export { makeSendAdapter } from "./send-adapter.js";
 // The per-request ServiceContext builder, for engine-side route modules (the sidecar's own
 // tables — AI settings, the stdio pairing mint) that call services exactly as the shared
 // handlers do. Mail-safe: it reads `deps.session` and the platform IP headers, nothing hosted.

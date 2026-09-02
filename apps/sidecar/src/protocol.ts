@@ -105,10 +105,15 @@ export interface ReadyInfo {
    * `absent` — nothing stored and nothing supplied. `unreadable` — a credential is stored and this
    * install's key does not open it. `ready` — there is a password to log in with.
    *
-   * It is the value AT LAUNCH and is never updated in place: a password entered afterwards takes
-   * effect on the next launch, which is the same rule `engine.ts` states about the IMAP adapter's
-   * credentials, so a frame that could go stale would be the only part of this contract that
-   * pretended otherwise.
+   * It is the value AT LAUNCH and is never updated in place, and the shell re-reads it rather
+   * than trusting this field to age well.
+   *
+   * It used to say a password entered afterwards "takes effect on the next launch". That is still
+   * true of THIS FRAME — it is a launch-time snapshot and nothing rewrites it — but it is no
+   * longer true of the install: a mailbox added from Settings is re-pointed by its own door,
+   * which detaches its runtime and attaches a fresh one, so its new password is in force within
+   * the request rather than after a restart. The frame describes the SEED's state at boot, which
+   * is the one the shell renders before any mailbox list exists.
    */
   credentialState: CredentialState;
   /**

@@ -108,8 +108,11 @@ export async function wipeLocalMirror(db: LocalDb, mailboxId: string): Promise<v
   await db.delete(drafts).where(eq(drafts.mailboxId, mailboxId));
   /* A draft in ANOTHER mailbox replying to a message in THIS one. Nullable, so the reply loses its
      thread rather than the draft being destroyed — a person's unsent words are not this
-     removal's to take. Unreachable on a one-mailbox install and cheap; it exists because after a
-     remove-and-re-add there ARE two rows, which is the state this whole file is about. */
+     removal's to take. This was written as "unreachable on a one-mailbox install and cheap", true
+     of an install that held one mailbox and reached only after a remove-and-re-add put two rows
+     beside each other. An install holds several mailboxes now, so it is an ORDINARY arm: a reply
+     drafted in one mailbox to a message in another is a thing people do, and removing the second
+     mailbox must take the message without taking the unsent words. */
   await db.update(drafts)
     .set({ inReplyToMessageId: null })
     .where(and(isNotNull(drafts.inReplyToMessageId), inArray(drafts.inReplyToMessageId, ownMessages)));
