@@ -324,22 +324,50 @@ const INFLIGHT_POLL_MS = 120;
 const SUGGEST_LANES = 5;
 
 /**
- * HOW LONG THIS REQUEST WILL WAIT FOR LANES BEFORE IT STOPS BUYING — the whole request, not a
- * sender.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  THE ADMISSION WINDOW, AND WHY IT IS DERIVED RATHER THAN CHOSEN
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
- * The Vercel host kills the catch-all at `maxDuration = 60` (`apps/api-vercel/app/[[...path]]/
- * route.ts`), and a request killed by the platform is the ONE failure mode with no error handling
- * at all: no response, no `finally`, and — if it had charged before waiting — a debited, claimed
- * sender nobody will ever be shown. Forty-five seconds leaves room for the model call the last
- * admitted lane is still making plus its own store, and the arithmetic is deliberately
- * conservative rather than tight: overshooting the budget costs an honest "retry" per sender,
- * overshooting the invocation costs a silent charge.
+ * A request killed by the platform is the ONE failure mode with no error handling at all: no
+ * response, no `finally`, no idempotency row. If a sender was charged and claimed before that
+ * happened, what is left behind is money moved for a verdict nobody will ever see — and the next
+ * attempt is told `duplicate`, so it is not bought again either.
  *
- * Measured from the top of the passes, so a slow preflight eats into it rather than being added
- * to it. `Date.now()` and NOT `ctx.now()`, for the reason {@link INFLIGHT_WAIT_MS} gives: this is
- * elapsed real time against `setTimeout`, and a frozen test clock would switch it off silently.
+ * The window therefore is not a round number somebody liked. It is what is left of the invocation
+ * after the WORST CASE of the work a lane is about to start:
+ *
+ *     window = invocation − the model call's own ceiling − the store that follows it
+ *
+ * Forty-five seconds was the round number, and it was wrong by construction: a lane admitted at 45 s
+ * may legitimately spend {@link SUGGEST_MODEL_CALL_CEILING_MS} on the model, which is past the
+ * invocation on its own. Admitting work there is no time to finish is the defect; refusing it costs
+ * one honest "retry" per sender, which is what `spend_unavailable` already means.
+ *
+ * Measured from the TOP of `suggest`, before the preflight reads, so a slow preflight eats into the
+ * window rather than being added to it. `Date.now()` and NOT `ctx.now()`, for the reason
+ * {@link INFLIGHT_WAIT_MS} gives: elapsed real time against `setTimeout`, and a frozen test clock
+ * would switch it off silently.
  */
-const SUGGEST_REQUEST_BUDGET_MS = 45_000;
+/** `maxDuration` on the catch-all route this service is served from. */
+const SUGGEST_INVOCATION_BUDGET_MS = 60_000;
+
+/**
+ * THE WORST CASE OF ONE `askScreeningQuestion`, in wall time.
+ *
+ * `callCeilingMs({ timeoutMs: 10_000, maxRetries: 1 })` — the hosted API's own classifier
+ * configuration — which is `timeoutMs × (maxRetries + 1) + maxRetries × MAX_RETRY_AFTER_MS`,
+ * because a `Retry-After` is honoured up to that cap between attempts. A test recomputes this from
+ * the real function rather than trusting the arithmetic here, so a change to either the function or
+ * the deployment's numbers reddens rather than silently shrinking the margin.
+ */
+const SUGGEST_MODEL_CALL_CEILING_MS = 40_000;
+
+/** The verdict's own transaction and the response after it. */
+const SUGGEST_STORE_MARGIN_MS = 3_000;
+
+/** What is left to admit lanes in. See the block above. */
+const SUGGEST_ADMISSION_WINDOW_MS =
+  SUGGEST_INVOCATION_BUDGET_MS - SUGGEST_MODEL_CALL_CEILING_MS - SUGGEST_STORE_MARGIN_MS;
 
 /**
  * WHAT THIS SERVER TELLS A CLIENT TO PUT IN ONE REQUEST — published on `GET /screener` as
@@ -356,6 +384,18 @@ const SUGGEST_REQUEST_BUDGET_MS = 45_000;
  * that has not yet read either.
  */
 export const SUGGEST_RECOMMENDED_PER_REQUEST = 40;
+
+/**
+ * The admission arithmetic, exported so a test can recompute it from the real
+ * `callCeilingMs` and the deployment's own numbers rather than trusting the constants here.
+ * Nothing in the product imports it.
+ */
+export const SUGGEST_ADMISSION = {
+  invocationMs: SUGGEST_INVOCATION_BUDGET_MS,
+  modelCallCeilingMs: SUGGEST_MODEL_CALL_CEILING_MS,
+  storeMarginMs: SUGGEST_STORE_MARGIN_MS,
+  windowMs: SUGGEST_ADMISSION_WINDOW_MS,
+} as const;
 
 /**
  * …AND THE CEILING IS PER PROCESS, NOT PER REQUEST — which is what the paragraph above claims.
@@ -401,9 +441,13 @@ export class LaneGate {
    * REFUSAL, reported per sender, that spent nothing.
    */
   async acquire(deadline: number): Promise<boolean> {
-    if (this.live < this.ceiling) { this.live++; return true; }
+    // THE DEADLINE IS CHECKED FIRST, and the order is the whole point. It used to test capacity
+    // first, so once a run passed its budget the very next lane to finish handed its slot
+    // straight to another sender — admitted, debited and started AFTER the window that exists to
+    // stop exactly that. A free slot is not a reason to begin work there is no time to finish.
     const left = deadline - Date.now();
     if (left <= 0) return false;
+    if (this.live < this.ceiling) { this.live++; return true; }
     return new Promise<boolean>((resolve) => {
       let timer: ReturnType<typeof setTimeout>;
       const entry = {
@@ -1620,6 +1664,11 @@ export class ScreenerService extends ScreenerReadService {
     body: ScreenerSuggestBody,
     opts: { idempotency?: ScreenIdempotency | null } = {},
   ): Promise<ScreenerSuggestResult> {
+    /* THE INVOCATION'S CLOCK STARTS HERE — the first statement of the method, before the
+       preference read, the held-rows query and the stored-suggestion snapshot. Anchoring it after
+       those makes the window longer than the invocation allows by exactly however long they took,
+       which is the shape the review found. See {@link SUGGEST_ADMISSION_WINDOW_MS}. */
+    const laneDeadline = Date.now() + SUGGEST_ADMISSION_WINDOW_MS;
     const senders = parseSenderSet(body);
     const dryRun = body?.dryRun === true;
     const classifier = this.classifier;
@@ -1697,8 +1746,6 @@ export class ScreenerService extends ScreenerReadService {
      * off silently. The gate's own docs record the same trap for `retryWindowMs`.
      */
     const waitUntil = Date.now() + INFLIGHT_WAIT_MS;
-    /** When this request stops admitting lanes — see {@link SUGGEST_REQUEST_BUDGET_MS}. */
-    const laneDeadline = Date.now() + SUGGEST_REQUEST_BUDGET_MS;
     const suggestions: ScreenerSuggestion[] = [];
     const skipped: ScreenerSuggestResult["skipped"] = [];
     let quoted = 0;
