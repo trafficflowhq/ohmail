@@ -856,11 +856,19 @@ export class SendService {
     const ceiling = startAttemptCeiling(deps.attemptCeilingMs ?? SEND_ATTEMPT_CEILING_MS);
     try {
       let adapter: Awaited<ReturnType<OpenSendAdapter>>;
-      const tOpen = Date.now();
+      const tWindow = Date.now();
+      // The two phases are timed SEPARATELY, not sliced out of one running total, because the
+      // whole value of the line is telling them apart: assembly is object storage and IMAP part
+      // streaming and is zero on an ordinary send, the dial is the phase that dominates on some
+      // providers. A single `Date.now() - tWindow` read after both would report the dial as
+      // assembly + dial, which is exactly the kind of number that sends the next reader looking
+      // in the wrong place.
+      let tDial = tWindow;
       // ONE promise for the whole window, so the ceiling races the window and not one call in it.
       const opening = (async () => {
         await this.assemble(ctx, reservation, deps, input);
-        phases.assembleMs = Date.now() - tOpen;
+        tDial = Date.now();
+        phases.assembleMs = tDial - tWindow;
         return deps.openSendAdapter(mailboxId);
       })();
       let opened: { timedOut: true } | { timedOut: false; value: Awaited<ReturnType<OpenSendAdapter>> };
@@ -874,7 +882,11 @@ export class SendService {
           err instanceof ServiceError ? err.message : SEND_FAILED_SENTENCE);
         throw err;
       }
-      phases.openMs = Date.now() - tOpen;
+      // `tDial` is still `tWindow` when the ceiling fired inside ASSEMBLY, so a breach there is
+      // reported as the whole window spent in `openMs` with `assembleMs` at zero. That is the
+      // honest reading of a window that never reached its second half — the alternative would be
+      // a zero for a phase that was running when the clock ran out.
+      phases.openMs = Date.now() - tDial;
       if (opened.timedOut) {
         // NOTHING WAS OFFERED, so this is the window's own outcome and is recorded as one.
         //
