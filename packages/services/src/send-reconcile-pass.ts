@@ -34,9 +34,16 @@ import { sendService, SEND_STALE_AFTER_MS, type SendService } from "./send-servi
  * `schedule-send-pass.ts`'s placement argument, verbatim and for the same measured reasons: the
  * hosted deployment runs it on the API HOST (`GET /internal/sends/reconcile/run`, poked every
  * minute by the worker's `api-cron.ts`) because the sync worker's platform blocks outbound SMTP
- * and `@trafficflow/services` is not in that app's runtime dependency set at all; the standalone
- * desktop and `apps/server` run the same function from their own loops. One implementation,
- * three hosts.
+ * and `@trafficflow/services` is not in that app's runtime dependency set at all. `apps/server`
+ * runs the same function from its own send clock.
+ *
+ * **TWO HOSTS TODAY, NOT THREE — the desktop does NOT run this yet.** `apps/sidecar/src/engine.ts`
+ * calls `runScheduledSendPass` and nothing here, so a LOCAL install's only resolver is still the
+ * client's own same-key retry: exactly the gap this pass closes everywhere else. The hook belongs
+ * in that file's drain beside `sendScheduled` and is owned by the multi-mailbox lane while it
+ * holds the file. Stated because the sentence above it used to claim all three hosts, which would
+ * have made this file's own docblock the evidence that a desktop install was covered when it was
+ * not — and `stuckSendMs` was widened on the strength of a reconciler those installs do not have.
  *
  * It is a SEPARATE route from the scheduled-send pass rather than folded into it: that
  * invocation already budgets three sends of up to twenty seconds each against its own
@@ -73,6 +80,29 @@ import { sendService, SEND_STALE_AFTER_MS, type SendService } from "./send-servi
  * two constants that have to be reasoned about together and can drift apart.
  */
 export const SEND_RECONCILE_BATCH = SCHEDULED_SEND_BATCH;
+
+/**
+ * How many stale rows one invocation EXAMINES, as a multiple of the rows it may DIAL.
+ *
+ * ── THE STARVATION THIS EXISTS TO PREVENT, WHICH A FIXED `LIMIT 3` HAD ──────────────────────
+ *
+ * The claim writes nothing — there is no status to flip — so its `SKIP LOCKED` is released when
+ * the short transaction commits, before any probe. A row that DEFERS is therefore left exactly
+ * as it was found, and being ordered oldest-first it is selected again on the very next cycle.
+ * Three permanently-deferring rows (a mailbox stuck in `error`, a suspended account, a probe that
+ * keeps throwing) would fill the whole window every minute until the 24-hour give-up, and **no
+ * newer stranded reservation would be examined for a day** — every draft behind them reading
+ * "Sending…" the entire time. That is the head-of-line failure `schedule-send-pass.ts` documents
+ * and answers with a paged scan; gating the dial rather than the claim, which this pass does for
+ * suspended accounts, covers only that one of the three sources.
+ *
+ * The answer here is cheaper than paging because the two costs are wildly different: the MIRROR
+ * arm is one indexed read and the IMAP arm is a LOGIN. So the batch bounds DIALS, this factor
+ * bounds examinations, and every row in the wider window still gets its mirror arm — which is the
+ * arm that resolves a stranded row without a connection at all. A deferring row now costs one
+ * indexed read and yields its dial slot to a row that can use it.
+ */
+export const SEND_RECONCILE_SCAN_FACTOR = 4;
 
 /**
  * How long a reservation may stay UNDECIDABLE before it is closed as `unverified` anyway —
@@ -159,23 +189,42 @@ export async function runSendReconcilePass(
     claimed: 0, sent: 0, unverified: 0, deferred: 0, resolvedElsewhere: 0, gaveUp: 0,
   };
 
-  const rows = await claimStale(db, now(), batch, deps.accountEligible);
+  const rows = await claimStale(
+    db, now(), batch * SEND_RECONCILE_SCAN_FACTOR, deps.accountEligible,
+  );
   result.claimed = rows.length;
   if (rows.length === 0) return result;
+
+  /** Dials spent this invocation. The batch bounds THIS, not the number of rows examined. */
+  let dialled = 0;
 
   // ONE real connection per distinct mailbox in the batch, closed once at the end. The wrapper
   // handed to the service reports `close()` as done immediately so the per-row `finally` inside
   // `resolveStale` does not tear down a connection the next row still needs.
-  const held: SendAdapter[] = [];
+  const held = new Map<string, SendAdapter>();
   const shared = new Map<string, SendAdapter>();
   const openOnce: OpenSendAdapter = async (mailboxId: string): Promise<SendAdapter> => {
     const cached = shared.get(mailboxId);
     if (cached) return cached;
     const real = await deps.openSendAdapter(mailboxId);
-    held.push(real);
+    held.set(mailboxId, real);
     const wrapper = probeOnly(real);
     shared.set(mailboxId, wrapper);
     return wrapper;
+  };
+  /**
+   * FORGET A CONNECTION THAT JUST FAILED, so the rest of the batch re-dials instead of reusing a
+   * dead socket. Without this the memo is a liability rather than a saving: one broken handle
+   * would fail every remaining row on that mailbox, and for the rows past the give-up that is not
+   * a harmless defer — they would be closed terminal `unverified` off a single connection
+   * failure, having never had an answer from the server, when a fresh dial would very likely have
+   * said `sent`.
+   */
+  const forget = async (mailboxId: string): Promise<void> => {
+    const real = held.get(mailboxId);
+    held.delete(mailboxId);
+    shared.delete(mailboxId);
+    if (real) await real.close().catch(() => { /* it is already broken; that is the point */ });
   };
 
   try {
@@ -211,8 +260,21 @@ export async function runSendReconcilePass(
        *    repaired, a suspension lifts, and the row is then decided by evidence instead of by
        *    default. The give-up is the bound on that patience.
        */
+      /**
+       * OUT OF DIAL BUDGET is its own case, and it must never close a row. The row is perfectly
+       * dialable; this invocation simply spent its logins on older ones. Deferring costs a minute
+       * — and it still got its mirror arm, which is the arm that resolves most rows anyway.
+       * Folding it into the give-up would close a reservation the pass never actually probed.
+       */
+      const outOfBudget = mayDial && dialled >= batch;
+      const willDial = mayDial && !outOfBudget;
       const wouldWait = !mayDial && row.mailboxStatus !== "disabled";
-      const onMiss: "unverified" | "defer" = wouldWait && !givingUp ? "defer" : "unverified";
+      const onMiss: "unverified" | "defer" =
+        outOfBudget ? "defer"
+        : row.mailboxStatus === "disabled" ? "unverified"
+        : wouldWait && !givingUp ? "defer"
+        : "unverified";
+      if (willDial) dialled += 1;
       /**
        * Was this row closed because a DAY PASSED, or because the answer was knowable? Recorded
        * as a fact here rather than inferred from the outcome afterwards, because the two are
@@ -220,18 +282,23 @@ export async function runSendReconcilePass(
        * its row's age, so an age-plus-outcome test would count every old disconnected mailbox as
        * a give-up and make the loudest counter on this pass mean something it does not.
        */
-      let closedByAge = wouldWait && givingUp;
+      let closedByAge = wouldWait && givingUp && !outOfBudget;
 
       let outcome;
       try {
         outcome = await sends.resolveStale(
-          ctx, row.send, row.mailboxId, mayDial ? openOnce : null, onMiss,
+          ctx, row.send, row.mailboxId, willDial ? openOnce : null, onMiss,
         );
       } catch (err) {
         // The probe threw (a dead socket, a deadline, `ImapBoundExceeded`). The row is UNTOUCHED
         // — writing a terminal state off a connection that failed is the ambiguity this path
         // exists to avoid — unless it is old enough that no further cycle is worth waiting for,
         // in which case the mirror arm gets one last read and then the honest ambiguous answer.
+        //
+        // The connection is dropped from the memo first, whatever happens next: the rows behind
+        // this one on the same mailbox must re-dial rather than inherit a socket that has just
+        // proved it cannot answer.
+        await forget(row.mailboxId);
         if (!givingUp) {
           result.deferred += 1;
           log.warn("send_reconcile_deferred", {
@@ -239,8 +306,22 @@ export async function runSendReconcilePass(
           });
           continue;
         }
-        closedByAge = true;
-        outcome = await sends.resolveStale(ctx, row.send, row.mailboxId, null, "unverified");
+        // THE GIVE-UP RE-RESOLUTION IS GUARDED TOO. It lives inside a `catch`, so an uncaught
+        // fault here — a transaction error, a pool timeout — would escape the per-row `try`,
+        // escape the loop, and abort the whole pass: the route would answer 503 and every
+        // remaining row in the batch would be skipped, which is precisely what this function's
+        // "never throws for a per-row fault" contract forbids. One row may not cost the others.
+        try {
+          closedByAge = true;
+          outcome = await sends.resolveStale(ctx, row.send, row.mailboxId, null, "unverified");
+        } catch (giveUpErr) {
+          result.deferred += 1;
+          log.warn("send_reconcile_deferred", {
+            sendId: row.send.id, accountId: row.send.accountId, draftId: row.send.draftId,
+            err: giveUpErr,
+          });
+          continue;
+        }
       }
 
       if (outcome.by === "elsewhere") {
@@ -277,7 +358,7 @@ export async function runSendReconcilePass(
       }
     }
   } finally {
-    for (const adapter of held) {
+    for (const adapter of held.values()) {
       await adapter.close().catch(() => { /* already broken; the pass is over either way */ });
     }
   }

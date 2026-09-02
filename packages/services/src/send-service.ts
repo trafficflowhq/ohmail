@@ -3,7 +3,7 @@ import {
   attachments, drafts, mailboxes, messageBodies, messages, outboundSends, recordChange, threads, type Tx,
 } from "@trafficflow/db";
 import {
-  createLogger, isMessageGone, mintMessageId, recordSentMessage,
+  createLogger, isMessageGone, mintMessageId, normalizeMessageId, recordSentMessage,
   type AppendedSent, type EmailAddress, type Logger, type NativeLocator, type OutboundMessage,
   type OpenSendAdapter, type RepoPort, type RoutingPort, type SendAdapter, type StorageCap,
 } from "@trafficflow/core/mail";
@@ -1903,11 +1903,24 @@ export class SendService {
     onMiss: "unverified" | "defer" = "unverified",
   ): Promise<ResolveStaleOutcome> {
     // ── 1. The mirror arm. Account-scoped like every read in this service.
-    const mirrored = await ctx.db.select({ id: messages.id })
+    //
+    // NORMALIZED, and this is the whole arm: `mintedMessageId` is `<uuid@domain>` WITH the angle
+    // brackets (`mintMessageId`), while `messages.message_id_header` is written through
+    // `normalizeMessageId`, which STRIPS them — `record-at-send.pg.test.ts` pins that column as
+    // `providerMessageId.replace(/[<>]/g, "")`. Comparing the two spellings matches zero rows for
+    // every real send, so the arm silently never fired: every row paid a LOGIN, and — far worse —
+    // on the no-dial branches the mirror is the ONLY evidence there is, so a `disabled` mailbox
+    // or a give-up would write terminal `unverified` over a message the mirror was holding all
+    // along. That is the exact wrong write this whole slice exists to prevent.
+    //
+    // It shipped green because the first version of the test seeded the header WITH brackets,
+    // which no writer in this codebase does.
+    const mintedKey = normalizeMessageId(row.mintedMessageId);
+    const mirrored = mintedKey === null ? [] : await ctx.db.select({ id: messages.id })
       .from(messages)
       .where(and(
         eq(messages.accountId, ctx.accountId),
-        eq(messages.messageIdHeader, row.mintedMessageId),
+        eq(messages.messageIdHeader, mintedKey),
       ))
       .limit(1);
     if (mirrored.length > 0) return this.settleSent(ctx, row, mailboxId, "mirror");

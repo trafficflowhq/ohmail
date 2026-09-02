@@ -219,9 +219,26 @@ export const SEND_RECONCILE_CRON_PATH = "/internal/sends/reconcile/run";
  */
 async function admittedSendAdapter(deps: ApiDeps, mailboxId: string): Promise<SendAdapter> {
   const now = (): Date => deps.now?.() ?? new Date();
-  const admitted = await imapAdmission(deps).acquire(
-    deps.db, { mailboxId, max: MAX_IMAP_PER_MAILBOX, now: now() },
-  );
+  /**
+   * THE COUNTER ITSELF FAILING IS NOT EVIDENCE ABOUT THE MESSAGE EITHER, and this wrapper is why
+   * the whole call is inside it. `imapAdmission()` throws `ServiceError("internal", 500)` when
+   * the host supplies no admission port at all, and the acquire can throw on a database fault —
+   * and `resolveStale` reads ANY `ServiceError` from a factory as "this mailbox can never be
+   * dialled again" and writes a terminal `unverified`. So a deployment that armed the alert
+   * secret but no admission port would have closed EVERY stranded reservation as unconfirmed,
+   * three a minute, without one Sent-folder search — a configuration mistake spending other
+   * people's mail. Re-raised as a transient refusal: the pass defers, the row is untouched, and
+   * the 24-hour give-up is still the bound. Nothing here fails open — a refusal never dials.
+   */
+  let admitted: boolean;
+  try {
+    admitted = await imapAdmission(deps).acquire(
+      deps.db, { mailboxId, max: MAX_IMAP_PER_MAILBOX, now: now() },
+    );
+  } catch (err) {
+    deps.logger?.error?.("send_reconcile_admission_failed", { mailboxId, err: String(err) });
+    throw new TransientDialRefusal(mailboxId, "the IMAP admission counter could not be consulted");
+  }
   if (!admitted) {
     // A `TransientDialRefusal` AND EMPHATICALLY NOT A `ServiceError`. The resolver reads a
     // `ServiceError` from a factory as "this mailbox can never be dialled again" and writes a
