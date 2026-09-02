@@ -2089,6 +2089,7 @@
     "readerStopped": "{name} has stopped checking in. Until something organizes this mailbox, new mail waits in the inbox.",
     "organizeHere": "Organize here instead",
     "organizeHereWhat": "This computer starts organizing on its next pass and {name} stands down the next time it checks. Its copy of your mail is left alone.",
+    "organizeHereWhatLegacy": "This computer starts organizing after you quit and reopen ohmail, and the other install stands down the next time it checks. Its copy of your mail is left alone.",
     "organizeHereConfirm": "Organize here",
     "organizeHereQueued": "Asked for. This computer takes over on its next pass — within a minute — unless the other install is still running, in which case it keeps the mailbox and this one goes on reading.",
     "organizeHereQueuedLegacy": "Asked for. Quit and reopen ohmail to organize this mailbox from this computer. If the other install is still running, it keeps the mailbox and this one stands down again.",

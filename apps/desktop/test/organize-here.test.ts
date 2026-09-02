@@ -375,6 +375,29 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
    * pre-role engine spends the stamp at its next process assembly, not on a tick, so the restart
    * sentence this lane retired is the true one HERE and nowhere else.
    */
+  /**
+   * THE CEREMONY AND ITS ANSWER MUST AGREE. The confirmation step promised "on its next pass" for
+   * every row, including the one whose engine has stopped its timer — so it contradicted the
+   * acknowledgement it produced one press later, in the same ceremony.
+   */
+  it("promises the legacy engine's own mechanism at the confirmation, not the modern one", async () => {
+    FACTS = [LEGACY_STAND_DOWN];
+    const el = await render(null);
+    await act(async () => { organizeButton(el)!.click(); });
+    const text = el.textContent ?? "";
+    expect(text).toContain("after you quit and reopen ohmail");
+    expect(text, "the ceremony promised a pass this engine will not make")
+      .not.toContain("starts organizing on its next pass");
+  });
+
+  it("and a MODERN reader is promised the pass, not a relaunch, at the confirmation", async () => {
+    const el = await render(null);
+    await act(async () => { organizeButton(el)!.click(); });
+    const text = el.textContent ?? "";
+    expect(text).toContain("starts organizing on its next pass");
+    expect(text).not.toContain("quit and reopen");
+  });
+
   it("tells a legacy install to relaunch, which is the mechanism on that engine", async () => {
     FACTS = [LEGACY_STAND_DOWN];
     const el = await render(null);

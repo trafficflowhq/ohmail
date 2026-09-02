@@ -2089,6 +2089,7 @@
     "readerStopped": "{name} meldet sich nicht mehr. Bis etwas dieses Postfach organisiert, wartet neue Post im Posteingang.",
     "organizeHere": "Stattdessen hier organisieren",
     "organizeHereWhat": "Dieser Computer beginnt beim nächsten Durchgang zu organisieren, und {name} tritt zurück, sobald es das nächste Mal nachsieht. Seine Kopie deiner Post bleibt unberührt.",
+    "organizeHereWhatLegacy": "Dieser Computer beginnt zu organisieren, nachdem du ohmail beendet und neu geöffnet hast, und die andere Installation tritt zurück, sobald sie das nächste Mal nachsieht. Ihre Kopie deiner Post bleibt unberührt.",
     "organizeHereConfirm": "Hier organisieren",
     "organizeHereQueued": "Angefragt. Dieser Computer übernimmt beim nächsten Durchgang — innerhalb einer Minute —, außer die andere Installation läuft noch; dann behält sie das Postfach und diese liest weiter.",
     "organizeHereQueuedLegacy": "Angefragt. Beende ohmail und öffne es neu, damit dieses Postfach von diesem Computer aus organisiert wird. Läuft die andere Installation noch, behält sie das Postfach und diese tritt wieder zurück.",

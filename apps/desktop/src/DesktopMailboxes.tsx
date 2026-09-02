@@ -651,7 +651,14 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
       {claimTarget && claim === "confirm" ? (
         <SettingsActions>
           <span className="set-note-inline">
-            {t("organizeHereWhat", { name: holderOf(claimTarget) })}
+            {/* THE CEREMONY PROMISES WHAT THIS ENGINE WILL DO, and the two engines do different
+                things. The modern sentence says "on its next pass"; a pre-role engine stopped its
+                poll timer at the stand-down and spends the stamp at its next process assembly, so
+                on that one the confirmation contradicted the acknowledgement it produced one press
+                later. It also names no holder, because a legacy row carries no holder columns. */}
+            {claimTarget.legacyStandDown === true
+              ? t("organizeHereWhatLegacy")
+              : t("organizeHereWhat", { name: holderOf(claimTarget) })}
           </span>
           <Button
             variant="primary"
