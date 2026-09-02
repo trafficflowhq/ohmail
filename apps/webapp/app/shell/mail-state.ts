@@ -255,6 +255,20 @@ export interface MailboxFacts {
   organizedBy?: { kind: string | null; name: string | null; since: string | null } | null;
   organizerState?: "held" | "stopped" | null;
   /**
+   * A STAND-DOWN AS AN ENGINE THAT PREDATES THE ROLE COLUMN REPORTS ONE — `disabled` with a
+   * reason, and no `organizerRole` at all.
+   *
+   * Computed at the seam that reads the wire, because that is the only place the ABSENCE of the
+   * role is still visible: the mapper coerces an absent role to `organizer` (the safe default),
+   * which is right for every other consumer and erases exactly the signal this flag carries.
+   *
+   * It exists so a window newer than its engine does not silently withdraw the only exit from a
+   * stand-down. The claim predicate is written against the new vocabulary, and a legacy row
+   * satisfies none of it — so without this the pane would offer nothing on precisely the rows the
+   * old pane offered it on, which is the defect that surface was built to close.
+   */
+  legacyStandDown?: boolean;
+  /**
    * WHEN somebody agreed to let ohmail organize this mailbox, `null` for "nobody has", and
    * ABSENT for "this build cannot tell" — three states, and the third is not the second.
    *

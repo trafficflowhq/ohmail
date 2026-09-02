@@ -128,27 +128,44 @@ const ORGANIZER: MailboxFacts = {
 /** A TOMBSTONE — removed from this machine. The handler refuses it and so must the pane. */
 const REMOVED: MailboxFacts = { ...READER, id: "mbx-removed", status: "disabled", organizerRole: "reader" };
 
+/** `unknown` is a LEGAL holder kind, and a reader may carry no holder name at all. */
+const UNKNOWN_HOLDER: MailboxFacts = {
+  ...READER, id: "mbx-unknown",
+  organizedBy: { kind: "unknown", name: null, since: "2026-08-28T09:00:00.000Z" },
+};
+
+/** A stand-down as an engine PREDATING the role column reports one: no role, `disabled` + reason. */
+const LEGACY_STAND_DOWN: MailboxFacts = {
+  ...READER, id: "mbx-legacy",
+  status: "disabled", disabledReason: "organized_elsewhere:local",
+  organizerRole: undefined, organizedBy: null, organizerState: null,
+  legacyStandDown: true,
+};
+
 let root: Root | null = null;
 let mountPoint: HTMLElement | null = null;
 
-async function render(door: string | null): Promise<HTMLElement> {
+/** The tree, as a node — so a case can re-render the SAME root over changed facts, which is how
+ *  the pane sees a poll land. */
+async function paneNode(door: string | null): Promise<React.ReactElement> {
   const { DesktopMailboxes } = await import("../src/DesktopMailboxes.js");
+  return h(
+    IntlProvider,
+    { locale: "en", messages: messages as never, timeZone: "UTC" },
+    h(
+      ThemeProvider,
+      { storageKey: "ohmail.theme" },
+      h(ToastHost, null, h(DesktopMailboxes, { door })),
+    ),
+  ) as React.ReactElement;
+}
+
+async function render(door: string | null): Promise<HTMLElement> {
+  const node = await paneNode(door);
   mountPoint = document.createElement("div");
   document.body.appendChild(mountPoint);
   root = createRoot(mountPoint);
-  await act(async () => {
-    root!.render(
-      h(
-        IntlProvider,
-        { locale: "en", messages: messages as never, timeZone: "UTC" },
-        h(
-          ThemeProvider,
-          { storageKey: "ohmail.theme" },
-          h(ToastHost, null, h(DesktopMailboxes, { door })),
-        ),
-      ),
-    );
-  });
+  await act(async () => { root!.render(node); });
   return mountPoint;
 }
 
@@ -246,6 +263,90 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     expect(el.textContent).not.toContain("This computer takes over on its next pass");
   });
 
+  /**
+   * THE ANSWER IS A RECORDED REQUEST, NOT A PROMISE — and not a spinner either.
+   *
+   * `/local/organizer/takeover` writes a one-shot stamp; `runLeaseGate` reads the lease on its next
+   * tick and MAY clear it without promoting anything (`engine.ts:1951-1955`) when the other holder
+   * is still renewing. The sentence said the takeover would happen "within a minute" flat — the
+   * caveat the retired copy carried was dropped with it — and rendered as `state="wait"`, so a
+   * refusal spun for ever with nothing coming.
+   */
+  it("says the other install may keep the mailbox, and does not spin about it", async () => {
+    const el = await render(null);
+    await act(async () => { organizeButton(el)!.click(); });
+    await act(async () => { confirmButton(el)!.click(); });
+    const text = el.textContent ?? "";
+    expect(text).toContain("This computer takes over on its next pass");
+    expect(text, "the request was reported as a certainty the lease can refuse")
+      .toContain("unless the other install is still running");
+    // A spinner claims something is in flight. Nothing is: the request is written and done.
+    expect(el.querySelector(".set-verdict.wait"), "a recorded request was drawn as a pending one")
+      .toBeNull();
+  });
+
+  /**
+   * AND IT GOES WHEN IT ACTUALLY HAPPENED. `reclaimed` is only ever added to, so the block used to
+   * render for the life of the pane — including after the poll confirmed the takeover worked and
+   * the banner had gone, still saying the change was pending.
+   */
+  it("stops reporting the request once the role confirms it worked", async () => {
+    const el = await render(null);
+    await act(async () => { organizeButton(el)!.click(); });
+    await act(async () => { confirmButton(el)!.click(); });
+    expect(el.textContent).toContain("This computer takes over on its next pass");
+
+    // The next poll: the gate promoted this install.
+    FACTS = [{ ...READER, organizerRole: "organizer", organizedBy: null, organizerState: null }];
+    await act(async () => { root!.render(await paneNode(null)); });
+    expect(el.textContent, "a completed takeover still reported itself as pending")
+      .not.toContain("This computer takes over on its next pass");
+    expect(el.textContent).not.toContain("Organized by");
+  });
+
+  /**
+   * `organizedBy.since` IS NOT A HEARTBEAT. It is when the holder BECAME the organizer, and the
+   * heartbeat is deliberately not persisted — so "last checked in 8 months ago" was reported about
+   * an install that stopped this morning. The sentence claims only what is known.
+   */
+  it("does not date the silence it cannot date", async () => {
+    FACTS = [{ ...READER, organizerState: "stopped" }];
+    const el = await render(null);
+    const text = el.textContent ?? "";
+    expect(text).toContain("has stopped checking in");
+    expect(text).toContain("new mail waits in the inbox");
+    expect(text, "an age was invented from the date the holder became organizer")
+      .not.toMatch(/last checked in|\bago\b/);
+  });
+
+  /**
+   * `unknown` IS A LEGAL KIND, and it used to fall through to the Cloud sentence — so a row whose
+   * wire says nothing about Cloud announced "ohmail Cloud" and named it as the holder.
+   */
+  it("does not call an unidentified holder ohmail Cloud", async () => {
+    FACTS = [UNKNOWN_HOLDER];
+    const el = await render(null);
+    const text = el.textContent ?? "";
+    expect(text, "an unidentified holder was announced as ohmail Cloud").not.toContain("ohmail Cloud");
+    expect(text).toContain("another install");
+    expect(text).toContain("it moves nothing and screens nothing");
+    expect(organizeButton(el), "an unidentified holder is still a holder to claim from").not.toBeNull();
+  });
+
+  /**
+   * A WINDOW NEWER THAN ITS ENGINE MUST NOT WITHDRAW THE ONLY EXIT. An engine predating the role
+   * column reports a stand-down the old way and runs the old handler, which accepts exactly that
+   * row — the two are one process. Without the legacy arm the pane offers nothing on precisely the
+   * rows the old pane offered it on, which is the defect this surface was built to close.
+   */
+  it("still offers the claim on a stand-down from an engine that predates the role", async () => {
+    FACTS = [LEGACY_STAND_DOWN];
+    const el = await render(null);
+    expect(organizeButton(el),
+      "a window newer than its engine withdrew the only exit from a stand-down")
+      .not.toBeNull();
+  });
+
   it("is NOT offered on a TOMBSTONE — the handler refuses that row and so does the pane", async () => {
     FACTS = [REMOVED];
     const el = await render(null);
@@ -292,7 +393,7 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     FACTS = [{ ...READER, organizerState: "stopped" }];
     const el = await render(null);
     const text = el.textContent ?? "";
-    expect(text).toContain("has not since");
+    expect(text).toContain("has stopped checking in");
     expect(text).toContain("new mail waits in the inbox");
     expect(text, "a stopped holder was described with the steady-state sentence")
       .not.toContain("it moves nothing and screens nothing");

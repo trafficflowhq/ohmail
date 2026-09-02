@@ -179,6 +179,10 @@ export async function readMailboxFactsVia(
         }
       : null,
     organizerState: m.organizerState ?? null,
+    /* Read HERE and nowhere else: one line above coerces the absent role away, and this is the
+       last point at which "the engine never sent one" can be told from "the engine said
+       organizer". See `MailboxFacts.legacyStandDown`. */
+    legacyStandDown: m.organizerRole === undefined && m.status === "disabled" && Boolean(m.disabledReason),
     lastSyncAt: m.lastSyncAt,
     ...("initialImportCompletedAt" in m
       ? { initialImportCompletedAt: m.initialImportCompletedAt }
@@ -529,7 +533,16 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
    * consent-less half waits for the field.
    */
   const claimable = (m: MailboxFacts): boolean =>
-    !cloud && m.status !== "disabled" && m.organizerRole === "reader";
+    !cloud
+    && ((m.status !== "disabled" && m.organizerRole === "reader")
+      /* THE LEGACY ARM, and it is not a contradiction of the paragraph above. That paragraph is
+         about an engine that HAS the role column, where a `disabled` row is a tombstone and
+         `organizeHere` declines it. An engine that predates the column reports a stand-down the
+         old way AND runs the old handler, which accepted exactly that row — the two travel
+         together, because they are the same process. So the discriminator is the engine's own
+         vocabulary: no role at all, plus `disabled` with a reason. On any current engine the role
+         is always present and this arm is unreachable. */
+      || m.legacyStandDown === true);
 
   /**
    * THE ONE ROW THE BANNER IS ABOUT. A standalone install opens one mailbox, so a list of readers
@@ -541,7 +554,7 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
   /** The holder's own name for a sentence, or the kind when it did not send one. */
   const holderOf = (m: MailboxFacts): string =>
     m.organizedBy?.name
-    ?? (m.organizedBy?.kind === "cloud" ? "ohmail Cloud" : t("desktopUnknownCode"));
+    ?? (m.organizedBy?.kind === "cloud" ? "ohmail Cloud" : t("readerHolderUnknown"));
 
   /**
    * What each mailbox is doing, in one line. A closure rather than a module function so it reads
@@ -581,22 +594,28 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
           label={t("readerLabel", { name: holderOf(claimTarget) })}
           description={
             claimTarget.organizerState === "stopped"
-              ? t("readerStopped", {
-                  name: holderOf(claimTarget),
-                  /* RELATIVE, because the question this sentence answers is "how long has nothing
-                     been organizing my mail" — an absolute stamp makes the reader do the
-                     subtraction, and this is the one banner state that is a problem. */
-                  when: claimTarget.organizedBy?.since
-                    ? agoStamp(claimTarget.organizedBy.since, Date.now()).rel
-                    : "—",
-                })
-              : t(
-                  claimTarget.organizedBy?.kind === "local" ? "readerSinceLocal" : "readerSinceCloud",
-                  {
+              /* NO AGE, because there is no timestamp that would make one true. It said "last
+                 checked in {when}" and was handed `organizedBy.since` — which is when that install
+                 BECAME the organizer, and the heartbeat is deliberately not persisted
+                 (`index.ts:1349-1353` says why). A holder that organized for eight months and
+                 stopped this morning was reported absent for eight months. The fact worth stating
+                 is that it stopped, and that is all this sentence claims now. */
+              ? t("readerStopped", { name: holderOf(claimTarget) })
+              /* EVERY KIND ON ITS OWN BRANCH. `unknown` is a legal kind and a reader may have no
+                 holder recorded at all, and both used to fall through to the CLOUD sentence — so a
+                 row whose wire says nothing about Cloud announced "ohmail Cloud". The third
+                 sentence names no holder, because none is known. */
+              : claimTarget.organizedBy?.kind === "local"
+                ? t("readerSinceLocal", {
                     name: holderOf(claimTarget),
                     since: day(claimTarget.organizedBy?.since ?? null),
-                  },
-                )
+                  })
+                : claimTarget.organizedBy?.kind === "cloud"
+                  ? t("readerSinceCloud", {
+                      name: holderOf(claimTarget),
+                      since: day(claimTarget.organizedBy?.since ?? null),
+                    })
+                  : t("readerSinceUnknown", { since: day(claimTarget.organizedBy?.since ?? null) })
           }
           {...(claim === "rest" && !reclaimed.has(claimTarget.id)
             ? {
@@ -687,12 +706,25 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
               `authorized` NO LONGER SAYS "QUIT AND REOPEN". That sentence was true when the engine
               only read the lease at launch; the gate spends the stamp on its next tick now, so the
               mailbox moves within a pass and telling somebody to restart the app is an instruction
-              to do something that is not needed and does not help. `organizeHereQueued` says what
-              actually happens and when. The other three outcomes are answers about the row rather
-              than failures, and each keeps its own true sentence. */}
+              to do something that is not needed and does not help.
+
+              ── AND IT IS NOT A SPINNER, WHICH IS TWO DEFECTS IN ONE ─────────────────────────
+              It was `state="wait"`, and `reclaimed` is only ever added to. So after a takeover
+              actually SUCCEEDED — the poll flips the role, the banner goes — the spinner stayed on
+              screen for ever, still claiming the change was pending. And a spinner is the wrong
+              shape even before that: the route only RECORDS the request. `runLeaseGate` reads the
+              lease on the next tick and may clear the stamp without promoting anything
+              (`engine.ts:1951-1955`), in which case nothing further will ever happen and there is
+              nothing to spin about.
+
+              So the press is reported as a COMPLETED action with a stated caveat, and the entry is
+              dropped the moment the role confirms it worked. `off` rather than `ok`: this window
+              has not been told the mailbox moved, and a tick would say it had. */}
           {reclaimed.has(shown.id) ? (
             reclaimed.get(shown.id) === "authorized" ? (
-              <SettingsVerdict state="wait" headline={t("organizeHereQueued")} />
+              shown.organizerRole === "reader" ? (
+                <SettingsVerdict state="off" headline={t("organizeHereQueued")} />
+              ) : null
             ) : (
               <SettingsNote>{t(`desktopOrganizeHere_${reclaimed.get(shown.id)!}`)}</SettingsNote>
             )
