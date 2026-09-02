@@ -1,6 +1,5 @@
 import { and, eq, ne } from "drizzle-orm";
 import { mailboxes } from "./schema-mail.js";
-import { isMailboxDisabledReason, type MailboxDisabledReason } from "./mailbox-errors.js";
 import type { Tx } from "./change-log.js";
 
 /**
@@ -37,8 +36,8 @@ import type { Tx } from "./change-log.js";
  * worker may not import `@trafficflow/services` at runtime (its barrel drags an HTML sanitiser
  * into the worker's boot graph, a hard `ERR_REQUIRE_CYCLE_MODULE` on Node 23), and two spellings
  * of "somebody else organizes this mailbox" would be two answers to what the person is told.
- * This module reaches `schema-mail.js`, `change-log.js` and `mailbox-errors.js` alone, which keeps
- * it inside the desktop engine's closure rule (`index.ts`'s barrel header).
+ * This module reaches `schema-mail.js` and `change-log.js` alone, which keeps it inside the
+ * desktop engine's closure rule (`index.ts`'s barrel header).
  *
  * ── THE POSITIVE CENSUS IS THE GUARD, NOT THIS COMMENT ────────────────────────────────────
  *
@@ -100,90 +99,6 @@ export function organizerDisplayName(raw: string | null | undefined): string | n
   const flat = raw.replace(/[\r\n]+/g, " ").trim();
   if (flat === "") return null;
   return flat.slice(0, ORGANIZED_BY_NAME_MAX);
-}
-
-/**
- * WHAT A ROW REMEMBERS ABOUT HAVING STOOD DOWN — the memory the mailbox itself cannot hold.
- *
- * ── WHY THIS IS A FUNCTION AND NOT A COLUMN READ ──────────────────────────────────────────
- *
- * Five call sites across two tiers ask one question — *"has this install been told to stop
- * organizing this mailbox, and by whom?"* — and until mail 0083 the answer was one column:
- * `status = 'disabled'` with an `organized_elsewhere:*` reason. 0083 moved the fact to
- * `organizer_role` and left `disabled_reason` with no writer at all, so every one of those reads
- * silently began answering NULL: the desktop's launch catch-up for orphaned appointments stopped
- * running, a relaunch's initial organizer state claimed to be organizing, and BOTH reclaim doors
- * — the desktop's and Cloud's — reported no previous holder to the person who pressed the button.
- * Nothing failed anywhere; a row that says "nothing happened" is a coherent row.
- *
- * So the derivation lives in ONE place, beside the column it now reads, rather than being
- * re-spelled at five call sites that can drift apart again — and a standalone install and the
- * hosted service cannot answer the same question differently about the same mailbox.
- *
- * ── THE ORDER OF THE TWO ARMS IS LOAD-BEARING ─────────────────────────────────────────────
- *
- * `status = 'disabled'` is asked FIRST, because a tombstone keeps whatever role it had — a
- * removal demotes nothing, it retires the row — so a removed mailbox that was a reader would
- * otherwise report a stand-down that nobody performed and no takeover can end. On a `disabled`
- * row the reason is therefore still the whole answer, and that is not legacy support: it is the
- * discriminator `closeRemovedMailboxAppointments` and `ensureLocalWorld` both turn on
- * (`disabled` + a reason is a PAUSE this install must not resume from; `disabled` + none is a
- * TOMBSTONE the user asked for).
- *
- * The second arm is the live one, and it asks TWO questions because `reader` carries two states:
- * a mailbox nobody has consented to organize is a reader too. See the guard in the body.
- *
- * A reader is `connected`, on its own roster, and its
- * `organized_by_kind` is the same closed three the reason's suffix carries — which is exactly
- * what migration 0083's backfill relied on when it split the one column into the other two, so
- * recomposing the string here is reading back what that migration wrote rather than inventing a
- * value. `'unknown'` for a reader whose first cycle has not looked yet: the row says somebody
- * else organizes this mailbox and does not yet say who, and the stand-down memory must survive
- * that gap or a relaunch inside it auto-resumes.
- */
-export function standDownMemory(row: {
-  status: string;
-  organizerRole: string | null;
-  organizedByKind: string | null;
-  organizeConsentedAt: Date | null;
-  disabledReason: string | null;
-}): MailboxDisabledReason | null {
-  if (row.status === "disabled") {
-    return isMailboxDisabledReason(row.disabledReason) ? row.disabledReason : null;
-  }
-  if (row.organizerRole !== "reader") return null;
-  /* -- A READER WITH NEITHER A HOLDER NOR A CONSENT NEVER STOOD DOWN --------------------------
-   *
-   * `reader` is the PRE-CONSENT state as well as the lost-the-lease one, and `schema-mail.ts`
-   * says so in as many words: *"What separates the two is `organizeConsentedAt`, not this
-   * column."* Reading the role alone conflated them, and the common Cloud path is the one that
-   * suffered: `POST /mailboxes` creates a reader with no consent and no holder so a fresh connect
-   * mirrors and moves nothing, and this reported `organized_elsewhere:unknown` for it — so the
-   * FIRST press of "organize here" answered that the mailbox had been taken back from another
-   * organizer, on a mailbox nobody had ever organized. That is the contract
-   * `MailboxTakeoverResult.previousReason` states (a consent-less mailbox answers `null`), broken
-   * by the function that was supposed to serve it.
-   *
-   * THE TEST IS `holder OR consent`, NOT CONSENT ALONE, and the second term is the one a reader
-   * of `schema-mail.ts` would leave out. A stand-down writes `organized_by_kind` in the SAME
-   * statement as the role (`markMailboxStoodDown`, and the sidecar's inline write) but writes no
-   * consent — so on a desktop row whose consent predates the stamp `ensureLocalWorld` now sets, a
-   * consent-only test would read a genuine stand-down as "never asked" and let the install
-   * auto-resume. Either fact present means somebody has been organizing this mailbox; only a row
-   * with neither is untouched.
-   */
-  if (row.organizedByKind === null && row.organizeConsentedAt === null) return null;
-  const kind = isOrganizerKind(row.organizedByKind) ? row.organizedByKind : "unknown";
-  const reason = `organized_elsewhere:${kind}`;
-  /* Composed and then CHECKED rather than cast — and the check is UNREACHABLE from today's tree,
-     which is stated rather than left to look load-bearing. `isOrganizerKind` above already
-     narrowed the kind to the same closed three `disabled_reason`'s suffix carries, so the string
-     is valid by construction and a mutation removing this line goes GREEN (run, not assumed).
-     It stays for `markMailboxStoodDown`'s reason-coercion's reason: it is the guard for the day
-     the two sets stop being equal. A fourth organizer kind would otherwise mint a reason no
-     `STAND_DOWN_SEND_SENTENCES` entry exists for, and close an appointment with `undefined` in
-     the sentence a person reads about their unsent message. */
-  return isMailboxDisabledReason(reason) ? reason : "organized_elsewhere:unknown";
 }
 
 /**

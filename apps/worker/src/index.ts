@@ -339,17 +339,6 @@ interface MailboxRuntime {
     takeoverAuthorizedAt: Date | null;
     disabledReason: string | null;
     /**
-     * Mail 0083. WHAT THE ROW SAYS THE ROLE IS — which is not the same thing as what this process
-     * is doing (`MailboxRuntime.role` carries that) and is why both exist.
-     *
-     * The gate needs it for one decision: whether a promotion has a row to flip. That used to be
-     * `takeoverAuthorizedAt || disabledReason` and the second term was the whole of "this row is
-     * stood down" — until 0083 moved the stand-down onto the role and left `disabled_reason` with
-     * no writer, at which point a consented reader whose foreign claim had simply gone away was
-     * promoted by the lease and never written back.
-     */
-    organizerRole: OrganizerRole;
-    /**
      * Mail 0083. NULL means NOBODY HAS ASKED THIS INSTALL TO ORGANIZE THIS MAILBOX, which is the
      * state `POST /mailboxes` now creates. It is read by the gate for one purpose and it is the
      * purpose the whole reader mode turns on: a consent-less mailbox must never be promoted by an
@@ -1420,7 +1409,6 @@ export async function startWorkerWithLock(
       mb: { mailboxId: string; accountId: string },
       lease: {
         takeoverAuthorizedAt: Date | null; disabledReason: string | null;
-        organizerRole: OrganizerRole;
         organizeConsentedAt: Date | null;
       },
       nonce: { leaseNonce: string | null },
@@ -1472,33 +1460,11 @@ export async function startWorkerWithLock(
         // let a lapse-then-resubscribe seize the mailbox back months later from whatever a human
         // deliberately moved it to. Written only when there IS something to clear, so the steady
         // state is zero extra writes per cycle.
-        /* -- AND THE ROW'S ROLE IS THE THIRD TERM, WITHOUT WHICH THIS WROTE NOTHING (mail 0083)
-         *
-         * The two original terms were the whole of "there is a stand-down on this row" while a
-         * stand-down WAS `status='disabled'` plus a reason. 0083 moved that fact to
-         * `organizer_role` and left `disabled_reason` with no writer at all, so for the one shape
-         * that needs no stamp — a CONSENTED reader whose foreign organizer released its claim, at
-         * which point `decideLease` correctly says organize — both terms were null and this block
-         * was skipped. The lease said organizer, the pipeline ran as organizer, and the ROW went
-         * on saying `reader`.
-         *
-         * That is not a cosmetic disagreement: `organizer_role` is the authority every service
-         * write door consults (`assertOrganizerRole`), so the process would move mail on IMAP
-         * while its own API answered `409 organized_elsewhere` to every request that asked it to —
-         * naming itself as the holder, out of the holder columns nothing had cleared either.
-         *
-         * `apps/sidecar/src/engine.ts` repaired the identical hole in the identical place, and
-         * for the identical reason: the arm was unreachable until a reader could be promoted
-         * without a relaunch, and then it was not.
-         */
-        if (lease.takeoverAuthorizedAt || lease.disabledReason || lease.organizerRole === "reader") {
+        if (lease.takeoverAuthorizedAt || lease.disabledReason) {
           try {
             await clearOrganizerStandDown(db, mb.mailboxId, { fence });
             lease.takeoverAuthorizedAt = null;
             lease.disabledReason = null;
-            // The row now says `organizer`, so the next cycle issues no second UPDATE — the
-            // "no-op UPDATE every cycle" `clearOrganizerStandDown`'s header refuses to pay for.
-            lease.organizerRole = "organizer";
           } catch (err) {
             // The gate already said organize and our claim is already written. Failing to spend
             // the stamp costs one more cycle of it being spendable, never correctness.
@@ -1508,13 +1474,7 @@ export async function startWorkerWithLock(
         return true;
       }
 
-      /* THE ROW'S MIRROR, AS `markMailboxStoodDown` IS ABOUT TO LEAVE IT (mail 0083). This line
-         was `lease.disabledReason = outcome.reason`, which had been true of the write below and
-         stopped being true when the demotion moved onto the role: the column gains no writer
-         there, so the mirror was recording a value the row does not hold. It happened to keep the
-         promotion above firing IN THIS PROCESS, which is precisely what hid the missing term from
-         every test that demoted and promoted inside one run. */
-      lease.organizerRole = "reader";
+      lease.disabledReason = outcome.reason;
       log.warn("organizer_stand_down", {
         mailboxId: mb.mailboxId, accountId: mb.accountId, phase,
         disabledReason: outcome.reason,
@@ -2051,10 +2011,6 @@ export async function startWorkerWithLock(
         const leaseState = { leaseNonce: null as string | null };
         const leaseRow = {
           takeoverAuthorizedAt: mb.takeoverAuthorizedAt, disabledReason: mb.disabledReason,
-          // Mail 0083 — see `MailboxRuntime.lease.organizerRole`. This is the shape the promotion
-          // hole was reachable through: an existing reader row attaches with no stamp and a null
-          // reason, so without this the gate had nothing left to notice it by.
-          organizerRole: mb.organizerRole,
           organizeConsentedAt: mb.organizeConsentedAt,
         };
         /** What the row says the holder is, so the reader peek writes only on a CHANGE. */
@@ -2770,10 +2726,6 @@ export async function startWorkerWithLock(
             // next cycle's gate instead of waiting for a restart.
             attached.lease = {
               takeoverAuthorizedAt: mb.takeoverAuthorizedAt, disabledReason: mb.disabledReason,
-              // Mail 0083, refreshed with the other two: a promotion or demotion written by
-              // another process (the connect flow, the reconcile backstop) is a fact about this
-              // row, and a value captured at attach would leave this gate deciding against it.
-              organizerRole: mb.organizerRole,
               // Mail 0083. Refreshed for `takeover_authorized_at`'s exact reason: `organizeHere`
               // stamps CONSENT from another process while this one is already reading the mailbox,
               // and a value captured at attach would leave a person's "organize here" doing

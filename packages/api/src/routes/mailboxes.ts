@@ -60,42 +60,6 @@ function organizeInputOf(body: Record<string, unknown>): {
 }
 
 /**
- * THE WIRE SHAPE OF `POST /mailboxes/probe`, VALIDATED HERE AND NOWHERE ELSE.
- *
- * `{ address, imap: { host, port?, secure?, user?, pass } }`. Read field by field and never
- * spread, on {@link organizeInputOf}'s argument verbatim: the object reaches a function that
- * opens a socket to a host named in it, and spreading an attacker-supplied object into that would
- * let a caller name fields this route never meant to expose.
- *
- * What is NOT checked here: whether the host is dialable, whether the port is a mail port, and
- * whether the address is well-formed. The first two belong to the probe's own SSRF/port guard,
- * which is the only place that knows this deployment's policy, and the third to the service, which
- * canonicalises the address inside its own call. A check here would be a check one caller can be
- * added past — the rule this file already states for `organizeHere`'s ranges.
- */
-function probeInputOf(body: Record<string, unknown>): {
-  address: string;
-  imap: { host: string; port?: number; secure?: boolean; user?: string; pass: string };
-} {
-  const address = typeof body.address === "string" ? body.address : "";
-  const imap = (body.imap && typeof body.imap === "object" ? body.imap : {}) as Record<string, unknown>;
-  const out: { address: string; imap: { host: string; port?: number; secure?: boolean; user?: string; pass: string } } = {
-    address,
-    imap: {
-      host: typeof imap.host === "string" ? imap.host : "",
-      pass: typeof imap.pass === "string" ? imap.pass : "",
-    },
-  };
-  // PORT AND MODE ARE OPTIONAL AND STAY ABSENT WHEN NOT SENT. Absent is what selects the standard
-  // ladder (993 implicit TLS, then 143 STARTTLS); coercing a missing port to a number would pin
-  // the probe to one rung and turn "find my server" into "try exactly this and fail".
-  if (typeof imap.port === "number") out.imap.port = imap.port;
-  if (typeof imap.secure === "boolean") out.imap.secure = imap.secure;
-  if (typeof imap.user === "string") out.imap.user = imap.user;
-  return out;
-}
-
-/**
  * ONE FRESH READ of the mailbox's saved-settings document, for the confirm-import routes below.
  *
  * Built HERE, per request, from the same `openMailboxImap` every other API dial goes through —
@@ -305,46 +269,6 @@ export const mailboxRoutes: Route[] = [
       const body = await readBody<{ fingerprint?: string; v?: number }>(req);
       await profileImport(deps).decline(serviceContext(deps, req), params.id!, body);
       return jsonResponse({ dismissed: true });
-    },
-  },
-  {
-    method: "POST",
-    /**
-     * TEST A CONNECTION WITHOUT MAKING ONE — the action every mailbox form has been missing.
-     *
-     * Until this route the only way to discover whether a set of mail-server details worked was to
-     * submit them and watch the mailbox either appear or not. All fourteen failure sentences were
-     * reachable only as the by-product of a create that did not happen, and there was no success
-     * sentence anywhere in the product because nothing could produce one.
-     *
-     * ── NO `:id`, BECAUSE THE POINT IS THAT THERE IS NO MAILBOX YET ─────────────────────────
-     *
-     * It is a PRE-create action, so there is no row to own and no ownership check to make. What
-     * bounds it is entirely the probe closure built below: the SSRF/port guard that refuses a
-     * private address on the hosted deployment, the per-address admission counter, and the
-     * deadline. A handler that dialled by hand would compile, classify correctly, and have none of
-     * them — which is why the probe is constructed here and never inside the service.
-     *
-     * ── `connection`, AND THAT IS WHAT KEEPS IT AWAY FROM AN UNVERIFIED ACCOUNT ──────────────
-     *
-     * The whole handler is one dial to a host the caller typed. `read` would put a mail-server
-     * dial inside the set an unproven address may reach, which is the connect oracle the peek
-     * route's comment argues at length; `work` would be a claim that it writes something, and it
-     * writes nothing at all. Step-up for `POST /mailboxes`'s reason with nothing subtracted: the
-     * body carries a mailbox password.
-     */
-    pattern: "/mailboxes/probe",
-    cost: "connection",
-    options: { stepUp: true },
-    handler: async (req, deps) => {
-      const body = await readBody<Record<string, unknown>>(req);
-      const dto = await mailbox(deps).probeConnection(
-        serviceContext(deps, req), probeInputOf(body),
-        // THE ONE CALL SITE THAT ASKS FOR A FOLDER COUNT. Every other probe in this file is built
-        // without it, so no create and no claim pays a LIST for a number it does not read.
-        { probe: makeImapProbe(deps, { countFolders: true }) },
-      );
-      return jsonResponse(dto);
     },
   },
   {
