@@ -4,7 +4,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider, createTranslator } from "next-intl";
 
-import { AiProviderForm, ollamaHost, ollamaIsLocal, verdictOf } from "../src/AiProviderForm.js";
+import { AiProviderForm, alreadyStopped, ollamaHost, ollamaIsLocal, verdictOf } from "../src/AiProviderForm.js";
 import type { AiProbeFailure, AiProbeReport, AiUnavailableReason, LocalAiStatus } from "../src/local-ai.js";
 import { setActiveCatalog } from "../../webapp/app/shell/locale.js";
 import en from "../../webapp/messages/en.json";
@@ -206,6 +206,31 @@ describe("verdictOf — one sentence per outcome, and they are the endpoint's ow
     // The block may not contradict itself: the detail says the model is present and unusable.
     expect(v.detail).toContain("is not a chat model");
     expect(v.detail).toContain(`${said}. Pick`);
+  });
+
+  /**
+   * NOT EVERY `detail` IS UNTERMINATED, and the round-2 fix assumed they all were.
+   *
+   * Two of the three `model_absent` details are ours and end without a stop. The third is the
+   * VENDOR'S OWN 404 body, forwarded verbatim by `shortDetail` (`ai-transport.ts:116-120`) — which
+   * also appends `…` when it truncates at 240 characters. Unconditionally appending "." to those
+   * rendered `Not found.. Pick one of…` and `…. Pick one of…`.
+   */
+  it.each([
+    ['the model server is running and does not have "llama3.2"', true],
+    ['"gpt-x" is not a chat model, so it cannot answer suggestions or drafts', true],
+    ["Not found.", false],
+    ["model: unknown_model?", false],
+    ["a very long upstream error the transport had to cut short…", false],
+    ['the server said "no such model."', false],
+  ])("%s → a stop is added: %s", (said, needsStop) => {
+    expect(alreadyStopped(said)).toBe(!needsStop);
+    const v = verdictOf(
+      statusOf({ reason: "unreachable", probe: probe({ reason: "model_absent", detail: said, models: ["a"] }) }),
+      t, NOW, null,
+    );
+    expect(v.detail).toContain(said);
+    expect(v.detail, "a detail that already ended itself was given a second stop").not.toMatch(/\.\.|…\./);
   });
 
   it("…and says something sensible when the engine sent no sentence", () => {

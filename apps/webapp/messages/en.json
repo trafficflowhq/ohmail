@@ -2216,6 +2216,7 @@
     "verdictModelAbsent": "The model you chose cannot be used.",
     "verdictModelAbsentDetail": "Pick one of the {count} models below.",
     "verdictModelAbsentSaid": "{said}. Pick one of the {count} models below.",
+    "verdictModelAbsentSaidDone": "{said} Pick one of the {count} models below.",
     "verdictBadResponse": "{vendor} answered with something ohmail could not read.",
     "verdictCredential": "A key is stored and this install's keychain does not open it. Paste it again to seal it afresh.",
     "verdictInternal": "Something on this side went wrong. Try again.",

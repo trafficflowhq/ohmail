@@ -117,6 +117,19 @@ export function ollamaIsLocal(baseUrl: string): boolean {
 }
 
 /**
+ * Whether a sentence from the engine already ends itself.
+ *
+ * Two of the three `model_absent` details are written by us and end unterminated
+ * (`ai-ollama.ts:244`, `ai-openai.ts:336`). The third is the vendor's own 404 body, forwarded
+ * verbatim by `shortDetail` (`ai-transport.ts:116-120`) — which also appends `…` when it truncates
+ * at 240 characters. A closing quote or bracket after the stop counts, because a forwarded body
+ * ending `"model not found."` is terminated too.
+ */
+export function alreadyStopped(said: string): boolean {
+  return /[.!?…][)\]"'\u201d\u2019]*\s*$/.test(said);
+}
+
+/**
  * THE VERDICT BLOCK'S CONTENT, from the engine's status — one derivation, every outcome named.
  *
  * Exported and pure so each outcome is a thing a test can hold rather than JSX to be re-read by
@@ -190,10 +203,16 @@ export function verdictOf(
           return {
             state: "bad",
             headline: t("verdictModelAbsent"),
-            /* The engine's sentences end WITHOUT punctuation, so the joiner is copy rather than a
-               full stop hardcoded here — two keys, both translated, one for each case. */
+            /* The joiner is COPY rather than a full stop hardcoded here, and WHICH joiner depends
+               on the detail: the engine's own generated sentences end unterminated, but the hosted
+               404 arm forwards the vendor's prose through `shortDetail`, which may already end in
+               `.`, `?` or the `…` it adds when it truncates at 240 characters. Appending a stop to
+               those produced `Not found.. Pick…` and `…. Pick…`. Three templates, one predicate. */
             detail: status.probe?.detail
-              ? t("verdictModelAbsentSaid", { count, said: status.probe.detail })
+              ? t(alreadyStopped(status.probe.detail) ? "verdictModelAbsentSaidDone" : "verdictModelAbsentSaid", {
+                  count,
+                  said: status.probe.detail,
+                })
               : t("verdictModelAbsentDetail", { count }),
             ...stamped,
           };
