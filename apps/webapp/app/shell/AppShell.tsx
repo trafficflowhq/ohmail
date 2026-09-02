@@ -74,7 +74,7 @@ import {
 } from "@ohmail/ui";
 import {
   EngineProvider,
-  useDemoMode,
+  useDemoMode, useResolvedDemoMode,
   useEngine,
   useEngineVersion,
   useSyncStatus,
@@ -193,7 +193,7 @@ import { FolderView } from "../views/FolderView";
 import { TriageView } from "../views/TriageView";
 import { ComposeView } from "../views/ComposeView";
 import { DraftsView } from "../views/DraftsView";
-import { reconcileWakeRegistration } from "./notification-settings.js";
+import { reconcileWakeRegistration, updateNotifyWords } from "./notification-settings.js";
 import { usePersistedFlag, UI_KEYS } from "./persisted-ui.js";
 
 interface ReadsAiChipEntity {
@@ -1148,6 +1148,9 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
   onUnread?: (unread: number) => void;
 }) {
   const demo = useDemoMode();
+  /* For EFFECT GATES only — see `useResolvedDemoMode`. Never rendered: reading it in output
+     would reintroduce the hydration mismatch `useDemoMode` exists to prevent. */
+  const resolvedDemo = useResolvedDemoMode();
   const t = useTranslations();
   const engine = useEngine();
   const version = useEngineVersion();
@@ -1316,13 +1319,35 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
    * module-global queue of `fetch`es that have no timeout.
    */
   useEffect(() => {
-    if (demo) return;
+    /* `resolvedDemo`, NOT `demo` — review-caught, and the difference is one render wide.
+       `useDemoMode` returns the SERVER snapshot on the hydration render so the markup matches;
+       a prerendered route bakes `searchParams = {}`, so on a `?demo=1` page that snapshot is
+       FALSE while the client answer is true. This effect fires on that commit. Gated on `demo`
+       it therefore ran on a demo page — issuing `GET /push/vapid-key` and `POST
+       /push/subscriptions` from the one surface whose promise is that nothing leaves the tab. */
+    if (resolvedDemo) return;
     void reconcileWakeRegistration(t("settings.notifyClosedBody"));
-    // Boot and door only. `t` is deliberately not a dependency: it changes identity on a locale
-    // adoption, and re-running then would reconcile a second time for a string the worker only
-    // reads when it draws.
+    // Boot and door only. `t` is deliberately not a dependency here: it changes identity on a
+    // locale adoption, and re-running the whole reconcile then would cost a second announce.
+    // The words are followed up by the relabel effect below instead.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [demo]);
+  }, [resolvedDemo]);
+  /**
+   * THE WORKER'S WORDS FOLLOW THE ACCOUNT'S LANGUAGE — the locale is adopted after boot.
+   *
+   * `GET /consent` answers well after this shell mounts, so the reconcile above has already
+   * written the notify-state body in the DEVICE's language. Without this a German account on an
+   * English device gets "New mail." drawn on the lock screen until somebody opens Settings.
+   *
+   * A RELABEL, not a reconcile: `updateNotifyWords` preserves the stored `enabled` byte for byte.
+   * Re-running the reconcile here would recompute it from `subscriptionWanted()`, which is an
+   * intent — and enabling on an intent rather than on a row this browser owns is exactly how a
+   * previous user's surviving registration gets re-armed.
+   */
+  useEffect(() => {
+    if (resolvedDemo) return;
+    void updateNotifyWords("ohmail", t("settings.notifyClosedBody"));
+  }, [resolvedDemo, t]);
   /**
    * "APPLY FOR ALL DEVICES" — the face's account write, folded to ONE nullable callback for
    * both consumers (the Settings row's scope line and the Option B offer). Null on the demo

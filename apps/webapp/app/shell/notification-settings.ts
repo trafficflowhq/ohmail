@@ -390,6 +390,21 @@ export function syncWebPush(wanted: boolean, api: PushApi): Promise<PushSyncOutc
   return serialize(() => syncWebPushNow(wanted, api));
 }
 
+/**
+ * DID THE SERVER ACTUALLY NAME A ROW?
+ *
+ * `POST /push/subscriptions` answers `{ id }`, and there is a live path on which `id` comes back
+ * UNDEFINED: the insert conflicts on the coalesced unique index — the endpoint is already
+ * registered — and the fallback lookup is scoped to the CALLER's account, so a row belonging to a
+ * DIFFERENT account on the same browser is found by neither. The endpoint then returns `{}`.
+ *
+ * Left unchecked, `writeId(undefined, …)` stores the literal string "undefined" (it only treats
+ * `null` as a removal) and the sync reports `subscribed` — a browser that believes it holds a
+ * registration it does not, under an id that names nothing. Reported as what is true instead:
+ * nothing here established a row this browser can rely on.
+ */
+const namedRow = (id: unknown): id is string => typeof id === "string" && id.length > 0;
+
 async function syncWebPushNow(wanted: boolean, api: PushApi): Promise<PushSyncOutcome> {
   if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return "unsupported";
   let reg: ServiceWorkerRegistration;
@@ -445,6 +460,7 @@ async function syncWebPushNow(wanted: boolean, api: PushApi): Promise<PushSyncOu
     if (keys === null) return "unsupported";
     try {
       const { id } = await api.subscribe(existing.endpoint, keys.p256dh, keys.auth);
+      if (!namedRow(id)) return "not_registered";
       /* The superseded row is dropped AFTER the new one exists, so a failure here never leaves
          this browser with no registration at all. A row for a dead endpoint is pruned by the
          sender anyway; a browser with none is simply never woken. */
@@ -483,6 +499,12 @@ async function syncWebPushNow(wanted: boolean, api: PushApi): Promise<PushSyncOu
   }
   try {
     const { id } = await api.subscribe(sub.endpoint, keys.p256dh, keys.auth);
+    if (!namedRow(id)) {
+      /* Same rollback as the throw below, for the same reason: a local subscription with no row
+         is the stuck state where every later call sees one and never retries the POST. */
+      try { await sub.unsubscribe(); } catch { /* nothing better to do */ }
+      return "not_registered";
+    }
     writeId(id, sub.endpoint);
     return "subscribed";
   } catch {
@@ -602,6 +624,45 @@ async function revokeWakeRegistrationNow(): Promise<PushSyncOutcome | null> {
 }
 
 /**
+ * RE-LABEL THE WORKER'S WORDS, and touch nothing else.
+ *
+ * The account's locale is adopted AFTER boot, off `GET /consent`. By then the boot reconcile has
+ * already written the notify-state body in the DEVICE's language, and nothing rewrote it until
+ * somebody opened Settings — so a German account on an English device got "New mail." drawn on
+ * the lock screen. Drawing those words is the entry's only purpose, so "the worker only reads it
+ * when it draws" is a reason to fix it, not to shrug.
+ *
+ * It re-writes the WORDS and preserves `enabled` EXACTLY as stored. Recomputing that here would
+ * undo the whole point of the reconcile's gate: `subscriptionWanted()` is an intent, and enabling
+ * on an intent rather than on a row this browser owns is how the previous user's surviving
+ * registration gets re-armed. A relabel is not a reconcile.
+ *
+ * Absent entry ⇒ nothing to relabel, and nothing is created: a worker with no entry draws
+ * nothing, which is the safe direction and the state a boot that established no row leaves.
+ */
+export function updateNotifyWords(title: string, body: string): Promise<void> {
+  return serialize(async () => {
+    try {
+      if (typeof caches === "undefined") return;
+      const cache = await caches.open(NOTIFY_CACHE);
+      const held = await cache.match(NOTIFY_STATE_URL);
+      if (!held) return;
+      const { enabled } = (await held.json()) as { enabled?: unknown };
+      if (typeof enabled !== "boolean") return;
+      await cache.put(
+        NOTIFY_STATE_URL,
+        new Response(JSON.stringify({ enabled, title, body }), {
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    } catch {
+      /* No Cache API, storage refused, or an entry that is not ours to parse. The words stay as
+         they were, which is a stale language and never a wrong `enabled`. */
+    }
+  });
+}
+
+/**
  * THE OTHER END OF THE SESSION — what {@link revokeWakeRegistration} undoes, put back.
  *
  * ── THE DEFECT THIS EXISTS FOR ────────────────────────────────────────────────────────────
@@ -645,22 +706,67 @@ export async function reconcileWakeRegistration(body: string): Promise<PushSyncO
 /**
  * The reconcile itself. Never throws; see {@link reconcileWakeRegistration} for the bound.
  *
- * The words go FIRST, and unlike the revoke's ordering this one has a second reason beyond "it
- * is the half that needs no network". A sign-out whose DELETE failed leaves a live server row
- * behind an `enabled: false` worker — the one arrangement in which a push arrives and is
- * deliberately dropped. Writing the state before touching the subscription closes that window on
- * the first boot rather than the second, and it cannot mis-fire in the other direction: an
- * `enabled: true` with no subscription is inert, because no push can arrive to read it.
+ * THE TWO DIRECTIONS ARE ORDERED DIFFERENTLY, and that asymmetry is the whole of the privacy
+ * argument. OFF is written first and unconditionally — it needs neither the network nor a
+ * subscription, and a worker told not to draw cannot leak. ON is written LAST, and only once this
+ * browser holds a row the server acknowledged, because the residue a failed sign-out delete
+ * leaves behind belongs to the PREVIOUS user and is still being dialled. See the body.
  */
 async function reconcileWakeRegistrationNow(body: string): Promise<PushSyncOutcome | null> {
   const wanted = subscriptionWanted(readChannels(), browserPermission());
-  try { await writeNotifyState(wanted, "ohmail", body); } catch { /* no Cache API, or refused */ }
+
+  /* OFF IS WRITTEN FIRST AND UNCONDITIONALLY. It needs neither the network nor a subscription,
+     and it is the safe direction: a worker told not to draw cannot leak whatever the sender still
+     has. This half is unchanged. */
+  if (!wanted) {
+    try { await writeNotifyState(false, "ohmail", body); } catch { /* no Cache API, or refused */ }
+    try {
+      return (await browserNotificationHost.syncSubscription?.(false)) ?? null;
+    } catch {
+      return "row_remains";
+    }
+  }
+
+  /*
+   * ── ON IS WRITTEN LAST, AND ONLY FOR A ROW THIS BOOT ESTABLISHED ────────────────────────
+   *
+   * An earlier version wrote `enabled: true` FIRST, arguing that an `enabled: true` with no
+   * subscription is inert because no push can arrive to read it. THAT ARGUMENT IS FALSE ON THE
+   * ONE MACHINE THAT MATTERS — a shared browser.
+   *
+   * Sign-out deletes the row, but a failed delete answers `row_remains` and leaves it LIVE by
+   * design, retained so a later attempt can name it. The sender goes on dialling that endpoint.
+   * So the sequence is: user A signs out, the delete fails, A's row survives behind an
+   * `enabled: false` worker — which is exactly what keeps A's mail from being drawn. User B signs
+   * in on the same browser, and a boot that writes `enabled: true` up front re-arms the worker
+   * for a registration that is still A's. The next push for A's mail is drawn, on B's screen.
+   * That is the privacy defect the sign-out revoke was written to close, reintroduced from the
+   * other end.
+   *
+   * So: announce first, and enable only on an OUTCOME that says this browser holds the row.
+   *
+   * The gate is the outcome and deliberately NOT `readId() !== null`, which was the first thing
+   * tried and is wrong for exactly the sequence above: a failed delete RETAINS the id by design,
+   * so after A's `row_remains` the id in storage is A's, and a non-null check would re-arm the
+   * worker for B on the strength of A's registration — the defect, wearing a guard.
+   *
+   * `subscribed` and `unchanged` are the two answers that mean a row exists AND names THIS
+   * browser's endpoint (`syncWebPush` compares the stored endpoint before it says `unchanged`).
+   * Every other answer — `row_remains`, `not_registered`, `no_server_key`, `unsupported` — leaves
+   * the honest state as the one that draws nothing.
+   */
+  let outcome: PushSyncOutcome | null;
   try {
-    return (await browserNotificationHost.syncSubscription?.(wanted)) ?? null;
+    outcome = (await browserNotificationHost.syncSubscription?.(true)) ?? null;
   } catch {
     /* The host's own guard threw before its try block could catch — a mocked `../api-client`
        with no `apiConfigured`, or a platform without one. Reported as the state that is true
        either way: nothing here established a registration this browser can rely on. */
-    return "not_registered";
+    outcome = "not_registered";
   }
+  const ours = outcome === "subscribed" || outcome === "unchanged";
+  try {
+    await writeNotifyState(ours, "ohmail", body);
+  } catch { /* no Cache API, or refused */ }
+  return outcome;
 }

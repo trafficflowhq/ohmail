@@ -707,6 +707,24 @@ const NEVER_CHANGES = (): (() => void) => () => {};
  * client snapshot in the very next render. The engine is already the client's, so the only
  * thing this defers by one render is chrome — the demo ribbon and the frozen demo clock.
  */
+/**
+ * THE CLIENT'S OWN ANSWER, WITHOUT THE HYDRATION SNAPSHOT — for effects, never for render.
+ *
+ * {@link useDemoMode} deliberately returns `serverDemo` on the hydration render so the markup
+ * matches what the server sent, and the client answer only on the render after. That is right for
+ * anything DRAWN and wrong for anything an effect DOES: a prerendered route bakes
+ * `searchParams = {}`, so `serverDemo` is false while `resolveDemo` turns the demo on from
+ * `window.location.search` — and an effect gated on the hydration value fires once, on a demo
+ * page, believing it is not one. For the boot wake reconcile that meant real network calls from a
+ * page whose whole promise is "fixtures only, nothing leaves the tab".
+ *
+ * Reading this IN RENDER OUTPUT would reintroduce the mismatch `useDemoMode` exists to prevent.
+ * It is for effect gates.
+ */
+export function useResolvedDemoMode(): boolean {
+  return useBinding().demo;
+}
+
 export function useDemoMode(): boolean {
   const { demo, serverDemo } = useBinding();
   return useSyncExternalStore(NEVER_CHANGES, () => demo, () => serverDemo);
