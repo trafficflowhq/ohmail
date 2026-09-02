@@ -149,6 +149,26 @@ export interface ScreenerSuggestDeps extends ScreenerDeps {
    */
   credits?: (db: Tx, accountId: string) => AiCreditGate;
   /**
+   * THE WALL-CLOCK CEILING THIS HOST KILLS A REQUEST AT — declared by the composition root,
+   * ABSENT for a host that has none.
+   *
+   * `suggest` admits lanes only while there is time left to finish the work it is about to start;
+   * see {@link admissionDeadline}. That window is `this − the model call's own ceiling − the store
+   * that follows it`, and it only means anything where a platform actually kills the request.
+   *
+   * Three hosts compose this service and ONE of them is killed by a platform: the serverless API,
+   * whose route declares `maxDuration = 60`. The self-hosted server and the standalone desktop's
+   * own engine are ordinary processes, and the desktop's provider deliberately permits a SIXTY
+   * SECOND model call because a local model on a laptop is slow — a window sized for the
+   * serverless host would refuse every sender after the first round there, enforcing a ceiling
+   * that host does not have.
+   *
+   * So it is stated rather than inferred, in the shape `trustedAuthservIds` and `storageCap`
+   * established: absent means "nothing kills a request here", which is a claim a deployment makes
+   * about itself and not a default this file guesses.
+   */
+  invocationBudgetMs?: number;
+  /**
    * THE BALANCE READ that answers "how much is left", beside the gate that spends it.
    *
    * A separate dep and not a method on {@link AiCreditGate}, because the gate is a PORT — the
@@ -323,6 +343,217 @@ const INFLIGHT_POLL_MS = 120;
  */
 const SUGGEST_LANES = 5;
 
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  THE ADMISSION WINDOW, AND WHY IT IS DERIVED RATHER THAN CHOSEN
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * A request killed by the platform is the ONE failure mode with no error handling at all: no
+ * response, no `finally`, no idempotency row. If a sender was charged and claimed before that
+ * happened, what is left behind is money moved for a verdict nobody will ever see — and the next
+ * attempt is told `duplicate`, so it is not bought again either.
+ *
+ * The window therefore is not a round number somebody liked. It is what is left of the invocation
+ * after the WORST CASE of the work a lane is about to start:
+ *
+ *     window = invocation − the model call's own ceiling − the store that follows it
+ *
+ * Forty-five seconds was the round number, and it was wrong by construction: a lane admitted at 45 s
+ * may legitimately spend {@link SUGGEST_MODEL_CALL_CEILING_MS} on the model, which is past the
+ * invocation on its own. Admitting work there is no time to finish is the defect; refusing it costs
+ * one honest "retry" per sender, which is what `spend_unavailable` already means.
+ *
+ * Measured from the TOP of `suggest`, before the preflight reads, so a slow preflight eats into the
+ * window rather than being added to it. `Date.now()` and NOT `ctx.now()`, for the reason
+ * {@link INFLIGHT_WAIT_MS} gives: elapsed real time against `setTimeout`, and a frozen test clock
+ * would switch it off silently.
+ */
+/** `maxDuration` on the catch-all route this service is served from. */
+const SUGGEST_INVOCATION_BUDGET_MS = 60_000;
+
+/**
+ * THE WORST CASE OF ONE `askScreeningQuestion`, in wall time.
+ *
+ * `callCeilingMs({ timeoutMs: 10_000, maxRetries: 1 })` — the hosted API's own classifier
+ * configuration — which is `timeoutMs × (maxRetries + 1) + maxRetries × MAX_RETRY_AFTER_MS`,
+ * because a `Retry-After` is honoured up to that cap between attempts. A test recomputes this from
+ * the real function rather than trusting the arithmetic here, so a change to either the function or
+ * the deployment's numbers reddens rather than silently shrinking the margin.
+ */
+const SUGGEST_MODEL_CALL_CEILING_MS = 40_000;
+
+/** The verdict's own transaction and the response after it. */
+const SUGGEST_STORE_MARGIN_MS = 3_000;
+
+/** What is left to admit lanes in, on a host whose ceiling is {@link SUGGEST_INVOCATION_BUDGET_MS}. */
+const SUGGEST_ADMISSION_WINDOW_MS =
+  SUGGEST_INVOCATION_BUDGET_MS - SUGGEST_MODEL_CALL_CEILING_MS - SUGGEST_STORE_MARGIN_MS;
+
+/**
+ * THE WINDOW FOR A HOST THAT STATES ITS OWN CEILING — and the reason this is a dependency rather
+ * than the constant above.
+ *
+ * `ScreenerService` is composed by THREE hosts, and only one of them is killed by a platform: the
+ * serverless API. The self-hosted server and the standalone desktop's own engine run in ordinary
+ * processes with no invocation cutoff, and the desktop's provider deliberately permits a SIXTY
+ * SECOND call because a local model on a laptop is slow. Applying the serverless window there
+ * would refuse every sender after the first round of a slow local batch — a deadline enforcing a
+ * ceiling that host does not have.
+ *
+ * So the ceiling is DECLARED by the host that has one, and an absent value means "nothing kills a
+ * request here". That is the same shape as `trustedAuthservIds` and `storageCap`: a fact about the
+ * deployment, stated by the composition root, never inferred from a default.
+ */
+export function admissionDeadline(invocationBudgetMs: number | undefined): number {
+  if (invocationBudgetMs === undefined) return Number.POSITIVE_INFINITY;
+  return Date.now()
+    + Math.max(0, invocationBudgetMs - SUGGEST_MODEL_CALL_CEILING_MS - SUGGEST_STORE_MARGIN_MS);
+}
+
+/**
+ * The per-sender wall time this build sizes a request against — the measured ~2 s of model round
+ * trip with a third on top, so an ordinary slow answer does not push a request past its own
+ * admission window.
+ */
+const SUGGEST_PER_SENDER_BUDGET_MS = 3_000;
+
+/**
+ * WHAT THIS SERVER TELLS A CLIENT TO PUT IN ONE REQUEST — published on `GET /screener` as
+ * `suggestable.recommendedPerRequest`, and it is a fact about THIS BUILD rather than a constant a
+ * client may assume.
+ *
+ * ── DERIVED, FOR THE SAME REASON THE WINDOW IS ──────────────────────────────────────────────
+ *
+ * Every sender in a request has to be ADMITTED inside {@link SUGGEST_ADMISSION_WINDOW_MS}, and
+ * lanes admit in rounds: `SUGGEST_LANES` at a time, each round costing one sender's wall time. So
+ * the largest request that reliably finishes is
+ *
+ *     lanes × floor(window / per-sender)  =  5 × floor(17 s / 3 s)  =  25
+ *
+ * and a number chosen instead of derived gets this wrong in the direction that hurts. Forty was
+ * chosen — ~16 s of admissions against a 17 s window, which fits only while every sender answers
+ * at the measured 2 s. A model half a second slower pushes the tail of the request past the
+ * window, those senders come back `spend_unavailable`, and the client HALTS its whole chunk
+ * sequence on `stopped`: a four-hundred-sender purchase would stop at thirty-something and say so.
+ * Honest, and a worse product than sixteen requests that each complete.
+ *
+ * The win is smaller than forty's and it is real: sixteen requests for the largest purchase the
+ * ladder offers, where the serial build needed twenty-seven.
+ *
+ * Deliberately BELOW {@link MAX_SUGGEST_SENDERS}: the cap is the 413 boundary and this is the
+ * latency budget, and a build that set them equal would leave nothing in reserve for the client
+ * that has not yet read either.
+ */
+export const SUGGEST_RECOMMENDED_PER_REQUEST =
+  SUGGEST_LANES * Math.floor(SUGGEST_ADMISSION_WINDOW_MS / SUGGEST_PER_SENDER_BUDGET_MS);
+
+/**
+ * The admission arithmetic, exported so a test can recompute it from the real
+ * `callCeilingMs` and the deployment's own numbers rather than trusting the constants here.
+ * Nothing in the product imports it.
+ */
+export const SUGGEST_ADMISSION = {
+  invocationMs: SUGGEST_INVOCATION_BUDGET_MS,
+  modelCallCeilingMs: SUGGEST_MODEL_CALL_CEILING_MS,
+  storeMarginMs: SUGGEST_STORE_MARGIN_MS,
+  windowMs: SUGGEST_ADMISSION_WINDOW_MS,
+  lanes: SUGGEST_LANES,
+  perSenderBudgetMs: SUGGEST_PER_SENDER_BUDGET_MS,
+} as const;
+
+/**
+ * …AND THE CEILING IS PER PROCESS, NOT PER REQUEST — which is what the paragraph above claims.
+ *
+ * A bound local to one `suggest` call bounds nothing a rate limit cares about: ten concurrent
+ * requests would each start five lanes and put fifty calls in flight, which is exactly the
+ * fan-out {@link SUGGEST_LANES} exists to prevent. The lanes of different requests do not contend
+ * on the per-source claim either — different accounts, different messages — so nothing else was
+ * holding them apart.
+ *
+ * This is the admission control, and it wraps the MODEL CALL alone: a lane waiting here holds no
+ * database transaction and no connection, and the wait is bounded by one round trip because the
+ * holder releases as soon as its call returns.
+ *
+ * ── WHAT IT DOES AND DOES NOT REACH, said plainly ────────────────────────────────────────────
+ *
+ * One process. On a container (the worker, a self-hosted server) that is the whole deployment. On
+ * the serverless API host it is one instance, and instances are created and reused by the
+ * platform — so the fleet-wide ceiling is the platform's own invocation concurrency multiplied by
+ * this number, not this number. No in-process mechanism can do better than that, and the honest
+ * consequence is stated rather than implied: a provider 429 arrives as `model_unavailable` for
+ * that sender with the charge standing, which is the same shape as any other model fault here and
+ * is bought back free by the `duplicate` retry.
+ */
+/** Exported for its own unit test — the mechanism, driven directly. Not part of the service API. */
+export class LaneGate {
+  private live = 0;
+  private readonly waiting: Array<{ resolve(ok: boolean): void }> = [];
+  constructor(private readonly ceiling: number) {}
+
+  /**
+   * A slot, or FALSE because `deadline` passed first.
+   *
+   * ── THE DEADLINE IS THE HALF THAT KEEPS THIS FROM BEING A NEW BUG ────────────────────────
+   *
+   * A queue with no deadline turns "too many requests at once" into "a request that never
+   * answers": on a host that multiplexes four forty-sender calls into one instance, 160 two-second
+   * model calls through five slots is over two minutes, and the invocation is killed at sixty
+   * seconds. Combined with charging BEFORE the wait — which is what the first version of this did
+   * — that leaves senders debited and claimed with no response and no idempotency row, which is
+   * the worst outcome this whole method is built to avoid. Both halves are fixed: the caller takes
+   * its slot BEFORE `gate.spend()`, and a slot that cannot be had inside the request's budget is a
+   * REFUSAL, reported per sender, that spent nothing.
+   */
+  async acquire(deadline: number): Promise<boolean> {
+    // A NON-FINITE DEADLINE IS "THIS HOST HAS NO INVOCATION CEILING" — see
+    // `ScreenerDeps.invocationBudgetMs`. It waits, and it waits without a timer: `setTimeout`
+    // refuses a non-finite delay (it warns and fires on the next tick), which would turn "no
+    // deadline" into "every deadline has already passed".
+    const bounded = Number.isFinite(deadline);
+    // THE DEADLINE IS CHECKED FIRST, and the order is the whole point. It used to test capacity
+    // first, so once a run passed its budget the very next lane to finish handed its slot
+    // straight to another sender — admitted, debited and started AFTER the window that exists to
+    // stop exactly that. A free slot is not a reason to begin work there is no time to finish.
+    const left = deadline - Date.now();
+    if (bounded && left <= 0) return false;
+    if (this.live < this.ceiling) { this.live++; return true; }
+    if (!bounded) return new Promise<boolean>((resolve) => { this.waiting.push({ resolve }); });
+    return new Promise<boolean>((resolve) => {
+      let timer: ReturnType<typeof setTimeout>;
+      const entry = {
+        resolve: (ok: boolean): void => { clearTimeout(timer); resolve(ok); },
+      };
+      timer = setTimeout(() => {
+        // REMOVED FROM THE QUEUE, and this is the leak the timeout would otherwise create: a
+        // `release` that handed its slot to a waiter which has already given up would decrement
+        // nothing and admit nobody, shrinking the ceiling by one for the life of the process.
+        const i = this.waiting.indexOf(entry);
+        if (i >= 0) this.waiting.splice(i, 1);
+        resolve(false);
+      }, left);
+      timer.unref?.();
+      this.waiting.push(entry);
+    });
+  }
+
+  /** FIFO, so a request that arrived first is not starved by one that arrived later. */
+  release(): void {
+    const next = this.waiting.shift();
+    if (next) { next.resolve(true); return; }   // the slot is handed over, never returned and re-taken
+    this.live--;
+  }
+}
+
+/**
+ * MODULE SCOPE, deliberately — see {@link LaneGate}. One per process, shared by every request.
+ *
+ * EXPORTED for one reason and it is a money reason: the property that a sender is never charged
+ * for a queue position can only be driven by a test that can occupy the gate, and the gate a
+ * purchase actually uses is this instance. Nothing in the product imports it.
+ */
+export const suggestLaneGate = new LaneGate(SUGGEST_LANES);
+const laneGate = suggestLaneGate;
+
 export interface ScreenerSuggestBody {
   /** The explicit sender set. Absent, empty or unparseable ⇒ 400; never "all". */
   senders?: unknown;
@@ -494,6 +725,21 @@ export interface ScreenerPage extends Page<ScreenerItem> {
      * the 413.
      */
     maxPerRequest: number;
+    /**
+     * HOW MANY SENDERS THIS SERVER RECOMMENDS PER REQUEST — the latency budget, distinct from the
+     * 413 cap above, and a CAPABILITY SIGNAL rather than a second limit.
+     *
+     * It exists because the server and its clients are built and released as separate artifacts,
+     * so during a rollout — or a rollback — a new client can be talking to an old server. The old server bought its senders SERIALLY, so a chunk sized for a server
+     * that buys them in lanes would run past the invocation deadline there and leave a partly
+     * debited purchase with no response. The client cannot infer that from `maxPerRequest`, which
+     * both versions publish as the same 50.
+     *
+     * ABSENT ⇒ the client keeps its own conservative fallback, which is the shape that makes this
+     * safe: an old server omits the field and a new client reads `undefined`, exactly as it would
+     * from a server deployed before the field existed.
+     */
+    recommendedPerRequest: number;
   };
 }
 
@@ -708,6 +954,7 @@ export class ScreenerReadService {
         senders: suggestable,
         credits: suggestable.length * AI_ACTION_WEIGHTS.debit_classify,
         maxPerRequest: MAX_SUGGEST_SENDERS,
+        recommendedPerRequest: SUGGEST_RECOMMENDED_PER_REQUEST,
       },
     };
   }
@@ -1395,13 +1642,16 @@ export class ScreenerService extends ScreenerReadService {
   private readonly credits?: (db: Tx, accountId: string) => AiCreditGate;
   /** The balance READ. Destructured out for the same reason as the two above. */
   private readonly remaining?: (db: Tx, accountId: string) => Promise<number>;
+  /** This host's own invocation ceiling, or absent. See {@link ScreenerSuggestDeps}. */
+  private readonly invocationBudgetMs?: number;
 
   constructor(deps: ScreenerSuggestDeps) {
-    const { classifier, credits, remaining, ...readOnly } = deps;
+    const { classifier, credits, remaining, invocationBudgetMs, ...readOnly } = deps;
     super(readOnly);
     this.classifier = classifier;
     this.credits = credits;
     this.remaining = remaining;
+    this.invocationBudgetMs = invocationBudgetMs;
   }
 
   /**
@@ -1487,6 +1737,11 @@ export class ScreenerService extends ScreenerReadService {
     body: ScreenerSuggestBody,
     opts: { idempotency?: ScreenIdempotency | null } = {},
   ): Promise<ScreenerSuggestResult> {
+    /* THE INVOCATION'S CLOCK STARTS HERE — the first statement of the method, before the
+       preference read, the held-rows query and the stored-suggestion snapshot. Anchoring it after
+       those makes the window longer than the invocation allows by exactly however long they took,
+       which is the shape the review found. See {@link SUGGEST_ADMISSION_WINDOW_MS}. */
+    const laneDeadline = admissionDeadline(this.invocationBudgetMs);
     const senders = parseSenderSet(body);
     const dryRun = body?.dryRun === true;
     const classifier = this.classifier;
@@ -1670,6 +1925,36 @@ export class ScreenerService extends ScreenerReadService {
 
     /** One sender's purchase, end to end. Everything below used to be the body of the loop. */
     const buy = async ({ index, sender, row: r }: Purchase): Promise<void> => {
+      /* -- THE LANE SLOT IS TAKEN BEFORE THE MONEY, AND THAT ORDER IS THE WHOLE OF ITS SAFETY --
+       *
+       * The first version of this took the slot around the MODEL CALL, after `gate.spend()` had
+       * already debited and claimed. Under a host that multiplexes several requests into one
+       * instance, the FIFO can then hold a lane past the invocation's own deadline — and a request
+       * the platform kills has no response, no `finally` and no idempotency row, so what is left
+       * behind is a charged, claimed sender nobody will ever be shown. Charging for a queue
+       * position is the defect; charging only for admitted work is the fix.
+       *
+       * A slot the budget could not buy is therefore an ordinary per-sender REFUSAL — the same
+       * `spend_unavailable` the in-flight wait already answers with, for the same honest reason
+       * ("this is temporary; ask again"), and it spent nothing to say so. `refusal: "fault"` so a
+       * run that produced nothing at all answers 503 rather than demanding money for our own
+       * queue.
+       */
+      if (!(await laneGate.acquire(laneDeadline))) {
+        refused[index] = { sender, reason: "spend_unavailable" };
+        stops[index] = "spend_unavailable";
+        refusals[index] = { refusal: "fault" };
+        return;
+      }
+      try {
+        await buyAdmitted({ index, sender, row: r });
+      } finally {
+        laneGate.release();
+      }
+    };
+
+    /** The purchase itself, inside a lane slot. */
+    const buyAdmitted = async ({ index, sender, row: r }: Purchase): Promise<void> => {
       const source = screenerLedgerSource(r.messageId);
       if (gate) {
         const outcome = await gate.spend(source, { messageId: r.messageId });
@@ -1842,15 +2127,39 @@ export class ScreenerService extends ScreenerReadService {
     // sender another lane already has — the same single-threaded argument the `charged` increment
     // above relies on, stated once here because it is the load-bearing one.
     let next = 0;
+    /**
+     * THE FIRST THROW STOPS ADMISSION, AND EVERY LANE IS AWAITED BEFORE IT IS RE-RAISED.
+     *
+     * `buy` catches the model's own faults per sender; what reaches here is the rest — `this.store`
+     * rejecting, the database going away mid-write. In the serial loop that throw left the function
+     * and nothing else was bought. `Promise.all` does NOT have that property: it rejects on the
+     * first error and leaves the other lanes running, so a transient storage fault would go on
+     * dequeuing and DEBITING the rest of the batch while the caller is already receiving a 500 and
+     * no idempotency row has been claimed. Money moved for work nobody will ever see.
+     *
+     * So: a fatal error closes the queue (`fatal` is checked before each dequeue, and the
+     * read-modify-write of `next` has no `await` in it, so it is atomic here), `allSettled` waits
+     * for the lanes that are mid-model-call to land their own verdicts, and the FIRST error is
+     * re-raised afterwards. Senders already paid for are still stored, which is the same bargain
+     * the per-message-transaction rule makes everywhere else in this method.
+     */
+    let fatal: unknown;
     const lanes = Math.max(1, Math.min(SUGGEST_LANES, purchases.length));
-    await Promise.all(Array.from({ length: lanes }, async () => {
+    await Promise.allSettled(Array.from({ length: lanes }, async () => {
       for (;;) {
+        if (fatal !== undefined) return;
         const i = next++;
         const p = purchases[i];
         if (!p) return;
-        await buy(p);
+        try {
+          await buy(p);
+        } catch (err) {
+          fatal ??= err ?? new Error("a suggestion lane failed with no error value");
+          return;
+        }
       }
     }));
+    if (fatal !== undefined) throw fatal;
 
     // ── FLATTENED IN THE CALLER'S OWN ORDER ─────────────────────────────────────────────────
     for (let i = 0; i < senders.length; i++) {

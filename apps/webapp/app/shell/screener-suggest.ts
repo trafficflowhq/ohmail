@@ -382,21 +382,32 @@ const ASSUMED_MAX_PER_REQUEST = 25;
  * top of {@link OFFERED_SIZES} — is TEN requests instead of twenty-seven, and about three minutes
  * instead of about fourteen.
  *
- * ── AND IT STAYS BELOW THE CAP, DELIBERATELY ────────────────────────────────────────────────
+ * ── AND FORTY IS THE SERVER'S NUMBER, NOT THIS FILE'S ───────────────────────────────────────
  *
- * Fifty — the server's own {@link ../../../packages/services/src/screener-service MAX_SUGGEST_SENDERS}
- * — measured at 20.2 s and would fit. It is not taken, because the cap and the budget answer
- * different questions and a client that sets them equal can no longer tell them apart: the 413
- * boundary would then be the only thing bounding a request, and a deployment that lowered its cap,
- * or a `maxPerRequest` read that had not landed, would put the client on the wrong side of it with
- * nothing in reserve. Forty keeps the margin that made the split worth making.
+ * This constant is now the FALLBACK — fifteen, unchanged, the size that is safe against a server
+ * that still buys serially. The forty comes off the wire, as `suggestable.recommendedPerRequest`
+ * on `GET /screener`.
  *
- * So the offered ladder (up to {@link MAX_SUGGEST_BATCH}) is split into requests of at most this
- * many, each of which reliably completes: a large purchase ticks forward one chunk at a time and
- * its chips land as it goes. The cap and this budget are two different bounds, and a request is
- * never larger than the lower of them.
+ * That indirection is not ceremony. The server and this app are built and released as separate
+ * artifacts, so during a rollout — or a rollback — this client can be talking to the PREVIOUS
+ * server, which buys its senders one at a time. Forty senders there is ~80 s against a 60 s
+ * invocation: killed by the deadline, with a partly debited purchase and no response. And the
+ * client cannot tell the two servers apart from `maxPerRequest`, which both publish as 50 — the
+ * cap is a 413 boundary and says nothing about how the work is done. So the server that can take
+ * forty is the one that says so, and a server that says nothing gets fifteen.
+ *
+ * Measured against PostgreSQL on a single connection at 2 000 ms per sender: fifteen senders went
+ * from 30.3 s to 6.1 s and fifty from 100.8 s to 20.2 s, a factor of five in both. Forty is
+ * therefore ~16 s — a smaller share of the invocation than the old fifteen occupied, while carrying
+ * nearly three times as many senders — and the largest purchase the ladder offers is TEN requests
+ * instead of twenty-seven, minutes instead of a quarter of an hour.
+ *
+ * So the offered ladder (up to {@link MAX_SUGGEST_BATCH}) is split into requests of at most the
+ * lower of the three numbers — this fallback or the server's recommendation, and the 413 cap —
+ * each of which reliably completes: a large purchase ticks forward one chunk at a time and its
+ * chips land as it goes.
  */
-export const SUGGEST_CHUNK_SIZE = 40;
+export const SUGGEST_CHUNK_SIZE = 15;
 
 /**
  * The sizes offered, before clamping. The small end is watchable, the large end drains a
@@ -541,6 +552,12 @@ export function useScreenerSuggestions(opts: {
   /** See {@link SuggestBatchControl.progress}. Written beside `notice`, never derived from it. */
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [maxPerRequest, setMaxPerRequest] = useState(ASSUMED_MAX_PER_REQUEST);
+  /**
+   * The server's own recommended request size, or `null` until one has said — see
+   * {@link SUGGEST_CHUNK_SIZE}. `null` and not a default, so "this server has not told me" is
+   * distinguishable from "this server recommends the fallback"; an older server never says.
+   */
+  const [recommendedPerRequest, setRecommendedPerRequest] = useState<number | null>(null);
   /**
    * The opt-in confirm's state, held apart from the manual control's three fields above.
    *
@@ -706,6 +723,10 @@ export function useScreenerSuggestions(opts: {
         const page = await link.current.wire.list({ limit: HYDRATE_LIMIT });
         if (cancelled) return;
         if (page.suggestable?.maxPerRequest) setMaxPerRequest(page.suggestable.maxPerRequest);
+        // A NUMBER, not a truthy read of an optional field: an older server omits it entirely and
+        // must leave the fallback standing, and a nonsense value must not become a chunk size.
+        const rec = (page.suggestable as { recommendedPerRequest?: unknown } | undefined)?.recommendedPerRequest;
+        if (typeof rec === "number" && Number.isFinite(rec) && rec >= 1) setRecommendedPerRequest(Math.floor(rec));
         merge(
           page.items
             .filter((i) => i.aiSuggestion != null)
@@ -845,8 +866,10 @@ export function useScreenerSuggestions(opts: {
     const chosen = sizes.includes(size) ? size : (sizes[sizes.length - 1] ?? 0);
 
     /**
-     * ONE request carries at most this many senders — the LOWER of the latency budget
-     * ({@link SUGGEST_CHUNK_SIZE}) and the server's per-request cap ({@link maxPerRequest},
+     * ONE request carries at most this many senders — the LOWEST of the server's own recommended
+     * size (`suggestable.recommendedPerRequest`, absent on a server deployed before it existed, in
+     * which case {@link SUGGEST_CHUNK_SIZE}'s conservative fallback stands) and the 413 cap
+     * ({@link maxPerRequest},
      * {@link ASSUMED_MAX_PER_REQUEST} until that read lands). The cap is only the 413 boundary; the
      * budget is what actually fits one serverless invocation, and it is the smaller of the two in
      * production — a request the size of the cap would classify past the invocation's deadline and
@@ -855,7 +878,7 @@ export function useScreenerSuggestions(opts: {
      * in the queue's own order so a chunk is a contiguous prefix-slice and the same press twice
      * covers the same senders.
      */
-    const chunkSize = Math.max(1, Math.min(maxPerRequest, SUGGEST_CHUNK_SIZE));
+    const chunkSize = Math.max(1, Math.min(maxPerRequest, recommendedPerRequest ?? SUGGEST_CHUNK_SIZE));
     const chunksOf = (set: string[]): string[][] => {
       const out: string[][] = [];
       for (let i = 0; i < set.length; i += chunkSize) out.push(set.slice(i, i + chunkSize));
