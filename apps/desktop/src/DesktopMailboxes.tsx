@@ -94,6 +94,8 @@ import { openWeb } from "./native.js";
 interface MailboxWire {
   id: string;
   address: string;
+  /** The mailbox's user-facing label — `MailboxDTO.displayName`, null when nobody typed one. */
+  displayName?: string | null;
   status: string;
   errorCode?: string | null;
   disabledReason?: string | null;
@@ -122,6 +124,24 @@ interface MailboxWire {
    * an absent number. Never confused with a count of the mirror: see `MailboxFacts`.
    */
   hostedMessageCount?: number;
+  /**
+   * HOW MUCH MAIL THE SERVER SAYS IS IN THIS MAILBOX — the local door's own Σ of
+   * `mailbox_folders.server_exists` over the folders a cycle has opened (mail 0083).
+   *
+   * It is the FIRST PULL'S DENOMINATOR and the only fact on this door that can say where the
+   * walk ends: the mirror's own count is the numerator, and without this there is no horizon to
+   * compare it against. The engine has served it all along and this narrowing dropped it, so the
+   * first-run pull stage showed no remaining count, no progress bar and never an ETA — see the
+   * map below.
+   *
+   * Grows as the folder tree is walked, so a consumer must clamp the remainder at zero rather
+   * than treat it as a fixed total (`pull-rate.ts` owns that rule).
+   */
+  serverMessageCount?: number;
+  /** When this install was told it may organize this mailbox (mail 0083); null pre-consent. */
+  organizeConsentedAt?: string | null;
+  /** OUR filings this mailbox has not applied yet — the strip's `filing` arm reads it. */
+  pendingMoves?: number;
   /**
    * The forwarding-detection notice's evidence pair (mail 0078): a standing quiet episode's
    * newest genuine inbound date, and this mailbox's dismissal. Absent on an engine that
@@ -163,6 +183,7 @@ export async function readMailboxFactsVia(
   return (body.items ?? []).map((m) => ({
     id: m.id,
     address: m.address,
+    ...("displayName" in m ? { displayName: m.displayName } : {}),
     status: m.status,
     errorCode: m.errorCode ?? null,
     disabledReason: m.disabledReason ?? null,
@@ -203,12 +224,45 @@ export async function readMailboxFactsVia(
     // strip's comparison upside down. Absent must arrive absent. This seam has dropped a field
     // exactly once before — `smtpMaxSizeBytes`, on the line above — and it did so silently.
     ...("hostedMessageCount" in m ? { hostedMessageCount: m.hostedMessageCount } : {}),
+    // ── AND IT DID IT A SECOND TIME, WITH THE FIELD THAT SAYS WHERE THE PULL ENDS ────────
+    //
+    // `serverMessageCount` is the local door's Σ of `server_exists`, and it never reached the
+    // shell: the engine answers it beside every mailbox row and this narrowing forwarded
+    // nothing, so `pullRemaining` had no denominator, the first-run pull stage rendered
+    // neither the remaining counter nor the bar nor an ETA, and no surface on this door could
+    // tell "the walk reached the end" from "the walk is still going".
+    //
+    // Absent must arrive ABSENT, on `hostedMessageCount`'s rule above: a `?? 0` would claim the
+    // server holds no mail, which is a confident wrong answer rather than a missing one.
+    //
+    // The three drops share one cause — a hand-written field list beside a growing wire — so
+    // `test/desktop-facts-census.test.ts` now derives the required set from `MailboxFacts`
+    // itself and fails on any key this map does not forward. A fourth silent drop is not
+    // available any more.
+    ...("serverMessageCount" in m ? { serverMessageCount: m.serverMessageCount } : {}),
+    ...("organizeConsentedAt" in m ? { organizeConsentedAt: m.organizeConsentedAt } : {}),
+    ...("pendingMoves" in m ? { pendingMoves: m.pendingMoves } : {}),
     // THE FORWARDING-DETECTION PAIR (mail 0078), forwarded by the same `in` spread and for the
     // same reason as every optional field above: absent is an engine that predates the columns
     // and must arrive absent, so the pane renders nothing rather than asserting "no episode".
     ...("inboundQuietSince" in m ? { inboundQuietSince: m.inboundQuietSince } : {}),
     ...("inboundQuietDismissedAt" in m ? { inboundQuietDismissedAt: m.inboundQuietDismissedAt } : {}),
-    createdAt: m.createdAt ?? new Date().toISOString(),
+    // ── NEVER `?? new Date()`, AND THAT DEFAULT WAS A BUG THE FLOOR COULD NOT SURVIVE ───
+    //
+    // `importFloorSpeaks` trusts an unwritten `initial_import_completed_at` ABSOLUTELY for
+    // `IMPORT_FLOOR_MAX_MS` (24 h) after `createdAt`, and only past that window does it demand
+    // corroboration before repeating a claim the server never made. Defaulting an absent
+    // `createdAt` to NOW re-based that window on every poll, so `now - connectedAt` was always
+    // ~0, the bound could never elapse, and the strip would announce "Syncing your mail" for
+    // ever over a finished mirror — the exact permanent falsehood the bound exists to end.
+    //
+    // The empty string is "the engine did not say", and every reader of this field already
+    // treats an unparseable stamp as unknown rather than as a time: `importFloorSpeaks`'s
+    // `Number.isFinite` guard takes the CORROBORATED path (documented there as deliberate, so
+    // the floor may still speak — it just may no longer speak unconditionally), `earliest`
+    // skips it and `minutesSince` answers null. Absent therefore degrades to "this client must
+    // have something of its own to say", which is the honest reading of not knowing.
+    createdAt: m.createdAt ?? "",
   }));
 }
 

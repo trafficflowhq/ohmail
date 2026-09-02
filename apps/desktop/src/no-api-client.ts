@@ -111,6 +111,10 @@ export interface MailboxDTO {
     status: string;
     lastSyncAt: string | null;
     authKind?: "password" | "oauth";
+    organizerRole?: "organizer" | "reader";
+    organizedBy?: { kind: string | null; name: string | null; since: string | null } | null;
+    organizerState?: "held" | "stopped" | null;
+    organizeConsentedAt?: string | null;
     errorCode?: "auth" | "connect" | "tls" | "timeout" | "storage" | "sync" | "unknown" | null;
     errorDetail?: string | null;
     failedAt?: string | null;
@@ -121,8 +125,11 @@ export interface MailboxDTO {
     disabledReason?: string | null;
     createdAt?: string;
     initialImportCompletedAt?: string | null;
+    inboundQuietSince?: string | null;
+    inboundQuietDismissedAt?: string | null;
     smtpMaxSizeBytes?: number | null;
     messageCount?: number;
+    serverMessageCount?: number;
 }
 
 export interface SubscriptionStatus {
