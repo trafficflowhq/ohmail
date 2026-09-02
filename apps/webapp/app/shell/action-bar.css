@@ -836,3 +836,69 @@
   .msg-actions .abar-file { display: flex; }
   .msg-actions .mmenu .mm-file { display: none; }
 }
+
+/* ── RUNTIME DENSITY — fold on ACTUAL overflow, measured in the machine's own font ───────────
+ *
+ * The rungs above are derived from label widths in one reference font, and that font does not
+ * resolve everywhere (their own comments record the drift). On a machine whose UI font renders
+ * narrower every rung fires early: verbs fold behind More with room left beside them —
+ * reported from real use. `bar-density.ts` measures the REAL row instead: a hidden copy of
+ * every group (same markup, same font — `.abar-measure` below) gives true widths, groups are
+ * admitted greedily in ROW ORDER while they actually fit, and the result lands on the pill as
+ * `data-admit="rall fwd …"`.
+ *
+ * THE RUNGS STAY, as the no-JS/first-paint fallback: `data-admit` is ABSENT until the first
+ * measurement (and forever under a client with no ResizeObserver), and every rule below is
+ * scoped `[data-admit]`, so without the attribute this whole block is inert and the ladder
+ * above governs alone. Once present, these rules OUTRANK the rungs — the not-admitted pairs
+ * tie the widest rung selectors on specificity and win by order, which is why this block must
+ * stay at the foot of the file.
+ *
+ * The laws are the ladder's own: a group is in the row or behind More and never in both (each
+ * pair below flips both), row order is fold order (the measurer admits a strict prefix), and
+ * the base — Reply, the read switch, More — is never hidden by anything here. MESSAGE BARS
+ * ONLY: the selection bar's `.pick-bar` geometry keeps its own rungs, exactly as the ladder
+ * already splits them. */
+
+/* The measure row: rendered inside the pill so it inherits the exact font and control metrics,
+   but out of flow, invisible, inert and heightless — it must never affect the pill's own
+   fit-content width or anyone's pointer. Its groups are forced visible with `!important`
+   deliberately: the measurement must be immune to every density decision by construction, or
+   a fold would zero the very widths that decide the fold (a feedback loop measured before this
+   line was written, not imagined). */
+.abar-measure {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+  height: 0;
+  overflow: hidden;
+  left: 0;
+  top: 0;
+}
+.abar-measure .abar-g { display: flex !important; }
+
+/* rall */
+.msg-actions .abar[data-admit~="rall"] .abar-rall { display: flex; }
+.msg-actions .abar[data-admit~="rall"] .mmenu .mm-rall { display: none; }
+.msg-actions .abar[data-admit]:not([data-admit~="rall"]) .abar-row .abar-rall { display: none; }
+.msg-actions .abar[data-admit]:not([data-admit~="rall"]) .mmenu .mm-rall { display: flex; }
+/* fwd */
+.msg-actions .abar[data-admit~="fwd"] .abar-fwd { display: flex; }
+.msg-actions .abar[data-admit~="fwd"] .mmenu .mm-fwd { display: none; }
+.msg-actions .abar[data-admit]:not([data-admit~="fwd"]) .abar-row .abar-fwd { display: none; }
+.msg-actions .abar[data-admit]:not([data-admit~="fwd"]) .mmenu .mm-fwd { display: flex; }
+/* defer */
+.msg-actions .abar[data-admit~="defer"] .abar-defer { display: flex; }
+.msg-actions .abar[data-admit~="defer"] .mmenu .mm-defer { display: none; }
+.msg-actions .abar[data-admit]:not([data-admit~="defer"]) .abar-row .abar-defer { display: none; }
+.msg-actions .abar[data-admit]:not([data-admit~="defer"]) .mmenu .mm-defer { display: flex; }
+/* tag */
+.msg-actions .abar[data-admit~="tag"] .abar-tag { display: flex; }
+.msg-actions .abar[data-admit~="tag"] .mmenu .mm-tag { display: none; }
+.msg-actions .abar[data-admit]:not([data-admit~="tag"]) .abar-row .abar-tag { display: none; }
+.msg-actions .abar[data-admit]:not([data-admit~="tag"]) .mmenu .mm-tag { display: flex; }
+/* file */
+.msg-actions .abar[data-admit~="file"] .abar-file { display: flex; }
+.msg-actions .abar[data-admit~="file"] .mmenu .mm-file { display: none; }
+.msg-actions .abar[data-admit]:not([data-admit~="file"]) .abar-row .abar-file { display: none; }
+.msg-actions .abar[data-admit]:not([data-admit~="file"]) .mmenu .mm-file { display: flex; }

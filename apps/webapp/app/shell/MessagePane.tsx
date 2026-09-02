@@ -17,6 +17,7 @@ import { ConversationPanels } from "./Conversation";
 import { MessageHeader } from "./MessageCard";
 import { PLACE_LABEL, dayNine, dayValue, hueOf, nextWeekNine, tagsOfMessage, tomorrowNine, withheldCopyKey } from "./format";
 import { replyAllRecipients } from "./compose-from";
+import { useBarDensity } from "./bar-density";
 import { InlineReply } from "./InlineReply";
 import { inlineForwardKey } from "./mail-send";
 import { chordKeys, useBinding, useKeyPress } from "./keymap";
@@ -289,6 +290,8 @@ function ActionBar({
   const tm = useTranslations("message");
   const press = useKeyPress();
   const chrome = useMessageChrome();
+  /** The runtime density measurement — which groups ACTUALLY fit; see `bar-density.ts`. */
+  const density = useBarDensity();
   /** The delete confirm's focus target (Cancel — the safe answer) and its described note. */
   const deleteCancelRef = useRef<HTMLButtonElement>(null);
   const deleteNoteId = useId();
@@ -761,7 +764,15 @@ function ActionBar({
        so defer and Tag are admitted at two different widths depending on whether this bar
        carries it. The attribute is set from the SAME `canReplyAll` that renders the group, so
        the row the ladder is measuring and the row on screen are the same row. */
-    <div className="abar" data-rall={canReplyAll ? "" : undefined}>
+    <div
+      className="abar"
+      data-rall={canReplyAll ? "" : undefined}
+      /* `data-admit` IS THE MEASUREMENT'S ANSWER — the groups that actually fit, measured off
+         the hidden copy below in the machine's real font. Absent until the first measurement
+         (and under jsdom/no-JS), which leaves the static rungs in charge as the fallback; the
+         rules that obey it close `action-bar.css`. `bar-density.ts` carries the whole argument. */
+      data-admit={density.admit ?? undefined}
+    >
       <div className="abar-row">
         <div className="abar-g">
           <button
@@ -938,6 +949,190 @@ function ActionBar({
           </button>
         </div>
       </div>
+      {/* THE MEASURE ROW — the same groups rendered again, invisible and inert, so the density
+          measurement reads each group's REAL rendered width (same markup, same classes, same
+          font) instead of trusting a reference font's figures. Position-absolute, so it adds
+          nothing to the pill's own fit-content width — and rendered only once `armed` (an
+          effect, post-hydration, ResizeObserver present), so the server tree, the hydration
+          tree and every environment that cannot measure keep the exact markup they had. */}
+      {density.armed ? (
+      <div className="abar-row abar-measure" ref={density.measureRef}>
+        <div className="abar-g">
+          <button
+            type="button"
+            className="abar-b abar-solo primary"
+            onClick={() => onAction("reply")}
+          >
+            {t("actionReply")}
+            <Key chord="r" />
+          </button>
+        </div>
+
+        {/* REPLY ALL — the same question as Reply, answered to everyone, so it stands beside
+            the accent verb and NOT inside it: a segment would dilute the one primary capsule.
+            Rendered only when `canReplyAll` (see above), and its own `.abar-g` so the row gap
+            applies. `.abar-rall` is the ladder's FIRST rung, which is not the same claim as
+            "always": the two reply verbs stand together at the three widths a message is read
+            at on a DESKTOP — reading column 572, stream card 576, conversation 628 — and this
+            group still folds into More below its rung: the 242px split column in both
+            locales, and the 350px phone reader in German, where `Allen antworten` needs 478.
+            `mm-rall` is the other half of "in the row or in the menu, never both". The exact
+            widths are per-locale because the label's width is; see `action-bar.css`. */}
+        {canReplyAll ? (
+          <div className="abar-g abar-rall">
+            <button
+              type="button"
+              className="abar-b abar-solo"
+              onClick={() => onAction("reply_all")}
+            >
+              {t("actionReplyAll")}
+              <Key chord="shift+r" />
+            </button>
+          </div>
+        ) : null}
+
+        {/* FORWARD — the third verb of the answer family, and the reason this group exists.
+            Reported from real use: *"fwd message / Forward in general should be within our main
+            pill-shaped UI besides Reply etc."* It stood in no row at any width before this: the
+            only mouse door was a panel's ⋯ menu, which is a disclosure a reader has to already
+            know about.
+
+            Its own `.abar-g` beside the other two rather than a segment inside either: Reply is
+            the one primary capsule (the argument the Reply-all group already makes), and Forward
+            answers a different question from both — not "what do I say back" but "who else needs
+            to see this".
+
+            `.abar-fwd` is the ladder's SECOND rung, directly after Reply all, so the three answer
+            verbs stand together at every width a message is read at on a desktop. What pays for it
+            is the three horizons and Tag, which fold into More earlier than they used to — the
+            full arithmetic, and the trade stated as a trade, is at the Forward rung in
+            `action-bar.css`. `mm-fwd` is the other half of "in the row or in the menu, never
+            both". */}
+        {canForward ? (
+          <div className="abar-g abar-fwd">
+            <button
+              type="button"
+              className="abar-b abar-solo"
+              onClick={() => onAction("forward")}
+            >
+              {tm("menuForward")}
+              <Key chord="shift+f" />
+            </button>
+          </div>
+        ) : null}
+
+        <div
+          className="abar-g abar-seg abar-defer"
+          role="group"
+          aria-label={copy("groupDefer", "Not now")}
+        >
+          {defer}
+        </div>
+
+        {/* Between the horizons and filing — see `tag` above for why it is its own group and
+            not a third segment of "File it". */}
+        {tag}
+
+        <div
+          className="abar-g abar-seg abar-file"
+          role="group"
+          aria-label={copy("groupFile", "File it")}
+        >
+          {file}
+        </div>
+
+        <div className="abar-g abar-read-g">
+          {/*
+           * ONE SLOT, TWO DIRECTIONS — AND A THIRD FACE ON A RESURFACED MESSAGE. See
+           * `markUnread` and `markRead` above for the two directions.
+           *
+           * Exactly one of the two renders, in the same position, with the same shape: the verb as
+           * the label (not a `role="switch"` reporting a state with the action hidden in a
+           * `title`), a dot PREVIEWING the outcome, and a keycap read from the live registry, so a
+           * chord that moves takes the hint with it and an unbound chord shows nothing. Filled dot
+           * ⇒ the row will have one; hollow ⇒ it will not — the same mark the list uses.
+           *
+           * A RESURFACED MESSAGE OWNS THE SLOT WITH "DONE". On a pinned message the deliberate
+           * read IS the release — one act spends both, there is no un-bold-but-pinned state — so
+           * "Mark as read" here was the release wearing the wrong name: nothing on the whole
+           * surface said how to END a resurface, reported from real use in exactly those terms.
+           * The verb is
+           * renamed where the state gives it its real meaning, not added beside it: a "Done" AND
+           * a "Mark as read" would be one mutation behind two buttons, and the slot's own rule is
+           * one control per state. It dispatches `resurface_done` (the shell's one release arm,
+           * shared with the pin-group row and the Resurface pile) rather than pressing `⇧I`,
+           * because the key acts on the SELECTED message and this bar can be mounted over an
+           * unselected one (a stream card); the keycap still shows `⇧I` where it is bound, since
+           * that key performs the same release on the open message. A check instead of the dot:
+           * the outcome being previewed is "finished", not a read mark.
+           *
+           * IT REPLACES THE SLOT AT EVERY WIDTH AND FOLDS NOWHERE — the slot always stands in the
+           * ladder, and "Done" plus the check is NARROWER than either label it replaces, so no
+           * tier moves. Re-measure per the ladder's rule if this label ever grows.
+           */}
+          {isResurfaced(message) ? (
+            <button
+              type="button"
+              className="abar-b abar-solo abar-read abar-done"
+              onClick={() => onAction("resurface_done")}
+            >
+              <Icon name="check" size={13} className="abar-check" />
+              {t("actionDone")}
+              <Key chord="shift+i" />
+            </button>
+          ) : read ? (
+            <button
+              type="button"
+              className="abar-b abar-solo abar-read"
+              onClick={markUnread}
+            >
+              <span className="abar-dot" aria-hidden="true" />
+              {copy("actionMarkUnread", "Mark unread")}
+              <Key chord="u" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="abar-b abar-solo abar-read"
+              onClick={markRead}
+            >
+              <span className="abar-dot abar-dot-off" aria-hidden="true" />
+              {t("actionMarkRead")}
+              <Key chord="shift+i" />
+            </button>
+          )}
+
+          {/*
+           * ICON-ONLY, and that is a measurement rather than a preference: dropping the word
+           * "More" is 35px, and 35px is the difference between filing standing on the row at
+           * the 569px reading measure and being pushed into this menu itself. A disclosure is
+           * the one control here whose meaning survives without a label — pressing it is the
+           * only thing it can do — so it is the right 35px to spend. The name is not lost,
+           * it moves to `aria-label` and the tooltip.
+           */}
+          {/*
+           * `aria-expanded` REPORTS THE MENU, and until this change it was the literal `false`.
+           * That was not merely stale — with `aria-haspopup` beside it, it announced "there is a
+           * popup and it is closed" every time, including while the disclosure was open. A
+           * screen-reader user pressed the control, the row underneath was replaced, and the
+           * control went on saying nothing had happened. It is a live value now, which is only
+           * possible because there is a real popup to report on.
+           */}
+          <button
+            ref={moreRef}
+            type="button"
+            className="abar-b abar-solo abar-more"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            aria-label={copy("actionMore", "More")}
+            title={copy("actionMore", "More")}
+            onClick={() => setMenuOpen((open) => !open)}
+          >
+            <Icon name="chev" size={12} className="abar-chev" />
+          </button>
+        </div>
+      </div>
+      ) : null}
 
       {/* The menu is a child of `.abar` — see `MoreMenu` for why that is the container and not
           a fixed popover, and why it drops upward. Out of flow, so the row above is unmoved. */}
