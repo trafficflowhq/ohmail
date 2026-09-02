@@ -145,6 +145,24 @@ controls that could not act, sitting above an assurance about what notifications
 contain. The pane now offers a switch only for events something actually draws;
 the others reappear as switches when something draws them.
 
+### Signing out takes this browser's notification registration with it
+
+Signing out of ohmail in a browser left behind the registration that lets the
+server wake it. The clean-up that removes those registrations is scoped to a
+device, and a browser signing in does not create a device record — so the
+clean-up never matched a browser's registration, and because the browser was
+still subscribed the registration never looked dead either. It stayed, and the
+server went on using it.
+
+On a shared computer that is the case that matters: someone signs out, the next
+person signs in, and the browser can still be woken for the first person's mail.
+
+Signing out now deletes that registration, unsubscribes the browser, and clears
+the stored copy of it — each of the three independently, so that one of them
+failing still leaves the other two to close the gap. Whether ohmail may show
+notifications at all is a permission belonging to the computer, so that setting
+stays, as the appearance settings do.
+
 ### Ring surfaces keep their top edge on the ohmarchy face
 
 A tile's edge on the ohmarchy face is an outer ring painted in the pixels beside
