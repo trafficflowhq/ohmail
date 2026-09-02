@@ -255,7 +255,7 @@ function narrowBody(wire: Partial<MessageBodyWire>): MessageBodyWire {
 
 /** `POST /drafts/:id/send` answers this shape at 200 AND at 409 — never the error envelope. */
 interface SendWire {
-  status?: "sent" | "unverified" | "failed" | "in_flight";
+  status?: "sent" | "unverified" | "failed" | "in_flight" | "queued";
   providerMessageId?: string | null;
   message?: string;
 }
@@ -1752,6 +1752,28 @@ export class HttpAdapter implements EngineAdapter {
       throw new MutationRejectedError(
         wire.message ?? "We couldn't confirm this send. Check your Sent folder before retrying.",
         { status: res.status, code: "send_unverified", retryable: false },
+      );
+    }
+
+    if (wire.status === "queued") {
+      // THE SERVER HAS IT. It reserved the send, stopped waiting for the submission at its own
+      // attempt ceiling, and kept the key — so the envelope may or may not have reached the mail
+      // server, and the reservation is what decides which.
+      //
+      // Retryable, and `draftForKey` is deliberately NOT cleared, for the same reason as
+      // `in_flight` below: the outbox replays this mutation under the SAME Idempotency-Key, which
+      // is the only thing that makes a retry safe. `resumeExisting` answers `in_flight` while the
+      // attempt could still be alive and runs verify-by-Sent once it provably is not; a fresh key
+      // would be a second delivery.
+      //
+      // Its own code rather than `send_in_flight`, and the distinction is load-bearing on screen:
+      // this one means the server ACCEPTED the send, so the compose surface may close and say so.
+      // A transport rejection means the request may never have arrived, and that surface must
+      // stay open. Telling the two apart is what stops "Accepted" being said about a request
+      // nobody received.
+      throw new MutationRejectedError(
+        wire.message ?? "This send was accepted and is still being handed to your mail server.",
+        { status: res.status, code: "send_queued", retryable: true },
       );
     }
 

@@ -51,7 +51,7 @@ import { Button, Chip, Icon, Kbd, useToast } from "@ohmail/ui";
 import { chordKeys, useBinding, useKeyBindings } from "../shell/keymap";
 import { go } from "../shell/routing";
 import { displayAddress } from "../shell/idn";
-import { canSend, type SendState } from "../shell/mail-send";
+import { canSend, sendVerb, type SendState } from "../shell/mail-send";
 import { RichEditor } from "../shell/RichEditor";
 import { SendStatus } from "../shell/SendStatus";
 import {
@@ -514,6 +514,7 @@ export function ComposeView({
 
   const locked = !canSend(send, plan.mutation);
   const inFlight = send.phase === "sending" || send.phase === "queued";
+  const verb = sendVerb(send, "compose");
 
   return (
     <section className="view col view-compose" ref={rootRef}>
@@ -942,9 +943,11 @@ export function ComposeView({
                 variant="primary"
                 disabled={locked}
                 aria-busy={send.phase === "sending" || undefined}
+                // See `sendVerb` — the same attribute and the same word as the inline dock.
+                data-send={verb.attr}
                 onClick={() => onSend()}
               >
-                {send.phase === "sending" ? t("sending") : t("send")}
+                {t(verb.key)}
                 {/* The verb's chord, from the live registry — the action-bar law (§12): an
                     action button wears its keycap always; no binding here, no cap. HIDDEN
                     while the send-later picker is open, because there the chord SCHEDULES

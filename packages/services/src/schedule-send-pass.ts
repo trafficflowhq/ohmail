@@ -200,9 +200,18 @@ export async function runScheduledSendPass(
           { includeSending: true });
         result.failed += 1;
       } else {
+        // `in_flight` OR `queued`, and they defer for the same reason from opposite ends.
+        //
         // `in_flight`: a live invocation already owns this key (two pokes overlapping in the
-        // one window SKIP LOCKED cannot arbitrate — after the claim committed). Nothing is
-        // written; the recovery arm re-finds the row once the attempt is provably dead.
+        // one window SKIP LOCKED cannot arbitrate — after the claim committed).
+        // `queued`: THIS call's own submission passed the attempt ceiling and was abandoned
+        // mid-flight, so its fate is unknown. In-process it may still land and finalize itself;
+        // if it does not, the row is a `sending` draft with its `send_key` standing, which is
+        // exactly what the recovery arm claims once it is provably stale.
+        //
+        // Nothing is written either way, and that is the point: a pass that closed the
+        // appointment here would be writing up an ending it cannot prove, and one that re-armed
+        // it would offer a second envelope for a message that may already be gone.
         result.deferred += 1;
       }
     } catch (err) {

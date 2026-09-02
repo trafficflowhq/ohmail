@@ -351,6 +351,23 @@ export const draftsRoutes: Route[] = [
             { status: "failed", message: "A prior send under this key failed and was not delivered." },
             { status: 409 },
           );
+        case "queued":
+          // 202 ACCEPTED, and the code is the whole statement: the reservation is committed and
+          // this request stopped waiting for the submission at the attempt ceiling. It is NOT a
+          // 200 — nothing is known to have been delivered — and NOT a 409 like `in_flight`, which
+          // refuses a SECOND request while someone else's attempt runs. This is the owning
+          // request's own answer, and the only send outcome a first press can get that is neither
+          // settled nor a refusal.
+          //
+          // `X-Sync-Seq` rides it: the reservation's own draft change (`sending`) is a committed
+          // row the client must drain past, and it exists whether or not the submission lands.
+          return jsonResponse(
+            {
+              status: "queued",
+              message: "This send was accepted and is still being handed to your mail server.",
+            },
+            { status: 202, seq: result.seq ?? undefined },
+          );
         default:
           return jsonResponse(
             { status: "in_flight", message: "A send for this draft is already in progress." },

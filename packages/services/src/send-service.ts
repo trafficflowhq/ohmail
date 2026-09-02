@@ -168,6 +168,15 @@ export interface SendDeps {
    * different claims and a swallowed exception only makes the first one.
    */
   log?: Logger;
+  /**
+   * Override {@link SEND_ATTEMPT_CEILING_MS} for this attempt. A TEST SEAM, and it is the only
+   * way the two ceiling outcomes can be driven: the alternative is a suite that waits twenty
+   * real seconds per case, which is not a suite anybody runs.
+   *
+   * It is deliberately not a per-host configuration knob. The ceiling is a statement about how
+   * long a person will watch a button, and that is the same number on every door.
+   */
+  attemptCeilingMs?: number;
 }
 
 /**
@@ -587,17 +596,152 @@ export const SEND_FAILED_SENTENCE =
   "This was not sent — the message never reached your mail server. Send it again.";
 
 /**
+ * HOW LONG ONE SEND ATTEMPT MAY HOLD THE PRESS BEFORE THE ANSWER STOPS WAITING FOR IT.
+ *
+ * Not a network deadline — {@link DEFAULT_NET_TIMEOUTS} already bounds each individual socket
+ * operation (15 s to connect, 25 s of inactivity). The gap this closes is that a send is a
+ * SEQUENCE of those: a cold IMAP dial + LOGIN + LIST, then a full SMTP session, then a second
+ * LIST, then an APPEND of the whole message. Every one of them can sit just under its own
+ * deadline without any of them tripping, so the sequence has no ceiling at all, and the press
+ * that started it has nothing to wait on but the platform's own kill.
+ *
+ * MEASURED, which is why the number is what it is. Dialling the three shipped provider shapes
+ * the way `makeSendAdapter` does — a fresh adapter per press — the plain-IMAP and Infomaniak
+ * mailboxes complete the whole attempt in well under a second, and a Gmail mailbox spends
+ * 1.0–8.5 s in `connect()` ALONE, varying eightfold between consecutive presses on one account.
+ * So the honest ceiling is far above every healthy attempt and far below the 60-second
+ * serverless invocation limit that is otherwise the only thing that ends a hung one — being
+ * killed BY the platform is the one failure with no error handling at all: no `finally`, no
+ * `close()`, no response, and a reservation left `pending` with nobody told.
+ *
+ * WHAT A BREACH MEANS depends on where it lands, and the boundary is the one the pre-SMTP
+ * window already draws — "has anything been offered to a server yet":
+ *   before `adapter.send`   nothing was offered, so this is a DEFINITE non-delivery and is
+ *                           recorded as one ({@link SEND_TIMEOUT_SENTENCE}, status `failed`).
+ *   at or after it          the fate is genuinely UNKNOWN. The reservation is left `pending`
+ *                           with its key intact and the answer is `queued`. Nothing is
+ *                           resent — see {@link SendResult}.
+ */
+export const SEND_ATTEMPT_CEILING_MS = 20_000;
+
+/**
+ * The Drafts-row sentence for an attempt that ran out of time BEFORE anything was offered to a
+ * server. A sibling of {@link SEND_FAILED_SENTENCE} and it makes the same promise — the message
+ * did not go — because at this point in the sequence that is provable. It names the cause,
+ * because "the server did not answer in time" is a fact the reader can act on (try again, or
+ * check the mailbox) in a way that "this was not sent" alone is not.
+ */
+export const SEND_TIMEOUT_SENTENCE =
+  "This was not sent — your mail server did not answer in time. Send it again.";
+
+/**
  * The outcome the route maps to an HTTP response:
  *  - `sent`       → 200 { status, providerMessageId } (+ X-Sync-Seq)
  *  - `unverified` → 200 { status } — ambiguous, surfaced ("check Sent before retrying")
  *  - `failed`     → 409 — a definitively-undelivered prior attempt under this key
  *  - `in_flight`  → 409 — a genuinely-concurrent attempt is mid-flight
+ *  - `queued`     → 202 — THIS request reserved the send and then stopped waiting for the
+ *                   submission at {@link SEND_ATTEMPT_CEILING_MS}. The envelope may or may not
+ *                   have reached the server, so this is the SAME unknown fate `unverified`
+ *                   describes, caught earlier and while the attempt is still alive.
+ *
+ * `queued` is distinct from `in_flight` on purpose, though both say "not settled yet". `in_flight`
+ * is what a SECOND request is told about someone else's live attempt; `queued` is what the
+ * OWNING request is told about its own. The reader-facing difference is that `queued` is the only
+ * one of the two that can be produced by a first press, so it is the one the compose surface has
+ * to be able to close on.
+ *
+ * NOTHING IS EVER RESENT ON `queued`. The reservation stays `pending` with its `send_key`
+ * standing, which is precisely the state {@link SendService.resumeExisting} reads: a same-key
+ * retry answers `in_flight` while the attempt could still be alive and runs verify-by-Sent once
+ * it provably is not. One press stays one delivery.
  */
 export interface SendResult {
-  status: "sent" | "unverified" | "failed" | "in_flight";
+  status: "sent" | "unverified" | "failed" | "in_flight" | "queued";
   providerMessageId: string | null;
   draftId: string;
   seq: number | null;
+}
+
+/**
+ * The ceiling as a thing that can be raced — one timer per attempt, shared by both phases.
+ *
+ * ONE clock for the whole attempt rather than one per phase, because the budget being spent is
+ * the reader's patience and it does not reset when the dial finishes. A per-phase timer would
+ * let a slow open and a slow submission add up to twice the ceiling, which is the shape of the
+ * unbounded sequence this exists to end.
+ *
+ * `reached` NEVER rejects: it is a race arm, and an arm that can reject would turn "we ran out of
+ * time" into a throw the caller has to distinguish from a real fault.
+ */
+const CEILING_REACHED = Symbol("send-attempt-ceiling");
+
+interface AttemptCeiling {
+  readonly reached: Promise<typeof CEILING_REACHED>;
+  /** Stop the timer. Idempotent, and REQUIRED — a live timer keeps a Node process awake. */
+  cancel(): void;
+}
+
+function startAttemptCeiling(ms: number): AttemptCeiling {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const reached = new Promise<typeof CEILING_REACHED>((resolve) => {
+    timer = setTimeout(() => resolve(CEILING_REACHED), ms);
+  });
+  return {
+    reached,
+    cancel: () => {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+    },
+  };
+}
+
+/**
+ * Race a phase against the attempt ceiling.
+ *
+ * The losing promise is NOT cancelled and must not be — there is no way to un-send an envelope,
+ * and on a host whose process outlives the response (the desktop's local engine) the abandoned
+ * submission goes on to its own finalizer, which is exactly the recovery this design wants: the
+ * row flips to `sent` on its own and the client learns it from the next `/sync`. On a serverless
+ * host the invocation ends instead and the reservation is resolved by the same verify-by-Sent
+ * recovery a crashed attempt has always used. Neither host resends.
+ *
+ * The caller is therefore responsible for what happens to an abandoned promise — see the two
+ * call sites in {@link SendService.send}, which close a leaked socket in one case and let the
+ * submission finish in the other.
+ */
+async function raceCeiling<T>(work: Promise<T>, ceiling: AttemptCeiling): Promise<{ timedOut: true } | { timedOut: false; value: T }> {
+  const outcome = await Promise.race([
+    work.then((value) => ({ timedOut: false as const, value })),
+    ceiling.reached.then(() => ({ timedOut: true as const })),
+  ]);
+  return outcome;
+}
+
+/**
+ * The per-phase millisecond costs of ONE attempt, logged once when it settles.
+ *
+ * It exists because "sending is slow" was, for the whole life of this path, a claim nobody could
+ * decompose: the request awaits a reservation transaction, an object-storage read, a cold IMAP
+ * dial, a full SMTP session, an IMAP APPEND and three more transactions, and the answer to WHICH
+ * of them costs the seconds is different per provider — measured, the dial dominates on one
+ * provider and is a rounding error on another. A log line that names the phases turns the next
+ * report of a slow send into a reading rather than an investigation.
+ */
+interface SendPhaseTimings {
+  reserveMs: number;
+  /** Staged-attachment fetch + a forward's IMAP part streaming. 0 when the send carries neither. */
+  assembleMs: number;
+  /** `openSendAdapter` — credential decrypt, DNS, TCP, TLS, LOGIN, LIST. */
+  openMs: number;
+  /** `adapter.send` — the SMTP session plus the Sent-folder APPEND. */
+  submitMs: number;
+  finalizeMs: number;
+  /** The sent-copy projection. 0 when the adapter reported no append. */
+  projectMs: number;
+  totalMs: number;
 }
 
 /** What the RESERVE tx resolves to: a fresh reservation, or an already-existing row to branch on. */
@@ -641,10 +785,22 @@ export class SendService {
     deps: SendDeps,
     input: SendInput = {},
   ): Promise<SendResult> {
+    const started = Date.now();
+    const phases: SendPhaseTimings = {
+      reserveMs: 0, assembleMs: 0, openMs: 0, submitMs: 0, finalizeMs: 0, projectMs: 0, totalMs: 0,
+    };
+
     // ── 1. RESERVE (short tx, NO network) ────────────────────────────────────
     const reservation = await this.reserve(ctx, draftId, idempotencyKey, deps, input);
+    phases.reserveMs = Date.now() - started;
 
     // A same-key request that hit the UNIQUE reservation: branch on stored status.
+    //
+    // NOT under the ceiling. This arm is a read of a settled row plus, for a provably-stale one,
+    // a verify-by-Sent probe; there is no envelope in it and nothing for a ceiling to protect
+    // against beyond the socket deadlines the probe already carries. Putting it under one would
+    // also mean a timed-out RECOVERY answered `queued`, which is a claim about a submission this
+    // request never made.
     if (reservation.kind === "existing") {
       return this.resumeExisting(ctx, reservation.row, reservation.mailboxId, deps);
     }
@@ -690,57 +846,155 @@ export class SendService {
     // and it keeps the verify-by-Sent recovery it has always had. The boundary is now exactly
     // "has anything been offered to a server yet", which is the only line that makes `failed`
     // honest.
-    let adapter: Awaited<ReturnType<OpenSendAdapter>>;
+    //
+    // ── AND THE CEILING RUNS OVER BOTH HALVES, SPLIT ON EXACTLY THIS BOUNDARY ────────────────
+    //
+    // {@link SEND_ATTEMPT_CEILING_MS} bounds the attempt as a whole, and the window is what gives
+    // a breach its meaning. Running out of time in HERE is a definite non-delivery for the same
+    // reason a throw in here is: no envelope has been offered. Running out of time BELOW is the
+    // unknown fate, and is answered `queued` rather than finalized.
+    const ceiling = startAttemptCeiling(deps.attemptCeilingMs ?? SEND_ATTEMPT_CEILING_MS);
     try {
-      await this.assemble(ctx, reservation, deps, input);
-      adapter = await deps.openSendAdapter(mailboxId);
-    } catch (err) {
-      // The sentence goes in with the terminal write, because on the scheduled path this row IS
-      // the only channel — see `finalizeFailed`. A typed refusal is written to be read; anything
-      // else is a diagnostic and gets the standing sentence instead.
-      await this.finalizeFailed(ctx, sendId, draftId,
-        err instanceof ServiceError ? err.message : SEND_FAILED_SENTENCE);
-      throw err;
-    }
-
-    try {
-      let providerMessageId: string;
-      /**
-       * THE COPY THE SEND PATH JUST PUT IN THE USER'S SENT FOLDER — locator + the exact bytes.
-       *
-       * Absent for a spy, and for any adapter that files sent mail some other way; the projection
-       * below is then skipped and the Sent-folder watch is the only path, exactly as before.
-       */
-      let appended: AppendedSent | undefined;
+      let adapter: Awaited<ReturnType<OpenSendAdapter>>;
+      const tOpen = Date.now();
+      // ONE promise for the whole window, so the ceiling races the window and not one call in it.
+      const opening = (async () => {
+        await this.assemble(ctx, reservation, deps, input);
+        phases.assembleMs = Date.now() - tOpen;
+        return deps.openSendAdapter(mailboxId);
+      })();
+      let opened: { timedOut: true } | { timedOut: false; value: Awaited<ReturnType<OpenSendAdapter>> };
       try {
-        const res = await adapter.send(msg);
-        providerMessageId = res.providerMessageId;
-        appended = res.appended;
-      } catch {
-        // SMTP threw → the delivery is AMBIGUOUS (it may have reached the server
-        // before the failure). VERIFY by Sent rather than assume either way; NEVER
-        // blindly resend. Reuse the still-open adapter for the probe.
-        const inSent = await adapter.messageInSent(mintedMessageId);
-        if (inSent) {
-          const seq = await this.finalizeSent(ctx, sendId, mintedMessageId, draftId, mailboxId);
-          return { status: "sent", providerMessageId: mintedMessageId, draftId, seq };
-        }
-        const seq = await this.finalizeUnverified(ctx, sendId, draftId);
-        return { status: "unverified", providerMessageId: null, draftId, seq };
+        opened = await raceCeiling(opening, ceiling);
+      } catch (err) {
+        // The sentence goes in with the terminal write, because on the scheduled path this row IS
+        // the only channel — see `finalizeFailed`. A typed refusal is written to be read; anything
+        // else is a diagnostic and gets the standing sentence instead.
+        await this.finalizeFailed(ctx, sendId, draftId,
+          err instanceof ServiceError ? err.message : SEND_FAILED_SENTENCE);
+        throw err;
       }
+      phases.openMs = Date.now() - tOpen;
+      if (opened.timedOut) {
+        // NOTHING WAS OFFERED, so this is the window's own outcome and is recorded as one.
+        //
+        // The abandoned `opening` is not cancelled — nothing can cancel a dial in flight — so it
+        // is followed to close whatever socket it eventually produces. A LOGIN that lands after
+        // this answer would otherwise leave an authenticated connection open with no handle to it,
+        // which on a long-lived host accumulates one per timed-out send. Its own rejection is
+        // swallowed: the send is already finalized and the error has nowhere truthful to go.
+        void opening.then(
+          (a) => a.close().catch(() => { /* the connection is already broken */ }),
+          () => { /* the dial that timed out also failed; nothing was opened */ },
+        );
+        await this.finalizeFailed(ctx, sendId, draftId, SEND_TIMEOUT_SENTENCE);
+        this.logPhases(deps, ctx, draftId, "failed", phases, started);
+        throw new ServiceError("send_timeout", 504, SEND_TIMEOUT_SENTENCE, undefined, true);
+      }
+      adapter = opened.value;
 
-      // ── 3. FINALIZE (short tx) ──────────────────────────────────────────────
-      const seq = await this.finalizeSent(ctx, sendId, providerMessageId, draftId, mailboxId);
+      /**
+       * THE SUBMISSION — one promise, so the ceiling can stop waiting for it WITHOUT stopping it.
+       *
+       * It owns `adapter.close()` in its own `finally` rather than the caller's, and that is the
+       * whole reason it is a closure: once the ceiling has been reached this function has returned
+       * and there is no caller left to run a `finally`. Closing the adapter out from under a live
+       * SMTP session would also be the one thing that could turn a slow send into a failed one.
+       *
+       * ON A HOST WHOSE PROCESS OUTLIVES THE RESPONSE this promise runs to completion and calls
+       * the real finalizer, so a send that beat the clock by a second still lands as `sent`, the
+       * draft's own change is emitted, and the client learns it from the next `/sync` — the
+       * standalone door's "the submission continues in its own loop", with no loop to write.
+       * On a serverless host the invocation ends here instead and the reservation is left for
+       * verify-by-Sent, exactly as a crashed attempt always was. Neither host resends.
+       */
+      const submitting = (async (): Promise<SendResult> => {
+        try {
+          let providerMessageId: string;
+          /**
+           * THE COPY THE SEND PATH JUST PUT IN THE USER'S SENT FOLDER — locator + the exact bytes.
+           *
+           * Absent for a spy, and for any adapter that files sent mail some other way; the projection
+           * below is then skipped and the Sent-folder watch is the only path, exactly as before.
+           */
+          let appended: AppendedSent | undefined;
+          const tSubmit = Date.now();
+          try {
+            const res = await adapter.send(msg);
+            providerMessageId = res.providerMessageId;
+            appended = res.appended;
+          } catch {
+            // SMTP threw → the delivery is AMBIGUOUS (it may have reached the server
+            // before the failure). VERIFY by Sent rather than assume either way; NEVER
+            // blindly resend. Reuse the still-open adapter for the probe.
+            const inSent = await adapter.messageInSent(mintedMessageId);
+            phases.submitMs = Date.now() - tSubmit;
+            if (inSent) {
+              const seq = await this.finalizeSent(ctx, sendId, mintedMessageId, draftId, mailboxId);
+              return { status: "sent", providerMessageId: mintedMessageId, draftId, seq };
+            }
+            const seq = await this.finalizeUnverified(ctx, sendId, draftId);
+            return { status: "unverified", providerMessageId: null, draftId, seq };
+          }
+          phases.submitMs = Date.now() - tSubmit;
 
-      // ── 4. RECORD-AT-SEND (a SEPARATE short tx, best-effort) ────────────────
-      //
-      // AFTER the finalize and outside its transaction, both deliberately. See
-      // `projectSentCopy` for why a failure here may never reach the caller.
-      await this.projectSentCopy(ctx, mailboxId, appended, deps);
-      return { status: "sent", providerMessageId, draftId, seq };
+          // ── 3. FINALIZE (short tx) ──────────────────────────────────────────────
+          const tFinalize = Date.now();
+          const seq = await this.finalizeSent(ctx, sendId, providerMessageId, draftId, mailboxId);
+          phases.finalizeMs = Date.now() - tFinalize;
+
+          // ── 4. RECORD-AT-SEND (a SEPARATE short tx, best-effort) ────────────────
+          //
+          // AFTER the finalize and outside its transaction, both deliberately. See
+          // `projectSentCopy` for why a failure here may never reach the caller.
+          const tProject = Date.now();
+          await this.projectSentCopy(ctx, mailboxId, appended, deps);
+          phases.projectMs = Date.now() - tProject;
+          return { status: "sent", providerMessageId, draftId, seq };
+        } finally {
+          await adapter.close().catch(() => { /* the connection is already broken */ });
+        }
+      })();
+
+      const settled = await raceCeiling(submitting, ceiling);
+      if (settled.timedOut) {
+        // UNKNOWN FATE, and the reservation says so by staying exactly as it is: `pending`, with
+        // its `send_key` standing. That is the state `resumeExisting` already knows how to read,
+        // so the recovery this answer hands over to is the one that has always existed.
+        //
+        // The abandoned submission keeps its own error handler for the serverless case, where
+        // nothing is listening any more and an unhandled rejection would take the process with it.
+        void submitting.catch((err: unknown) => {
+          (deps.log ?? defaultLog).warn("send_abandoned_after_ceiling", {
+            draftId, sendId, err,
+            reason: "the attempt passed the ceiling and the caller was answered `queued`; this "
+              + "reservation stays `pending` with its key, and verify-by-Sent resolves it",
+          });
+        });
+        this.logPhases(deps, ctx, draftId, "queued", phases, started);
+        return { status: "queued", providerMessageId: null, draftId, seq: reservation.seq };
+      }
+      this.logPhases(deps, ctx, draftId, settled.value.status, phases, started);
+      return settled.value;
     } finally {
-      await adapter.close();
+      ceiling.cancel();
     }
+  }
+
+  /**
+   * One line per settled attempt, naming what each phase cost. See {@link SendPhaseTimings}.
+   *
+   * `info`, not `debug`: this is the only record of how long a person waited, and it is the
+   * evidence any future "sending is slow" report gets read against. It carries no address, no
+   * subject and no recipient — the draft id and the outcome are enough to join it to everything
+   * else, and a log line about a message may not quote the message.
+   */
+  private logPhases(
+    deps: SendDeps, ctx: ServiceContext, draftId: string,
+    status: SendResult["status"], phases: SendPhaseTimings, started: number,
+  ): void {
+    phases.totalMs = Date.now() - started;
+    (deps.log ?? defaultLog).info("send_phases", { draftId, accountId: ctx.accountId, status, ...phases });
   }
 
   /**

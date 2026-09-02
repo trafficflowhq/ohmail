@@ -93,12 +93,65 @@ import { scheduleLabel } from "./format";
 import { EMPTY_RICH, parseRichValue, serializeRichValue, type RichValue } from "./rich-text";
 import type { SignatureState } from "./signature";
 
-export type SendPhase = "idle" | "sending" | "queued" | "unverified" | "failed";
+export type SendPhase = "idle" | "sending" | "sent" | "queued" | "unverified" | "failed";
+
+/**
+ * How long the delivered state is held on screen before the surface closes — the beat.
+ *
+ * The composer used to close on the confirmation itself, which meant the only thing the reader
+ * ever saw of a successful send was the surface disappearing. That reads as "something happened"
+ * and not as "this was sent", and on a send that took four seconds it reads as neither. Six
+ * hundred milliseconds is long enough for the button's own `sent` state to be seen and short
+ * enough that nobody waits for it.
+ *
+ * It is NOT a delay on the delivery, on the toast, or on the triage discharge: all of those run
+ * at the confirmation, exactly as before. Only the closing is on the beat.
+ */
+export const SENT_BEAT_MS = 600;
+
+/**
+ * When a send that is still going stops saying "Sending" and starts saying "Still sending".
+ *
+ * Measured against the thing it describes: a healthy send on a plain IMAP/SMTP mailbox settles
+ * in well under a second and a Gmail mailbox takes 2–6 s, mostly in the cold dial. So four
+ * seconds is past every ordinary send and short of the point where a person decides the button
+ * is broken — the state it answers.
+ */
+export const SENDING_LONG_MS = 4_000;
 
 export interface SendState {
   phase: SendPhase;
   /** The server's or the transport's own words, for `failed`. */
   reason?: string;
+  /**
+   * WHICH `queued` THIS IS, and the difference is the difference between two sentences.
+   *
+   * `true` — THE SERVER ACCEPTED IT. The reservation is committed under this key and the
+   * submission is still being handed to the mail server (the send route's own `queued`, past its
+   * attempt ceiling). So "Accepted. ohmail sends it on its next pass." is a true statement, and
+   * the surface may close on it: the draft row carries the outcome from here.
+   *
+   * ABSENT — the request may never have arrived. A transport rejection, a replay hold, an
+   * offline press: the intent is in the durable outbox and the retry driver is trying. The only
+   * honest line is "Not sent yet", and the surface stays open.
+   *
+   * Saying "Accepted" about a request nobody received is the exact class of false claim the
+   * four-phase machine exists to prevent, which is why this is a field and not an inference from
+   * the phase.
+   */
+  accepted?: true;
+  /** A `sent` that settled a SEND-LATER — the button says "Scheduled", not "Sent". */
+  scheduled?: true;
+  /**
+   * When the current phase began, in `Date.now()` ms — for `sending` only, and read by
+   * `SendStatus` to swap its line at {@link SENDING_LONG_MS}.
+   *
+   * On the STATE rather than in a timer inside the status line, because the phase can be entered
+   * and left by four different paths (the press, a flush minutes later, a rejection, the beat)
+   * and a component-local timer would have to be re-armed correctly by each of them. A timestamp
+   * is re-derived correctly by construction.
+   */
+  since?: number;
   /**
    * The server's stable machine name for the refusal, when it sent one.
    *
@@ -261,6 +314,82 @@ export function writeReplyMeta(lane: string, meta: ReplyEditorMeta): void {
   }
 }
 
+/**
+ * DROP THE PER-LANE SCRATCH a settled send is done with — the body buffer and the editor meta.
+ *
+ * Module-level and shared, because two different endings now spend it: a delivery (`settle`) and
+ * the server's accepted-pending hand-off, which closes the surface without discharging anything
+ * else. A second copy of "which keys is this lane holding" is a second place for a lane to leak a
+ * draft that outlives the message it was.
+ *
+ * Every write is guarded: private mode refuses `localStorage` outright, and a lane that could not
+ * store anything has nothing to remove.
+ */
+export function clearLaneScratch(key: string, m: MailSend, owner: string | null): void {
+  if (m.inReplyTo === null) {
+    if (key === COMPOSE_SEND_KEY) {
+      clearComposeDraft(owner);
+      // The delivered message's row is spent, and so is the block state keyed to it.
+      if (m.draftId) {
+        try {
+          window.localStorage.removeItem(replyMetaKey(`draft:${m.draftId}`));
+        } catch {
+          /* private mode refuses writes and therefore holds nothing to remove */
+        }
+      }
+      return;
+    }
+    // The INLINE forward — the lane doubles as the scratch suffix, so the note clears here
+    // exactly as a reply's draft does below. The compose form's autosave is deliberately
+    // untouched: this send never used the form, and a half-written compose must survive
+    // somebody forwarding a message mid-sentence.
+    try {
+      window.localStorage.removeItem(replyDraftKey(key));
+      window.localStorage.removeItem(replyMetaKey(key));
+    } catch {
+      /* private mode refuses writes and therefore holds nothing to remove */
+    }
+    return;
+  }
+  try {
+    window.localStorage.removeItem(replyDraftKey(m.inReplyTo));
+    window.localStorage.removeItem(replyMetaKey(m.inReplyTo));
+  } catch {
+    /* private mode refuses writes and therefore holds nothing to remove */
+  }
+}
+
+/**
+ * WHAT THE SEND BUTTON SAYS, and what the button wears while it says it — one derivation, both
+ * surfaces.
+ *
+ * The compose form and the thread's inline dock render the same verb in the same six states, and
+ * a second copy of "which word goes with which phase" is a second place for the button to claim a
+ * delivery that did not happen. That is not hypothetical for one pair in particular: `sent` and
+ * `queued` differ by whether the mail is gone, and they are one `?:` apart.
+ *
+ * `attr` is the value for `data-send`, which is what `packages/ui` paints the state from. Only the
+ * three phases the stylesheet names are ever written — a state it has no rule for would be an
+ * attribute that changes nothing, which reads in the DOM as a claim the CSS is not making. The
+ * not-sent phases deliberately carry none: the button is back at rest and Send is the retry.
+ *
+ * `scheduled` is COMPOSE-ONLY because a send-later appointment is: the reply scope has no such
+ * key, and asking for one would render the key's own name at a reader. The fallback is `sent`,
+ * which for a reply is always the true word.
+ */
+export function sendVerb(
+  state: SendState, scope: "compose" | "reply",
+): { key: "send" | "sending" | "sent" | "scheduled" | "queued"; attr?: "sending" | "sent" | "queued" } {
+  if (state.phase === "sending") return { key: "sending", attr: "sending" };
+  if (state.phase === "sent") {
+    return state.scheduled === true && scope === "compose"
+      ? { key: "scheduled", attr: "sent" }
+      : { key: "sent", attr: "sent" };
+  }
+  if (state.phase === "queued") return { key: "queued", attr: "queued" };
+  return { key: "send" };
+}
+
 /* ── the one rule ─────────────────────────────────────────────────────────────────────── */
 
 /**
@@ -313,7 +442,9 @@ export function writeReplyMeta(lane: string, meta: ReplyEditorMeta): void {
  * `forward-send.test.ts` walks all three.
  */
 export function canSend(state: SendState, m: MailSend): boolean {
-  if (state.phase === "sending" || state.phase === "queued") return false;
+  // `sent` joins the two locked phases: it is the beat between the confirmation and the surface
+  // closing, and a press landing inside it would mint a second key for a message already gone.
+  if (state.phase === "sending" || state.phase === "queued" || state.phase === "sent") return false;
   const isForward = typeof m.forwardOf === "string" && m.forwardOf.length > 0;
   if (!isForward && m.body.trim().length === 0) return false;
   if (m.inReplyTo === null) {
@@ -333,7 +464,12 @@ export function canSend(state: SendState, m: MailSend): boolean {
  */
 export function phaseFor(res: MutationResult): SendState {
   if (res.status === "confirmed") return IDLE;
-  if (res.status === "queued") return { phase: "queued" };
+  // `send_queued` is the SERVER's own accepted-pending answer (HTTP 202 from the send route past
+  // its attempt ceiling): the reservation is committed under this key. Every other queued result
+  // is the transport's — the request may never have arrived. See `SendState.accepted`.
+  if (res.status === "queued") {
+    return res.error?.code === "send_queued" ? { phase: "queued", accepted: true } : { phase: "queued" };
+  }
   if (res.error?.code === "send_unverified") return { phase: "unverified" };
   return {
     phase: "failed",
@@ -365,6 +501,33 @@ export function clearsTriage(state: string | undefined): boolean {
  * resolves the row, and a client hammering it faster than that buys nothing.
  */
 const BACKOFF_MS = [5_000, 10_000, 20_000, 40_000, 60_000];
+
+/**
+ * LET THE ACKNOWLEDGEMENT REACH THE SCREEN BEFORE THE WORK STARTS.
+ *
+ * `setPhase(key, {phase:"sending"})` is a React state update inside a click handler, so React
+ * commits it when the handler RETURNS. `engine.mutate` was called before that — and its prologue
+ * is not free: it enriches the mutation, writes the durable outbox entry, and on a send with files
+ * base64s the attachment bytes. All of that ran in the same task the commit was waiting to finish,
+ * so on the sends that are slowest to start the button was still saying "Send" while the work was
+ * already under way. That is the "nothing seems to be happening" of the report, and it happens
+ * before a single byte reaches the network.
+ *
+ * A TASK BOUNDARY, not a frame. `setTimeout(…, 0)` puts the mutation's prologue in a LATER task
+ * than the one the handler and React's commit share, which is the whole ordering guarantee this
+ * needs — the paint follows the commit on the browser's own schedule, and nothing here has to
+ * know when. `requestAnimationFrame` was tried and is deliberately not used: it would make the
+ * press depend on a frame clock, which a hidden tab throttles to nothing and a non-visual host
+ * does not have at all, so the one gesture in the app that must never stall would be waiting on
+ * the least reliable timer in the platform.
+ *
+ * A MICROTASK would not do: microtasks drain before the task ends, so the prologue would still be
+ * in front of the commit. Anything that awaits a press therefore has to cross a task boundary —
+ * which is why the suites' drain helpers flush timers rather than only `Promise.resolve()`.
+ */
+function afterPaint(): Promise<void> {
+  return new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+}
 
 export function useMailSend(
   engine: OhmailEngine,
@@ -414,42 +577,40 @@ export function useMailSend(
   }, []);
 
   /**
+   * The pending BEATS, by lane — the timers that close a surface {@link SENT_BEAT_MS} after its
+   * terminal state was shown.
+   *
+   * Held so they can be cleared on unmount (a timer that fires into a dead tree would run
+   * `onSettled` for a surface that is already gone) and re-armed rather than stacked when one
+   * lane reaches two beat-worthy states in a row, which a flush can produce.
+   */
+  const beats = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+
+  const beat = useCallback((key: string, then: () => void) => {
+    const held = beats.current.get(key);
+    if (held !== undefined) clearTimeout(held);
+    beats.current.set(key, setTimeout(() => {
+      beats.current.delete(key);
+      then();
+    }, SENT_BEAT_MS));
+  }, []);
+
+  useEffect(() => {
+    const held = beats.current;
+    return () => {
+      for (const timer of held.values()) clearTimeout(timer);
+      held.clear();
+    };
+  }, []);
+
+  /**
    * A send that DID land. The scratch draft goes, the triage debt goes, and the surface
    * closes if it is still the one on screen.
    */
   const settle = useCallback(
     (key: string, m: MailSend) => {
-      if (m.inReplyTo === null) {
-        if (key === COMPOSE_SEND_KEY) {
-          clearComposeDraft(owner.current);
-          // The delivered message's row is spent, and so is the block state keyed to it.
-          if (m.draftId) {
-            try {
-              window.localStorage.removeItem(replyMetaKey(`draft:${m.draftId}`));
-            } catch {
-              /* private mode refuses writes and therefore holds nothing to remove */
-            }
-          }
-        } else {
-          // The INLINE forward settled — the lane doubles as the scratch suffix, so the note
-          // clears here exactly as a reply's draft does below. The compose form's autosave is
-          // deliberately untouched: this send never used the form, and a half-written compose
-          // must survive somebody forwarding a message mid-sentence.
-          try {
-            window.localStorage.removeItem(replyDraftKey(key));
-            window.localStorage.removeItem(replyMetaKey(key));
-          } catch {
-            /* private mode refuses writes and therefore holds nothing to remove */
-          }
-        }
-      } else {
-        try {
-          window.localStorage.removeItem(replyDraftKey(m.inReplyTo));
-          window.localStorage.removeItem(replyMetaKey(m.inReplyTo));
-        } catch {
-          /* private mode refuses writes and therefore holds nothing to remove */
-        }
-
+      clearLaneScratch(key, m, owner.current);
+      if (m.inReplyTo !== null) {
         // ── the reply IS the evidence the message was answered ─────────────────────────
         //
         // Read at CONFIRM time, not at press time: the state may have moved while the request
@@ -481,8 +642,20 @@ export function useMailSend(
         }
       }
 
-      setPhase(key, IDLE);
-      settledRef.current(key, m);
+      /**
+       * THE DELIVERED STATE IS SHOWN, and only then does the surface close — see
+       * {@link SENT_BEAT_MS}. Everything above this line ran at the confirmation and is
+       * unaffected: the scratch is cleared, the triage debt is discharged, the toast is raised
+       * below. The beat delays exactly one thing, the closing.
+       *
+       * `scheduled` rides the state for the same reason the toast branches on `m.sendAt`:
+       * nothing was sent, an appointment was made, and the button may not say "Sent" over it.
+       */
+      setPhase(key, m.sendAt ? { phase: "sent", scheduled: true } : { phase: "sent" });
+      beat(key, () => {
+        setPhase(key, IDLE);
+        settledRef.current(key, m);
+      });
       // Each lane's own sentence — keyed on the LANE, not the mutation shape, for the same
       // reason the cleanup above is. A forward is not a reply, and a toast that said "Reply
       // sent." over a forward was measured live; the key shim keeps the sentence honest until
@@ -502,7 +675,7 @@ export function useMailSend(
             : t("reply.toastSent"),
       );
     },
-    [engine, setPhase, toast, t],
+    [engine, setPhase, toast, t, beat],
   );
 
   /**
@@ -553,8 +726,31 @@ export function useMailSend(
       // draft and discharges the debt exactly as the first press would have.
       if (res.status === "confirmed") settle(key, m);
       else setPhase(key, next);
+
+      /**
+       * THE SERVER HAS IT — hand the surface back, on the same beat a delivery gets.
+       *
+       * Only for `accepted`, i.e. the send route's own 202: the reservation is committed under
+       * this key, so the draft row is now the record of what happens next and the editor has
+       * nothing left to hold. A transport-queued send is NOT this — the request may never have
+       * arrived — and its surface stays open under "Not sent yet".
+       *
+       * What is deliberately NOT done here is everything `settle` does beyond closing. The lane
+       * stays LOCKED and its durable key stays claimed, because the intent is still out there and
+       * a second press would be a second delivery; the triage debt is NOT discharged, because a
+       * reply that has not landed has answered nothing; and the toast says accepted rather than
+       * sent. The scratch IS cleared — the server's row carries the message from here, and a
+       * local copy that outlived it would come back as a phantom draft beside it.
+       */
+      if (res.status === "queued" && next.accepted === true) {
+        beat(key, () => {
+          clearLaneScratch(key, m, owner.current);
+          settledRef.current(key, m);
+          toast(t(key === COMPOSE_SEND_KEY ? "compose.statusAccepted" : "reply.statusAccepted"));
+        });
+      }
     },
-    [settle, setPhase],
+    [settle, setPhase, beat, toast, t],
   );
 
   const flush = useCallback(async (): Promise<void> => {
@@ -639,9 +835,12 @@ export function useMailSend(
       }
 
       locked.current.add(key);
-      setPhase(key, { phase: "sending" });
-      void engine
-        .mutate(m, { key: sendKey })
+      setPhase(key, { phase: "sending", since: Date.now() });
+      // ACKNOWLEDGE FIRST, WORK SECOND — see {@link afterPaint}. The lock and the durable claim
+      // above are synchronous and stay that way: they are what make a second press impossible,
+      // and a yield in front of either would open the window they exist to close.
+      void afterPaint()
+        .then(() => engine.mutate(m, { key: sendKey }))
         .then((res) => {
           absorb(key, m, res);
           if (res.status === "queued") arm();

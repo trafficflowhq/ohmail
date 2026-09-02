@@ -55,7 +55,7 @@ import { Button, Kbd } from "@ohmail/ui";
 import { ComposeAttach, composeAttachCap } from "../components/ComposeAttach";
 import { rowAddress, senderName } from "./format";
 import { displayAddress } from "./idn";
-import { canSend, type SendState } from "./mail-send";
+import { canSend, sendVerb, type SendState } from "./mail-send";
 import { parseRecipients } from "./compose";
 import { forwardEnvelopePlan, forwardSend } from "./forward-send";
 import { RichEditor } from "./RichEditor";
@@ -523,6 +523,7 @@ export function InlineReply({
 
 
   const inFlight = send.phase === "sending" || send.phase === "queued";
+  const verb = sendVerb(send, "reply");
   // LOCKED, not merely styled: `disabled` is what stops a second key being minted. Shared
   // with the state machine — see `canSend`. The mutation it judges carries the SAME envelope
   // fields `AppShell.sendReply` will put on the wire (`replyEnvelopePlan` over the same
@@ -834,9 +835,13 @@ export function InlineReply({
           variant="primary"
           disabled={locked}
           aria-busy={send.phase === "sending" || undefined}
+          // THE BUTTON CARRIES THE LANE'S PHASE — see `sendVerb`. It is the same attribute and the
+          // same word on both send surfaces, because "sent" and "queued" differ by whether the
+          // mail is gone and a surface may not reach its own verdict about that.
+          data-send={verb.attr}
           onClick={() => onSend()}
         >
-          {send.phase === "sending" ? t("sending") : t("send")}
+          {t(verb.key)}
           {/* The verb's chord, from the live registry — the action-bar law (§12): an action
               button wears its keycap always; a provider-less mount has no binding, no cap. */}
           {sendChord ? <Kbd>{chordKeys("mod+Enter").join(" ")}</Kbd> : null}

@@ -16,8 +16,9 @@
  * The `scope` picks the wording (a reply and a message are different nouns) and nothing else;
  * the tones, the element and the announcement are the same for both.
  */
+import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
-import type { SendState } from "./mail-send";
+import { SENDING_LONG_MS, type SendState } from "./mail-send";
 
 type Tone = "pending" | "warn" | "error";
 
@@ -29,11 +30,56 @@ export function SendStatus({
   scope: "reply" | "compose";
 }) {
   const t = useTranslations(scope);
+
+  /**
+   * HAS THIS SEND BEEN GOING LONG ENOUGH TO SAY SO? — see {@link SENDING_LONG_MS}.
+   *
+   * A send that is still running after four seconds is no longer described by "Sending your
+   * message": the reader has already decided nothing is happening, and repeating the opening
+   * sentence is what makes a working button look broken. The line changes to say the product
+   * still knows about it.
+   *
+   * Armed from `send.since`, the stamp the phase carries, rather than from a mount: the same
+   * component instance sits through a whole compose session, and a timer keyed on its lifetime
+   * would fire once and then never again for the next send. Re-armed on every change of that
+   * stamp and cleared on every other phase, so a send that finishes in 200 ms leaves no timer
+   * and a second send starts its own clock.
+   */
+  const since = send.phase === "sending" ? send.since : undefined;
+  const [longAt, setLongAt] = useState(false);
+  useEffect(() => {
+    if (since === undefined) {
+      setLongAt(false);
+      return;
+    }
+    const elapsed = Date.now() - since;
+    if (elapsed >= SENDING_LONG_MS) {
+      setLongAt(true);
+      return;
+    }
+    setLongAt(false);
+    const timer = setTimeout(() => setLongAt(true), SENDING_LONG_MS - elapsed);
+    return () => clearTimeout(timer);
+  }, [since]);
+
   const line: { tone: Tone; text: string } | null =
     send.phase === "sending"
-      ? { tone: "pending", text: t("statusSending") }
+      ? { tone: "pending", text: t(longAt ? "statusSendingLong" : "statusSending") }
       : send.phase === "queued"
-        ? { tone: "pending", text: t("statusQueued") }
+        /**
+         * TWO QUEUED STATES, TWO SENTENCES, AND THE DIFFERENCE IS WHO HAS THE MESSAGE.
+         *
+         * `accepted` is the send route's own answer: it reserved the send under this key and
+         * stopped waiting for the submission at its attempt ceiling, so the server HAS it and
+         * "Accepted. ohmail sends it on its next pass." is true. Without it the request may
+         * never have arrived at all — a transport rejection, an offline press — and the only
+         * honest line is that it has not gone yet and we are still trying.
+         *
+         * Branching on the flag rather than on the phase is the whole point: saying "Accepted"
+         * about a request nobody received is exactly the false claim this component exists to
+         * prevent, and it is one careless `else` away.
+         */
+        ? { tone: "pending", text: t(send.accepted === true ? "statusAccepted" : "statusQueued") }
         : send.phase === "unverified"
           ? { tone: "warn", text: t("statusUnverified") }
           : send.phase === "failed"

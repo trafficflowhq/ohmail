@@ -180,6 +180,25 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // field cannot be added without being emitted.
   // ── the sentence a human reads, and the config name a human checks ──
   "connectMs", "leaseMs", "foldersMs", "kickstartMs", "watchMs", "attachMs",
+  // ── The SEND path's own phase durations, and `sendId`, added WITH the line that emits them ──
+  //
+  // `send_phases` decomposes one attempt: the reservation transaction, the attachment assembly,
+  // the cold dial (`openMs` — measured as the largest and by far the most variable phase on one
+  // shipped provider), the SMTP session and Sent APPEND, the finalize, and the sent-copy
+  // projection. The whole point of the line is the SPLIT — a total nobody can decompose is the
+  // state that made "sending is slow" an investigation rather than a reading — so a census that
+  // keeps `totalMs` and drops the other six keeps the one number that was never the question.
+  //
+  // Added here after this list refused them on the first real run (`droppedFields` named all six)
+  // — the fourth time that has happened, and the second where the suite could not see it because
+  // it asserts a FAKE logger. The guard for these names drives the real one.
+  //
+  // Every value is a duration in milliseconds computed from two clock reads. `sendId` is the
+  // `outbound_sends` ROW UUID, the same non-secret shape and justification as `messageId` and
+  // `threadId` above: it correlates a line to the reservation row and carries no mail content —
+  // not the recipient, not the subject, and never the minted `Message-ID` header, which reads
+  // like an address and is logged nowhere.
+  "reserveMs", "assembleMs", "openMs", "submitMs", "finalizeMs", "projectMs", "sendId",
   "reason", "detail", "kind", "severity", "phase", "state", "verdict", "configVar",
   // ── The `SIZE` back-fill pass's counts and its two per-mailbox facts ──
   //
