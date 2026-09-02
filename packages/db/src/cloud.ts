@@ -217,7 +217,7 @@ export {
   type WeightedDebitReason,
   // The account-level AI off switch (migration 0022). Read by the gate itself on every
   // spend decision; these two are the settings surface over the same column.
-  getAiEnabled, setAiEnabled,
+  getAiAnswer, getAiEnabled, setAiEnabled,
   type AiCreditGate, type AiCreditGateOptions, type AiSpendOutcome, type AiRefusalReason,
 } from "./ai-gate.js";
 

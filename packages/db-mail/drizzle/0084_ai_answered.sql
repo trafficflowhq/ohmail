@@ -1,0 +1,115 @@
+-- "HAS ANYBODY BEEN ASKED ABOUT AI?" — the question `accounts.ai_enabled` cannot answer.
+--
+-- ══ THE DEFECT, AND IT IS NOT THE ONE THE GAP ROW DESCRIBED ══════════════════════════════
+--
+-- `OnboardingAi` is a FOUR-state union — `unset` · `off` · `on` · `on-unconfigured` — because
+-- "answered no" and "never asked" need opposite behaviour: the first walks past the question,
+-- the second stops to ask it. The hosted door could supply only three, and the file that says so
+-- (`useCloudFirstRun.ts`) collapsed the missing one into `unset`:
+--
+--     const ai = aiEnabled === null ? "unset" : aiEnabled ? "on" : "unset";
+--
+-- The row that filed this said `ai_enabled` "rests false", and therefore that the cost was one
+-- repeated question on a resumed run. **BOTH halves of that are wrong, and the truth is worse.**
+-- `ai_enabled` is `NOT NULL DEFAULT true` (migration 0019) and `aiEnabledFor` falls back to
+-- `true` for a missing row. So a brand-new hosted account reports `on`, and
+-- `deriveOnboardingStep`'s row 5 — `if (facts.ai === "unset") return "ai"` — never fires.
+--
+-- MEASURED, not read: driving the derivation with a fresh hosted account (mailbox consented,
+-- import running, `ai: "on"`) answers `pull`. The AI screen is on the forward path and is never
+-- reached, because the window's write re-derives past it. So on that door the question is not
+-- asked twice; **it is not asked at all**, and the account's AI is already on — which is a
+-- consent question about spending the account's own credits, skipped by default.
+--
+-- ══ WHY A COLUMN, AND WHY THIS ONE ══════════════════════════════════════════════════════
+--
+-- The boolean answers "is AI on". It cannot answer "was anyone asked", because its resting value
+-- is indistinguishable from an answer — in EITHER direction. That is not a client bug to be
+-- patched in a derivation: no arrangement of one boolean carries two independent facts.
+--
+--   accounts.ai_answered_at   when a human answered the AI question for this account, or NULL for
+--                    "nobody has been asked". Read as `IS NOT NULL` and never as a deadline —
+--                    `auto_suggest_at`'s own rule, and for its reason: a skewed clock must not
+--                    be able to make it mean something else.
+--
+-- The posture becomes `answeredAt === null ? "unset" : aiEnabled ? "on" : "off"`, which supplies
+-- all four states from two columns and fixes both failures at once: the never-asked account
+-- stops at the question, and the account that said no walks past it for good.
+--
+-- ON `accounts`, DIRECTLY BESIDE `ai_enabled` — and this is a DEPARTURE from the earlier
+-- ruling, which said `account_settings`. That ruling rested on the same false premise the row
+-- did (that `ai_enabled` "rests false"), and it put the answer in a different table from the
+-- question. Three reasons the switch's own row is right:
+--
+--   1. **One write, one row, atomically consistent.** `setAiEnabled` already updates this row.
+--      The stamp joins the UPDATE it is the answer to, so a switch can never exist without its
+--      answer or an answer without its switch — which is exactly the pair whose disagreement is
+--      the defect being closed.
+--   2. **It stays out of the erasure fence's lock chain.** Every `account_settings` writer must
+--      take `fenceErasedAccount` FIRST (accounts → account_settings → change-log), and that
+--      helper lives in `packages/services` while `setAiEnabled` lives in `packages/db`. Putting
+--      the stamp on the settings row would either invert that dependency or move the AI write
+--      into a second layer for one timestamp.
+--   3. **`accounts` is where the fact's subject already is.** `ai_enabled` survives erasure as
+--      part of the pseudonymous billing subject; an instant beside it adds no personal data and
+--      no new retention question.
+--
+-- ══ THE BACKFILL, AND THE MUCH LARGER ONE THAT IS DELIBERATELY NOT HERE ═════════════════
+--
+-- ONE statement, and it is narrow on purpose.
+--
+-- (1) AN ACCOUNT WITH AI SWITCHED OFF HAS ANSWERED. `ai_enabled` is `false` only by an explicit
+--     `PATCH /ai/settings` — the column's default is `true` and so is the missing-row fallback —
+--     so `false` is a decision somebody made, and recording that it happened is a fact rather
+--     than an invention. The INSTANT is not known, and `now()` says exactly what is known and no
+--     more: "this was answered before the migration". 0083 made the same trade for
+--     `organize_consented_at` (`COALESCE(created_at, now())`, because connecting WAS the consent).
+--
+--     Without it, somebody who has deliberately turned AI off and is mid-onboarding is asked
+--     again — which is the SAFE direction, but it is also a question this column exists to stop.
+--
+-- (2) THERE IS NO STATEMENT FOR `ai_enabled = true`, AND THAT ABSENCE IS THE WHOLE POINT. `true`
+--     is the resting value: it says nothing about whether anybody was asked, which is precisely
+--     the defect. Backfilling it would stamp "answered" across every account in production and
+--     make the flow skip the question for ever — shipping the bug as data, where no later fix can
+--     tell the stamped accounts from the answered ones. 0027's rule, stated the other way round:
+--     do not record an observation nobody made.
+--
+-- ONE TABLE, SO NO ROW IS CREATED BY THIS MIGRATION AT ALL. The backfill is an UPDATE of the
+-- `accounts` rows that already exist, which is the whole reason this placement is also the safer
+-- one: an equivalent backfill on `account_settings` would have had to choose between leaving a
+-- residue (accounts with AI off and no settings row) and an upsert that CREATES settings rows in
+-- bulk — and `account_settings` is exactly the table the erasure fence exists to stop a late
+-- writer recreating (`schema-mail.ts`: "a consent-settings PATCH in flight across the erasure
+-- could recreate `account_settings` / doorbell rows a millisecond after the catalog sweep counted
+-- zero"). The `erased_at IS NULL` guard remains for the narrower reason: an erased account's row
+-- survives as the pseudonymous billing subject and must not gain new facts about a person who
+-- asked to be forgotten.
+--
+-- ══ COMPATIBILITY ═══════════════════════════════════════════════════════════════════════
+--
+-- Additive and nullable, so an OLD binary against a migrated database is unaffected: nothing
+-- reads the column until the API that ships with it. The reverse — a NEW binary against an
+-- un-migrated database — is why the deploy order is MIGRATION → API: the AI settings read selects
+-- the column, so an API deployed first answers Postgres 42703 on `GET /account/ai`, which is on
+-- the first-run flow's own path. It therefore joins `MAIL_SCHEMA_MARKERS` in
+-- `packages/api/src/routes/health.ts`, so that mistake reports `503 schema_incomplete` naming
+-- this migration instead of a 500 nobody can attribute. Same shape as 0023, 0025, 0027 and 0083.
+-- The sidecar self-migrates at launch, so the standalone door needs no ordering.
+--
+-- No CHECK: the column is a nullable instant with no closed set, so there is no second catalog
+-- object to probe and a `SCHEMA_CHECK_MARKERS` entry would be a number that means nothing —
+-- 0030's rule, verbatim.
+--
+-- ROLLBACK is `DROP COLUMN`. It is safe on its own, unlike 0083's: the column has no other
+-- writer and the client falls back to the three-state posture it had before, which is the
+-- behaviour this migration replaces rather than a corrupted one.
+
+ALTER TABLE "accounts" ADD COLUMN IF NOT EXISTS "ai_answered_at" timestamp with time zone;--> statement-breakpoint
+-- BACKFILL (1) — see the header. Idempotent: `IS NULL` means a replay writes nothing, which
+-- matters because a real-Postgres test rewinds a fully-migrated database and re-migrates, and
+-- `openLocalDb` re-runs this journal on every desktop launch.
+UPDATE "accounts" SET "ai_answered_at" = now()
+WHERE "ai_enabled" = false
+  AND "erased_at" IS NULL
+  AND "ai_answered_at" IS NULL;

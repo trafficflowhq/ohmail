@@ -904,6 +904,31 @@ export async function getAiEnabled(tx: Tx, accountId: string): Promise<boolean> 
 }
 
 /**
+ * THE SWITCH AND WHETHER ANYBODY WAS ASKED — the pair, because one without the other cannot
+ * answer the onboarding question (migration 0084).
+ *
+ * `answered` is `IS NOT NULL` and never an instant, so a skewed clock cannot turn it into a
+ * different answer — the rule `auto_suggest_at` states and this column inherits.
+ *
+ * A MISSING ROW ANSWERS `{ enabled: true, answered: false }`, which is `aiEnabledFor`'s fail-open
+ * read plus the only honest reading of an absent row: nobody has been asked. The two halves must
+ * agree with the gate or the UI would show a state the spend path does not honour — and the
+ * `answered` half must fail towards ASKING, because the alternative is walking silently past a
+ * consent question about spending somebody's credits.
+ */
+export async function getAiAnswer(
+  tx: Tx, accountId: string,
+): Promise<{ enabled: boolean; answered: boolean }> {
+  const [row] = await tx
+    .select({ aiEnabled: accounts.aiEnabled, aiAnsweredAt: accounts.aiAnsweredAt })
+    .from(accounts)
+    .where(eq(accounts.id, accountId))
+    .limit(1);
+  if (!row) return { enabled: true, answered: false };
+  return { enabled: row.aiEnabled, answered: row.aiAnsweredAt !== null };
+}
+
+/**
  * Set the account's AI switch, and record WHY it changed.
  *
  * ## This is the whole off switch, and it is deliberately this small
@@ -930,10 +955,33 @@ export async function setAiEnabled(
   accountId: string,
   enabled: boolean,
   actor: { userId: string | null; requestId?: string } = { userId: null },
+  /**
+   * The instant the answer was given. Injected so the suite can pin it; the route does not pass
+   * one, and `new Date()` here is the same clock every other writer on this row uses.
+   */
+  now: Date = new Date(),
 ): Promise<{ aiEnabled: boolean; changed: boolean }> {
   const previous = await aiEnabledFor(tx, accountId);
-  if (previous === enabled) return { aiEnabled: enabled, changed: false };
-  await tx.update(accounts).set({ aiEnabled: enabled }).where(eq(accounts.id, accountId));
+  /* ── THE ANSWER IS RECORDED EVEN WHEN THE SWITCH DOES NOT MOVE ─────────────────────────────
+   *
+   * This returned here and wrote NOTHING when `previous === enabled`, which is right for the
+   * switch and wrong for the question — and the case it is wrong in is the common one.
+   * `ai_enabled` rests `true`, so the first-run flow's "Yes" is a write of the value the account
+   * already has: the early return meant the most likely answer anybody gives was never recorded,
+   * the posture stayed "nobody has been asked", and the flow asked again on every resume for ever.
+   *
+   * So the STAMP is unconditional and the rest of the write stays conditional. `changed` still
+   * means what it said — the switch moved — so no caller's reading of it changes, and the audit
+   * row is still only written for a real change (an audit entry whose inverse is the value it
+   * already had is noise). One UPDATE either way: the stamp joins the switch's own row and its
+   * own statement, so an answer can never exist without its switch or a switch without its
+   * answer. See migration 0084 for why the column is here and not on `account_settings`.
+   */
+  if (previous === enabled) {
+    await tx.update(accounts).set({ aiAnsweredAt: now }).where(eq(accounts.id, accountId));
+    return { aiEnabled: enabled, changed: false };
+  }
+  await tx.update(accounts).set({ aiEnabled: enabled, aiAnsweredAt: now }).where(eq(accounts.id, accountId));
   await tx.insert(auditLog).values({
     accountId,
     action: "account.ai_enabled",

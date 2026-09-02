@@ -1,5 +1,5 @@
 import { type Tx } from "@trafficflow/db";
-import { getAiEnabled, setAiEnabled } from "@trafficflow/db/cloud";
+import { getAiAnswer, setAiEnabled } from "@trafficflow/db/cloud";
 import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
@@ -35,7 +35,13 @@ export const aiSettingsRoutes: Route[] = [
     cost: "read",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
-      return jsonResponse({ aiEnabled: await getAiEnabled(ctx.db as unknown as Tx, ctx.accountId) });
+      /* BOTH FACTS, because one cannot answer the onboarding question. `aiEnabled` says whether
+         AI is on; `aiAnswered` says whether anybody was ever asked, which its resting value
+         (`true`) cannot distinguish from a "yes". The first-run posture is a four-state union for
+         exactly that reason — see migration 0084. `aiEnabled` keeps its name and meaning, so the
+         Settings switch that has always read this route is unaffected. */
+      const ai = await getAiAnswer(ctx.db as unknown as Tx, ctx.accountId);
+      return jsonResponse({ aiEnabled: ai.enabled, aiAnswered: ai.answered });
     },
   },
   {
@@ -58,7 +64,12 @@ export const aiSettingsRoutes: Route[] = [
         ctx.db as unknown as Tx, ctx.accountId, body.aiEnabled,
         { userId: ctx.userId, requestId: ctx.requestId },
       );
-      return jsonResponse(result);
+      /* `aiAnswered: true` UNCONDITIONALLY, and it is a fact rather than an optimism: reaching
+         this line means the stamp was written, whether or not the switch moved (`setAiEnabled`
+         records the answer either way — the first-run "Yes" is usually a write of the value the
+         account already had). Echoing it lets the client re-derive its posture with no second
+         round trip, on the same answer the next GET would give. */
+      return jsonResponse({ ...result, aiAnswered: true });
     },
   },
 ];

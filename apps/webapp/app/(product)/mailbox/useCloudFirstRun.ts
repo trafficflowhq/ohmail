@@ -14,18 +14,20 @@
  * `/hello` round trip for this at all, and the operator's AI state (`features.ai`, which is
  * `anthropicApiKey !== null` server-side) is read only where it is going to be shown.
  *
- * ── THE AI POSTURE CANNOT SAY "ASKED, AND THE ANSWER WAS NO" ──────────────────────────────
+ * ── THE AI POSTURE SUPPLIES ALL FOUR STATES NOW, AND THE OLD NOTE HAD IT BACKWARDS ────────
  *
- * `accounts.ai_enabled` is a boolean that rests `false`, so this door reports `unset` for both
- * "never asked" and "answered no". That is a real limitation of what is stored, not a shortcut:
- * `OnboardingAi` exists as a four-state union precisely because those two need opposite
- * behaviour, and this door can only supply three of the four. The stage compensates by walking
- * its own cursor past a "no" instead of re-deriving into the same question — see the AI step in
- * `FirstRun.tsx` — and the residual cost is stated there: a run RESUMED later asks again.
+ * This block used to say `accounts.ai_enabled` "rests false", so the door reported `unset` for
+ * both "never asked" and "answered no", and the cost was one repeated question on a resumed run.
+ * **Both halves were wrong.** The column is `NOT NULL DEFAULT true` (migration 0019) and
+ * `aiEnabledFor` falls back to `true` for a missing row, so a brand-new account reported `on` —
+ * and `deriveOnboardingStep`'s row 5 (`facts.ai === "unset"`) therefore never fired. Measured by
+ * driving the derivation with a fresh hosted account: it answers `pull`. On this door the
+ * question was not asked twice; it was **not asked at all**, on an account whose AI was already
+ * spending its credits.
  *
- * Resolving it properly needs a column (`ai_answered_at`), which is a migration and belongs to
- * whoever next opens `account_settings`. Until then the safe direction is the one taken: ask
- * twice rather than silently skip somebody who was never asked.
+ * Migration 0084 adds `accounts.ai_answered_at` beside the switch, and `GET /account/ai` serves
+ * both facts. The posture below is the whole fix: a null stamp is `unset` WHATEVER the switch
+ * says, because the switch's resting value is not an answer.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -68,6 +70,16 @@ export function useCloudFirstRun(demo: boolean, pairNode?: ReactNode): FirstRunH
    * `off` from an unanswered read would walk silently past the question.
    */
   const [aiEnabled, setAiEnabled] = useState<boolean | null>(null);
+  /**
+   * HAS ANYBODY BEEN ASKED — `accounts.ai_answered_at IS NOT NULL`, the fact the switch cannot
+   * carry (migration 0084). `null` while the read is outstanding, and the posture treats that as
+   * `unset` for {@link aiEnabled}'s reason: "we could not ask" must land on the screen that asks.
+   *
+   * An API deployed before 0084 omits the field, which reads as `false` ⇒ `unset` ⇒ the question
+   * is asked. That is the safe direction on a version skew, and the same direction the four-state
+   * union was written for.
+   */
+  const [aiAnswered, setAiAnswered] = useState<boolean | null>(null);
   /** The operator's key, self-host only. `undefined` until `/hello` answers, and on managed. */
   const [operatorAi, setOperatorAi] = useState<boolean | undefined>(undefined);
 
@@ -75,7 +87,11 @@ export function useCloudFirstRun(demo: boolean, pairNode?: ReactNode): FirstRunH
     if (demo) return;
     let live = true;
     void aiSettings.get()
-      .then((r: { aiEnabled: boolean }) => { if (live) setAiEnabled(r.aiEnabled); })
+      .then((r: { aiEnabled: boolean; aiAnswered?: boolean }) => {
+        if (!live) return;
+        setAiEnabled(r.aiEnabled);
+        setAiAnswered(r.aiAnswered === true);
+      })
       // A FAILED READ STAYS NULL, never false. See the state's own note: the two answers select
       // opposite screens, and "we could not ask" must land on the one that asks.
       .catch(() => {});
@@ -94,7 +110,19 @@ export function useCloudFirstRun(demo: boolean, pairNode?: ReactNode): FirstRunH
     return () => { live = false; };
   }, [demo]);
 
-  const ai: OnboardingAi = aiEnabled === null ? "unset" : aiEnabled ? "on" : "unset";
+  /**
+   * THE FOUR-STATE POSTURE, from two facts.
+   *
+   * The stamp is asked FIRST and it outranks the switch, which is the whole correction: with no
+   * stamp nobody has answered, so the flow must stop and ask — whatever `ai_enabled` happens to
+   * rest at. Only once somebody HAS answered does the switch mean anything, and then it means
+   * exactly what it says.
+   */
+  const ai: OnboardingAi = aiEnabled === null || aiAnswered === null
+    ? "unset"
+    : !aiAnswered
+      ? "unset"
+      : aiEnabled ? "on" : "off";
 
   const probe = useCallback(async (input: FirstRunMailboxInput) => {
     /* SENT AS TYPED, including an ABSENT username — the service defaults that to the address
@@ -129,6 +157,12 @@ export function useCloudFirstRun(demo: boolean, pairNode?: ReactNode): FirstRunH
 
   const writeAi = useCallback(async (enabled: boolean) => {
     const r = await aiSettings.set(enabled);
+    /* THE ANSWER IS RECORDED BY THE WRITE, so the posture moves off `unset` here even when the
+       switch did not — which is the common case, since `ai_enabled` rests `true` and "Yes" is a
+       write of the value the account already had. The server stamps it either way
+       (`setAiEnabled`); this is the echo of that, not an optimistic guess. An API before 0084
+       omits the field and this stays `false`, which keeps the pre-migration behaviour exactly. */
+    setAiAnswered((r as { aiAnswered?: boolean }).aiAnswered === true);
     // THE ECHO, NOT THE ARGUMENT. The posture the flow re-derives from must be what the server
     // stored, so a write the server clamped or refused cannot leave this client believing it
     // took — the discipline `autoSuggest` states for the one flag that authorises spending, and

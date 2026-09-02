@@ -1488,6 +1488,25 @@ export const accounts = pgTable("accounts", {
    */
   aiEnabled: boolean("ai_enabled").notNull().default(true),
   /**
+   * WHEN THE AI QUESTION WAS ANSWERED for this account, or NULL for "nobody has been asked"
+   * (migration 0084).
+   *
+   * `accounts.ai_enabled` says whether AI is ON. It cannot say whether anybody was ASKED,
+   * because its resting value is `true` (`NOT NULL DEFAULT true`, and `aiEnabledFor` falls back
+   * to `true` for a missing row) and a resting value is indistinguishable from an answer. The
+   * onboarding posture needs both facts — `OnboardingAi` is a four-state union precisely because
+   * "answered no" and "never asked" select opposite screens — and one boolean cannot carry two
+   * independent facts however it is read.
+   *
+   * The measured cost of not having it: a fresh hosted account reported `on`, so
+   * `deriveOnboardingStep`'s AI row never fired and the question was never asked at all, on an
+   * account whose AI was already spending its credits.
+   *
+   * READ AS `IS NOT NULL`, never as a deadline — `autoSuggestAt`'s rule directly above, and for
+   * its reason: a skewed clock must not be able to turn it into a different answer.
+   */
+  aiAnsweredAt: timestamp("ai_answered_at", { withTimezone: true }),
+  /**
    * THE ERASURE FENCE (migration 0079). NULL for every live account; the instant of the account's
    * Art. 17 erasure otherwise — stamped FIRST inside `deleteAccount`'s transaction, with
    * `coalesce` so a retried erasure keeps the first stamp.

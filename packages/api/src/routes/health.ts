@@ -729,6 +729,13 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   ["mailboxes", "organize_consented_at"],
   ["account_settings", "onboarding_completed_at"],
   ["account_settings", "screening_scope"],
+  // mail 0084_ai_answered — "has anybody been asked about AI?", the question `accounts.ai_enabled`
+  // cannot answer because its resting value is `true`. Probed for 0083's reason and 0027's before
+  // it: `getAiAnswer` SELECTs the column, so an API deployed ahead of the migration answers
+  // Postgres 42703 on `GET /account/ai` — which is on the first-run flow's own path, i.e. the
+  // first five minutes of an account's life. One marker and no CHECK entry: the column is a
+  // nullable instant closing no set, so there is no second catalog object to probe (0030's rule).
+  ["accounts", "ai_answered_at"],
   ["mailbox_folders", "server_exists"],
   // mail 0054_auto_unsubscribe_optout — the switch for auto-unsubscribe on screen-out, stored as
   // the opt-out. The fifth `account_settings` marker, on the whole-row-select argument every one
@@ -1652,7 +1659,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0083_organizer_role";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0084_ai_answered";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */

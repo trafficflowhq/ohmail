@@ -589,6 +589,13 @@
       "when": 1791600000002,
       "tag": "0083_organizer_role",
       "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1791600000003,
+      "tag": "0084_ai_answered",
+      "breakpoints": true
     }
   ]
 }
