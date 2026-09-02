@@ -173,13 +173,24 @@ export function verdictOf(
           };
         case "timeout":
           return { state: "bad", headline: t("verdictTimeout", { vendor }), ...stamped };
+        /**
+         * `probe.detail` IS A COMPLETE SENTENCE, NOT A MODEL ID.
+         *
+         * The engine writes `the model server is running and does not have "llama3.2"` and
+         * `"gpt-x" is not a chat model, so it cannot answer suggestions or drafts`
+         * (`ai-ollama.ts:244`, `ai-openai.ts:336`). Interpolating that into "the key works, but
+         * {model} is not on its list" produced a mangled sentence AND told an Ollama user their
+         * key works, when Ollama has no key at all.
+         *
+         * So the headline is OURS — translated, provider-neutral, true of both — and the engine's
+         * sentence rides in the detail beside the pointer that repairs it. That is `local-ai.ts`'s
+         * standing rule: the engine's words for what happened, ours for what to do next.
+         */
         case "model_absent":
           return {
             state: "bad",
-            headline: t("verdictModelAbsent", {
-              model: status.probe?.detail ?? status.settings[p].classifyModel,
-            }),
-            detail: t("verdictModelAbsentDetail", { count }),
+            headline: t("verdictModelAbsent"),
+            detail: t("verdictModelAbsentDetail", { count, said: status.probe?.detail ?? "" }).trim(),
             ...stamped,
           };
         case "bad_response":
@@ -338,7 +349,22 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
   const choice: AiChoice = status.provider ?? "none";
   const keyed = isKeyed(choice);
   const hasKey = keyed && status.settings[choice].hasKey;
-  const models = status.probe?.ok ? status.probe.models : [];
+  /**
+   * THE ENDPOINT'S LIST IS THE ENDPOINT'S LIST, WHETHER OR NOT THE VERIFICATION PASSED.
+   *
+   * This was `probe.ok ? probe.models : []`, which reads as caution and is a dead end. The one
+   * failure that carries a NON-EMPTY list is exactly the one the list repairs: `model_absent`
+   * means the endpoint answered, listed what it has, and did not have the model in the settings
+   * (`ai-ollama.ts:239-246` returns `models` alongside the failure, as does `ai-openai.ts`). So
+   * the arm that discarded it hid both selectors at the only moment they were needed, left the
+   * verdict pointing at "the models below" with nothing below, and made every retry repeat the
+   * same failure — an Ollama install holding `mistral:latest` while the settings asked for
+   * `llama3.2` could not be fixed from the pane at all.
+   *
+   * Every other failure returns an empty list anyway (`unreachable`, `timeout`, `unauthorized`),
+   * so reading it unconditionally can only ever ADD the list where the endpoint really sent one.
+   */
+  const models = status.probe?.models ?? [];
   const listed = models.length > 0 && choice !== "none";
   const stored = choice === "none" ? null : status.settings[choice];
   const dirty =

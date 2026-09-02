@@ -533,6 +533,62 @@ describe("the AI provider form never sends a key to the vendor it was not typed 
     expect(buttonSaying(el, /Save models/)!.disabled).toBe(true);
   });
 
+  /**
+   * THE ONE FAILURE THAT CARRIES A MODEL LIST IS THE ONE THE LIST REPAIRS.
+   *
+   * `model_absent` means the endpoint answered, listed what it has, and did not have the model the
+   * settings named — so `probe.ok` is false and `probe.models` is NON-EMPTY (`ai-ollama.ts:239-246`,
+   * `ai-openai.ts:328-338`). Gating the pickers on `probe.ok` therefore hid both selectors at the
+   * only moment they were needed: the verdict pointed at "the models below" with nothing below,
+   * every retry repeated the same failure, and an Ollama install holding `mistral:latest` while
+   * its settings asked for `llama3.2` could not be repaired from the pane at all. A dead end, and
+   * the review that found it was right.
+   *
+   * MUTATION WATCHED: restore `status.probe?.ok ? status.probe.models : []` → red here.
+   */
+  it("offers the endpoint's models on the failure that lists them, so the dead end has an exit", async () => {
+    const absent: LocalAiStatus = {
+      ...READY,
+      available: false,
+      unavailableReason: "unreachable",
+      probe: {
+        ok: false,
+        reason: "model_absent",
+        detail: 'the model server is running and does not have "llama3.2"',
+        models: ["mistral:latest", "qwen2.5:7b"],
+        at: "2026-01-01T00:00:00.000Z",
+      },
+    };
+    const { el, asked } = await paneWith(absent);
+
+    const classify = el.querySelector("#ai-classify") as HTMLSelectElement | null;
+    expect(
+      classify,
+      "the model pickers are hidden on the one failure whose own verdict tells somebody to use them",
+    ).toBeTruthy();
+    const offered = [...classify!.querySelectorAll("option")].filter((o) => o.value !== "").map((o) => o.value);
+    expect(offered).toEqual(["mistral:latest", "qwen2.5:7b"]);
+
+    // …and the repair actually completes: pick both, save, and the write names what was chosen.
+    for (const id of ["#ai-classify", "#ai-draft"]) {
+      const sel = el.querySelector(id) as HTMLSelectElement;
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+        setter.call(sel, "mistral:latest");
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    }
+    asked.length = 0;
+    await act(async () => { buttonSaying(el, /Save models/)!.click(); });
+    await settle();
+    const puts = asked.filter((a) => a.command === "engine_request" && a.method === "PUT");
+    expect(puts).toHaveLength(1);
+    expect(JSON.parse(puts[0]!.body)).toEqual({
+      provider: "ollama",
+      ollama: { classifyModel: "mistral:latest", draftModel: "mistral:latest" },
+    });
+  });
+
   it("saves the two chosen models and no address — the origin is the engine's", async () => {
     const { el, asked } = await paneWith(READY);
     const pick = async (id: string): Promise<void> => {

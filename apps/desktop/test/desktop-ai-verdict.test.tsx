@@ -156,17 +156,42 @@ describe("verdictOf — one sentence per outcome, and they are the endpoint's ow
     expect(v.headline).toBe(en.aiProvider.verdictTimeout.replace("{vendor}", "Anthropic"));
   });
 
-  it("model_absent: names the model that is missing and how many there are instead", () => {
+  /**
+   * `probe.detail` IS A SENTENCE, AND THIS CASE USED TO PROVE THE OPPOSITE.
+   *
+   * It fed the fixture `detail: "claude-old-1"` — a model id — and asserted the headline
+   * contained it, which passed while the engine has never sent one. What it actually writes is
+   * `the model server is running and does not have "llama3.2"` (`ai-ollama.ts:244`) and
+   * `"gpt-x" is not a chat model, …` (`ai-openai.ts:336`). Interpolated into "The key works, but
+   * {model} is not on its list" that produced a mangled sentence, and on Ollama it announced that
+   * a key works to somebody who has no key. The fixture now carries what the engine sends.
+   */
+  it("model_absent: our frame, the engine's sentence, and the repair", () => {
+    const said = 'the model server is running and does not have "llama3.2"';
     const v = verdictOf(
       statusOf({
+        provider: "ollama",
         reason: "unreachable",
-        probe: probe({ reason: "model_absent", detail: "claude-old-1", models: ["a", "b", "c"] }),
+        probe: probe({ reason: "model_absent", detail: said, models: ["mistral", "qwen2.5", "phi3"] }),
       }),
       t, NOW, null,
     );
     expect(v.state).toBe("bad");
-    expect(v.headline).toContain("claude-old-1");
+    // OURS, translated, and true of a provider that has no key.
+    expect(v.headline).toBe(en.aiProvider.verdictModelAbsent);
+    expect(v.headline, "an Ollama user was told their key works").not.toMatch(/key/i);
+    // The engine's own words, whole, plus the pointer that repairs it.
+    expect(v.detail).toContain(said);
     expect(v.detail).toContain("3");
+  });
+
+  it("…and says something sensible when the engine sent no sentence", () => {
+    const v = verdictOf(
+      statusOf({ reason: "unreachable", probe: probe({ reason: "model_absent", models: ["a", "b"] }) }),
+      t, NOW, null,
+    );
+    expect(v.detail?.startsWith(" "), "an absent detail left a leading space").toBe(false);
+    expect(v.detail).toContain("2");
   });
 
   it("bad_response: the endpoint answered, and ohmail could not read it", () => {
