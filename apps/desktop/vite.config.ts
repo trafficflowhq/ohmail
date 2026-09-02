@@ -234,6 +234,7 @@ export const SHELL_MESSAGE_NAMESPACES = [
   // and the verdicts are the worst place in the product for a raw key — they are the only thing
   // that ever explains why a model is not answering.
   "aiProvider",
+  "onboarding",
 ] as const;
 
 /**
