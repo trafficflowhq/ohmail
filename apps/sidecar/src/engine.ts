@@ -3930,11 +3930,40 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * be able to make it. The separation is structural: those doors route through
          * `desktopHostRoutes`, which has never heard of this path. */
         const localAddMatch = req.method === "POST" && url.pathname === "/local/mailboxes";
+        /* -- `POST /local/mailboxes/probe` — TESTING A CONNECTION, ON THIS DOOR --------------
+         *
+         * The sixth member, and the reason it exists is the family's reason arriving through a
+         * door that was not open until this release. The shared `POST /mailboxes/probe` is
+         * `stepUp: true` — correctly, its body carries a mailbox password — and on this door the
+         * launch session's second-factor stamp is written ONCE at boot, so the flag refuses
+         * everything from five minutes after launch for the life of the process.
+         *
+         * IT USED TO BE SATISFIABLE BY ACCIDENT, and the accident is over. The flow's connect
+         * form is withheld the moment a mailbox exists, so the only state in which "Test
+         * connection" could be pressed was one where the engine had just come up — the same
+         * window in which the launch stamp is fresh. `local-first-run.ts` said so in as many
+         * words and was right at the time. Settings → Add mailbox makes the form reachable at any
+         * point in a launch, and the flow's primary is DISABLED until a verdict exists — so
+         * without this route "Add mailbox" is a dead end on every window that has been open
+         * longer than a coffee.
+         *
+         * MEASURED rather than reasoned: against a real sidecar, the shared route answered the
+         * mail server's own refusal at 170 s after boot and `403 step_up_required` at 330 s.
+         *
+         * The SERVICE is `MailboxService.probeConnection`, with the same prober the shared route
+         * builds and the same `countFolders: true` — this is the one call site that pays a LIST
+         * for a number a screen reads. It writes NOTHING: no row, no credential, no folder. The
+         * authority is the per-launch bearer, as it is for the other five.
+         *
+         * On `handle` ALONE. A probe opens a socket to a host named in its body, so a phone on
+         * the same network must not be able to ask this computer to make one. */
+        const localProbeMatch = req.method === "POST" && url.pathname === "/local/mailboxes/probe";
         const localAction = (req.method === "DELETE" && url.pathname === "/local/stored-login")
           || (req.method === "POST" && url.pathname === "/local/organizer/takeover")
           || localRemoveMatch !== null
           || localOrganizeMatch !== null
           || localSealMatch !== null
+          || localProbeMatch
           || localAddMatch;
         if (localAction) {
           const header = req.headers.get("authorization");
@@ -4013,6 +4042,63 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                     : { code: "internal", message: "internal error" },
                 }),
                 { status: refused ? 400 : 500, headers: { "content-type": "application/json" } },
+              );
+            }
+          }
+          if (localProbeMatch) {
+            /* THE PROBE, AND ONLY THE PROBE. `probeConnection` dials and answers; it takes no
+               transaction and touches no table, so there is nothing to undo on a refusal and
+               nothing to attach on success. The refusal shape is the shared route's verbatim —
+               `mailbox_probe_failed` with its `details.reason` — because the window's own
+               classifier (`localProbeReason`) reads exactly that taxonomy and the connect form
+               already renders every member of it. */
+            try {
+              const body = (await req.json()) as Record<string, unknown>;
+              const imap = (body.imap && typeof body.imap === "object" ? body.imap : {}) as
+                Record<string, unknown>;
+              const deps = depsFor();
+              const dto = await deps.services!.mailbox.probeConnection(
+                {
+                  db, accountId: core.accountId, userId: core.userId,
+                  now, requestId: "", sessionId: core.sessionId ?? null,
+                } as never,
+                {
+                  address: typeof body.address === "string" ? body.address : "",
+                  /* FIELD BY FIELD, NEVER A SPREAD — the shared route's own rule, and it is
+                     sharper here: this object reaches a function that opens a socket to a host
+                     named in it, so spreading a caller-supplied object into it would let the
+                     caller name fields this route never meant to expose. */
+                  imap: {
+                    host: typeof imap.host === "string" ? imap.host : "",
+                    ...(typeof imap.port === "number" ? { port: imap.port } : {}),
+                    ...(typeof imap.secure === "boolean" ? { secure: imap.secure } : {}),
+                    ...(typeof imap.user === "string" ? { user: imap.user } : {}),
+                    pass: typeof imap.pass === "string" ? imap.pass : "",
+                  },
+                },
+                { probe: makeImapProbe(deps, { ...probeOpts, countFolders: true }) },
+              );
+              return new Response(JSON.stringify(dto), {
+                status: 200, headers: { "content-type": "application/json" },
+              });
+            } catch (err) {
+              const e = err as { code?: string; httpStatus?: number; message?: string; details?: unknown };
+              const status = typeof e.httpStatus === "number" ? e.httpStatus : 500;
+              log("local_mailbox_probe_failed", { err });
+              return new Response(
+                JSON.stringify({
+                  error: {
+                    code: e.code ?? "internal",
+                    message: status === 500 ? "internal error" : (e.message ?? ""),
+                    /* THE DETAILS TRAVEL. `localProbeReason` reads `details.reason` to pick the
+                       form's sentence, and `probeTlsSentence` reads `details.tls` to name the
+                       host a certificate actually covers — dropping them would put the service's
+                       generic line on screen while the answer sat unread in the same response,
+                       which is the defect the door's own TLS branch was written to end. */
+                    ...(status === 500 || e.details === undefined ? {} : { details: e.details }),
+                  },
+                }),
+                { status, headers: { "content-type": "application/json" } },
               );
             }
           }

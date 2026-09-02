@@ -59,7 +59,7 @@ import "./first-run.css";
  * Ordered, and the order is `onboardingPath`'s: a rail whose order disagreed with the path's
  * would light a dot the Back button walks away from.
  */
-const RAIL: Array<{ id: string; steps: OnboardingStep[] }> = [
+const ALL_RAIL: Array<{ id: string; steps: OnboardingStep[] }> = [
   { id: "mailbox", steps: ["welcome", "mailbox", "elsewhere"] },
   { id: "organize", steps: ["consent"] },
   { id: "history", steps: ["window"] },
@@ -68,6 +68,26 @@ const RAIL: Array<{ id: string; steps: OnboardingStep[] }> = [
   { id: "decide", steps: ["decide"] },
   { id: "done", steps: ["summary", "pair"] },
 ];
+
+/**
+ * THE RAIL THIS RUN ACTUALLY WALKS — the groups above, filtered by the path.
+ *
+ * The list above is every phase the flow HAS. It is not every phase a given run walks, and until
+ * this function existed the rail drew all seven whatever the path said. That made the rail's own
+ * docblock false the moment a run dropped a step: it promises a phase that will never arrive, and
+ * `n / 7` reports a total the person will never reach.
+ *
+ * The ADD run is where it became visible — no AI question and no pairing, so two of the seven dots
+ * were decoration — but it was already wrong on a run whose Screener queue is empty, where the
+ * `decide` step is skipped SILENTLY and its dot sat there unlit for ever.
+ *
+ * A phase survives when the path still contains at least ONE of its steps, which is what keeps
+ * the groups meaningful: `ai`/`provider` are one question and its answer, and a door that has the
+ * question without the form still has the phase.
+ */
+function railFor(path: readonly OnboardingStep[]): Array<{ id: string; steps: OnboardingStep[] }> {
+  return ALL_RAIL.filter((r) => r.steps.some((step) => path.includes(step)));
+}
 
 /** The five destinations the guided decision offers, with the keycap each one wears. */
 const DECIDE_LEGEND: Array<{ key: string; copy: "decideOhbox" | "decideReads" | "decideReceipts" | "decideScreened" | "decideSpam" }> = [
@@ -696,7 +716,9 @@ export function FirstRun({
     }).format(value);
   };
 
-  const railAt = RAIL.findIndex((r) => r.steps.includes(step));
+  /* THE RAIL THIS RUN WALKS, not every phase the flow has — see {@link railFor}. */
+  const rail = useMemo(() => railFor(path), [path]);
+  const railAt = rail.findIndex((r) => r.steps.includes(step));
   const railLabel = (id: string) => t(`rail_${id}` as "rail_mailbox");
 
   const foot = (opts: { primary?: ReactNode; back?: boolean; cancel?: boolean } = {}) => (
@@ -744,7 +766,7 @@ export function FirstRun({
         {step === "welcome" ? null : (
           <>
             <ol className="join-rail" aria-label={t("rail_mailbox")}>
-              {RAIL.map((r, i) => (
+              {rail.map((r, i) => (
                 <li key={r.id} data-state={i < railAt ? "done" : i === railAt ? "now" : "todo"}>
                   <span className="join-rail-dot" aria-hidden="true" />
                   <span className="join-rail-label">{railLabel(r.id)}</span>
@@ -753,7 +775,7 @@ export function FirstRun({
             </ol>
             {/* NARROW: the labels go and the step is NAMED once. See `first-run.css`. */}
             <p className="ob-step" aria-hidden="true">
-              {`${railAt + 1} / ${RAIL.length} · ${railLabel(RAIL[railAt]?.id ?? "mailbox")}`}
+              {`${railAt + 1} / ${rail.length} · ${railLabel(rail[railAt]?.id ?? "mailbox")}`}
             </p>
           </>
         )}
@@ -798,10 +820,21 @@ export function FirstRun({
                * since been stored; leaving it standing would arm this screen's primary again the
                * moment somebody walked back onto it. */
               retireTest();
-              /* WHICH ROW THE REST OF THIS RUN IS ABOUT. The caller resolves that from the route,
-                 and an add run's route names no mailbox until this moment — there was no row to
-                 name. Without this every later screen would be about whichever row came first. */
-              onConnected?.(id);
+              /* ── WHICH ROW THE REST OF THIS RUN IS ABOUT — ON AN ADD RUN, AND ONLY THERE ────
+               *
+               * The caller resolves the run's subject from the route, and an ADD run's route names
+               * no mailbox until this moment because there was no row to name.
+               *
+               * `add === true` IS LOAD-BEARING AND WAS MISSING. Called unconditionally, this
+               * re-pointed the hash at `#/first-run/add` after every connect — including a FIRST
+               * run's, on the door where the flow's form IS the connect (cloud) and on the
+               * standalone path through "Start over → forget this mailbox". From the next render
+               * `route.firstRunAdd` was true, so `onboardingPath` dropped `ai`, `provider` and
+               * `pair`: the AI question was never asked, the standalone door's provider form was
+               * never shown, and the phone was never offered — on the one run that exists to
+               * offer them. A first run needs no id in its hash anyway: its new row is the only
+               * row, so `facts[0]` is already the right answer. */
+              if (add === true) onConnected?.(id);
             });
           },
           (

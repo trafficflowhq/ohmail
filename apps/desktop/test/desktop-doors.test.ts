@@ -487,9 +487,14 @@ describe("the local door", () => {
 
     const result = await enterLocalDoor(filled, providerById("fastmail"));
 
-    expect(result.problem, "a mismatched row was sealed anyway").toMatch(
-      /already opening a different mailbox/,
-    );
+    /* THE SENTENCE STATES BOTH HALVES. The configure has already run — there is no row to read
+       until the engine makes one — so the install IS now set up for the typed address while
+       still opening a different mailbox, and a sentence that mentioned only the unsaved password
+       would leave the person believing nothing changed. */
+    expect(result.problem, "a mismatched row was sealed anyway")
+      .toMatch(/still opening a different mailbox/);
+    expect(result.problem).toMatch(/set up for that address/);
+    expect(result.problem).toMatch(/Settings → Mailboxes/);
     /* AND NOTHING WAS WRITTEN. Not "the sentence was right" — no PATCH left this process, so no
        credential can have landed on the wrong row. */
     expect(
@@ -508,7 +513,7 @@ describe("the local door", () => {
 
     const result = await enterLocalDoor(filled, providerById("fastmail"));
 
-    expect(result.problem).toMatch(/already opening a different mailbox/);
+    expect(result.problem).toMatch(/still opening a different mailbox/);
     expect(asked.filter((a) => a.command === "engine_request" && a.payload!.method === "PATCH"))
       .toEqual([]);
   });
@@ -527,6 +532,63 @@ describe("the local door", () => {
       (a) => a.command === "engine_request" && (a.payload!.method ?? "GET") === "GET",
     );
     expect(reads, "the reconfigure order read a row it had already identified").toEqual([]);
+  });
+
+  /**
+   * ── SENDING THE SMTP BLOCK NARROWS WHAT CAN BE CONNECTED, AND THE REFUSAL HAS TO SAY WHICH ──
+   *
+   * Raised in review, and it is a real consequence rather than a hypothetical. The seal now
+   * carries an `smtp` block, `MailboxService.update` PROBES it (the local route injects
+   * `makeSmtpProbe`), and a refused submission server aborts the whole patch — so neither
+   * credential is written. Before this change the standalone door never dialled SMTP, so a
+   * mailbox whose IMAP worked could always be connected.
+   *
+   * IT IS THE HOSTED DOOR'S OWN SHAPE, which is what the ruling asked for ("an `smtp` credential
+   * row per mailbox — the hosted shape"): `POST /mailboxes` refuses the same way. And it is not a
+   * dead end, because this form has an outgoing-server FIELD and an empty one is a legitimate
+   * answer — `smtpHost: ""` records "saved for a pair with nothing on the outgoing side", which
+   * the case below proves still connects.
+   *
+   * What it costs is that the flow's "Test connection" dials IMAP only, so a green tick can be
+   * followed by a refusal about a server the test never touched. The sentence therefore has to
+   * NAME the outgoing server, or the person is looking at the wrong field. That is the assertion.
+   */
+  it("an SMTP refusal on the seal reaches the form NAMING the outgoing server", async () => {
+    const asked = shellThatWorks(SERVING, 200);
+    const inner = host.__TAURI_INTERNALS__!.invoke;
+    host.__TAURI_INTERNALS__!.invoke = async (command, payload) => {
+      const req = payload as { method?: string } | undefined;
+      if (command === "engine_request" && req?.method === "PATCH") {
+        asked.push({ command, payload });
+        return encode(400, JSON.stringify({
+          error: {
+            code: "mailbox_probe_failed",
+            message: "That outgoing (SMTP) mail server refused that password. "
+              + "Check the username and password for it.",
+            details: { reason: "auth", transport: "smtp" },
+          },
+        }), "Bad Request");
+      }
+      return inner(command, payload);
+    };
+
+    const result = await enterLocalDoor(filled, providerById("fastmail"));
+    expect(result.problem).toContain("outgoing (SMTP) mail server");
+    /* The person can act on it: the form has the field, and blanking it is a legitimate answer
+       rather than a workaround — see the case below. */
+  });
+
+  it("…and a mailbox with NO outgoing server still connects, which is why that is not a dead end", async () => {
+    const asked = shellThatWorks();
+    await enterLocalDoor(
+      { ...EMPTY_LOCAL, providerId: "imap", address: "me@example.invalid", password: "pw",
+        imapHost: "mail.example.invalid", imapPort: "993", smtpHost: "  ", smtpPort: "" },
+      providerById("imap"),
+    );
+    const patch = sealPatch(asked) as { imap: { smtpHost?: string }; smtp?: unknown };
+    // NO BLOCK to probe, so nothing can refuse — and the witness still states "none authorized".
+    expect(patch.smtp).toBeUndefined();
+    expect(patch.imap.smtpHost).toBe("");
   });
 
   it("waits for the reconfigured engine before addressing anything to it", async () => {

@@ -294,7 +294,21 @@ describe("the requests that leave this window", () => {
     });
     expect(ok).toEqual({ host: "imap.example.org", user: "me@example.org", folders: 12 });
     const call = asked.at(-1)!;
-    expect(call).toMatchObject({ method: "POST", url: "/mailboxes/probe" });
+    /* ── `/local/…`, AND THE MOVE IS A FIX ────────────────────────────────────────────────────
+     *
+     * The shared `POST /mailboxes/probe` is `stepUp: true`, and on this door the launch session's
+     * second-factor stamp is written once at boot — so it refuses from five minutes after launch
+     * for the life of the process. It was satisfiable here by ACCIDENT: the connect form was
+     * withheld the moment a mailbox existed, so the button could only be pressed on an engine
+     * that had just come up.
+     *
+     * Settings → Add mailbox ends the accident, and the flow's primary stays disabled until a
+     * verdict exists — so on the shared route "Add mailbox" is a dead end on every window open
+     * more than five minutes. Measured against a real sidecar: the mail server's own refusal at
+     * 170 s, `403 step_up_required` at 330 s. The engine's own test of the local probe route holds
+     * both halves as cases: the local route answers on a session older than the step-up window,
+     * and the shared one refuses it. */
+    expect(call).toMatchObject({ method: "POST", url: "/local/mailboxes/probe" });
     expect(JSON.parse(call.body).imap.user).toBeUndefined();
   });
 
@@ -601,6 +615,11 @@ describe("the two connect modes", () => {
       // hosted create both apply, so all three dial one identity.
       user: "second@example.org",
       pass: "pw-2",
+      /* SENDING IS SETTLED BY A SUCCESSFUL CREATE. The engine's add route retries without the
+         submission block when that dial is refused, writing the probe's reason into this key —
+         so the create that DOES prove it has to say so, or a mailbox re-added after a blocked
+         port would carry the old refusal. */
+      smtpUnsettled: "",
     });
     expect(body.smtp).toEqual({
       host: "smtp.example.org", port: 465, secure: true,
@@ -760,6 +779,99 @@ describe("adding a further mailbox to a standalone install", () => {
     expect(onboardingPath(ADD_FACTS)).toContain("welcome");
     expect(onboardingPath(ADD_FACTS)).toContain("ai");
     expect(onboardingPath(ADD_FACTS)).toContain("pair");
+  });
+
+  it("A FIRST RUN DOES NOT NAME ITS MAILBOX IN THE HASH — it would become an add run", async () => {
+    /* ── REVIEW FINDING, AND IT COST THE FIRST RUN THREE SCREENS ────────────────────────────
+     *
+     * `onConnected` was called after EVERY connect, and `nameFirstRunMailbox` writes
+     * `#/first-run/add?mailbox=<id>`. So a first run whose connect goes through the flow's own
+     * form — the cloud door always, and the standalone door after "Start over → forget this
+     * mailbox" — re-pointed its own hash at the ADD intent. From the next render
+     * `route.firstRunAdd` was true and `onboardingPath` dropped `ai`, `provider` and `pair`: the
+     * AI question was never asked, the standalone provider form was never shown, and the phone
+     * was never offered, on the one run that exists to offer them.
+     *
+     * A first run needs no id in its hash: its new row is the only row, so `facts[0]` is already
+     * the right answer. MUTATION: drop the `add === true` guard and this reds. */
+    const made = (await makeHost())!;
+    const connected = [];
+    const host = {
+      ...made,
+      probe: async () => ({ host: "imap.example.org", user: "me@example.org", folders: 3 }),
+      connect: async () => ({ id: "mbx-first" }),
+    };
+    const el = document.createElement("div");
+    document.body.append(el);
+    const root = createRoot(el);
+    mounted = root;
+    await act(async () => {
+      root.render(
+        h(ThemeProvider, null,
+          h(NextIntlClientProvider, { locale: "en", messages: en as never },
+            h(KeymapProvider, null,
+              h(FirstRun, {
+                host,
+                // A FIRST run: no completion stamp, no mailbox, no add intent.
+                facts: {
+                  door: "local", mailbox: null, account: {}, ai: "unset", queuedSenders: 0,
+                },
+                mailboxId: null,
+                onConnected: (id) => { connected.push(id); },
+                pull: { screened: 0, history: 0, mirrorCount: 0 },
+                decide: null,
+                onRefresh: () => {},
+                onLeave: () => {},
+              })))));
+    });
+    /* A first run opens on the WELCOME — which is the whole point: those are the screens the
+       defect took away. Walk onto the form through whichever verb it wears. */
+    const step = async (labels: string[]) => {
+      const all = [...el.querySelectorAll("button")];
+      const b = all.find((x) => labels.some((l) => (x.textContent ?? "").trim().startsWith(l)));
+      expect(b, `no ${labels.join("/")} — buttons: ${
+        all.map((x) => (x.textContent ?? "").trim()).join(" | ")}`).toBeDefined();
+      await act(async () => { b!.click(); await Promise.resolve(); });
+    };
+    /* The welcome screen — the first of the three the defect took away. Recognised by its own
+       primary rather than by a greeting: `welcomeTitle` is a sentence about what ohmail does. */
+    await step(["Set up a mailbox"]);
+    const address = el.querySelector('input[type="email"]');
+    const pass = el.querySelector('input[type="password"]');
+    const set = (input, value) => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!
+        .call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    await act(async () => { set(address, "me@example.org"); set(pass, "pw"); });
+    await step(["Test connection"]);
+    await act(async () => { await Promise.resolve(); });
+    await step(["Connect and continue"]);
+    await act(async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); });
+
+    expect(connected, "a first run re-pointed its own route at the add intent").toEqual([]);
+  });
+
+  it("THE RAIL PROMISES ONLY THE PHASES THIS RUN WALKS", async () => {
+    /* ── FOUND ON THE RENDERED APP, NOT BY READING ──────────────────────────────────────────
+     *
+     * `RAIL` was a module constant of seven groups and the rail drew all seven whatever the path
+     * said, so an add run — which has no AI question and no pairing — showed a dot for a phase
+     * that would never arrive and counted "3 / 7" towards a total the person could not reach.
+     * Caught on the built bundle over a real sidecar: the stage's own text read
+     * "Mailbox | Organize | How far back | AI | First pull" on a walk that showed no AI screen.
+     *
+     * The rail's own docblock is the claim under test — *"Ordered, and the order is
+     * `onboardingPath`'s"* — and it had stopped being true. It is derived from the path now.
+     *
+     * IT WAS ALREADY WRONG BEFORE THIS SLICE, in a quieter way: `decide` is skipped SILENTLY on
+     * an empty Screener queue, and its dot sat there unlit for ever. Same fix, same line.
+     */
+    const { el } = await driveAdd();
+    const labels = [...el.querySelectorAll(".join-rail-label")].map((n) => n.textContent?.trim());
+    expect(labels).toEqual(["Mailbox", "Organize", "How far back", "First pull", "Done"]);
+    // The narrow form counts towards the same total.
+    expect(el.querySelector(".ob-step")?.textContent).toContain(`/ ${labels.length} ·`);
   });
 
   it("CONNECTS IN `add` MODE, and hands the new mailbox's id back to the route", async () => {

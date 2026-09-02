@@ -937,9 +937,16 @@ export async function enterLocalDoor(
   if (!sameAddress(settledAddress ?? undefined, address)) {
     return {
       status: settled,
+      /* THE SENTENCE HAS TO BE TRUE ABOUT WHAT DID CHANGE, and the first draft was not. The
+         configure above has ALREADY replaced the engine and rewritten the shell's settings, so
+         "the password you typed was not saved" is true and incomplete: this install is now set up
+         for the address that was typed while still opening a different mailbox. The check cannot
+         move ahead of the configure — there is no row to read until the engine makes one — so the
+         honest answer is to say both halves and name the door that does work. */
       problem:
-        "This copy of ohmail is already opening a different mailbox, so the password you typed "
-        + "was not saved. Add this mailbox from Settings → Mailboxes instead.",
+        "This copy of ohmail is set up for that address but is still opening a different mailbox, "
+        + "so the password you typed was not saved. Add this mailbox from Settings → Mailboxes "
+        + "instead.",
     };
   }
 

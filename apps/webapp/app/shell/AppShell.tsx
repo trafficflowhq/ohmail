@@ -1904,12 +1904,42 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
    * the guard at the mount site refuses to render over it. The one deliberate exception is an ADD
    * run before its create has answered — see below.
    */
-  const firstRunMailbox = facts === null
+  const namedFirstRunRow = facts === null || route.firstRunMailboxId === null
     ? null
-    : (route.firstRunMailboxId === null
-        ? null
-        : facts.find((m) => m.id === route.firstRunMailboxId) ?? null)
-      ?? facts[0] ?? null;
+    : facts.find((m) => m.id === route.firstRunMailboxId) ?? null;
+  /**
+   * AN ADD RUN HAS NO MAILBOX UNTIL ITS CREATE ANSWERS — AND UNTIL THE FACTS SAY SO.
+   *
+   * `#/first-run/add` opens on the connect FORM, and the form is withheld the moment
+   * `facts.mailbox` is non-null — the mailbox step becomes a statement about the mailbox this run
+   * is about, which is right for a Back press and wrong here. On an install that already holds
+   * mailboxes the `?? facts[0]` fallback below would hand the stage row #1, so the person who
+   * pressed "Add mailbox" would be shown a statement about a mailbox they already have.
+   *
+   * ── AND THE CONDITION IS NOT "THE HASH NAMES NO MAILBOX" ──────────────────────────────────
+   *
+   * It was, and that left a window with a wrong-mailbox WRITE in it. `onConnected` puts the new
+   * id in the hash the instant the create answers, but `facts` still holds the pre-create list
+   * until `refreshFacts` round-trips — so `facts.find(id)` missed and the fallback resolved the
+   * run to mailbox #1: its address on the screen, its consent stamp in the derivation, and its id
+   * in `mailboxId`. `run()` clears `busy` before the refetch lands, so the consent press was live
+   * in that window and would have posted `POST /local/mailboxes/<mailbox #1>/organize` — writing
+   * the window somebody had just chosen for mailbox #2 onto mailbox #1.
+   *
+   * So an add run is "pending" until the facts actually HOLD its named row, and while it is
+   * pending the flow is about no mailbox at all: the form stays, `mailboxId` is null, and there
+   * is nothing for `organize` to address. It is also the honest answer when `GET /mailboxes` is
+   * stale or failing, which is the same window arriving for a different reason.
+   */
+  const addPending = route.firstRunAdd && namedFirstRunRow === null;
+  /**
+   * THE MAILBOX THIS RUN IS ABOUT. The row the ROUTE names, and the first row only when the hash
+   * names none — the router's own rule for every id it carries: a claim the data does not support
+   * is corrected in the shell, never 404'd. An ADD run never takes the fallback; see above.
+   */
+  const firstRunMailbox = facts === null || addPending
+    ? null
+    : namedFirstRunRow ?? facts[0] ?? null;
   /** The holder's "since" instant as a DATE in the app's own language — see the mount below. */
   const holderSince = useMemo(() => {
     const iso = firstRunMailbox?.organizedBy?.since;
@@ -1920,25 +1950,11 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
       dateStyle: "medium", timeZone: activeFormatZone(),
     });
   }, [firstRunMailbox]);
-  /**
-   * AN ADD RUN HAS NO MAILBOX UNTIL ITS CREATE ANSWERS, AND THE FLOW HAS TO BE TOLD SO.
-   *
-   * `#/first-run/add` opens on the connect FORM, and the form is withheld the moment
-   * `facts.mailbox` is non-null — the mailbox step becomes a statement about the mailbox this run
-   * is about, which is right for a Back press and wrong here. On an install that already holds
-   * mailboxes the fallback above would hand the stage row #1, so the person who pressed "Add
-   * mailbox" would be shown a statement about a mailbox they already have and a Continue button.
-   *
-   * The condition is the route's own: an add run whose hash names no mailbox has not made one
-   * yet. The moment the create answers, `FirstRun`'s `onConnected` puts the new id in the hash
-   * and this stops applying — from that render on the run is about the row that was just added.
-   */
-  const addPending = route.firstRunAdd && route.firstRunMailboxId === null;
   const onboardingFacts: OnboardingFacts | null = useMemo(() => {
     if (!firstRun || facts === null) return null;
     return {
       door: firstRun.door,
-      mailbox: firstRunMailbox === null || addPending ? null : {
+      mailbox: firstRunMailbox === null ? null : {
         organizerRole: firstRunMailbox.organizerRole,
         organizedBy: firstRunMailbox.organizedBy,
         organizerState: firstRunMailbox.organizerState,
@@ -1952,7 +1968,7 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
       ai: firstRun.ai,
       queuedSenders: screener.waitingCount,
     };
-  }, [addPending, firstRun, facts, firstRunMailbox, consent.onboardingCompletedAt, screener.waitingCount]);
+  }, [firstRun, facts, firstRunMailbox, consent.onboardingCompletedAt, screener.waitingCount]);
   /**
    * THE ONE SENDER THE GUIDED DECISION IS ABOUT — the head of the real queue, decided through
    * the real `ScreenerState`.
@@ -7354,13 +7370,11 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
         <FirstRun
           host={firstRun}
           facts={onboardingFacts}
-          mailboxId={addPending ? null : firstRunMailbox?.id ?? null}
+          mailboxId={firstRunMailbox?.id ?? null}
           /* WHICH mailbox this run is about, for the one screen that has to name it — the
              mailbox step once a mailbox exists, where the form is withheld and a statement
              stands in its place. */
-          {...(!addPending && firstRunMailbox?.address
-            ? { mailboxAddress: firstRunMailbox.address }
-            : {})}
+          {...(firstRunMailbox?.address ? { mailboxAddress: firstRunMailbox.address } : {})}
           /* ── WHEN THE HOLDER BECAME THE ORGANIZER, IN WORDS — AND NOTHING PASSED IT ────────
              `FirstRunProps.organizedSince` is interpolated into `mailboxes.readerSince*` by two
              screens (the claim question's banner, and now a reader's summary), and this mount —

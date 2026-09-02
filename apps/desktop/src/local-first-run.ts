@@ -24,6 +24,8 @@
  *     machine.
  *  2. {@link FirstRunHost.forgetMailbox} → `DELETE /local/mailboxes/:id`, on the identical
  *     argument; the shared `DELETE /mailboxes/:id` carries the same flag and the same consequence.
+ *     {@link FirstRunHost.probe} → `POST /local/mailboxes/probe`, likewise, and it is the one
+ *     that USED to be safe on the shared route: see {@link PROBE_PATH} for what changed.
  *  3. {@link FirstRunHost.connect} → the SHELL'S DOOR, not `POST /mailboxes`. See its own note: a
  *     mailbox row created through the API would be a row the shell's settings file has never heard
  *     of, and the engine dials what the settings file says. The create is not a request here, it
@@ -57,8 +59,26 @@ import {
   enterLocalDoor, firstRunDoorFor, localProblem, standingEngine, type LocalDoorFields,
 } from "./doors.js";
 
-/** Where the engine serves the probe. Root-relative, like every path in this window. */
-export const PROBE_PATH = "/mailboxes/probe";
+/**
+ * WHERE THIS DOOR SERVES THE PROBE — `/local/…`, and the move is a fix rather than tidying.
+ *
+ * The shared `POST /mailboxes/probe` is `stepUp: true` (its body carries a mailbox password), and
+ * on this door the launch session's second-factor stamp is written ONCE at boot — so that flag
+ * refuses from five minutes after launch for the life of the process. It was satisfiable here by
+ * ACCIDENT: the flow's connect form was withheld the moment a mailbox existed, so the only state
+ * in which "Test connection" could be pressed was one where the engine had just come up.
+ *
+ * Settings → Add mailbox ends the accident. The form is reachable at any point in a launch now,
+ * and the flow's primary stays disabled until a verdict exists — so on the shared route "Add
+ * mailbox" is a dead end on every window open longer than a coffee. Measured against a real
+ * sidecar: the shared route answered the mail server's own refusal 170 s after boot and
+ * `403 step_up_required` at 330 s.
+ *
+ * The local route runs the SAME `MailboxService.probeConnection` with the same prober and the
+ * same folder count; what differs is the authority, which is the per-launch bearer — the same
+ * protection the other five members of this family carry.
+ */
+export const PROBE_PATH = "/local/mailboxes/probe";
 
 /** The standalone consent route, for the mailbox this run is about. See the header's point 1. */
 export function organizePath(mailboxId: string): string {
@@ -311,16 +331,18 @@ export function useLocalFirstRun(opts: LocalFirstRunOptions): FirstRunHost | und
 
   const probe = useCallback(async (input: FirstRunMailboxInput): Promise<FirstRunProbeOk> => {
     /**
-     * TEST THIS CONNECTION — the engine's own dial, `POST /mailboxes/probe`.
+     * TEST THIS CONNECTION — the engine's own dial, `POST /local/mailboxes/probe`.
      *
-     * REACHABLE ONLY WHILE THIS INSTALL HAS NO MAILBOX, and that is not a limitation of this
-     * function but of where the stage puts it: the mailbox step withholds its form the moment
-     * `facts.mailbox` is non-null, and `mailMount` in `doors.ts` will not mount `AppShell` at all
-     * until the engine reports a `mailboxId`. So the only state in which this can be pressed is
-     * one where the engine has just come up — which is also the only state in which the shared
-     * route's `stepUp: true` is satisfiable on this door (the launch session's stamp is written
-     * at boot and expires five minutes later, for ever). The two windows are the same window,
-     * which is why this may stay on the shared route while `organize` may not.
+     * ── IT USED TO SAY "REACHABLE ONLY WHILE THIS INSTALL HAS NO MAILBOX" ───────────────────
+     *
+     * That was true and it was load-bearing: the mailbox step withheld its form the moment
+     * `facts.mailbox` was non-null, so the only state in which this could be pressed was one
+     * where the engine had just come up — which was also the only state in which the shared
+     * route's `stepUp: true` was satisfiable on this door. Two windows, one window, and this
+     * could stay on the shared route while `organize` could not.
+     *
+     * Settings → Add mailbox makes the form reachable at ANY point in a launch, so the premise
+     * is gone and the route moved with it. See {@link PROBE_PATH} for the measurement.
      *
      * Sent as typed, including an ABSENT username: the service defaults that to the address, and
      * `doorFields` applies the identical default on the connect that follows, so the test and the
