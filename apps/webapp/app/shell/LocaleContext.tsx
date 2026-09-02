@@ -55,6 +55,22 @@ export interface LocaleControls {
   adoptLocale: (next: AppLocale) => Promise<void>;
   /** A switch is in flight — the selector disables itself rather than queueing two. */
   busy: boolean;
+  /**
+   * HOW FAR THE CHOICE REACHES, because the row says so and the two hosts differ.
+   *
+   * `account` — the preference is written to the account and follows the person to every browser
+   * they sign in on, which is what "Applies to this app everywhere you sign in" claims.
+   * `install` — `localStorage` IS the persistence. That is the desktop on BOTH its doors: this
+   * build's Cloud adapter is aliased out of the bundle and `apiConfigured()` is false, so even an
+   * install pointed at a hosted account writes the language nowhere but here. The account-wide
+   * sentence was rendered there anyway, and it was false — switching to German on the desktop
+   * changes nothing about the same account in a browser.
+   *
+   * REQUIRED rather than defaulted, and that is the point: a default would have to be `account`,
+   * which is the claim that is wrong on the surface most likely to be added next (a second
+   * standalone host), and an absent field would select it silently.
+   */
+  scope: "account" | "install";
 }
 
 export const LocaleContext = createContext<LocaleControls | null>(null);

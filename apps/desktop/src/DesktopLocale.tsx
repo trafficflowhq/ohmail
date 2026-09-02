@@ -102,6 +102,11 @@ export function DesktopLocale({ children }: { children: ReactNode }) {
       /* Never busy: both catalogues are already in the bundle, so a switch is a synchronous state
          change with nothing to wait for. */
       busy: false,
+      /* THIS INSTALL, and on the hosted door too. The header above states why: the Cloud adapter is
+         aliased out of this bundle and `apiConfigured()` is false, so `localStorage` is not a
+         fallback for an account preference — it IS the preference. The shared row said "applies to
+         this app everywhere you sign in" here, which promised a sync no code performs. */
+      scope: "install" as const,
     }),
     [locale, apply],
   );

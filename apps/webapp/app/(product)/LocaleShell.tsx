@@ -127,6 +127,11 @@ export function LocaleShell({
       setLocale: adoptLocale,
       adoptLocale,
       busy,
+      /* The browser client's language is the ACCOUNT's: `AccountLocale` wraps this provider inside
+         the mail client and writes `PATCH /consent/settings` before the catalogue swaps. On
+         `/login` and `/join` there is no account yet and this setter is the whole persistence, but
+         the row that states the reach is only ever drawn inside Settings, behind that wrapper. */
+      scope: "account" as const,
     }),
     [state.locale, adoptLocale, busy],
   );

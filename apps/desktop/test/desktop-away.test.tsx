@@ -174,15 +174,15 @@ describe("the away responder on the hosted door", () => {
     stored = { ...stored, enabled: true, subject: "Away", body: "Back Monday.", audience: "everyone" };
     await mountRow();
     expect(asked).toEqual([{ method: "GET", url: AWAY_PATH, body: null }]);
-    expect((hostEl.querySelector('input[aria-label="Subject"]') as HTMLInputElement).value).toBe("Away");
+    expect((hostEl.querySelector("#away-subject") as HTMLInputElement).value).toBe("Away");
     expect((hostEl.querySelector('[role="switch"]') as HTMLElement).getAttribute("aria-checked")).toBe("true");
   });
 
   it("saves the whole row in ONE explicit PUT — one press, one enablement episode", async () => {
     await mountRow();
     await click(hostEl.querySelector('[role="switch"]')!);
-    setNative(hostEl.querySelector('input[aria-label="Subject"]') as HTMLInputElement, "Away");
-    setNative(hostEl.querySelector('textarea[aria-label="Message"]') as HTMLTextAreaElement, "Back Monday.");
+    setNative(hostEl.querySelector("#away-subject") as HTMLInputElement, "Away");
+    setNative(hostEl.querySelector("#away-body") as HTMLTextAreaElement, "Back Monday.");
     const save = [...hostEl.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Save")!;
     await click(save);
 

@@ -43,7 +43,10 @@ export function LanguageRow() {
   return (
     <SettingsRow
       label={t("language")}
-      description={t("languageHint")}
+      /* The reach of the choice, from the host that persists it — see `LocaleControls.scope`.
+         A standalone install writes the language nowhere but this machine, so the account-wide
+         sentence would be a claim about a sync that does not happen. */
+      description={t(controls.scope === "install" ? "languageHintLocal" : "languageHint")}
       control={
         <SegmentedControl<AppLocale>
           ariaLabel={t("languageAria")}

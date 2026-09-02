@@ -43,7 +43,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
-import { SettingsSection } from "@ohmail/ui";
+import { SettingsRow, SettingsSection } from "@ohmail/ui";
 import { apiConfigured, mailboxes as mailboxApi, messageOf, type MailboxDTO } from "../../api-client";
 import { SELF_HOST_BUILD } from "../../hello";
 
@@ -105,31 +105,48 @@ export function AboutSection() {
     })();
   }, []);
 
+  /* A TABLE OF FACTS, LIKE EVERY OTHER SETTINGS PANE — which is what this one had stopped being.
+     It was five loose paragraphs and two `<h3>`s: a mailbox sentence, a version, a keyboard hint
+     and an address block, each floating with nothing naming it, so the one pane whose whole job is
+     to answer "what am I running and who wrote it" gave no way to find any single answer in it.
+     `SettingsRow` is the shape the rest of Settings reads in — label left, fact right, a rule
+     between — and the three facts that had no heading now carry one. Nothing here changed its
+     words; the publisher block is still the imprint's own text, verbatim (see the header). */
   return (
     <SettingsSection className="about-pane">
-      {failure === null
-        ? <p className="about-line">{mailboxLine(items, t)}</p>
-        : <p className="about-line" role="alert">{failure}</p>}
-      {/* ONE LINE, TWO FACTS, and one copy key. "0.7.1 · build 1635001" — the release is what a
+      <SettingsRow
+        label={t("mailboxesLabel")}
+        description={
+          failure === null ? (
+            mailboxLine(items, t)
+          ) : (
+            <span role="alert">{failure}</span>
+          )
+        }
+      />
+      {/* ONE VALUE, TWO FACTS, and one copy key. "0.7.1 · build 1635001" — the release is what a
           person means when they ask which version they are on, and the sha is what makes two
-          reports of the same version distinguishable. Splitting them into two paragraphs would
-          put a lone seven-character string on a line of its own with nothing to read it against. */}
-      <p className="about-build">{t("build", { version: VERSION, build: BUILD })}</p>
-      <p className="about-build">{t("keys")}</p>
+          reports of the same version distinguishable. Splitting them would put a lone
+          seven-character string in a row of its own with nothing to read it against. */}
+      <SettingsRow label={t("buildLabel")} value={t("build", { version: VERSION, build: BUILD })} />
+      <SettingsRow label={t("keyboardLabel")} description={t("keys")} />
 
       {/* The publisher. Same facts as ohmail.app/imprint, written the same way — see the
-          header for why the FACTS are not translated (the headings and link labels are). */}
-      <h3 className="acct-sub about-h">{t("publishedBy")}</h3>
-      <p className="about-line">
-        TrafficFlow GmbH
-        <br />
-        Staubstrasse 1, 8038 Zürich, Switzerland
-        <br />
-        UID CHE&#8209;364.165.705 · Commercial Register, Canton of Zurich
-      </p>
-      <p className="about-line">
-        <a href="mailto:support@ohmail.app">support@ohmail.app</a>
-      </p>
+          header for why the FACTS are not translated (the heading and the link labels are). */}
+      <SettingsRow
+        label={t("publishedBy")}
+        description={
+          <>
+            TrafficFlow GmbH
+            <br />
+            Staubstrasse 1, 8038 Zürich, Switzerland
+            <br />
+            UID CHE&#8209;364.165.705 · Commercial Register, Canton of Zurich
+            <br />
+            <a href="mailto:support@ohmail.app">support@ohmail.app</a>
+          </>
+        }
+      />
 
       {/* WHERE TO READ WHAT WE DO WITH YOUR MAIL — on the deployment where that question has
           an answer we can give. These three documents describe the HOSTED service: its
@@ -138,17 +155,19 @@ export function AboutSection() {
           nor can see), so linking them there would be three links to a 404 and, worse, an
           offer to explain a policy that does not govern the install the reader is looking at.
           What happens to mail on somebody's own server is between them and whoever runs it;
-          the honest thing for this pane to do about it is nothing. The heading goes with the
-          links — a section header over an empty block is its own small lie. */}
+          the honest thing for this pane to do about it is nothing. The label goes with the
+          links — a row header over an empty block is its own small lie. */}
       {SELF_HOST_BUILD ? null : (
-        <>
-          <h3 className="acct-sub about-h">{t("yourMail")}</h3>
-          <p className="about-line about-links">
-            <Link href="/privacy">{tf("privacy")}</Link>
-            <Link href="/subprocessors">{tf("subprocessors")}</Link>
-            <Link href="/imprint">{tf("imprint")}</Link>
-          </p>
-        </>
+        <SettingsRow
+          label={t("yourMail")}
+          control={
+            <span className="about-links">
+              <Link href="/privacy">{tf("privacy")}</Link>
+              <Link href="/subprocessors">{tf("subprocessors")}</Link>
+              <Link href="/imprint">{tf("imprint")}</Link>
+            </span>
+          }
+        />
       )}
     </SettingsSection>
   );

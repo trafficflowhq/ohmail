@@ -45,7 +45,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Button, SegmentedControl, SettingsRow, Switch } from "@ohmail/ui";
+import { Button, SegmentedControl, SettingsActions, SettingsField, SettingsRow, Switch } from "@ohmail/ui";
 import { away as awayApi, type AwayResponderWire } from "../api-client";
 
 /**
@@ -239,32 +239,31 @@ export function AwayResponderRow({ onChanged, transport }: {
           />
         }
       />
-      <SettingsRow
-        label={t("subjectLabel")}
-        control={
-          <input
-            className="join-input set-tag-input"
-            type="text"
-            value={draft.subject ?? ""}
-            disabled={pending}
-            aria-label={t("subjectLabel")}
-            onChange={(e) => edit({ subject: e.target.value })}
-          />
-        }
-      />
-      <SettingsRow
-        label={t("bodyLabel")}
-        control={
-          <textarea
-            className="set-screening-textarea"
-            rows={3}
-            value={draft.body ?? ""}
-            disabled={pending}
-            aria-label={t("bodyLabel")}
-            onChange={(e) => edit({ body: e.target.value })}
-          />
-        }
-      />
+      {/* THE TWO THINGS SOMEBODY WRITES ARE FIELDS, NOT ROWS. `SettingsRow` puts its control at
+          the right of a label, which is right for a switch and wrong for prose: the subject line
+          got a 200px flex basis and the message a three-row textarea in the same gutter, so the
+          one control in Settings whose content is a sentence people will read was the narrowest
+          one on the pane. `SettingsField` is label above, control at full width, hint below —
+          and its `htmlFor` gives each control a VISIBLE accessible name, which is what the
+          `aria-label` here was standing in for. */}
+      <SettingsField htmlFor="away-subject" label={t("subjectLabel")}>
+        <input
+          id="away-subject"
+          type="text"
+          value={draft.subject ?? ""}
+          disabled={pending}
+          onChange={(e) => edit({ subject: e.target.value })}
+        />
+      </SettingsField>
+      <SettingsField htmlFor="away-body" label={t("bodyLabel")}>
+        <textarea
+          id="away-body"
+          rows={4}
+          value={draft.body ?? ""}
+          disabled={pending}
+          onChange={(e) => edit({ body: e.target.value })}
+        />
+      </SettingsField>
       <SettingsRow
         label={t("audienceLabel")}
         description={draft.audience === "everyone" ? t("everyoneNote") : t("screenedInNote")}
@@ -278,13 +277,24 @@ export function AwayResponderRow({ onChanged, transport }: {
         }
       />
       <p className="set-note-inline">{t("never")}</p>
-      <div className="gate-actions">
-        <Button onClick={save} disabled={pending}>{pending ? t("saving") : t("save")}</Button>
-      </div>
-      {state === "saved" ? <span className="scn-sg-note">{t("saved")}</span> : null}
-      {state === "failed" ? (
-        <span className="scn-sg-note">{complete ? t("failed") : t("incomplete")}</span>
-      ) : null}
+      {/* THE VERB AND ITS ANSWER, TOGETHER. The outcome used to render as a bare `<span>` after a
+          `gate-actions` div — the sign-in gate's container, borrowed on a settings pane — so the
+          one press in Settings that starts an enablement episode reported into loose text below
+          itself. `SettingsActions` is the form-verb row this pane's other forms use, and the
+          outcome sits in it, beside the button that asked. Both are live regions: this is the
+          only control here that sends mail, so whether the press took has to reach somebody who
+          is not watching the pixels. */}
+      <SettingsActions>
+        <Button variant="primary" onClick={save} disabled={pending}>
+          {pending ? t("saving") : t("save")}
+        </Button>
+        {state === "saved" ? (
+          <span className="set-note-inline" role="status">{t("saved")}</span>
+        ) : null}
+        {state === "failed" ? (
+          <span className="set-note-inline" role="alert">{complete ? t("failed") : t("incomplete")}</span>
+        ) : null}
+      </SettingsActions>
     </>
   );
 }
