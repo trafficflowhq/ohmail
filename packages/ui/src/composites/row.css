@@ -44,11 +44,19 @@
    (count, faces, clip, protected — direct flex:none children) hold. The subject keeps a
    6ch floor so a short subject is never wiped out by somebody's long tags — the order is:
    subject down to a readable fragment, then the tail collapses, and only a row too narrow
-   for the bounded members plus the amount (well under the 390px target) clips further. */
+   for the bounded members plus the amount clips further. The one case that floor can cost
+   a keep member is ALL FIVE bounded marks on one row at ~320px — a PROTECTED message (a
+   verification code, a no-reply one-shot by nature) that is simultaneously a multi-voice
+   THREAD with an attachment — which the product's own mail shapes do not produce; the
+   reachable failure the floor prevents (tags erasing a short subject) outranks it, and at
+   the 390px build target even that synthetic row fits.
+   The strip's 2px padding (returned by margin) is CLIP ROOM: overflow:hidden cuts at the
+   padding edge, and the participant circles wear a 1.5px separation ring drawn as shadow —
+   without the room, the ring's lower arc was shaved even with space to spare. */
 .row .subj{flex-shrink:1000;min-width:6ch}
-.row .badges{display:inline-flex;gap:6px;flex:0 1 auto;min-width:0;overflow:hidden;margin-left:-3px;vertical-align:1px}
+.row .badges{display:inline-flex;gap:6px;flex:0 1 auto;min-width:0;overflow:hidden;padding:2px;margin:-2px -2px -2px -5px;vertical-align:1px}
 .row .badges > *{flex:none}
-.row .badges > .bdg-tail{display:inline-flex;gap:6px;flex:0 1 auto;min-width:0;overflow:hidden}
+.row .badges > .bdg-tail{display:inline-flex;gap:6px;flex:0 1 auto;min-width:0;overflow:hidden;padding:2px;margin:-2px}
 .row .badges > .bdg-tail > *{flex:none}
 
 /* THREAD PARTICIPANT CIRCLES — the conversation's faces in the subject line's badge strip,
