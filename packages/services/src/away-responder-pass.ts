@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, gte, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
+import { and, asc, eq, exists, gt, gte, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import {
   awayReplies, awayResponders, awaySenderState, folderState, mailboxes, messageBodies, messages,
   type Tx,
@@ -304,6 +304,31 @@ async function liveResponders(
       // current instant would make an enabled responder with no dates answer nobody.
       or(isNull(awayResponders.startsAt), sql`${awayResponders.startsAt} <= ${at.toISOString()}::timestamptz`)!,
       or(isNull(awayResponders.endsAt), sql`${awayResponders.endsAt} >= ${at.toISOString()}::timestamptz`)!,
+      /* ── THE MAILBOX NARROWING REACHES THE PROBE, NOT ONLY THE CANDIDATES ────────────────
+       *
+       * This used to be discarded here (`void mailboxIds`) on the reasoning that the narrowing is
+       * about candidates. That was wrong in two ways, one of them only visible against a real
+       * database.
+       *
+       * Cheaply: a caller that named its mailboxes was still made to read up to
+       * `AWAY_ACCOUNTS_PER_RUN` responders belonging to accounts it did not ask about, and then run
+       * a full candidate query for each of them — every one returning nothing, because the
+       * candidate filter excluded them anyway.
+       *
+       * And correctly: the probe is a PAGE. Ordered and capped, it can exclude the very account the
+       * caller named — which is not hypothetical, it is what the shared test Postgres does today
+       * (70 live responders, all with older `enabled_at` than a freshly seeded one, against a cap
+       * of 50). A sidecar drain naming its own mailbox would be silently served nothing on any
+       * store holding more live responders than the cap.
+       *
+       * So the page is drawn from the accounts that own the named mailboxes. Absent ⇒ every account,
+       * which is the hosted clock's shape and unchanged. */
+      ...(mailboxIds === undefined ? [] : [exists(
+        (db as unknown as Tx).select({ one: sql`1` }).from(mailboxes).where(and(
+          eq(mailboxes.accountId, awayResponders.accountId),
+          inArray(mailboxes.id, [...mailboxIds]),
+        )),
+      )]),
     ))
     /* DETERMINISTIC, and it decides two things rather than one. Without an ORDER BY, Postgres
        returns whatever the scan produces, so (a) WHICH 50 responders are considered at all when
@@ -334,7 +359,6 @@ async function liveResponders(
       floor,
     });
   }
-  void mailboxIds;   // the narrowing is applied to CANDIDATES, not to the responder probe
   return out;
 }
 
