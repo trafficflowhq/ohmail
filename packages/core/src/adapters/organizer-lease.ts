@@ -211,10 +211,15 @@ function metaDelimiter(bare: string, list: readonly MetaFolderRow[], ns: readonl
  *    `INBOX` is a mailbox on that server. Derived from the LIST rather than hardcoded, so a
  *    server whose personal namespace is not spelled `INBOX` is found on the same rule.
  *
- * The root spelling is always a candidate, whatever NAMESPACE says, because an install that ran
- * before this resolution existed may have left its `_meta` there — and that folder holds the
- * claim a newer install must still see. Two matches is {@link AmbiguousMetaFolderError}, never a
- * choice.
+ * The root spelling is always a candidate, whatever NAMESPACE says. The reason is the flat
+ * server — most of them: `personal[0].prefix` is empty, and the root IS where the folder lives.
+ * It also covers a client that hands back the server's paths unaltered. It does NOT, on a
+ * prefixed server reached through `ImapFlow`, catch a folder an older build left at the root:
+ * that client normalizes LIST output by prepending the namespace prefix, so a genuinely
+ * root-level `ohmail._meta` is reported as `INBOX.ohmail._meta` and is indistinguishable here
+ * from the prefixed one. Which also makes {@link AmbiguousMetaFolderError} close to unreachable
+ * through that client — it is the honest answer where two really are visible, not a case anyone
+ * should expect to meet. Two matches is that error, never a choice.
  *
  * When nothing matches, the path returned is the FIRST declared personal prefix plus the mapped
  * name: the server would file a root-named CREATE there anyway, and creating at the name LIST
@@ -229,20 +234,47 @@ export function resolveMetaFolder(input: {
   const { list, bare } = input;
   const ns = input.namespaces ?? [];
   const delimiter = metaDelimiter(bare, list, ns);
-  const declared = ns
-    .map((entry) => entry.prefix ?? "")
-    .filter((prefix) => prefix !== "" && prefix.endsWith(delimiter));
   // A CLIENT THAT ANSWERED IS AUTHORITATIVE EVEN WHEN ITS ANSWER IS "no prefix", and reading
-  // this off `declared.length` instead would be a hole in exactly the servers most people use.
-  // Gmail and Fastmail declare ONE personal namespace whose prefix is empty; that is a positive
-  // statement that mailboxes live at the root, so the only candidate is the root. Falling
-  // through to the derived branch there would let a customer's own `Archive/ohmail/_meta` — any
-  // folder under any listed parent — be adopted as this mailbox's organizer lease.
+  // this off "are there any NON-EMPTY prefixes" instead would be a hole in exactly the servers
+  // most people use. Gmail and Fastmail declare ONE personal namespace whose prefix is empty;
+  // that is a positive statement that mailboxes live at the root, so the only candidate is the
+  // root. Falling through to the derived branch there would let a customer's own
+  // `Archive/ohmail/_meta` — any folder under any listed parent — be adopted as the lease.
   const authoritative = ns.length > 0;
+
+  // ── THE FIRST PERSONAL NAMESPACE, AND ONLY IT ─────────────────────────────────────────────
+  //
+  // A server may declare several personal namespaces. `ImapFlow` uses exactly one — it sets
+  // `namespace = namespaces.personal[0]` and `tools.normalizePath` prepends THAT prefix to
+  // every path it sends and to every path LIST hands back — so a folder under a SECOND declared
+  // namespace is not where this connection's own organizer would ever write, and treating it as
+  // the lease would read a claim out of somewhere the writer will never renew. On a server
+  // declaring personal = (("" "/") ("Shared/" "/")) that is a customer's — or another
+  // account's — `Shared/ohmail/_meta` adopted as this mailbox's organizer lease.
+  //
+  // It is also the create path, for the same reason and with the same spelling: the earlier
+  // version filtered empty prefixes out before taking the first, which on that same server
+  // skipped the empty personal[0] and created the folder under `Shared/`.
+  const head = authoritative ? (ns[0]?.prefix ?? "") : "";
+  const primary = head === "" || head.endsWith(delimiter) ? head : `${head}${delimiter}`;
 
   const credible = (prefix: string): boolean => {
     if (prefix === "" || !prefix.endsWith(delimiter)) return false;
-    if (authoritative) return declared.includes(prefix);
+    if (authoritative) return prefix === primary;
+    // ── NO NAMESPACE TO ASK, AND THIS BRANCH TRADES A RISK FOR AN ANSWER ────────────────────
+    //
+    // Reachable in production, not only against a fake: `ImapFlow`'s NAMESPACE handler assigns
+    // `namespaces.personal[0] = …` when the server answers NIL for the personal list, and
+    // `personal` is `false` there — assigning a property to a boolean throws under strict mode,
+    // the handler's own catch swallows it, and the connection ends up with no namespace at all.
+    //
+    // Here a prefix counts when the server LISTS the mailbox it names. That is weaker than the
+    // authoritative branch and it is weaker in a direction that matters: a customer's
+    // `Backup/ohmail/_meta` IS adopted when `Backup` is a listed folder. The alternative is
+    // refusing to resolve at all on a connection that cannot say where its own mail lives,
+    // which makes the lease unreadable rather than occasionally wrong. The root candidate is
+    // always in play beside this, so an ordinary install still resolves; and two matches are
+    // refused rather than picked. The trade is recorded rather than hidden.
     const parent = prefix.slice(0, prefix.length - delimiter.length);
     return list.some((f) => f.path === parent);
   };
@@ -253,7 +285,7 @@ export function resolveMetaFolder(input: {
   if (hits.length > 1) throw new AmbiguousMetaFolderError(hits.map((f) => f.path));
   const hit = hits[0];
   if (hit !== undefined) return { path: hit.path, row: hit };
-  return { path: `${declared[0] ?? ""}${bare}`, row: null };
+  return { path: `${primary}${bare}`, row: null };
 }
 
 /** The minimum a client has to be for {@link makeMetaFolderRef} to resolve against it. */
