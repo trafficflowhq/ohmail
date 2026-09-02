@@ -37,7 +37,16 @@
  */
 
 import { useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
 import { SettingsNote, SettingsRow, SettingsSubhead, Switch } from "@ohmail/ui";
+
+/* THE ONE STAND-DOWN PREDICATE, aggregated over the roster — the same `readerStandDown` Settings
+   → Mailboxes renders its banner from, and the same call the Screener pane itself makes. See
+   `mail-state.ts#screenerReadOnly`. `useMailboxFacts` is the NON-throwing accessor: a surface
+   mounted without the provider reads `null`, which answers "this install organizes" and leaves
+   every sentence here exactly as it was. */
+import { useMailboxFacts } from "../../webapp/app/shell/MailStateProvider";
+import { screenerReadOnly } from "../../webapp/app/shell/mail-state";
 
 import { DesktopAutoSuggest } from "./DesktopAutoSuggest.js";
 import { DesktopScreeningWords } from "./DesktopScreeningWords.js";
@@ -54,6 +63,9 @@ export function DesktopScreening({
 }: {
   door: "local" | "cloud" | null;
 }) {
+  /* See `DesktopScreeningWords` for why the namespace has to be on `vite.config.ts`'s list. */
+  const t = useTranslations("desktopScreener");
+  const readOnly = screenerReadOnly(useMailboxFacts());
   const [read, setRead] = useState<ScreeningRead | null>(null);
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -111,23 +123,39 @@ export function DesktopScreening({
 
   return (
     <>
-      <SettingsSubhead>How your mail is filed</SettingsSubhead>
+      <SettingsSubhead>{t("filedHead")}</SettingsSubhead>
+
+      {/* ── A READER'S PANE SAYS SO, ABOVE THE CONTROLS ────────────────────────────────────
+          MEASURED on the released 0.13.7: on an install reading a mailbox ohmail Cloud holds,
+          this pane offered the Ohbox posture, the automatic-suggestion consent and the
+          "when a sender goes quiet" window as though this install screened. Every one of them
+          is inert here and none said so.
+
+          The controls STAY, and that is the considered direction rather than the easy one: the
+          values are stored on this computer and are what the install will screen by the moment
+          somebody takes the mailbox over, so removing them would make setting up ahead of a
+          takeover impossible and would take away the only record of what this machine believes.
+          What was missing is the sentence. `SettingsNote` and not an alarm — nothing is broken.
+
+          Withheld where this install organizes, so an ordinary pane is unchanged. */}
+      {readOnly ? (
+        <SettingsNote>
+          {readOnly.name
+            ? t("readerNote", { name: readOnly.name })
+            : t("readerNoteUnknown")}
+        </SettingsNote>
+      ) : null}
 
       {/* THE POSTURE. Framed around RELEVANCE and never "only real people": the mechanism keeps
           service mail you act on — a receipt still lands in Receipts, an alert can stay in the
           Ohbox — and files the obvious bulk. */}
       <SettingsRow
-        label="Keep my Ohbox for what matters"
-        description={
-          "On: real people, plus the service mail you act on. Obvious bulk — newsletters, " +
-          "promotions — goes to Reads and Receipts. Off: anything from a sender you have written " +
-          "to reaches the Ohbox. It changes how the NEXT messages are filed; mail already in your " +
-          "Ohbox stays where it is."
-        }
+        label={t("postureLabel")}
+        description={t("postureWhy")}
         control={
           <Switch
             checked={pref.ohboxPolicy === "people_only"}
-            ariaLabel="Keep my Ohbox for what matters"
+            ariaLabel={t("postureLabel")}
             onChange={(on) => apply({ ohboxPolicy: on ? "people_only" : "people_and_replied" })}
           />
         }
@@ -152,23 +180,19 @@ export function DesktopScreening({
       {/* AUTO-APPLY, ON THE HOSTED DOOR ONLY. See the header. */}
       {door === "cloud" ? (
         <SettingsRow
-          label="Act on suggestions for me"
-          description={
-            "When your account works through the senders waiting in your Screener, file the ones " +
-            "it is confident about instead of leaving them for you. You can undo any of it from " +
-            "the rules list."
-          }
+          label={t("autoApplyLabel")}
+          description={t("autoApplyWhy")}
           control={
             <Switch
               checked={pref.screenerAutoApply}
-              ariaLabel="Act on suggestions for me"
+              ariaLabel={t("autoApplyLabel")}
               onChange={(on) => apply({ screenerAutoApply: on })}
             />
           }
         />
       ) : null}
 
-      {failed ? <p className="join-error">That did not save. Nothing has changed.</p> : null}
+      {failed ? <p className="join-error">{t("saveFailed")}</p> : null}
 
       {/* THE BAR, still its own component. It carries its own read, its own save and its own
           failure line, and that is worth one extra read of the same row rather than one component

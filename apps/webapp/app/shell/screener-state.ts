@@ -260,6 +260,35 @@ export interface ScreenerState {
   refused: (id: string) => boolean;
   /** Commit every pending decision now (route/segment changes). */
   flush: () => void;
+  /**
+   * SOMEBODY ELSE ORGANIZES THIS MAILBOX, so NOTHING HERE FILES — and who they are, by name.
+   *
+   * `null` is the ordinary case: this install organizes the mailbox and every verb above works.
+   * Non-null carries the holder for the copy, with `name: null` for a holder this build has no
+   * name for (a claim written by a version that recorded none) — three states, the same shape
+   * `mailboxes.readerLabel` / `readerLabelLegacy` already render.
+   *
+   * ── WHAT IT WAS MEASURED DOING, AND WHY THE GUARD IS HERE RATHER THAN IN THE VIEW ─────────
+   *
+   * On the released 0.13.7, on a standalone install reading a mailbox ohmail Cloud holds: the
+   * Screener drew the full decision bar, `o` toasted *"Ohbox — filed. Future mail from … files
+   * there automatically. Undo"*, the sender left the list and the count dropped 329 → 328 —
+   * while the server's Screener folder, INBOX and `ohmail/_meta` were all unchanged. No rule was
+   * written and nothing moved. Forty-five seconds later the sender was back, tagged "Not saved",
+   * with no sentence saying why. A minute earlier the flow's own elsewhere step had said "This
+   * computer reads the mailbox; it moves nothing and screens nothing."
+   *
+   * That is the whole shape: the optimistic path told the truth about an act the engine would
+   * not make, and the honest answer arrived a rollback later as a mark with no reason. So the
+   * refusal is BEFORE the press, at the funnel every decision converges on, rather than in the
+   * view: the view withholds the bar and the keys (which is what a person should see), and this
+   * makes it structural — a surface that forgets, a key that was missed, a row menu, the bulk
+   * buttons and the boot replay all meet the same wall.
+   *
+   * It is derived from {@link readerStandDown} in `mail-state.ts`, the predicate Settings →
+   * Mailboxes already renders its banner from, and never from a second rule shaped like it.
+   */
+  readOnly: { name: string | null } | null;
 }
 
 const OUT_MS = 330;
@@ -388,6 +417,16 @@ export function useScreenerState(
    * failure to avoid is the silent one: a decision that quietly leaves a mailing list.
    */
   autoUnsubscribe = true,
+  /**
+   * WHO ORGANIZES THIS MAILBOX, when it is not this install — see {@link ScreenerState.readOnly}.
+   *
+   * OPTIONAL, and absent means "this install organizes it", which is what every caller meant
+   * before this parameter existed and is the safe default in the only direction that matters
+   * here: the dangerous value would refuse decisions on a mailbox this install DOES organize.
+   * The one caller that can know (`AppShell`) computes it from `readerStandDown` over the same
+   * polled row Settings → Mailboxes reads.
+   */
+  readOnly: { name: string | null } | null = null,
 ): ScreenerState {
   const t = useTranslations("screener");
   // The past-the-gate branch of `commit` speaks the sender-sheet's own sentences (`toastRuled`,
@@ -1451,6 +1490,13 @@ export function useScreenerState(
    */
   const restoredIntents = useRef<ScreenerIntent[] | null>(null);
   useEffect(() => {
+    /* AND NOT ON A MAILBOX THIS INSTALL NO LONGER ORGANIZES. The journal outlives the session
+       that wrote it, so an install that organized yesterday and is a reader today would replay
+       decisions the engine will not make — the exact rollback-with-no-reason this slice closes,
+       arriving through the durable path instead of a keypress. Nothing is consumed: the entries
+       stay in the journal for the next boot, and age out on {@link INTENT_TTL_MS} if this install
+       never gets the mailbox back. */
+    if (readOnly !== null) return;
     if (restoredIntents.current === null) {
       restoredIntents.current = takeScreenerIntents(Date.now())
         .filter((r) => !s.pending.has(r.id));
@@ -1490,6 +1536,26 @@ export function useScreenerState(
       .map((x) => ({ sender: x, pinned: false })),
   ];
 
+  /**
+   * WHAT A DECIDING VERB DOES ON A MAILBOX THIS INSTALL DOES NOT ORGANIZE — say so, do nothing.
+   *
+   * ONE sentence for all seven verbs, and one wall for all seven, which is the point of putting
+   * it at the return rather than at the top of each: the list below is complete by construction,
+   * and a verb added later that is not wrapped is a verb visibly outside the guard rather than
+   * one that silently escaped it. `test/screener-reader.test.ts` asserts the exact set.
+   *
+   * It raises a toast and does NOT touch `s.refused`: that mark means "the wire would not take
+   * your decision", which is a thing that happened to a row. Nothing happened to a row here —
+   * nothing was armed, nothing was dispatched, no overlay moved, and the queue does not flicker.
+   */
+  const refuseReadOnly = (): void => {
+    toast(readOnly?.name
+      ? t("readerRefused", { name: readOnly.name })
+      : t("readerRefusedUnknown"));
+  };
+  const guard = <A extends unknown[]>(verb: (...args: A) => void) =>
+    (readOnly === null ? verb : ((..._args: A) => refuseReadOnly()));
+
   return {
     waiting: visibleWaiting,
     waitingCount,
@@ -1503,13 +1569,17 @@ export function useScreenerState(
     isExiting: (id) => s.pending.has(id),
     refused: (id) => s.refused.has(id),
     bodyStall,
-    decide,
-    applyAll,
-    markAllSpam,
-    allowScreened,
-    notSpamToWaiting,
-    notSpamToOhbox,
-    deleteSpam,
+    /* THE SEVEN VERBS THAT WRITE, every one behind the same wall. `flush` is deliberately NOT
+       among them — it commits decisions ALREADY armed, and on a reader none can be, so wrapping
+       it would only make a route change raise a sentence about nothing. */
+    decide: guard(decide),
+    applyAll: guard(applyAll),
+    markAllSpam: guard(markAllSpam),
+    allowScreened: guard(allowScreened),
+    notSpamToWaiting: guard(notSpamToWaiting),
+    notSpamToOhbox: guard(notSpamToOhbox),
+    deleteSpam: guard(deleteSpam),
     flush,
+    readOnly,
   };
 }

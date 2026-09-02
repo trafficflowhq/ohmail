@@ -1480,6 +1480,25 @@ body.reading .shell {
   color: var(--ink3);
   margin: 0 0 10px;
 }
+/* WHERE THE DECISION VERBS WOULD BE, on a mailbox this install does not organize — the pane's
+   standing condition rather than an error, so it takes the caption's quiet voice with one line
+   of emphasis on the fact itself. It sits inside `.decide` (the sticky bar) on all three
+   segments, so no geometry of its own is needed beyond the stack. */
+.scn-reader {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.scn-reader b {
+  font-size: 12.5px;
+  color: var(--ink);
+}
+.scn-reader span {
+  font-size: 11px;
+  color: var(--ink3);
+  line-height: 1.45;
+}
 /* The Junk window's footnotes — the per-mailbox degrades and the digit-free retention
    sentence — quiet lines under the rows, in the caption's own voice, padded to the row gutter. */
 .scn-junk-note {

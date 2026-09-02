@@ -38,6 +38,7 @@
  */
 
 import { useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 import { Button } from "@ohmail/ui";
 
 import { unavailableLine, type LocalAiStatus } from "./local-ai.js";
@@ -62,6 +63,10 @@ export interface LocalSuggestProps {
 }
 
 export function LocalSuggest({ senders, absorb, ai, onConfigure }: LocalSuggestProps) {
+  /* See `DesktopScreeningWords` for why `desktopScreener` has to be on `vite.config.ts`'s
+     namespace list. Only the three sentences this control owns are read here — the refusal
+     sentences below are the ENGINE's own words and are never composed in this file. */
+  const t = useTranslations("desktopScreener");
   const [running, setRunning] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   /**
@@ -100,11 +105,11 @@ export function LocalSuggest({ senders, absorb, ai, onConfigure }: LocalSuggestP
   if (ai === null) {
     /* The first read has not landed. One quiet line rather than a guess in either direction: a
        control that renders "no model" for a moment on every visit teaches people to ignore it. */
-    return <span className="scn-sg-note" role="status">Checking for a model…</span>;
+    return <span className="scn-sg-note" role="status">{t("suggestChecking")}</span>;
   }
 
   const problem = ai.provider === null
-    ? "Suggestions come from a model you set up. There is none on this install yet."
+    ? t("suggestNoModel")
     : ai.available
       ? null
       : unavailableLine(ai);
@@ -113,7 +118,7 @@ export function LocalSuggest({ senders, absorb, ai, onConfigure }: LocalSuggestP
     return (
       <div className="scn-suggest" role="group" aria-label="Suggestions">
         <span className="scn-sg-note">{problem}</span>
-        <Button variant="ghost" onClick={onConfigure}>Set up a model</Button>
+        <Button variant="ghost" onClick={onConfigure}>{t("suggestSetUp")}</Button>
       </div>
     );
   }

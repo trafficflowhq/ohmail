@@ -559,13 +559,16 @@ export function FirstRun({
   /* ── THE ELSEWHERE CHOICE ──────────────────────────────────────────────────────────── */
 
   /**
-   * `here` is the DEFAULT, and that is a considered direction rather than a coin toss: this
-   * screen is reached from a first run, where the person is setting ohmail up to organize their
-   * mail. Defaulting to "just read it" would make the ordinary intent the one that needs a
-   * click, and neither option is destructive — a reader can claim later from Settings, and a
-   * claim can be handed back.
+   * WHICH CHOICE THE PERSON MADE, or `null` while they have not touched the control.
+   *
+   * `null` rather than a seeded value, because the default is a FACT and the fact arrives late.
+   * The holder columns are filled by a PEEK — an IMAP round trip that lands after this component
+   * mounts — so a `useState` initializer reading them would compute the default against facts
+   * that had not arrived yet and keep it for the life of the run. The effective value is derived
+   * below, where `claimRefusedHere` is in hand, and switches to what the person picked the
+   * instant they pick anything.
    */
-  const [elsewhereChoice, setElsewhereChoice] = useState<"here" | "read">("here");
+  const [elsewhereChoicePicked, setElsewhereChoice] = useState<"here" | "read" | null>(null);
   /** A claim has been authorized in this run — the "on its next pass" verdict, not a success. */
   const [claimed, setClaimed] = useState(false);
 
@@ -591,6 +594,23 @@ export function FirstRun({
 
   /** Whether the claim choice on the elsewhere screen would be declined. See the function. */
   const claimRefusedHere = claimRefusedOnThisDoor(facts);
+  /**
+   * THE PRE-SELECTED CHOICE IS THE ONE THAT CAN SUCCEED — and it used to be the refused one.
+   *
+   * `here` was hard-coded as the default on the reasoning that a first run is somebody setting
+   * ohmail up to organize their mail. That reasoning holds on a door where the claim can be
+   * taken. It does not hold here: `claimRefusedHere` is the state in which the block directly
+   * under this control says, before any press, that the takeover cannot be taken — and the
+   * default sat on exactly that option, so ↵ on an untouched screen pressed the refused thing.
+   *
+   * So the default follows the facts, and only until the person answers: any press writes
+   * `elsewhereChoicePicked` and that wins from then on, including a deliberate "Organize here
+   * instead" over a live holder — the screen states the refusal, it does not remove the choice.
+   * Where the claim CAN succeed (the hosted door, a stopped holder) `here` is still the default,
+   * unchanged, because there the choice promises nothing the next pass declines.
+   */
+  const elsewhereChoice: "here" | "read" =
+    elsewhereChoicePicked ?? (claimRefusedHere ? "read" : "here");
   /**
    * IS THIS INSTALL THE ORGANIZER — the one fact the summary is allowed to report work on.
    *
@@ -838,11 +858,30 @@ export function FirstRun({
             if (mailboxId) setClaimAnsweredFor(mailboxId);
             /* ── "JUST READ IT HERE" WRITES NOTHING ABOUT ORGANIZING ──────────────────────
              *
-             * It stamps completion and leaves. That is the whole action: this install is
-             * already a reader (which is what put this screen on screen), and a reader is a
-             * mail client — it reads, searches, marks read and sends. There is no "become a
-             * reader" call, because nothing has to change for it to be one. */
-            if (elsewhereChoice === "read") { leave(); return; }
+             * There is no "become a reader" call: this install is already a reader (which is
+             * what put this screen on screen), and a reader is a mail client — it reads,
+             * searches, marks read and sends. Nothing has to change for it to be one.
+             *
+             * ── AND IT USED TO `leave()` HERE, WHICH ENDED THE RUN AT THE QUESTION ────────
+             *
+             * Measured on the released 0.13.7: choosing to read closed the flow outright, on a
+             * first run, on "Run setup again" and in German — no summary, and nothing anywhere
+             * else in the shell saying who organizes the mailbox. The reader summary that
+             * screen owes exists in both catalogues (`doneReaderTitle`, `doneReaderReads`/`Why`,
+             * `doneReaderClaim`/`Why`) and was unreachable, because this was the only path to
+             * it and it went past.
+             *
+             * So the run FINISHES rather than being abandoned: `goTo("summary")` walks to the
+             * one screen written for this ending, which names the holder and since when, says
+             * what this computer does and does not do, and points at where the claim lives. Its
+             * own "Open ohmail" is what stamps completion — cancel and finish write the same
+             * stamp, so nothing is lost by deferring it one screen, and a person who quits
+             * mid-summary is in exactly the state `leave()` would have left them in.
+             *
+             * `summary` is always in `onboardingPath`, and `firstRunStep` returns a non-null
+             * cursor once the claim question is answered — which the line above has just
+             * recorded — so this cannot be thrown back to the choice it came from. */
+            if (elsewhereChoice === "read") { goTo("summary"); return; }
             /* ── "ORGANIZE HERE INSTEAD" — AND WHY IT USUALLY CALLS NOTHING EITHER ────────
              *
              * The claim, the consent and the window ride ONE request
@@ -928,8 +967,15 @@ export function FirstRun({
                   two surfaces cannot drift into describing it differently.
 
                   Withheld on the other two doors rather than made vaguer: a Cloud claim outranks
-                  a local holder, so there the promise the choice makes is true. */}
-              {elsewhereChoice === "here" && claimRefusedHere ? (
+                  a local holder, so there the promise the choice makes is true.
+
+                  IT NO LONGER WAITS FOR "ORGANIZE HERE INSTEAD" TO BE SELECTED, and that is the
+                  other half of moving the default off the refused option. Gated on the selection
+                  it would be invisible in exactly the state it describes — the person arrives on
+                  "Just read it here" and is never told why that is where they landed. The
+                  sentence is about the MAILBOX, not about a selection, so it is said whenever it
+                  is true. */}
+              {claimRefusedHere ? (
                 <SettingsVerdict
                   state="off"
                   headline={tm("organizeHereWhatBlocked", {

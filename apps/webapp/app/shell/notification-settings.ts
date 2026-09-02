@@ -147,6 +147,20 @@ export interface NotificationHost {
    * even less.
    */
   syncSubscription?: (wanted: boolean, opts?: { forceAnnounce?: boolean }) => Promise<PushSyncOutcome | null>;
+  /**
+   * THIS SURFACE CANNOT READ THE OPERATING SYSTEM'S ANSWER — its shell asks on first use.
+   *
+   * Absent (the browser) means `permission()` IS the OS answer and the pane's three sentences
+   * (`denied`, `unsupported`, `default`) describe it exactly. Set (the desktop) means
+   * `permission()` answers a narrower question — may this window ask the shell — and the pane
+   * therefore owes a sentence about who has the last word, because none of those three is true
+   * and the switch would otherwise be the only thing on screen with an opinion.
+   *
+   * A FACT ABOUT THE HOST, not copy: the wording stays in the catalogue where every other
+   * sentence on the pane lives. It exists because the released desktop had a master switch that
+   * could not be turned on and said nothing at all — see `apps/desktop/src/notify-host.ts`.
+   */
+  osHoldsPermission?: boolean;
 }
 
 /**

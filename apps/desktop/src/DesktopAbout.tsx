@@ -20,6 +20,14 @@ import { SettingsNote, SettingsRow, SettingsSection, SettingsSubhead } from "@oh
 import type { EngineStatus } from "./bridge-fetch.js";
 import { DesktopUpdate } from "./DesktopUpdate.js";
 
+/* WHAT THIS INSTALL DOES WITH THE MAILBOX BELOW — "organizes" or "reads". One rule, two
+   panes and one confirmation bullet; see `install-role.ts` for the measured defect and
+   why the predicate is the shared one. `useMailboxFacts` is the NON-throwing accessor,
+   so a pane mounted without the provider keeps the sentence it always had. */
+import { useMailboxFacts } from "../../webapp/app/shell/MailStateProvider";
+import { screenerReadOnly } from "../../webapp/app/shell/mail-state";
+import { mailboxRowWhy } from "./install-role.js";
+
 /** What the two doors are called on screen. The same words the Desktop pane uses. */
 const DOOR: Record<string, string> = {
   local: "Your own mail server",
@@ -27,6 +35,7 @@ const DOOR: Record<string, string> = {
 };
 
 export function DesktopAbout({ status }: { status: EngineStatus }) {
+  const readOnly = screenerReadOnly(useMailboxFacts());
   return (
     <SettingsSection>
       <SettingsRow
@@ -57,7 +66,7 @@ export function DesktopAbout({ status }: { status: EngineStatus }) {
 
       <SettingsRow
         label="Mailbox"
-        description="The mailbox this copy of ohmail organizes."
+        description={mailboxRowWhy(readOnly)}
         value={status.address ?? "—"}
       />
       <SettingsRow

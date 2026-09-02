@@ -3,7 +3,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import { DesktopAutoSuggest, autoSuggestCopy } from "../src/DesktopAutoSuggest.js";
+import { NextIntlClientProvider } from "next-intl";
+import messages from "../../webapp/messages/en.json";
+import de from "../../webapp/messages/de.json";
+import { DesktopAutoSuggest, autoSuggestCopyKey } from "../src/DesktopAutoSuggest.js";
 import { DESKTOP_PANE_LABEL } from "../src/DesktopSettings.js";
 
 /**
@@ -102,7 +105,17 @@ async function mount(): Promise<void> {
   hostEl = document.createElement("div");
   document.body.append(hostEl);
   root = createRoot(hostEl);
-  await act(async () => { root.render(h(DesktopAutoSuggest)); });
+  /* THE CATALOGUE, which this row now reads through rather than carrying literals. Wrapped with
+     the REAL `en.json` and not a stub, so every assertion below is still against the sentence
+     that ships — the point of moving the strings was that a German install gets German, and a
+     stubbed provider here would let the English drift unnoticed. */
+  await act(async () => {
+    root.render(h(
+      NextIntlClientProvider,
+      { locale: "en", messages: messages as never, timeZone: "UTC" },
+      h(DesktopAutoSuggest),
+    ));
+  });
   /* One more turn: the row reads its value in an effect, so the first render is always the empty
      one and every assertion belongs after the answer has landed. */
   await act(async () => { await Promise.resolve(); });
@@ -185,9 +198,36 @@ describe("the automatic-suggestion row on the standalone door", () => {
    * constant and not against a second literal, because a second literal is exactly what drifted.
    */
   it("sends somebody to the pane the nav actually draws", () => {
-    const said = autoSuggestCopy({ on: false, since: null, modelReady: false });
+    /* TWO STEPS NOW, and the split is the change: the function answers which of the three
+       sentences this state owes, and the catalogue holds the sentence. It returned the English
+       text until the copy moved into `messages/*.json`, which is what kept this row in English
+       on a German install. Both halves are still pinned — the arm, and the words it selects —
+       and the words are read out of the shipped catalogue rather than restated here. */
+    const key = autoSuggestCopyKey({ on: false, since: null, modelReady: false });
+    expect(key).toBe("autoSuggestNoModel");
+    const said = messages.desktopScreener[key];
     expect(said).toContain(`under ${DESKTOP_PANE_LABEL}`);
     expect(said).not.toContain("under This install");
+  });
+
+  it("the three arms select three DIFFERENT sentences, and the German ones exist too", () => {
+    /* The table, which is the whole of what the function is. It was three literals returned by
+       three arms; now it is three keys, and a key that resolved to nothing would be a raw string
+       in the pane — the failure `desktop-messages.test.ts` catches for a whole namespace and
+       nothing catches for one key. */
+    const keys = [
+      autoSuggestCopyKey({ on: false, since: null, modelReady: false }),
+      autoSuggestCopyKey({ on: false, since: null, modelReady: true }),
+      autoSuggestCopyKey({ on: true, since: "2026-09-02T09:00:00.000Z", modelReady: true }),
+    ];
+    expect(keys).toEqual(["autoSuggestNoModel", "autoSuggestOff", "autoSuggestOn"]);
+    expect(new Set(keys).size, "two arms select the same sentence").toBe(3);
+    for (const k of keys) {
+      expect(messages.desktopScreener[k], `en.json has no ${k}`).toBeTruthy();
+      expect(de.desktopScreener[k], `de.json has no ${k}`).toBeTruthy();
+      expect(de.desktopScreener[k], `${k} was never translated`)
+        .not.toBe(messages.desktopScreener[k]);
+    }
   });
 
   it("draws nothing on a door that does not serve the route", async () => {

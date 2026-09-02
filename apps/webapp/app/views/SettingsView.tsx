@@ -1204,8 +1204,20 @@ export function SettingsView({
                   {notifyPermission === "unsupported" ? (
                     <SettingsNote>{t("notifyUnsupported")}</SettingsNote>
                   ) : null}
-                  {notifyPermission === "default" ? (
+                  {notifyPermission === "default" && !notificationHost.osHoldsPermission ? (
                     <SettingsNote>{t("notifyAskFirst")}</SettingsNote>
+                  ) : null}
+                  {/* ── AND WHERE THE ANSWER IS NOT THIS SURFACE'S TO READ ────────────────────
+                      The desktop window holds no notification permission and cannot acquire one:
+                      its shell asks the platform on first use and reports a refusal as a
+                      rejection nothing on screen ever sees. So none of the three sentences above
+                      is true there — `permission()` answers "may this window ask the shell" —
+                      and on the released build the result was a master switch that could not be
+                      turned on with no sentence anywhere on the pane. This is the sentence that
+                      state owes: the switch governs whether ohmail asks, and the operating
+                      system has the last word on whether anything is drawn. */}
+                  {notificationHost.osHoldsPermission ? (
+                    <SettingsNote>{t("notifyOsHeld")}</SettingsNote>
                   ) : null}
                   {/* WHAT THE SERVER SAID, when it said something a person can act on. A switch
                       set to ON over a deployment that cannot sign a wake is the shape this pane

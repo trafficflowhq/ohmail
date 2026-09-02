@@ -958,6 +958,12 @@ export function ScreenerView({
     if (!current || "pinned" in current) return;
     const next = ids.filter((id) => id !== current.id && !state.isExiting(id));
     state.decide(current, dest, { read, scope: scopeOf(current) });
+    /* ── AND THE SELECTION DOES NOT MOVE ON A REFUSAL ────────────────────────────────────────
+       `state.decide` is a no-op that raises a sentence on a mailbox this install does not
+       organize, so advancing here would take the person off the sender they pressed about and
+       onto the next one — the queue behaving exactly as it does after a decision that landed,
+       which is the shape of the defect this closes rather than a smaller version of it. */
+    if (state.readOnly !== null) return;
     onSelect("waiting", next[0] ?? null);
   };
 
@@ -1167,8 +1173,13 @@ export function ScreenerView({
           /* QUICK-ADJUST, on the row. Every branch of it goes through `state.decide` — the same
              funnel the decision bar, the five keys and both bulks use — so a row press earns
              the undo window, the read clamp, the rule promotion and the past-the-gate branch
-             without this file knowing that any of them exist. See {@link RowActions}. */
-          actions={
+             without this file knowing that any of them exist. See {@link RowActions}.
+
+             WITHHELD ON A READER, on the bulk strip's rule: the funnel refuses on a mailbox this
+             install does not organize, so leaving the control here would put a five-destination
+             menu on every row whose every entry answers with the same sentence. The pane's
+             `readerBar` note says it once instead. */
+          actions={state.readOnly !== null ? undefined : (
             <RowActions
               exiting={state.isExiting(w.id)}
               accept={acceptDestOf(w)}
@@ -1183,7 +1194,7 @@ export function ScreenerView({
                 state.decide(w, dest, { read: false, scope: scopeOf(w) });
               }}
             />
-          }
+          )}
           onClick={() => selectRow(w.id)}
         />
       );
@@ -1300,6 +1311,12 @@ export function ScreenerView({
                 explanation is most worth having, not least. Resolving the last waiting sender took
                 both the remaining balance and the plan offer off the screen, contradicting this
                 prop's own contract. */}
+            {/* AND NOTHING THAT DECIDES IS OFFERED ON A MAILBOX THIS INSTALL DOES NOT ORGANIZE.
+                `readOnly` takes the two bulk verbs off the strip outright — an inert button is
+                its own small lie, and both of these would answer every press with a refusal. The
+                allowance line stays: it is a statement about the account, not a control, and it
+                is as true here as anywhere. The suggest control stays for the same reason it
+                exists — a suggestion is advice, and a reader may still buy and read it. */}
             {segment === "waiting" && (state.waitingCount > 0 || aiCreditNode) ? (
               <div className="scn-bulk">
                 {state.waitingCount > 0 ? (
@@ -1310,7 +1327,7 @@ export function ScreenerView({
                       promote a rule for each, while its label said it was applying
                       suggestions the user was never shown. `markAllSpam` says exactly what it
                       does and needs no such gate. */}
-                  {state.suggestedCount > 0 ? (
+                  {state.suggestedCount > 0 && state.readOnly === null ? (
                     <Button kbdHint="a" onClick={() => state.applyAll(scopeOf)}>
                       {t("applyAll", {
                         count: state.suggestedCount,
@@ -1321,11 +1338,18 @@ export function ScreenerView({
                   {/* Its own control and not a branch of the one above, because the two are
                       opposite acts: this one BUYS advice, that one ACTS on advice already
                       bought. They are both visible while some senders have a suggestion and
-                      others do not, which is the ordinary state of a queue being worked. */}
+                      others do not, which is the ordinary state of a queue being worked.
+
+                      NOT withheld on a reader, unlike the two verbs either side of it: buying a
+                      suggestion writes nothing to the mailbox and moves no mail — it is advice
+                      about senders, and a reader who wants to know what a model thinks before
+                      taking the mailbox over is asking a question this install can answer. */}
                   {suggestNode ?? (suggest ? <SuggestControl control={suggest} /> : null)}
-                  <Button variant="ghost" kbdHint="s" onClick={() => state.markAllSpam(scopeOf)}>
-                    {t("markAllSpam")}
-                  </Button>
+                  {state.readOnly === null ? (
+                    <Button variant="ghost" kbdHint="s" onClick={() => state.markAllSpam(scopeOf)}>
+                      {t("markAllSpam")}
+                    </Button>
+                  ) : null}
                   </>
                 ) : null}
                 {/* THE ALLOWANCE, one line under the control that spends it — last in the strip
@@ -1414,6 +1438,7 @@ export function ScreenerView({
             bodyStall={state.bodyStall}
             remoteImages={remoteImages}
             onBack={() => onFull(false)}
+            readOnly={state.readOnly}
           />
         ) : segment === "screened" ? (
           <ScreenedPreview
@@ -1430,6 +1455,7 @@ export function ScreenerView({
             remoteImages={remoteImages}
             onUnsubscribe={onUnsubscribe}
             onBack={() => onFull(false)}
+            readOnly={state.readOnly}
           />
         ) : (
           <SpamPreview
@@ -1451,6 +1477,7 @@ export function ScreenerView({
             remoteImages={remoteImages}
             onUnsubscribe={onUnsubscribe}
             onBack={() => onFull(false)}
+            readOnly={state.readOnly}
           />
         )}
       </div>
@@ -1800,6 +1827,30 @@ function HeldMail({
   );
 }
 
+/**
+ * WHAT STANDS WHERE A PREVIEW'S VERBS WOULD BE, on a mailbox this install does not organize.
+ *
+ * One component for all three segments, because it is one fact: this computer reads the mailbox
+ * and somebody else decides where mail goes. Rendering it three times in three wordings is how
+ * the three surfaces come to describe one state differently, which is the failure
+ * `mail-state.ts` and `ONBOARDING-RULINGS.md` both spend paragraphs on.
+ *
+ * `role="note"` and not `alert`: nothing has gone wrong and nothing needs answering. It is the
+ * standing condition of the pane, present before any press, which is the whole point — the
+ * released build said it AFTER the press, in a toast, and the toast was not true.
+ */
+function ReaderNote({ readOnly }: { readOnly: { name: string | null } }) {
+  const t = useTranslations("screener");
+  return (
+    <div className="scn-reader" role="note">
+      <b>{t("readerBarTitle")}</b>
+      <span>
+        {readOnly.name ? t("readerBarWhy", { name: readOnly.name }) : t("readerBarWhyUnknown")}
+      </span>
+    </div>
+  );
+}
+
 function WaitingPreview({
   sender,
   scope,
@@ -1809,11 +1860,14 @@ function WaitingPreview({
   bodyStall,
   remoteImages,
   onBack,
+  readOnly,
 }: {
   sender: ScreenerSenderDTO;
   scope: DecisionScope;
   onScopeChange: (scope: DecisionScope) => void;
   onDecide: Parameters<typeof DecisionBar>[0]["onDecide"];
+  /** `ScreenerState.readOnly` — the bar's place is taken by a sentence. See the render. */
+  readOnly: { name: string | null } | null;
   /** Ask for one held message's body again. */
   onRetryBody: (id: string) => void;
   /** `ScreenerState.bodyStall`, per held id — see {@link HeldBodyStall}. */
@@ -1829,14 +1883,38 @@ function WaitingPreview({
   const aiDest = sender.ai?.dest as Parameters<typeof DecisionBar>[0]["aiDest"];
   return (
     <>
-      <DecisionBar
-        aiDest={aiDest}
-        scope={scope}
-        onScopeChange={onScopeChange}
-        ruleTarget={ruleTarget}
-        onDecide={onDecide}
-        onBack={onBack}
-      />
+      {/* ── THE BAR IS WITHHELD ON A MAILBOX THIS INSTALL DOES NOT ORGANIZE ─────────────────
+          Not disabled — GONE, and the sentence takes its place. A greyed decision bar is still
+          five destinations, a scope control and a rule promise on screen; the thing to say here
+          is that this computer does not file, and who does.
+
+          `scn-reader`, styled as the pane's own note. The refusal is stated BEFORE the press,
+          which is the rule the first-run flow's elsewhere step already keeps for the same state:
+          the released build let the press happen, said "Ohbox — filed", and took it back
+          forty-five seconds later with no reason. The keys refuse too (`keys`, below), and the
+          state refuses under both (`screener-state.ts` → `readOnly`) — three layers, because the
+          only one a person meets is this one and the only one that is structural is the last. */}
+      {readOnly ? (
+        /* The bar's own chrome, minus its verbs — the sticky panel and the narrow-width Back,
+           which is the only way out of a full-screen preview on a phone and has nothing to do
+           with deciding. Same shape the screened and spam previews take, so the three segments
+           read as one pane in this state rather than as three different accidents. */
+        <div className="decide">
+          <button type="button" className="scn-back" onClick={onBack}>
+            <Icon name="chev" className="chev" /> {t("back")}
+          </button>
+          <ReaderNote readOnly={readOnly} />
+        </div>
+      ) : (
+        <DecisionBar
+          aiDest={aiDest}
+          scope={scope}
+          onScopeChange={onScopeChange}
+          ruleTarget={ruleTarget}
+          onDecide={onDecide}
+          onBack={onBack}
+        />
+      )}
       <div className="scn-mails">
         {/**
           * THE ABSENCE OF A SUGGESTION IS ITSELF SOMETHING TO SAY.
@@ -1938,6 +2016,7 @@ function ScreenedPreview({
   remoteImages,
   onUnsubscribe,
   onBack,
+  readOnly,
 }: {
   sender: ScreenerSenderDTO;
   choosing: boolean;
@@ -1950,6 +2029,8 @@ function ScreenedPreview({
   remoteImages?: RemoteImagesChrome;
   onUnsubscribe?: (id: string) => Promise<UnsubscribeResult | null>;
   onBack: () => void;
+  /** `ScreenerState.readOnly` — the release verb is a MOVE, so a reader is not offered it. */
+  readOnly: { name: string | null } | null;
 }) {
   const t = useTranslations("screener");
   return (
@@ -1958,6 +2039,10 @@ function ScreenedPreview({
         <button type="button" className="scn-back" onClick={onBack}>
           <Icon name="chev" className="chev" /> {t("back")}
         </button>
+        {/* "Allow" moves the sender's held mail and writes a rule, which is exactly what a
+            reader install cannot do. Withheld rather than shown refusing, on the bulk strip's
+            rule; the note says once why. */}
+        {readOnly ? <ReaderNote readOnly={readOnly} /> : (
         <div className="d-btns">
           {choosing ? (
             <>
@@ -1972,6 +2057,7 @@ function ScreenedPreview({
             <Button onClick={onChoose}>{t("allow")}</Button>
           )}
         </div>
+        )}
         <div className="d-sub">
           <span className="d-note num">
             {t("screenedNote", {
@@ -2026,6 +2112,7 @@ function SpamPreview({
   remoteImages,
   onUnsubscribe,
   onBack,
+  readOnly,
 }: {
   row: SpamRow;
   choosing: boolean;
@@ -2040,6 +2127,8 @@ function SpamPreview({
   remoteImages?: RemoteImagesChrome;
   onUnsubscribe?: (id: string) => Promise<UnsubscribeResult | null>;
   onBack: () => void;
+  /** `ScreenerState.readOnly` — the rescue is a MOVE, so a reader is not offered it. */
+  readOnly: { name: string | null } | null;
 }) {
   const t = useTranslations("screener");
   const held = row.sender.held;
@@ -2050,6 +2139,11 @@ function SpamPreview({
         <button type="button" className="scn-back" onClick={onBack}>
           <Icon name="chev" className="chev" /> {t("back")}
         </button>
+        {/* The rescue releases quarantined mail back into the mailbox, which is a move; delete
+            is the demo's own affordance and reaches no endpoint at all. Neither is offered on a
+            mailbox this install does not organize. The mail stays viewable, which is the half of
+            this segment a reader keeps. */}
+        {readOnly ? <ReaderNote readOnly={readOnly} /> : (
         <div className="d-btns">
           {choosing ? (
             <>
@@ -2077,6 +2171,7 @@ function SpamPreview({
             </>
           )}
         </div>
+        )}
         <div className="d-sub">
           <span className="d-note">{t("spamNote")}</span>
         </div>

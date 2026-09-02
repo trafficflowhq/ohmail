@@ -13,6 +13,81 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### An install that reads a mailbox stops acting as though it organizes it
+
+Two installs never organize one mailbox at once: one holds the lease, the other
+reads it. On the reader, reading, searching, marking read and sending all work.
+Filing does not — and until now the app let you try, told you it had worked, and
+took it back about a minute later without saying why.
+
+The Screener no longer offers a decision it cannot make. Where this install does not
+organize the mailbox, the decision bar is replaced by a sentence naming who does and
+what still works here; the per-row quick-file menu, "Apply all" and "Mark all spam"
+are not drawn; and the five destination keys answer with that sentence instead of
+filing. Asking a model about a sender is still offered — advice writes nothing to
+the mailbox.
+
+A reader's settings read as a reader's, too. Settings → Desktop and About said "The
+mailbox this copy of ohmail organizes" on an install that only reads it, and the
+Remove confirmation's first bullet said organizing would stop. Both say what the
+install actually does now. Settings → Screener keeps its controls — they are stored
+on this computer and take effect if you take the mailbox over — and gains a line
+saying so.
+
+### Removing the last mailbox clears the door it came in by
+
+Removing a mailbox cleared the entry, the stored password, the organizer claim and
+this computer's copy of the mail, and left the file the app builds its connection
+from. The next launch created a fresh entry for the same address and opened saying
+"Connected. The first sync has not finished yet." with no password stored anywhere.
+
+The removal itself is unchanged and still happens first. The sign-out that clears
+the door follows it, and only when the mailbox you removed was the last one.
+
+### The setup flow's reader ending, and one ask at a time
+
+Choosing "Just read it here" used to close setup outright, so the summary written
+for that ending — who organizes the mailbox, since when, and what this computer does
+and does not do — was never shown. It is shown now.
+
+On the same screen the pre-selected choice is the one that can succeed: where taking
+the mailbox over would be refused, "Just read it here" starts selected and the
+refusal is stated before any press instead of only after choosing the other option.
+
+And a first run puts one thing in front of you at a time. The "open email links with
+ohmail?" prompt used to stack over setup's own buttons and hide them, with the theme
+offer behind both. Both wait until setup is closed.
+
+### The desktop notification switch works, and says what it governs
+
+The app window holds no notification permission and cannot ask for one — the shell
+around it asks your system on first use. Reading the browser's permission there
+reported a refusal that had never happened, so the master switch could not be turned
+on. Meanwhile notices were being posted, because the stored default is on: the
+switch showed the opposite of what the app was doing, and there was no way to stop
+it.
+
+The switch now reflects and controls what the app does, and the pane says plainly
+that your computer has the last word on whether a notice appears.
+
+### Settings → Screener is translated
+
+Its heading, the Ohbox posture, the automatic-suggestion consent, the Ohbox sentence
+editor and the two lines shown when no model is set up were written directly into the
+source, so a German install read that pane half in English. All of them are proper
+catalogue entries now, in both languages.
+
+### When another install has claimed the mailbox, the notice says what to do
+
+"Not organized here — ohmail on your own machine has claimed this mailbox." stated a
+fact and stopped, leaving no way forward for somebody who then tried to pull new mail
+and was refused. It now says that mail still arrives and is readable and searchable
+here, that nothing is filed from here, and where the control is that moves organizing
+to this install — after which the other one reads the mailbox. The mailbox row adds
+what this install does, and the line under it names the button directly beneath it.
+
+### Still to come
+
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 

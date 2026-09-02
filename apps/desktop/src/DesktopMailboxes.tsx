@@ -88,14 +88,14 @@ import { useTranslations } from "next-intl";
 import { Button, SettingsActions, SettingsBanner, SettingsNote, SettingsRow, SettingsSection, SettingsVerdict } from "@ohmail/ui";
 
 import {
-  deviceHoldings, holdingsSpeak, showInboundQuiet, type MailboxFacts,
+  deviceHoldings, holdingsSpeak, readerStandDown, showInboundQuiet, type MailboxFacts,
 } from "../../webapp/app/shell/mail-state";
 import { addressKey } from "../../webapp/app/shell/address-key";
 import { agoStamp } from "../../webapp/app/shell/format";
 import { activeFormatLocale, activeFormatZone } from "../../webapp/app/shell/locale";
 import { useMailState } from "../../webapp/app/shell/MailStateProvider";
 import { goFirstRun } from "../../webapp/app/shell/routing";
-import { bridgeFetch, type EngineStatus } from "./bridge-fetch.js";
+import { bridgeFetch, engineLogout, type EngineStatus } from "./bridge-fetch.js";
 import { firstRunDoorFor } from "./doors.js";
 import { openWeb } from "./native.js";
 
@@ -453,9 +453,17 @@ function statusOf(door?: string | null): EngineStatus | null {
  *
  * ABSENT means the shell did not say, and the control is withheld — the safe direction,
  * on the same rule every optional field on this surface follows.
+ *
+ * `onShellStatus` is how removing the LAST mailbox ends: see {@link remove}. ABSENT means this
+ * pane cannot tell the shell anything, so it does not try — the removal still happens and the
+ * door configuration survives it, which is the released behaviour and the honest degradation.
  */
 export function DesktopMailboxes(
-  { door, servedMailboxId }: { door?: string | null; servedMailboxId?: string },
+  { door, servedMailboxId, onShellStatus }: {
+    door?: string | null;
+    servedMailboxId?: string;
+    onShellStatus?: (next: EngineStatus) => void;
+  },
 ) {
   const t = useTranslations("mailboxes");
   /* The SAME binding the sync line reads, and `refresh` is what its own comment offers this pane:
@@ -627,6 +635,72 @@ export function DesktopMailboxes(
           method: "DELETE",
         });
         if (!res.ok) throw new Error(await reasonOf(res));
+        /* ── AND WHEN THAT WAS THE LAST ONE, THE DOOR CONFIGURATION GOES WITH IT ────────────
+         *
+         * MEASURED on the released 0.13.7: Remove cleared the row, the credential, the organizer
+         * claim and this machine's mirror — and NOT `config.json`, which is what the engine
+         * composes its dial from at every launch. So the next launch minted a fresh row for the
+         * same address and the shell opened on *"Connected. The first sync has not finished
+         * yet."* with the removed address in the status bar, an empty Ohbox offering "Load older
+         * mail", and a Mailboxes row reading "Reading only · Organized by another install ·
+         * Since —". The engine's own log said `stored_login_absent` and the Desktop pane said,
+         * honestly, that no password was stored. Two panes, two answers, and the loud one was
+         * the false one.
+         *
+         * `engine_logout` is the command that already does exactly this and nothing more: it
+         * clears the engine's stored credential, stops the engine and removes `config.json`,
+         * leaving the mirror and this install's key alone (`Shell::logout`). No Rust change —
+         * the command has been registered since the door chooser was built, and Settings → This
+         * install has called it for a sign-out all along. This is the same act, reached by the
+         * one other route that means "there is nothing left for this install to open".
+         *
+         * THE ORDER IS DELIBERATE. The DELETE goes first and its 200 is required, because the
+         * removal is the thing the person asked for and it must not be conditional on a shell
+         * command; the logout then tidies the state the removal cannot reach. `Shell::logout`
+         * on this door refuses unless the engine answers 2xx to `DELETE /local/stored-login` —
+         * and it does: that route answers `{cleared:false}` with a 200 when there is nothing
+         * left to clear, which is precisely the state the removal has just produced.
+         *
+         * THREE CONDITIONS, and only the THIRD is load-bearing here — measured, not assumed:
+         *  · NO OTHER LIVE ROW — the whole point is "nothing left to open". `status !== "disabled"`
+         *    is the live test the rest of this pane uses; a tombstone is not something to open.
+         *    Dropping it was watched RED ("A SECOND LIVE MAILBOX keeps the door").
+         *  · the LOCAL door, and · the row the ENGINE serves — both DEFENSIVE, and labelled so
+         *    rather than described as guards. Dropping either was watched GREEN, because the
+         *    Remove CONTROL is already `!cloud && servedMailboxId === shown.id` (see its own
+         *    note below): a hosted install is offered the hand-off to the browser instead, and a
+         *    row the engine does not serve is offered nothing. Neither clause is reachable
+         *    through this pane, and the cases that carry those two guarantees are one layer up —
+         *    "THE HOSTED DOOR OFFERS NO REMOVE" and "a row the ENGINE DOES NOT SERVE offers no
+         *    Remove". They stay because `remove` is a function and the control's gate is a
+         *    render, and the failure if the two ever came apart is signing an account out of a
+         *    browser session from a pane that meant to tidy one machine.
+         *
+         * Read off the facts in hand rather than a re-poll: `refresh()` is a request, not a fact,
+         * and the row just removed is still `connected` in this copy — which is why it is excluded
+         * by id rather than by status.
+         *
+         * LANE-W NOTE: the multi-mailbox version of this is a roster-aware decision (which rows
+         * a person still has, and whether the door should point at one of them instead), and it
+         * supersedes this predicate wholesale. Kept deliberately single-mailbox-shaped so that
+         * replacement is a deletion rather than an untangling.
+         */
+        const lastOne = door !== "cloud"
+          && servedMailboxId === m.id
+          && (facts ?? []).every((f) => f.id === m.id || f.status === "disabled");
+        if (lastOne && onShellStatus) {
+          /* ITS OWN `try`, and a failure here is NOT the removal failing. The mailbox is gone
+             either way; what is left behind is the stale door configuration, which is the
+             released behaviour rather than a new fault. So the sentence says what did not
+             happen and the panel closes on the act that DID. */
+          try {
+            onShellStatus(await engineLogout());
+            setRemoving(null);
+            return;
+          } catch (logoutErr) {
+            setProblem(logoutErr instanceof Error ? logoutErr.message : String(logoutErr));
+          }
+        }
         setRemoving(null);
         refresh();
       } catch (err) {
@@ -1017,7 +1091,17 @@ export function DesktopMailboxes(
             >
               <h3 className="acct-sub">{t("removeTitle", { address: shown.address })}</h3>
               <ul className="acct-fine mbx-remove-list">
-                <li>{t("removeStops")}</li>
+                {/* ── THE FIRST BULLET USED TO CLAIM WORK THIS INSTALL NEVER DID ─────────────
+                    "ohmail stops organizing this mailbox." — measured on the released 0.13.7 on
+                    an install that had never organized it, one pane away from the banner saying
+                    so. The reader's bullet also has to answer the question the organizer's does
+                    not raise: if it was not organizing, what actually changes at the mailbox?
+                    Nothing, and the sentence says that rather than leaving it to be guessed.
+
+                    `readerStandDown` on THIS ROW, not the roster-wide `screenerReadOnly` the
+                    panes above use — this confirmation is about one mailbox, and it is the row
+                    the pane already has in hand. Same predicate underneath. */}
+                <li>{readerStandDown(shown) ? t("removeStopsReader") : t("removeStops")}</li>
                 <li>{t("removeMailSafe")}</li>
                 <li>{t("removeCredential")}</li>
                 <li>{t("removeScheduled")}</li>

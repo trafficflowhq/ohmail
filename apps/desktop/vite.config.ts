@@ -270,8 +270,27 @@ const BASE_MESSAGE_NAMESPACES = [
  * The phone the host door serves pairs with an install; it does not configure that install's
  * model and does not set it up, so nothing on that door reads these keys and nothing renders a
  * raw one.
+ *
+ * ── `desktopScreener` JOINED THEM, AND THE GUARD IS WHAT PUT IT HERE ────────────────────────
+ *
+ * It is Settings → Screener's own copy on this build — the posture switch, the
+ * automatic-suggestion consent, the Ohbox sentence editor and the reader note above them
+ * (`DesktopScreening.tsx`, `DesktopAutoSuggest.tsx`, `DesktopScreeningWords.tsx`), plus the two
+ * sentences the Screener's suggest control shows when no model is set up (`local-suggest.tsx`).
+ * Every one was a hardcoded English literal until the German half of the Screener was fixed,
+ * which is why a German install read that pane half in English: the SHARED shell's screener copy
+ * translated and the desktop's own did not, four rows apart on one pane.
+ *
+ * It was added to the BASE list first and `desktop-messages.test.ts` refused it in the same
+ * minute — `no window-only namespace reaches the served client's catalogue` matched the marker
+ * **"Set up a model"** in the kept payload. The refusal is correct and is the same one `join`
+ * met for a price: `suggestSetUp` and `suggestNoModel` are the local-model surface in copy, and
+ * a served host client must not carry it. Narrowing to a key subset was the other option and is
+ * the wrong one here — the whole namespace belongs to surfaces the served client never mounts
+ * (`host-client/HostGate.tsx` mounts `AppShell` with no injected Settings sections), so it is
+ * dead payload there exactly as `onboarding` was, and being dead is not a reason to ship it.
  */
-export const WINDOW_ONLY_NAMESPACES = ["aiProvider", "onboarding"] as const;
+export const WINDOW_ONLY_NAMESPACES = ["aiProvider", "onboarding", "desktopScreener"] as const;
 
 /**
  * What THIS build carries. The window gets the window-only namespaces; the served client does

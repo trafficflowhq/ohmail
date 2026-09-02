@@ -147,6 +147,11 @@ import { ColumnHandles } from "./ColumnHandles";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { SyncBar } from "./SyncBar";
 import { MailStateProvider, useMailState, type FreshnessProbe, type MailboxProbe } from "./MailStateProvider";
+/* The ONE stand-down predicate, aggregated over the roster: does this install organize anything?
+   Settings → Mailboxes renders its banner from the same `readerStandDown` underneath. */
+import { screenerReadOnly } from "./mail-state";
+/* The OS-answer seam, threaded to `SettingsView` for the hosts that must inject one. */
+import type { NotificationHost } from "./notification-settings";
 import { ViewBoundary } from "./ViewBoundary";
 import {
   formatRecipientChips,
@@ -662,6 +667,7 @@ export function AppShell({
   desktopSection,
   devicesSection,
   defaultMailSection,
+  notificationHost,
   screeningSection,
   screenerSuggest,
   awayTransport,
@@ -803,6 +809,20 @@ export function AppShell({
    * "mail links open the wrong app" would look — beside language and appearance.
    */
   defaultMailSection?: ReactNode;
+  /**
+   * WHERE THE OPERATING SYSTEM'S NOTIFICATION ANSWER COMES FROM, when it is not this page's.
+   *
+   * ABSENT means the browser's own reader, which is right in a tab: `Notification.permission` IS
+   * the OS answer there. The DESKTOP window holds no notification permission and cannot acquire
+   * one — its shell asks the platform on first use — so it injects a host that says so, and the
+   * pane grows one sentence about who has the last word.
+   *
+   * Threaded rather than read here, and `SettingsView` has documented the arrangement since the
+   * prop was added; what was missing was a host to inject and a wire to inject it on. Measured
+   * cost of the gap: a master switch that could not be turned on, with no sentence anywhere on
+   * the pane. See `apps/desktop/src/notify-host.ts`.
+   */
+  notificationHost?: NotificationHost;
   /**
    * THE SCREENER PANE'S OWN CONTROLS, WHEN THE HOST HAS ITS OWN — the desktop's, and nobody else's.
    *
@@ -1056,6 +1076,7 @@ export function AppShell({
             desktopSection={desktopSection}
             devicesSection={devicesSection}
             defaultMailSection={defaultMailSection}
+            {...(notificationHost ? { notificationHost } : {})}
             screeningSection={screeningSection}
             screenerSuggest={screenerSuggest}
             awayTransport={awayTransport}
@@ -1112,7 +1133,7 @@ function MailStateHost({ probe, freshnessProbe, children }: { probe?: MailboxPro
   );
 }
 
-function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, billingSection, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, screeningSection, screenerSuggest, awayTransport, profileImportTransport, consentTransport, olderBodyWire, junkWire, suggestWire, aiCredits, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
+function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, billingSection, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, notificationHost, screeningSection, screenerSuggest, awayTransport, profileImportTransport, consentTransport, olderBodyWire, junkWire, suggestWire, aiCredits, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
   /** The pull settle watch's read — the same probe `MailStateHost` above provides the strip. */
   mailboxFacts?: MailboxProbe;
   /** The host's surface declaration for the attach ceiling — see `AppShell`'s prop of this name. */
@@ -1126,6 +1147,8 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
   desktopSection?: { label: string; node: ReactNode };
   devicesSection?: ReactNode;
   defaultMailSection?: ReactNode;
+  /** See the outer prop of the same name. */
+  notificationHost?: NotificationHost;
   screeningSection?: ReactNode;
   screenerSuggest?: (ctx: {
     senders: string[];
@@ -1811,8 +1834,18 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
    * show what the product does.
    */
   const autoUnsubscribeDiscloses = consent.autoUnsubscribe && !consent.standalone;
+  /**
+   * DOES THIS INSTALL ORGANIZE ANY MAILBOX AT ALL — the Screener's read-only answer.
+   *
+   * The rule is `screenerReadOnly` in `mail-state.ts`, beside the `readerStandDown` it is built
+   * on — the same predicate Settings → Mailboxes renders its banner from, so the two surfaces
+   * cannot come to describe one state differently. Memoised on the polled facts and nothing
+   * else; the function is pure and has its own table test.
+   */
+  const readOnlyScreener = useMemo(() => screenerReadOnly(facts), [facts]);
   const screener = useScreenerState(
     engine, version, toast, suggestions.suggestions, presented, autoUnsubscribeDiscloses,
+    readOnlyScreener,
   );
   /**
    * The opt-in's quote, bound to the SAME list the automatic batch will slice.
@@ -6324,7 +6357,19 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
                     const away = demo || !awaySupported || !awayNotice.on
                       ? null
                       : <AwayNotice audience={awayNotice.audience} />;
+                    /* ── ONE ASK AT A TIME ON A FIRST RUN ──────────────────────────────
+                       MEASURED on the released 0.13.7: at +15 s after connecting a mailbox a
+                       person faced THREE asks at once — the setup flow's modal, the OS
+                       "Open email links with ohmail?" prompt stacked over the flow's own
+                       Continue and Cancel row, and this banner behind both.
+
+                       `route.firstRun` is the stage's own gate (see the mount below), so this
+                       is the same condition rather than a second opinion about it. WAITS, not
+                       withheld: `faceOffer.eligible` is unchanged and the banner is there the
+                       moment the flow closes — a first run is the one visit where somebody has
+                       a screen full of decisions already. */
                     const offer = faceOffer.eligible && applyFaceAllDevices !== null
+                      && !route.firstRun
                       ? <OhmarchyOffer apply={applyFaceAllDevices} onDone={faceOffer.dismiss} />
                       : null;
                     return offer === null && away === null ? undefined : <>{offer}{away}</>;
@@ -6764,6 +6809,7 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
                    desktop supplies one, a browser tab passes nothing, so there is nothing for
                    `?demo=1` to leak. */
                 defaultMailSection={defaultMailSection}
+                {...(notificationHost ? { notificationHost } : {})}
                 /* DEMO-MASKED, unlike `desktopSection` directly above — and this line used to
                    read `devicesSection={devicesSection}` with a comment whose premise ("a
                    browser tab passes nothing") the Cloud Devices pane retired. With the seam

@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+/* The namespace lists themselves, so the marker contract below reads the build config
+   rather than a copy of it — the drift this file exists to catch. */
+import { WINDOW_ONLY_NAMESPACES } from "../vite.config";
 
 /**
  * The Tauri shell's security posture, asserted.
@@ -2333,13 +2336,41 @@ describe("the UI bundle's build config", () => {
     // Not vacuous: the stripper leaves real code alone.
     expect(sharedCode).toMatch(/useTranslations\("settings"\)/);
 
-    // The artifact scan's marker for this surface must be a sentence this file really contains.
-    // Compared with runs of whitespace collapsed, because the sentence is JSX text wrapped across
-    // source lines and JSX collapses exactly that to single spaces — which is the form the marker
-    // has to match in the emitted bundle, and the form a re-wrap of this paragraph must not break.
+    /* ── THE ARTIFACT SCAN'S MARKER FOR THIS SURFACE, AND WHERE IT LIVES NOW ───────────────
+     *
+     * It used to be a JSX literal in this component, and this assertion read it out of the
+     * source. The sentence moved into `messages/*.json` when the pane's copy was translated —
+     * it was one of the strings a German install read in English — so the source no longer
+     * contains it and this had to follow.
+     *
+     * IT STILL DISCRIMINATES, and the second assertion is what says so rather than assumes it.
+     * `scan-artifact.mjs` uses this string to prove a bundle carries a GATE-REACHABLE surface,
+     * which only works while the string is absent from the served host client. In the source
+     * that was structural (the file is reachable only from the gate); in the catalogue it holds
+     * only because `desktopScreener` is in `WINDOW_ONLY_NAMESPACES`. Put that namespace in the
+     * base list and the marker would be in every artifact and prove nothing — silently, which
+     * is exactly the shape of failure this whole file exists to catch. So the namespace's list
+     * membership is now part of the marker's contract.
+     *
+     * Whitespace is collapsed on the catalogue side for the same reason it was on the source
+     * side: the message is one long line here and JSX-wrapped prose there, and the marker has to
+     * match the form that reaches the bundle. */
     const marker = "judges them against your sentence";
     expect(read("scripts/scan-artifact.mjs")).toContain(marker);
-    expect(words.replace(/\s+/g, " ")).toContain(marker);
+    const catalogue = JSON.parse(read("../webapp/messages/en.json")) as
+      { desktopScreener: Record<string, string> };
+    expect(
+      catalogue.desktopScreener.wordsWhy.replace(/\s+/g, " "),
+      "the scan's marker names a sentence the catalogue no longer carries",
+    ).toContain(marker);
+    expect(
+      WINDOW_ONLY_NAMESPACES as readonly string[],
+      "the marker's namespace reaches the served client, so it proves nothing",
+    ).toContain("desktopScreener");
+    /* AND THE SOURCE MUST NOT CARRY IT TWICE. A literal left behind beside the key would keep
+       this green while a German reader still saw English — the defect the move closed. */
+    expect(words.replace(/\s+/g, " "), "the sentence is still a literal in the source")
+      .not.toContain(marker);
   });
 
   /**

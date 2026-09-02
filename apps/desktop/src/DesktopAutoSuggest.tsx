@@ -31,6 +31,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
 import { SettingsNote, SettingsRow, Switch } from "@ohmail/ui";
 
 import {
@@ -45,22 +46,25 @@ import {
  * A function, and exported, so the three sentences are a thing a test can hold rather than JSX to
  * be re-read by eye. Which one is shown is the whole of this component's judgement.
  */
-export function autoSuggestCopy(value: AutoSuggestState): string {
-  if (!value.modelReady) {
-    return "This install has no model set up yet, so nothing is being suggested. Add your own API " +
-      "key or point ohmail at a model on this machine under Desktop, and suggestions start " +
-      "with the next batch of mail.";
-  }
-  if (!value.on) {
-    return "Off. Senders wait in the Screener until you press Suggest, and nothing is sent to your " +
-      "model before you do.";
-  }
-  return "On. Each time ohmail finishes bringing in new mail, it asks your model about the new " +
-    "senders waiting in the Screener, so the advice is already there when you look. It still files " +
-    "nothing and writes no rules — every sender waits for you.";
+/**
+ * WHICH OF THE THREE SENTENCES THIS STATE OWES — the KEY, not the sentence.
+ *
+ * It returned the English text until this slice, which is what kept this row in English on a
+ * German install. Returning a key rather than taking a translator keeps this a pure function of
+ * the state — which is what makes the three-arm table testable without a provider, and it is
+ * tested that way (`desktop-auto-suggest.test.tsx`).
+ */
+export function autoSuggestCopyKey(
+  value: AutoSuggestState,
+): "autoSuggestNoModel" | "autoSuggestOff" | "autoSuggestOn" {
+  if (!value.modelReady) return "autoSuggestNoModel";
+  if (!value.on) return "autoSuggestOff";
+  return "autoSuggestOn";
 }
 
 export function DesktopAutoSuggest() {
+  /* See `DesktopScreeningWords` for why the namespace has to be on `vite.config.ts`'s list. */
+  const t = useTranslations("desktopScreener");
   /**
    * NULL UNTIL THE ENGINE HAS ANSWERED WITH A VALUE, and null for ever on a door that has none.
    *
@@ -108,14 +112,14 @@ export function DesktopAutoSuggest() {
   return (
     <>
       <SettingsRow
-        label="Suggest for new senders automatically"
-        description={autoSuggestCopy(value)}
+        label={t("autoSuggestLabel")}
+        description={t(autoSuggestCopyKey(value))}
         control={
           <Switch
             /* The STORED value, never the hoped-for one. This is the only record the person has of
                whether their own model is being asked unprompted. */
             checked={value.on}
-            ariaLabel="Suggest for new senders automatically"
+            ariaLabel={t("autoSuggestLabel")}
             disabled={pending}
             onChange={write}
           />
@@ -125,12 +129,9 @@ export function DesktopAutoSuggest() {
           knows which provider is configured; what this row is responsible for is not letting an
           automatic path be armed without the sentence being on screen at the same moment. */}
       {value.on && value.modelReady ? (
-        <SettingsNote>
-          Only the sender, the subject and a short extract go to the model you configured — the same
-          request the Suggest button makes, just without you pressing it.
-        </SettingsNote>
+        <SettingsNote>{t("autoSuggestPrivacy")}</SettingsNote>
       ) : null}
-      {failed ? <p className="join-error">That did not save. Nothing has changed.</p> : null}
+      {failed ? <p className="join-error">{t("saveFailed")}</p> : null}
     </>
   );
 }

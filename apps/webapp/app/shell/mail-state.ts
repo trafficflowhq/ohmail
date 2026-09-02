@@ -230,6 +230,47 @@ export function readerStandDown(m: {
 }
 
 /**
+ * DOES THIS INSTALL ORGANIZE ANY MAILBOX AT ALL — and if not, who has them?
+ *
+ * `null` means at least one live mailbox is this install's to organize, which is the ordinary
+ * case and the one in which the Screener works exactly as it always has. Non-null means every
+ * live mailbox belongs to somebody else, and carries a NAME for the copy — `name: null` where
+ * the holder is real but this build has no name for it, the same three-state shape
+ * `mailboxes.readerLabel` / `readerLabelLegacy` already render.
+ *
+ * ── WHY THE WHOLE ROSTER RATHER THAN ONE MAILBOX ──────────────────────────────────────────────
+ *
+ * `ONBOARDING-RULINGS.md` boundary 1(b): account-scoped configuration is permitted iff the
+ * account holds at least one `organizer_role = 'organizer'` mailbox, and *"on a one-mailbox
+ * standalone that collapses to 'all refused'"*. A Screener decision writes a rule and moves mail,
+ * so it is inside that set. This is that rule, and it is also the SAFE direction of the two: with
+ * an organizer present nothing is refused, so a decision that could have succeeded never is.
+ *
+ * The per-mailbox version — a mixed roster in which a decision about one sender would land and
+ * about another would not — needs the queue to say which mailbox each sender belongs to, and is
+ * deliberately not invented here.
+ *
+ * ── AND `live` FIRST, WHICH IS NOT COSMETIC ──────────────────────────────────────────────────
+ *
+ * A `disabled` row is a tombstone and KEEPS whatever role it had ({@link readerStandDown}'s own
+ * first line). Counting it would let a mailbox somebody removed last week decide whether the
+ * Screener works today. An empty roster answers `null` for the same reason a missing field does
+ * everywhere on this surface: "we cannot see" is not "somebody else has it".
+ */
+export function screenerReadOnly(
+  facts: ReadonlyArray<Parameters<typeof readerStandDown>[0] & {
+    organizedBy?: { kind: string | null; name: string | null; since: string | null } | null;
+  }> | null,
+): { name: string | null } | null {
+  if (facts === null) return null;
+  const live = facts.filter((m) => m.status !== "disabled");
+  if (live.length === 0) return null;
+  if (live.some((m) => readerStandDown(m) === null)) return null;
+  const named = live.map((m) => m.organizedBy?.name).find((n) => n && n.trim());
+  return { name: named ?? null };
+}
+
+/**
  * ONE mailbox, as the shared shell is allowed to know it.
  *
  * Structural and shell-owned, NOT `MailboxDTO`. The Cloud client's API layer is not part of the

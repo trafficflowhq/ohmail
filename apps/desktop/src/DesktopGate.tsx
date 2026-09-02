@@ -56,13 +56,15 @@ import type { OhmailEngine } from "@ohmail/client-engine";
 import { AppShell } from "../../webapp/app/shell/AppShell";
 import { setStorageOwner } from "../../webapp/app/shell/storage-owner";
 import { BootSkeleton } from "../../webapp/app/shell/BootSkeleton";
-import { go, goFirstRun, goSettings } from "../../webapp/app/shell/routing";
+import { go, goFirstRun, goSettings, useHashRoute } from "../../webapp/app/shell/routing";
 import { setMailtoSink } from "../../webapp/app/shell/open-external";
 import { BootStatus } from "./BootStatus.js";
 import { bridgeAvailable, bridgeFetch } from "./bridge-fetch.js";
 import { DoorChooser } from "./DoorChooser.js";
 import { DesktopAbout } from "./DesktopAbout.js";
 import { DesktopMailboxes, readMailboxFacts, readMirrorFreshness } from "./DesktopMailboxes.js";
+/* The OS-answer reader this window has to bring itself — see the injection below. */
+import { desktopNotificationHost } from "./notify-host.js";
 import { DesktopScreening } from "./DesktopScreening.js";
 import { GateNotice } from "./GateNotice.js";
 import { DESKTOP_PANE_LABEL, DesktopSettings } from "./DesktopSettings.js";
@@ -228,6 +230,10 @@ export function DesktopGate() {
      below would be skipped on the renders that return early — which is the "rendered fewer hooks
      than expected" crash, arriving on whichever render first took a different branch. */
   const onUnread = useUnreadSink();
+  /* WHERE THE APP IS, for the one-ask rule below — the SAME hash route `AppShell` gates the
+     first-run stage on, so the flow being open and this prompt waiting cannot disagree. A hook,
+     so it belongs up here with `onUnread` for the reason that comment gives. */
+  const routeNow = useHashRoute();
 
   /**
    * WHAT THIS INSTALL HAS FOR A MODEL — read once, here, because two surfaces need the answer.
@@ -687,12 +693,25 @@ export function DesktopGate() {
           <DesktopMailboxes
             door={status?.mode ?? null}
             {...(status?.mailboxId ? { servedMailboxId: status.mailboxId } : {})}
+            /* REMOVING THE LAST MAILBOX ENDS THE INSTALL'S DOOR, and this is how the pane says
+               so. `onStatus` is the same sink the sign-out in Settings → This install feeds:
+               it re-keys the gate on the new engine state, and a `NotConfigured` shell routes
+               to the door chooser rather than to a mail client with nothing behind it. See
+               `DesktopMailboxes#remove` for what the released build did instead. */
+            onShellStatus={onStatus}
           />
         ) } : {})}
         /* SETTINGS → SCREENER. The shared shell's own section reaches an API client that is not
            in this build, so it drew nothing and the pane was blank. This is the same three
            controls over the same three columns, over the pipe. */
         {...(status ? { screeningSection: <DesktopScreening door={status.mode ?? null} /> } : {})}
+        /* SETTINGS → NOTIFICATIONS' OS ANSWER. Unconditional and not gated on `status`: this is a
+           fact about the WINDOW — it holds no notification permission and cannot acquire one, so
+           its shell asks the platform on first use — and that is true before the shell has said
+           anything about a door. Without it the pane falls back to the browser reader, whose
+           `Notification.requestPermission()` resolves here without granting anything: the master
+           switch could not be turned on and nothing on the pane said why. See `notify-host.ts`. */
+        notificationHost={desktopNotificationHost}
         /* SETTINGS → ABOUT. Injected everywhere, because the facts differ by surface — and the
            facts a standalone install has to answer are not the hosted service's. */
         {...(status ? { aboutSection: <DesktopAbout status={status} /> } : {})}
@@ -896,8 +915,19 @@ export function DesktopGate() {
       />
       {/* THE ONE-TIME DEFAULT-MAIL ASK — over the mail, once a mailbox is connected, and never
           twice: either answer persists, and "already the default" persists too. The Settings row
-          above is the durable way back for whoever says "Not now". */}
-      <DefaultMailAsk />
+          above is the durable way back for whoever says "Not now".
+
+          ── AND NOT WHILE THE SETUP FLOW IS OPEN ─────────────────────────────────────────────
+          MEASURED on the released 0.13.7: at +15 s after connecting a mailbox this prompt was
+          stacked ON TOP of the flow's own Continue and Cancel row and HID them until dismissed,
+          with the ohmarchy banner behind both — three asks at once, and the one covering the
+          buttons was this one.
+
+          `route.firstRun` is the stage's own gate in `AppShell`, read here through the shared
+          hash router so the two cannot disagree. It WAITS rather than being withheld: the ask
+          is one-time and un-answered, so it is offered on the next visit with the flow closed —
+          which is also the visit where somebody has attention for it. */}
+      {routeNow.firstRun ? null : <DefaultMailAsk />}
       {overlay ? (
         /* OVER the client, not under it. `.gate` is a full-height flow element — correct when it
            IS the window, wrong when the mail is already on screen behind it, where it would

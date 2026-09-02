@@ -30,6 +30,14 @@ import { DesktopAiSettings } from "./DesktopAiSettings.js";
 import type { LocalAiStatus } from "./local-ai.js";
 import { MACHINE_WORD } from "./platform.js";
 
+/* WHAT THIS INSTALL DOES WITH THE MAILBOX BELOW — "organizes" or "reads". One rule, two
+   panes and one confirmation bullet; see `install-role.ts` for the measured defect and
+   why the predicate is the shared one. `useMailboxFacts` is the NON-throwing accessor,
+   so a pane mounted without the provider keeps the sentence it always had. */
+import { useMailboxFacts } from "../../webapp/app/shell/MailStateProvider";
+import { screenerReadOnly } from "../../webapp/app/shell/mail-state";
+import { mailboxRowWhy } from "./install-role.js";
+
 /**
  * The label the Settings nav shows for this pane. Supplied with the node; see `SettingsView`.
  *
@@ -205,6 +213,9 @@ export function DesktopSettings({
 
   const door = status.mode ? (DOOR_NAME[status.mode] ?? status.mode) : "Not chosen";
   const credential = credentialLine(status);
+  /* "organizes" or "reads" — see `install-role.ts`. This pane said the first on an install that
+     did the second, beside a Mailboxes pane saying the truth on the same machine. */
+  const readOnly = screenerReadOnly(useMailboxFacts());
 
   const signOut = async (): Promise<void> => {
     if (busy) return;
@@ -224,7 +235,7 @@ export function DesktopSettings({
     <SettingsSection>
       <SettingsRow
         label="Mailbox"
-        description="The mailbox this copy of ohmail organizes."
+        description={mailboxRowWhy(readOnly)}
         value={status.address ?? "—"}
       />
       <SettingsRow label="Connected through" description={doorDescription(status.mode)} value={door} />

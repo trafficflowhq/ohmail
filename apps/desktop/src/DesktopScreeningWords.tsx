@@ -37,6 +37,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
 import { SettingsNote, SettingsSubhead } from "@ohmail/ui";
 
 import { OhboxWords } from "../../webapp/app/shell/OhboxWords";
@@ -48,6 +49,12 @@ export function DesktopScreeningWords({
 }: {
   door: "local" | "cloud" | null;
 }) {
+  /* THE CATALOGUE, and until this slice there was none: every sentence below was an English
+     literal, so a German install read this section of its Screener pane in English while the
+     shared shell's own screener copy beside it translated. `desktopScreener` is registered in
+     `vite.config.ts`'s namespace list — the desktop strips any namespace not on it, and a
+     namespace the sources read but the list omits throws `MISSING_MESSAGE` on first render. */
+  const t = useTranslations("desktopScreener");
   const [read, setRead] = useState<ScreeningRead | null>(null);
 
   useEffect(() => {
@@ -73,21 +80,18 @@ export function DesktopScreeningWords({
   if (read.state === "offline") {
     return (
       <>
-        <SettingsSubhead>What reaches your Ohbox</SettingsSubhead>
+        <SettingsSubhead>{t("wordsHead")}</SettingsSubhead>
         {/* NAMED, NOT HIDDEN. The words are on the hosted account and this install cannot reach it
             — which is a sentence somebody can act on, where an absent section is one they would
             read as their writing having gone. */}
-        <SettingsNote>
-          Your words live on your ohmail Cloud account, so they can&rsquo;t be edited while this
-          install is offline. Your mail keeps reading; this comes back with the connection.
-        </SettingsNote>
+        <SettingsNote>{t("wordsOffline")}</SettingsNote>
       </>
     );
   }
 
   return (
     <>
-      <SettingsSubhead>What reaches your Ohbox</SettingsSubhead>
+      <SettingsSubhead>{t("wordsHead")}</SettingsSubhead>
       {/* WHAT THE WORDS ACTUALLY REACH, stated in full and no wider than that.
           Both places a model is asked about a sender are covered: the filing loop, which hands
           them to the classifier for mail it cannot settle by rules, and the Screener's suggestion
@@ -97,11 +101,9 @@ export function DesktopScreeningWords({
           It does NOT promise that every message meets a model: most mail is filed by rules alone,
           and mail carrying a credential is never sent anywhere. The claim is about what happens
           WHEN a model judges — which is the claim the sentence makes. */}
-      <SettingsNote>
-        Used whenever a model judges a sender for you — as your mail is filed, and when you ask
-        about the senders waiting in your Screener. It judges them against your sentence rather than
-        ours. With no model set up the words simply wait: your mail is filed by rules either way.
-      </SettingsNote>
+      {/* "the words SIMPLY wait" went with the move — a banned word, and it was doing nothing
+          the sentence needed. */}
+      <SettingsNote>{t("wordsWhy")}</SettingsNote>
       <OhboxWords
         bar={read.pref.ohboxBar}
         defaultBar={read.pref.defaultBar}
