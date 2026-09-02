@@ -117,19 +117,6 @@ export function ollamaIsLocal(baseUrl: string): boolean {
 }
 
 /**
- * Whether a sentence from the engine already ends itself.
- *
- * Two of the three `model_absent` details are written by us and end unterminated
- * (`ai-ollama.ts:244`, `ai-openai.ts:336`). The third is the vendor's own 404 body, forwarded
- * verbatim by `shortDetail` (`ai-transport.ts:116-120`) — which also appends `…` when it truncates
- * at 240 characters. A closing quote or bracket after the stop counts, because a forwarded body
- * ending `"model not found."` is terminated too.
- */
-export function alreadyStopped(said: string): boolean {
-  return /[.!?…][)\]"'\u201d\u2019]*\s*$/.test(said);
-}
-
-/**
  * THE VERDICT BLOCK'S CONTENT, from the engine's status — one derivation, every outcome named.
  *
  * Exported and pure so each outcome is a thing a test can hold rather than JSX to be re-read by
@@ -143,7 +130,7 @@ export function verdictOf(
   now: number,
   /** The provider a write is in flight for, or null. Named so "Asking …" names the right vendor. */
   pending: AiChoice | null,
-): { state: SettingsVerdictState; headline: string; detail?: string; when?: string } {
+): { state: SettingsVerdictState; headline: string; detail?: string; hint?: string; when?: string } {
   if (pending !== null) {
     const vendor = pending === "none" ? "" : VENDOR[pending];
     return { state: "wait", headline: t("testing", { vendor }) };
@@ -203,17 +190,14 @@ export function verdictOf(
           return {
             state: "bad",
             headline: t("verdictModelAbsent"),
-            /* The joiner is COPY rather than a full stop hardcoded here, and WHICH joiner depends
-               on the detail: the engine's own generated sentences end unterminated, but the hosted
-               404 arm forwards the vendor's prose through `shortDetail`, which may already end in
-               `.`, `?` or the `…` it adds when it truncates at 240 characters. Appending a stop to
-               those produced `Not found.. Pick…` and `…. Pick…`. Three templates, one predicate. */
-            detail: status.probe?.detail
-              ? t(alreadyStopped(status.probe.detail) ? "verdictModelAbsentSaidDone" : "verdictModelAbsentSaid", {
-                  count,
-                  said: status.probe.detail,
-                })
-              : t("verdictModelAbsentDetail", { count }),
+            /* TWO BLOCKS, NEVER ONE JOINED STRING. Three review rounds were spent narrowing a
+               guess about whether the engine's sentence ends itself, and the guess cannot be
+               made: a model identifier may legally end in `.` (`ai-provider.ts:242`), so
+               `does not have "foo."` is a stop belonging to a NAME while
+               `the server said "no such model."` is a stop belonging to a SENTENCE. The verdict
+               renders them as separate lines instead, which needs no separator at all. */
+            ...(status.probe?.detail ? { detail: status.probe.detail } : {}),
+            hint: t("verdictModelAbsentDetail", { count }),
             ...stamped,
           };
         case "bad_response":
@@ -513,6 +497,7 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
           state={verdict.state}
           headline={verdict.headline}
           {...(verdict.detail === undefined ? {} : { detail: verdict.detail })}
+          {...(verdict.hint === undefined ? {} : { hint: verdict.hint })}
           {...(verdict.when === undefined ? {} : { when: verdict.when })}
         />
       ) : null}

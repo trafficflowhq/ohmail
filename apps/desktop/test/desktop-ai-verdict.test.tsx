@@ -4,7 +4,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider, createTranslator } from "next-intl";
 
-import { AiProviderForm, alreadyStopped, ollamaHost, ollamaIsLocal, verdictOf } from "../src/AiProviderForm.js";
+import { AiProviderForm, ollamaHost, ollamaIsLocal, verdictOf } from "../src/AiProviderForm.js";
 import type { AiProbeFailure, AiProbeReport, AiUnavailableReason, LocalAiStatus } from "../src/local-ai.js";
 import { setActiveCatalog } from "../../webapp/app/shell/locale.js";
 import en from "../../webapp/messages/en.json";
@@ -187,8 +187,8 @@ describe("verdictOf — one sentence per outcome, and they are the endpoint's ow
       .not.toMatch(/does not have|not on its list|nicht hat|hat das angeforderte/i);
     // The engine's own words, WHOLE and terminated, plus the pointer that repairs it. The engine
     // writes no full stop of its own, so an unjoined "{said} Pick one…" ran two sentences together.
-    expect(v.detail).toContain(`${said}. Pick`);
-    expect(v.detail).toContain("3");
+    expect(v.detail).toBe(said);
+    expect(v.hint).toContain("3");
   });
 
   it("…and the same headline is true when the model EXISTS and merely cannot chat", () => {
@@ -204,33 +204,42 @@ describe("verdictOf — one sentence per outcome, and they are the endpoint's ow
     expect(v.state).toBe("bad");
     expect(v.headline).toBe(en.aiProvider.verdictModelAbsent);
     // The block may not contradict itself: the detail says the model is present and unusable.
+    expect(v.detail).toBe(said);
     expect(v.detail).toContain("is not a chat model");
-    expect(v.detail).toContain(`${said}. Pick`);
   });
 
   /**
-   * NOT EVERY `detail` IS UNTERMINATED, and the round-2 fix assumed they all were.
+   * THE ENGINE'S SENTENCE AND OURS ARE TWO BLOCKS, AND THAT IS WHY THERE IS NO SEPARATOR TO GET
+   * WRONG.
    *
-   * Two of the three `model_absent` details are ours and end without a stop. The third is the
-   * VENDOR'S OWN 404 body, forwarded verbatim by `shortDetail` (`ai-transport.ts:116-120`) — which
-   * also appends `…` when it truncates at 240 characters. Unconditionally appending "." to those
-   * rendered `Not found.. Pick one of…` and `…. Pick one of…`.
+   * Three review rounds were spent narrowing a guess about whether `detail` ends itself: round 2
+   * added a full stop to everything (wrong for a forwarded 404 body reading `Not found.`), round 3
+   * added a predicate (wrong for a model identifier that legally ends in `.` —
+   * `ai-provider.ts:242` accepts `foo.`, so `does not have "foo."` is a stop belonging to a NAME
+   * while `the server said "no such model."` is one belonging to a SENTENCE, and no regex tells
+   * them apart). The guess is gone. `detail` is the engine's sentence, `hint` is ours, and the
+   * verdict renders them as separate lines.
+   *
+   * The table is every shape the three detail sources actually produce, and each asserts the
+   * SAME two things: the engine's sentence survives byte-for-byte, and ours is not fused to it.
    */
   it.each([
-    ['the model server is running and does not have "llama3.2"', true],
-    ['"gpt-x" is not a chat model, so it cannot answer suggestions or drafts', true],
-    ["Not found.", false],
-    ["model: unknown_model?", false],
-    ["a very long upstream error the transport had to cut short…", false],
-    ['the server said "no such model."', false],
-  ])("%s → a stop is added: %s", (said, needsStop) => {
-    expect(alreadyStopped(said)).toBe(!needsStop);
+    'the model server is running and does not have "llama3.2"',
+    '"gpt-x" is not a chat model, so it cannot answer suggestions or drafts',
+    'the model server is running and does not have "foo."',
+    "Not found.",
+    "model: unknown_model?",
+    "a very long upstream error the transport had to cut short…",
+    'the server said "no such model."',
+  ])("%s reaches the reader whole, with our instruction on its own line", (said) => {
     const v = verdictOf(
-      statusOf({ reason: "unreachable", probe: probe({ reason: "model_absent", detail: said, models: ["a"] }) }),
+      statusOf({ reason: "unreachable", probe: probe({ reason: "model_absent", detail: said, models: ["a", "b"] }) }),
       t, NOW, null,
     );
-    expect(v.detail).toContain(said);
-    expect(v.detail, "a detail that already ended itself was given a second stop").not.toMatch(/\.\.|…\./);
+    expect(v.detail, "the engine's sentence was altered on the way to the screen").toBe(said);
+    expect(v.hint).toBe("Pick one of the 2 models below.");
+    // Nothing is concatenated, so no shape of detail can produce a doubled or missing stop.
+    expect(v.detail).not.toContain(v.hint!);
   });
 
   it("…and says something sensible when the engine sent no sentence", () => {
@@ -238,8 +247,8 @@ describe("verdictOf — one sentence per outcome, and they are the endpoint's ow
       statusOf({ reason: "unreachable", probe: probe({ reason: "model_absent", models: ["a", "b"] }) }),
       t, NOW, null,
     );
-    expect(v.detail?.startsWith(" "), "an absent detail left a leading space").toBe(false);
-    expect(v.detail).toContain("2");
+    expect(v.detail, "an absent engine sentence still produced a detail line").toBeUndefined();
+    expect(v.hint).toContain("2");
   });
 
   it("bad_response: the endpoint answered, and ohmail could not read it", () => {
@@ -292,18 +301,16 @@ describe("verdictOf — one sentence per outcome, and they are the endpoint's ow
    * one provider sets both on the same pass, so they cannot disagree; in a test they can, and this
    * case sets the register on purpose so a German verdict is asserted whole rather than half.
    */
-  it("joins the same way in German, both templates", () => {
+  it("keeps the two blocks apart in German too", () => {
     setActiveCatalog("de", de as never);
     try {
-      const unterminated = 'the model server is running and does not have "llama3.2"';
-      const terminated = "Nicht gefunden.";
-      const of = (said: string) =>
-        verdictOf(
-          statusOf({ reason: "unreachable", probe: probe({ reason: "model_absent", detail: said, models: ["a"] }) }),
-          tDe, NOW, null,
-        ).detail ?? "";
-      expect(of(unterminated)).toBe(`${unterminated}. Wähl unten eines der 1 Modelle.`);
-      expect(of(terminated)).toBe(`${terminated} Wähl unten eines der 1 Modelle.`);
+      const said = 'the model server is running and does not have "foo."';
+      const v = verdictOf(
+        statusOf({ reason: "unreachable", probe: probe({ reason: "model_absent", detail: said, models: ["a"] }) }),
+        tDe, NOW, null,
+      );
+      expect(v.detail).toBe(said);
+      expect(v.hint).toBe("Wähl unten eines der 1 Modelle.");
     } finally {
       setActiveCatalog("en", en as never);
     }
@@ -421,6 +428,31 @@ describe("the model form's test action reports to the person who pressed it", ()
     const verdict = el.querySelector(".set-verdict");
     expect(verdict?.getAttribute("role")).toBe("status");
     expect(verdict?.getAttribute("aria-live")).toBe("polite");
+  });
+
+  /**
+   * AND BOTH LINES REACH THE SCREEN — which nothing asserted until the mutation pass asked.
+   *
+   * Deleting the `hint` line from `SettingsVerdict` left every case in this file GREEN: `verdictOf`
+   * is pure, so its return value can carry a field the composite never draws, and the pure tests
+   * cannot tell. That is the built-and-unreachable shape exactly. This one mounts the state and
+   * reads the rendered text, so the seam between the derivation and the composite is covered.
+   */
+  it("renders the engine's sentence and the instruction as two separate lines", async () => {
+    const said = 'the model server is running and does not have "llama3.2"';
+    const el = await mount(
+      statusOf({
+        provider: "ollama",
+        reason: "unreachable",
+        probe: probe({ reason: "model_absent", detail: said, models: ["mistral", "qwen2.5"] }),
+      }),
+    );
+    const verdict = el.querySelector(".set-verdict")!;
+    const lines = [...verdict.querySelectorAll("p")].map((p) => p.textContent ?? "");
+    expect(lines, "the two sentences were not rendered as two blocks").toHaveLength(2);
+    expect(lines[0]).toBe(said);
+    expect(lines[1]).toBe("Pick one of the 2 models below.");
+    expect(verdict.querySelector(".set-verdict-hint")?.textContent).toBe(lines[1]);
   });
 
   it("shows no verdict at all when nothing is chosen — there is no answer to report", async () => {
