@@ -295,6 +295,26 @@ export interface PushApi {
   unsubscribe: (id: string) => Promise<void>;
 }
 
+/**
+ * THE PREFIX SIGN-OUT SWEEPS, and the ruling that separates these two keys from the switches.
+ *
+ * `ohmail.notifications.channels` is a per-INSTALL preference and survives sign-out beside
+ * `ohmail.theme` and `ohmail.face` — the header above is the whole argument for why, and it does
+ * not change because somebody signed out: the OS permission it mirrors is a fact about this
+ * machine, not about an account.
+ *
+ * The two keys below are NOT that. They are a server row's id and the address that row was made
+ * for — both minted inside a signed-in session, both meaningless to the next account on this
+ * browser, and the endpoint is a URL a push service will deliver to. Leaving them behind on a
+ * shared machine is the case the sign-out census was written for, and it has a second, quieter
+ * cost: a stale id makes {@link syncWebPushNow} answer "unchanged" for the NEXT account, which
+ * would then never register and never be woken, with nothing on screen to explain it.
+ *
+ * One prefix rather than two entries because both keys share it by construction, and a sweep
+ * that names a prefix cannot be half-updated when a third key joins them.
+ */
+export const NOTIFICATION_SUBSCRIPTION_PREFIX = "ohmail.notifications.subscription";
+
 /** Where the row id is remembered, so `unsubscribe` can name it after a reload. */
 const SUBSCRIPTION_ID_KEY = "ohmail.notifications.subscriptionId";
 /**
@@ -474,3 +494,64 @@ async function syncWebPushNow(wanted: boolean, api: PushApi): Promise<PushSyncOu
   }
 }
 
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════
+ *  SIGNING OUT — the registration must not outlive the session that minted it
+ * ══════════════════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * TAKE THIS BROWSER'S WAKE REGISTRATION DOWN. Called by `sign-out.ts`, on both its doors.
+ *
+ * ── THE DEFECT THIS CLOSES ────────────────────────────────────────────────────────────────
+ *
+ * The server's own sign-out prune is DEVICE-scoped: `logout` reads the session's `device_id` and
+ * deletes the push rows carrying it. A browser ceremony mints no device row — `establish` only
+ * auto-mints one for the desktop kinds — so a browser session's `device_id` is NULL, the prune
+ * returns early, and the row survives the sign-out. The sender does not care: it selects on the
+ * account and the transport, so it goes on POSTing a wake to this endpoint. Nothing unregisters
+ * the push service either, so the endpoint keeps answering 2xx and the sender's prune-on-404/410
+ * never fires. The row and the traffic are permanent, and the next person on a shared machine is
+ * the one being woken for the previous account's mail.
+ *
+ * ── WHY THE CLIENT IS THE RIGHT PLACE, AND NOT A WIDER SERVER PREDICATE ───────────────────
+ *
+ * This browser is the only party that knows WHICH deviceless row is its own — it kept the id.
+ * The server cannot: deleting every deviceless registration on the account at sign-out would
+ * silently end another browser's notifications, which is why the prune deliberately does not
+ * guess. `DELETE /push/subscriptions/:id` is account-scoped and already exists; naming the row
+ * we minted is both the sharpest handle available and no new mechanism.
+ *
+ * ── THREE HALVES, BECAUSE ANY ONE OF THEM CAN FAIL ────────────────────────────────────────
+ *
+ * `syncWebPush(false, …)` unsubscribes LOCALLY and then deletes the row, in that order and each
+ * independently of the other's failure. Whichever lands helps: a dropped local subscription makes
+ * the endpoint answer 404/410, which is exactly the status the sender prunes on, so the row that
+ * a failed DELETE left behind is collected on the next wake. The third half is the notify-state
+ * entry — the only place the words a notice may draw are kept — set to `enabled: false` so that a
+ * browser which somehow keeps both a live subscription and a live row still draws nothing.
+ *
+ * ── AND IT PUTS NO SENTENCE ON SCREEN, DELIBERATELY ───────────────────────────────────────
+ *
+ * Every other failure `signOut` reports is one the reader can act on (close the other tab, try
+ * again). This one is not: there is no retry a signed-out browser could make — the credential
+ * that authorized the DELETE is precisely what has just been revoked — and the residue collects
+ * itself through the two halves above. A row that reported it could only worry somebody with no
+ * action attached, which this product treats as its own small defect.
+ *
+ * Never throws. `apiConfigured()` is false in every desktop build (its Cloud adapter is aliased
+ * out), so this is a no-op there; and callers' tests mock `../api-client`, where a missing export
+ * would otherwise throw out of the guard itself and skip the rest of the sign-out.
+ */
+export async function revokeWakeRegistration(): Promise<PushSyncOutcome | null> {
+  // The words go first and unconditionally: it is the one half that needs neither the network nor
+  // a live subscription, so a browser that fails everything below still refuses to draw.
+  try { await writeNotifyState(false, "", ""); } catch { /* no Cache API, or storage refused */ }
+  try {
+    return (await browserNotificationHost.syncSubscription?.(false)) ?? null;
+  } catch {
+    /* The host's own guard threw before its try block could catch — a mocked `../api-client` with
+       no `apiConfigured`, or a platform without one. Reported as the state that is true either
+       way: nothing here proved the server row gone. */
+    return "row_remains";
+  }
+}

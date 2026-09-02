@@ -3,6 +3,9 @@ import { auth } from "./api-client";
 import { clearBootCaches, dropLocalStorageKeys } from "./shell/boot-cache";
 import { COMPOSE_DRAFT_PREFIX, LEGACY_COMPOSE_DRAFT_KEY } from "./shell/compose";
 import { REPLY_DRAFT_PREFIX, REPLY_META_PREFIX } from "./shell/mail-send";
+import {
+  NOTIFICATION_SUBSCRIPTION_PREFIX, revokeWakeRegistration,
+} from "./shell/notification-settings";
 import { forgetOwner } from "./shell/owner-cookie";
 import { SCREENER_INTENTS_PREFIX } from "./shell/screener-intents";
 import { SEND_LOCKS_PREFIX } from "./shell/send-lock";
@@ -93,6 +96,22 @@ export async function forgetThisBrowser(owner?: string): Promise<{
   inventoryComplete: boolean;
 }> {
   forgetOwner();
+  /*
+   * ── THE WAKE REGISTRATION GOES FIRST, BEFORE THE ID THAT NAMES IT IS SWEPT ──────────────
+   *
+   * This browser is the only party that knows which push row is its own: the server's sign-out
+   * prune is DEVICE-scoped and a browser ceremony mints no device row, so nothing on the server
+   * side names THIS browser rather than every deviceless registration on the account. The id we
+   * kept is that name, and it lives in the very keys swept a few lines below — so the revoke has
+   * to happen while it is still readable. See `revokeWakeRegistration` for the three halves and
+   * why none of them puts a sentence on screen.
+   *
+   * On the ERASURE door the server rows went with the account, so what this does there is drop
+   * the browser's own subscription and stop the worker being able to draw; on the SIGN-OUT door
+   * `signOut` has already called it once with a live session, and this second call finds nothing
+   * left to reconcile. One implementation, both doors, neither able to be forgotten.
+   */
+  await revokeWakeRegistration();
   // The boot caches: the account's dormancy window, screening baseline and own addresses,
   // remembered so the next boot can paint the partitioned piles before the server answers
   // (`shell/boot-cache.ts`). Cleared by prefix, not by owner — this browser forgets, including
@@ -132,6 +151,19 @@ export async function forgetThisBrowser(owner?: string): Promise<{
     // `ohmail.theme` — a browser's look, not account data (the census names them).
     "ohmail.face.account",
     "ohmail.faceOffer",
+    // THE PUSH ROW'S ID AND THE ENDPOINT IT WAS MINTED FOR, both session-bound (see
+    // `NOTIFICATION_SUBSCRIPTION_PREFIX`). Swept UNCONDITIONALLY, even when the revoke above
+    // could not delete the row, and that is deliberate rather than careless: after a sign-out
+    // there is no credential left to retry the delete with — the account-scoped `DELETE` would
+    // 404 for whoever signs in next — so keeping the id buys no retry and costs the next
+    // account its notifications, because `syncWebPush` reads a stored id as "this browser is
+    // already registered" and never announces the new endpoint. The row a failed delete leaves
+    // behind is collected by the sender's prune-on-404/410 once the local unsubscribe has made
+    // the endpoint dead.
+    //
+    // The SWITCHES (`ohmail.notifications.channels`) are not here: they are this install's
+    // preference, like `ohmail.theme` and `ohmail.face`, and the census names them.
+    NOTIFICATION_SUBSCRIPTION_PREFIX,
   ]);
   survivors.push(...durable.survivors);
   // The mirror-name registry is swept BY `clearAllMirrors` itself (it removes the names it proved
@@ -178,6 +210,19 @@ export async function signOut(owner?: string): Promise<SignOutResult> {
   // rest of this file exists to stop; and throwing would throw away `remaining`, which is the
   // one thing the caller cannot find out any other way.
   let serverRefused: string | null = null;
+  /*
+   * ── BEFORE `auth.logout()`, AND THE ORDER IS THE WHOLE FIX ──────────────────────────────
+   *
+   * `DELETE /push/subscriptions/:id` is authenticated by the session this call is about to
+   * revoke. After the logout it answers 401 for ever: the row stays, the sender goes on POSTing
+   * a wake to this browser's endpoint, and — because the endpoint keeps answering 2xx while the
+   * subscription lives — its prune-on-404/410 never fires either. So the registration is taken
+   * down while there is still a credential that can take it down.
+   *
+   * It runs BEFORE the logout and the logout runs regardless of how it went: a browser asking to
+   * be signed out is asking whether or not this succeeded, exactly as with the local wipe below.
+   */
+  await revokeWakeRegistration();
   try {
     await auth.logout();
   } catch (err) {
