@@ -1760,25 +1760,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * told which install kept it.
      */
     const takeoverRequested = world.takeoverAuthorizedAt !== null;
-    /**
-     * THE STAND-DOWN THIS PROCESS REMEMBERS — and it is a `let` because the process now OUTLIVES
-     * the stand-down that sets it.
-     *
-     * It was a `const` read once from the row, which was exactly right while a demoted install
-     * STOPPED: the timer was cleared and the login closed, so the next reader of this value was
-     * the next launch, and the row it read was the record. Mail 0083 made the loser a READER —
-     * connected, poll timer running — and that turns a snapshot into a hole. The gate stands down
-     * mid-life, the poll fires a minute later, `priorStandDown` is still the NULL it was at
-     * assembly, and the gate reads the lease again; find the foreign claim gone (the other
-     * organizer released cleanly, so `ohmail/_meta` is empty) and `decideLease`'s "nobody has
-     * ever organized this mailbox" arm ORGANIZES. That is the auto-resume this whole mechanism
-     * exists to prevent, reached without any human action, on a machine somebody left running.
-     *
-     * So the two arms of the gate maintain it: standing down writes the memory, and the promotion
-     * — which only ever runs behind an explicit press — clears it. The value is deliberately the
-     * same one the ROW carries, so a relaunch and a poll answer the question identically.
-     */
-    let priorStandDown: string | null = takeoverRequested ? null : world.standDownReason;
+    const priorStandDown = takeoverRequested ? null : world.standDownReason;
     /**
      * WHAT THE WINDOW REPORTS, and it is the ROW's answer rather than the gate's optimism: a
      * stood-down install with a request outstanding is still stood down until the lease says
@@ -1804,23 +1786,6 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * right to seize this mailbox back from wherever it may go next.
      */
     let takeoverAuthorized = world.takeoverAuthorizedAt !== null;
-    /**
-     * THE EXACT STAMP THIS PASS READ, so the stand-down can clear THAT ONE and not whatever is on
-     * the row by the time it writes.
-     *
-     * The gate reads the stamp, then reads the LEASE — a network round trip against the user's own
-     * IMAP server, which can take seconds. A press landing inside that window writes a stamp this
-     * pass never saw and never offered to the lease, and an unconditional
-     * `takeoverAuthorizedAt: null` in the stand-down would erase it: the route answered
-     * `authorized`, the person carried on working, and the request is gone with nothing anywhere
-     * saying so. Narrow, and exactly the class this whole round is about — a press consumed by a
-     * pass that could not act on it.
-     *
-     * Comparing rather than serializing, because serializing is the wrong instrument here: the
-     * route must stay answerable while a slow lease read is in flight, and making it wait on the
-     * gate would block a button press behind an IMAP timeout.
-     */
-    let observedTakeoverAt: Date | null = world.takeoverAuthorizedAt;
 
     /**
      * CLOSE THE SEND-LATER APPOINTMENTS A STAND-DOWN ORPHANS — the local half of
@@ -1934,7 +1899,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       try {
         const [row] = await db.select({ at: mailboxes.takeoverAuthorizedAt })
           .from(mailboxes).where(eq(mailboxes.id, world.mailboxId)).limit(1);
-        if (row) { takeoverAuthorized = row.at !== null; observedTakeoverAt = row.at; }
+        if (row) takeoverAuthorized = row.at !== null;
       } catch (err) {
         log("organizer_takeover_reread_failed", {
           err,
@@ -1966,12 +1931,6 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       if (outcome.organize) {
         leaseNonce = outcome.nonce;
         organizer = { organizing: true, reason: null, heldBy: null };
-        // THE MEMORY IS SPENT WITH THE STAMP. Reaching here past a remembered stand-down means a
-        // human pressed the button and the lease agreed; leaving the memory set would make the
-        // very next poll return false for an install that IS the organizer — it would drain as a
-        // reader against a row that says `organizer`, which is the two halves disagreeing in the
-        // other direction. See {@link priorStandDown}.
-        priorStandDown = null;
         if (takeoverAuthorized) {
           // SPEND IT. One becoming, not a standing right: leaving the stamp set would let this
           // install seize the mailbox back on some later launch, after a human had deliberately
@@ -2089,10 +2048,6 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       // Standing down voids any unspent authorization, in memory and on the row below. We are not
       // the organizer, so becoming one again is a new becoming and needs a new explicit request.
       takeoverAuthorized = false;
-      // …AND IT IS REMEMBERED FOR THE REST OF THIS PROCESS, not only on the row. A reader keeps
-      // polling, so without this line the next cycle would ask the lease again and take the
-      // mailbox back the moment the other organizer released it. See {@link priorStandDown}.
-      priorStandDown = outcome.reason;
       log("organizer_stand_down", {
         disabledReason: outcome.reason,
         heldBy: organizer.heldBy,
@@ -2131,15 +2086,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             organizedByName: organizerDisplayName(outcome.by?.displayName ?? null),
             organizedSince: outcome.by?.claimedAt ?? null,
             organizerState: outcome.state,
-            /* THE STAMP THIS PASS READ, and only that one — see {@link observedTakeoverAt}. A
-               press that landed while the lease was being read was never offered to it, and
-               clearing it here would answer a request nothing ever considered. `IS NOT DISTINCT
-               FROM` rather than `=` so the ordinary case (both NULL) matches: SQL equality on two
-               NULLs is NULL, which would make this a no-op on every stand-down that had no stamp
-               and leave the column's own value untouched — harmless there, and the wrong shape to
-               rely on. */
-            takeoverAuthorizedAt: sql`case when ${mailboxes.takeoverAuthorizedAt} is not distinct from ${observedTakeoverAt}
-              then null else ${mailboxes.takeoverAuthorizedAt} end`,
+            takeoverAuthorizedAt: null,
           })
           .where(eq(mailboxes.id, world.mailboxId));
       } catch (err) {
@@ -2926,30 +2873,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         const localRemoveMatch = req.method === "DELETE"
           ? /^\/local\/mailboxes\/([0-9a-fA-F-]{36})$/.exec(url.pathname)
           : null;
-        /* -- `POST /local/mailboxes/:id/organize` — THE FIRST-RUN CONSENT, ON THIS DOOR -------
-         *
-         * The shared table's `POST /mailboxes/:id/organize` is `stepUp: true`, which on THIS door
-         * is not a guard but a permanent refusal: the launch session's second-factor stamp is
-         * written once at boot (`identity.ts#mintLaunchSession`, "there is no second factor on a
-         * local install"), so `withStepUp` refuses from five minutes after launch for the life of
-         * the process — which is every machine that has been open longer than a coffee. That is
-         * the same shape `DELETE /local/mailboxes/:id` was added for, and it is recorded in its
-         * note below; here it would strand the standalone install's ONLY onboarding path, so the
-         * flow could never be completed on the door the flow exists for.
-         *
-         * The per-launch bearer is the authority, exactly as it is for the three routes beside
-         * this one: minted at boot, added shell-side, never reaching the window, impossible for a
-         * page to compose. Holding it IS being the person sitting at this machine.
-         *
-         * `stepUpWindowMs` is NOT widened. The window is right for the door it was written for;
-         * what is wrong is applying a second factor to a tier that has none. */
-        const localOrganizeMatch = req.method === "POST"
-          ? /^\/local\/mailboxes\/([0-9a-fA-F-]{36})\/organize$/.exec(url.pathname)
-          : null;
         const localAction = (req.method === "DELETE" && url.pathname === "/local/stored-login")
           || (req.method === "POST" && url.pathname === "/local/organizer/takeover")
-          || localRemoveMatch !== null
-          || localOrganizeMatch !== null;
+          || localRemoveMatch !== null;
         if (localAction) {
           const header = req.headers.get("authorization");
           const token = header && /^Bearer\s+/i.test(header)
@@ -2961,74 +2887,6 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               JSON.stringify({ error: { code: "unauthorized", message: "authentication required" } }),
               { status: 401, headers: { "content-type": "application/json" } },
             );
-          }
-          if (localOrganizeMatch) {
-            /* -- AGREE AND START ORGANIZING, WITH THE WINDOW IN THE SAME WRITE ---------------
-             *
-             * The ceremony is `requestOrganizerTakeover`'s and is NOT re-implemented here — this
-             * handler is the transport and the outcome, the same division the takeover route
-             * below keeps. What is new is that the SCREENING ANSWER travels with the consent:
-             * `screening_baseline_at`, `dormancy_days` and `screening_scope` are written in the
-             * same transaction as `organize_consented_at`, because the baseline is what the
-             * window is measured from. Written separately, there is a gap in which the consent
-             * exists and the window does not, and in that gap the cutoff is the product default
-             * rather than the answer the person just gave.
-             *
-             * The account is the LAUNCH SESSION's, never a value from the body. This install
-             * serves one account and `core` is the session just resolved above; taking it from
-             * the request would let a body name a different account's settings row.
-             */
-            const mailboxId = localOrganizeMatch[1]!;
-            let body: { screening?: { dormancyDays?: unknown; scope?: unknown } } = {};
-            try {
-              body = (await req.json()) as typeof body;
-            } catch {
-              /* an absent or unparseable body is "no screening answer" — the claim-back shape */
-            }
-            // The dial arrives over JSON, so a string that looks like a number is a real shape.
-            // It is NOT coerced: `requestOrganizerTakeover` refuses a non-integer, and coercing
-            // here would turn a client bug into a silently different window.
-            const raw = body.screening;
-            const screening = raw
-              ? {
-                  ...(raw.dormancyDays === undefined
-                    ? {}
-                    : { dormancyDays: raw.dormancyDays as number }),
-                  ...(raw.scope === undefined ? {} : { scope: raw.scope as "window" | "all_time" }),
-                }
-              : undefined;
-            try {
-              const result = await requestOrganizerTakeover(db, {
-                mailboxId, now: now(), accountId: core.accountId,
-                ...(screening ? { screening } : {}),
-              });
-              log("local_mailbox_organize_consented", {
-                verdict: result.outcome,
-                // The ANSWER, never the mailbox: this line is instrumentation about a ceremony,
-                // and `ALLOWED_FIELDS` drops anything else anyway.
-                reason: "a person agreed to let this machine organize this mailbox; the consent, "
-                  + "the screening baseline and the window were written together, and the lease "
-                  + "is still the authority",
-              });
-              return new Response(
-                JSON.stringify({ outcome: result.outcome, previousReason: result.previousReason }),
-                { status: 200, headers: { "content-type": "application/json" } },
-              );
-            } catch (err) {
-              // A refused screening answer is a 400 with the refusal's own sentence; anything
-              // else is internal. Mapped by hand because this handler sits AHEAD of the route
-              // table and therefore ahead of `withErrorEnvelope`.
-              const refused = (err as { name?: string }).name === "LocalConsentRefusal";
-              log("local_mailbox_organize_failed", { err });
-              return new Response(
-                JSON.stringify({
-                  error: refused
-                    ? { code: "validation_failed", message: (err as Error).message }
-                    : { code: "internal", message: "internal error" },
-                }),
-                { status: refused ? 400 : 500, headers: { "content-type": "application/json" } },
-              );
-            }
           }
           if (localRemoveMatch) {
             /* -- REMOVING A MAILBOX ON A STANDALONE INSTALL
