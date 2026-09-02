@@ -2093,6 +2093,7 @@
     "organizeHereWhatLegacy": "Das fragt nach dem Postfach, es nimmt es nicht. Beende ohmail und öffne es neu; erneuert die andere Installation ihren Anspruch nicht vorher, beginnt dieser Computer zu organisieren. Ihre Kopie deiner Post bleibt so oder so unberührt.",
     "organizeHereConfirm": "Hier organisieren",
     "organizeHereQueued": "Angefragt. Beende ohmail und öffne es neu, damit dieses Postfach von diesem Computer aus organisiert wird. Läuft die andere Installation noch und erneuert ihren Anspruch vorher, behält sie das Postfach und diese liest weiter.",
+    "organizeHereQueuedLegacy": "Angefragt. Beende ohmail und öffne es neu, damit dieses Postfach von diesem Computer aus organisiert wird. Läuft die andere Installation noch und erneuert ihren Anspruch vorher, behält sie das Postfach und diese bleibt zurückgetreten.",
     "organizeHereRefused": "Gerade nicht möglich: {reason}",
     "stateOrganizing": "Organisiert",
     "stateReading": "Liest nur",
