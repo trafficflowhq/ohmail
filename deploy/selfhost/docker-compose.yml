@@ -197,6 +197,15 @@ services:
       # connected here. Generated once at install (`.env.example` shows the command) and
       # never changed: this install's claims are recognised as its own by this value.
       TF_ORGANIZER_INSTALL_ID: ${TF_ORGANIZER_INSTALL_ID:?set TF_ORGANIZER_INSTALL_ID in .env — this install's unique organizer identity, e.g. ohmail-selfhost:<openssl rand -hex 6>}
+      # THE ORIGIN THIS DEPLOYMENT IS REACHED AT — and on THIS service it is here for exactly one
+      # reader: the organizer's display name below.
+      #
+      # The `${OHMAIL_ORIGIN}` spellings elsewhere in this block are compose INTERPOLATIONS,
+      # resolved from the operator's `.env` on the host and substituted into some other variable's
+      # value. None of them puts `OHMAIL_ORIGIN` inside the container, and the worker's own
+      # derivation reads it from the PROCESS environment — so without this line that derivation is
+      # unreachable in this deployment, whatever the code says it does.
+      OHMAIL_ORIGIN: ${OHMAIL_ORIGIN:?set OHMAIL_ORIGIN in .env}
       # HOW THIS DEPLOYMENT NAMES ITSELF TO A HUMAN, in the same claim. The install id above is an
       # opaque handle; THIS is the string another install shows on its reader banner and the one a
       # person reads when they open `ohmail/_meta` in any mail client.
@@ -204,10 +213,23 @@ services:
       # It had a typed config field and NO READER for its whole life, so the worker fell through to
       # the hosted default — and every self-hosted deployment in the world wrote "ohmail Cloud"
       # into its own customers' mailboxes, telling them a service they are not a customer of had
-      # taken their mail. Set here from the origin so the value is visible in this file rather than
-      # derived somewhere a reader cannot see it; unset, the worker still defaults to the origin's
-      # host, which is true, and only an absent origin falls back to the hosted name.
-      TF_ORGANIZER_DISPLAY_NAME: ${TF_ORGANIZER_DISPLAY_NAME:-${OHMAIL_ORIGIN}}
+      # taken their mail.
+      #
+      # ── AND THERE IS NO `:-${OHMAIL_ORIGIN}` DEFAULT HERE, WHICH IS THE CORRECTION ──────────
+      #
+      # That default was the obvious shape and it was wrong twice over. `organizerDisplayNameFrom`
+      # takes the EXPLICIT value verbatim and derives a HOST only from the origin — so a default
+      # that hands it the origin AS the explicit value skips the parse and names the deployment
+      # `https://mail.example.com` on every banner, when the string a person should read is
+      # `mail.example.com`. And it hid the real gap: with `OHMAIL_ORIGIN` absent from the
+      # container (above), an operator whose compose file predates this line, or who exports the
+      # variable empty, gets no name at all — and no name is the HOSTED default, which is the
+      # untruth this whole block exists to stop.
+      #
+      # Unset is therefore the RIGHT resting state now: the worker derives the host from
+      # `OHMAIL_ORIGIN` itself. Set it only to say something the origin does not, e.g. `Front
+      # office server`.
+      TF_ORGANIZER_DISPLAY_NAME: ${TF_ORGANIZER_DISPLAY_NAME:-}
       # The SAME key ring as the api — the /health responses of the two carry a ring
       # fingerprint precisely so an operator can prove they agree.
       TF_KEK_V1: ${TF_KEK_V1:?set TF_KEK_V1 in .env}
