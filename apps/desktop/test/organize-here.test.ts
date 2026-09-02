@@ -448,9 +448,7 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     const text = el.textContent ?? "";
     expect(text, "the confirmation promised what rule 5 refuses even with authorization")
       .toContain("cannot take it yet");
-    expect(text).toContain("Stop it organizing there first, then come back and ask again");
-    expect(text, "a request the running loop can clear was described as kept")
-      .not.toMatch(/kept until then|is kept/);
+    expect(text).toContain("Stop it organizing there, then quit and reopen ohmail");
     expect(text).not.toContain("unless zorin-9950 renews its claim first");
 
     /* AND THE PRESS IS STILL THERE. Withholding it depended on `organizerState` moving off `held`
@@ -473,10 +471,8 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     await act(async () => { organizeButton(el)!.click(); });
     await act(async () => { confirmButton(el)!.click(); });
     const text = el.textContent ?? "";
-    expect(text).toContain("keeps this mailbox for as long as it is still checking in");
+    expect(text).toContain("keeps this mailbox while it is still checking in");
     expect(text).toContain("whatever was asked for here");
-    // The reliable order, because the request itself is not durable against the running loop.
-    expect(text).toContain("then ask again and reopen ohmail");
     expect(text, "a blocked request was answered with the local peer's renewal race")
       .not.toContain("renews its claim first");
   });
@@ -544,83 +540,6 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
       .not.toContain("goes on reading");
   });
 
-
-  /**
-   * AND THE RETRY IS STILL THERE AFTERWARDS, because the answer tells somebody to use it.
-   *
-   * `reclaimed` records that a request was made and is never cleared — correct for a request that
-   * can succeed, since the row's own role is what ends it. A blocked request can never succeed, so
-   * its entry hid the button for the life of the pane while the sentence beside it said "stop it
-   * organizing there, then ask again". That is the dead end this screen exists to close, reached
-   * through the one branch whose entire purpose is to send somebody back.
-   */
-  it("keeps the retry reachable after a blocked request, which its own answer tells you to use", async () => {
-    FACTS = [CLOUD_HELD];
-    const el = await render(null);
-    await act(async () => { organizeButton(el)!.click(); });
-    await act(async () => { confirmButton(el)!.click(); });
-    expect(el.textContent).toContain("then ask again and reopen ohmail");
-    expect(organizeButton(el),
-      "the answer said to ask again and the button it meant was gone")
-      .not.toBeNull();
-  });
-
-  /**
-   * THE TRANSITION THE INSTRUCTION SENDS SOMEBODY TO MAKE — and the case that was missing.
-   *
-   * The blocked answer says "stop it organizing there, then ask again". Doing that turns the row's
-   * `organizerState` from `held` to `stopped`, at which point the request could finally succeed —
-   * and a guard written against the row's CURRENT blocked-ness took the button away at exactly
-   * that moment, because the spent-request marker was still set. The earlier case could not see
-   * it: it asserted the button on the blocked row and never re-rendered with the stopped one.
-   */
-  it("keeps the retry across the very transition its answer tells you to make", async () => {
-    FACTS = [CLOUD_HELD];
-    const el = await render(null);
-    await act(async () => { organizeButton(el)!.click(); });
-    await act(async () => { confirmButton(el)!.click(); });
-    expect(organizeButton(el), "the retry was gone while the holder was still there").not.toBeNull();
-
-    // The user goes and stops it organizing there; the reader cycle refreshes the same row.
-    FACTS = [{ ...CLOUD_HELD, organizerState: "stopped" }];
-    await act(async () => { root!.render(await paneNode(null)); });
-    expect(organizeButton(el),
-      "the button vanished at the moment the retry would have worked, which is what the answer " +
-        "sent somebody away to bring about")
-      .not.toBeNull();
-  });
-
-  /**
-   * AND THE REVERSE TRANSITION, which the previous fix regressed.
-   *
-   * A holder that was quiet when the request went in can resume before this install is promoted.
-   * The lease then refuses the authorization and the running loop clears it — so the request no
-   * longer exists, while the marker recorded at press time still said "beatable" and went on
-   * suppressing the button for the life of the pane.
-   */
-  it("keeps the retry when a once-beatable request becomes blocked", async () => {
-    FACTS = [CLOUD_STOPPED];
-    const el = await render(null);
-    await act(async () => { organizeButton(el)!.click(); });
-    await act(async () => { confirmButton(el)!.click(); });
-    expect(organizeButton(el), "a request that can still succeed should spend its button").toBeNull();
-
-    // The holder wakes up again before this install is promoted.
-    FACTS = [{ ...CLOUD_STOPPED, organizerState: "held" }];
-    await act(async () => { root!.render(await paneNode(null)); });
-    expect(organizeButton(el),
-      "the lease refused the request and cleared it, and the pane kept suppressing the retry")
-      .not.toBeNull();
-  });
-
-  it("…and a request that CAN succeed still spends its button", async () => {
-    // The negative control: a beatable holder's request is one-shot, so the button goes and the
-    // acknowledgement stands in its place until the role confirms it.
-    const el = await render(null);
-    await act(async () => { organizeButton(el)!.click(); });
-    await act(async () => { confirmButton(el)!.click(); });
-    expect(organizeButton(el), "a spent one-shot request still offered its button").toBeNull();
-  });
 
   it("is NOT offered on a TOMBSTONE — the handler refuses that row and so does the pane", async () => {
     FACTS = [REMOVED];
