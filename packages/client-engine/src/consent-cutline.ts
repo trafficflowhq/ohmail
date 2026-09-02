@@ -1,5 +1,5 @@
 import type { EntityReader } from "./store.js";
-import { isResurfaced, rulesList, senderKey } from "./selectors.js";
+import { isResurfaced, messagesByDateDesc, rulesList, senderKey } from "./selectors.js";
 import type { EngineMessage, Folder, RuleDTO } from "./types.js";
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
@@ -583,7 +583,10 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
     }
   }
 
-  const history = messages.filter((m) => historyIds.has(m.id)).sort(byDateDesc);
+  // Filtered from the shared per-version order rather than sorted here: History is the one
+  // subset that can be nearly the whole mirror, so its own sort was a second whole-mirror
+  // sort on every bump (`messagesByDateDesc` carries the identical-order argument).
+  const history = messagesByDateDesc(reader).filter((m) => historyIds.has(m.id));
 
   return {
     placeOf,
@@ -630,11 +633,19 @@ export function presentationReader(reader: EntityReader, partition: ConsentParti
       return (project(v as unknown as EngineMessage) ?? undefined) as T | undefined;
     },
     list<T = unknown>(type: string): T[] {
-      const rows = reader.list<T>(type);
-      if (type !== "message") return rows;
+      if (type !== "message") return reader.list<T>(type);
+      /**
+       * ITERATE THE BASE READER'S SHARED DATE ORDER, not its raw list. `list()`'s order is
+       * unspecified, so any order is legal here — and `project` never touches a date, so the
+       * projected rows come out already newest-first. `messagesByDateDesc` OVER THIS PROJECTION
+       * then sorts an already-sorted array, which is one O(n) verification pass instead of a
+       * whole-mirror sort — and the projection is rebuilt every version (its object identity
+       * cannot carry the cache), so without this it paid the full sort on every bump.
+       */
+      const rows = messagesByDateDesc(reader);
       const out: T[] = [];
       for (const r of rows) {
-        const p = project(r as unknown as EngineMessage);
+        const p = project(r);
         if (p) out.push(p as unknown as T);
       }
       return out;

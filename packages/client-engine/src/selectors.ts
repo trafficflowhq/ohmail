@@ -140,9 +140,26 @@ export function messageDisplayTime(
 }
 
 /** Server list order (contract §5.2): date desc, id desc. */
+/**
+ * A message's parsed date, cached per ENTITY OBJECT. `Date.parse` per comparison made the
+ * comparator itself the cost at scale (a whole-mirror pass is tens of thousands of
+ * comparisons, two parses each). Entities are replaced-on-change, never mutated, so object
+ * identity is exactly the lifetime a parsed date is valid for — and the WeakMap dies with
+ * the entities it keyed.
+ */
+const parsedDate = new WeakMap<EngineMessage, number>();
+function tsOf(m: EngineMessage): number {
+  let t = parsedDate.get(m);
+  if (t === undefined) {
+    t = m.date ? Date.parse(m.date) : 0;
+    parsedDate.set(m, t);
+  }
+  return t;
+}
+
 function byDateDesc(a: EngineMessage, b: EngineMessage): number {
-  const ta = a.date ? Date.parse(a.date) : 0;
-  const tb = b.date ? Date.parse(b.date) : 0;
+  const ta = tsOf(a);
+  const tb = tsOf(b);
   if (ta !== tb) return tb - ta;
   return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
 }
@@ -367,11 +384,75 @@ export function threadOf(reader: EntityReader, messageId: string): EngineMessage
   return members.length > 1 ? members : [];
 }
 
+/**
+ * ONE date-desc sort of the whole mirror per (reader, version) — the order every whole-mirror
+ * selector shares.
+ *
+ * Every selector here is called once per version bump, and most of them used to end in their
+ * own `.sort(byDateDesc)` over the whole mirror — so a single mutation's bump paid for the
+ * same sort roughly eight times, which on a mailbox tens of thousands deep was the dominant
+ * term of the long task a scroll-time read-mark produced. A `filter` of a sorted array is
+ * sorted, and {@link byDateDesc} is total (its own header carries the argument), so deriving
+ * each selector's slice from one shared order is byte-identical to sorting each slice.
+ *
+ * Keyed WEAKLY on the reader object and invalidated by `version()`: `engine.read()` returns
+ * one stable view for the life of the engine, and a projection (`presentationReader`) is
+ * memoized by its consumer per version, so entries die with their readers and a stale version
+ * can never serve. The cached array is FROZEN in spirit — callers filter it, never mutate it;
+ * `.filter`/spread copies are what leave this function.
+ */
+const dateOrderCache = new WeakMap<EntityReader, { v: number; all: EngineMessage[] }>();
+export function messagesByDateDesc(reader: EntityReader): readonly EngineMessage[] {
+  // A hand-rolled partial reader (several test harnesses build one) may not implement
+  // `version()`; without an invalidation key there is nothing safe to cache on, so such a
+  // reader gets the plain sort — correct, merely uncached.
+  if (typeof reader.version !== "function") {
+    return reader.list<EngineMessage>("message").sort(byDateDesc);
+  }
+  const v = reader.version();
+  const hit = dateOrderCache.get(reader);
+  if (hit && hit.v === v) return hit.all;
+  // `list()` builds a fresh array per call (both stores and the projection), so the in-place
+  // sort below touches nothing shared.
+  const rows = reader.list<EngineMessage>("message");
+  /**
+   * THE REPAIR PATH — most bumps do not move the order, so do not pay the sort for them.
+   *
+   * A read-mark, a body arriving, a label flip: the common mutations change FIELDS on rows
+   * whose ids and dates stay exactly what they were, and the date order is invariant under
+   * every one of them. When the previous order's membership (same ids, same count) and every
+   * row's date survive, the new order IS the old order with fresh entities substituted in —
+   * one pass and a Map, instead of a whole-mirror sort per bump. Anything else — an arrival,
+   * a prune, an edited date — falls through to the honest sort. Correctness does not depend
+   * on classifying the mutation: the repair VERIFIES membership and dates itself, and
+   * `date-order-cache.test.ts` pins both fallthroughs.
+   */
+  let all: EngineMessage[] | null = null;
+  if (hit && hit.all.length === rows.length) {
+    const byId = new Map<string, EngineMessage>();
+    for (const m of rows) byId.set(m.id, m);
+    if (byId.size === rows.length) {
+      const repaired: EngineMessage[] = new Array(rows.length);
+      let ok = true;
+      for (let i = 0; i < hit.all.length; i++) {
+        const prev = hit.all[i]!;
+        const cur = byId.get(prev.id);
+        if (cur === undefined || cur.date !== prev.date) {
+          ok = false;
+          break;
+        }
+        repaired[i] = cur;
+      }
+      if (ok) all = repaired;
+    }
+  }
+  all ??= rows.sort(byDateDesc);
+  dateOrderCache.set(reader, { v, all });
+  return all;
+}
+
 export function messagesIn(reader: EntityReader, folder: Folder): EngineMessage[] {
-  return reader
-    .list<EngineMessage>("message")
-    .filter((m) => m.folder === folder)
-    .sort(byDateDesc);
+  return messagesByDateDesc(reader).filter((m) => m.folder === folder);
 }
 
 /**
@@ -420,7 +501,7 @@ export function messagesIn(reader: EntityReader, folder: Folder): EngineMessage[
 export function sendingMailboxId(reader: EntityReader): string | null {
   const seeded = reader.list<{ id?: string }>("mailbox")[0]?.id;
   if (typeof seeded === "string" && seeded.length > 0) return seeded;
-  const newest = reader.list<EngineMessage>("message").sort(byDateDesc)[0];
+  const newest = messagesByDateDesc(reader)[0];
   return newest?.mailboxId ?? null;
 }
 
@@ -730,10 +811,12 @@ function byLastReadDesc(a: EngineMessage, b: EngineMessage): number {
  * asymmetry, and `search-locate.test.ts` pins it.
  */
 export function ohboxView(reader: EntityReader): OhboxView {
-  const all = reader.list<EngineMessage>("message");
+  // The shared date-desc order (`messagesByDateDesc`): a filter of it is newest-first by
+  // construction, so the groups below carry no sorts of their own any more.
+  const all = messagesByDateDesc(reader);
   const inbox = messagesIn(reader, FOLDER_OF_VIEW.ohbox);
   // the account's own sent mail, folder-agnostic (see `isOwnSent`), newest first.
-  const sent = all.filter(isOwnSent).sort(byDateDesc);
+  const sent = all.filter(isOwnSent);
 
   /**
    * THE PIN IS STATE-DRIVEN AND FOLDER-AGNOSTIC, and the whole mirror is scanned for it —
@@ -748,7 +831,7 @@ export function ohboxView(reader: EntityReader): OhboxView {
    * Newest bubble first — the order the two groups below use for anything that has no reading
    * time to sort by.
    */
-  const resurfaced = all.filter(isResurfaced).sort(byDateDesc);
+  const resurfaced = all.filter(isResurfaced);
   const pinned = new Set(resurfaced.map((m) => m.id));
 
   /**
@@ -1323,12 +1406,13 @@ export interface TagGroup {
   messages: EngineMessage[];
 }
 
-/** Tags cut ACROSS folders: one group per tag, with every labeled message. */
+/** Tags cut ACROSS folders: one group per tag, with every labeled message — newest first via
+ *  the shared order (`messagesByDateDesc`), where this used to sort once PER TAG. */
 export function tagsCrossView(reader: EntityReader): TagGroup[] {
-  const messages = reader.list<EngineMessage>("message");
+  const messages = messagesByDateDesc(reader);
   return reader.list<TagDTO>("tag").map((tag) => ({
     tag,
-    messages: messages.filter((m) => m.labels.includes(tag.id)).sort(byDateDesc),
+    messages: messages.filter((m) => m.labels.includes(tag.id)),
   }));
 }
 

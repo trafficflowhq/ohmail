@@ -208,6 +208,9 @@ export {
   isOwnSent,
   isResurfaced,
   messageDisplayTime,
+  // The shared whole-mirror date order — one sort per (reader, version), which every
+  // whole-mirror selector filters from. Exported for the cache-identity guard.
+  messagesByDateDesc,
   messagesIn,
   ohboxView,
   // Read state AS DRAWN — resurface presents unread, derived from the pin and never stamped
