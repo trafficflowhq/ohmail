@@ -62,9 +62,18 @@ export {
 // The ONE spelling of "somebody else organizes this mailbox" (mail 0083) — the same argument as
 // the two lines above: the worker may not import services at runtime, the sidecar's gate and the
 // hosted gate both write the holder columns, and eleven service write doors share one refusal.
-// Reaches `schema-mail.js`, `change-log.js` and `mailbox-errors.js` alone, so the closure rule
-// holds — `mailbox-errors.js` for `standDownMemory`, which composes the same closed set
-// `disabled_reason` carries and checks its own answer against it rather than casting.
+// Reaches `schema-mail.js`, `change-log.js` and `mailbox-errors.js` alone — the third for
+// `standDownMemory`, which composes the same closed set `disabled_reason` carries and checks its
+// own answer against it rather than casting. `mailbox-errors.js` is a LEAF (zero imports), so it
+// widens the graph by one file and by nothing behind it.
+//
+// WHAT CHECKS THAT, precisely, because the obvious answer is wrong: NOT
+// `desktop-engine-closure.test.ts` — that walker starts at `@trafficflow/db/journal`, the narrow
+// entry, and never reaches this module at all (planting a `schema-cloud.js` import in
+// `organizer-role.ts` leaves all six of its tests green — run, not assumed). What does check it is
+// `publish-desktop.mjs`'s bundle pass, which walks the ENGINE's real closure and refuses any input
+// outside the published payload. The sentence above is otherwise a source fact a reader verifies
+// by reading the imports, and it is written here so nobody mistakes it for a guarded one.
 export {
   assertOrganizerRole, assertAccountOrganizes, readOrganizerRole, organizerDisplayName,
   OrganizedElsewhereError, MailboxNotFoundError,
