@@ -590,6 +590,29 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
       .not.toBeNull();
   });
 
+  /**
+   * AND THE REVERSE TRANSITION, which the previous fix regressed.
+   *
+   * A holder that was quiet when the request went in can resume before this install is promoted.
+   * The lease then refuses the authorization and the running loop clears it — so the request no
+   * longer exists, while the marker recorded at press time still said "beatable" and went on
+   * suppressing the button for the life of the pane.
+   */
+  it("keeps the retry when a once-beatable request becomes blocked", async () => {
+    FACTS = [CLOUD_STOPPED];
+    const el = await render(null);
+    await act(async () => { organizeButton(el)!.click(); });
+    await act(async () => { confirmButton(el)!.click(); });
+    expect(organizeButton(el), "a request that can still succeed should spend its button").toBeNull();
+
+    // The holder wakes up again before this install is promoted.
+    FACTS = [{ ...CLOUD_STOPPED, organizerState: "held" }];
+    await act(async () => { root!.render(await paneNode(null)); });
+    expect(organizeButton(el),
+      "the lease refused the request and cleared it, and the pane kept suppressing the retry")
+      .not.toBeNull();
+  });
+
   it("…and a request that CAN succeed still spends its button", async () => {
     // The negative control: a beatable holder's request is one-shot, so the button goes and the
     // acknowledgement stands in its place until the role confirms it.

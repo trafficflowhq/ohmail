@@ -687,13 +687,26 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
               the other holder has gone quiet the lease returns available rather than standing this
               install down — so nothing clears it and the relaunch spends it.
 
-              THE TEST IS ON THE ENTRY, NOT ON THE ROW'S CURRENT STATE, and that distinction is the
-              whole fix. Gating on "is it blocked NOW" put the button back while the holder was
-              still there and took it away again the moment the holder stopped — which is precisely
-              when the retry becomes the thing that works, and precisely what the answer had sent
-              somebody away to do. A blocked request never consumed a one-shot in the first place;
-              a beatable one did. */
-          {...(claim === "rest" && (reclaimed.get(claimTarget.id)?.blocked ?? true)
+              THE BUTTON IS SPENT IN ONE QUADRANT OF FOUR, and each of the other three was found
+              by walking a path somebody actually takes. Write the request's blocked-ness against
+              the row's current blocked-ness:
+
+                · beatable then, beatable now  → SPENT. The request is genuinely in flight and a
+                  second press would be a second one-shot;
+                · blocked then, blocked now    → offered. A blocked request achieves nothing, so it
+                  never consumed anything, and the answer beside it says to come back;
+                · blocked then, beatable now   → offered. This is the transition the answer sends
+                  somebody to make, and gating on the row alone removed the button at exactly the
+                  moment the retry would have worked;
+                · beatable then, blocked now   → offered. The holder resumed before this install
+                  was promoted, the lease refused the authorization and the loop cleared it, so the
+                  spent marker describes a request that no longer exists.
+
+              Only the first can still succeed on its own; every other one needs the press back. */
+          {...(claim === "rest"
+            && (!reclaimed.has(claimTarget.id)
+              || reclaimed.get(claimTarget.id)!.blocked
+              || claimWouldBeRefused(claimTarget))
             ? {
                 action: (
                   <Button variant="primary" onClick={() => setClaim("confirm")}>
