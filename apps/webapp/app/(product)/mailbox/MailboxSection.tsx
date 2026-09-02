@@ -1805,6 +1805,19 @@ export function MailboxSection() {
   const [probeBad, setProbeBad] = useState<{ reason: string | null; message: string } | null>(null);
   /** Enough typed to ask the question at all — the same three fields the endpoint requires. */
   const canProbe = Boolean(typed.provider && typed.address.trim() && typed.pass);
+  /**
+   * THE OAUTH DOOR OPENING UNDER A RUNNING TEST RETIRES IT.
+   *
+   * `microsoftOauth` depends on a capability read that resolves after mount, so it can become true
+   * while somebody is part-way through the app-password path they were correctly offered a moment
+   * earlier. When it does, "Continue" stops being a password step and becomes the consent
+   * ceremony — a different act entirely — so any verdict about the password, settled or still in
+   * flight, is about a path nobody is taking any more.
+   */
+  useEffect(() => {
+    if (microsoftOauth) clearVerdict();
+  }, [microsoftOauth, clearVerdict]);
+
   const runProbe = useCallback(async () => {
     if (!typed.provider) return;
     const mine = ++probeSeq.current;
@@ -2431,7 +2444,14 @@ export function MailboxSection() {
             </Button>
           </div>
 
-          {probing ? (
+          {/* ── THE VERDICT RENDERS ONLY WHERE THE TEST IS OFFERED ───────────────────────────
+              `microsoftOauth` is not a stable fact about the form: the deployment's OAuth
+              availability is read asynchronously, so it can flip to true UNDER a person who
+              already chose Microsoft, typed an app password and pressed Test. The fields and the
+              Test button vanish, "Continue" becomes the consent ceremony — and without this gate
+              the app-password verdict stayed on screen, describing a path the next press no longer
+              takes. The effect above retires it; this keeps the frame before that honest. */}
+          {!microsoftOauth && probing ? (
             <SettingsVerdict
               state="wait"
               headline={tob("testing", {
@@ -2439,7 +2459,7 @@ export function MailboxSection() {
               })}
             />
           ) : null}
-          {!probing && probeOk ? (
+          {!microsoftOauth && !probing && probeOk ? (
             <SettingsVerdict
               state="ok"
               headline={tob("probeOk", {
@@ -2450,7 +2470,7 @@ export function MailboxSection() {
           ) : null}
           {/* THE SERVER'S OWN SENTENCE when the taxonomy has no member this build knows — a newer
               API that adds one must degrade to something true, and the message always is. */}
-          {!probing && probeBad ? (
+          {!microsoftOauth && !probing && probeBad ? (
             <SettingsVerdict
               state="bad"
               headline={probeBad.reason
