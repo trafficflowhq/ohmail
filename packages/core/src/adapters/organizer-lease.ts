@@ -189,9 +189,33 @@ export function personalNamespacesOf(client: MetaNamespaceSource | undefined): r
  * {@link META_FOLDER} is exactly two segments, so re-joining them costs nothing and leaves the
  * comparison and the concatenation in the same alphabet.
  *
- * Below that, `bare`'s own separator — `toServerPath` IS the live connection's delimiter mapping,
- * so whatever it put between the two segments is this server's delimiter, discovered rather than
- * guessed. Then a LIST row's. Then `/`.
+ * Below that, THE LIST ROW'S OWN DELIMITER — the server's statement about its own hierarchy —
+ * and only then `bare`'s separator.
+ *
+ * ── THAT ORDER IS A FIX, AND THE OLD ONE HAD A FALSE PREMISE IN IT ────────────────────────
+ *
+ * `bare`'s separator used to outrank the LIST row, justified here in these words: "`toServerPath`
+ * IS the live connection's delimiter mapping, so whatever it put between the two segments is this
+ * server's delimiter, discovered rather than guessed."
+ *
+ * It is not, and the exception is not exotic. `ImapAdapter` initialises `delimiter = "/"` BEFORE
+ * it connects (`imap.ts`), and `toServerPath` short-circuits on `"/"` and returns the canonical
+ * name UNCHANGED. So on any adapter that has not learned its delimiter — or has learned `"/"` as
+ * the fallback when the LIST carried none — `between` is the CANONICAL's own separator, a default
+ * wearing the costume of a discovery, and it was being trusted over the server's own answer.
+ *
+ * The consequence was a wrong ANSWER rather than a refusal, which is the one direction this file
+ * exists to prevent: on a prefixed server with no NAMESPACE reply, `bare` stayed `ohmail/_meta`,
+ * no LIST row ends in that, and the resolution returned "absent" — which `makeLeasePeekIo` reads
+ * as ZERO CLAIMS and the peek reports as `state=none`. A mailbox another install was actively
+ * organizing looked free. Measured: of the four combinations of {delimiter learned, NAMESPACE
+ * answered}, exactly one failed — unlearned delimiter AND no namespaces — and neither half failed
+ * alone, which is why it survived a resolver written to fix this very family.
+ *
+ * A LIST row's delimiter is the server saying what its hierarchy separator is. An adapter's
+ * spelling of a name it was asked to map is, at best, a report of the same fact and, at worst,
+ * the absence of one. So the server's own statement goes first of the two. `between` remains
+ * below it for the case the LIST answers nothing at all.
  */
 function metaAlphabet(
   bare: string,
@@ -212,7 +236,7 @@ function metaAlphabet(
   const one = (d: unknown): string | undefined => (typeof d === "string" && d.length === 1 ? d : undefined);
   const between = one(bare.slice(head.length, bare.length - tail.length));
   const row = list.find((f) => f.path.toUpperCase() === "INBOX") ?? list[0];
-  const delimiter = one(ns[0]?.delimiter) ?? between ?? one(row?.delimiter) ?? "/";
+  const delimiter = one(ns[0]?.delimiter) ?? one(row?.delimiter) ?? between ?? "/";
   return {
     delimiter,
     bare: between !== undefined && between !== delimiter ? `${head}${delimiter}${tail}` : bare,
