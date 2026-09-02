@@ -52,6 +52,7 @@ export { serveOverStdio, type StdioHost, type StdioHostOptions } from "./host.js
 // will hand `createSidecar` a bare `console.log` and reopen, from outside this package, the
 // unredacted-diagnostics hole the shared logger's allowlist closed.
 export {
-  createSidecarLog, describeMethod, describeRoute, type Diagnostic, type SidecarLogOptions,
+  createSidecarLog, createSidecarLogger, diagnosticFor,
+  describeMethod, describeRoute, type Diagnostic, type SidecarLogOptions,
 } from "./log.js";
 export { connectOverStdio, type BridgeFetch, type StdioClient, type StdioClientOptions } from "./client.js";

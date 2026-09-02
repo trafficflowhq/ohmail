@@ -1,4 +1,4 @@
-import { createLogger, type LogLevel, type LogSink } from "@trafficflow/core/mail";
+import { createLogger, type Logger, type LogLevel, type LogSink } from "@trafficflow/core/mail";
 
 /**
  * THE SIDECAR'S DIAGNOSTIC CHANNEL — `packages/core/src/log.ts`, on stderr.
@@ -98,18 +98,46 @@ export interface SidecarLogOptions {
   now?: () => Date;
 }
 
-/** The diagnostic channel, backed by the hardened logger. `service` is always `sidecar`. */
-export function createSidecarLog(opts: SidecarLogOptions = {}): Diagnostic {
-  const logger = createLogger({
+/**
+ * The hardened logger itself, `service: sidecar`, on stderr.
+ *
+ * ── WHY THIS IS EXPOSED SEPARATELY FROM {@link createSidecarLog} ────────────────────────────
+ *
+ * The two-argument {@link Diagnostic} is forced by `readMailboxLease` (see the header) and it is
+ * the right seam for this package's own call sites, whose severity is a naming convention. It is
+ * the WRONG seam for code this package merely HOSTS: `@trafficflow/worker/sync` is written
+ * against `Logger` and states its own severity per line — `log?.warn(...)` for a host that
+ * refused a `STORE`, `log?.error(...)` for bookkeeping that did not commit. Passing those
+ * through a `Diagnostic` would re-derive the level from the event name and flatten both to
+ * `info`, because the worker's vocabulary was never written to the sidecar's convention
+ * (`reconcile_flag_transport_failure` ends in `_failure`, which {@link ERROR_EVENT} does not
+ * match, and there is no reason it should — that regex is a claim about THIS package).
+ *
+ * So the sync loop gets the `Logger` and this package keeps the `Diagnostic`, and both are the
+ * same object underneath: one construction, one sink, one allowlist. `createSidecarLog` is now
+ * literally `diagnosticFor(createSidecarLogger(...))`, so there is no second configuration to
+ * drift — the thing `log.ts` exists to prevent.
+ */
+export function createSidecarLogger(opts: SidecarLogOptions = {}): Logger {
+  return createLogger({
     service: "sidecar",
     sink: opts.sink ?? stderrSink,
     ...(opts.level === undefined ? {} : { level: opts.level }),
     ...(opts.now === undefined ? {} : { now: opts.now }),
   });
+}
+
+/** The two-argument seam over a logger, severity derived from the event name. */
+export function diagnosticFor(logger: Logger): Diagnostic {
   return (event, detail) => {
     if (ERROR_EVENT.test(event)) logger.error(event, detail);
     else logger.info(event, detail);
   };
+}
+
+/** The diagnostic channel, backed by the hardened logger. `service` is always `sidecar`. */
+export function createSidecarLog(opts: SidecarLogOptions = {}): Diagnostic {
+  return diagnosticFor(createSidecarLogger(opts));
 }
 
 /**

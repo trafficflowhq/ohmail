@@ -7,7 +7,7 @@ import { createAdmission, maybeStartHostListener, type HostListener } from "./ho
 import { maybeStartLanListener, type LanListener } from "./host-lan.js";
 import { encodeFrame, PROTOCOL_VERSION } from "./frame.js";
 import { serveOverStdio, type StdioHost } from "./host.js";
-import { createSidecarLog } from "./log.js";
+import { createSidecarLog, createSidecarLogger, diagnosticFor } from "./log.js";
 import type { PhaseHeader } from "./protocol.js";
 
 /**
@@ -302,7 +302,14 @@ export async function runSidecar(): Promise<void> {
   // `JSON.stringify` whose comment claimed the worker's shape; `log.ts` in this package records
   // what that cost. Every `log(...)` below goes through the allowlist, the value patterns and the
   // `err` reduction.
-  const log = createSidecarLog();
+  //
+  // ONE construction, TWO faces, and the second one is the fix: `log` is the two-argument seam
+  // this package and `readMailboxLease` write through, `logger` is the same object in the shape
+  // `@trafficflow/worker/sync` speaks. The engine used to be handed only the first, so it built
+  // its `syncDeps` with no `log` at all and the reconcile passes' diagnostics — every line that
+  // reports a write the mail server did not accept — were discarded on the standalone door.
+  const logger = createSidecarLogger();
+  const log = diagnosticFor(logger);
   let sidecar: Sidecar | null = null;
 
   // EPIPE means the parent is gone. Nothing left to serve, and continuing would keep an IMAP
@@ -354,7 +361,7 @@ export async function runSidecar(): Promise<void> {
   try {
     // The narration is only valid while nothing else writes frames — see `bootPhaseEmitter`.
     // The constructor returns before `serveOverStdio` below is built, which is that window.
-    sidecar = await createSidecar({ ...configFromEnv(), log, onPhase: bootPhaseEmitter(stdout) });
+    sidecar = await createSidecar({ ...configFromEnv(), log, logger, onPhase: bootPhaseEmitter(stdout) });
   } catch (err) {
     log("start_failed", { err });
     process.exit(1);

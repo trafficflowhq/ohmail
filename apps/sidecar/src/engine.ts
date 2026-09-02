@@ -2,7 +2,7 @@ import { hostname } from "node:os";
 import { and, eq, sql } from "drizzle-orm";
 import {
   StaticKeyProvider, kekRingFingerprint, UNMETERED_STORAGE_CAP,
-  type KekEnvIdentity, type KeyProvider, type OpenSendAdapter, type SendAdapter,
+  type KekEnvIdentity, type KeyProvider, type Logger, type OpenSendAdapter, type SendAdapter,
 } from "@trafficflow/core/mail";
 import { ImapAdapter, buildImapAuth, type ImapConfig, type MailboxAdapter, type CredMetaAuth } from "@trafficflow/core/adapters/imap";
 import { makeDrizzleRepo, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
@@ -218,6 +218,31 @@ export interface SidecarConfig {
    * by the same gate — which is why this stays a two-argument function and not a `Logger`.
    */
   log?: Diagnostic;
+  /**
+   * THE SAME DIAGNOSTICS, IN THE SHAPE THE SHARED SYNC LOOP SPEAKS — and the reason it exists is
+   * that this door was running the loop with `log` UNSET.
+   *
+   * `@trafficflow/worker/sync` is one implementation serving two hosts. Cloud's composition root
+   * hands it a `Logger`; this one built `syncDeps` without one, so every `log?.warn` / `log?.error`
+   * in the reconcile passes optional-chained into nothing on the standalone door. What was lost is
+   * exactly the set of lines that describe a write the mail server did NOT accept — a refused
+   * `STORE`, a `STORE` whose bookkeeping did not commit, a read-state intent with nowhere to go —
+   * which is to say: on the one door where the local database is the only other witness, the
+   * diagnostics for "your mailbox did not take this" were discarded. A person reporting that a
+   * message they marked read stayed unread in their mailbox left no trace at all.
+   *
+   * A SECOND FIELD RATHER THAN A WIDER `log`, because {@link Diagnostic} is not a widening of
+   * `Logger` — it is a narrowing, forced by `readMailboxLease`, and the level it derives from the
+   * event name is a claim about THIS package's vocabulary and not the worker's (see
+   * `log.ts#createSidecarLogger`). Production builds ONE `createSidecarLogger()` and passes both
+   * faces of it, which is what `main.ts` does and what the log census now asserts it does.
+   *
+   * ABSENT ⇒ the sync loop's own diagnostics are dropped, exactly as they were before this
+   * existed. That is the right default for the many tests that compose an engine without a log at
+   * all, and it is the wrong one for production — which is why the guard is on `main.ts` rather
+   * than on this type.
+   */
+  logger?: Logger;
   /**
    * THE PER-INSTALL KEY RING, from the native shell's keystore. `version → 32-byte key`.
    *
@@ -1640,6 +1665,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     const adapter = config.adapterFactory ? config.adapterFactory(imapConfig) : new ImapAdapter(imapConfig);
     const syncDeps = {
       repo, adapter, accountId: world.accountId, mailboxId: world.mailboxId,
+      // THE SYNC LOOP'S OWN DIAGNOSTICS, which this composition used to omit — see
+      // `SidecarConfig.logger`. Spread here rather than assigned unconditionally so that an
+      // install with no logger keeps the pre-existing shape (`log` absent, not `log: undefined`),
+      // which is what `exactOptionalPropertyTypes` requires of an optional field.
+      ...(config.logger === undefined ? {} : { log: config.logger }),
       // The same consent rule as the hosted worker: whose `Authentication-Results` this
       // mailbox may believe is a fact about the host THIS config dials — Gmail/Microsoft
       // resolve to their signing authserv-id, everything else to the empty set (demote nothing).
@@ -1730,7 +1760,25 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * told which install kept it.
      */
     const takeoverRequested = world.takeoverAuthorizedAt !== null;
-    const priorStandDown = takeoverRequested ? null : world.standDownReason;
+    /**
+     * THE STAND-DOWN THIS PROCESS REMEMBERS — and it is a `let` because the process now OUTLIVES
+     * the stand-down that sets it.
+     *
+     * It was a `const` read once from the row, which was exactly right while a demoted install
+     * STOPPED: the timer was cleared and the login closed, so the next reader of this value was
+     * the next launch, and the row it read was the record. Mail 0083 made the loser a READER —
+     * connected, poll timer running — and that turns a snapshot into a hole. The gate stands down
+     * mid-life, the poll fires a minute later, `priorStandDown` is still the NULL it was at
+     * assembly, and the gate reads the lease again; find the foreign claim gone (the other
+     * organizer released cleanly, so `ohmail/_meta` is empty) and `decideLease`'s "nobody has
+     * ever organized this mailbox" arm ORGANIZES. That is the auto-resume this whole mechanism
+     * exists to prevent, reached without any human action, on a machine somebody left running.
+     *
+     * So the two arms of the gate maintain it: standing down writes the memory, and the promotion
+     * — which only ever runs behind an explicit press — clears it. The value is deliberately the
+     * same one the ROW carries, so a relaunch and a poll answer the question identically.
+     */
+    let priorStandDown: string | null = takeoverRequested ? null : world.standDownReason;
     /**
      * WHAT THE WINDOW REPORTS, and it is the ROW's answer rather than the gate's optimism: a
      * stood-down install with a request outstanding is still stood down until the lease says
@@ -1756,6 +1804,23 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * right to seize this mailbox back from wherever it may go next.
      */
     let takeoverAuthorized = world.takeoverAuthorizedAt !== null;
+    /**
+     * THE EXACT STAMP THIS PASS READ, so the stand-down can clear THAT ONE and not whatever is on
+     * the row by the time it writes.
+     *
+     * The gate reads the stamp, then reads the LEASE — a network round trip against the user's own
+     * IMAP server, which can take seconds. A press landing inside that window writes a stamp this
+     * pass never saw and never offered to the lease, and an unconditional
+     * `takeoverAuthorizedAt: null` in the stand-down would erase it: the route answered
+     * `authorized`, the person carried on working, and the request is gone with nothing anywhere
+     * saying so. Narrow, and exactly the class this whole round is about — a press consumed by a
+     * pass that could not act on it.
+     *
+     * Comparing rather than serializing, because serializing is the wrong instrument here: the
+     * route must stay answerable while a slow lease read is in flight, and making it wait on the
+     * gate would block a button press behind an IMAP timeout.
+     */
+    let observedTakeoverAt: Date | null = world.takeoverAuthorizedAt;
 
     /**
      * CLOSE THE SEND-LATER APPOINTMENTS A STAND-DOWN ORPHANS — the local half of
@@ -1826,12 +1891,19 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     /**
      * Read the lease. Returns false when this install must not organize, and makes that durable.
      *
-     * The loser stands down on its next cycle and STOPS SYNCING ENTIRELY — it does not keep
-     * passively mirroring, because a read-only IMAP loop is half the dual-organizer bug surface:
-     * it still observes folders, still feeds `adopt_external`, still burns a connection. So the
-     * poll timer stops and the login closes. The APP does not: offline is a property of both
-     * modes, and a frozen mirror served over the bridge is the correct product here — the local
-     * database is kept, never auto-deleted, and the UI offers removal.
+     * ── WHAT THE LOSER BECOMES (mail 0083 — this paragraph used to say the opposite) ────────
+     *
+     * The loser is a READER: connected, poll timer running, mirror growing, `\Seen` its one IMAP
+     * write verb. It is NOT a stopped install, and this header said it was — *"stands down on its
+     * next cycle and STOPS SYNCING ENTIRELY … the poll timer stops and the login closes"* — for
+     * long enough that three separate call sites implemented that sentence instead of the one the
+     * stand-down arm below actually logs. The fear it encoded is real and is answered by the ROLE
+     * rather than by stopping: a reader's cycle skips `reconcileFolders`, the folder-ops pass, the
+     * junk sweep, `ensureFolders`, the retro passes and the profile publish, so it observes without
+     * acting and cannot be half of a dual-organizer bug. `SyncDeps.role` carries the whole list.
+     *
+     * `false` therefore means "this install is not the organizer" and never "and therefore do
+     * nothing" — which is what every caller of this gate has to be read as asking.
      *
      * The stand-down is STICKY in the local row (`status='disabled'` + the reason), and that is
      * what actually keeps a stood-down desktop from auto-resuming when Cloud lapses. The lease
@@ -1840,11 +1912,45 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * the mailbox cannot hold, and only an explicit human action clears it.
      */
     const mayOrganize = async (): Promise<boolean> => {
+      /* -- THE STAMP IS RE-READ EVERY RUN, AND WITHOUT THIS THE POLL DESTROYS IT ---------------
+       *
+       * `takeoverAuthorized` was derived ONCE at assembly, which was harmless while a stood-down
+       * install had no poll timer: the row survived to the next launch and the gate read it then.
+       * A reader cycles now, and that turns a dormant staleness into a DESTRUCTIVE one — the poll
+       * asks the lease with `takeover: "none"`, is correctly refused by the foreign claim the
+       * person is asking to take over, and the refusal arm then CLEARS the persisted stamp. The
+       * press is consumed by the one pass that could not act on it, and a relaunch cannot recover
+       * it either because there is nothing left on the row to recover.
+       *
+       * So the row is asked again, here, at the top of the gate. One indexed read per poll against
+       * the local store, which is the cheapest thing in this function, and it is what makes the
+       * takeover route's own promise — *"the gate runs again on the very next poll, reads the
+       * stamp, and promotes"* — a fact rather than a sentence.
+       *
+       * Failure is NOT an error: an unreadable row leaves the in-memory value standing, which is
+       * exactly what it was before this read existed. A takeover deferred to the next poll is a
+       * far better outcome than a launch that fails because a status read did.
+       */
+      try {
+        const [row] = await db.select({ at: mailboxes.takeoverAuthorizedAt })
+          .from(mailboxes).where(eq(mailboxes.id, world.mailboxId)).limit(1);
+        if (row) { takeoverAuthorized = row.at !== null; observedTakeoverAt = row.at; }
+      } catch (err) {
+        log("organizer_takeover_reread_failed", {
+          err,
+          reason: "the takeover request could not be re-read this cycle; the stamp stands on the " +
+            "row and the next cycle asks again",
+        });
+      }
       // The row's memory outranks the folder. See `priorStandDown` above: this is the arm that
       // makes "the desktop does not auto-resume" survive a relaunch, and it deliberately does not
       // even read the lease — there is nothing for the gate to decide about a mailbox this install
       // has been told to stop organizing.
-      if (priorStandDown) return false;
+      //
+      // A LIVE REQUEST OUTRANKS THAT MEMORY, and it has to now that the stamp is re-read: the
+      // press is the explicit human action the stand-down's stickiness exists to wait for, and
+      // `priorStandDown` was computed at assembly from a row that had no stamp on it yet.
+      if (priorStandDown && !takeoverAuthorized) return false;
       const outcome = await readMailboxLease({
         adapter,
         self: { installId, kind: "local", displayName: machineName, lastNonce: leaseNonce },
@@ -1860,6 +1966,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       if (outcome.organize) {
         leaseNonce = outcome.nonce;
         organizer = { organizing: true, reason: null, heldBy: null };
+        // THE MEMORY IS SPENT WITH THE STAMP. Reaching here past a remembered stand-down means a
+        // human pressed the button and the lease agreed; leaving the memory set would make the
+        // very next poll return false for an install that IS the organizer — it would drain as a
+        // reader against a row that says `organizer`, which is the two halves disagreeing in the
+        // other direction. See {@link priorStandDown}.
+        priorStandDown = null;
         if (takeoverAuthorized) {
           // SPEND IT. One becoming, not a standing right: leaving the stamp set would let this
           // install seize the mailbox back on some later launch, after a human had deliberately
@@ -1919,6 +2031,23 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 status: sql`case when ${mailboxes.disabledReason} is not null then 'connected' else ${mailboxes.status} end`,
                 disabledReason: null,
                 takeoverAuthorizedAt: null,
+                /* -- THE ROLE, IN THE SAME STATEMENT AS THE STAMP IT SPENDS (mail 0083) --------
+                 *
+                 * Without this the row still says `reader` for an install the lease has just
+                 * made the ORGANIZER, and `organizer_role` is the authority every write door
+                 * consults: the install would move mail on IMAP while its own API refused every
+                 * request that asked it to, with `409 organized_elsewhere`, naming itself.
+                 *
+                 * It was unreachable before — this arm runs only when a takeover stamp is spent,
+                 * and until the stamp could be spent by a POLL there was no promotion that did
+                 * not also go through a relaunch, where the role is written at assembly. Arming
+                 * the reader's loop is what made this path live, so it is repaired here.
+                 *
+                 * The two clean-up columns are deliberately NOT touched: `organized_by_*` is what
+                 * the pane renders about the install that held it, and the next cycle's own
+                 * writes are the right place for that, not a stamp-spending UPDATE.
+                 */
+                organizerRole: "organizer",
               })
               .where(eq(mailboxes.id, world.mailboxId))
               .returning({ status: mailboxes.status });
@@ -1960,10 +2089,18 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       // Standing down voids any unspent authorization, in memory and on the row below. We are not
       // the organizer, so becoming one again is a new becoming and needs a new explicit request.
       takeoverAuthorized = false;
+      // …AND IT IS REMEMBERED FOR THE REST OF THIS PROCESS, not only on the row. A reader keeps
+      // polling, so without this line the next cycle would ask the lease again and take the
+      // mailbox back the moment the other organizer released it. See {@link priorStandDown}.
+      priorStandDown = outcome.reason;
       log("organizer_stand_down", {
         disabledReason: outcome.reason,
         heldBy: organizer.heldBy,
-        organizerState: outcome.state,
+        // `state` and NOT `organizerState`, which is the name this line shipped with and which
+        // `ALLOWED_FIELDS` drops — so the stand-down line reported `droppedFields` and said
+        // nothing about the state it exists to name. `reconcile-cron.ts:259` already carries the
+        // same correction in the same words for the same value on the hosted door.
+        state: outcome.state,
         reason: "another organizer holds this mailbox; this install becomes a READER of it — it " +
           "keeps its login and its poll timer, its mirror goes on growing, it can mark mail read " +
           "and send, and it moves, files and deletes nothing",
@@ -1994,7 +2131,15 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             organizedByName: organizerDisplayName(outcome.by?.displayName ?? null),
             organizedSince: outcome.by?.claimedAt ?? null,
             organizerState: outcome.state,
-            takeoverAuthorizedAt: null,
+            /* THE STAMP THIS PASS READ, and only that one — see {@link observedTakeoverAt}. A
+               press that landed while the lease was being read was never offered to it, and
+               clearing it here would answer a request nothing ever considered. `IS NOT DISTINCT
+               FROM` rather than `=` so the ordinary case (both NULL) matches: SQL equality on two
+               NULLs is NULL, which would make this a no-op on every stand-down that had no stamp
+               and leave the column's own value untouched — harmless there, and the wrong shape to
+               rely on. */
+            takeoverAuthorizedAt: sql`case when ${mailboxes.takeoverAuthorizedAt} is not distinct from ${observedTakeoverAt}
+              then null else ${mailboxes.takeoverAuthorizedAt} end`,
           })
           .where(eq(mailboxes.id, world.mailboxId));
       } catch (err) {
@@ -2422,7 +2567,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       }
     };
 
-    /** The drain itself, ALREADY GATED. Never called from outside this closure. */
+    /**
+     * The drain itself. Never called from outside this closure, and — since mail 0083 — reached
+     * by a READER as well as by an organizer; `organizer.organizing` is what separates them, both
+     * for the passes below and for the `role` every cycle runs under.
+     */
     const drain = async (maxCycles: number): Promise<number> => {
       // ── THE MARKER-SURFACING PREFLIGHT, AT THE TOP OF THE ONE DRAIN BOTH DOORS SHARE ──────
       //
@@ -2433,7 +2582,15 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       // a local takeover could route in hold mode for its entire launch with no candidate on
       // screen and no way to release. Self-guarding: one folder read per pre-seed drain entry,
       // nothing once seeded or held.
-      await profileSync.armHoldFromFolder();
+      //
+      // ORGANIZER ONLY, and it has to be said here now that a reader reaches this line. The hold
+      // exists so an INCOMING organizer does not re-screen what it is inheriting; an install that
+      // is not the incoming organizer has nothing to inherit.
+      // `profile-import-service.ts` states the invariant as a fact about this file — *"its cycle
+      // never arms the hold (`engine.ts`, `index.ts` — both skip `armHoldFromFolder` for a
+      // reader)"* — and while the whole drain was gated that was true by accident. It is true on
+      // purpose now.
+      if (organizer.organizing) await profileSync.armHoldFromFolder();
       // BEFORE the cycles, not after: a resurface is a local database fact and does not depend on
       // the mailbox being reachable, so it must survive a cycle that throws on a dead connection.
       await resurfaceDue();
@@ -2441,7 +2598,20 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       // on it, and it must not wait out a hundred-cycle backlog drain — nor be skipped because
       // an inbound cycle threw on a dead connection (its own SMTP dial fails independently and
       // the pass re-arms the row).
-      await sendScheduled();
+      //
+      // ── ORGANIZER ONLY, and it is `SyncDeps.role`'s own list that says so ──────────────────
+      //
+      // *"A reader cycle SKIPS … the user-commanded folder-ops pass … and — at the composition
+      // roots above this file — `ensureFolders`, `sendScheduled`, the kickstart, every retro pass
+      // and the organizer profile publish."* This IS one of those composition roots, and while
+      // the whole drain was gated the rule held by accident.
+      //
+      // It is not merely tidy. A stand-down CLOSES the appointments it can no longer keep, but
+      // that close is best-effort and explicitly may fail — so a due appointment can survive into
+      // a reader launch, and an ungated pass here would claim and SEND it, from an install the
+      // mailbox's organizer knows nothing about, at a time nobody re-chose. The gate makes the
+      // close's failure cost a delay rather than a delivery.
+      if (organizer.organizing) await sendScheduled();
       let cycles = 0;
       /** Did a cycle report an empty backlog, or did the loop simply run out of cycles? */
       let drained = false;
@@ -2637,7 +2807,32 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // over a dead connection and throw `LeaseUnavailableError` out of a public method whose
         // honest answer is "this install organizes nothing". `stop()` reaches the same state.
         if (stopped) return 0;
-        if (!(await mayOrganize())) return 0;
+        /* -- THE GATE ANSWERS A ROLE. IT USED TO ANSWER ADMISSION, AND THAT WAS THE BUG ------
+         *
+         * This line was `if (!(await mayOrganize())) return 0;`, which made a stood-down install
+         * do NOTHING -- and it contradicted, in this same file, both the sentence the stand-down
+         * logs (*"its mirror goes on growing, it can mark mail read and send"*) and the comment
+         * inside `drain` that spreads `role: organizer.organizing ? "organizer" : "reader"` and
+         * says *"a demoted install keeps draining"*. The reader half of the cycle was written and
+         * was unreachable: `drain` is the only path to `runSyncCycle` on this door, so a reader's
+         * mirror never grew by one message and `reconcileFlags` -- `\Seen`, the reader's ONE IMAP
+         * write verb -- never ran at all.
+         *
+         * MEASURED, against a real IMAP account whose lease another install holds
+         * (`scripts/read-writeback-live.ts`): the install stood down, `syncUntilQuiet()` returned,
+         * and the mirror stayed EMPTY -- not one message of a mailbox that had plenty. That is
+         * also the whole of the reported symptom *"I marked it read on the desktop and my mailbox
+         * never saw it"* for anybody whose desktop is a reader -- the intent is written locally
+         * and the pass that would carry it to the server is never entered.
+         *
+         * `mayOrganize()` is therefore called for its DECISION and its side effects, and only the
+         * arm that genuinely means "do nothing" still stops the drain: the removed-mailbox arm,
+         * which sets `stopped` (and clears the timer and closes the login) before returning false.
+         * The stand-down arm sets neither, which is exactly the distinction it was rewritten to
+         * make.
+         */
+        const organizing = await mayOrganize();
+        if (stopped) return 0;
         const cycles = await drain(maxCycles);
         // ── THE PORTABLE PROFILE'S WRITE-BEHIND TICK, BEHIND THE GATE IT RIDES ────────────
         //
@@ -2646,7 +2841,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // `mayOrganize()` said yes — a stood-down install reads and writes nothing here, which
         // is the single-writer property the lease already enforces. Runs on a zero-cycle drain
         // too, deliberately: settings change without mail arriving. Never throws.
-        await profileSync.onOrganize();
+        //
+        // EXPLICIT NOW, because the line above no longer returns for a reader: this used to be
+        // organizer-only by being unreachable, and the property has to survive that stopping being
+        // true. Publishing the portable profile is a write into somebody else's `ohmail/_meta`,
+        // and it is the single-writer rule rather than an optimisation.
+        if (organizing) await profileSync.onOrganize();
         return cycles;
       });
 
@@ -2726,9 +2926,30 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         const localRemoveMatch = req.method === "DELETE"
           ? /^\/local\/mailboxes\/([0-9a-fA-F-]{36})$/.exec(url.pathname)
           : null;
+        /* -- `POST /local/mailboxes/:id/organize` — THE FIRST-RUN CONSENT, ON THIS DOOR -------
+         *
+         * The shared table's `POST /mailboxes/:id/organize` is `stepUp: true`, which on THIS door
+         * is not a guard but a permanent refusal: the launch session's second-factor stamp is
+         * written once at boot (`identity.ts#mintLaunchSession`, "there is no second factor on a
+         * local install"), so `withStepUp` refuses from five minutes after launch for the life of
+         * the process — which is every machine that has been open longer than a coffee. That is
+         * the same shape `DELETE /local/mailboxes/:id` was added for, and it is recorded in its
+         * note below; here it would strand the standalone install's ONLY onboarding path, so the
+         * flow could never be completed on the door the flow exists for.
+         *
+         * The per-launch bearer is the authority, exactly as it is for the three routes beside
+         * this one: minted at boot, added shell-side, never reaching the window, impossible for a
+         * page to compose. Holding it IS being the person sitting at this machine.
+         *
+         * `stepUpWindowMs` is NOT widened. The window is right for the door it was written for;
+         * what is wrong is applying a second factor to a tier that has none. */
+        const localOrganizeMatch = req.method === "POST"
+          ? /^\/local\/mailboxes\/([0-9a-fA-F-]{36})\/organize$/.exec(url.pathname)
+          : null;
         const localAction = (req.method === "DELETE" && url.pathname === "/local/stored-login")
           || (req.method === "POST" && url.pathname === "/local/organizer/takeover")
-          || localRemoveMatch !== null;
+          || localRemoveMatch !== null
+          || localOrganizeMatch !== null;
         if (localAction) {
           const header = req.headers.get("authorization");
           const token = header && /^Bearer\s+/i.test(header)
@@ -2740,6 +2961,74 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               JSON.stringify({ error: { code: "unauthorized", message: "authentication required" } }),
               { status: 401, headers: { "content-type": "application/json" } },
             );
+          }
+          if (localOrganizeMatch) {
+            /* -- AGREE AND START ORGANIZING, WITH THE WINDOW IN THE SAME WRITE ---------------
+             *
+             * The ceremony is `requestOrganizerTakeover`'s and is NOT re-implemented here — this
+             * handler is the transport and the outcome, the same division the takeover route
+             * below keeps. What is new is that the SCREENING ANSWER travels with the consent:
+             * `screening_baseline_at`, `dormancy_days` and `screening_scope` are written in the
+             * same transaction as `organize_consented_at`, because the baseline is what the
+             * window is measured from. Written separately, there is a gap in which the consent
+             * exists and the window does not, and in that gap the cutoff is the product default
+             * rather than the answer the person just gave.
+             *
+             * The account is the LAUNCH SESSION's, never a value from the body. This install
+             * serves one account and `core` is the session just resolved above; taking it from
+             * the request would let a body name a different account's settings row.
+             */
+            const mailboxId = localOrganizeMatch[1]!;
+            let body: { screening?: { dormancyDays?: unknown; scope?: unknown } } = {};
+            try {
+              body = (await req.json()) as typeof body;
+            } catch {
+              /* an absent or unparseable body is "no screening answer" — the claim-back shape */
+            }
+            // The dial arrives over JSON, so a string that looks like a number is a real shape.
+            // It is NOT coerced: `requestOrganizerTakeover` refuses a non-integer, and coercing
+            // here would turn a client bug into a silently different window.
+            const raw = body.screening;
+            const screening = raw
+              ? {
+                  ...(raw.dormancyDays === undefined
+                    ? {}
+                    : { dormancyDays: raw.dormancyDays as number }),
+                  ...(raw.scope === undefined ? {} : { scope: raw.scope as "window" | "all_time" }),
+                }
+              : undefined;
+            try {
+              const result = await requestOrganizerTakeover(db, {
+                mailboxId, now: now(), accountId: core.accountId,
+                ...(screening ? { screening } : {}),
+              });
+              log("local_mailbox_organize_consented", {
+                verdict: result.outcome,
+                // The ANSWER, never the mailbox: this line is instrumentation about a ceremony,
+                // and `ALLOWED_FIELDS` drops anything else anyway.
+                reason: "a person agreed to let this machine organize this mailbox; the consent, "
+                  + "the screening baseline and the window were written together, and the lease "
+                  + "is still the authority",
+              });
+              return new Response(
+                JSON.stringify({ outcome: result.outcome, previousReason: result.previousReason }),
+                { status: 200, headers: { "content-type": "application/json" } },
+              );
+            } catch (err) {
+              // A refused screening answer is a 400 with the refusal's own sentence; anything
+              // else is internal. Mapped by hand because this handler sits AHEAD of the route
+              // table and therefore ahead of `withErrorEnvelope`.
+              const refused = (err as { name?: string }).name === "LocalConsentRefusal";
+              log("local_mailbox_organize_failed", { err });
+              return new Response(
+                JSON.stringify({
+                  error: refused
+                    ? { code: "validation_failed", message: (err as Error).message }
+                    : { code: "internal", message: "internal error" },
+                }),
+                { status: refused ? 400 : 500, headers: { "content-type": "application/json" } },
+              );
+            }
           }
           if (localRemoveMatch) {
             /* -- REMOVING A MAILBOX ON A STANDALONE INSTALL
@@ -2995,36 +3284,44 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             schedule();
             return;
           }
-          if (!permitted) {
-            // ── A STAND-DOWN REMEMBERED ON THE ROW MUST ALSO STOP BURNING A CONNECTION ─────
-            //
-            // A stood-down install STOPS SYNCING ENTIRELY — it does not keep passively
-            // mirroring, and it must not keep burning a connection either. A stand-down decided
-            // by the LEASE closes the login inside `mayOrganize`; a stand-down decided by
-            // `priorStandDown` returns from the gate before the lease is read at all — the arm
-            // that keeps a lapsed Cloud subscription from auto-resuming the desktop across a
-            // relaunch — so it reached none of that code. The relaunch of a stood-down install
-            // therefore logged in and held the socket for the life of the process while
-            // organizing nothing: no throw, no log line, no poll timer, and the only leak of
-            // this family that is deterministic rather than error-dependent.
-            //
-            // Keyed on `priorStandDown` rather than closing unconditionally, so the lease arm is
-            // not closed twice — and the GATE stays in one place. Testing the row here instead
-            // would be a second reading of "may this install organize", which is exactly what
-            // `mayOrganize`'s header refuses.
-            if (priorStandDown) {
-              try {
-                await adapter.close();
-              } catch (err) {
-                log("adapter_close_failed", { err });
-              }
-            }
+          /* -- `!permitted` IS "NOT THE ORGANIZER", NOT "STOP" — THE LAUNCH HALF (mail 0083) --
+           *
+           * This branch used to `return` here, and what it returned before is the whole first
+           * drain, the special-folder discovery AND `schedule()` — so a stood-down install came up
+           * with no poll timer at all. On `priorStandDown` it also closed the login, under a
+           * comment whose first sentence was the pre-0083 doctrine verbatim: *"A stood-down
+           * install STOPS SYNCING ENTIRELY — it does not keep passively mirroring, and it must not
+           * keep burning a connection either."*
+           *
+           * That is no longer what a stand-down means, and TWO other comments in this same file
+           * already say so. The stand-down logs *"it keeps its login and its poll timer, its
+           * mirror goes on growing"*; and the takeover route's own header says *"A demoted install
+           * is now a READER — it keeps its login and its poll timer and goes on cycling — so the
+           * gate runs again on the very next poll, reads the stamp, and promotes. No relaunch."*
+           * Neither could be true while this line returned: there was no next poll to read the
+           * stamp on, so "Organize from this machine" did nothing at all until the app was
+           * restarted — and that button is the whole of how a person takes a mailbox back onto a
+           * machine that has stood down, so "it needs a relaunch" was not a small caveat.
+           *
+           * So a reader falls through: it drains, it schedules, and it keeps the connection the
+           * next poll asks over. The ONE thing it does not do is below.
+           */
+          if (!permitted && stopped) {
+            // THE MAILBOX WAS REMOVED — the only `false` that still means "do nothing".
+            // `mayOrganize` has already cleared the timer and closed the login on that arm; there
+            // is no mirror to grow and nothing to schedule.
             return;
           }
-          // Before the first cycle, always: the pipeline routes into `ohmail/*` and a move to a
-          // folder the server does not have fails. The hosted sync worker does the same thing at
-          // attach time.
-          await adapter.ensureFolders();
+          // Before the first cycle of an ORGANIZER, always: the pipeline routes into `ohmail/*`
+          // and a move to a folder the server does not have fails. The hosted sync worker does the
+          // same thing at attach time.
+          //
+          // NEVER FOR A READER, and this is the sharpest line in the branch above: `ensureFolders`
+          // is the IMAP WRITE that creates somebody else's `ohmail/*` tree, and the header forty
+          // lines up already says so — *"reconnect is learn-then-act … creating the `ohmail/*` tree
+          // in a mailbox Cloud is organizing is a write this install has no business making"*. It
+          // was gated by the `return` that has just gone, so it needs its own gate now.
+          if (permitted) await adapter.ensureFolders();
           // ── Mail 0065: DISCOVER THE PROVIDER'S OWN \Junk AND \Trash, AND WRITE THEM DOWN ──
           //
           // The hosted worker's attach hook, mirrored here because the LOCAL engine is its own
@@ -3033,6 +3330,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // never reach the provider's Junk. Read-only (one LIST), re-written every attach so a
           // renamed folder heals, best-effort: a discovery failure keeps the stored answer and
           // the fallbacks are never destructive. imap-types.ts carries the product rule.
+          //
+          // A READER RUNS THIS TOO, deliberately. It is one LIST and a write to this install's own
+          // row — no mailbox write of any kind — and the knowledge is what makes a promotion take
+          // effect on the next poll rather than on the next launch.
           if (typeof adapter.findSpecialFolders === "function"
             && typeof repo.setMailboxSpecialFolders === "function") {
             try {
