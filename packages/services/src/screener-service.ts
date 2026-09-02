@@ -247,15 +247,17 @@ const SUGGESTION_PROVENANCE = SCREENER_SUGGESTION_PROVENANCE;
  *
  * ── A HARD 413 CEILING, NOT A SIZE CHOSEN TO FIT ONE INVOCATION ──────────────────────────────
  *
- * A real (non-dry) purchase of N senders makes N SERIAL model calls in the loop below, and the
- * Vercel host runs under `maxDuration = 60` (`apps/api-vercel/app/[[...path]]/route.ts`). At the
- * measured per-sender model latency a batch this large does NOT finish inside one invocation, so
- * 50 is the point past which a request is REFUSED (413) — a guard against an absurd request, not a
- * size picked to fit the deadline. The size that fits the deadline is the CLIENT's, and it is
- * smaller: the webapp splits a purchase into requests of `SUGGEST_CHUNK_SIZE` senders (well below
- * this cap), pricing and buying each on its own (`apps/webapp/.../screener-suggest.ts`), so each
- * request completes and the run ticks forward one chunk at a time rather than freezing on a single
- * oversized request. This cap only bounds the worst a single request may be; the run is RESUMABLE
+ * A real (non-dry) purchase of N senders makes N model calls in the passes below — no longer one
+ * at a time, but {@link SUGGEST_LANES} at a time — and the Vercel host runs under
+ * `maxDuration = 60` (`apps/api-vercel/app/[[...path]]/route.ts`). Fifty senders measured at
+ * 100.8 s while the loop was serial and 20.2 s in lanes (real Postgres, `max: 1`, 2 000 ms per
+ * sender), so a request at this cap now DOES finish inside one invocation. That does not make 50 a
+ * size picked to fit the deadline: it stays what it always was, the point past which a request is
+ * REFUSED (413) — a guard against an absurd request. The size that fits the deadline is still the
+ * CLIENT's and is still smaller: the webapp splits a purchase into requests of
+ * `SUGGEST_CHUNK_SIZE` senders (40, below this cap and deliberately not equal to it), pricing and
+ * buying each on its own (`apps/webapp/.../screener-suggest.ts`), so each request completes and the
+ * run ticks forward one chunk at a time rather than freezing on a single oversized request. This cap only bounds the worst a single request may be; the run is RESUMABLE
  * per message anyway — spend and the stored suggestion are written before the next model call — so
  * even a request cut short bills only what it finished and a re-press resumes for free (the
  * `duplicate` retry re-asks nothing already stored). A DRY RUN makes no model call at all, so a
@@ -288,6 +290,38 @@ const INFLIGHT_WAIT_MS = 2_500;
  * large enough that a full budget is ~20 indexed point reads and not a spin.
  */
 const INFLIGHT_POLL_MS = 120;
+
+/**
+ * HOW MANY SENDERS OF ONE REQUEST ARE BOUGHT AT THE SAME TIME.
+ *
+ * The purchase loop used to be strictly serial and the whole of its wall clock was a model round
+ * trip it spent idle — ~2 s per sender, so a fifteen-sender request took about thirty seconds and
+ * a four-hundred-sender purchase took twenty-seven of them. Nothing about the money required
+ * that: `spend` serializes on the account's balance row whatever this file does, and the sources
+ * in one request are distinct, so the lanes never contend for a claim with each other.
+ *
+ * ── WHY FIVE, AND NOT `Promise.all` OVER THE SET ────────────────────────────────────────────
+ *
+ * The bound is what makes this honest rather than a way of turning a slow answer into a 429. It
+ * is set by the three ceilings the concurrency actually presses on, and it is the SMALLEST of
+ * them that decides:
+ *
+ *  · **The model provider's per-account rate limit.** One request may not become fifty
+ *    simultaneous classify calls; the account being burned would be the deployment's own.
+ *  · **The pooled connection.** A serverless invocation dials `max: 1` (`packages/db/src/client.ts`),
+ *    so every lane's transactions queue on one connection. That costs nothing while the
+ *    transactions are short and no lane holds one across its model call — both true here, and
+ *    both stated in the pass-2 comment — but it does mean lanes beyond a handful buy nothing.
+ *  · **The invocation deadline.** Five lanes bring a fifty-sender request (the endpoint's own
+ *    {@link MAX_SUGGEST_SENDERS} cap) to ~20 s of model time, comfortably inside the 60 s
+ *    ceiling with room for a cold start. Ten would leave more headroom and press harder on the
+ *    first two ceilings for a saving nobody watching a progress line would notice.
+ *
+ * It is a number this file owns rather than configuration: a deployment that could tune it could
+ * tune it into a rate-limit failure, and the ceiling it is being fitted to is the model
+ * provider's, which no operator here controls.
+ */
+const SUGGEST_LANES = 5;
 
 export interface ScreenerSuggestBody {
   /** The explicit sender set. Absent, empty or unparseable ⇒ 400; never "all". */
@@ -1538,9 +1572,70 @@ export class ScreenerService extends ScreenerReadService {
     /** WHY the gate refused, kept undiminished for the status decision below the loop. */
     let refusal: { refusal: "state" | "quantity" | "fault"; reason?: string } | undefined;
 
-    for (const sender of senders) {
+    /**
+     * ══════════════════════════════════════════════════════════════════════════════════════════
+     *  TWO PASSES, AND THE SPLIT IS WHAT MAKES THE SECOND ONE SAFE TO RUN CONCURRENTLY
+     * ══════════════════════════════════════════════════════════════════════════════════════════
+     *
+     * This was one serial `for` over `senders` doing everything: resolve, price, debit, ask the
+     * model, store. One model round trip is ~2 s and the loop spent all of it idle, so a request
+     * of fifteen took ~30 s and a four-hundred-sender purchase took twenty-seven of those — about
+     * a quarter of an hour of a person watching a progress line move.
+     *
+     * PASS 1 (below) is the whole of the resolution and it touches nothing: which message
+     * represents each sender, which are already bought, which are not held here, and therefore
+     * `quoted`. It performs no IO, spends nothing and cannot fail, which is why a DRY RUN answers
+     * out of it alone — a quote is now a pure function of two reads taken before the passes.
+     *
+     * PASS 2 is the paid work, and it is the only part that is concurrent.
+     *
+     * ── WHY CONCURRENCY IS SAFE HERE, IN THE ORDER THE MONEY CARES ABOUT ─────────────────────
+     *
+     *  · **The balance cannot be overspent, and that is not this loop's promise to keep.**
+     *    `AiCreditGate.spend` takes a row lock on the account's balance (`lockExistingBalance`,
+     *    `FOR UPDATE`) and debits inside it, so two lanes spending for the same account SERIALIZE
+     *    on that row whatever this function does. The gate is the authority on the balance and it
+     *    was already written to be raced — the fourth layer in this method's docblock exists for
+     *    exactly that. Lanes make refusals arrive in a different ORDER; they cannot make one
+     *    arrive too late.
+     *  · **The exclusive claim is per SOURCE, and the sources in one request are distinct.** A
+     *    source is `classify:screener:<message_id>` and `rep` maps each sender to one message, so
+     *    no two lanes of one request ever contend for the same claim. Two REQUESTS still can, and
+     *    that is the case the claim was built for; it behaves here exactly as it does today,
+     *    `awaitHeldSuggestion` included.
+     *  · **No lane holds a database transaction across a model call.** That is the standing rule
+     *    in this file ("the model calls happen OUTSIDE any transaction") and it is now also what
+     *    keeps a `max: 1` pooled host — which every serverless invocation is — from wedging: each
+     *    lane's transactions are short and queue behind each other on the single connection,
+     *    while the ~2 s each lane spends waiting on the model holds nothing at all. The DB phase
+     *    therefore stays serial and only the idle part overlaps, which is the part worth having.
+     *  · **A stop leaves the ledger consistent, because there is no stop.** This loop does not
+     *    break on a refusal and did not before: an exhausted balance makes every remaining
+     *    `spend` refuse without a model call, each such sender is reported `out_of_credits`, and
+     *    the caller halts its own chunk sequence on `stopped`. So no lane can be admitted past
+     *    the balance and none is abandoned mid-purchase.
+     *
+     * ── AND THE ANSWER IS ORDER-INDEPENDENT, WHICH IS NOT AUTOMATIC ──────────────────────────
+     *
+     * Results are written into POSITION-INDEXED slots and flattened in `senders` order after both
+     * passes, so the response bytes do not depend on which lane finished first. The same applies
+     * to `stopped` and `refusal`: both are decided by the LOWEST INDEX that produced one, which
+     * is precisely what `??=` meant while the loop was serial. Without this a run would answer
+     * differently on two identical inputs, and the client's "stopped at N of M" line would name a
+     * different sender each time.
+     */
+    interface Purchase { index: number; sender: string; row: ScreenerRow }
+    const answered: Array<ScreenerSuggestion | undefined> = senders.map(() => undefined);
+    const refused: Array<ScreenerSuggestResult["skipped"][number] | undefined> = senders.map(() => undefined);
+    const stops: Array<ScreenerSuggestResult["stopped"] | undefined> = senders.map(() => undefined);
+    const refusals: Array<{ refusal: "state" | "quantity" | "fault"; reason?: string } | undefined> =
+      senders.map(() => undefined);
+    const purchases: Purchase[] = [];
+
+    // ── PASS 1 — RESOLUTION ONLY ────────────────────────────────────────────────────────────
+    senders.forEach((sender, index) => {
       const r = rep.get(sender);
-      if (!r) { skipped.push({ sender, reason: "not_held" }); continue; }
+      if (!r) { refused[index] = { sender, reason: "not_held" }; return; }
       // ── THERE IS NO SENSITIVITY GATE HERE ANY MORE. THAT IS THE FEATURE ────────────────────
       //
       // This line read `if (!r.aiEligible) { skipped.push({ sender, reason: "withheld" }); … }`
@@ -1551,7 +1646,7 @@ export class ScreenerService extends ScreenerReadService {
       // which is the same transform that produced the snippet stored on `r` in the first place.
       //
       // Removing it in isolation would have been a billing defect rather than a policy change,
-      // and that is worth stating where the money is: `gate.spend()` is eight lines below, and
+      // and that is worth stating where the money is: `gate.spend()` is in the lane below, and
       // the sink used to THROW for exactly these rows. A withheld sender would have been debited,
       // then caught as `model_unavailable`, and the user would have paid a credit for a sentence
       // saying the model did not answer. The sink's `"redact"` policy is what makes this line's
@@ -1562,15 +1657,19 @@ export class ScreenerService extends ScreenerReadService {
       // this has the answer to.
       const already = stored.get(r.messageId);
       if (already) {
-        suggestions.push({ sender, messageId: r.messageId, ...already });
-        continue;
+        answered[index] = { sender, messageId: r.messageId, ...already };
+        return;
       }
       quoted++;
 
       // THE PRICE CHECK STOPS HERE — above the gate, so a quote cannot debit, and above the
       // model, so a quote cannot send mail to a third party. `quoted` is the whole answer.
-      if (dryRun) continue;
+      if (dryRun) return;
+      purchases.push({ index, sender, row: r });
+    });
 
+    /** One sender's purchase, end to end. Everything below used to be the body of the loop. */
+    const buy = async ({ index, sender, row: r }: Purchase): Promise<void> => {
       const source = screenerLedgerSource(r.messageId);
       if (gate) {
         const outcome = await gate.spend(source, { messageId: r.messageId });
@@ -1594,36 +1693,37 @@ export class ScreenerService extends ScreenerReadService {
         // and there is a verdict for their sender arriving within seconds; handing them a skip
         // would make a correct system look broken and send them back to press again. The wait is
         // bounded and the budget is per-REQUEST, so a large set whose senders are all held
-        // elsewhere degrades to one wait and not one per sender.
+        // elsewhere degrades to one wait and not one per sender — and now that the lanes overlap,
+        // several such waits run inside that one budget rather than end to end.
         if (!outcome.permitted && outcome.refusal === "inflight") {
           const settled = await this.awaitHeldSuggestion(ctx, r.messageId, ohboxPolicy, waitUntil);
           if (settled) {
             // Charged NOTHING and asked NOTHING, and the sender is answered. `quoted` stays as it
             // was: this request priced the sender honestly and then did not have to pay.
-            suggestions.push({ sender, messageId: r.messageId, ...settled });
-            continue;
+            answered[index] = { sender, messageId: r.messageId, ...settled };
+            return;
           }
           // The holder is slower than the budget, or died mid-call and its claim has not expired
           // yet. Both are temporary and both are cleared by asking again, which is what
           // `spend_unavailable` already tells a client — so no new wire value is minted for a
           // state whose whole content is "retry". It is NOT `out_of_credits`: this account is
           // fully funded, and a 402 here would be a bill for somebody else's concurrency.
-          skipped.push({ sender, reason: "spend_unavailable" });
-          stopped ??= "spend_unavailable";
+          refused[index] = { sender, reason: "spend_unavailable" };
+          stops[index] = "spend_unavailable";
           // `fault`, so a run that produced nothing at all answers 503 "temporarily unavailable;
           // please retry" rather than 402. Refusing to demand money for this is the point.
-          refusal ??= { refusal: "fault" };
-          continue;
+          refusals[index] = { refusal: "fault" };
+          return;
         }
 
         if (!outcome.permitted) {
           const reason = outcome.refusal === "quantity" ? "out_of_credits" : "spend_unavailable";
-          skipped.push({ sender, reason });
-          stopped ??= reason;
-          refusal ??= outcome.refusal === "fault"
+          refused[index] = { sender, reason };
+          stops[index] = reason;
+          refusals[index] = outcome.refusal === "fault"
             ? { refusal: "fault" }
-            : { refusal: outcome.refusal, reason: outcome.reason };
-          continue;
+            : { refusal: outcome.refusal, ...(outcome.reason === undefined ? {} : { reason: outcome.reason }) };
+          return;
         }
         // `charged: false` is a free retry of an attempt already on record — a `duplicate`.
         // Reporting it as spend would tell the user they paid twice for one message.
@@ -1633,6 +1733,9 @@ export class ScreenerService extends ScreenerReadService {
         // amount is passed here). The gate this service is handed books `debit_classify`, whose
         // weight is 1, so the two agree today and this changes no number; it is the increment
         // that stays true now that weights are per-reason and move independently.
+        //
+        // `charged` is a plain `+=` across lanes and that is sound: JavaScript runs one lane at a
+        // time between `await`s, so a read-modify-write with no `await` inside it is atomic here.
         if (outcome.charged) charged += AI_ACTION_WEIGHTS.debit_classify;
 
         // ── A FREE RETRY LOOKS FOR THE RESULT IT IS A RETRY OF, BEFORE RE-BUYING TOKENS ────
@@ -1641,7 +1744,7 @@ export class ScreenerService extends ScreenerReadService {
         // was taken as leave to call the model, and it is the LAST way N requests could still
         // make more than one paid call for one credit — not through the claim (this caller holds
         // it) but through the preflight SNAPSHOT above, which is read once for the whole set
-        // before the loop starts. A racer that stored its verdict after that read and released
+        // before the passes start. A racer that stored its verdict after that read and released
         // its claim leaves the next caller with a `stored` map that predates the answer: it sees
         // nothing, is told `duplicate`, and buys the same tokens again. Measured, on two racers
         // over five senders: eight model calls where the claim alone brought ten down to eight.
@@ -1657,9 +1760,9 @@ export class ScreenerService extends ScreenerReadService {
         if (!outcome.charged) {
           const settled = (await this.storedSuggestions(ctx, [r.messageId], ohboxPolicy)).get(r.messageId);
           if (settled) {
-            suggestions.push({ sender, messageId: r.messageId, ...settled });
+            answered[index] = { sender, messageId: r.messageId, ...settled };
             await gate.release?.(source);
-            continue;
+            return;
           }
         }
       }
@@ -1695,6 +1798,10 @@ export class ScreenerService extends ScreenerReadService {
         // All four were written out here while this was the only caller; the worker's always-on
         // pass is the second, and four lines a second caller has to get independently right is
         // four ways to send a credential or ask the wrong question. See that function.
+        //
+        // THIS IS THE ONLY AWAIT THAT OVERLAPS BETWEEN LANES in any meaningful way, and it is the
+        // whole point of them: it holds no connection, no lock and no claim-blocking transaction,
+        // and it is ~2 s long.
         result = await askScreeningQuestion(classifier, {
           fromAddress: r.fromAddress,
           subject: r.subject,
@@ -1705,23 +1812,54 @@ export class ScreenerService extends ScreenerReadService {
         console.error(`[screener] AI suggestion failed for message ${r.messageId}:`, err);
         // Not refunded, and the charge is what buys the retry: the source is stable, so the
         // next attempt over this message answers `duplicate` and costs nothing.
-        skipped.push({ sender, reason: "model_unavailable" });
+        refused[index] = { sender, reason: "model_unavailable" };
         await gate?.release?.(source);
-        continue;
+        return;
       }
 
-      // Persisted NOW, in its own transaction, before the next model call is made.
+      // Persisted NOW, in its own transaction, before this lane takes another sender.
       await this.store(ctx, r.messageId, result);
       // …and only NOW is the source free. See the block above the `try` for the window this
       // ordering closes.
       await gate?.release?.(source);
-      suggestions.push({
+      answered[index] = {
         sender,
         messageId: r.messageId,
         ...suggestionAdvice(result.destination, result.spam, result.rationale, ohboxPolicy),
         confidence: result.confidence,
         rationale: result.rationale,
-      });
+      };
+    };
+
+    // ── PASS 2 — THE PAID WORK, IN BOUNDED LANES ────────────────────────────────────────────
+    //
+    // A hand-rolled pool rather than `Promise.all` over the whole set, because the bound IS the
+    // feature: `Promise.all(purchases.map(buy))` would put fifty model calls in flight at once
+    // against a per-account rate limit and a single pooled connection, which is how an
+    // acceleration becomes a 429 and a queue.
+    //
+    // `next` is read-and-incremented with no `await` between the two, so a lane cannot take a
+    // sender another lane already has — the same single-threaded argument the `charged` increment
+    // above relies on, stated once here because it is the load-bearing one.
+    let next = 0;
+    const lanes = Math.max(1, Math.min(SUGGEST_LANES, purchases.length));
+    await Promise.all(Array.from({ length: lanes }, async () => {
+      for (;;) {
+        const i = next++;
+        const p = purchases[i];
+        if (!p) return;
+        await buy(p);
+      }
+    }));
+
+    // ── FLATTENED IN THE CALLER'S OWN ORDER ─────────────────────────────────────────────────
+    for (let i = 0; i < senders.length; i++) {
+      const a = answered[i];
+      if (a) suggestions.push(a);
+      const s = refused[i];
+      if (s) skipped.push(s);
+      stopped ??= stops[i];
+      refusal ??= refusals[i];
     }
 
     // ── A RUN THAT PRODUCED NOTHING BECAUSE OF THE GATE IS NOT A SUCCESS ────────────────────

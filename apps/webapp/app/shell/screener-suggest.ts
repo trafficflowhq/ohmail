@@ -359,20 +359,44 @@ const ASSUMED_MAX_PER_REQUEST = 25;
 /**
  * HOW MANY SENDERS ONE REQUEST ACTUALLY CARRIES — the latency budget, distinct from the 413 cap.
  *
- * The server classifies the senders in a request SERIALLY through the model, and the whole request
- * has to finish inside one serverless invocation (its host runs under a 60-second ceiling). A
- * sender costs roughly two seconds of model time, so a request of about fifteen finishes in well
- * under half that budget — leaving room for a cold start or an occasional slow sender — while a
- * request the size of the per-request cap ({@link ASSUMED_MAX_PER_REQUEST} / the server's
- * `maxPerRequest`, up to 50) would run PAST the invocation and return nothing the control could
- * show: no ticking progress, no chips, just a timeout.
+ * The whole request has to finish inside one serverless invocation (its host runs under a
+ * 60-second ceiling), and a sender costs roughly two seconds of model time. What decides how many
+ * of those fit is whether the server buys them one at a time.
+ *
+ * ── IT NO LONGER DOES, AND THAT IS WHY THIS NUMBER MOVED (was 15) ───────────────────────────
+ *
+ * `ScreenerService.suggest` bought its senders SERIALLY, so fifteen was already thirty seconds —
+ * half the budget, with the other half kept for a cold start or a slow sender — and a request the
+ * size of the per-request cap would have run past the invocation and returned nothing the control
+ * could show: no ticking progress, no chips, just a timeout. That server now buys in bounded lanes
+ * (`SUGGEST_LANES`), which took the model waits off the critical path without touching the money:
+ * the credit gate serialises on the account's balance row whatever the lanes do.
+ *
+ * MEASURED against real Postgres on a `max: 1` connection — production's shape — at 2 000 ms per
+ * sender: fifteen senders went from **30.3 s to 6.1 s** and fifty from **100.8 s to 20.2 s**, a
+ * factor of five in both. Forty is therefore about sixteen seconds of model time: a SMALLER share
+ * of the invocation than the old fifteen occupied, while carrying nearly three times as many
+ * senders.
+ *
+ * The consequence for a person is the number of round trips: a four-hundred-sender purchase — the
+ * top of {@link OFFERED_SIZES} — is TEN requests instead of twenty-seven, and about three minutes
+ * instead of about fourteen.
+ *
+ * ── AND IT STAYS BELOW THE CAP, DELIBERATELY ────────────────────────────────────────────────
+ *
+ * Fifty — the server's own {@link ../../../packages/services/src/screener-service MAX_SUGGEST_SENDERS}
+ * — measured at 20.2 s and would fit. It is not taken, because the cap and the budget answer
+ * different questions and a client that sets them equal can no longer tell them apart: the 413
+ * boundary would then be the only thing bounding a request, and a deployment that lowered its cap,
+ * or a `maxPerRequest` read that had not landed, would put the client on the wrong side of it with
+ * nothing in reserve. Forty keeps the margin that made the split worth making.
  *
  * So the offered ladder (up to {@link MAX_SUGGEST_BATCH}) is split into requests of at most this
  * many, each of which reliably completes: a large purchase ticks forward one chunk at a time and
- * its chips land as it goes, instead of freezing on a single request that cannot finish. The cap
- * and this budget are two different bounds, and a request is never larger than the lower of them.
+ * its chips land as it goes. The cap and this budget are two different bounds, and a request is
+ * never larger than the lower of them.
  */
-export const SUGGEST_CHUNK_SIZE = 15;
+export const SUGGEST_CHUNK_SIZE = 40;
 
 /**
  * The sizes offered, before clamping. The small end is watchable, the large end drains a
