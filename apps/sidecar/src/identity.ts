@@ -181,24 +181,47 @@ export async function ensureLocalWorld(db: LocalDb, input: EnsureLocalWorldInput
         address: input.address,
         ...(input.displayName ? { displayName: input.displayName } : {}),
         status: "connected",
-        /* -- ADDING THE MAILBOX *IS* THE CONSENT ON THIS DOOR (mail 0083) -------------------
+        /* -- THE PRE-CONSENT STATE IS A READER, ON THIS DOOR TOO ----------------------------
          *
-         * `organize_consented_at` NULL means "nobody has asked this install to organize this
-         * mailbox", the state `POST /mailboxes` creates on Cloud so a fresh connect builds a
-         * mirror and moves nothing until a human says yes on the consent screen. **There is no
-         * such screen and no such second step here**: a standalone install is launched with one
-         * address, by the person who owns the machine, and organizing it is the entire reason
-         * they ran the app. This is migration 0083's own backfill (2) argument — *"connecting a
-         * mailbox WAS the consent … so the record is true"* — applied to the rows this function
-         * creates AFTER that migration, which the backfill can never reach.
+         * This line was `organizeConsentedAt: input.now`, under a docblock headed *"ADDING THE
+         * MAILBOX IS THE CONSENT ON THIS DOOR"* whose argument rested on one premise: **"there is
+         * no such screen and no such second step here"**. That was true when it was written and
+         * it is not true any more. The guided setup flow landed on this door — the connect
+         * navigates to `#/first-run`, the consent screen states what will be re-arranged, and
+         * "Agree and start organizing" is `POST /local/mailboxes/:id/organize`, which writes the
+         * consent, the baseline, the window and the scope in one transaction.
          *
-         * Left NULL it was not inert: `authorizeOrganizerTakeover` reads the pair
-         * (`role !== 'reader' && consentedAt !== null`) to answer "you already organize this",
-         * so a healthy standalone install answered `authorized` to a press on a mailbox it was
-         * already organizing — writing a one-shot seizure stamp that then sat on the row waiting
-         * to be spent against whoever held the mailbox next.
+         * With the stamp written HERE, that screen could never be the thing that grants anything.
+         * `deriveOnboardingStep`'s consent row is `if (!consented) return "consent"`, so a fresh
+         * mailbox skipped straight past it; and the engine's own gate reads the LEASE, where an
+         * empty `ohmail/_meta` means "nobody has ever organized this mailbox", which organizes.
+         * The measured result on a released build: six folders created and the backlog moved,
+         * six seconds after somebody typed a password, with nothing having asked them anything.
+         *
+         * So the row is created in the state the consult names as the whole answer to this
+         * question — *"Connect writes row+credential in one tx as a consent-less reader → mirror
+         * builds at once, nothing moves, `ohmail/*` never created … There is no half-applied
+         * mailbox because the reader mode IS the pre-consent state"* — which is also exactly what
+         * `POST /mailboxes` creates on the hosted door. One shape, two doors.
+         *
+         * ── AND THE ROLE HAS TO BE WRITTEN, BECAUSE THE COLUMN'S DEFAULT IS THE OTHER ONE ────
+         *
+         * `organizer_role` is `NOT NULL DEFAULT 'organizer'` (0083, correct for the backfill it
+         * was written for), so omitting it here would leave a row saying `organizer` with no
+         * consent — the two halves disagreeing, which is the failure shape this area keeps
+         * producing. `standDownMemory` already reads the PAIR and answers `null` for "no holder
+         * and no consent", so a launch on this row reports itself as never having stood down
+         * rather than as demoted; that predicate is what makes this safe and it is already there.
+         *
+         * The hazard the old docblock named is unchanged and is now correct rather than merely
+         * avoided: `authorizeOrganizerTakeover` refuses when `role !== 'reader' && consentedAt
+         * !== null` — an install that already organizes. A consent-less reader is precisely the
+         * row that SHOULD answer `authorized`, because agreeing is the becoming.
+         *
+         * A HEADLESS INSTALL is not stranded: `runOrganizeHere` (`organize-here.ts`) is the CLI
+         * that writes the same consent, for a machine with no window to show the screen on.
          */
-        organizeConsentedAt: input.now,
+        organizerRole: "reader",
       })
       .returning({ id: mailboxes.id })
   )[0]!.id;

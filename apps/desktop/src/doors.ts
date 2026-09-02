@@ -644,7 +644,29 @@ async function sealLocalPassword(
   smtpHost: string,
 ): Promise<string | null> {
   try {
-    const res = await bridgeFetch(`/mailboxes/${encodeURIComponent(mailboxId)}`, {
+    /* -- `/local/…`, AND THAT IS NOT A STYLE CHOICE -----------------------------------------
+     *
+     * The shared `PATCH /mailboxes/:id` is `stepUp: true`. On this door the launch session's
+     * second-factor stamp is written ONCE at boot, so that flag refuses every call from five
+     * minutes after launch for the life of the process — and the measured symptom was
+     * re-connecting a mailbox thirty-five minutes in and being told **"recent two-factor
+     * authentication required"**, on a door that has no second factor and no way to obtain one.
+     * Quitting and reopening the app was the only cure a person had.
+     *
+     * IT PASSED ON THE FIRST CONNECT BY LUCK OF TIMING, which is why it stayed hidden: that arm
+     * seals seconds after `engineConfigure` has replaced the engine, inside the one window where
+     * the stamp is fresh. Only the RECONFIGURE arm — which seals over an engine that has been up
+     * a while, deliberately, so a refusal leaves the working configuration in place — ever met
+     * the refusal. Both call this function, so routing it here makes the first connect's success
+     * structural rather than accidental.
+     *
+     * The local route's authority is the per-launch bearer: minted at boot, added shell-side,
+     * never reaching this window, impossible for a page to compose. It runs the SAME
+     * `MailboxService.update` with the SAME probes, so a password that cannot log in is still
+     * refused on the form. `DELETE /local/mailboxes/:id` and
+     * `POST /local/mailboxes/:id/organize` are the precedent and carry the argument in full.
+     */
+    const res = await bridgeFetch(`/local/mailboxes/${encodeURIComponent(mailboxId)}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ imap: { ...imap, pass: password, smtpHost } }),

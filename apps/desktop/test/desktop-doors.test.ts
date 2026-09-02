@@ -181,10 +181,14 @@ describe("the local door", () => {
     expect(JSON.stringify(configure.payload)).not.toContain("app-password-1234");
     expect(JSON.stringify(configure.payload)).not.toMatch(/pass|secret|token|credential/i);
 
-    /* IT IS IN THE BRIDGE REQUEST, addressed to the mailbox the engine announced. */
+    /* IT IS IN THE BRIDGE REQUEST, addressed to the mailbox the engine announced — ON THE
+       LOCAL ROUTE. The shared `PATCH /mailboxes/:id` is `stepUp: true` and this door's
+       second factor expires five minutes after launch for the life of the process, so the
+       shared path is a permanent refusal for every reconnect; `/local/…` is the same service
+       and the same probes on the per-launch bearer. `sealLocalPassword` carries the argument. */
     const request = asked.find((a) => a.command === "engine_request")!;
     expect(request.payload!.method).toBe("PATCH");
-    expect(request.payload!.url).toBe("/mailboxes/mbx-1");
+    expect(request.payload!.url).toBe("/local/mailboxes/mbx-1");
     const body = new TextDecoder().decode(Uint8Array.from(request.payload!.body as number[]));
     /* THE TRANSPORT TRAVELS WITH THE PASSWORD. This used to be `{ imap: { pass } }` alone; see
        the reproduction below for why a body carrying only the secret cannot be acted on.

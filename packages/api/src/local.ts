@@ -25,6 +25,13 @@ export { localRoutes } from "./routes/local.js";
 // `makeProbeHostGuard`. See `imap-probe.ts`.
 export {
   ALLOW_ANY_PROBE_HOST, makeProbeHostGuard, MAIL_PROBE_PORTS, type ProbeHostGuard,
+  // The probe FACTORIES, on `serviceContext`'s own argument: an engine-side handler that calls a
+  // credential-writing service must inject the same dial the shared handler does, or it becomes
+  // the second door into `mailbox_credentials` that stores a password nothing has tried to log in
+  // with — which is the defect `PATCH /mailboxes/:id`'s own comment records having had. The
+  // sidecar's `PATCH /local/mailboxes/:id` is that caller; it exists because the shared route is
+  // `stepUp: true` and this door's second factor expires five minutes after launch, for ever.
+  makeImapProbe, makeSmtpProbe,
 } from "./imap-probe.js";
 export {
   matchRoute, UNVERIFIED_MAY_REACH, unverifiedMayReach,

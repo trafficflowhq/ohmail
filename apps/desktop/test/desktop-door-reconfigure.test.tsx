@@ -275,7 +275,13 @@ function runningInstall(): Install {
 
       if (command === "engine_request") {
         const url = String(payload!.url ?? "");
-        if (url !== `/mailboxes/${install.mailboxId}`) {
+        /* `/local/…`, because that is the route the door seals through. The shared
+           `PATCH /mailboxes/:id` is `stepUp: true`, and on this door the launch session's
+           second-factor stamp goes stale five minutes after boot and never refreshes — so the
+           shared route answers "recent two-factor authentication required" to every reconnect
+           on a window that has been open a while, which is every real one. This fake serving
+           the shared path was what let that pass unnoticed here. */
+        if (url !== `/local/mailboxes/${install.mailboxId}`) {
           return encode(404, '{"error":{"code":"not_found","message":"no such mailbox"}}', "Not Found");
         }
         if (install.patch.status !== 200) {

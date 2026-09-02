@@ -56,7 +56,7 @@ import type { OhmailEngine } from "@ohmail/client-engine";
 import { AppShell } from "../../webapp/app/shell/AppShell";
 import { setStorageOwner } from "../../webapp/app/shell/storage-owner";
 import { BootSkeleton } from "../../webapp/app/shell/BootSkeleton";
-import { go } from "../../webapp/app/shell/routing";
+import { go, goFirstRun, goSettings } from "../../webapp/app/shell/routing";
 import { setMailtoSink } from "../../webapp/app/shell/open-external";
 import { BootStatus } from "./BootStatus.js";
 import { bridgeAvailable, bridgeFetch } from "./bridge-fetch.js";
@@ -115,6 +115,38 @@ const SETTLING_POLL_MS = 250;
  * and only on the cloud door — the standalone door has no hosted session to lose.
  */
 const HOSTED_SESSION_PROBE_MS = 60_000;
+
+/**
+ * THE STANDALONE DOOR'S ENTRY POINT INTO GUIDED SETUP — the one thing that opens the stage here.
+ *
+ * `AppShell` renders the first-run stage only at `#/first-run`, and it says why: *"the stage never
+ * opens itself; a dialog that appears over somebody's mail unbidden is the thing every entry point
+ * is written to avoid."* That rule is right and it leaves a hole on THIS door, because every entry
+ * point that existed was on the hosted side or behind Settings → Mailboxes → "Run setup". So a
+ * person who chose "On this computer", picked a provider and typed a password landed in the mail
+ * client with nothing having asked them anything — measured on a released build, and the release
+ * notes' claim that "a first run walks from 'I installed ohmail' to a mailbox that is being
+ * organized" was untrue on the main customer door.
+ *
+ * CONNECTING IS THE ENTRY POINT. It is a person asking for setup as plainly as pressing "Run
+ * setup" is, so it navigates, and it is the ONLY thing this function does — WHICH step the stage
+ * opens on, and whether it opens at all, stay with `deriveOnboardingStep` over the facts. That
+ * separation is why this can be unconditional on the local door: a re-seal of the password on a
+ * mailbox whose setup is finished derives to `null`, `FirstRun` renders nothing, and the route's
+ * own view (the Ohbox — `parseRoute` picks it precisely so that leaving the stage lands
+ * somewhere) is what the person sees. There is no state in which this strands anybody on a blank
+ * overlay.
+ *
+ * The HOSTED door is excluded structurally rather than by a check here: `firstRunDoorFor` is the
+ * one door rule, and on a cloud status it answers `null` — `useLocalFirstRun` would hand
+ * `AppShell` no host, so `#/first-run` would draw nothing at all.
+ */
+function openSetupOnStandalone(status: EngineStatus | null): void {
+  if (firstRunDoorFor(status) !== "local") return;
+  /* BEFORE the status is delivered, so the first render of `AppShell` already carries the route
+     and the person does not see one frame of the Ohbox before the stage arrives. */
+  goFirstRun();
+}
 
 export function DesktopGate() {
   const [shell, setShell] = useState<Shell | null>(null);
@@ -428,7 +460,17 @@ export function DesktopGate() {
   }
 
   if (gate.kind === "choose") {
-    return <DoorChooser onEntered={(r) => { if (r.status) onStatus(r.status); else void refresh(); }} />;
+    return (
+      <DoorChooser
+        onEntered={(r) => {
+          /* THE FIRST LAUNCH'S CHOOSER, and the standalone door's only way into guided setup.
+             See {@link openSetupOnStandalone}. */
+          openSetupOnStandalone(r.status ?? null);
+          if (r.status) onStatus(r.status);
+          else void refresh();
+        }}
+      />
+    );
   }
 
   const status = shell.kind === "status" ? shell.status : null;
@@ -689,7 +731,12 @@ export function DesktopGate() {
                   senders={senders}
                   absorb={absorb}
                   ai={ai}
-                  onConfigure={() => go("settings")}
+                  /* THE PANE THE FORM IS ACTUALLY ON. `go("settings")` opened the settings
+                     view at its own default — General — and the model form lives under Desktop,
+                     below the fold: a control saying "Set up a model" that lands somewhere with
+                     no model form on it, leaving the person to find it. `goSettings` names the
+                     pane, and "desktop" is where `DesktopAiSettings` is mounted. */
+                  onConfigure={() => goSettings("desktop")}
                 />
               ),
             }
@@ -886,7 +933,14 @@ export function DesktopGate() {
             setOverlay(null);
             void refresh();
           }}
-          onEntered={(r) => { if (r.status) onStatus(r.status); else void refresh(); }}
+          onEntered={(r) => {
+            /* THE SETTINGS OVERLAY, which is where a mailbox is CONNECTED AGAIN after a removal
+               — the same act as the first launch's connect, so it opens setup on the same rule.
+               A cloud entry here answers `null` at the door rule and navigates nowhere. */
+            openSetupOnStandalone(r.status ?? null);
+            if (r.status) onStatus(r.status);
+            else void refresh();
+          }}
         />
         </div>
       ) : null}
