@@ -538,6 +538,31 @@ export const Copy = {
   faceScopeDevice: "Applies on this device only.",
   faceApplyAll: "Apply on all devices",
   faceFailed: "Couldn't save that — try again.",
+  /* ────────────────────────────────────────────────── who organizes this mailbox */
+
+  /*
+   * ═══ THE READER BANNER ═══════════════════════════════════════════════════════════════════
+   *
+   * A phone cannot be the organizer — there is no IMAP client here and no engine dialling a
+   * mail server, which is the same fact the three-doors block above is built on. So every
+   * decision taken here is carried out somewhere else, and this names where.
+   *
+   * The first two lines are the onboarding deck's own (`onboarding.phoneBanner` and
+   * `phoneBannerWhy` in `apps/webapp/messages/en.json`), which were written for this surface
+   * and had no consumer until the phone gained a mailbox read. The third is the mailbox pane's
+   * (`mailboxes.readerStopped`) rather than a phone-specific rewrite: "has stopped checking in"
+   * is the sentence every other client says for that state, and it is already true of a phone
+   * with nothing phone-shaped in it. Byte-equal on purpose, and pinned.
+   *
+   * WITHHELD unless the server names ONE holder for every mailbox — `live.ts#phoneOrganizer`
+   * has the three answers and why two of them are silence.
+   */
+  phoneBanner: (name: string) => `Organized by ${name}`,
+  phoneBannerWhy:
+    "This phone reads the mailbox. Decisions are made where it is organized.",
+  phoneBannerStopped: (name: string) =>
+    `${name} has stopped checking in. Until something organizes this mailbox, new mail waits in the inbox.`,
+
   about: "About this build",
   /** The About block — states what is real on this build, no more. */
   aboutLive: (origin: string) =>

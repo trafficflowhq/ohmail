@@ -115,6 +115,16 @@ export interface WorldView {
    * the pre-feature partition byte for byte.
    */
   foldersEnabled?: boolean;
+  /**
+   * THE READER'S OWN ADDRESSES — every mailbox on the paired account, from `GET /mailboxes`
+   * (`src/net/mailboxes.ts`), read by the world layer on the folders flag's own cadence.
+   *
+   * ABSENT ⇒ {@link NO_OWN_ADDRESSES}, which is what this client had for its whole life and is
+   * still the right answer for the render before the first read lands. Present, it is what lets
+   * the reader be told apart from the other recipients — see `canReplyAll` in {@link toMail}
+   * and `replyAllRecipients`, whose degradation this ends.
+   */
+  ownAddresses?: readonly string[];
 }
 
 /** The phone's own zone, once — `Intl` on Hermes; UTC where the runtime cannot say. */
@@ -232,7 +242,7 @@ function displayName(r: EmailAddress): string {
 
 function toMail(reader: EntityReader, m: EngineMessage, v: WorldView): WorldMail {
   const body = bodyOf(reader, m);
-  const env = replyAllRecipients(m, NO_OWN_ADDRESSES);
+  const env = replyAllRecipients(m, v.ownAddresses ?? NO_OWN_ADDRESSES);
   const physical = physicalFolderOf(m);
   return {
     // A message in one of the user's OWN folders (no view owns its path) names itself by its
@@ -263,8 +273,12 @@ function toMail(reader: EntityReader, m: EngineMessage, v: WorldView): WorldMail
        read" on a pinned row spends the pin, which is the release this presentation implies. */
     unread: presentsUnread(m),
     pile: pileOf(reader, m),
-    // The phone holds no `GET /mailboxes` facts, so the reader cannot be told apart — the
-    // predicate's documented degradation: offered from two listed people, withheld at one.
+    /* THE READER IS TOLD APART NOW, where the mailbox read has landed. This carried the
+       degradation the predicate documents — offered from two listed people, withheld at one —
+       for as long as the phone had no `GET /mailboxes` facts at all. `v.ownAddresses` is that
+       read; before it lands (and on a server that could not be asked) the fallback is the same
+       empty set as before, so the old behaviour is exactly the unread state and not a
+       regression path. */
     canReplyAll: env !== null,
     replyAllHead: env
       ? { to: env.to.map(displayName).join(", "), cc: env.cc.map(displayName).join(", ") }
@@ -280,13 +294,76 @@ function toMail(reader: EntityReader, m: EngineMessage, v: WorldView): WorldMail
 }
 
 /**
- * THE PHONE KNOWS NONE OF THE READER'S OWN ADDRESSES. The webapp resolves them from
- * `GET /mailboxes` once in `AppShell`; this client has no mailbox read yet, and the honest
- * posture is the one the webapp documents for a surface without the facts (`message-chrome.tsx`
- * `ownAddresses`): recognise the reader nowhere. Every predicate below takes this constant so
- * the day a mailbox read lands there is one place to feed it.
+ * THE ANSWER BEFORE THE MAILBOX READ LANDS — recognise the reader nowhere.
+ *
+ * This used to be the phone's permanent posture: there was no mailbox read on this client at
+ * all, and the honest thing for a surface with no facts is the one the webapp documents
+ * (`message-chrome.tsx` `ownAddresses`). The read exists now (`src/net/mailboxes.ts`, fed
+ * through {@link WorldView.ownAddresses}) and this is what remains: the FALLBACK for the render
+ * before the first answer arrives, and for a server that could not be asked.
+ *
+ * It stays a named constant rather than an inline `[]` because that is what made the feed a
+ * one-line change when it finally came, and the same is true of whatever needs it next.
  */
 const NO_OWN_ADDRESSES: readonly string[] = [];
+
+/**
+ * WHO ORGANIZES THE MAILBOXES THIS PHONE IS SHOWING — the reader banner's one fact, or `null`
+ * when there is nothing true to say.
+ *
+ * ── WHY A BANNER AT ALL, AND WHY IT WAS NEVER BUILT ───────────────────────────────────────
+ *
+ * A phone cannot be the organizer: there is no IMAP client here and no engine dialling a mail
+ * server (`copy.ts`'s three-doors note). So every decision this phone takes is carried out
+ * somewhere else, and the onboarding deck has carried `phoneBanner`/`phoneBannerWhy` from the
+ * beginning to say so. They had no consumer because this client had no mailbox read: naming a
+ * holder with no source would have been an invented claim, which is the one thing the whole
+ * flow's copy is written against.
+ *
+ * ── THE THREE ANSWERS, AND ONLY ONE OF THEM IS A NAME ─────────────────────────────────────
+ *
+ *  · **A named holder, and only one.** The paired server reports somebody else organizes these
+ *    mailboxes and names them. That is the banner.
+ *  · **No named holder.** `organizedBy` is null on every row — which the DTO is explicit about
+ *    meaning "the answering install organizes it", and also covers "nobody ever has". Nothing
+ *    to name, and the account header directly above already says which server this is, so the
+ *    banner is WITHHELD rather than filled with an origin URL nobody calls a machine name.
+ *  · **Two different holders.** One mailbox organized by a laptop, another by Cloud. The copy
+ *    has one `{name}` and naming either one is false about the other, so it is withheld too.
+ *    Rare, and the rule is stated rather than left to whichever row sorted first.
+ *
+ * `stopped` rides along because the two states want opposite sentences everywhere else they
+ * reach a person (`MailboxDTO.organizerState`), and a phone that says "organized by Andreas's
+ * laptop" about an organizer that stopped renewing is telling somebody their decisions are
+ * being carried out when they are not.
+ */
+export interface PhoneOrganizer {
+  /** The holder's own machine name — never empty, or this is not a `PhoneOrganizer`. */
+  name: string;
+  /** `cloud` · `local` · `unknown`, as the wire gave it; `null` when it named only a name. */
+  kind: string | null;
+  /** True when the paired server last saw that organizer STOPPED renewing its claim. */
+  stopped: boolean;
+}
+
+export function phoneOrganizer(
+  mailboxes: readonly { organizedBy: { kind: string | null; name: string | null } | null;
+                       organizerState: "held" | "stopped" | null }[],
+): PhoneOrganizer | null {
+  const named = mailboxes.filter((m) => (m.organizedBy?.name ?? "") !== "");
+  if (named.length === 0) return null;
+  const distinct = new Set(named.map((m) => m.organizedBy!.name!));
+  if (distinct.size !== 1) return null;
+  const first = named[0]!;
+  return {
+    name: first.organizedBy!.name!,
+    kind: first.organizedBy!.kind ?? null,
+    /* STOPPED ONLY IF EVERY ROW SAYS SO. With one holder across several mailboxes a mixed
+       answer means the claim is still being renewed somewhere, and "stopped organizing" would
+       be the more alarming of the two sentences told on the weaker evidence. */
+    stopped: named.every((m) => m.organizerState === "stopped"),
+  };
+}
 
 /** The reply-all envelope: who stands on the To line, and who rides Cc. */
 export interface ReplyAllRecipients {
@@ -972,6 +1049,17 @@ export interface LiveDeps {
   uuid?: () => string;
   /** The reader's zone for the resurface horizons — 09:00 where the reader is. Defaults to the device's. */
   zone?: string;
+  /**
+   * THE READER'S OWN ADDRESSES, as a GETTER rather than a value — see
+   * {@link WorldView.ownAddresses} for what they are and where they come from.
+   *
+   * A getter because this facade is identity-stable BY DESIGN (`World.worldKey`'s own note: so
+   * mirror versions cannot re-fire effects), while the mailbox read lands asynchronously after
+   * it is built. A value captured at construction would be the empty set for the life of the
+   * session, and the reply-all a person sends would address a list derived from facts the rest
+   * of the app already had.
+   */
+  ownAddresses?: () => readonly string[];
 }
 
 export interface LiveWorldActions {
@@ -1509,7 +1597,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     if (!m || text === "") return { outcome: "failed" };
     // A plain reply leaves the envelope to `Engine.enrich` (to = the sender, the parent's
     // mailbox, thread and subject); reply-all carries the SAME envelope the sheet offered.
-    const env = all ? replyAllRecipients(m, NO_OWN_ADDRESSES) : null;
+    /* THE SAME ADDRESSES THE SHEET WAS DRAWN FROM. Read through the getter at SEND time, not at
+       construction — see {@link LiveDeps.ownAddresses}. */
+    const env = all ? replyAllRecipients(m, deps.ownAddresses?.() ?? NO_OWN_ADDRESSES) : null;
     return sent(
       engine.mutate(withSignature({
         kind: "mail_send" as const,

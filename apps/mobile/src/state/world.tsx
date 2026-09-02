@@ -44,6 +44,7 @@ import {
   writeThemeFace,
   type FoldersConsent,
 } from "../net/consent";
+import { readMailboxes, type PhoneMailbox } from "../net/mailboxes";
 import { readFolderSummary } from "../net/folder-ops";
 import * as Crypto from "expo-crypto";
 import type { FaceName } from "../theme/face";
@@ -65,6 +66,7 @@ import {
   liveScreener,
   liveTags,
   mirrorSettled,
+  phoneOrganizer,
   presentedOf,
   scheduleLabel,
   staleAsOf,
@@ -74,6 +76,7 @@ import {
   type FolderEntity,
   type ScreenerRow,
   type WorldActions,
+  type PhoneOrganizer,
   type WorldMail,
   type WorldPile,
   type WorldScheduled,
@@ -83,7 +86,8 @@ import {
 import type { Scope } from "./model";
 
 export type {
-  FolderEntity, MoveTarget, ScreenerRow, WorldActions, WorldMail, WorldPile, WorldScheduled, WorldTag,
+  FolderEntity, MoveTarget, PhoneOrganizer, ScreenerRow, WorldActions, WorldMail, WorldPile,
+  WorldScheduled, WorldTag,
 } from "./live";
 
 export interface World {
@@ -118,6 +122,28 @@ export interface World {
   worldKey: string;
   /** The header identity: the paired server + account id; empty while nothing is live. */
   account: { name: string; email: string };
+  /**
+   * THE MAILBOX FACTS — `GET /mailboxes` over the paired server (`src/net/mailboxes.ts`), on the
+   * folders flag's own cadence (boot + after every completed drain).
+   *
+   * This client had NO mailbox read at all until now, and two surfaces said so in their own
+   * comments (`live.ts`): the reader could not be told apart from the other recipients, and the
+   * onboarding deck's `phoneBanner` had no consumer because naming a holder with no source
+   * would be an invented claim.
+   *
+   * `known` is what separates "the account has no mailboxes" from "nobody has asked yet", and
+   * it is the gate the banner is drawn behind — a phone that has not read yet must say nothing
+   * about who organizes anything. It goes true on the first SUCCESSFUL read and stays true for
+   * the session; a later failure keeps the last known answer rather than blanking a banner on a
+   * flaky request (`readMailboxes` returns `null` for "could not ask", never an empty list).
+   */
+  mailboxes: {
+    known: boolean;
+    /** Every mailbox address on the account — the reader's own, for `canReplyAll` and reply-all. */
+    ownAddresses: readonly string[];
+    /** Who organizes them, when one holder organizes all of them and is named. */
+    organizer: PhoneOrganizer | null;
+  };
   ohbox: {
     resurfaced: WorldMail[];
     fresh: WorldMail[];
@@ -312,6 +338,9 @@ function emptyWorld(actions: WorldActions): World {
     boot: { settled: false, syncFailure: null, staleAsOf: null },
     worldKey: "none",
     account: { name: "", email: "" },
+    // Nothing has been asked on the empty world, so `known` is false and the banner is withheld
+    // — the same honest-unknown the boot facts keep between a teardown and the redirect.
+    mailboxes: { known: false, ownAddresses: [], organizer: null },
     ohbox: { resurfaced: [], fresh: [], seen: [], unread: 0, total: 0, meta: "" },
     doorbell: { initials: [], count: 0 },
     reads: { items: [], waterlineAboveId: null, waterLabel: Copy.waterline, newCount: 0, meta: "" },
@@ -419,6 +448,18 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    */
   const [signatures, setSignatures] = useState<Readonly<Record<string, string>> | null>(null);
   /**
+   * THE ACCOUNT'S MAILBOXES, or `null` until a read SUCCEEDS this session (which is what
+   * {@link World.mailboxes.known} publishes). Nothing on this phone ever writes a mailbox, so
+   * freshest-successful-read-wins is the whole rule — the signatures' exact situation, and it
+   * uses the same `freshestRead` wrapper for the same race: two overlapping reads settling out
+   * of issue order, the boot GET still in the air when a drain-completed refresh fires.
+   *
+   * A session swap resets it to `null` below, beside the signatures and the face: account A's
+   * mailbox addresses must never make account B's reader recognisable, which is the same rule
+   * one field up and the reason this is state rather than a ref.
+   */
+  const [mailboxes, setMailboxes] = useState<readonly PhoneMailbox[] | null>(null);
+  /**
    * THE ACCOUNT'S FACE, and a write in flight. `null` is "the account has no preference", which
    * is also where a fresh session starts — account A's face must never skin account B, the same
    * rule the signatures keep one field up.
@@ -434,6 +475,17 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    */
   const pinNow = useRef(facePin);
   pinNow.current = facePin;
+  /**
+   * THE READER'S OWN ADDRESSES AS THEY STAND RIGHT NOW, readable at send time — the same shape
+   * and the same reason as `pinNow` above. The actions facade is identity-stable by design and
+   * the mailbox read lands after it is built, so a value closed over at construction would send
+   * every reply-all of the session against an empty set.
+   */
+  const addressesNow = useRef<readonly string[]>([]);
+  addressesNow.current = useMemo(
+    () => (mailboxes ?? []).map((b) => b.address),
+    [mailboxes],
+  );
   /** `conn.syncNow` behind a ref so the machine below keeps one identity across renders. */
   const syncNowRef = useRef(conn.syncNow);
   syncNowRef.current = conn.syncNow;
@@ -507,8 +559,21 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     const sigRead = freshestRead<FoldersConsent>((ans) => {
       if (current.current === m) setSignatures(ans.signatures);
     });
+    /* THE MAILBOX READ, built beside the folders machine and gated on the SAME identity: a
+       superseded session's late answer applies nothing. Its own request rather than a field on
+       the consent answer — `GET /mailboxes` is a different route — but deliberately the same
+       CADENCE, because the two questions go stale together: another client claiming a mailbox
+       writes the delta this drain just applied. */
+    const boxRead = freshestRead<readonly PhoneMailbox[]>((ans) => {
+      if (current.current === m) setMailboxes(ans);
+    });
     const m = foldersFlag({
       read: () => {
+        /* Fired from the flag's read so there is ONE cadence to reason about and one place that
+           knows when facts go stale. It is NOT awaited into the flag's own promise: a mailbox
+           read that is slow or refused must not hold up the folders answer, which has its own
+           epoch and its own correctness. */
+        void boxRead(() => readMailboxes(session));
         /* Stamped BEFORE the request leaves — the whole point of the two-phase read. */
         const applyFace = faces.beginRead();
         return sigRead(async () => {
@@ -537,6 +602,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // (account A's signature must never dress account B's composer); the tracker itself is
     // rebuilt with the machine, so its tally starts over with it.
     setSignatures(null);
+    // The mailboxes are the outgoing session's answer, for the signatures' reason exactly:
+    // account A's addresses must not make account B's reader recognisable, and its holder must
+    // not name a banner over B's mail.
+    setMailboxes(null);
     /* And the FACE, for the same reason and one more: an account's appearance choice is that
        account's state, so the next session starts with none and the device's own pin (which
        outranks it either way) is deliberately left alone — it belongs to the phone, not to
@@ -605,7 +674,16 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // confinement holds that no state module imports the engine composition (the connection
     // layer is the one door), and a uuid is randomness, not network. See `LiveDeps.uuid` for
     // why a created tag's row id needs the real thing.
-    () => (engine ? liveActions({ engine, toast: showToast, uuid: () => Crypto.randomUUID(), zone }) : null),
+    /* `ownAddresses` is a GETTER through a ref, so this facade keeps ONE identity across the
+       mailbox read landing — see `LiveDeps.ownAddresses`. Adding `mailboxes` to the dependency
+       list instead would rebuild the facade mid-session, which is exactly what `World.worldKey`
+       exists to stop effects doing. */
+    () => (engine
+      ? liveActions({
+        engine, toast: showToast, uuid: () => Crypto.randomUUID(), zone,
+        ownAddresses: () => addressesNow.current,
+      })
+      : null),
     [engine, showToast, zone],
   );
 
@@ -762,7 +840,12 @@ export function WorldProvider({ children }: { children: ReactNode }) {
 
   const world = useMemo<World>(() => {
     if (engine === null || session === null) return emptyWorld(actions);
-    const v: WorldView = { now: new Date(), zone, foldersEnabled: foldersOn };
+    const v: WorldView = {
+      now: new Date(), zone, foldersEnabled: foldersOn,
+      // Before the first read this is `[]`, which is `NO_OWN_ADDRESSES` — the posture this
+      // client had for its whole life, and the right answer for a phone that has not asked yet.
+      ownAddresses: addressesNow.current,
+    };
     const pres = presentedOf(engine.read(), v.now, foldersOn);
     const ohbox = liveOhbox(pres, v);
     const reads = liveReads(pres, v);
@@ -787,6 +870,14 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       },
       worldKey: session.ownerKey,
       account: { name: session.profile.origin, email: session.profile.accountId },
+      mailboxes: {
+        // `known` is the SUCCESSFUL-read gate, not "the list is non-empty": an account whose
+        // mailbox was removed answers `[]`, and that is an answer. The banner is drawn behind
+        // this so a phone that has not asked says nothing about who organizes anything.
+        known: mailboxes !== null,
+        ownAddresses: addressesNow.current,
+        organizer: mailboxes === null ? null : phoneOrganizer(mailboxes),
+      },
       ohbox: { ...ohbox, meta: `${ohbox.unread} unread of ${ohbox.total}` },
       doorbell: {
         initials: screener.waiting.map((r) => r.initial),
