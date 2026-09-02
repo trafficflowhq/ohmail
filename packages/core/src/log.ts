@@ -436,6 +436,26 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // open door for the next call site that happens to reach for it — this list's own header, on
   // why an allowlist is keyed by name and the names have to be worth allowing.
   "resolvedElsewhere", "gaveUp", "decidedBy",
+  // ── The AWAY RESPONDER's pass (mail 0087), added WITH the call sites ──
+  //
+  // Three more `++` counters and one setting name, named for the same 3am reason the send pass's
+  // are: an operator reading `away_responder_pass` asks how many correspondents were ANSWERED, how
+  // many were held back because they were answered recently (`throttled`), and how many because a
+  // guard refused them outright (`suppressed`) — and those are three different situations with
+  // three different fixes. Folding them into `count` would make the line unable to distinguish
+  // "the responder is working" from "the responder is refusing everybody".
+  //
+  // All three are integers the pass only ever `++`s, so they are structurally content-free.
+  // `throttle` is the SETTING's name — one of four literals from a closed enum (`always`,
+  // `per_message`, `per_day`, `per_week`), never a value anybody typed. `accounts`, `examined` and
+  // `capped` are already on this census from earlier passes and are reused rather than re-added.
+  //
+  // What this pass deliberately does NOT log, and it is the sharpest omission on this file: the
+  // CORRESPONDENT'S ADDRESS. `away_replies.sender` is somebody else's personal data, held only
+  // because we sent them mail, and a log line naming who wrote to a person while they were away is
+  // a disclosure about both of them. The lines carry `messageId` and `mailboxId` — ids that point
+  // into rows the deletion sweep erases — and the responder's own text is never logged either.
+  "throttled", "suppressed", "throttle",
   // `mirrorDraining` is the OTHER half of the same `shutdown` line, and it is here because
   // `inFlight` alone was misleading rather than merely incomplete: the Cloud mirror's pull is not a
   // stdio request, so `inFlight` reads 0 in exactly the case where the mirror is what the quit is

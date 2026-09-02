@@ -697,6 +697,20 @@ export default defineConfig({
          package.json beside the file, and Rollup would die at `vite build` on every platform.
          A browser-safe leaf like the two above — zero imports, no store, no clock, no DOM. */
       { find: "@trafficflow/core/drain-policy", replacement: r("../../packages/core/src/drain-policy.ts") },
+      /* `Re: ` exactly once — the FOURTH such specifier, and it reaches this bundle by the most
+         direct route of any of them: `packages/client-engine/src/mutations.ts` imports it, and
+         that file is the compose window's own mutation layer.
+         It moved out of `mutations.ts` because a SECOND surface composes replies now — the away
+         responder, which is reply-only and runs in `packages/services` on three hosts, none of
+         which may import the browser engine. Two copies of this rule is how `Re: RE: Re:` ships on
+         the one reply in the product that no human reads before it leaves.
+         Listed here for `ics`'s exact reason, which is worth restating because the failure is
+         invisible in this tree: the specifier resolves fine through the workspace link and core's
+         own exports map HERE, and in the published tree `reply-subject.ts` is a single file with
+         no package.json beside it and no workspace to link, so Rollup would die at `vite build` on
+         every platform job while the engine bundle went green beside them. A browser-safe leaf
+         like the three above — one regex, zero imports. */
+      { find: "@trafficflow/core/reply-subject", replacement: r("../../packages/core/src/reply-subject.ts") },
     ],
   },
 

@@ -1,3 +1,4 @@
+import { replySubject } from "@trafficflow/core/reply-subject";
 import { senderKey } from "./selectors.js";
 import type { EntityReader } from "./store.js";
 import {
@@ -17,17 +18,18 @@ import {
 } from "./types.js";
 
 /**
- * The reply subject for a parent subject — `Re: ` exactly once.
+ * The reply subject for a parent subject — `Re: ` exactly once. DEFINED IN
+ * `@trafficflow/core/reply-subject` now, and re-exported here because this module's consumers —
+ * the compose window, `engine.ts`, and two suites — have always imported it from this file.
  *
- * CASE-INSENSITIVE, because the prefix arrives in whatever case the sender's client used
- * and a case-sensitive test yields `Re: RE: …` on the second exchange with an Outlook
- * correspondent. Only the leading prefix is stripped: `Re: Re: x` collapses to one, and a
- * subject that merely CONTAINS "re:" is untouched.
+ * It moved because a SECOND surface composes replies now and cannot reach this package: the away
+ * responder is reply-only (no subject of its own, derived from the message it answers) and runs in
+ * `packages/services` on three hosts, none of which may import the browser engine. Two copies of
+ * "`Re: ` exactly once" is how `Re: RE: Re:` ships on the one reply in the product that no human
+ * reads before it leaves. The subpath is a dependency-free source leaf, so this import costs the
+ * browser bundle nothing — see the module's own header for why it is not on the `mail` barrel here.
  */
-export function replySubject(parentSubject: string): string {
-  const bare = parentSubject.replace(/^(?:\s*re\s*:\s*)+/i, "").trim();
-  return bare ? `Re: ${bare}` : "Re:";
-}
+export { replySubject };
 
 /**
  * The forward subject for an original's subject — `Fwd: ` exactly once.

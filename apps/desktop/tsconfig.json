@@ -80,7 +80,18 @@
          on all three platforms because the subpath was added to core's exports and not here.
          `test/desktop-mirror-excludes-the-engine.test.ts` now holds the two maps to each other
          so there is no fourth. */
-      "@trafficflow/core/drain-policy": ["../../packages/core/src/drain-policy.ts"]
+      "@trafficflow/core/drain-policy": ["../../packages/core/src/drain-policy.ts"],
+      /* `Re: ` exactly once — the FOURTH admitted leaf, and it arrived WITH this line rather than
+         owing it. The comment above says the guard "now holds the two maps to each other so there
+         is no fourth"; there is a fourth, and the guard is what made it cheap — the map and
+         `vite.config.ts`'s alias table are checked against each other, so adding the subpath to
+         core's exports and forgetting this list is a red test here instead of a release CI that
+         dies at `tsc --noEmit` on all three platforms, which is what the two slices above each
+         paid.
+         It is imported by `packages/client-engine/src/mutations.ts` and moved out of that file
+         because the away responder composes replies too, from `packages/services`, which may not
+         import the browser engine. */
+      "@trafficflow/core/reply-subject": ["../../packages/core/src/reply-subject.ts"]
     }
   },
   "include": ["src", "vite.config.ts"]

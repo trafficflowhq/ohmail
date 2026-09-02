@@ -45,9 +45,13 @@ export async function serializeOrganizerProfile(db: Tx, accountId: string): Prom
       }).from(rulesTbl).where(eq(rulesTbl.accountId, accountId)),
       await tx.select({ kind: notifyRulesTbl.kind, target: notifyRulesTbl.target })
         .from(notifyRulesTbl).where(eq(notifyRulesTbl.accountId, accountId)),
+      // `subject` is not selected: the responder is reply-only since 0087 and the column is inert
+      // until the 0.15 contract migration drops it. Reading it here would put a dead field back
+      // into every published document.
       await tx.select({
-        enabled: awayResponders.enabled, subject: awayResponders.subject, body: awayResponders.body,
-        startsAt: awayResponders.startsAt, endsAt: awayResponders.endsAt, audience: awayResponders.audience,
+        enabled: awayResponders.enabled, body: awayResponders.body,
+        startsAt: awayResponders.startsAt, endsAt: awayResponders.endsAt,
+        audience: awayResponders.audience, throttle: awayResponders.throttle,
       }).from(awayResponders).where(eq(awayResponders.accountId, accountId)),
       await tx.select({ name: tagsTbl.name }).from(tagsTbl).where(eq(tagsTbl.accountId, accountId)),
     ] as const;
@@ -65,8 +69,8 @@ export async function serializeOrganizerProfile(db: Tx, accountId: string): Prom
     notifyRules: notifyRows.map((n) => ({ kind: n.kind, target: n.target })),
     awayResponder: away === undefined ? null : {
       enabled: away.enabled,
-      subject: away.subject,
       body: away.body,
+      throttle: away.throttle,
       startsAt: away.startsAt === null ? null : away.startsAt.toISOString(),
       endsAt: away.endsAt === null ? null : away.endsAt.toISOString(),
       audience: away.audience,

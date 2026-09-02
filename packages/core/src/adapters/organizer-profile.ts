@@ -148,14 +148,28 @@ export interface ProfileNotifyRuleEntry {
   target: string;
 }
 
-/** The single per-mailbox autoresponder. Timestamps are ISO 8601 strings or null. */
+/**
+ * The single per-mailbox autoresponder. Timestamps are ISO 8601 strings or null.
+ *
+ * `subject` is GONE (mail 0087): the responder is reply-only and derives `Re: <what they wrote>`,
+ * so there is no subject to travel. A document written by an older ohmail still carries the field
+ * and the parser simply does not read it — an unknown key is not an error in this format, which is
+ * what makes the removal safe in both directions. `throttle` is new and defaults to `'per_day'` for
+ * a document that predates it, which is the rate every row migrated by 0087 carries.
+ *
+ * `PROFILE_VERSION` deliberately does NOT move for this. The envelope's version is about what a
+ * reader must UNDERSTAND to apply a document safely, and both changes are backward- and
+ * forward-compatible at the field level: an old reader ignores `throttle` and applies the rest
+ * correctly, a new reader defaults it. Bumping would make every older install refuse a document it
+ * can read perfectly well, which is the opposite of what the version is for.
+ */
 export interface ProfileAwayResponder {
   enabled: boolean;
-  subject: string | null;
   body: string | null;
   startsAt: string | null;
   endsAt: string | null;
   audience: string;
+  throttle: string;
 }
 
 /** The configuration itself — everything that travels, and nothing else. */
@@ -215,11 +229,11 @@ export function canonicalizeProfilePayload(p: OrganizerProfilePayload): Organize
       .sort((a, b) => a.kind.localeCompare(b.kind) || a.target.localeCompare(b.target)),
     awayResponder: p.awayResponder === null ? null : {
       enabled: p.awayResponder.enabled,
-      subject: p.awayResponder.subject,
       body: p.awayResponder.body,
       startsAt: p.awayResponder.startsAt,
       endsAt: p.awayResponder.endsAt,
       audience: p.awayResponder.audience,
+      throttle: p.awayResponder.throttle,
     },
     tagNames: [...p.tagNames].sort((a, b) => a.localeCompare(b)),
   };
@@ -389,11 +403,17 @@ function readPayload(raw: Record<string, unknown>): OrganizerProfilePayload {
     const o = raw.awayResponder as Record<string, unknown>;
     awayResponder = {
       enabled: typeof o.enabled === "boolean" ? o.enabled : false,
-      subject: asString(o.subject),
+      // `o.subject` is deliberately NOT read — the responder is reply-only since 0087, and a
+      // document from an older ohmail carries a subject that has nowhere to go.
       body: asString(o.body),
       startsAt: asString(o.startsAt),
       endsAt: asString(o.endsAt),
       audience: asString(o.audience) ?? "screened_in",
+      // `per_day` for a document that predates the field, which is the rate every row migrated by
+      // 0087 carries. The importer narrows an UNRECOGNISED member to the same value; this only
+      // fills in an absent one, and the two are separate on purpose (a member we do not know is a
+      // newer ohmail's, and is a different fact from a field that was never written).
+      throttle: asString(o.throttle) ?? "per_day",
     };
   }
   const tagNames: string[] = Array.isArray(raw.tagNames)

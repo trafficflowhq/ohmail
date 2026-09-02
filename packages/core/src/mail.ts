@@ -85,6 +85,15 @@ export * from "./draft-prompt.js";
 // can validate and store a workflow, and cannot generate one.
 export * from "./workflow-shapes.js";
 export * from "./send.js";
+// `Re: ` exactly once — the reply subject, promoted out of the client engine because the away
+// responder is REPLY-ONLY and composes from `packages/services`, which may not import the browser
+// engine. A leaf with its own source subpath (`@trafficflow/core/reply-subject`) for the graphs
+// that cannot load this barrel; see the module header and `//reply-subject` in the manifest.
+export * from "./reply-subject.js";
+// The away responder's whole suppression set, as one pure function over one row, plus the text
+// hash `throttle='per_message'` is keyed by. Mail-half by the same test as `pipeline.js`: it names
+// no model, and its only imports are this package's own `rules.js` and `node:crypto`.
+export * from "./away-eligibility.js";
 export * from "./sent-record.js";
 export * from "./outbound-text.js";
 export * from "./crypto.js";

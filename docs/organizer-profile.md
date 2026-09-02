@@ -67,11 +67,11 @@ One RFC822 message in `ohmail/_meta`:
   ],
   "awayResponder": {               // the single per-mailbox autoresponder, or null
     "enabled": false,
-    "subject": "<string or null>",
     "body": "<string or null>",
     "startsAt": "<ISO 8601 or null>",
     "endsAt": "<ISO 8601 or null>",
-    "audience": "screened_in" | "everyone"
+    "audience": "screened_in" | "everyone",
+    "throttle": "always" | "per_message" | "per_day" | "per_week"
   },
   "tagNames": ["<tag name>", …]    // the names of this mailbox's tags
 }
@@ -119,11 +119,15 @@ The envelope:
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `enabled` | boolean | Whether it answers at all — a drafted-but-off responder travels too. |
-| `subject` | string or null | The reply's subject. |
-| `body` | string or null | The reply's body. |
+| `body` | string or null | The reply's text. |
 | `startsAt` | ISO 8601 or null | When it starts answering. |
 | `endsAt` | ISO 8601 or null | When it stops. |
 | `audience` | `"screened_in"` \| `"everyone"` | Who gets an answer. |
+| `throttle` | `"always"` \| `"per_message"` \| `"per_day"` \| `"per_week"` | How often one person may be answered. `"per_message"` means once until the text changes. Absent in a document written by an older ohmail, which reads as `"per_day"`. |
+
+The responder is reply-only: it answers in the correspondent's own thread under `Re: ` plus their
+subject, so there is no subject to carry. A document written by an older ohmail may contain a
+`subject` field; readers ignore it.
 
 **`tagNames`** — an array of this mailbox's tag names, as plain strings.
 
@@ -213,11 +217,11 @@ The format: versioned JSON, documented in ohmail's published source
   ],
   "awayResponder": {
     "enabled": false,
-    "subject": "Out of the studio until 2 September",
     "body": "Thanks for writing — I read mail again on 2 September.",
     "startsAt": "2026-08-24T00:00:00.000Z",
     "endsAt": "2026-09-02T00:00:00.000Z",
-    "audience": "screened_in"
+    "audience": "screened_in",
+    "throttle": "per_day"
   },
   "tagNames": [
     "kiln",

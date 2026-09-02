@@ -1804,6 +1804,42 @@ export const awayResponders = pgTable("away_responders", {
    * CHECK (a closed two-member enum) lives in the migration.
    */
   audience: text("audience").notNull().default("screened_in"),
+  /**
+   * HOW OFTEN ONE PERSON MAY BE ANSWERED — `'per_day'` by default (mail 0087).
+   *
+   *   always       every message gets a reply.
+   *   per_message  once, until the responder's TEXT changes — keyed by `awayTextHash(body)` and
+   *                deliberately not by this row's `updated_at`: a save is not an edit, and keying
+   *                on the row made switching the responder off and on again re-answer everybody.
+   *   per_day      (DEFAULT) at most one reply per person per 24 h.
+   *   per_week     at most one per person per 7 days.
+   *
+   * NOT NULL with a default, for `audience`'s reason one line up: there is no "off" reading of an
+   * absent value here — a responder that is enabled is answering somebody at SOME rate — so an
+   * absent value would have to be guessed, and a reader guessing `always` where the writer meant
+   * `per_week` would answer a correspondent seven times. The CHECK (a closed four-member enum)
+   * lives in the migration. The DEFAULT is the middle of the range rather than the narrowest
+   * member on purpose: it is what the copy calls "at most once a day", it is what every existing
+   * row gets, and `always` is a choice somebody makes rather than one they inherit.
+   */
+  throttle: text("throttle").notNull().default("per_day"),
+  /**
+   * WHEN THE RESPONDER WAS LAST TURNED ON — the episode floor's first half, and the column that
+   * stops an edit stranding the correspondents who wrote before it.
+   *
+   * The floor used to be `updated_at`, which made EVERY save move it: somebody who fixed a typo
+   * mid-trip pushed the floor past the mail that had already arrived, and every correspondent
+   * behind it was never answered at all — not by the old text and not by the new one. `enabled_at`
+   * moves only on the OFF → ON transition (`nextEnabledAt`, one implementation, used by `put` and
+   * by the profile import), so an edit while away leaves the floor where it was and the backlog
+   * inside the window stays answerable.
+   *
+   * Nullable because a responder that has never been enabled has no such instant, and the pass
+   * reads a NULL as "not live" rather than as "the beginning of time". Backfilled `= updated_at`
+   * for rows already enabled when 0087 ran, which is the closest true statement available about a
+   * row whose enablement instant was never recorded.
+   */
+  enabledAt: timestamp("enabled_at", { withTimezone: true }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({ uqAccount: unique().on(t.accountId) }));   // one row per account ⇒ PUT upserts
 
@@ -1855,6 +1891,121 @@ export const awayResponderSent = pgTable("away_responder_sent", {
   uqEpisode: uniqueIndex("away_responder_sent_episode_uq")
     .on(t.accountId, t.sender, t.responderUpdatedAt),
   ixAccount: index("away_responder_sent_account_idx").on(t.accountId),
+}));
+
+/**
+ * THE AWAY REPLY LEDGER (mail 0087) — one row per DECIDED candidate, and the reservation that
+ * makes "one automatic reply per message" a property of the schema.
+ *
+ * ── IT REPLACES `away_responder_sent`, AND THE DIFFERENCE IS WHAT IT RECORDS ────────────────
+ *
+ * That table records only the sends that HAPPENED, keyed by an enablement episode. This one
+ * records every candidate the pass examined and what it decided, which is a different and more
+ * useful fact for three reasons:
+ *
+ *   · A suppression nobody can attribute is indistinguishable from a pass that never ran. The old
+ *     shape wrote nothing for a message it declined, so the only evidence a correspondent was
+ *     deliberately not answered lived in a log line that ages out. `outcome` + `reason` is the
+ *     durable answer to "why did my colleague not get a reply".
+ *   · A held candidate that writes nothing stays a candidate for ever, and a first-time backfill
+ *     contributes thousands of them — they pin the oldest page of every cycle and a genuine
+ *     arrival behind them is never examined — a pass that cannot converge, starved by its own
+ *     oldest page. A ledger row per examined candidate is what fixes that: `LEFT JOIN … WHERE
+ *     ar.id IS NULL` takes each decided row out of the candidate set permanently, so the window
+ *     shrinks as an away period proceeds instead of growing.
+ *   · `UNIQUE (account_id, message_id)` is the structural half of at-most-once. Two runners racing
+ *     one message both attempt the INSERT, exactly one gets a row, and the loser stops — no
+ *     read-then-write window, and no dependence on either runner's control flow.
+ *
+ * ── THE ROW IS WRITTEN BEFORE THE SEND, NEVER AFTER ────────────────────────────────────────
+ *
+ * SMTP is not transactional, so the choice is at-most-once or at-least-once and there is no third
+ * option. `pending` is committed with the throttle reservation BEFORE anything dials; the send
+ * follows; the finalize is a compare-and-swap on `outcome='pending'` so exactly one writer ever
+ * records a terminal state. A crash between the reservation and the send costs ONE unsent reply. A
+ * crash after it leaves `pending`, which is never retried — see `unverified`.
+ *
+ * `message_id` carries NO foreign key, for `away_responder_sent`'s reason: the record has to
+ * outlive the message it was triggered by, and an expunge must not un-answer a correspondent.
+ */
+export const awayReplies = pgTable("away_replies", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  accountId: uuid("account_id").notNull(),
+  /** The mailbox the message ARRIVED in — the identity the reply is sent from. */
+  mailboxId: uuid("mailbox_id").notNull(),
+  /** The message that triggered it. NO foreign key — see the header. */
+  messageId: uuid("message_id").notNull(),
+  /** The lowercased envelope author. Never a display name. */
+  sender: text("sender").notNull(),
+  /**
+   * WHAT WAS DECIDED. The CHECK (a closed five-member enum) lives in the migration.
+   *
+   *   pending      reserved, not yet sent. Terminal ONLY in the crash case, and never retried.
+   *   sent         SMTP accepted it.
+   *   unverified   SMTP threw. The delivery is AMBIGUOUS — it may have reached the server before
+   *                the failure — so the claim is KEPT and no second copy is ever offered. The
+   *                interactive send path answers the same ambiguity the same way.
+   *   throttled    the per-sender reservation refused: this person was answered recently enough.
+   *   suppressed   an eligibility guard held. `reason` names which.
+   */
+  outcome: text("outcome").notNull(),
+  /** The suppression member, or the throttle setting that refused. Null for `sent`/`pending`. */
+  reason: text("reason"),
+  /**
+   * The responder text this decision was made against — `awayTextHash(body)`. Stored on the
+   * DECISION and not only on the sender state so that "why was this throttled" is answerable from
+   * the ledger alone, without reconstructing what the responder said at the time.
+   */
+  textHash: text("text_hash"),
+  /** The minted `<uuid@domain>` of the reply, so a Sent-folder copy is attributable. */
+  mintedMessageId: text("minted_message_id"),
+  decidedAt: timestamp("decided_at", { withTimezone: true }).defaultNow().notNull(),
+  sentAt: timestamp("sent_at", { withTimezone: true }),
+}, (t) => ({
+  // THE RESERVATION. Not an index for speed — the ON CONFLICT target that makes "one automatic
+  // reply per message" structural. Named explicitly because the migration creates it by name.
+  uqMessage: uniqueIndex("away_replies_message_uq").on(t.accountId, t.messageId),
+  // The "why was this person not answered" read, and the throttle's own diagnostic.
+  ixSender: index("away_replies_sender_idx").on(t.accountId, t.sender, t.decidedAt),
+}));
+
+/**
+ * THE PER-SENDER THROTTLE STATE (mail 0087) — one row per correspondent, and its
+ * `ON CONFLICT DO UPDATE … WHERE` IS the throttle.
+ *
+ * ── WHY THIS IS A TABLE AND NOT A QUERY OVER THE LEDGER ────────────────────────────────────
+ *
+ * "Has this person been answered in the last 24 hours" is answerable from `away_replies` with a
+ * MAX over an index, and that answer would be a READ — after which the pass would decide, and then
+ * write. Two runners can both read "no" before either writes, and the correspondent gets two
+ * replies. Serialising it needs a row to lock, and there is no row to lock for a sender who has
+ * never been answered (`INSERT … WHERE NOT EXISTS` and `SELECT … FOR UPDATE` both fail on exactly
+ * that case — a row that does not exist yet cannot be locked).
+ *
+ * An upsert against a PRIMARY KEY has no such gap: the INSERT arm and the UPDATE arm are one
+ * statement, the key is what serialises them, and the `WHERE` on the DO UPDATE decides. Zero rows
+ * returned means "the predicate said no" — the throttle refused — and that is a decision, not a
+ * race. It is the same shape `unsubscribe_records` uses and the same argument.
+ *
+ * ── WHAT IT DELIBERATELY IS NOT ────────────────────────────────────────────────────────────
+ *
+ * Not per-mailbox: the throttle is a promise to a PERSON ("at most once a day"), and somebody who
+ * writes to two of the account's addresses is still one person. Not shared across installs either
+ * — this is per-install data, and a handover mid-window may cost one duplicate per sender, which
+ * is filed rather than defended.
+ */
+export const awaySenderState = pgTable("away_sender_state", {
+  accountId: uuid("account_id").notNull(),
+  /** The lowercased envelope author. Half of the primary key, and the throttle's subject. */
+  sender: text("sender").notNull(),
+  /** When this person was last answered. NOT NULL: a row exists only because one was sent. */
+  lastRepliedAt: timestamp("last_replied_at", { withTimezone: true }).notNull(),
+  /** The `awayTextHash` of what they were told — what `per_message` compares against. */
+  lastTextHash: text("last_text_hash").notNull(),
+}, (t) => ({
+  // THE SERIALISER. The upsert's conflict target, so it is the primary key rather than a unique
+  // index beside one: there is no other identity for this row.
+  pk: primaryKey({ columns: [t.accountId, t.sender] }),
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────
