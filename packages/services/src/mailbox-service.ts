@@ -851,6 +851,33 @@ function stableJson(v: unknown): string {
  * (`HttpAdapter.rejectionOf`), and an automatic retry here would re-dial somebody's mail server
  * without being asked — a connection cost, and a way to walk into a provider's lockout.
  */
+/**
+ * A probe whose middle verdict is a refusal — see {@link MailboxService.organizeHere}.
+ *
+ * A WRAPPER rather than a flag on `probedImapMeta`, so the policy travels with the CALL that
+ * needs it and no other caller can be moved onto it by editing a default. It changes no sentence:
+ * `probeRefused` maps the same `MailboxErrorCode` the permissive path would have stored, so the
+ * person is told the same true thing about their provider and is simply not authorized on it.
+ */
+const proveOrRefuse = (probe: MailboxProbe): MailboxProbe => async (input) => {
+  const v = await probe(input);
+  return v.verdict === "store_unverified" ? { verdict: "refuse", code: v.code } : v;
+};
+
+/**
+ * A claim on a mailbox with no stored IMAP credential — see the check inside `organizeHere`.
+ *
+ * `422` and not `409`: nothing is in conflict, the request is simply missing the one thing it
+ * needs. `retryable: false`, because retrying the identical request changes nothing — what
+ * changes it is the person typing a password, which is what the sentence asks for.
+ */
+const credentialNeeded = (): ServiceError => new ServiceError(
+  "credential_needed", 422,
+  "This mailbox has no password stored on this install, so organizing it would fail at the first "
+  + "connection. Enter the mailbox password to organize it here.",
+  undefined, false,
+);
+
 const configMoved = (transport: ProbeTransport): ServiceError => new ServiceError(
   "mailbox_config_changed", 409,
   transport === "smtp"
@@ -1905,8 +1932,32 @@ export class MailboxService {
      * timeout) and NOTHING is written: no stamp, no consent, no allowance spent.
      */
     const kp = input.imap ? this.requireKeyProvider() : null;
+    /* -- THIS DOOR NEEDS A STRICTER VERDICT THAN `create` DOES ------------------------------
+     *
+     * `MailboxProbe` has three answers, and the middle one — `store_unverified` — is deliberately
+     * permissive: at CONNECT time a provider that answers `UNAVAILABLE` or a rate limit is not
+     * evidence that the password is wrong, and refusing there would strand somebody behind their
+     * provider's bad afternoon. The row is stored "connecting" and the worker settles it.
+     *
+     * That policy is wrong for THIS door, and a max-effort review found it. The whole reason the
+     * ceremony takes a password is that a stamp on a mailbox whose login does not work is an
+     * action that looks like it worked and leaves the mailbox quarantined — so accepting an
+     * UNVERIFIED password and committing the authorization with it reproduces the exact defect,
+     * atomically. The transaction is sound and it commits the forbidden state.
+     *
+     * So when a password is supplied it must be PROVED. `store_unverified` is refused with the
+     * probe's own honest sentence — "we could not reach that mail server", "that server's
+     * certificate was refused" — which is true, actionable, and asks the person to try again in a
+     * moment rather than telling them their password is wrong.
+     *
+     * `create`'s policy is untouched: a connect with no organizing attached to it can still be
+     * optimistic, because nothing is authorized by it.
+     */
     const probed = input.imap
-      ? await this.probedImapMeta(ctx, id, { imap: { pass: input.imap.pass } }, opts)
+      ? await this.probedImapMeta(
+        ctx, id, { imap: { pass: input.imap.pass } },
+        opts === undefined ? undefined : { ...opts, probe: proveOrRefuse(opts.probe) },
+      )
       : null;
 
     return asTx(ctx).transaction(async (tx) => {
@@ -1952,6 +2003,44 @@ export class MailboxService {
       // excluded from the count because it does not yet hold the slot it is asking for.
       await this.allowance(tx as LedgerTx, ctx.accountId, ctx.now(), { excludeMailboxId: id });
 
+      /* -- AND WITH NO PASSWORD SUPPLIED, THERE MUST STILL BE ONE STORED --------------------
+       *
+       * The empty-body call is the ordinary claim-back: nothing about the login has changed, so
+       * the stored credential stands. "Stands" was doing unexamined work — a max-effort review
+       * found the case, and it needs no race:
+       *
+       *   the install is a reader; the provider revokes the saved password; the reader's own
+       *   cycle observes the auth failure and the row goes to `status='error'` WITH the dead
+       *   credential still stored; the person presses "Organize here instead" with no password
+       *   (there is nowhere to type one on the plain claim-back); the authorization commits; the
+       *   worker spends it, cannot log in, and quarantines the mailbox with a backoff.
+       *
+       * That is `QAR-TAKEOVER-NEEDS-A-READABLE-CREDENTIAL` reached through the door built to
+       * close it. A credential ROW that is simply absent produces the same ending.
+       *
+       * So a claim with no password requires a stored one, and the refusal ASKS FOR THE PASSWORD
+       * rather than reporting a fault — which is the true and actionable sentence, and the one the
+       * claim screen can act on by showing the field.
+       *
+       * It checks the ROW and does not decrypt or dial. Decrypting proves the envelope opens and
+       * says nothing about whether the provider still accepts what is inside; dialling here would
+       * put a network round trip inside a transaction holding the mailbox row lock, which is the
+       * thing the probe is deliberately placed outside for. The honest bound is "there is a
+       * credential to try", and where the person supplies one it is PROVED.
+       */
+      if (!input.imap) {
+        const [cred] = await tx.select({ transport: mailboxCredentials.transport })
+          .from(mailboxCredentials)
+          // `'imap'` for BOTH auth kinds: an oauth mailbox stores its refresh token under the
+          // same transport (`connectOAuth` writes it there), so one predicate covers both and a
+          // branch would be two spellings of one row.
+          .where(and(
+            eq(mailboxCredentials.mailboxId, id),
+            eq(mailboxCredentials.transport, "imap"),
+          ))
+          .limit(1);
+        if (!cred) throw credentialNeeded();
+      }
       // The credential, in THIS transaction, so the stamp and the password the worker will use to
       // spend it commit together. See {@link OrganizeHereInput}: a stamp without a usable login is
       // an action that looks like it worked and leaves the mailbox quarantined.

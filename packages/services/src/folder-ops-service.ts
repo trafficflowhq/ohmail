@@ -2,7 +2,7 @@ import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 // `@trafficflow/core/mail`, NOT the default barrel — `folders.ts`'s rule, same reason: this
 // module is imported beside it and must never pull the classifier/drafter graph anywhere.
 import { folderNameError } from "@trafficflow/core/mail";
-import { claimIdempotencyKey, readIdempotencyKey, folderOps, folderState, mailboxFolders, mailboxes, messages, recordChange, type Tx } from "@trafficflow/db";
+import { assertOrganizerRole, claimIdempotencyKey, readIdempotencyKey, folderOps, folderState, mailboxFolders, mailboxes, messages, recordChange, type Tx } from "@trafficflow/db";
 import type { ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import type { MoveIdempotency } from "./message-service.js";
@@ -300,7 +300,11 @@ export class FolderOpsService {
    */
   private async requireCommandableMailbox(tx: Tx, ctx: ServiceContext, mailboxId: string): Promise<MailboxRow> {
     const [mb] = await tx
-      .select({ id: mailboxes.id, status: mailboxes.status, trashFolder: mailboxes.trashFolder })
+      .select({
+        id: mailboxes.id, status: mailboxes.status, trashFolder: mailboxes.trashFolder,
+        // Mail 0083 — see the refusal below.
+        organizerRole: mailboxes.organizerRole,
+      })
       .from(mailboxes)
       .where(and(
         eq(mailboxes.id, mailboxId),
@@ -322,6 +326,30 @@ export class FolderOpsService {
         "this mailbox is organized by your local install — make folder changes there",
       );
     }
+    /* -- AND THE ROLE, WHICH `status` STOPPED ANSWERING (mail 0083) -----------------------
+     *
+     * The refusal above was the whole test, and its own comment says why it existed: *"a
+     * `disabled` mailbox is another organizer's (a local install holds the lease), and a command
+     * Cloud's worker will never execute is a lie in a table."* Every word of that is still the
+     * right reason — and `disabled` stopped being how the product records it. A demoted install
+     * is `organizer_role = 'reader'` and `status = 'connected'`, so this door admitted the exact
+     * case it was written to refuse.
+     *
+     * It is the worst of the doors this ruling touched, because a folder command is not an
+     * intent that waits: it is recorded in `folder_ops` and rings the worker, and the pass
+     * CREATES, RENAMES or DELETES a real folder on the person's server — a delete moving the
+     * whole subtree's mail to Trash. The reader's cycle now skips that pass, so nothing executes
+     * it today; the row would still be there for the first cycle after a promotion.
+     *
+     * `assertOrganizerRole` rather than an inline check, so the refusal is the SAME sentence
+     * every other door gives (`409 organized_elsewhere` naming the holder) instead of a second
+     * one, and so the census can see this door at all — it could not, because a census discovers
+     * guard calls and not write doors, which is precisely how this one was missed.
+     *
+     * The row lock is already held by the `.for("update")` above, so the share lock the helper
+     * takes is free here and the pair is genuinely atomic against a demotion.
+     */
+    await assertOrganizerRole(tx, ctx.accountId, mailboxId);
     return mb;
   }
 
