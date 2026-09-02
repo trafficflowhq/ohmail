@@ -666,27 +666,18 @@ export function FirstRun({
                   },
                 ]}
               />
-              {/* ── THE VERDICT IS DOOR-AWARE, BECAUSE THE MECHANISM DIFFERS TODAY ────────
-                  On Cloud and self-host the worker re-reads the authorization on its next pass,
-                  so "on its next pass — within a minute" is true and is what the flow says.
+              {/* ── ONE SENTENCE, ON EVERY DOOR, AND IT IS TRUE ON ALL THREE AGAIN ─────────
+                  This was door-aware for a day. The standalone install read its takeover stamp
+                  ONCE, when it assembled its engine, so a claim made while the app was running
+                  was not spent until a restart — and "on its next pass, within a minute" would
+                  have been a promise that door could not keep. It said what had to be done
+                  instead, in the mailbox pane's own words.
 
-                  ON THE STANDALONE DOOR IT IS NOT TRUE YET. The sidecar reads the takeover flag
-                  ONCE, when it assembles its engine, so a claim made by a RUNNING install is not
-                  spent until the app is restarted. The flow must not promise a pass that will
-                  not happen: it says what actually has to be done, in the sentence the mailbox
-                  pane already uses for exactly this on exactly this door.
-
-                  This is a temporary difference, not a permanent one — the engine is being taught
-                  to promote on its next cycle. When it does, this branch collapses to the one
-                  sentence and the pinned test below it goes with it. */}
-              {claimed ? (
-                <SettingsVerdict
-                  state="wait"
-                  headline={host.door === "local"
-                    ? tm("organizeHereQueued")
-                    : t("elsewhereQueued")}
-                />
-              ) : null}
+                  The engine re-reads the stamp at the top of every gate now, so a press on a
+                  running install is honoured on the next poll with no relaunch. The premise the
+                  branch stood on is gone, and the branch goes with it rather than surviving as a
+                  vaguer sentence on one door — which would understate what that door does. */}
+              {claimed ? <SettingsVerdict state="wait" headline={t("elsewhereQueued")} /> : null}
               {problem ? <SettingsVerdict state="bad" headline={problem} /> : null}
               {foot({ back: true, primary: next(t("continue")) })}
             </>
