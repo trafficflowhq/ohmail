@@ -255,6 +255,22 @@ export interface MailboxFacts {
   organizedBy?: { kind: string | null; name: string | null; since: string | null } | null;
   organizerState?: "held" | "stopped" | null;
   /**
+   * WHEN somebody agreed to let ohmail organize this mailbox, `null` for "nobody has", and
+   * ABSENT for "this build cannot tell" — three states, and the third is not the second.
+   *
+   * It sits beside `organizerRole` because the pair cannot be collapsed: a mailbox connected in
+   * the browser is a reader that has never been agreed to, and a mailbox whose organizer was
+   * displaced is a reader that HAS. The first needs the agreement screen; the second must never
+   * be shown it again, and `organizedBy` cannot tell them apart because its own `null` means
+   * "this install organizes it" OR "nobody ever has".
+   *
+   * `deriveMailState` must never read it and does not — it says nothing about whether mail is
+   * arriving. It is here because this is the narrowed shape `GET /mailboxes` arrives as, and the
+   * claim offer and the first-run flow both read it. Every reader tests `=== null`: read `== null`
+   * an absent field would offer a claim on every mailbox of every older deployment.
+   */
+  organizeConsentedAt?: string | null;
+  /**
    * HOW MANY OF THE USER'S OWN FILINGS THIS MAILBOX HAS NOT APPLIED YET.
    *
    * The API never opens IMAP: a Screener decision writes `folder_state` and the WORKER moves the

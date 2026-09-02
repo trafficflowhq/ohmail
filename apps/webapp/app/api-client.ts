@@ -258,6 +258,53 @@ export interface MailboxDTO {
    */
   authKind?: "password" | "oauth";
   /**
+   * ── WHO ORGANIZES THIS MAILBOX, AND WHETHER IT WAS EVER AGREED TO (mail 0083) ────────────
+   *
+   * `organizer` is this install; `reader` is somebody else's, or nobody's. A reader is CONNECTED
+   * and its mirror is growing — what it does not do is move, file or delete mail. The server has
+   * projected these since mail 0083 and this client did not declare them, which is why the web
+   * pane's claim control was still gated on `status === "disabled"`: the one set the server
+   * refuses, since a `disabled` row is a tombstone and a stood-down row is `connected`.
+   *
+   * OPTIONAL, and absent reads as `organizer` at every site. Every install was one before the
+   * column existed, so a server that cannot say has not demoted anybody; the dangerous default is
+   * the other one, which would put a claim banner over a mailbox this install already organizes.
+   */
+  organizerRole?: "organizer" | "reader";
+  /**
+   * WHO holds it, when somebody else does — `null` when this install does, or when nobody ever
+   * has. Those two cases are NOT distinguishable from this field, which is exactly why
+   * {@link organizeConsentedAt} exists beside it.
+   *
+   * `since` is when that install BECAME the organizer, not when it was last seen: a banner says
+   * "since Tuesday", never "last seen 40 seconds ago", because a heartbeat on a screen invites
+   * somebody to sit and watch it.
+   */
+  organizedBy?: { kind: string | null; name: string | null; since: string | null } | null;
+  /**
+   * Whether that holder is still RENEWING (`held`) or stopped and left its claim behind
+   * (`stopped`). `null` is "this install has not looked". The two want opposite sentences on
+   * screen, which is why the lease's verdicts are not collapsed into a boolean anywhere they
+   * reach a person.
+   */
+  organizerState?: "held" | "stopped" | null;
+  /**
+   * WHEN somebody agreed to let ohmail organize this mailbox, or `null` for "nobody has".
+   *
+   * ── ABSENT AND `null` ARE DIFFERENT HERE, AND THE DIFFERENCE IS A CONTROL ────────────────
+   *
+   * The claim offer's server-side rule is `status <> 'disabled' AND (organizer_role = 'reader' OR
+   * organize_consented_at IS NULL)`. Read `== null`, an ABSENT field — an API deployed before
+   * mail 0083 — satisfies the second disjunct on every row, and the pane sprouts an "Organize
+   * here instead" button on every mailbox of every older deployment, each of which would be
+   * refused. So every reader of this field tests `=== null`, and the seam that maps it
+   * (`CloudShell`) forwards it UNTOUCHED rather than with a `?? null`.
+   *
+   * This is the same absent-versus-null rule {@link initialImportCompletedAt} carries, with the
+   * sign chosen for the same reason: collapse the unknown toward the state that offers LESS.
+   */
+  organizeConsentedAt?: string | null;
+  /**
    * WHY a mailbox is in `error` (mail 0023). Null unless `status === "error"`.
    *
    * A stable KEY, not a sentence — the server never ships English, so the copy stays in
