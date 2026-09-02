@@ -1437,7 +1437,7 @@ export function FirstRun({
               cancel: false,
               primary: (
                 <>
-                  {host.pairNode ? (
+                  {host.pairNode && path.includes("pair") ? (
                     <Button variant="ghost" onClick={() => goTo("pair")} disabled={busy}>
                       {t("pairTitle")}
                     </Button>

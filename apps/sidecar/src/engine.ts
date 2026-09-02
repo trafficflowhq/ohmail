@@ -1785,7 +1785,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      *   earlier came back dialling nothing, with no gesture in the window that repairs it.
      *
      * By ADDRESS, so after the seed's removal NO row is the seed and every survivor dials from its
-     * own credential meta — which is the branch that was already right for #2..N. One rule.
+     * own credential meta — which is the branch that was already right for #2..N.
+     *
+     * ── AND IT IS THE BOOT'S QUESTION ONLY ────────────────────────────────────────────────────
+     *
+     * The two route sites that attach a runtime pass `false` outright and must keep doing so; the
+     * comments there carry the case. The short version is that "does the settings file describe
+     * this address" and "was this runtime made by a request that ignores the settings file" are
+     * different questions, and a tombstoned seed makes them disagree.
      *
      * The walk that was supposed to catch this PASSED: its two mailboxes shared one hostname, and
      * `credentialIsForeign` compares hosts. The fixture gives each mailbox its own server now.
@@ -4298,11 +4305,27 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                     id: dto.id, address: dto.address, displayName: dto.displayName ?? null,
                     standDownReason: null, takeoverAuthorizedAt: null,
                   },
-                  /* NOT the seed, and ASKED rather than asserted: a mailbox being added is by
-                     definition not the address this process was configured for — the same-login
-                     refusal above would have caught it — but the predicate is the one place that
-                     rule lives, and a hard `false` is a second statement of it that can drift. */
-                  isSeedRow(dto.address),
+                  /* ── NEVER THE SEED, AND THIS WAS `isSeedRow(dto.address)` FOR ONE ROUND ────
+                   *
+                   * The reasoning for asking the predicate was that a mailbox being added cannot
+                   * be the configured address because the same-login refusal would have caught it.
+                   * IT IS WRONG, and the case is one `identity.ts` documents as expected (its case
+                   * 5, "re-add of a removed address through Add mailbox"): the refusal scans rows
+                   * with `status <> 'disabled'`, so a TOMBSTONED seed is invisible to it. Remove
+                   * the seed while another mailbox remains — no sign-out, so `config.json` keeps
+                   * naming it — then add that address again, and `isSeedRow` answered true for a
+                   * row whose credential had just been proved against whatever host the person
+                   * typed. The runtime would then dial `config.imap`, the STALE settings file, and
+                   * `credentialIsForeign` would compare the freshly proven host against it and
+                   * withhold the password: a mailbox that had just passed a live probe coming up
+                   * dialling nothing, at this launch and every one after it.
+                   *
+                   * The two answers differ because the two questions do. At BOOT the question is
+                   * "which row does the settings file describe", and `isSeedRow` answers it. HERE
+                   * the row was made by a request that deliberately does not touch the settings
+                   * file, so it is not the seed whatever its address says — and its credential,
+                   * which was just proven, is the only honest source for its dial. */
+                  false,
                 );
               } catch (attachErr) {
                 log("local_mailbox_attach_failed", {
@@ -4413,11 +4436,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                       id: dto.id, address: dto.address, displayName: dto.displayName ?? null,
                       standDownReason: null, takeoverAuthorizedAt: null,
                     },
-                    /* THE SAME PREDICATE. A re-seal of the SEED's password reattaches it, and
-                       asserting `false` there stripped that runtime of the environment password
-                       and the process's submission server. It survived only because the seed's
-                       reconfigure replaces the whole engine moments later — luck, not design. */
-                    isSeedRow(dto.address),
+                    /* NOT THE SEED, on the add route's reasoning above and one of its own: this
+                       reattach follows a PATCH that has just proved a credential against the host
+                       in its body, so that credential is what this runtime should dial. Handing it
+                       `config.imap` instead would compare the just-proven host against the settings
+                       file and withhold the password it was called to store. */
+                    false,
                   );
                   void attached.start().catch((startErr: unknown) => {
                     log("mailbox_start_failed", { err: startErr });

@@ -934,7 +934,23 @@ export async function enterLocalDoor(
    * the same as "it matched", which is the direction that costs a credential.
    */
   const settledAddress = await localMailboxAddress(settled.mailboxId);
-  if (!sameAddress(settledAddress ?? undefined, address)) {
+  if (settledAddress === null) {
+    /* ── "WE COULD NOT CHECK" IS NOT "IT IS THE WRONG MAILBOX" ───────────────────────────────
+     *
+     * Both refuse, and refusing is right either way — an unchecked row must not be sealed onto.
+     * What must NOT be the same is the sentence. `localMailboxAddress` collapses a refusal, a
+     * 404, a body that is not JSON and a row with no address into one `null`, and the mismatch
+     * sentence below states a confident fact about the install ("it is still opening a different
+     * mailbox") that a failed read has not established. On a transient read failure that is a
+     * confident claim about a state nobody observed. */
+    return {
+      status: settled,
+      problem:
+        "ohmail could not check which mailbox this copy is opening, so the password you typed "
+        + "was not saved. Try again in a moment.",
+    };
+  }
+  if (!sameAddress(settledAddress, address)) {
     return {
       status: settled,
       /* THE SENTENCE HAS TO BE TRUE ABOUT WHAT DID CHANGE, and the first draft was not. The

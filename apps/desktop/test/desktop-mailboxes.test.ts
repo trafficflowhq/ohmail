@@ -839,6 +839,32 @@ describe("the desktop mailbox pane on the standalone door", () => {
     expect(published.map((p) => p.state)).toEqual(["not_configured"]);
   });
 
+  it("says NOTHING about organizing a mailbox nobody has agreed to yet", async () => {
+    /* ── REVIEW FINDING ─────────────────────────────────────────────────────────────────────
+     *
+     * The role line was gated on `organizerRole !== "reader"`, and that column RESTS
+     * `'organizer'` — it is the schema default, and the pane's own mapper coerces anything that
+     * is not literally `"reader"` to it. So a mailbox that has been connected and never agreed to
+     * read "Organized on this computer" while nothing was filed and `ohmail/*` did not exist.
+     *
+     * Reachable straight from this pane's own new control: Add mailbox, complete the connect,
+     * cancel at the consent screen. `organizeConsentedAt` is the truth-condition and it was
+     * already on the facts. MUTATION: drop the `organizeConsentedAt` clause and this reds. */
+    FACTS = [{ ...MAILBOX, organizerRole: "organizer", organizeConsentedAt: null }];
+    const el = await render("local");
+    expect(el.textContent ?? "", "the pane claimed to organize a mailbox nobody agreed to")
+      .not.toContain("Organized on this computer");
+  });
+
+  it("and says it once consent exists", async () => {
+    // The positive control, so the case above cannot pass because the line is simply gone.
+    FACTS = [{
+      ...MAILBOX, organizerRole: "organizer", organizeConsentedAt: "2026-09-02T10:00:00.000Z",
+    }];
+    const el = await render("local");
+    expect(el.textContent ?? "").toContain("Organized on this computer");
+  });
+
   it("A LEGACY STOOD-DOWN ROW COUNTS as a mailbox — no sixth consequence, no sign-out", async () => {
     /* ── REVIEW FINDING ─────────────────────────────────────────────────────────────────────
      *

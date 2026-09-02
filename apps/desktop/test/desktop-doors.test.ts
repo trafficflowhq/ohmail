@@ -505,15 +505,23 @@ describe("the local door", () => {
     expect(result.problem).not.toMatch(/password.*(refused|incorrect|wrong)/i);
   });
 
-  it("REFUSES on a read it could not make, because 'we could not check' is not 'it matched'", async () => {
-    // A 404, a refusal, a body that is not JSON, a row with no address: every one of them means
-    // this is not provably the right row. Spelling that the same as a match is the direction that
-    // costs a credential.
+  it("REFUSES on a read it could not make — and SAYS SO, rather than claiming the mismatch", async () => {
+    /* A 404, a refusal, a body that is not JSON, a row with no address: every one of them means
+       this is not provably the right row, and every one of them refuses. Spelling that the same as
+       a match is the direction that costs a credential.
+
+       BUT THE SENTENCE IS NOT THE MISMATCH'S. Raised in review: the mismatch line states a
+       confident fact about the install — "it is still opening a different mailbox" — that a failed
+       read has not established. On a transient read failure that is a claim about a state nobody
+       observed, and it points somebody at Settings → Mailboxes to solve a problem they may not
+       have. Both refuse; only one of them knows why. */
     const asked = shellThatWorks(SERVING, 200, null);
 
     const result = await enterLocalDoor(filled, providerById("fastmail"));
 
-    expect(result.problem).toMatch(/still opening a different mailbox/);
+    expect(result.problem).toMatch(/could not check which mailbox/);
+    expect(result.problem, "a failed read claimed the mailbox was the wrong one")
+      .not.toMatch(/still opening a different mailbox/);
     expect(asked.filter((a) => a.command === "engine_request" && a.payload!.method === "PATCH"))
       .toEqual([]);
   });
