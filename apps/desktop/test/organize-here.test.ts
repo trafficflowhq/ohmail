@@ -545,6 +545,35 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
   });
 
 
+  /**
+   * AND THE RETRY IS STILL THERE AFTERWARDS, because the answer tells somebody to use it.
+   *
+   * `reclaimed` records that a request was made and is never cleared — correct for a request that
+   * can succeed, since the row's own role is what ends it. A blocked request can never succeed, so
+   * its entry hid the button for the life of the pane while the sentence beside it said "stop it
+   * organizing there, then ask again". That is the dead end this screen exists to close, reached
+   * through the one branch whose entire purpose is to send somebody back.
+   */
+  it("keeps the retry reachable after a blocked request, which its own answer tells you to use", async () => {
+    FACTS = [CLOUD_HELD];
+    const el = await render(null);
+    await act(async () => { organizeButton(el)!.click(); });
+    await act(async () => { confirmButton(el)!.click(); });
+    expect(el.textContent).toContain("then ask again and reopen ohmail");
+    expect(organizeButton(el),
+      "the answer said to ask again and the button it meant was gone")
+      .not.toBeNull();
+  });
+
+  it("…and a request that CAN succeed still spends its button", async () => {
+    // The negative control: a beatable holder's request is one-shot, so the button goes and the
+    // acknowledgement stands in its place until the role confirms it.
+    const el = await render(null);
+    await act(async () => { organizeButton(el)!.click(); });
+    await act(async () => { confirmButton(el)!.click(); });
+    expect(organizeButton(el), "a spent one-shot request still offered its button").toBeNull();
+  });
+
   it("is NOT offered on a TOMBSTONE — the handler refuses that row and so does the pane", async () => {
     FACTS = [REMOVED];
     const el = await render(null);

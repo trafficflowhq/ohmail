@@ -660,7 +660,20 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
                     })
                   : t("readerSinceUnknown", { since: day(claimTarget.organizedBy?.since ?? null) })
           }
-          {...(claim === "rest" && !reclaimed.has(claimTarget.id)
+          /* THE RETRY THE ANSWER TELLS SOMEBODY TO USE HAS TO BE THERE WHEN THEY COME BACK.
+              `reclaimed` records that a request was made and is never cleared, which is right for
+              a request that can succeed: the row's own role is what ends it. A BLOCKED request can
+              never succeed — the holder keeps the mailbox for as long as it is checking in — so
+              its entry would hide the button for the life of the pane, and the sentence it just
+              printed says "stop it organizing there, then ask again". That is the dead end this
+              screen exists to close, arriving through the one branch whose whole purpose is to
+              tell somebody to come back.
+
+              The order the answer gives IS the reliable one, which is why it is worth keeping
+              reachable: the stamp is cleared by the STAND-DOWN write (`engine.ts:2038`), and once
+              the other holder has gone quiet the lease returns available rather than standing this
+              install down — so nothing clears it and the relaunch spends it. */
+          {...(claim === "rest" && (!reclaimed.has(claimTarget.id) || claimWouldBeRefused(claimTarget))
             ? {
                 action: (
                   <Button variant="primary" onClick={() => setClaim("confirm")}>
