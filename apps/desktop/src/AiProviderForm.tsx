@@ -32,7 +32,7 @@
  * "A key is stored" is the whole of what is ever said about it.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import {
   Button,
@@ -275,20 +275,31 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
   const [draft, setDraft] = useState("");
   const [saved, setSaved] = useState(false);
 
-  const land = useCallback(
-    (next: LocalAiStatus | null) => {
-      setStatus(next);
-      // Cleared on every landing, success or not: a field still holding a key after a save is a
-      // secret sitting in the window's memory for as long as the form is open.
-      setApiKey("");
-      if (next?.provider) {
-        setClassify(next.settings[next.provider].classifyModel);
-        setDraft(next.settings[next.provider].draftModel);
-      }
-      onStatus?.(next);
-    },
-    [onStatus],
-  );
+  /**
+   * THE HOST'S ECHO THROUGH A REF, so the load effect below keeps its once-per-mount `[]` deps.
+   *
+   * This is not tidiness. `land` closes over `onStatus`, and with `land` in the effect's deps a
+   * host that passes an inline arrow — `onStatus={(s) => setThing(s)}`, the obvious way to write
+   * it — gives a new function every render, a new `land`, a re-run of the effect, a `setStatus`,
+   * and another render. A read loop against the engine for as long as the form is open. The pane
+   * that used to hold this form got away with it because its one host passes a `useState` setter,
+   * which is stable; the form now has a second host and the first-run flow has no reason to know
+   * that rule. `AwayResponderRow` holds its echo the same way, for the same reason.
+   */
+  const echo = useRef(onStatus);
+  echo.current = onStatus;
+
+  const land = useCallback((next: LocalAiStatus | null) => {
+    setStatus(next);
+    // Cleared on every landing, success or not: a field still holding a key after a save is a
+    // secret sitting in the window's memory for as long as the form is open.
+    setApiKey("");
+    if (next?.provider) {
+      setClassify(next.settings[next.provider].classifyModel);
+      setDraft(next.settings[next.provider].draftModel);
+    }
+    echo.current?.(next);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;

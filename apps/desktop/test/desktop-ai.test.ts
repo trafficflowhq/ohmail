@@ -613,3 +613,56 @@ describe("the AI provider form never sends a key to the vendor it was not typed 
     expect(el.textContent?.trim()).toBe("");
   });
 });
+
+/**
+ * THE FORM READS THE ENGINE ONCE PER MOUNT, whatever shape the host's callback has.
+ *
+ * `AiProviderForm` is mounted by two hosts now — that is the whole reason it is a file — and the
+ * obvious way to write the second one is `onStatus={(s) => setThing(s)}`. An inline arrow is a new
+ * function on every render, so with the callback in the load effect's dependency chain it would
+ * give a new `land`, a re-run of the effect, a `setStatus`, and another render: a read loop
+ * against the engine for as long as the form is open. The pane this was extracted from got away
+ * with it because its one host passes a `useState` setter. The echo goes through a ref for that
+ * reason, and this is the case that would notice if it stopped.
+ *
+ * MUTATION WATCHED: put `onStatus` back in `land`'s dependency array and read `echo.current` from
+ * the closure instead — the GET count runs away and this goes red.
+ */
+describe("the model form reads the engine once, however the host wrote its callback", () => {
+  it("does not re-read when the host passes a fresh callback on every render", async () => {
+    const { asked } = engine(() => ({ status: 200, body: JSON.stringify(READY) }));
+    const el = document.createElement("div");
+    document.body.appendChild(el);
+    const r = createRoot(el);
+    const paint = async () =>
+      act(async () => {
+        r.render(
+          h(
+            NextIntlClientProvider,
+            { locale: "en", messages: en as never, timeZone: "Europe/Zurich" },
+            // A NEW ARROW EVERY TIME, which is what a host writes without thinking about it.
+            h(DesktopAiSettings, { door: "local" as const, onStatus: (s: LocalAiStatus | null) => void s }),
+          ),
+        );
+      });
+
+    await paint();
+    for (let i = 0; i < 6; i++) {
+      await paint();
+      await act(async () => { await new Promise((res) => setTimeout(res, 2)); });
+    }
+    for (let i = 0; i < 20; i++) await act(async () => { await new Promise((res) => setTimeout(res, 2)); });
+
+    const gets = asked.filter(
+      (a) => a.command === "engine_request" && a.url === "/local/ai" && a.method !== "PUT" && a.method !== "DELETE",
+    );
+    expect(
+      gets.length,
+      `the form re-read the engine ${gets.length} times across seven renders — the host's callback ` +
+        "is in the load effect's dependency chain",
+    ).toBe(1);
+
+    await act(async () => { r.unmount(); });
+    el.remove();
+  });
+});
