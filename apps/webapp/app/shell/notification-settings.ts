@@ -136,9 +136,15 @@ export interface NotificationHost {
   /**
    * `opts.forceAnnounce` — do NOT accept a stored id as proof this browser owns the row.
    *
-   * Only the BOOT path passes it; see {@link reconcileWakeRegistration}. The settings pane keeps
-   * the cheap `unchanged` shortcut because a person pressing a switch has already proved whose
-   * session it is.
+   * BOTH doors pass it, because both go through {@link applyWakeIntent}, which sets it
+   * unconditionally.
+   *
+   * An earlier version of this sentence said the settings pane kept the cheap `unchanged`
+   * shortcut, "because a person pressing a switch has already proved whose session it is". That
+   * was true when it was written and false one commit later, and the reasoning was wrong as well
+   * as the fact: a press proves the SESSION, never which account owns the registration already
+   * live on this browser — which is the only question `unchanged` is being asked. A mount proves
+   * even less.
    */
   syncSubscription?: (wanted: boolean, opts?: { forceAnnounce?: boolean }) => Promise<PushSyncOutcome | null>;
 }
@@ -259,7 +265,7 @@ export function writeNotifyStateUnchecked(
  * Renaming is the cheap half of stopping that recurring: `writeNotifyStateUnchecked` is still
  * exported (its own behaviour is under test in `web-push-subscription.test.ts`, and this module
  * uses it), but it no longer reads like the thing to call. The census in
- * `sign-in-reconciles-wake.test.ts` is the half that actually holds.
+ * `settings-pane-rearms-wake.test.tsx` is the half that actually holds.
  */
 export function disarmNotifyState(title: string, body: string): Promise<void> {
   return writeNotifyStateUnchecked(false, title, body);
