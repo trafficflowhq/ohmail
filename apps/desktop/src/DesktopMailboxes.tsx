@@ -795,10 +795,12 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
         <SettingsActions>
           <span className="set-note-inline">
             {/* THE CEREMONY PROMISES WHAT THIS ENGINE WILL DO, and the two engines do different
-                things. The modern sentence says "on its next pass"; a pre-role engine stopped its
-                poll timer at the stand-down and spends the stamp at its next process assembly, so
-                on that one the confirmation contradicted the acknowledgement it produced one press
-                later. It also names no holder, because a legacy row carries no holder columns. */}
+                things. The modern sentence says "on its next pass" — and for a while this comment
+                said that while the copy still said "quit and reopen", which is the shape a claim
+                takes when the code is corrected and the sentence is not. A pre-role engine stopped
+                its poll timer at the stand-down and spends the stamp at its next process assembly,
+                so on that one the confirmation would contradict the acknowledgement it produces
+                one press later. It also names no holder, because a legacy row carries none. */}
             {claimTarget.legacyStandDown === true
               ? t("organizeHereWhatLegacy")
               : claimWouldBeRefused(claimTarget)
@@ -917,14 +919,21 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
                  so there a restart is not a superstition, it is the mechanism. The sentence is back
                  under a name that says when it applies, and it persists until the relaunch clears
                  the row — because the instruction is outstanding until then. */
-              /* ONE MECHANISM, TWO OUTCOMES. The relaunch is what spends the stamp on both
-                 engines — `world` is assembled once (`engine.ts:892`), `takeoverAuthorized` is
-                 derived from it once (`:1788`, and its own comment at `:1914` says "read at
-                 assembly"), the route writes only the database row, and the running loop's
-                 stand-down path CLEARS the stamp (`:1951`). Arming the live loop — re-reading the
-                 column each cycle, or having the route poke the running engine — would let the
-                 press be honoured on the next pass instead; until it does, this sentence is what
-                 is true.
+              /* TWO MECHANISMS, AND THIS COMMENT USED TO CLAIM THERE WAS ONE. It read "the
+                 relaunch is what spends the stamp on both engines ... Arming the live loop —
+                 re-reading the column each cycle — would let the press be honoured on the next
+                 pass instead; until it does, this sentence is what is true." **The live loop is
+                 armed.** `mayOrganize` re-reads `takeover_authorized_at` at the top of every gate
+                 (`apps/sidecar/src/engine.ts`, "THE STAMP IS RE-READ EVERY RUN"), and it had to
+                 be: a polling reader otherwise DESTROYS the press, because the poll asks with
+                 `takeover: "none"`, is refused by the very claim being taken over, and the refusal
+                 arm clears the row. So a modern reader is spent on its next poll, and the copy
+                 says so.
+
+                 The LEGACY row is the one the relaunch is still the mechanism for, and the reason
+                 is the roster rather than the gate: it is `disabled`, `loadEnabledMailboxes`
+                 filters on `ne(status, 'disabled')`, so no gate ever runs for it and the stamp is
+                 spent at the next process assembly.
 
                  What still differs is where losing leaves this install, and there are three
                  answers rather than one. A modern reader keeps reading — that is what a reader IS.

@@ -249,11 +249,15 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     expect(bridged[0]!.method).toBe("POST");
     expect(JSON.parse(bridged[0]!.body!)).toEqual({ mailboxId: "mbx-reader" });
 
-    // THE SENTENCE, AND IT NO LONGER SENDS ANYBODY TO RESTART THE APP. "Quit and reopen" was true
-    // when the engine read the lease only at launch; the gate spends the stamp on its next tick
-    // now, so the instruction was to do something neither needed nor helpful.
+    /* THE SENTENCE, AND IT NO LONGER SENDS ANYBODY TO RESTART THE APP. This comment said exactly
+       that while the assertion under it pinned the restart sentence — the copy came back and the
+       expectation was re-pinned to it, leaving the comment as a false claim about the product.
+       Both agree now, and the fact they agree ON is `mayOrganize`: the gate re-reads
+       `takeover_authorized_at` at the top of every run, so a press on a running install is spent
+       on the next poll. Its own header calls that "a fact rather than a sentence". */
     const text = el.textContent ?? "";
-    expect(text).toContain("Quit and reopen ohmail to organize this mailbox");
+    expect(text).toContain("takes over on its next pass");
+    expect(text, "the retired restart instruction is back").not.toContain("Quit and reopen");
 
     // The row's own state moved, so the pane re-reads rather than keeping the banner on screen.
     expect(refreshed).toBe(1);
@@ -270,7 +274,7 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     await act(async () => { organizeButton(el)!.click(); });
     await act(async () => { confirmButton(el)!.click(); });
     expect(el.textContent).toContain("This machine already organizes that mailbox");
-    expect(el.textContent).not.toContain("Quit and reopen ohmail to organize this mailbox");
+    expect(el.textContent).not.toContain("takes over on its next pass");
   });
 
   /**
@@ -287,7 +291,7 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     await act(async () => { organizeButton(el)!.click(); });
     await act(async () => { confirmButton(el)!.click(); });
     const text = el.textContent ?? "";
-    expect(text).toContain("Quit and reopen ohmail to organize this mailbox");
+    expect(text).toContain("takes over on its next pass");
     expect(text, "the request was reported as a certainty the lease can refuse")
       .toContain("it keeps the mailbox and this one goes on reading");
     // A spinner claims something is in flight. Nothing is: the request is written and done.
@@ -304,13 +308,13 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     const el = await render(null);
     await act(async () => { organizeButton(el)!.click(); });
     await act(async () => { confirmButton(el)!.click(); });
-    expect(el.textContent).toContain("Quit and reopen ohmail to organize this mailbox");
+    expect(el.textContent).toContain("takes over on its next pass");
 
     // The next poll: the gate promoted this install.
     FACTS = [{ ...READER, organizerRole: "organizer", organizedBy: null, organizerState: null }];
     await act(async () => { root!.render(await paneNode(null)); });
     expect(el.textContent, "a completed takeover still reported itself as pending")
-      .not.toContain("Quit and reopen ohmail to organize this mailbox");
+      .not.toContain("takes over on its next pass");
     expect(el.textContent).not.toContain("Organized by");
   });
 
@@ -401,21 +405,29 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
   });
 
   /**
-   * BOTH ENGINES NEED THE RELAUNCH, and the split that said otherwise was a distinction the code
-   * does not make. `world` is assembled once (`engine.ts:892`) and `takeoverAuthorized` derived
-   * from it once (`:1788`); the route writes only the row, so the running loop keeps passing
-   * `takeover: "none"` and its stand-down path clears the stamp. If the engine ever re-reads that
-   * column per cycle, the press becomes effective on the next pass and this expectation is the one
-   * that should change first.
+   * THE TWO ENGINES DIFFER AGAIN, AND THIS DOCBLOCK NAMED ITS OWN FALSIFICATION CONDITION.
+   *
+   * It read "BOTH ENGINES NEED THE RELAUNCH ... If the engine ever re-reads that column per cycle,
+   * the press becomes effective on the next pass and this expectation is the one that should
+   * change first." That condition has been met: `mayOrganize` re-reads
+   * `takeover_authorized_at` at the top of every gate (`apps/sidecar/src/engine.ts`, "THE STAMP
+   * IS RE-READ EVERY RUN"), which it did precisely because a polling reader would otherwise
+   * DESTROY the stamp — the poll asks with `takeover: "none"`, is refused, and the refusal arm
+   * clears the row. So the modern reader is spent on the next poll and the restart sentence was
+   * an instruction to do something neither needed nor helpful.
+   *
+   * The LEGACY row keeps it, and the case above is where that is pinned: it is `disabled`, so
+   * `loadEnabledMailboxes` (`ne(status, 'disabled')`) keeps it off the roster and no gate ever
+   * runs for it — the stamp is spent at the next process assembly, which is the relaunch.
    */
-  it("tells a MODERN reader the same thing, because the same thing is true of it", async () => {
+  it("tells a MODERN reader the next pass, which is what its gate actually does", async () => {
     const el = await render(null);
     await act(async () => { organizeButton(el)!.click(); });
     await act(async () => { confirmButton(el)!.click(); });
     const text = el.textContent ?? "";
-    expect(text).toContain("Quit and reopen ohmail to organize this mailbox");
-    expect(text, "the modern engine was promised a pass its running loop never makes")
-      .not.toContain("takes over on its next pass");
+    expect(text).toContain("takes over on its next pass");
+    expect(text, "the modern engine was sent to restart for a stamp its gate re-reads")
+      .not.toContain("Quit and reopen");
     // A reader that loses the race keeps reading — that is what a reader IS, and it is the one
     // thing the legacy row cannot say.
     expect(text).toContain("this one goes on reading");
@@ -434,7 +446,7 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     const el = await render(null);
     await act(async () => { organizeButton(el)!.click(); });
     const text = el.textContent ?? "";
-    expect(text).toContain("Quit and reopen ohmail");
+    expect(text).toContain("on its next pass");
     expect(text, "the renewal race is the only thing that saves the peer, and it is stated")
       .toContain("unless zorin-9950 renews its claim first");
     expect(text, "a displaceable peer was described as unbeatable")
@@ -475,8 +487,11 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     const text = el.textContent ?? "";
     expect(text).toContain("keeps this mailbox for as long as it is still checking in");
     expect(text).toContain("whatever was asked for here");
-    // The reliable order, because the request itself is not durable against the running loop.
-    expect(text).toContain("then ask again and reopen ohmail");
+    /* The reliable order. It used to end "and reopen ohmail", which was the running loop's
+       staleness expressed as an instruction; the gate re-reads the stamp now, so asking again
+       after the other organizer stops is the whole of it. */
+    expect(text).toContain("then ask again");
+    expect(text, "the retired restart instruction is back").not.toContain("reopen ohmail");
     expect(text, "a blocked request was answered with the local peer's renewal race")
       .not.toContain("renews its claim first");
   });
@@ -500,7 +515,7 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     await act(async () => { organizeButton(el)!.click(); });
     const text = el.textContent ?? "";
     expect(text, "a quiet holder is beatable and the confirmation withheld that")
-      .toContain("Quit and reopen ohmail");
+      .toContain("on its next pass");
     expect(text).not.toContain("cannot take it yet");
   });
 
@@ -559,7 +574,7 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     const el = await render(null);
     await act(async () => { organizeButton(el)!.click(); });
     await act(async () => { confirmButton(el)!.click(); });
-    expect(el.textContent).toContain("then ask again and reopen ohmail");
+    expect(el.textContent).toContain("then ask again");
     expect(organizeButton(el),
       "the answer said to ask again and the button it meant was gone")
       .not.toBeNull();
