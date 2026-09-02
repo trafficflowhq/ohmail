@@ -1138,6 +1138,7 @@
     "notifyAskFirst": "Dein Ger\u00e4t fragt beim ersten Einschalten nach.",
     "notifyDenied": "Dieses Ger\u00e4t lehnt Benachrichtigungen von ohmail ab. Das \u00e4nderst du in den Systemeinstellungen, nicht hier.",
     "notifyUnsupported": "Dieses Ger\u00e4t hat keine Benachrichtigungszentrale, es gibt hier also nichts zu senden.",
+    "notifyClosedBody": "Neue Mail.",
     "vipTitle": "VIP — benachrichtigt immer",
     "learnedYes": "Ja",
     "learnedNo": "Nein",

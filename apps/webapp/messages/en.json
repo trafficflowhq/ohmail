@@ -1138,6 +1138,7 @@
     "notifyAskFirst": "Your device will ask the first time you turn this on.",
     "notifyDenied": "This device is set to refuse notifications from ohmail. That is changed in the system settings, not here.",
     "notifyUnsupported": "This device has no notification centre, so there is nothing to send here.",
+    "notifyClosedBody": "New mail.",
     "vipTitle": "VIP — always notifies",
     "learnedYes": "Yes",
     "learnedNo": "No",

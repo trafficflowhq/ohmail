@@ -61,7 +61,9 @@ import { PANE_IDS, type PaneId } from "../shell/routing";
 import {
   browserNotificationHost,
   readChannels,
+  subscriptionWanted,
   writeChannels,
+  writeNotifyState,
   type NotificationHost,
 } from "../shell/notification-settings";
 import { useZoneNav } from "../shell/zone-nav";
@@ -799,10 +801,22 @@ export function SettingsView({
   /* A press writes, and the pane renders what was written — Lane D's control grammar. The master
      is the only switch that can ASK: a permission prompt has to come from a user gesture, and one
      fired on mount is the behaviour browsers punish with a permanent block. */
-  const setNotify = useCallback((next: NotificationChannels) => {
+  const setNotify = useCallback((next: NotificationChannels, at: NoticePermission) => {
     setNotifyChannels(next);
     writeChannels(next);
-  }, []);
+    /* THE TWO THINGS THAT LIVE OUTSIDE REACT, both derived from the same `next` so they cannot
+       disagree with what was just stored:
+
+       · the wake REGISTRATION — whether this browser should be woken while it is closed. Only
+         the master and the new-mail switch bear on it (see `subscriptionWanted`), and dropping
+         the subscription is what makes "off" mean the server has nothing to dial, rather than
+         something delivered and then discarded;
+       · the WORDS the service worker may draw, in this user's language, because that worker
+         never reads the push payload and so has no other source for them. */
+    const wanted = subscriptionWanted(next, at);
+    void writeNotifyState(wanted, "ohmail", t("notifyClosedBody"));
+    void notificationHost.syncSubscription?.(wanted);
+  }, [notificationHost, t]);
   const pressMaster = useCallback(async (want: boolean) => {
     let state = notificationHost.permission();
     if (want && state === "default") {
@@ -812,7 +826,7 @@ export function SettingsView({
     /* A refusal leaves the switch OFF. Storing `master: true` under a denied OS would render a
        switch claiming ON over a platform that draws nothing — the exact lie this pane replaced. */
     if (want && state !== "granted") return;
-    setNotify({ ...notifyChannels, master: want });
+    setNotify({ ...notifyChannels, master: want }, state);
   }, [notificationHost, notifyChannels, setNotify]);
   const [vips, setVips] = useState<string[] | null>(null);
   const [learned, setLearned] = useState<"open" | "accepted" | "dismissed">("open");
@@ -1078,7 +1092,9 @@ export function SettingsView({
                             <Switch
                               checked={notifyChannels[r.key]}
                               ariaLabel={t(r.label)}
-                              onChange={(v) => setNotify({ ...notifyChannels, [r.key]: v })}
+                              onChange={(v) =>
+                                setNotify({ ...notifyChannels, [r.key]: v }, notifyPermission)
+                              }
                             />
                           }
                         />
@@ -1091,7 +1107,9 @@ export function SettingsView({
                             checked={notifyChannels.showSenderAndSubject}
                             ariaLabel={t("notifyIdentify")}
                             onChange={(v) =>
-                              setNotify({ ...notifyChannels, showSenderAndSubject: v })
+                              setNotify(
+                                { ...notifyChannels, showSenderAndSubject: v }, notifyPermission,
+                              )
                             }
                           />
                         }

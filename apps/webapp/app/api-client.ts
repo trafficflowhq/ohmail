@@ -1429,6 +1429,31 @@ export interface SeedReviewWire {
  * hook state from that echo so the open tab re-partitions with the value the server actually stored.
  * It is a settings write only — the dial changes what the Screener SHOWS, never where mail lives.
  */
+/**
+ * WAKE REGISTRATIONS — the three calls that let this browser be woken while it is closed.
+ *
+ * `vapidKey` comes FIRST and is not optional: a browser subscribes by handing its push service a
+ * server's public key, and from then on renders only wakes signed by the matching private half.
+ * The key is per-deployment — the hosted service, an operator's own install — so it has to be
+ * asked for rather than compiled in. A deployment with no keypair answers `null`, which is a
+ * supported state and not a failure: the app says so and does not subscribe.
+ *
+ * `subscribe` sends the three values a `PushSubscription` yields and nothing else. No device
+ * name, no locale, no account field — the row is keyed by the endpoint, and the session is what
+ * says whose it is.
+ */
+export const push = {
+  vapidKey: () => api<{ publicKey: string | null }>("/push/vapid-key"),
+  subscribe: (endpoint: string, p256dh: string, auth: string) =>
+    api<{ id: string }>("/push/subscriptions", {
+      method: "POST",
+      body: { transport: "webpush", endpoint, p256dh, auth },
+    }),
+  /** Idempotent by intent: a 404 means the row is already gone, which is the desired state. */
+  unsubscribe: (id: string) =>
+    api<void>(`/push/subscriptions/${encodeURIComponent(id)}`, { method: "DELETE" }),
+};
+
 export const consent = {
   state: () => api<ConsentStateWire>("/consent"),
   /**
