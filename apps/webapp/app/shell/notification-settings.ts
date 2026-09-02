@@ -564,7 +564,7 @@ export async function revokeWakeRegistration(): Promise<PushSyncOutcome | null> 
    */
   let timer: ReturnType<typeof setTimeout> | undefined;
   const budget = new Promise<PushSyncOutcome>((resolve) => {
-    timer = setTimeout(() => resolve("row_remains"), REVOKE_BUDGET_MS);
+    timer = setTimeout(() => resolve("row_remains"), WAKE_BUDGET_MS);
   });
   try {
     return await Promise.race([revokeWakeRegistrationNow(), budget]);
@@ -574,13 +574,17 @@ export async function revokeWakeRegistration(): Promise<PushSyncOutcome | null> 
 }
 
 /**
- * How long a sign-out will wait for the revoke before going on without it.
+ * How long either end of the session will wait on the push queue before going on without it.
  *
  * Long enough for an ordinary round trip on a poor connection, short enough that nobody reads it
  * as a hang. The number is a bound on a BEST-EFFORT step, not a request deadline: what it
- * protects is the two acts after it, which are the ones a user is entitled to.
+ * protects is the acts around it, which are the ones a user is entitled to — the sign-out's
+ * logout and wipe on one end ({@link revokeWakeRegistration}), the shell's own boot on the other
+ * ({@link reconcileWakeRegistration}). ONE constant because it is one hazard: every call on both
+ * paths goes through the same module-global {@link serialize} chain, so a single stalled `fetch`
+ * is what both budgets exist to survive.
  */
-const REVOKE_BUDGET_MS = 4_000;
+const WAKE_BUDGET_MS = 4_000;
 
 /** The revoke itself. Never throws; see {@link revokeWakeRegistration} for the bound around it. */
 async function revokeWakeRegistrationNow(): Promise<PushSyncOutcome | null> {
@@ -594,5 +598,69 @@ async function revokeWakeRegistrationNow(): Promise<PushSyncOutcome | null> {
        no `apiConfigured`, or a platform without one. Reported as the state that is true either
        way: nothing here proved the server row gone. */
     return "row_remains";
+  }
+}
+
+/**
+ * THE OTHER END OF THE SESSION — what {@link revokeWakeRegistration} undoes, put back.
+ *
+ * ── THE DEFECT THIS EXISTS FOR ────────────────────────────────────────────────────────────
+ *
+ * Sign-out deletes this browser's push row and writes the worker's notify-state `enabled: false`.
+ * Nothing used to re-establish either. The channels in `localStorage` deliberately SURVIVE a
+ * sign-out — they are a per-install preference, like the theme, and sweeping them at sign-out
+ * would be honest about the wire and wrong about the person — and the OS permission survives
+ * with them. So the same reader signing back in on their own laptop got `subscriptionWanted()`
+ * true, every switch rendered ON, and no push row and a worker refusing to draw behind them.
+ * Closed-browser new-mail notices were silently off, with nothing on screen to say so.
+ *
+ * The only reconcile in the app was the settings pane's mount effect, so the switches told the
+ * truth again only if the reader happened to open Settings. This runs at shell boot instead —
+ * once per sign-in, before anybody has been asked to go looking.
+ *
+ * ── BOUNDED, FOR THE REASON THE REVOKE IS ─────────────────────────────────────────────────
+ *
+ * Same hazard, same shape, same {@link WAKE_BUDGET_MS}. Every call below joins the module-global
+ * {@link serialize} chain, whose ops are `fetch`es with no timeout, so an unguarded `await` here
+ * would hand a captive portal the power to stall the shell's boot path. The loser of the race is
+ * NOT cancelled: a late registration is a free win, because nothing downstream reads this
+ * function's answer as permission to do anything. `not_registered` is the honest reply on a
+ * timeout — nothing here proved a row exists.
+ *
+ * Never throws, for the reason the revoke does not: callers' tests mock `../api-client`, and a
+ * missing export must not throw out of a boot effect and take the rest of the shell with it.
+ */
+export async function reconcileWakeRegistration(body: string): Promise<PushSyncOutcome | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const budget = new Promise<PushSyncOutcome>((resolve) => {
+    timer = setTimeout(() => resolve("not_registered"), WAKE_BUDGET_MS);
+  });
+  try {
+    return await Promise.race([reconcileWakeRegistrationNow(body), budget]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/**
+ * The reconcile itself. Never throws; see {@link reconcileWakeRegistration} for the bound.
+ *
+ * The words go FIRST, and unlike the revoke's ordering this one has a second reason beyond "it
+ * is the half that needs no network". A sign-out whose DELETE failed leaves a live server row
+ * behind an `enabled: false` worker — the one arrangement in which a push arrives and is
+ * deliberately dropped. Writing the state before touching the subscription closes that window on
+ * the first boot rather than the second, and it cannot mis-fire in the other direction: an
+ * `enabled: true` with no subscription is inert, because no push can arrive to read it.
+ */
+async function reconcileWakeRegistrationNow(body: string): Promise<PushSyncOutcome | null> {
+  const wanted = subscriptionWanted(readChannels(), browserPermission());
+  try { await writeNotifyState(wanted, "ohmail", body); } catch { /* no Cache API, or refused */ }
+  try {
+    return (await browserNotificationHost.syncSubscription?.(wanted)) ?? null;
+  } catch {
+    /* The host's own guard threw before its try block could catch — a mocked `../api-client`
+       with no `apiConfigured`, or a platform without one. Reported as the state that is true
+       either way: nothing here established a registration this browser can rely on. */
+    return "not_registered";
   }
 }

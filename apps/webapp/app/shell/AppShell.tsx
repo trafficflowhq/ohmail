@@ -193,6 +193,7 @@ import { FolderView } from "../views/FolderView";
 import { TriageView } from "../views/TriageView";
 import { ComposeView } from "../views/ComposeView";
 import { DraftsView } from "../views/DraftsView";
+import { reconcileWakeRegistration } from "./notification-settings.js";
 import { usePersistedFlag, UI_KEYS } from "./persisted-ui.js";
 
 interface ReadsAiChipEntity {
@@ -1290,6 +1291,38 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
     if (!themeFaceKnown) return;
     adoptAccountFace(accountThemeFace);
   }, [adoptAccountFace, accountThemeFace, themeFaceKnown, consentStandalone]);
+  /**
+   * BEING WOKEN, RECONCILED AT BOOT — the sign-in counterpart of the sign-out revoke.
+   *
+   * Sign-out drops this browser's push row and tells the worker to stop drawing. The channels in
+   * `localStorage` and the OS permission both SURVIVE it deliberately — they are a per-install
+   * preference, like the theme — so the same reader signing back in on their own laptop had every
+   * switch rendering ON over no registration at all, and closed-browser new-mail notices silently
+   * off. Nothing re-established either: the app's ONLY reconcile was `SettingsView`'s mount
+   * effect, which is to say it happened if and only if somebody went looking in Settings.
+   *
+   * Here instead, because the shell boots exactly once per sign-in and the settings pane may
+   * never be opened at all. `demo` is the whole gate: the shell renders for the demo or for a
+   * validated session, so `!demo` IS the signed-in reader (`showDesktopCta`'s docstring makes the
+   * same argument). Every narrower condition is already inside — `syncSubscription` is a no-op
+   * without `apiConfigured()`, which is every desktop build, and `syncWebPush` answers
+   * "unsupported" where there is no service worker.
+   *
+   * NO STATE IS WRITTEN FROM HERE, and that is deliberate rather than incidental: the pane owns
+   * the sentence about delivery, and an unconditional `setState` in a boot effect makes every
+   * test that mounts this shell without `act` print a React warning — a suite that prints
+   * warnings is one where a real one is not noticed. The call is bounded internally
+   * ({@link reconcileWakeRegistration}); it must never be awaited here, because it joins a
+   * module-global queue of `fetch`es that have no timeout.
+   */
+  useEffect(() => {
+    if (demo) return;
+    void reconcileWakeRegistration(t("settings.notifyClosedBody"));
+    // Boot and door only. `t` is deliberately not a dependency: it changes identity on a locale
+    // adoption, and re-running then would reconcile a second time for a string the worker only
+    // reads when it draws.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [demo]);
   /**
    * "APPLY FOR ALL DEVICES" — the face's account write, folded to ONE nullable callback for
    * both consumers (the Settings row's scope line and the Option B offer). Null on the demo
