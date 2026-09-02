@@ -21,7 +21,11 @@ import { effectForDestination } from "../rules.js";
 import { SENT_SHAPED_CANONICAL } from "./imap-types.js";
 import { providerAuthservIds } from "../authserv-ids.js";
 
-export interface PersistedFolderCursor { uidValidity: string; uidNext: number; highestModseq: string; }
+export interface PersistedFolderCursor {
+  uidValidity: string; uidNext: number; highestModseq: string;
+  /** Mail 0083 — the folder's `EXISTS`. Absent ⇒ the stored value is LEFT ALONE, not nulled. */
+  serverExists?: number;
+}
 /**
  * One message this mailbox already stores, as the adapter's known-set needs it.
  *
@@ -2116,18 +2120,38 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       uidValidity: r.uidvalidity != null ? String(r.uidvalidity) : "0",
       uidNext: r.uidnext != null ? Number(r.uidnext) : 0,
       highestModseq: r.highestmodseq != null ? String(r.highestmodseq) : "0",
+      // Mail 0083. Carried on the read so `buildCursor`'s round trip preserves it — without this
+      // the value written by one cycle would be absent from the cursor the NEXT cycle hands back
+      // to `upsertMailboxFolder`, which is harmless only because the writer skips an absent one.
+      // Carrying it keeps the cursor a faithful round trip of the row.
+      ...(r.serverExists == null ? {} : { serverExists: r.serverExists }),
     }));
   }
 
   async upsertMailboxFolder(mailboxId: string, folder: string, cursor: PersistedFolderCursor): Promise<void> {
+    /* -- `server_exists` IS SPREAD, NOT ASSIGNED (mail 0083) ---------------------------------
+     *
+     * Absent means "this pass did not open the folder" — the passive fast path skips the SELECT
+     * on a provably unchanged folder, and every fake adapter omits it. Assigning `?? null` there
+     * would ERASE the last count somebody actually observed, once per cycle, for every folder the
+     * optimisation covers: the strip's denominator would collapse to the folders that happened to
+     * change, and the progress it reports would jump around for no reason a user could see.
+     *
+     * So an absent value writes nothing at all, on both arms of the upsert. That is also why the
+     * column is nullable rather than defaulted: NULL means "never opened under this build", which
+     * is a different fact from zero.
+     */
+    const exists = cursor.serverExists;
     await this.db.insert(mailboxFolders).values({
       mailboxId, folder,
       uidvalidity: BigInt(cursor.uidValidity), uidnext: BigInt(cursor.uidNext), highestmodseq: BigInt(cursor.highestModseq),
+      ...(exists === undefined ? {} : { serverExists: exists }),
     }).onConflictDoUpdate({
       target: [mailboxFolders.mailboxId, mailboxFolders.folder],
       set: {
         uidvalidity: BigInt(cursor.uidValidity), uidnext: BigInt(cursor.uidNext),
         highestmodseq: BigInt(cursor.highestModseq), updatedAt: new Date(),
+        ...(exists === undefined ? {} : { serverExists: exists }),
       },
     });
   }

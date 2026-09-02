@@ -45,8 +45,16 @@ const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
        `desired_folder = 'ohmail/Screener'` with no cutline, so any client that trusts it rather
        than partitioning locally sees the unfiltered backlog, and `suggestable.credits` prices it.
      · DESKTOP / Local tier — `apps/desktop/src/no-api-client.ts` pins `apiConfigured()` false, so
-       the consent state never arrives and the partition is never switched on at all. The sidecar
-       serves no consent endpoint to switch it on with.
+       the consent state never arrives and the partition is never switched on at all.
+
+       AMENDED 2026-09-01 (mail 0083): the second half of this bullet — *"The sidecar serves no
+       consent endpoint to switch it on with"* — is no longer true. `consentRoutes` are mounted on
+       `localRoutes`, so the standalone door answers `GET /consent` and `PATCH /consent/settings`
+       and the window is storable and readable there. What is STILL not covered is the first half:
+       the desktop window's own client is pinned to "no API", so it does not ask. That is a client
+       wiring item, not a missing endpoint, and it is the smaller of the two by a long way — the
+       endpoint's absence also meant the sidecar's CYCLE had no cutoff to apply, which is fixed
+       with it.
 
    ── IT TELLS THE CLIENTS ──────────────────────────────────────────────────────────────────
 

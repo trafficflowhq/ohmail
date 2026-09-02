@@ -19,11 +19,28 @@
  *
  * ── ONE DOOR ONLY, AND IT IS THE PRODUCT RATHER THAN THE PLUMBING ───────────────────────────
  *
- * Wired on the HOSTED door alone (`consentDoorFor` in `doors.ts`). A standalone engine would answer
- * `/consent` no better than it answers `/away-responder` — there is no account row behind it, no
- * watermark for the automatic suggestion pass to measure from, and no ledger for the opt-in to
- * spend against. Its window keeps `DEFAULT_DORMANCY_DAYS`, which is the window its own engine uses
- * unasked, and offers no dial for a number there is nowhere to store.
+ * Wired on the HOSTED door alone (`consentDoorFor` in `doors.ts`).
+ *
+ * ── AMENDED 2026-09-01, mail 0083: THE STANDALONE HALF OF THAT ARGUMENT WAS FALSE ───────────
+ *
+ * It read: *"A standalone engine would answer `/consent` no better than it answers
+ * `/away-responder` — there is no account row behind it, no watermark for the automatic suggestion
+ * pass to measure from, and no ledger for the opt-in to spend against. Its window keeps
+ * `DEFAULT_DORMANCY_DAYS`, which is the window its own engine uses unasked, and offers no dial for
+ * a number there is nowhere to store."*
+ *
+ * There IS an account row: the standalone store is the mail schema in full, `account_settings`
+ * included, and `dormancy_days`, `screening_scope` and `screening_baseline_at` all live in it. And
+ * the closing clause was not merely wrong about storage — it was wrong about behaviour, in the
+ * direction that costs the most. The standalone engine did NOT use `DEFAULT_DORMANCY_DAYS`
+ * "unasked": it had no cutoff at all (`engine.ts` contained zero occurrences of `screeningCutoff`),
+ * so it screened every backfilled message regardless of age. On a mailbox with a decade of history
+ * that is a decade of it moved into `ohmail/Screener`, one physical IMAP move at a time.
+ *
+ * `consentRoutes` are mounted on `localRoutes` now, and the sidecar's cycle threads the resolved
+ * cutoff exactly as the hosted worker does. The two clauses that remain TRUE of a standalone
+ * install are the AI ones — no ledger to spend against, no watermark for the automatic suggestion
+ * pass — and those gate the auto-suggest opt-in, not the window.
  *
  * ── WHAT A REFUSAL MEANS HERE ───────────────────────────────────────────────────────────────
  *

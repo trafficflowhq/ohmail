@@ -3194,6 +3194,13 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           uidValidity: truncated || flagsTruncated ? (prev?.uidValidity ?? "0") : String(curUidValidity),
           uidNext: truncated ? (prev?.uidNext ?? 0) : mb.uidNext,
           highestModseq: flagsTruncated || !caps.condstore ? (prev?.highestModseq ?? "0") : advanceTo,
+          // THE SERVER'S OWN COUNT, which this SELECT already answered and which was discarded
+          // here for the whole life of the adapter (mail 0083). It is deliberately NOT held back
+          // under truncation the way the three cursors above are: a cursor that advances past
+          // unread work loses mail, so truncation must hold it — but a COUNT is just what the
+          // folder holds right now, and reporting last cycle's total for a folder that is
+          // visibly growing is the one thing a progress strip must not do.
+          ...(typeof mb.exists === "number" ? { serverExists: mb.exists } : {}),
         };
         // What the SERVER said about INBOX at the moment this scan read it — NOT the cursor value
         // above, which deliberately holds back under truncation. {@link rearmWatch} compares the

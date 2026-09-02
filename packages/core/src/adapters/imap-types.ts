@@ -852,7 +852,28 @@ export interface ImapAdapterOpts {
   nowMs?: () => number;
 }
 
-export interface PersistedFolderCursor { uidValidity: string; uidNext: number; highestModseq: string; }
+export interface PersistedFolderCursor {
+  uidValidity: string;
+  uidNext: number;
+  highestModseq: string;
+  /**
+   * THE FOLDER'S `EXISTS`, AS THIS SELECT REPORTED IT — the first pull's denominator (mail 0083).
+   *
+   * The adapter has always read `mb.exists` and always DISCARDED it, so no truthful total of the
+   * mailbox existed anywhere: `mailbox_folders` held cursors only, and the import progress strip
+   * had a numerator (the mirror's row count) with nothing to divide it by. Remaining is the sum
+   * of this over watched folders minus the mirror count.
+   *
+   * OPTIONAL, and absent means "this pass did not open the folder" — the passive fast path, which
+   * skips the SELECT entirely on a provably unchanged folder, and every fake adapter. The writer
+   * (`upsertMailboxFolder`) leaves the stored value alone when it is absent rather than nulling
+   * it, so a folder the fast path skipped keeps the last count somebody actually observed.
+   *
+   * It is a COUNT AND NOT A CURSOR, which is why it is stated here rather than folded into one of
+   * the three above: nothing decides anything on it, and it may go backwards (mail is deleted).
+   */
+  serverExists?: number;
+}
 /**
  * One UID the adapter must not re-fetch, plus the `\Seen` state the database last observed for
  * it (`flag_state.observed_seen`, or the ingest-time flags before any flag row exists).

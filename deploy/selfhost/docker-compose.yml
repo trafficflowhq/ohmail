@@ -197,6 +197,17 @@ services:
       # connected here. Generated once at install (`.env.example` shows the command) and
       # never changed: this install's claims are recognised as its own by this value.
       TF_ORGANIZER_INSTALL_ID: ${TF_ORGANIZER_INSTALL_ID:?set TF_ORGANIZER_INSTALL_ID in .env — this install's unique organizer identity, e.g. ohmail-selfhost:<openssl rand -hex 6>}
+      # HOW THIS DEPLOYMENT NAMES ITSELF TO A HUMAN, in the same claim. The install id above is an
+      # opaque handle; THIS is the string another install shows on its reader banner and the one a
+      # person reads when they open `ohmail/_meta` in any mail client.
+      #
+      # It had a typed config field and NO READER for its whole life, so the worker fell through to
+      # the hosted default — and every self-hosted deployment in the world wrote "ohmail Cloud"
+      # into its own customers' mailboxes, telling them a service they are not a customer of had
+      # taken their mail. Set here from the origin so the value is visible in this file rather than
+      # derived somewhere a reader cannot see it; unset, the worker still defaults to the origin's
+      # host, which is true, and only an absent origin falls back to the hosted name.
+      TF_ORGANIZER_DISPLAY_NAME: ${TF_ORGANIZER_DISPLAY_NAME:-${OHMAIL_ORIGIN}}
       # The SAME key ring as the api — the /health responses of the two carry a ring
       # fingerprint precisely so an operator can prove they agree.
       TF_KEK_V1: ${TF_KEK_V1:?set TF_KEK_V1 in .env}
