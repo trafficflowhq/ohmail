@@ -59,6 +59,23 @@ export {
   type SignatureState,
 } from "./signature.js";
 
+// THE NOTIFICATION GATE. Every surface that can draw a notice decides here and nowhere else,
+// which is what makes "fully off" a property of the tree rather than of three emitters that
+// each have to remember the master switch. Pure: no platform, no catalogue, no sentence.
+export {
+  DEFAULT_CHANNELS,
+  NOTICE_EVENTS,
+  channelsAreLive,
+  decideNotices,
+  type NoticeEvent,
+  type NoticePermission,
+  type NoticeSnapshot,
+  type NoticeSpec,
+  type NotificationChannels,
+  type PairingEvent,
+  type ScheduledOutcome,
+} from "./notifications.js";
+
 // Wire vocabulary + errors.
 export {
   CursorExpiredError,
