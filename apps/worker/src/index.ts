@@ -3464,6 +3464,11 @@ export async function startWorkerWithLock(
             });
           }
           if (!organize && wasOrganizer) {
+            // The profile module's memory of ORGANIZING this mailbox goes with the role. See
+            // `forgetOrganizerLife` for what it holds and why keeping it across a handover makes
+            // the NEXT promotion skip its own preflight and then supersede the document the other
+            // organizer left. Purely in-process; the durable markers stand.
+            rt.profile.forgetOrganizerLife();
             log.info("organizer_demoted_to_reader", {
               mailboxId: rt.mailboxId, accountId: rt.accountId,
               reason: "another organizer holds this mailbox; this install keeps its login and its "
@@ -3533,7 +3538,22 @@ export async function startWorkerWithLock(
             // and never throws: a faulted read answers the previous cycle, or a provably armed
             // hold before the first success. The attach-time preflight above remains for the
             // durable marker the confirm surface needs and for the write-behind's own hold.
-            importDecisionOpen: await rt.profile.importDecisionOpenNow(),
+            /* ── AND ONLY AN ORGANIZER ASKS IT ────────────────────────────────────────────
+             *
+             * The flag governs whether the consent gate adopts placement instead of screening,
+             * which is a decision only an organizer makes — a reader files nothing, so the
+             * answer cannot change what its cycle does.
+             *
+             * Asking anyway was not free once the role gate above stopped readers from seeding:
+             * `importDecisionOpenNow`'s TTL is the flush interval for a SEEDED install and
+             * `min(EVAL_TAKEOVER_TTL_MS, flushInterval)` for an unseeded one, so an attached
+             * reader — which never seeds — would fetch the whole profile source out of
+             * `ohmail/_meta` every 30 s for the life of the attachment, instead of settling into
+             * the five-minute cadence. A reader that polls a mailbox it does not organize is
+             * exactly what the reader model asks for; a reader that FETCHES a document it may
+             * not act on is not.
+             */
+            importDecisionOpen: rt.role === "organizer" ? await rt.profile.importDecisionOpenNow() : false,
           });
           rt.failures = 0;
           // …and the shard-wide database condition, on the ONLY evidence strong enough to end it:

@@ -182,6 +182,45 @@ export class OrganizerProfileSync {
   constructor(private readonly deps: OrganizerProfileSyncDeps) {}
 
   /**
+   * FORGET EVERYTHING THIS PROCESS BELIEVED ABOUT OWNING THIS MAILBOX'S DOCUMENT.
+   *
+   * Called when the lease demotes this install to a reader, and it exists because mail 0083 made
+   * the runtime OUTLIVE the role. Before it, a demotion detached: the `OrganizerProfileSync`
+   * object went with the runtime, and a later promotion built a new one that had never seen the
+   * mailbox. A demoted runtime is now kept and re-promoted in place, so without this the second
+   * organizing life starts holding the FIRST one's beliefs.
+   *
+   * Two of them are actively wrong after a handover, and they compound:
+   *
+   *  · `seeded` + `lastWrittenFingerprint` make {@link armHoldFromFolder} return at its second
+   *    guard, so the promotion's preflight probes nothing;
+   *  · and `lastWrittenFingerprint` makes the evaluator classify the document the OTHER organizer
+   *    wrote while it held the mailbox as an established incumbent's mid-flight residue — the one
+   *    case it deliberately does not hold on. The re-promoted install would route on its own
+   *    stale rules and then supersede the inherited document instead of offering it for import,
+   *    which is the takeover re-screen this whole hold exists to prevent, reached by a longer
+   *    road.
+   *
+   * `seenForeignFingerprints` goes for the same reason: those surfacings belong to the previous
+   * life. The durable half — the marker rows — is untouched and is what a re-derivation reads.
+   * Nothing here writes to the mailbox or to the database; it is one process's memory being told
+   * that it is no longer this mailbox's organizer.
+   */
+  forgetOrganizerLife(): void {
+    this.seeded = false;
+    this.lastWrittenFingerprint = null;
+    this.seenForeignFingerprints = new Set<string>();
+    this.holdFingerprint = null;
+    this.holdNewerV = null;
+    this.holdSince = null;
+    this.blockedByNewer = false;
+    this.evalCache = null;
+    this.lastPreflightAt = 0;
+    this.lastOpenAnswer = false;
+    this.everEvaluated = false;
+  }
+
+  /**
    * Whether a found FOREIGN document's import decision is open for this mailbox — the routing
    * half of the hold. `runSyncCycle` reads this once per cycle and threads it to `planChange` as
    * {@link PlanDeps.importDecisionOpen}, which is what stops the consent gate re-screening mail
