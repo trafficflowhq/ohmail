@@ -50,7 +50,7 @@
  * menu item and a keystroke can never land in different places.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { OhmailEngine } from "@ohmail/client-engine";
 
 import { AppShell } from "../../webapp/app/shell/AppShell";
@@ -69,8 +69,8 @@ import { DESKTOP_PANE_LABEL, DesktopSettings } from "./DesktopSettings.js";
 import { DesktopBilling } from "./DesktopBilling.js";
 import { DesktopWebSection } from "./DesktopWebSection.js";
 import {
-  accountDoorFor, awayDoorFor, gateFor, hostDoorFor, mailMount, profileImportDoorFor, readShell,
-  suggestDoorFor,
+  accountDoorFor, awayDoorFor, firstRunDoorFor, gateFor, hostDoorFor, mailMount,
+  profileImportDoorFor, readShell, suggestDoorFor,
   type Shell,
 } from "./doors.js";
 import { DesktopDevices } from "./DesktopDevices.js";
@@ -81,6 +81,8 @@ import { olderBodyOverBridge } from "./local-older-body.js";
 import { junkOverBridge } from "./local-junk.js";
 import { cloudSuggestWire } from "./cloud-suggest.js";
 import { readAiStatus, type LocalAiStatus } from "./local-ai.js";
+import { AiProviderForm } from "./AiProviderForm.js";
+import { useLocalFirstRun } from "./local-first-run.js";
 import { LocalSuggest } from "./local-suggest.js";
 import { CloudSuggest } from "./CloudSuggest.js";
 import {
@@ -210,6 +212,32 @@ export function DesktopGate() {
    */
   const [ai, setAi] = useState<LocalAiStatus | null>(null);
   const door = shell?.kind === "status" ? (shell.status.mode ?? null) : null;
+
+  /**
+   * THE FIRST-RUN STAGE'S DOOR — built here, at the top, for the reason `onUnread` is: it is a
+   * hook, and a hook called from inside the JSX below would be skipped on the renders that
+   * return early, which is the "rendered fewer hooks than expected" crash arriving on whichever
+   * render first took a different branch.
+   *
+   * The two injected nodes are MEMOISED rather than written inline at the call. Both are React
+   * elements, so an inline one is a new object every render, which would defeat the host's own
+   * `useMemo` and hand the stage a new `host` on every keystroke anywhere in the app.
+   * `AiProviderForm`'s echo is the gate's own `ai` setter — the same state Settings → AI and the
+   * Screener's suggest control read, so a key saved inside the flow is live everywhere without a
+   * relaunch, and `setAi` is a `useState` setter and therefore stable.
+   */
+  const gateStatus = shell?.kind === "status" ? shell.status : null;
+  const providerForm = useMemo(() => <AiProviderForm onStatus={setAi} />, []);
+  const pairNode = useMemo(
+    () => (hostDoorFor(gateStatus) === "local" ? <DesktopDevices /> : undefined),
+    [gateStatus],
+  );
+  const firstRun = useLocalFirstRun({
+    status: gateStatus,
+    ai,
+    providerForm,
+    ...(pairNode ? { pairNode } : {}),
+  });
 
   /**
    * THE HOSTED SESSION'S LIVE TRUTH, asked of the engine rather than remembered from launch —
@@ -700,10 +728,25 @@ export function DesktopGate() {
            section rule the away responder states: one implementation of what a consent means, one
            implementation of how money moves, and only the bytes injected.
 
-           On the STANDALONE door neither is passed, and every one of those controls stays absent.
-           That is a product boundary, not a gap: there is no account row to hold a window, no
-           watermark for an automatic pass to measure from, and no ledger to price against. */
-        {...(accountDoor ? { consentTransport: consentOverBridge, suggestWire: cloudSuggestWire } : {})}
+           THE TWO WIRES PART COMPANY AT THE STANDALONE DOOR (mail 0083), and the half of the old
+           rule that sent both away was measured wrong. `consentRoutes` are mounted on
+           `localRoutes` now, so a standalone install DOES have the row: `dormancy_days`,
+           `screening_scope` and `screening_baseline_at` live in its own `account_settings`, its
+           sync cycle threads the resolved cutoff exactly as the hosted worker does, and
+           `local-consent.ts` carries the correction in full. Withholding the transport there left
+           the free tier — the one most people meet first — with no screening window at all and no
+           way to say so. It also withheld `consent.known`, which is one of the four conditions
+           `AppShell` gates the first-run stage on, so the guided setup below could not open on
+           the door the guided setup exists for.
+
+           `suggestWire` STAYS hosted-only, and that is the clause of the old rule that survived:
+           it prices a batch against an account's ledger, and there is no ledger and no watermark
+           behind a standalone engine. A spend control with nothing behind it is the one thing
+           that control must never be. */
+        {...(accountDoor || firstRunDoorFor(status) === "local"
+          ? { consentTransport: consentOverBridge }
+          : {})}
+        {...(accountDoor ? { suggestWire: cloudSuggestWire } : {})}
         /* THE REACH-PAST BODY WIRE — BOTH doors, `consentTransport`'s transport-not-a-control
            rule: the door, its states and its sentences are the shared shell's
            (`shell/older-body.ts`); this hands in the pipe. On the HOSTED door the engine serves
@@ -769,6 +812,28 @@ export function DesktopGate() {
            exactly the way `writeTo` does (see `AppShell`'s `mailtoDraft`). Cleared once seeded,
            so a remount cannot seed the same click twice. */
         {...(mailtoDraft ? { mailtoDraft, onMailtoDraftSeeded: () => setMailtoDraft(null) } : {})}
+        /* ── THE GUIDED SETUP FLOW, ON THE DOOR IT WAS WRITTEN FOR ─────────────────────────
+         *
+         * The stage itself is the shared shell's (`app/shell/FirstRun.tsx`) and knows about no
+         * door at all; what it asks for is one object that can make the calls, and this is the
+         * standalone door's. Absent on the hosted door and before a door is chosen, which is not
+         * a withheld feature but the whole gate: `AppShell` renders no stage without a host, so
+         * `#/first-run` draws nothing there rather than drawing a flow whose consent belongs to
+         * an account and whose "Start over" would offer to forget a mailbox other devices are
+         * mirroring. `firstRunDoorFor` is the rule, a pure function a test drives.
+         *
+         * THE PROVIDER FORM IS INJECTED RATHER THAN IMPORTED, and the direction is the point:
+         * `apps/webapp` may not import `AiProviderForm` (a pin asserts it does not) because the
+         * form is the standalone install's own and the shell is shared. It is the SAME component
+         * Settings → AI mounts, so there is one write path to this install's model file and not
+         * two, and its `onStatus` echo lands in the same `ai` state the Screener's suggest
+         * control reads — saving a key inside the flow makes that control live without a
+         * relaunch, exactly as saving one in Settings does.
+         *
+         * `pairNode` is the devices surface, on `hostDoorFor`'s rule rather than on a second
+         * opinion about it: the flow's last, skippable step offers to pair a phone, and only an
+         * install that may publish its engine has anything to pair to. */
+        {...(firstRun ? { firstRun } : {})}
         onUnread={onUnread}
       />
       {/* THE ONE-TIME DEFAULT-MAIL ASK — over the mail, once a mailbox is connected, and never

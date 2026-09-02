@@ -312,6 +312,31 @@ export function hostDoorFor(status: EngineStatus | null): "local" | null {
   return status?.mode === "local" ? "local" : null;
 }
 
+/**
+ * WHETHER THE GUIDED SETUP FLOW EXISTS IN THIS WINDOW — the first-run stage's door rule, a pure
+ * function here for the reason `gateFor` and `hostDoorFor` are.
+ *
+ * STANDALONE ONLY, and the boundary is which install the flow is ABOUT rather than which one can
+ * afford it.
+ *
+ *  · STANDALONE. The flow is this install's own: the mailbox is on the user's own server, the
+ *    consent that lets this machine re-arrange it is written on this machine
+ *    (`POST /local/mailboxes/:id/organize`), the model is a property of the install, and nobody
+ *    else has been asked any of it. This is the door the guided setup was written for.
+ *  · HOSTED. The account's setup belongs to the ACCOUNT and has already been run — in a browser
+ *    tab, or on whichever install first opened it — and its answers are stored on the hosted
+ *    row. A second stage here would ask a person to consent again to something they consented to
+ *    elsewhere, and its "Start over" would offer to forget a mailbox that other devices are
+ *    mirroring. Withheld structurally: `AppShell` renders no stage without a host, so
+ *    `#/first-run` draws nothing rather than drawing something that would refuse.
+ *  · NO DOOR YET, or no answer from the shell. `null`, `suggestDoorFor`'s rule — and here it is
+ *    also the honest one: with no door chosen the screen a person needs is `DoorChooser`, which
+ *    is this door's step 1 and is not part of the stage.
+ */
+export function firstRunDoorFor(status: EngineStatus | null): "local" | null {
+  return status?.mode === "local" ? "local" : null;
+}
+
 /** What the local door's form collects. Every field is what the user typed, untrimmed. */
 export interface LocalDoorFields {
   /** The preset's id — `providerById` in the shared shell resolves it to hosts and ports. */

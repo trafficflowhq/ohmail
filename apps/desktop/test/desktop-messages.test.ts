@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
-import { SHELL_MESSAGE_NAMESPACES } from "../vite.config.js";
+import { SHELL_MESSAGE_KEYS, SHELL_MESSAGE_NAMESPACES } from "../vite.config.js";
 
 /**
  * The desktop binary must not contain the marketing site's copy.
@@ -237,12 +237,21 @@ describe("desktop message filter", () => {
 
   it("SHELL_MESSAGE_NAMESPACES is exactly what the sources read", () => {
     const used = [...namespacesUsed()].sort();
-    expect(used).toEqual([...SHELL_MESSAGE_NAMESPACES].sort());
+    /* BOTH LISTS, because both ship. A namespace the shell reads is satisfied by the wholesale
+       list or by the subset one, and a namespace on NEITHER is the omission this guard exists
+       for — a raw key in front of a user. Concatenated rather than made optional: a subset entry
+       for a namespace nobody reads is dead payload and this still catches it. */
+    expect(used).toEqual([...SHELL_MESSAGE_NAMESPACES, ...Object.keys(SHELL_MESSAGE_KEYS)].sort());
   });
 
   it("every listed namespace exists in en.json", () => {
     const all = JSON.parse(read("apps/webapp/messages/en.json")) as Record<string, unknown>;
     for (const ns of SHELL_MESSAGE_NAMESPACES) expect(all, ns).toHaveProperty(ns);
+    // A NARROWED namespace is checked to the KEY: a renamed key is as blank on screen as a
+    // renamed namespace, and the wholesale check cannot tell the two apart.
+    for (const [ns, keys] of Object.entries(SHELL_MESSAGE_KEYS)) {
+      for (const key of keys) expect(all, `${ns}.${key}`).toHaveProperty(`${ns}.${key}`);
+    }
   });
 
   it("the marketing namespaces are excluded", () => {
@@ -250,14 +259,27 @@ describe("desktop message filter", () => {
     // the defect. `pricing` carries the prices; `faq`/`compare` discuss Cloud.
     for (const ns of ["pricing", "faq", "compare", "hero", "nav", "footer", "signup", "trial"]) {
       expect(SHELL_MESSAGE_NAMESPACES as readonly string[]).not.toContain(ns);
+      // The narrowing lane is not a way back in for one of them: a subset of `pricing` is still
+      // pricing. Only namespaces the shell reads ONE line out of belong there.
+      expect(Object.keys(SHELL_MESSAGE_KEYS)).not.toContain(ns);
     }
   });
 
   it("no price survives the filter", () => {
     const all = JSON.parse(read("apps/webapp/messages/en.json")) as Record<string, unknown>;
-    const kept = JSON.stringify(
-      Object.fromEntries(SHELL_MESSAGE_NAMESPACES.map((ns) => [ns, all[ns]])),
-    );
+    const kept = JSON.stringify({
+      ...Object.fromEntries(SHELL_MESSAGE_NAMESPACES.map((ns) => [ns, all[ns]])),
+      /* THE NARROWED NAMESPACES ARE SCANNED TOO, and this is what makes the lane safe rather
+         than a hole in this guard: `join` is admitted for one line and holds the sign-up
+         funnel's prices in the other 94, so a subset that grew a priced key would come through
+         here exactly as a whole namespace would. */
+      ...Object.fromEntries(Object.entries(SHELL_MESSAGE_KEYS).map(([ns, keys]) => [
+        ns,
+        Object.fromEntries(
+          keys.map((k) => [k, (all[ns] as Record<string, unknown> | undefined)?.[k]]),
+        ),
+      ])),
+    });
     // The three Cloud prices, and the metering vocabulary that only Cloud has.
     expect(kept).not.toMatch(/\$\s?(9|15|29)\b/);
     // SINGULAR TOO. This read `/AI actions/i` and two shipped strings walked straight

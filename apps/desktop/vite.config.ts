@@ -238,6 +238,33 @@ export const SHELL_MESSAGE_NAMESPACES = [
 ] as const;
 
 /**
+ * NAMESPACES SHIPPED AS A SUBSET — the named keys, and nothing else in them.
+ *
+ * ── WHY A SECOND LIST RATHER THAN A SECOND ENTRY ABOVE ────────────────────────────────────
+ *
+ * The list above is all-or-nothing, and for every namespace on it that is the right shape: the
+ * shell either reads a surface or it does not. `join` is the first namespace the shell reads ONE
+ * key out of. `FirstRun.tsx` composes the setup flow's "already connected" line from
+ * `join.mailboxConnected` rather than writing a second sentence for a state the connect funnel had
+ * already worded — one sentence, one translation — and the other 94 keys are the sign-up funnel's,
+ * several of which name Cloud's prices and its metering unit.
+ *
+ * Adding `join` to the list above was tried and the guard refused it in the same minute: `no price
+ * survives the filter` matched `/AI actions?/i` in the kept payload. That refusal is the whole
+ * point of this file — a standalone binary sells nothing and must not carry the price of anything —
+ * so the namespace is narrowed instead of admitted. Anything added here is scanned by the same
+ * price guard, so a subset cannot be used to smuggle one in.
+ *
+ * It became load-bearing when the standalone door was given a first-run host
+ * (`src/local-first-run.ts`): the stage's mailbox step withholds its form once a mailbox exists,
+ * and on this door a mailbox ALWAYS exists by the time the stage can open, so that line is the
+ * first thing standalone onboarding shows. Without it the screen reads `join.mailboxConnected`.
+ */
+export const SHELL_MESSAGE_KEYS: Record<string, readonly string[]> = {
+  join: ["mailboxConnected"],
+};
+
+/**
  * Replace each catalogue module with just those namespaces, at build time.
  *
  * A runtime `pick()` would not do: a JSON import compiles to one object literal
@@ -293,7 +320,17 @@ function shellMessagesOnly(): Plugin {
        * by a bundler whose only vocabulary is "no".
        */
       if (name === "en.json") {
-        const missing = SHELL_MESSAGE_NAMESPACES.filter((ns) => !(ns in all));
+        const missing = [
+          ...SHELL_MESSAGE_NAMESPACES.filter((ns) => !(ns in all)),
+          /* A subset namespace is missing when the namespace is absent OR when the one key the
+             shell reads out of it is — a renamed key is exactly as blank on screen as a renamed
+             namespace, and the wholesale list cannot see the difference. */
+          ...Object.entries(SHELL_MESSAGE_KEYS).flatMap(([ns, keys]) => {
+            const held = all[ns] as Record<string, unknown> | undefined;
+            if (!held) return [ns];
+            return keys.filter((k) => !(k in held)).map((k) => `${ns}.${k}`);
+          }),
+        ];
         if (missing.length) {
           this.error(
             `apps/webapp/messages/en.json has no ${missing.join(", ")} — ` +
@@ -305,6 +342,15 @@ function shellMessagesOnly(): Plugin {
       const picked: Record<string, unknown> = {};
       for (const ns of SHELL_MESSAGE_NAMESPACES) {
         if (ns in all) picked[ns] = all[ns];
+      }
+      /* AND THE NARROWED ONES, key by key. A namespace absent from a TRANSLATION is skipped for
+         the reason the abort above skips it: `fillFrom` resolves it to the English sentence. */
+      for (const [ns, keys] of Object.entries(SHELL_MESSAGE_KEYS)) {
+        const held = all[ns] as Record<string, unknown> | undefined;
+        if (!held) continue;
+        picked[ns] = Object.fromEntries(
+          keys.filter((k) => k in held).map((k) => [k, held[k]]),
+        );
       }
       return JSON.stringify(picked);
     },
