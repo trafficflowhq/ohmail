@@ -227,6 +227,13 @@ export const SHELL_MESSAGE_NAMESPACES = [
   // here worse than the usual raw key: it would render `update.upToDate` on the one control that
   // tells somebody whether their mail client is current.
   "update",
+  // `aiProvider` is the model form (`src/AiProviderForm.tsx`) — the provider choice, the key
+  // field, the twelve verdicts and the model pickers, shared by Settings → Desktop and by the
+  // first-run flow's provider step. A DESKTOP-ONLY namespace: the browser client has no local
+  // model to configure. Genuinely reachable in the engine-bearing binary on the standalone door,
+  // and the verdicts are the worst place in the product for a raw key — they are the only thing
+  // that ever explains why a model is not answering.
+  "aiProvider",
 ] as const;
 
 /**

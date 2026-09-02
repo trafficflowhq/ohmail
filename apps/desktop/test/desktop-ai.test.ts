@@ -3,6 +3,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ThemeProvider } from "@ohmail/ui";
+import { NextIntlClientProvider } from "next-intl";
+
+import en from "../../webapp/messages/en.json";
 
 import { clearAiProvider, readAiStatus, saveAiSettings, verifyAiProvider, type LocalAiStatus } from "../src/local-ai.js";
 import { DesktopAiSettings } from "../src/DesktopAiSettings.js";
@@ -124,7 +127,16 @@ async function render(node: React.ReactElement): Promise<HTMLElement> {
   document.body.appendChild(mount);
   root = createRoot(mount);
   await act(async () => {
-    root!.render(h(ThemeProvider, { storageKey: "ohmail.theme" }, node));
+    /* THE REAL CATALOGUE, not a stub: the form's twelve verdicts and every label on it come from
+       `aiProvider` in `en.json`, so a test that supplied its own messages would be asserting
+       against words the app does not ship. */
+    root!.render(
+      h(
+        NextIntlClientProvider,
+        { locale: "en", messages: en as never, timeZone: "Europe/Zurich" },
+        h(ThemeProvider, { storageKey: "ohmail.theme" }, node),
+      ),
+    );
   });
   for (let i = 0; i < 20; i++) await act(async () => { await new Promise((r) => setTimeout(r, 2)); });
   return mount;
@@ -316,80 +328,251 @@ describe("the Screener's suggest control on a standalone install", () => {
   });
 });
 
-/* ── the settings pane, with two hosted vendors sharing one key field ──────────────────── */
 
-describe("the AI settings pane never sends a key to the vendor it was not typed for", () => {
-  /** The pane, mounted on the standalone door with a stand-in engine behind it. */
+/* ── the model form: one write path, and a key that can only go where it was typed ─────── */
+
+describe("the AI provider form never sends a key to the vendor it was not typed for", () => {
+  /**
+   * A stand-in engine that BEHAVES like the real one across a write.
+   *
+   * The old pane held the vendor choice in local state, so a test could click a segment and see
+   * the fields change with nothing round-tripping. The form reads the choice off the STATUS, which
+   * is the whole point of it — a refused write leaves the control showing what is really stored —
+   * so the stub has to answer the way the engine answers: the provider a PUT names is the provider
+   * the next GET reports, and every write discards the previous verification.
+   */
+  const paneEngine = (initial: LocalAiStatus) => {
+    let current = initial;
+    const { asked } = engine((req) => {
+      if (req.command === "engine_request" && req.method === "PUT") {
+        const write = JSON.parse(req.body) as {
+          provider?: string | null;
+          anthropic?: { apiKey?: string };
+          openai?: { apiKey?: string };
+        };
+        const provider = (write.provider ?? null) as LocalAiStatus["provider"];
+        const settings = { ...current.settings, provider };
+        if (write.anthropic?.apiKey) settings.anthropic = { ...settings.anthropic, hasKey: true };
+        if (write.openai?.apiKey) settings.openai = { ...settings.openai, hasKey: true };
+        current = {
+          ...current,
+          provider,
+          settings,
+          available: false,
+          unavailableReason: provider ? "unverified" : "not_configured",
+          probe: null,
+        };
+      }
+      if (req.command === "engine_request" && req.method === "DELETE") {
+        current = { ...UNSET, settings: { ...UNSET.settings } };
+      }
+      return { status: 200, body: JSON.stringify(current) };
+    });
+    return { asked, current: () => current };
+  };
+
   const paneWith = async (
     status: LocalAiStatus,
-    answer?: (req: Asked) => { status: number; body: string },
   ): Promise<{ el: HTMLElement; asked: Asked[] }> => {
-    const { asked } = engine(answer ?? (() => ({ status: 200, body: JSON.stringify(status) })));
+    const { asked } = paneEngine(status);
     const el = await render(h(DesktopAiSettings, { door: "local" as const }));
     return { el, asked };
   };
 
-  const segmentSaying = (el: HTMLElement, text: RegExp): HTMLElement | undefined =>
-    [...el.querySelectorAll("button, [role='radio'], label")]
-      .find((b) => text.test(b.textContent ?? "")) as HTMLElement | undefined;
+  /** The radio whose label reads `text`, in the provider choice list. */
+  const choiceSaying = (el: HTMLElement, text: RegExp): HTMLInputElement | undefined =>
+    [...el.querySelectorAll<HTMLLabelElement>(".set-choice label")]
+      .find((l) => text.test(l.querySelector("b")?.textContent ?? ""))
+      ?.querySelector("input") as HTMLInputElement | undefined;
 
-  /**
-   * THE FINDING THIS TEST EXISTS FOR.
-   *
-   * One key field serves both hosted vendors, because only one vendor's block is ever on screen.
-   * That makes the field's contents outlive the choice that framed them: paste an Anthropic key,
-   * switch the control to OpenAI, press Save, and a live Anthropic credential is sealed into the
-   * OpenAI block and then sent to `api.openai.com` by the verification the write triggers.
-   *
-   * The ENGINE cannot catch this — it receives a well-formed write naming OpenAI and carrying a
-   * key, which is byte-for-byte what a person legitimately choosing OpenAI sends. So the guard has
-   * to be here, and so does the test.
-   */
-  it("discards a typed key when the vendor is switched before saving", async () => {
-    const key = "this-is-not-a-real-api-key-0000";
-    const { el, asked } = await paneWith(UNSET);
-
-    const field = el.querySelector("#ai-key") as HTMLInputElement | null;
-    // Anthropic is the default hosted choice; the field must be on screen to type into.
-    const toAnthropic = segmentSaying(el, /Anthropic/);
-    await act(async () => { toAnthropic?.click(); });
-    const keyField = (el.querySelector("#ai-key") ?? field) as HTMLInputElement;
-    expect(keyField, "the key field must be rendered for a hosted vendor").toBeTruthy();
-
+  const typeKey = async (el: HTMLElement, key: string): Promise<HTMLInputElement> => {
+    const field = el.querySelector("#ai-key") as HTMLInputElement;
+    expect(field, "the key field must be rendered for a hosted vendor").toBeTruthy();
     await act(async () => {
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-      setter.call(keyField, key);
-      keyField.dispatchEvent(new Event("input", { bubbles: true }));
+      setter.call(field, key);
+      field.dispatchEvent(new Event("input", { bubbles: true }));
     });
+    return field;
+  };
 
-    // …and now change your mind, without clearing the field yourself.
-    const toOpenAi = segmentSaying(el, /OpenAI/);
-    expect(toOpenAi, "the OpenAI choice must be offered").toBeTruthy();
-    await act(async () => { toOpenAi!.click(); });
+  const settle = async (): Promise<void> => {
+    for (let i = 0; i < 20; i++) await act(async () => { await new Promise((r) => setTimeout(r, 2)); });
+  };
+
+  const KEY = "this-is-not-a-real-api-key-0000";
+
+  /**
+   * THE FINDING THIS BLOCK EXISTS FOR, AND HOW THE FORM DISPOSES OF IT.
+   *
+   * One key field serves both hosted vendors, because only one vendor's block is ever on screen.
+   * Under the old pane that made the field's contents outlive the choice that framed them: paste
+   * an Anthropic key, switch the control to OpenAI, press Save, and a live Anthropic credential
+   * was sealed into the OpenAI block and sent to `api.openai.com` by the verification the write
+   * triggers. The ENGINE cannot catch it — it receives a well-formed write naming OpenAI and
+   * carrying a key, byte-for-byte what somebody legitimately choosing OpenAI sends.
+   *
+   * The guard used to be a hand-written "clear the field when the segment changes". It is now the
+   * SHAPE of the form: a key is submitted by its own `<form>` at the moment it is typed, and a
+   * vendor change is a write that carries `provider` and nothing else. There is no deferred save
+   * for a stale key to ride out on. Both halves are asserted, because the shape is only a guard
+   * for as long as it is the shape.
+   */
+  it("carries no key at all on a vendor change, and empties the field", async () => {
+    const { el, asked } = await paneWith(UNSET);
+
+    await act(async () => { choiceSaying(el, /Anthropic/)!.click(); });
+    await settle();
+    await typeKey(el, KEY);
 
     asked.length = 0;
-    const save = buttonSaying(el, /^Save/);
-    await act(async () => { save?.click(); });
-    for (let i = 0; i < 20; i++) await act(async () => { await new Promise((r) => setTimeout(r, 2)); });
+    // …and now change your mind, without clearing the field yourself.
+    await act(async () => { choiceSaying(el, /OpenAI/)!.click(); });
+    await settle();
 
     const puts = asked.filter((a) => a.command === "engine_request" && a.method === "PUT");
-    expect(puts.length, "Save must have written once").toBeGreaterThan(0);
-    // The whole claim: the Anthropic key reaches NEITHER block on a write that names OpenAI.
-    for (const p of puts) {
-      expect(p.body, "a key typed for one vendor was submitted under another").not.toContain(key);
+    expect(puts.length, "the choice must have written once").toBe(1);
+    expect(JSON.parse(puts[0]!.body)).toEqual({ provider: "openai" });
+    for (const a of asked) {
+      expect(a.body, "a key typed for one vendor travelled on the vendor change").not.toContain(KEY);
     }
+    expect((el.querySelector("#ai-key") as HTMLInputElement).value, "the field kept a stale key").toBe("");
+  });
+
+  it("sends a typed key only to the vendor whose field it was typed in", async () => {
+    const { el, asked } = await paneWith(UNSET);
+    await act(async () => { choiceSaying(el, /Anthropic/)!.click(); });
+    await settle();
+    await typeKey(el, KEY);
+
+    asked.length = 0;
+    await act(async () => { buttonSaying(el, /Save key and test/)!.click(); });
+    await settle();
+
+    const puts = asked.filter((a) => a.command === "engine_request" && a.method === "PUT");
+    expect(puts).toHaveLength(1);
+    expect(puts[0]!.url).toBe("/local/ai");
+    const body = JSON.parse(puts[0]!.body) as Record<string, unknown>;
+    expect(body).toEqual({ provider: "anthropic", anthropic: { apiKey: KEY } });
+    // The other vendor's block is ABSENT, not merely key-less: an omitted block keeps what is
+    // stored, and a block naming the other vendor is where a mis-sent key would have to live.
+    expect(body.openai).toBeUndefined();
+  });
+
+  /**
+   * A STORED KEY IS TESTED, NOT RE-SAVED.
+   *
+   * With one already sealed, the action becomes "Test the stored key" and must ask the verify
+   * verb. A PUT here would be an empty write, and the engine DISCARDS the previous verification
+   * on every write — so a button labelled "test" would clear the very state it was pressed to
+   * confirm, and the pane would go from "working" to "not tested" for pressing test.
+   */
+  it("tests the stored key over verify, and writes nothing", async () => {
+    const stored: LocalAiStatus = {
+      ...UNSET,
+      provider: "anthropic",
+      unavailableReason: "unverified",
+      settings: {
+        ...UNSET.settings,
+        provider: "anthropic",
+        anthropic: { ...UNSET.settings.anthropic, hasKey: true },
+      },
+    };
+    const { el, asked } = await paneWith(stored);
+    asked.length = 0;
+    await act(async () => { buttonSaying(el, /Test the stored key/)!.click(); });
+    await settle();
+
+    const calls = asked.filter((a) => a.command === "engine_request").map((a) => `${a.method} ${a.url}`);
+    expect(calls).toEqual(["POST /local/ai/verify"]);
+  });
+
+  /**
+   * PRESSING THE VENDOR ALREADY CHOSEN DOES NOTHING AT ALL.
+   *
+   * The old pane cleared the key field on every `onChange`, including the segment already
+   * selected — so pasting a key and re-pressing the vendor you were already on silently emptied
+   * the field, after which Save omitted the key and kept whatever was stored. A guard that
+   * discards a credential nobody asked it to discard is its own defect. Real radios do not fire a
+   * change for the checked member, and the form guards it a second time (`next === choice`), so
+   * the press is not a write and nothing typed is lost.
+   */
+  it("writes nothing when the already-chosen vendor is pressed again", async () => {
+    const { el, asked } = await paneWith(UNSET);
+    await act(async () => { choiceSaying(el, /Anthropic/)!.click(); });
+    await settle();
+    const field = await typeKey(el, KEY);
+
+    asked.length = 0;
+    await act(async () => { choiceSaying(el, /Anthropic/)!.click(); });
+    await settle();
+
+    expect(asked.filter((a) => a.command === "engine_request"), "a re-press wrote").toEqual([]);
+    expect(field.value, "a re-press silently dropped the key that was typed").toBe(KEY);
+  });
+
+  /**
+   * THE MODEL LIST IS THE ENDPOINT'S, AND A NAME THAT IS NOT ON IT CANNOT BE SAVED.
+   *
+   * The old pane offered free-text inputs with a `<datalist>` hint, so a model the endpoint does
+   * not have could be typed, saved and verified into `model_absent` — a round trip to discover a
+   * typo. The `<select>`s are filled from `probe.models` and from nothing else. `READY` is the
+   * realistic awkward case: the endpoint reports `llama3.2:latest` while the stored setting says
+   * `llama3.2`, so nothing is selected and Save stays refused until somebody picks.
+   */
+  it("offers only the models the endpoint reported, and refuses a save until one is chosen", async () => {
+    const { el } = await paneWith(READY);
+    const classify = el.querySelector("#ai-classify") as HTMLSelectElement;
+    expect(classify, "the model pickers are absent after a successful probe").toBeTruthy();
+
+    const offered = [...classify.querySelectorAll("option")]
+      .filter((o) => o.value !== "")
+      .map((o) => o.value);
+    expect(offered).toEqual(["llama3.2:latest"]);
+    expect(classify.value, "a stored model the endpoint does not have was shown as chosen").toBe("");
+    expect(buttonSaying(el, /Save models/)!.disabled).toBe(true);
+  });
+
+  it("saves the two chosen models and no address — the origin is the engine's", async () => {
+    const { el, asked } = await paneWith(READY);
+    const pick = async (id: string): Promise<void> => {
+      const select = el.querySelector(id) as HTMLSelectElement;
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+        setter.call(select, "llama3.2:latest");
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    };
+    await pick("#ai-classify");
+    await pick("#ai-draft");
+
+    asked.length = 0;
+    const save = buttonSaying(el, /Save models/)!;
+    expect(save.disabled, "both models are chosen and Save is still refused").toBe(false);
+    await act(async () => { save.click(); });
+    await settle();
+
+    const puts = asked.filter((a) => a.command === "engine_request" && a.method === "PUT");
+    expect(puts).toHaveLength(1);
+    expect(JSON.parse(puts[0]!.body)).toEqual({
+      provider: "ollama",
+      ollama: { classifyModel: "llama3.2:latest", draftModel: "llama3.2:latest" },
+    });
+    // THE ANTI-EXFILTRATION INVARIANT, as traffic. No surface in the product sets the endpoint a
+    // model is reached at, so no write from one may carry it.
+    expect(puts[0]!.body, "a write from the form carried a base URL").not.toContain("baseUrl");
   });
 
   /**
    * A stored key must always have a way out.
    *
-   * Selecting None clears the provider and KEEPS the sealed envelope, deliberately — switching away
-   * is not an instruction to forget a credential. That makes this row the only route to the
+   * Selecting None clears the provider and KEEPS the sealed envelope, deliberately — switching
+   * away is not an instruction to forget a credential. That makes this row the only route to the
    * deletion, and while its condition named the Anthropic key alone, a stored OpenAI key with no
    * provider selected had none: the row disappeared, and reaching it again meant re-selecting the
    * vendor whose key you were trying to remove.
    */
-  it("offers Remove when only the OpenAI key is stored and no provider is chosen", async () => {
+  it("offers Forget when only the OpenAI key is stored and no provider is chosen", async () => {
     const storedOpenAiOnly: LocalAiStatus = {
       ...UNSET,
       settings: {
@@ -399,49 +582,11 @@ describe("the AI settings pane never sends a key to the vendor it was not typed 
       },
     };
     const { el } = await paneWith(storedOpenAiOnly);
-    expect(buttonSaying(el, /Remove/), "a stored key with no provider had no route to deletion")
+    expect(buttonSaying(el, /^Forget$/), "a stored key with no provider had no route to deletion")
       .toBeTruthy();
   });
 
-  /**
-   * CLEARING ON A VENDOR CHANGE MUST NOT MEAN CLEARING ON EVERY CLICK.
-   *
-   * `SegmentedControl` fires `onChange` for any press, the already-selected segment included. The
-   * first version of the guard above cleared unconditionally, so pasting a key and then re-pressing
-   * the vendor you were already on silently emptied the field — after which Save omitted the key
-   * and kept whatever was stored. A guard that discards a credential nobody asked it to discard is
-   * its own defect, so both halves are pinned: cleared across a change, kept across a re-press.
-   */
-  it("keeps a typed key when the already-selected vendor is pressed again", async () => {
-    const key = "this-is-not-a-real-api-key-0000";
-    const { el, asked } = await paneWith(UNSET);
-
-    const toAnthropic = segmentSaying(el, /Anthropic/);
-    await act(async () => { toAnthropic?.click(); });
-    const keyField = el.querySelector("#ai-key") as HTMLInputElement;
-    expect(keyField).toBeTruthy();
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-      setter.call(keyField, key);
-      keyField.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-
-    // Press the SAME vendor again — a natural thing to do, and not a change of mind.
-    await act(async () => { segmentSaying(el, /Anthropic/)?.click(); });
-
-    asked.length = 0;
-    await act(async () => { buttonSaying(el, /^Save/)?.click(); });
-    for (let i = 0; i < 20; i++) await act(async () => { await new Promise((r) => setTimeout(r, 2)); });
-
-    const puts = asked.filter((a) => a.command === "engine_request" && a.method === "PUT");
-    expect(puts.length).toBeGreaterThan(0);
-    expect(
-      puts.some((p) => p.body.includes(key)),
-      "re-pressing the selected vendor silently dropped the key that was typed",
-    ).toBe(true);
-  });
-
-  it("still offers Remove for a stored Anthropic key, and none when nothing is stored", async () => {
+  it("still offers Forget for a stored Anthropic key, and none when nothing is stored", async () => {
     const anthropicOnly: LocalAiStatus = {
       ...UNSET,
       settings: {
@@ -450,8 +595,21 @@ describe("the AI settings pane never sends a key to the vendor it was not typed 
         anthropic: { classifyModel: "claude-haiku-4-5-20251001", draftModel: "claude-sonnet-5", hasKey: true },
       },
     };
-    expect(buttonSaying((await paneWith(anthropicOnly)).el, /Remove/)).toBeTruthy();
+    expect(buttonSaying((await paneWith(anthropicOnly)).el, /^Forget$/)).toBeTruthy();
     // …and the negative control, so the two above are not passing on a row that is always there.
-    expect(buttonSaying((await paneWith(UNSET)).el, /Remove/)).toBeFalsy();
+    expect(buttonSaying((await paneWith(UNSET)).el, /^Forget$/)).toBeFalsy();
+  });
+
+  /**
+   * THE HOSTED DOOR SHOWS NOTHING HERE, where it used to show "Model — latest Frontier Models".
+   *
+   * That row named no setting: nothing on the pane set it, nothing could test it, and the words
+   * described whatever the hosted service happens to run this quarter. A settings row that names
+   * no setting is a claim dressed as a control.
+   */
+  it("draws nothing on the hosted door", async () => {
+    paneEngine(READY);
+    const el = await render(h(DesktopAiSettings, { door: "cloud" as const }));
+    expect(el.textContent?.trim()).toBe("");
   });
 });
