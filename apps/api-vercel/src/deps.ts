@@ -1,5 +1,5 @@
 import { noticeSinkFor, setNoticeSink, IDEMPOTENCY_TTL_MS, type Tx } from "@trafficflow/db";
-import { makePooledDb } from "@trafficflow/db/cloud";
+import { API_MAX_DURATION_MS, makePooledDb } from "@trafficflow/db/cloud";
 import {
   adminDbFor, attestStaffDbFault, makeAiCreditGate, resetAdminDbs, webhookAlertSink,
   telegramAlertSink,
@@ -317,8 +317,15 @@ function buildServices(cfg: HostConfig): ApiServices {
      * beside the route that declares it, rather than assumed inside the service. The self-hosted
      * server and the desktop's own engine state nothing and are admitted without a deadline,
      * which is correct: nothing kills a request in either of them.
+     *
+     * `API_MAX_DURATION_MS` and NOT a literal: it is the canonical spelling of that ceiling, the
+     * route's own `maxDuration` is already pinned to it (`host-wiring.test.ts`), and the pool
+     * timeouts are derived from it too. A second copy here would drift the day the duration
+     * changes — and it would drift SILENTLY in the dangerous direction, since a duration that is
+     * REDUCED leaves the admission window too wide and puts charged work back on the wrong side
+     * of the kill.
      */
-    invocationBudgetMs: 60_000,
+    invocationBudgetMs: API_MAX_DURATION_MS,
     // `exclusive: true` — closes the concurrent double-purchase race a money review found,
     // and the ONE option this gate takes.
     //
