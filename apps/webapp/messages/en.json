@@ -2179,6 +2179,7 @@
     "winDefault": "usual",
     "winAllWhy": "Every sender goes through the Screener. Nothing is listed under History unscreened.",
     "windowLater": "You can widen this later in Settings → Screener: older senders then wait in the Screener as undecided, and a decision moves that sender's mail.",
+    "windowGone": "That mailbox is no longer connected, so nothing was saved. Close setup, connect it again, and run setup from there.",
     "agree": "Agree and start organizing",
     "agreeing": "Starting…",
     "aiTitle": "AI for the Screener?",

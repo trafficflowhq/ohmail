@@ -47,7 +47,7 @@ import { useCallback, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
 import type {
-  FirstRunHost, FirstRunMailboxInput, FirstRunProbeOk,
+  FirstRunHost, FirstRunMailboxInput, FirstRunOrganizeOutcome, FirstRunProbeOk,
 } from "../../webapp/app/shell/first-run-host";
 import type { OnboardingAi } from "../../webapp/app/shell/onboarding";
 import { bridgeFetch, type EngineStatus } from "./bridge-fetch.js";
@@ -321,7 +321,7 @@ export function useLocalFirstRun(opts: LocalFirstRunOptions): FirstRunHost | und
   const organize = useCallback(async (
     mailboxId: string,
     body: { imap?: { pass: string }; screening?: { dormancyDays?: number; scope?: "window" | "all_time" } },
-  ) => {
+  ): Promise<FirstRunOrganizeOutcome> => {
     /**
      * AGREE AND START ORGANIZING — consent, baseline, window and scope in one transaction.
      *
@@ -331,13 +331,19 @@ export function useLocalFirstRun(opts: LocalFirstRunOptions): FirstRunHost | und
      * wire for a handler that ignores it, which is the kind of thing that is harmless right up
      * until somebody logs a request body.
      */
-    await okOf(
+    /* THE OUTCOME IS READ, not discarded. Every reply here is a 200 — `authorized` is the first
+       consent, `already_organizing` is a re-run of setup on a mailbox this install already
+       organizes (the stamp is refused and the window IS written), and `removed`/`no_mailbox` are
+       a mailbox that is not there, which stores nothing. The stage advances on the first two and
+       must not on the last two. See {@link FirstRunOrganizeOutcome}. */
+    const r = await jsonOf<{ outcome?: string }>(
       await bridgeFetch(organizePath(mailboxId), {
         method: "POST",
         headers: JSON_HEADERS,
         body: JSON.stringify(body.screening ? { screening: body.screening } : {}),
       }),
     );
+    return r.outcome === "authorized" || r.outcome === "already_organizing" ? "stored" : "gone";
   }, []);
 
   const complete = useCallback(async () => {

@@ -2016,6 +2016,67 @@ export class MailboxService {
    * a resurrection would bring back a mailbox somebody deliberately removed, and would do it
    * without the credential it no longer has.
    */
+  /**
+   * THE ACCOUNT'S SCREENING STATE — the half of the consent that is not about the mailbox row.
+   *
+   * See {@link OrganizeHereInput.screening}. Three columns, one upsert, and the baseline is the
+   * one that matters: without it the window the person just chose has nothing to be measured
+   * from and the whole backlog moves.
+   *
+   * `COALESCE` on the baseline so a live account keeps the instant it already had; the two dials
+   * are overwritten because they ARE the answer the person just gave. The order — settings
+   * before the mailbox row — is deliberate and matches every other writer of this table
+   * (`setDormancyDays`, `setThemeFace`): one lock chain, always the same direction.
+   *
+   * It is a method rather than a block inside {@link organizeHere} because it has TWO callers
+   * there and they are the two states a person can press "Agree and start organizing" in: the
+   * first consent, and a re-run of setup on a mailbox this install already organizes. The second
+   * one wrote nothing at all until 2026-09-02, so the window control was decorative on every
+   * re-run. It still must not re-stamp the mailbox; it must still store the dials.
+   *
+   * The bounds throw before anything is written, and they are checked on both paths for the same
+   * reason: a refusal must write nothing, and a 400 on a re-run must be the same 400 as on a
+   * first run.
+   */
+  private async writeScreeningAnswer(
+    tx: Tx, ctx: ServiceContext, screening: NonNullable<OrganizeHereInput["screening"]>,
+  ): Promise<void> {
+    const days = screening.dormancyDays;
+    if (days !== undefined && (!Number.isInteger(days) || days < 1 || days > 365)) {
+      throw new ServiceError(
+        "validation_failed", 400,
+        "dormancyDays must be an integer between 1 and 365",
+      );
+    }
+    const scope = screening.scope ?? "window";
+    if (scope !== "window" && scope !== "all_time") {
+      throw new ServiceError("validation_failed", 400, "screeningScope must be window or all_time");
+    }
+    // NEVER STORE THE DEFAULT for the dial — `setDormancyDays`' rule verbatim, so the product
+    // default can move without rewriting every account that never chose.
+    const stored = days === undefined || days === DEFAULT_DORMANCY_DAYS ? null : days;
+    await tx.insert(accountSettings)
+      .values({
+        accountId: ctx.accountId,
+        dormancyDays: stored,
+        screeningScope: scope,
+        screeningBaselineAt: ctx.now(),
+        updatedAt: ctx.now(),
+      })
+      .onConflictDoUpdate({
+        target: accountSettings.accountId,
+        set: {
+          dormancyDays: stored,
+          screeningScope: scope,
+          // The column's own guard, in SQL so two consents racing produce ONE baseline
+          // without this transaction having to read the row first.
+          // Same cast, same reason as the mailbox row's consent — see its note.
+          screeningBaselineAt: sql`coalesce(${accountSettings.screeningBaselineAt}, ${ctx.now().toISOString()}::timestamptz)`,
+          updatedAt: ctx.now(),
+        },
+      });
+  }
+
   async organizeHere(
     ctx: ServiceContext, id: string, input: OrganizeHereInput = {},
     opts?: UpdateMailboxOptions,
@@ -2095,6 +2156,24 @@ export class MailboxService {
         return { outcome: "disconnected" as const };
       }
       if (current.organizerRole !== "reader" && current.organizeConsentedAt !== null) {
+        /* ── ALREADY ORGANIZING, AND THE WINDOW STILL HAS TO LAND ──────────────────────────
+         *
+         * This used to return here and write nothing, which made "How far back" DECORATIVE on
+         * every re-run of setup: a person who came back through "Run setup again" to widen
+         * their history to all time pressed "Agree and start organizing", got a 200, and the
+         * account kept the window it already had. Nothing failed and nothing was stored.
+         *
+         * The precondition above is about the MAILBOX ROW and its reasoning says so — a
+         * re-authorisation would put a spendable takeover stamp on a healthy mailbox, and that
+         * stamp is what lets a gate seize a mailbox past a live foreign claim. None of that is
+         * an argument about `account_settings`. The window and the scope ARE the answer the
+         * person just gave, and they are the whole reason the screen has a button.
+         *
+         * So the stamp is still refused and the dials are still written. The baseline is
+         * untouched by construction — its upsert is a `COALESCE`, so a re-run cannot slide a
+         * live account's cutline forward, which is the damage this branch existed to avoid.
+         */
+        if (input.screening) await this.writeScreeningAnswer(tx, ctx, input.screening);
         return { outcome: "already_organizing" as const };
       }
 
@@ -2163,42 +2242,7 @@ export class MailboxService {
        * settings before the mailbox row — is deliberate and matches every other writer of this
        * table (`setDormancyDays`, `setThemeFace`): one lock chain, always the same direction.
        */
-      if (input.screening) {
-        const days = input.screening.dormancyDays;
-        if (days !== undefined && (!Number.isInteger(days) || days < 1 || days > 365)) {
-          throw new ServiceError(
-            "validation_failed", 400,
-            "dormancyDays must be an integer between 1 and 365",
-          );
-        }
-        const scope = input.screening.scope ?? "window";
-        if (scope !== "window" && scope !== "all_time") {
-          throw new ServiceError("validation_failed", 400, "screeningScope must be window or all_time");
-        }
-        // NEVER STORE THE DEFAULT for the dial — `setDormancyDays`' rule verbatim, so the product
-        // default can move without rewriting every account that never chose.
-        const stored = days === undefined || days === DEFAULT_DORMANCY_DAYS ? null : days;
-        await tx.insert(accountSettings)
-          .values({
-            accountId: ctx.accountId,
-            dormancyDays: stored,
-            screeningScope: scope,
-            screeningBaselineAt: ctx.now(),
-            updatedAt: ctx.now(),
-          })
-          .onConflictDoUpdate({
-            target: accountSettings.accountId,
-            set: {
-              dormancyDays: stored,
-              screeningScope: scope,
-              // The column's own guard, in SQL so two consents racing produce ONE baseline
-              // without this transaction having to read the row first.
-              // Same cast, same reason as the mailbox row's consent below — see its note.
-              screeningBaselineAt: sql`coalesce(${accountSettings.screeningBaselineAt}, ${ctx.now().toISOString()}::timestamptz)`,
-              updatedAt: ctx.now(),
-            },
-          });
-      }
+      if (input.screening) await this.writeScreeningAnswer(tx, ctx, input.screening);
 
       const rows = await tx.update(mailboxes).set({
         // NOT the role. **The GATE promotes, and this is the whole reason the ceremony is safe to

@@ -2179,6 +2179,7 @@
     "winDefault": "üblich",
     "winAllWhy": "Jeder Absender geht durch den Screener. Nichts landet unsortiert unter Historie.",
     "windowLater": "Du kannst das später unter Einstellungen → Screener erweitern: Ältere Absender warten dann unentschieden im Screener, und eine Entscheidung verschiebt die Post dieses Absenders.",
+    "windowGone": "Dieses Postfach ist nicht mehr verbunden, es wurde nichts gespeichert. Schließe die Einrichtung, verbinde es erneut und starte die Einrichtung von dort.",
     "agree": "Zustimmen und organisieren",
     "agreeing": "Startet …",
     "aiTitle": "KI für den Screener?",

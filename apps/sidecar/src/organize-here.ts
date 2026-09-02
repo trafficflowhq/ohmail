@@ -253,6 +253,65 @@ export class LocalConsentRefusal extends Error {
   }
 }
 
+/** The handle a `db.transaction` callback is given — derived, so it cannot drift from `LocalDb`. */
+type LocalTx = Parameters<Parameters<LocalDb["transaction"]>[0]>[0];
+
+/**
+ * THE SCREENING ANSWER, WRITTEN — extracted because it has TWO callers and they are the two
+ * states a person can press "Agree and start organizing" in.
+ *
+ * The first consent writes it beside the mailbox row, in one transaction, because the baseline is
+ * what the window is measured from. A RE-RUN of setup on a mailbox this install already organizes
+ * writes only this half: the mailbox row must not be re-stamped (a second press is not a second
+ * becoming) and the dials must still be stored, because they are the answer the person just gave.
+ * Until 2026-09-02 that second path wrote nothing at all and the window control was decorative on
+ * every re-run.
+ *
+ * The bounds are the caller's — they are checked before any transaction opens, so a refusal
+ * writes nothing on either path.
+ */
+async function upsertScreeningAnswer(
+  tx: LocalTx,
+  o: { accountId: string; days: number | undefined; scope: ScreeningScope; now: Date },
+): Promise<void> {
+  // NEVER STORE THE DEFAULT for the dial — `setDormancyDays`' rule and the hosted door's,
+  // verbatim, so the product default can move without rewriting every install that never
+  // chose. NULL here reads back as the default, and that is the point.
+  const stored = o.days === undefined || o.days === DEFAULT_DORMANCY_DAYS ? null : o.days;
+  await tx.insert(accountSettings)
+    .values({
+      accountId: o.accountId,
+      dormancyDays: stored,
+      screeningScope: o.scope,
+      screeningBaselineAt: o.now,
+      updatedAt: o.now,
+    })
+    .onConflictDoUpdate({
+      target: accountSettings.accountId,
+      set: {
+        // The two dials ARE the answer the person just gave, so they are overwritten.
+        dormancyDays: stored,
+        screeningScope: o.scope,
+        /* -- THE BASELINE IS WRITTEN ONLY WHILE NULL, AND IN SQL -----------------------
+         *
+         * It is the instant the account's screening history begins. Moving it forward on a
+         * re-run would slide a live install's cutline: every message between the original
+         * baseline and now would fall outside the window on the next pass and the backlog
+         * would move — the same damage as having no baseline at all, arriving later and
+         * looking like a sync bug. It is also what makes the re-run path above safe: that
+         * path writes the dials on an account that already has a baseline, and this
+         * `coalesce` is the reason it cannot disturb it.
+         *
+         * `coalesce` in SQL rather than a read-then-write so two consents racing (the flow
+         * and a Settings press, or two windows of the same install) produce ONE baseline
+         * without this transaction having to read the row first.
+         */
+        screeningBaselineAt: sql`coalesce(${accountSettings.screeningBaselineAt}, ${o.now.toISOString()}::timestamptz)`,
+        updatedAt: o.now,
+      },
+    });
+}
+
 export async function requestOrganizerTakeover(
   db: LocalDb,
   input: {
@@ -314,6 +373,31 @@ export async function requestOrganizerTakeover(
     return { outcome: "removed", previousReason: null, mailboxId: row.id };
   }
   if (row.organizerRole !== "reader" && row.organizeConsentedAt !== null) {
+    /* -- ALREADY ORGANIZING, AND THE WINDOW STILL HAS TO LAND ------------------------------
+     *
+     * This returned here and wrote nothing, which made "How far back" DECORATIVE on every
+     * re-run of setup: somebody who came back through "Run setup again" to widen their history
+     * to all time pressed "Agree and start organizing", got a 200, and the install kept the
+     * window it already had. Nothing failed and nothing was stored.
+     *
+     * The precondition is about the MAILBOX ROW — it exists so a second press is not a second
+     * becoming and leaves no spendable takeover stamp on a healthy mailbox. That is not an
+     * argument about `account_settings`. The window and the scope ARE the answer the person
+     * just gave, and they are the whole reason the screen has a button.
+     *
+     * The stamp stays refused and the dials are written. The baseline cannot move: its upsert
+     * is a `coalesce`, so a re-run never slides a live install's cutline forward — which is the
+     * damage the single-write rule protects against.
+     *
+     * Its own transaction, because there is no mailbox write here to share one with.
+     */
+    if (input.screening) {
+      await db.transaction(async (tx) => {
+        await upsertScreeningAnswer(tx, {
+          accountId: input.accountId!, days, scope, now: input.now,
+        });
+      });
+    }
     return { outcome: "already_organizing", previousReason: null, mailboxId: row.id };
   }
 
@@ -327,40 +411,9 @@ export async function requestOrganizerTakeover(
    */
   await db.transaction(async (tx) => {
     if (input.screening) {
-      // NEVER STORE THE DEFAULT for the dial — `setDormancyDays`' rule and the hosted door's,
-      // verbatim, so the product default can move without rewriting every install that never
-      // chose. NULL here reads back as the default, and that is the point.
-      const stored = days === undefined || days === DEFAULT_DORMANCY_DAYS ? null : days;
-      await tx.insert(accountSettings)
-        .values({
-          accountId: input.accountId!,
-          dormancyDays: stored,
-          screeningScope: scope,
-          screeningBaselineAt: input.now,
-          updatedAt: input.now,
-        })
-        .onConflictDoUpdate({
-          target: accountSettings.accountId,
-          set: {
-            // The two dials ARE the answer the person just gave, so they are overwritten.
-            dormancyDays: stored,
-            screeningScope: scope,
-            /* -- THE BASELINE IS WRITTEN ONLY WHILE NULL, AND IN SQL -----------------------
-             *
-             * It is the instant the account's screening history begins. Moving it forward on a
-             * re-run would slide a live install's cutline: every message between the original
-             * baseline and now would fall outside the window on the next pass and the backlog
-             * would move — the same damage as having no baseline at all, arriving later and
-             * looking like a sync bug.
-             *
-             * `coalesce` in SQL rather than a read-then-write so two consents racing (the flow
-             * and a Settings press, or two windows of the same install) produce ONE baseline
-             * without this transaction having to read the row first.
-             */
-            screeningBaselineAt: sql`coalesce(${accountSettings.screeningBaselineAt}, ${input.now.toISOString()}::timestamptz)`,
-            updatedAt: input.now,
-          },
-        });
+      await upsertScreeningAnswer(tx, {
+        accountId: input.accountId!, days, scope, now: input.now,
+      });
     }
     await tx
       .update(mailboxes)

@@ -52,6 +52,32 @@ export interface FirstRunMailboxInput {
   smtp?: { host: string; port?: number; secure?: boolean; user?: string; pass?: string };
 }
 
+/**
+ * WHAT "AGREE AND START ORGANIZING" ACTUALLY DID — two answers, because the stage needs exactly
+ * one bit and the doors answer it in two different vocabularies.
+ *
+ * Cloud answers `authorized | already_organizing | disconnected`; the standalone door adds
+ * `removed` and `no_mailbox`. None of those distinctions mean anything to a screen — what the
+ * screen has to know is whether the press stored the answer it promised to store. Mapping at the
+ * host keeps the server's vocabulary out of the stage, the same way {@link FirstRunHost.probeReason}
+ * keeps `ApiError` out of it.
+ *
+ * IT IS A RETURN VALUE AND NOT AN EXCEPTION because none of these is an error: every one of them
+ * is a 200. Before this existed the stage could not tell them apart at all and treated a press
+ * that stored nothing exactly like a press that worked.
+ */
+export type FirstRunOrganizeOutcome =
+  /**
+   * The answer is stored: consent is recorded (it may already have been) and the window and
+   * scope this call carried are on the account. The flow may go on.
+   */
+  | "stored"
+  /**
+   * There was nothing to organize — the mailbox is disconnected, removed, or unknown to this
+   * door. NOTHING was written, so the flow may not advance and must say so.
+   */
+  | "gone";
+
 export interface FirstRunHost {
   /** Which door is asking — it decides which steps exist at all (see {@link OnboardingDoor}). */
   door: OnboardingDoor;
@@ -97,11 +123,22 @@ export interface FirstRunHost {
    * leave a gap in which the baseline exists and the window does not — and during that gap the
    * cutoff is the product default, not the answer the person just gave. The service writes
    * consent, baseline, window and scope in one transaction; this method is the door to it.
+   *
+   * ── IT ANSWERS, AND THE ANSWER IS NOT ALWAYS "DONE" ──────────────────────────────────────
+   *
+   * See {@link FirstRunOrganizeOutcome}. Every reply is a 200, including the ones that store
+   * nothing, so a `Promise<void>` gave the stage no way to tell a press that worked from a press
+   * that could not — and it advanced either way.
+   *
+   * On a RE-RUN of setup the mailbox is usually already organized with consent recorded. Both
+   * doors refuse to re-stamp it (a second press is not a second becoming) and both still write
+   * the window and the scope, because those are the answer the person just gave. That is
+   * `"stored"`, and it is why the re-run's window control is not decorative.
    */
   organize: (
     mailboxId: string,
     body: { imap?: { pass: string }; screening?: { dormancyDays?: number; scope?: "window" | "all_time" } },
-  ) => Promise<void>;
+  ) => Promise<FirstRunOrganizeOutcome>;
 
   /**
    * LEAVE THE FLOW — `PATCH /consent/settings { onboardingCompleted: true }`.

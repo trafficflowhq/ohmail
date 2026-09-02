@@ -196,7 +196,7 @@ export function firstRunStep(
 }
 
 export function FirstRun({
-  host, facts, onRefresh, onLeave, pull, serverMessageCount, decide, resumed,
+  host, facts: wireFacts, onRefresh, onLeave, pull, serverMessageCount, decide, resumed,
   mailboxId, organizedSince, organizerLastSeen, rerun, screening, mailboxAddress,
 }: FirstRunProps) {
   const t = useTranslations("onboarding");
@@ -206,6 +206,37 @@ export function FirstRun({
   const tj = useTranslations("join");
   const locale = useLocale();
   const ids = useId();
+
+  /**
+   * WHAT THE CONSENT CALL JUST PROVED — applied to the facts BEFORE the derivation reads them.
+   *
+   * ── WHY THE RE-READ IS NOT ENOUGH ON ITS OWN ──────────────────────────────────────────────
+   *
+   * "Re-derive after every write" needs the write to be VISIBLE, and `onRefresh` is a request,
+   * not a fact: the facts this stage renders come from `GET /mailboxes` on the hosted door and
+   * from the local mirror on the standalone one, and neither is guaranteed to have caught up by
+   * the render that follows the press. Row 4 of the derivation is `if (!consented) return
+   * "consent"` — so for as long as the read lags, a person who has just agreed is put back on
+   * the screen asking them to agree, with the button they pressed still on it. That is the same
+   * loop the re-run had, arriving through a different door, and on a slow read it does not end.
+   *
+   * So the answer the server gave is applied to the local copy. It only ever ASSERTS SOMETHING
+   * TRUE — the organize call returned `stored`, which means consent is recorded — and it stops
+   * mattering the moment the read catches up, because the override is only consulted while the
+   * wire still says null.
+   *
+   * KEYED BY MAILBOX, and that is not decoration: "Start over → forget this mailbox" and a
+   * reconnect inside one mount would otherwise carry this assertion onto a NEW row that nobody
+   * has consented to, and skip the consent screen on a mailbox that needs it.
+   */
+  const [consented, setConsented] = useState<{ mailboxId: string; at: string } | null>(null);
+  const facts = useMemo(() => {
+    const mb = wireFacts.mailbox;
+    if (!consented || !mb || mb.organizeConsentedAt || consented.mailboxId !== mailboxId) {
+      return wireFacts;
+    }
+    return { ...wireFacts, mailbox: { ...mb, organizeConsentedAt: consented.at } };
+  }, [consented, mailboxId, wireFacts]);
 
   /** The cursor inside this run — never a step counter. See the header. */
   const [at, setAt] = useState<OnboardingStep | null>(null);
@@ -226,6 +257,21 @@ export function FirstRun({
    * the request was in flight), and the derivation is the only thing entitled to say where the
    * flow stands afterwards. Re-deriving after a failure costs a render; NOT re-deriving after
    * one leaves the person on a screen whose question the facts have already answered.
+   *
+   * ── EXCEPT ON A RE-RUN, WHERE A CLEARED CURSOR IS AN INFINITE LOOP ────────────────────────
+   *
+   * `firstRunStep` answers `consent` for a re-run whose cursor is null. That is right for an
+   * ENTRY — a re-run opens on the consent statement — and it is fatal for a WRITE, because a
+   * finished account derives to "nothing to do" and the cursor is therefore the re-run's only
+   * navigation. So on `#/first-run/again` every write walked back to the screen before it:
+   * pressing "Agree and start organizing" stored the window, cleared the cursor, and returned to
+   * the consent statement, for ever. Measured on a released build by somebody who had opened
+   * setup again on a mailbox that was already organized.
+   *
+   * A re-run's SUCCESS therefore names its next screen (the caller's `keepCursor`, which on that
+   * path is not optional), and a re-run's FAILURE stays where it is, on the screen carrying the
+   * sentence that explains it. A first run is untouched: there the derivation is the authority
+   * and a null cursor is how it is asked.
    */
   const run = useCallback(async (write: () => Promise<void>, keepCursor?: OnboardingStep) => {
     /* THE FORM'S GENERATION AT THE MOMENT THIS STARTED. `retireTest` advances it on every edit, so
@@ -235,23 +281,26 @@ export function FirstRun({
        was written unconditionally, so A's sentence appeared over B with no B press. The evidence
        had been retired and then re-arrived. */
     const mine = testSeq.current;
+    /* Where a FAILED write leaves a re-run: exactly here. Captured before the await, so a screen
+       the person left mid-flight cannot be restored over the one they are on. */
+    const here = step;
     setBusy(true);
     setProblem(null);
     try {
       await write();
       setAt(keepCursor ?? null);
     } catch (err) {
-      // The CURSOR still moves — the derivation is entitled to answer over the newest facts
-      // whatever happened here — but the SENTENCE belongs to a form that is gone.
+      // The CURSOR still moves on a first run — the derivation is entitled to answer over the
+      // newest facts whatever happened here — but the SENTENCE belongs to a form that is gone.
       if (testSeq.current === mine) {
         setProblem(host.probeMessage(err) ?? String((err as { message?: string })?.message ?? err));
       }
-      setAt(null);
+      setAt(rerun === true ? here : null);
     } finally {
       setBusy(false);
       onRefresh();
     }
-  }, [host, onRefresh]);
+  }, [host, onRefresh, rerun, step]);
 
   /** Move inside the run — the Back and Continue verbs, and nothing else. */
   const goTo = useCallback((next: OnboardingStep) => {
@@ -808,12 +857,30 @@ export function FirstRun({
           () => {
             if (!mailboxId) return;
             void run(async () => {
-              await host.organize(mailboxId, {
+              const outcome = await host.organize(mailboxId, {
                 screening: win === "all"
                   ? { scope: "all_time" }
                   : { dormancyDays: Number(win), scope: "window" },
               });
-            });
+              /* ── A PRESS THAT STORED NOTHING MAY NOT LOOK LIKE ONE THAT WORKED ───────────
+               *
+               * Every reply to this call is a 200, including the one for a mailbox that is no
+               * longer there — so until `organize` answered, the stage advanced identically
+               * whether the window had been stored or not. Throwing puts the sentence in the
+               * screen's own verdict and leaves the cursor here, which is the rule the rest of
+               * this flow's copy is written to: a control may not report having acted when it
+               * has not. */
+              if (outcome === "gone") throw new Error(t("windowGone"));
+              // The write's own result, applied before the re-read lands. See `consented`.
+              setConsented({ mailboxId, at: new Date().toISOString() });
+            /* ── ON A RE-RUN THE CURSOR NAMES THE NEXT SCREEN, BECAUSE NOTHING ELSE CAN ─────
+             *
+             * See `run`. A re-run is cursor-driven — a finished account derives to "nothing to
+             * do" — so a cleared cursor here means the consent statement, which is the screen
+             * this press came FROM. That was an infinite loop on the button that ends setup's
+             * only irreversible-sounding sentence. On a first run the cursor is cleared and the
+             * derivation answers, which it now can: consent has just been stamped. */
+            }, rerun === true ? "ai" : undefined);
           },
           (
             <>
@@ -868,9 +935,17 @@ export function FirstRun({
              * progress bar and the derivation has a better answer (the guided decision, or the
              * summary).
              */
-            const keep = on || facts.mailbox?.initialImportCompletedAt !== null
-              ? undefined
-              : ("pull" as const);
+            /* ── AND ON A RE-RUN THE CURSOR IS THE ONLY NAVIGATION ──────────────────────────
+             *
+             * Same reason as the window step's: `firstRunStep` answers `consent` for a re-run
+             * with no cursor, so a cleared cursor here walks back to the statement two screens
+             * ago. "Yes" on the standalone door still needs a model, which is the provider step;
+             * every other answer has nothing left to ask and a re-run ends at the summary. */
+            const keep = rerun === true
+              ? (on && host.door === "local" ? ("provider" as const) : ("summary" as const))
+              : on || facts.mailbox?.initialImportCompletedAt !== null
+                ? undefined
+                : ("pull" as const);
             void run(async () => { await host.setAiEnabled!(on); }, keep);
           },
           (

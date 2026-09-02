@@ -30,7 +30,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import type { FirstRunHost, FirstRunMailboxInput } from "../../shell/first-run-host";
+import type {
+  FirstRunHost, FirstRunMailboxInput, FirstRunOrganizeOutcome,
+} from "../../shell/first-run-host";
 import type { OnboardingAi } from "../../shell/onboarding";
 import {
   ApiError, aiSettings, consent as consentApi, mailboxes as mailboxApi, messageOf,
@@ -111,8 +113,14 @@ export function useCloudFirstRun(demo: boolean, pairNode?: ReactNode): FirstRunH
   const organize = useCallback(async (
     id: string,
     body: { imap?: { pass: string }; screening?: { dormancyDays?: number; scope?: "window" | "all_time" } },
-  ) => {
-    await mailboxApi.organize(id, body);
+  ): Promise<FirstRunOrganizeOutcome> => {
+    /* THE OUTCOME IS READ, not discarded. All three replies are 200s: `authorized` is the first
+       consent, `already_organizing` is a re-run of setup on a mailbox this account already
+       organizes — the stamp is refused and the window IS written — and `disconnected` is a
+       mailbox that was removed, which stores nothing at all. The stage advances on the first two
+       and must not on the third. See {@link FirstRunOrganizeOutcome}. */
+    const r = await mailboxApi.organize(id, body);
+    return r.outcome === "disconnected" ? "gone" : "stored";
   }, []);
 
   const complete = useCallback(async () => {
