@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { pushSubscriptions } from "@trafficflow/db/cloud";
 import type { Tx } from "@trafficflow/db";
 import {
@@ -494,7 +494,25 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
       auth: pushSubscriptions.auth,
     }).from(pushSubscriptions).where(and(
       eq(pushSubscriptions.accountId, accountId),
-      eq(pushSubscriptions.transport, "unifiedpush"),
+      /**
+       * BOTH WEB-PUSH-SHAPED TRANSPORTS, and `apns` deliberately absent.
+       *
+       * This read `unifiedpush` alone for as long as the phone was the only client that could
+       * receive a wake. A browser registration has always been storable — `POST /push/subscriptions`
+       * validates and writes `webpush` rows with their `endpoint`, `p256dh` and `auth` — and
+       * nothing ever dialled them, so the rows sat there and the browser was never woken. Widening
+       * the predicate is the whole of that fix; the sender below needed no change, because a
+       * `webpush` row carries both key columns by validation and therefore takes the SEALED arm
+       * that already existed for connectors that offer keys.
+       *
+       * `apns` stays out and its absence is load-bearing rather than an oversight: an Apple device
+       * token is not an endpoint URL, so it cannot be POSTed to, and this function would have to
+       * grow a second protocol. It is refused by omission until that sender exists.
+       *
+       * The payload does not move. Both arms send the same closed constant, and the census over
+       * this file's source is what keeps saying so.
+       */
+      inArray(pushSubscriptions.transport, ["unifiedpush", "webpush"]),
     ));
 
     for (const row of rows) {
