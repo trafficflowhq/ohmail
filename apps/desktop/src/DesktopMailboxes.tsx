@@ -69,18 +69,9 @@
  *
  * The STANDALONE door is untouched by all of that, and its mailbox IS editable: the door chooser
  * configures the server through the shell and sends the password to the engine over this same
- * bridge (`doors.ts`, `PATCH /local/mailboxes/:id`), which the local engine serves itself against
- * a single-user database with no account and no factor in the picture. Nothing on that door is
- * sent to a browser, because there is no hosted account to administer.
- *
- * ── AND THAT DOOR CAN NOW REMOVE ONE, WHICH IT COULD NOT ────────────────────────────────────
- *
- * `DELETE /local/mailboxes/:id` is the fourth member of that same family and it has been served
- * since the removal was made to mean removal — release the organizer claim, wipe this machine's
- * mirror, stop the timer, close the login. NO CLIENT CALLED IT. This pane offered "Reading only"
- * and "Sync now", its own footnote said "you can remove it and nothing is lost from the mailbox
- * itself", and a release note described a remove-then-re-add walk that nobody standing at this
- * door could perform. The control is below, beside the resync, on the local door alone.
+ * bridge (`doors.ts`, `PATCH /mailboxes/:id`), which the local engine serves itself against a
+ * single-user database with no account and no factor in the picture. Nothing on that door is sent
+ * to a browser, because there is no hosted account to administer.
  */
 
 import { Fragment, useState } from "react";
@@ -439,24 +430,7 @@ function statusOf(door?: string | null): EngineStatus | null {
     : null;
 }
 
-/**
- * `servedMailboxId` is the mailbox the ENGINE is opening, from `engine_status`.
- *
- * It gates the REMOVE control, and that is narrower than it looks: the local removal
- * route releases the organizer claim, wipes this machine's copy of the mail and stops the
- * timer only `if (mailboxId === world.mailboxId)` — for any other row it tombstones and
- * deletes the credential and nothing else. The confirmation states five consequences and
- * one of them is the wipe, so offering it on a row the engine does not serve would be a
- * panel promising an act the request does not perform. Reachable rather than theoretical:
- * reconfiguring the door to a different address mints a new row and leaves the old one
- * `connected` behind it.
- *
- * ABSENT means the shell did not say, and the control is withheld — the safe direction,
- * on the same rule every optional field on this surface follows.
- */
-export function DesktopMailboxes(
-  { door, servedMailboxId }: { door?: string | null; servedMailboxId?: string },
-) {
+export function DesktopMailboxes({ door }: { door?: string | null }) {
   const t = useTranslations("mailboxes");
   /* The SAME binding the sync line reads, and `refresh` is what its own comment offers this pane:
      "Re-read the mailbox facts now. The Settings pane calls it after a connect or a resync." */
@@ -493,16 +467,6 @@ export function DesktopMailboxes(
   /* Resting, or asked whether you meant it. One value rather than two booleans, for the reason
      the tag rows give: two booleans can both be true and there is no rendering for that. */
   const [claim, setClaim] = useState<"rest" | "confirm">("rest");
-  /**
-   * WHICH MAILBOX REMOVE IS ASKING ABOUT, or `null` when nothing is asking.
-   *
-   * The mailbox itself rather than an id, because the confirmation names the ADDRESS and a row
-   * that vanishes from `facts` mid-question (a poll landing between the press and the answer)
-   * must not leave the panel titled "Remove ?".
-   */
-  const [removing, setRemoving] = useState<MailboxFacts | null>(null);
-  /** True while the DELETE is in flight, so the destructive button cannot be pressed twice. */
-  const [removeBusy, setRemoveBusy] = useState(false);
   const cloud = door === "cloud";
   const heading = cloud ? t("modeCloud") : t("desktopModeLocal");
 
@@ -590,52 +554,6 @@ export function DesktopMailboxes(
           next.delete(id);
           return next;
         });
-      }
-    })();
-  };
-
-  /**
-   * REMOVE THIS MAILBOX FROM THIS COMPUTER — and until now this door had no way to do it.
-   *
-   * The route has existed since the hotfix that made removal mean removal (release the organizer
-   * claim, wipe this machine's mirror, stop the timer and close the login), and NO CLIENT CALLED
-   * IT: the pane offered "Reading only" and "Sync now" and nothing else, while its own footnote
-   * said "you can remove it and nothing is lost from the mailbox itself" — a promise with no
-   * control behind it, and a released changelog describing a remove-then-re-add walk that a
-   * person standing at this door could not perform.
-   *
-   * `DELETE /local/mailboxes/:id`, NOT the shared `DELETE /mailboxes/:id`. The shared one is
-   * `stepUp: true`, and on this door a step-up is a permanent refusal rather than a guard: the
-   * launch session's second-factor stamp is written once at boot ("there is no second factor on
-   * a local install"), so the shared route answers 403 from five minutes after launch for the
-   * life of the process. The local route's authority is the per-launch bearer, added shell-side,
-   * which is the same protection the other three routes in that family carry.
-   *
-   * LOCAL DOOR ONLY, and structurally so: the hosted door's removal is the ACCOUNT's ceremony —
-   * a password and a fresh factor against a real origin — which is exactly what this window
-   * cannot offer and why the pane sends a hosted install to the browser instead.
-   *
-   * `refresh()` and not an optimistic splice: the row's state moved (it is a tombstone now), and
-   * the shared poller is the one thing entitled to say what this install is connected to.
-   */
-  const remove = (m: MailboxFacts): void => {
-    setProblem(null);
-    setRemoveBusy(true);
-    void (async () => {
-      try {
-        const res = await bridgeFetch(`/local/mailboxes/${encodeURIComponent(m.id)}`, {
-          method: "DELETE",
-        });
-        if (!res.ok) throw new Error(await reasonOf(res));
-        setRemoving(null);
-        refresh();
-      } catch (err) {
-        /* THE PANEL STAYS OPEN ON A FAILURE, on the browser pane's rule: dropping somebody back
-           to a list that still shows the mailbox says nothing about whether the removal
-           happened. The sentence goes to the pane's one problem line, above the rows. */
-        setProblem(err instanceof Error ? err.message : String(err));
-      } finally {
-        setRemoveBusy(false);
       }
     })();
   };
@@ -877,12 +795,10 @@ export function DesktopMailboxes(
         <SettingsActions>
           <span className="set-note-inline">
             {/* THE CEREMONY PROMISES WHAT THIS ENGINE WILL DO, and the two engines do different
-                things. The modern sentence says "on its next pass" — and for a while this comment
-                said that while the copy still said "quit and reopen", which is the shape a claim
-                takes when the code is corrected and the sentence is not. A pre-role engine stopped
-                its poll timer at the stand-down and spends the stamp at its next process assembly,
-                so on that one the confirmation would contradict the acknowledgement it produces
-                one press later. It also names no holder, because a legacy row carries none. */}
+                things. The modern sentence says "on its next pass"; a pre-role engine stopped its
+                poll timer at the stand-down and spends the stamp at its next process assembly, so
+                on that one the confirmation contradicted the acknowledgement it produced one press
+                later. It also names no holder, because a legacy row carries no holder columns. */}
             {claimTarget.legacyStandDown === true
               ? t("organizeHereWhatLegacy")
               : claimWouldBeRefused(claimTarget)
@@ -959,88 +875,16 @@ export function DesktopMailboxes(
                  `claimable`. What stays here is Sync now, withheld on a disconnected mailbox for
                  its own reason: nothing is opening it, so a pass over it cannot be asked for. */
               shown.status === "disabled" ? undefined : (
-                <>
-                  <Button
-                    className="mbx-btn"
-                    onClick={() => resync(shown.id)}
-                    disabled={queued.has(shown.id)}
-                  >
-                    {queued.has(shown.id) ? t("syncQueued") : t("syncNow")}
-                  </Button>
-                  {/* ── REMOVE — the door out, and this door had none ─────────────────────
-                      Ghost beside the resync, which is the row cluster's own ranking: Sync now
-                      is the ordinary verb and this is the one somebody should have to mean.
-
-                      NO KEYCAP. The registry is checked rather than guessed: the two other verbs
-                      in this pane — Sync now and Organize here — carry none, so a keycap on the
-                      destructive one would be the only shortcut on the surface and it would be
-                      on the press that deletes a stored password.
-
-                      It opens a CONFIRMATION, never the removal. On the hosted door the
-                      destructive press is two screens away behind the account's second factor;
-                      here there is no second factor to ask for, so the statement of consequences
-                      IS the ceremony and it has to carry its weight. */}
-                  {!cloud && servedMailboxId === shown.id ? (
-                    <Button
-                      className="mbx-btn"
-                      variant="ghost"
-                      onClick={() => { setProblem(null); setRemoving(shown); }}
-                    >
-                      {t("remove")}
-                    </Button>
-                  ) : null}
-                </>
+                <Button
+                  className="mbx-btn"
+                  onClick={() => resync(shown.id)}
+                  disabled={queued.has(shown.id)}
+                >
+                  {queued.has(shown.id) ? t("syncQueued") : t("syncNow")}
+                </Button>
               )
             }
           />
-          {/* ══ THE REMOVAL CONFIRMATION — FIVE CONSEQUENCES, AND THE FIFTH IS THIS DOOR'S ══
-              The hosted pane's panel, verbatim in shape and in four of its five statements,
-              because they are true on both doors: organizing stops, THE MAIL IS UNTOUCHED (the
-              removal opens no IMAP connection to delete anything), the stored password goes, and
-              scheduled sends are closed rather than sent.
-
-              The fifth differs and had to. On the hosted door the copy already synced STAYS —
-              erasure there is account-scoped and there is no per-mailbox purge, so claiming the
-              local copy goes would be false. On THIS door the local mirror is deleted, by this
-              route, in the same request: that is the wipe the doubling fix added, and it is the
-              honest sentence here. Saying "stays in your account" on a machine that has no
-              account would be the same class of false statement pointing the other way.
-
-              Under the row rather than over the pane, so a machine with two addresses cannot
-              show a confirmation whose subject is ambiguous. `role="alertdialog"` and the SAFE
-              ANSWER FIRST in the DOM, the browser pane's discipline. */}
-          {removing?.id === shown.id ? (
-            <div
-              className="acct-confirm"
-              role="alertdialog"
-              aria-label={t("removeTitle", { address: shown.address })}
-            >
-              <h3 className="acct-sub">{t("removeTitle", { address: shown.address })}</h3>
-              <ul className="acct-fine mbx-remove-list">
-                <li>{t("removeStops")}</li>
-                <li>{t("removeMailSafe")}</li>
-                <li>{t("removeCredential")}</li>
-                <li>{t("removeScheduled")}</li>
-                <li>{t("removeCopyLocal")}</li>
-              </ul>
-              <p className="acct-fine">{t("removeReconnect")}</p>
-              <div className="acct-actions">
-                <Button onClick={() => setRemoving(null)} disabled={removeBusy}>
-                  {t("removeCancel")}
-                </Button>
-                {/* `primary danger` — the account section's convention for a destructive
-                    confirm, so this and the browser's pane read as one product. */}
-                <Button
-                  variant="primary"
-                  className="danger"
-                  disabled={removeBusy}
-                  onClick={() => remove(shown)}
-                >
-                  {removeBusy ? t("removeWorking") : t("removeConfirm")}
-                </Button>
-              </div>
-            </div>
-          ) : null}
           {/* WHAT THE ANSWER WAS, under the row it is about.
               `authorized` NO LONGER SAYS "QUIT AND REOPEN". That sentence was true when the engine
               only read the lease at launch; the gate spends the stamp on its next tick now, so the
@@ -1073,21 +917,14 @@ export function DesktopMailboxes(
                  so there a restart is not a superstition, it is the mechanism. The sentence is back
                  under a name that says when it applies, and it persists until the relaunch clears
                  the row — because the instruction is outstanding until then. */
-              /* TWO MECHANISMS, AND THIS COMMENT USED TO CLAIM THERE WAS ONE. It read "the
-                 relaunch is what spends the stamp on both engines ... Arming the live loop —
-                 re-reading the column each cycle — would let the press be honoured on the next
-                 pass instead; until it does, this sentence is what is true." **The live loop is
-                 armed.** `mayOrganize` re-reads `takeover_authorized_at` at the top of every gate
-                 (`apps/sidecar/src/engine.ts`, "THE STAMP IS RE-READ EVERY RUN"), and it had to
-                 be: a polling reader otherwise DESTROYS the press, because the poll asks with
-                 `takeover: "none"`, is refused by the very claim being taken over, and the refusal
-                 arm clears the row. So a modern reader is spent on its next poll, and the copy
-                 says so.
-
-                 The LEGACY row is the one the relaunch is still the mechanism for, and the reason
-                 is the roster rather than the gate: it is `disabled`, `loadEnabledMailboxes`
-                 filters on `ne(status, 'disabled')`, so no gate ever runs for it and the stamp is
-                 spent at the next process assembly.
+              /* ONE MECHANISM, TWO OUTCOMES. The relaunch is what spends the stamp on both
+                 engines — `world` is assembled once (`engine.ts:892`), `takeoverAuthorized` is
+                 derived from it once (`:1788`, and its own comment at `:1914` says "read at
+                 assembly"), the route writes only the database row, and the running loop's
+                 stand-down path CLEARS the stamp (`:1951`). Arming the live loop — re-reading the
+                 column each cycle, or having the route poke the running engine — would let the
+                 press be honoured on the next pass instead; until it does, this sentence is what
+                 is true.
 
                  What still differs is where losing leaves this install, and there are three
                  answers rather than one. A modern reader keeps reading — that is what a reader IS.
