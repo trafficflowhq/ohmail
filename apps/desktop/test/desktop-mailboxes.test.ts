@@ -212,6 +212,21 @@ function buttonSaying(el: HTMLElement, label: string): HTMLButtonElement | null 
 const openButton = (el: HTMLElement) => buttonSaying(el, "Open ohmail.app");
 
 /**
+ * The Remove verb on the row for one address. `buttonExactly` answers the FIRST Remove in the
+ * pane, which is the wrong control the moment there is more than one row — and every case about
+ * which mailbox a removal names depends on pressing the right one.
+ */
+function rowRemove(el: HTMLElement, address: string): HTMLButtonElement {
+  const row = [...el.querySelectorAll<HTMLElement>(".set-row")]
+    .find((r) => (r.querySelector(".lab b")?.textContent ?? "").includes(address));
+  if (!row) throw new Error(`no row for ${address}`);
+  const verb = [...row.querySelectorAll("button")]
+    .find((b) => (b.textContent ?? "").trim() === "Remove");
+  if (!verb) throw new Error(`no Remove on the row for ${address}`);
+  return verb;
+}
+
+/**
  * A button by its EXACT label. "Remove" and "Remove mailbox" are two different controls one
  * press apart, and `buttonSaying`'s `includes` cannot tell them apart — it would answer the
  * row's verb for both and the confirmation's assertions would pass without the panel existing.
@@ -822,6 +837,45 @@ describe("the desktop mailbox pane on the standalone door", () => {
     /* AND THE GATE IS TOLD. Without this the window would go on rendering the app over an install
        with no door, and only a relaunch would show the door chooser. */
     expect(published.map((p) => p.state)).toEqual(["not_configured"]);
+  });
+
+  it("A LEGACY STOOD-DOWN ROW COUNTS as a mailbox — no sixth consequence, no sign-out", async () => {
+    /* ── REVIEW FINDING ─────────────────────────────────────────────────────────────────────
+     *
+     * `isLastLive` filtered on `status !== "disabled"`, which excludes the pre-role engine's
+     * stand-down shape — `disabled` WITH a reason — and `claimable` deliberately INCLUDES it: such
+     * a row is rendered with a state line and a working "Organize here instead". So on an upgraded
+     * install holding one live mailbox beside one legacy stood-down one, removing the live mailbox
+     * announced "this is the only mailbox on this computer" with the other visibly listed a row
+     * away, and then signed the door out — deleting the only route back to the one still there.
+     *
+     * MUTATION: filter on `status !== "disabled"` again and both assertions red. */
+    FACTS = [
+      { ...MAILBOX, id: "mbx-live", address: "live@example.test" },
+      {
+        ...MAILBOX,
+        id: "mbx-legacy",
+        address: "legacy@example.test",
+        status: "disabled",
+        disabledReason: "organized_elsewhere:unknown",
+        legacyStandDown: true,
+      },
+    ];
+    bridgeReply = () => new Response(null, { status: 200 });
+    const el = await render("local");
+    // The legacy row is on screen and claimable — which is why it is a mailbox and not a tombstone.
+    expect(el.textContent ?? "").toContain("legacy@example.test");
+
+    await act(async () => { rowRemove(el, "live@example.test").click(); });
+    const panel = el.querySelector('[role="alertdialog"]')!.textContent ?? "";
+    expect(panel, "the confirmation called it the only mailbox with another one listed")
+      .not.toContain("only mailbox on this computer");
+
+    await act(async () => {
+      buttonExactly(el, "Remove mailbox")!.click();
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+    });
+    expect(shellCommands, "the door was signed out with a mailbox still held").toEqual([]);
   });
 
   it("a sign-out that fails still reports it, because the removal already happened", async () => {

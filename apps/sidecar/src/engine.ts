@@ -1763,6 +1763,37 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        message, because the organization was never stored here — it is where the messages
        physically sit on the user's own server. */
 
+    /**
+     * IS THIS ROW THE MAILBOX THE SETTINGS FILE DESCRIBES — the seed, by ADDRESS.
+     *
+     * ── IT USED TO BE `row.id === world.mailboxId`, AND THAT CONFLATED TWO QUESTIONS ─────────
+     *
+     * `world.mailboxId` answers "which row do the shell's single-mailbox surfaces speak for", and
+     * `identity.ts` is explicit that when the seed address has no row THE OLDEST LIVE ONE STANDS
+     * IN — a fallback that exists so a working install does not report itself unconfigured after
+     * its seed was removed. Correct for that question, and wrong for this one.
+     *
+     * `isSeed` gates four things and every one of them is a fact about the CONFIGURATION: the dial
+     * (`config.imap`), the environment password (twice), and the process's submission server. Hand
+     * them to a row the settings file has never heard of and the results are wrong in the worst
+     * available direction — WHICH IS THE DEFECT THIS REPLACES, measured on the rig:
+     *
+     *   remove the seed while another mailbox remains, relaunch, and the survivor was handed the
+     *   REMOVED mailbox's host and user. `credentialIsForeign(row.meta, mbImap.host)` then compared
+     *   the survivor's own credential against a server it was never proved against, answered
+     *   `foreign-host`, and withheld the password — a mailbox that had been organizing five seconds
+     *   earlier came back dialling nothing, with no gesture in the window that repairs it.
+     *
+     * By ADDRESS, so after the seed's removal NO row is the seed and every survivor dials from its
+     * own credential meta — which is the branch that was already right for #2..N. One rule.
+     *
+     * The walk that was supposed to catch this PASSED: its two mailboxes shared one hostname, and
+     * `credentialIsForeign` compares hosts. The fixture gives each mailbox its own server now.
+     */
+    const seedAddress = (config.address ?? config.imap.auth.user ?? "").trim().toLowerCase();
+    const isSeedRow = (address: string): boolean =>
+      seedAddress !== "" && address.trim().toLowerCase() === seedAddress;
+
     const attachLocal = async (mb: LocalRosterRow, isSeed: boolean): Promise<LocalMailboxRuntime> => {
       /**
        * ══ WHAT THIS MAILBOX DIALS ═══════════════════════════════════════════════════════════
@@ -3582,7 +3613,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * `start()` is what opens connections, and that is concurrent.
      */
     for (const row of await loadLocalRoster(db, world.accountId)) {
-      await attachLocal(row, row.id === world.mailboxId);
+      await attachLocal(row, isSeedRow(row.address));
     }
     log("local_roster_attached", {
       count: runtimes.size,
@@ -4267,7 +4298,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                     id: dto.id, address: dto.address, displayName: dto.displayName ?? null,
                     standDownReason: null, takeoverAuthorizedAt: null,
                   },
-                  false,
+                  /* NOT the seed, and ASKED rather than asserted: a mailbox being added is by
+                     definition not the address this process was configured for — the same-login
+                     refusal above would have caught it — but the predicate is the one place that
+                     rule lives, and a hard `false` is a second statement of it that can drift. */
+                  isSeedRow(dto.address),
                 );
               } catch (attachErr) {
                 log("local_mailbox_attach_failed", {
@@ -4378,7 +4413,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                       id: dto.id, address: dto.address, displayName: dto.displayName ?? null,
                       standDownReason: null, takeoverAuthorizedAt: null,
                     },
-                    false,
+                    /* THE SAME PREDICATE. A re-seal of the SEED's password reattaches it, and
+                       asserting `false` there stripped that runtime of the environment password
+                       and the process's submission server. It survived only because the seed's
+                       reconfigure replaces the whole engine moments later — luck, not design. */
+                    isSeedRow(dto.address),
                   );
                   void attached.start().catch((startErr: unknown) => {
                     log("mailbox_start_failed", { err: startErr });

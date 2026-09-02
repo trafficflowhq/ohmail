@@ -1931,7 +1931,20 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
    * is nothing for `organize` to address. It is also the honest answer when `GET /mailboxes` is
    * stale or failing, which is the same window arriving for a different reason.
    */
-  const addPending = route.firstRunAdd && namedFirstRunRow === null;
+  /* ── AND IT IS NOT THE ADD RUN'S PROBLEM ALONE ─────────────────────────────────────────────
+   *
+   * The re-run names a mailbox too (`#/first-run/again?mailbox=<id>`, from the row's own "Run
+   * setup"), and it had no equivalent guard: let the poller drop that row — a removal from another
+   * surface, a stale or failing `GET /mailboxes` — and `?? facts[0]` silently resolved the run to
+   * mailbox #1. The window screen's press then posts `organize` for THAT mailbox with the window
+   * somebody chose for a different one. Same wrong-mailbox write, different door.
+   *
+   * So the rule is about the HASH rather than about the intent: a run that NAMES a mailbox is
+   * about that mailbox or about none. The `facts[0]` fallback survives for the one case it was
+   * written for — a hash that names none at all, which is a first run and an add run before its
+   * create answers. */
+  const namedRowMissing = route.firstRunMailboxId !== null && namedFirstRunRow === null;
+  const addPending = namedRowMissing || (route.firstRunAdd && route.firstRunMailboxId === null);
   /**
    * THE MAILBOX THIS RUN IS ABOUT. The row the ROUTE names, and the first row only when the hash
    * names none — the router's own rule for every id it carries: a claim the data does not support

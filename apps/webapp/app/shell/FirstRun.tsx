@@ -304,9 +304,25 @@ export function firstRunStep(
      *    Reported as `on` rather than skipped afterwards, so the derivation flows on to rows 7-9
      *    instead of being clamped to one of them.
      *
-     * What is left is the mailbox's own truth-conditions, which is the resume this run needs:
-     * quit halfway through adding a mailbox, come back through the same route, and land on the
-     * first thing THAT mailbox still needs — the claim question, consent, the pull, a decision.
+     * What is left is the mailbox's own truth-conditions.
+     *
+     * ── AND THIS DOES NOT DESCRIBE A RESUME, WHICH IS WHAT IT USED TO CLAIM ──────────────────
+     *
+     * It said: "quit halfway through adding a mailbox, come back through the same route, and land
+     * on the first thing THAT mailbox still needs". No entry point produces that. Coming back
+     * means pressing "Add mailbox", which navigates to `#/first-run/add` with NO `?mailbox=` —
+     * so the run is pending, the mailbox is withheld, and the screen is the connect form again;
+     * re-typing the same mailbox then meets `POST /local/mailboxes`'s `same_login` refusal.
+     *
+     * The half-added mailbox is recovered from its own ROW instead — it is in the pane by then,
+     * and its "Run setup" opens the re-run on the consent statement, which is the first thing it
+     * still needs. That is the honest sentence, and the claim is corrected rather than the code:
+     * a route that resumed an add would have to name the row, and the row already has a control
+     * that does.
+     *
+     * What this arm is actually for is the run in FLIGHT: once `onConnected` has put the new id in
+     * the hash, every later render of the same run derives from that mailbox's own conditions
+     * rather than from the install's.
      */
     return deriveOnboardingStep({ ...facts, account: {}, ai: "on" }) ?? "mailbox";
   }
@@ -718,7 +734,22 @@ export function FirstRun({
 
   /* THE RAIL THIS RUN WALKS, not every phase the flow has — see {@link railFor}. */
   const rail = useMemo(() => railFor(path), [path]);
-  const railAt = rail.findIndex((r) => r.steps.includes(step));
+  /**
+   * WHERE THE RUN IS ON ITS OWN RAIL — and never `-1`, which used to be unreachable and is not.
+   *
+   * Against the full seven-group list this always matched, because every step belongs to a group.
+   * Against the PATH-FILTERED rail it can miss: a step the path has since dropped is still the
+   * step on screen for one render — the reachable case is `decide`, whose group leaves the rail
+   * the moment a background pass drains the Screener queue to zero. `-1` then printed "0 / 6"
+   * with no dot lit.
+   *
+   * Clamped to the last phase rather than the first: a run whose remaining step just disappeared
+   * is at the END of what it has left to do, and the screen it is on is the one before the
+   * summary. (The body of that screen going empty when `decide` loses its subject is a separate,
+   * pre-existing strand — this is about the numbering.)
+   */
+  const railFound = rail.findIndex((r) => r.steps.includes(step));
+  const railAt = railFound === -1 ? Math.max(0, rail.length - 1) : railFound;
   const railLabel = (id: string) => t(`rail_${id}` as "rail_mailbox");
 
   const foot = (opts: { primary?: ReactNode; back?: boolean; cancel?: boolean } = {}) => (
