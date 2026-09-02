@@ -211,7 +211,8 @@ export {
   type ScheduledSendPassDeps, type ScheduledSendPassResult,
 } from "./schedule-send-pass.js";
 export {
-  runSendReconcilePass, SEND_RECONCILE_BATCH, SEND_RECONCILE_GIVE_UP_MS, SEND_RECONCILE_SCAN_FACTOR,
+  runSendReconcilePass, SEND_RECONCILE_BATCH, SEND_RECONCILE_CALL_CEILING_MS,
+  SEND_RECONCILE_DIAL_DEADLINE_MS, SEND_RECONCILE_GIVE_UP_MS, SEND_RECONCILE_SCAN_FACTOR,
   type SendReconcilePassDeps, type SendReconcilePassResult,
 } from "./send-reconcile-pass.js";
 export {

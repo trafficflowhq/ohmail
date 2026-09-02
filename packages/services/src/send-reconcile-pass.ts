@@ -2,7 +2,7 @@ import { and, eq, lt, ne } from "drizzle-orm";
 import { drafts, mailboxes, outboundSends, type Tx } from "@trafficflow/db";
 import { createLogger, type Logger, type OpenSendAdapter, type SendAdapter } from "@trafficflow/core/mail";
 import type { Db, ServiceContext } from "./context.js";
-import { SettleFailed, TransientDialRefusal } from "./errors.js";
+import { ServiceError, SettleFailed, TransientDialRefusal } from "./errors.js";
 import { SCHEDULED_SEND_BATCH, SCHEDULED_SEND_EXPIRY_MS } from "./schedule-send-pass.js";
 import { sendService, SEND_STALE_AFTER_MS, type SendService } from "./send-service.js";
 
@@ -97,7 +97,9 @@ import { sendService, SEND_STALE_AFTER_MS, type SendService } from "./send-servi
 export const SEND_RECONCILE_BATCH = SCHEDULED_SEND_BATCH;
 
 /**
- * How many stale rows one invocation EXAMINES, as a multiple of the rows it may DIAL.
+ * How many stale rows one invocation EXAMINES FROM EACH CLAIM WINDOW, as a multiple of the
+ * logins it may attempt. There are TWO windows, so the examination total is twice this times
+ * the batch — twenty-four against a login budget of three, not four times it.
  *
  * ── THE STARVATION THIS EXISTS TO PREVENT, WHICH A FIXED `LIMIT 3` HAD ──────────────────────
  *
@@ -137,6 +139,56 @@ export const SEND_RECONCILE_SCAN_FACTOR = 4;
  * on the first cycle, whatever its age.
  */
 export const SEND_RECONCILE_GIVE_UP_MS = SCHEDULED_SEND_EXPIRY_MS;
+
+/**
+ * PER-CALL CEILING on anything this pass does over a socket — the dial, and the Sent-folder
+ * search — and the reason it exists at all is that the batch is NOT a time bound.
+ *
+ * The scheduled sender's 3 × 20 s = 60 s arithmetic works because `SendService.send` races every
+ * attempt against {@link SEND_ATTEMPT_CEILING_MS}. This pass had no such race, and
+ * `makeSendAdapter` passes no timeouts, so `DEFAULT_NET_TIMEOUTS` applies: a connect of 15 s, a
+ * greeting of 15 s and a socket read of 25 s. Three mailboxes hanging in LOGIN or in the
+ * post-login LIST is 75 s inside a 60-second platform ceiling — and being killed there is worse
+ * than slow, because the `finally` that closes the held connections never runs and each one's
+ * admission slot leaks until the stale-window reclaim.
+ *
+ * Ten seconds, with {@link SEND_RECONCILE_DIAL_DEADLINE_MS} refusing to START a dial late in the
+ * invocation: the worst case becomes deadline + one dial + one probe, comfortably inside the
+ * ceiling, and a mailbox too slow to answer in ten seconds is deferred rather than paid for.
+ */
+export const SEND_RECONCILE_CALL_CEILING_MS = 10_000;
+
+/**
+ * How late into an invocation a NEW dial may still be started. Past this the remaining rows are
+ * deferred exactly as if the login budget were spent — they keep their mirror arm, and they are
+ * first in line next minute. Bounds the tail the per-call ceiling cannot: three calls that each
+ * take the full ten seconds are fine; three that start at second fifty-nine are not.
+ */
+export const SEND_RECONCILE_DIAL_DEADLINE_MS = 25_000;
+
+/**
+ * Race one socket operation against {@link SEND_RECONCILE_CALL_CEILING_MS}. The abandoned promise
+ * is followed and its result closed, never dropped: a LOGIN that lands after we stopped waiting
+ * would otherwise leave an authenticated connection with no handle to it — the same reasoning
+ * `SendService.send` records for its own abandoned dial.
+ */
+async function bounded<T>(
+  what: string, work: Promise<T>, ceilingMs: number, onLateAdapter?: (v: T) => void,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const ceiling = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`send-reconcile: ${what} exceeded ${ceilingMs}ms`)), ceilingMs);
+  });
+  try {
+    return await Promise.race([work, ceiling]);
+  } catch (err) {
+    if (onLateAdapter) void work.then(onLateAdapter, () => { /* it failed too; nothing to close */ });
+    throw err;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 
 const defaultLog = createLogger({ service: "send-reconcile" });
 
@@ -226,6 +278,8 @@ export async function runSendReconcilePass(
    * scan factor exists to remove, relocated from the claim window into the budget.
    */
   let dialled = 0;
+  /** Wall clock at the start, for {@link SEND_RECONCILE_DIAL_DEADLINE_MS}. */
+  const startedAt = now().getTime();
 
   // ONE real connection per distinct mailbox in the batch, closed once at the end. The wrapper
   // handed to the service reports `close()` as done immediately so the per-row `finally` inside
@@ -253,9 +307,18 @@ export async function runSendReconcilePass(
      */
     let real: SendAdapter;
     try {
-      real = await deps.openSendAdapter(mailboxId);
+      real = await bounded(
+        "dial", deps.openSendAdapter(mailboxId), SEND_RECONCILE_CALL_CEILING_MS,
+        (late) => { void late.close().catch(() => { /* nothing to do */ }); },
+      );
     } catch (err) {
-      if (!(err instanceof TransientDialRefusal)) dialled += 1;
+      // FREE ONLY IF NOTHING REACHED THE WIRE, and there are two such refusals, not one.
+      // `TransientDialRefusal` is the admission counter; `ServiceError` is `makeSendAdapter`
+      // finding no `mailbox_credentials` rows — a pure SELECT, decided before a socket exists.
+      // Charging either would let a mailbox that cannot be dialled AT ALL drain the login budget
+      // and defer every genuinely dialable row behind it: the head-of-line block this pass keeps
+      // being fixed for, re-entered from the other side.
+      if (!(err instanceof TransientDialRefusal) && !(err instanceof ServiceError)) dialled += 1;
       throw err;
     }
     dialled += 1;
@@ -322,7 +385,10 @@ export async function runSendReconcilePass(
       // point of the memo, and charging it a slot would make "N ids on one mailbox cost one
       // LOGIN, not N" false — a mailbox with a dozen strandings would drain three a minute over
       // one socket it had already paid for.
-      const outOfBudget = mayDial && !shared.has(row.mailboxId) && dialled >= batch;
+      const lateInTheInvocation =
+        now().getTime() - startedAt >= SEND_RECONCILE_DIAL_DEADLINE_MS;
+      const outOfBudget = mayDial && !shared.has(row.mailboxId)
+        && (dialled >= batch || lateInTheInvocation);
       const willDial = mayDial && !outOfBudget;
       const onMiss: "unverified" | "defer" =
         outOfBudget ? "defer"
@@ -351,23 +417,32 @@ export async function runSendReconcilePass(
         // exists to avoid — unless it is old enough that no further cycle is worth waiting for,
         // in which case the mirror arm gets one last read and then the honest ambiguous answer.
         //
-        // The connection is dropped from the memo first, whatever happens next.
-        //
-        // DELIBERATELY CONSERVATIVE, and worth being exact about rather than claiming more than
-        // is true: this catch also sees throws the connection did not cause — a database fault in
-        // the finalize AFTER a successful probe, for instance. Those discard a healthy handle and
-        // cost the next row on that mailbox one re-dial. Keeping a DEAD handle costs every
-        // remaining row on that mailbox, and for a row past the give-up it costs a terminal
-        // `unverified` written off one socket failure. The trade is one wasted LOGIN against a
-        // wrong terminal write, so it is not close. (A factory that refused before connecting
-        // left no entry, so this is already a no-op for that path.)
-        await forget(row.mailboxId);
         // A WRITE THAT FAILED AFTER THE EVIDENCE WAS IN NEVER GIVES UP, whatever the row's age.
         // The give-up's mirror-only re-resolution would take a probe answer of "the message IS in
         // Sent", throw it away, and record `unverified` — terminally — for a message the server
         // had confirmed milliseconds earlier. The database is what failed; the next cycle
         // re-probes and re-writes, and `pending` is exactly what a failed commit should leave.
-        if (err instanceof SettleFailed || !givingUp) {
+        if (err instanceof SettleFailed) {
+          // The mailbox ANSWERED and the database could not record it, so the connection is
+          // known GOOD — keep it. Tearing it down here would make the rows behind this one
+          // re-dial and re-login for a fault the mailbox had no part in, and under the login
+          // accounting those re-dials spend the budget, deferring everything else. This is the
+          // case the older comment here called unavoidable; it is identifiable, so it is handled.
+          result.deferred += 1;
+          // ITS OWN EVENT, at error level, for the give-up failure's reason one branch down: a
+          // settle that fails deterministically leaves these rows `pending` for ever with
+          // `gaveUp: 0`, which is indistinguishable from a healthy pass full of undialable
+          // mailboxes if it is logged as an ordinary defer.
+          log.error("send_reconcile_settle_failed", {
+            sendId: row.send.id, accountId: row.send.accountId, draftId: row.send.draftId, err,
+          });
+          continue;
+        }
+        // Anything else came from the connection or from asking it, so the handle is suspect and
+        // the rows behind this one on the same mailbox must re-dial rather than inherit it. (A
+        // factory that refused before connecting left no entry, so this is a no-op there.)
+        await forget(row.mailboxId);
+        if (!givingUp) {
           result.deferred += 1;
           log.warn("send_reconcile_deferred", {
             sendId: row.send.id, accountId: row.send.accountId, draftId: row.send.draftId, err,
@@ -460,7 +535,9 @@ function probeOnly(real: SendAdapter): SendAdapter {
         + "reading, and a reservation whose fate is unknown is finalized `unverified`, never resent",
       );
     },
-    messageInSent: (messageId: string) => real.messageInSent(messageId),
+    messageInSent: (messageId: string) => bounded(
+      "probe", real.messageInSent(messageId), SEND_RECONCILE_CALL_CEILING_MS,
+    ),
     close: async () => { /* held for the batch; the pass closes the real handle once */ },
   };
 }
@@ -529,10 +606,14 @@ async function claimStale(
      * mailbox stuck in `error` with a dozen strandings would therefore fill a single oldest-first
      * window for a full day and no other account's reservation would be examined at all.
      *
-     * Giving those rows their own small window removes that structurally: they still get the
-     * MIRROR arm (a disconnected mailbox does not un-send the mail that already left it, and the
-     * mirror may well hold it) and the give-up still closes them, but they cannot crowd out the
-     * rows this pass can actually finish.
+     * Giving those rows their OWN window removes that structurally: they still get the MIRROR arm
+     * (a disconnected mailbox does not un-send the mail that already left it, and the mirror may
+     * well hold it) and the give-up still closes them, but they cannot crowd out the rows this
+     * pass can actually finish. It is the SAME SIZE as the dialable window, not a small one —
+     * sized off the examination factor because these rows are never dialled, so pinning them to
+     * the login budget would throttle the only two things they can still get. The honest cost:
+     * an invocation now examines up to twice what it did before the split, all of it indexed
+     * reads.
      *
      * **The residual, stated rather than papered over:** a SUSPENDED account's rows sit in the
      * dialable window (suspension is not a column this query can read — it is the injected

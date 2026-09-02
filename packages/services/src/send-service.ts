@@ -1969,14 +1969,17 @@ export class SendService {
     // A THROW HERE IS A WRITE FAILURE, NOT A PROBE FAILURE — tagged so the reconciling pass
     // cannot apply its give-up to it and record `unverified` for a message the Sent folder had
     // just confirmed. See {@link SettleFailed}.
-    let seq: number | null;
+    // `answerWinner` IS INSIDE THE TRY, not after it. Its re-read is part of settling: a pool
+    // fault there is still "the mailbox answered and the database could not record it", and
+    // leaving it untagged would let the reconciling pass apply its give-up to a row whose probe
+    // had already spoken.
     try {
-      seq = await this.finalizeSent(ctx, row.id, row.mintedMessageId, row.draftId, mailboxId);
+      const seq = await this.finalizeSent(ctx, row.id, row.mintedMessageId, row.draftId, mailboxId);
+      if (seq === null) return await this.answerWinner(ctx, row);
+      return { status: "sent", providerMessageId: row.mintedMessageId, draftId: row.draftId, seq, by };
     } catch (err) {
       throw new SettleFailed("sent", err);
     }
-    if (seq === null) return this.answerWinner(ctx, row);
-    return { status: "sent", providerMessageId: row.mintedMessageId, draftId: row.draftId, seq, by };
   }
 
   /** `finalizeUnverified`, plus the CAS-loser re-read. See {@link SendService.resolveStale}. */
@@ -1984,14 +1987,14 @@ export class SendService {
     ctx: ServiceContext, row: typeof outboundSends.$inferSelect, by: ResolveStaleBy,
   ): Promise<ResolveStaleOutcome> {
     // See {@link SettleFailed} — the evidence was in; only the write failed.
-    let seq: number | null;
+    // `answerWinner` inside the try, for `settleSent`'s reason.
     try {
-      seq = await this.finalizeUnverified(ctx, row.id, row.draftId);
+      const seq = await this.finalizeUnverified(ctx, row.id, row.draftId);
+      if (seq === null) return await this.answerWinner(ctx, row);
+      return { status: "unverified", providerMessageId: null, draftId: row.draftId, seq, by };
     } catch (err) {
       throw new SettleFailed("unverified", err);
     }
-    if (seq === null) return this.answerWinner(ctx, row);
-    return { status: "unverified", providerMessageId: null, draftId: row.draftId, seq, by };
   }
 
   /**
