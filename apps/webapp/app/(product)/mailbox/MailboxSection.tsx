@@ -1389,11 +1389,12 @@ export function MailboxSection() {
         smtpHost: s.transport === "smtp" || both ? s.host : v.smtpHost,
       };
     });
+    setSuggestion(null);
     setError(null);
-    // IT REWRITES A HOST, so everything learned about the old one goes — the verdict, the
-    // plaintext consent and the offer behind it. This press can change BOTH hosts at once (the
-    // vanity pair), which is exactly where stale evidence is likeliest to be left standing.
-    retireHostEvidence();
+    // IT REWRITES A HOST, so it clears the verdict like every other write to one. This press can
+    // change BOTH hosts at once (the vanity pair), which is exactly the case where a green tick
+    // for the old IMAP host is most likely to be left standing over a new one.
+    clearVerdict();
   };
 
   const fail = (err: unknown): void => {
@@ -1448,11 +1449,6 @@ export function MailboxSection() {
       setError(null);
       setInsecureOffer(false);
       setSuggestion(null);
-      // AND THE VERDICT GOES WITH THE FORM IT DESCRIBED. Without this a successful connect left
-      // the tick standing, so reopening Connect later rendered it over an EMPTY form — a green
-      // verdict about a mailbox that is already connected, presented as evidence about a mailbox
-      // nobody has typed yet.
-      clearVerdict();
       setStage("list");
       await refresh();
       // A mailbox that has just been connected is exactly the case the account strip exists for, so it
@@ -1662,10 +1658,13 @@ export function MailboxSection() {
     setMsAppPassword(false);
     // AND THE VERDICT GOES WITH IT. A provider change changes which server would be dialled, so a
     // green tick from the previous choice is evidence about a different host entirely.
-    // EVERYTHING LEARNED ABOUT THE OLD SERVER GOES, not only the verdict: the plaintext consent,
-    // the offer that produced it, and the certificate's host suggestion are all evidence about a
-    // host this form no longer addresses.
-    retireHostEvidence();
+    setProbeOk(null);
+    setProbeBad(null);
+    // SO DOES THE PLAINTEXT OPT-IN. It is a consent about ONE server that reported no TLS at all,
+    // and carrying it into a different provider's attempt would offer that server the same
+    // exemption on evidence gathered about somebody else's. The checkbox only reappears when a
+    // server reports `tls_unavailable` again.
+    setTyped((v) => ({ ...v, allowInsecure: false }));
   };
 
   /** Open the edit form for one mailbox. Starts empty — the stored settings are not on the wire. */
@@ -1783,70 +1782,11 @@ export function MailboxSection() {
    * verdict; this form's primary leads to a step-up ceremony rather than straight to a write, so
    * here the verdict informs rather than authorises — but it still may not be stale.
    */
-  const clearVerdict = useCallback(() => {
-    /* IT RETIRES THE REQUEST, not just the sentence — and believing the generation counter alone
-       did that was the defect a third review round found in the second round's fix. Advancing the
-       sequence only when a test STARTS orders concurrent presses and nothing else: press Test for
-       A, edit a field to B while it is pending, and A's answer still carries the current
-       generation, so it lands over B. The edit has to advance the sequence, which is what makes it
-       invalidate a request rather than merely blank the screen.
-
-       `setProbing(false)` with it: the request is no longer ours, so the pending line must stop
-       claiming it and the button must come back. */
-    probeSeq.current += 1;
-    setProbeOk(null);
-    setProbeBad(null);
-    setProbing(false);
-    /* THE FAILED WRITE'S SENTENCE BELONGS HERE, not only to a host change. It was retired when the
-       HOST moved, which covers "the certificate is for another name" and misses the commoner one:
-       an auth refusal, then the person corrects the PASSWORD, and "That mail server refused the
-       password" goes on describing a credential that is no longer in the form — with a fresh test
-       able to run green beside it. */
-    setError(null);
-  }, []);
-
-  /**
-   * RETIRE EVERYTHING THAT WAS LEARNED ABOUT THE PREVIOUS SERVER — not just the test's verdict.
-   *
-   * Three things on this form are EVIDENCE ABOUT ONE HOST, and all three used to survive a change
-   * of that host:
-   *
-   *  · `insecureOffer` — the plaintext checkbox, which only appears because a server reported it
-   *    has no TLS at all;
-   *  · `typed.allowInsecure` — the consent itself, and this is the one that matters. It is sent by
-   *    the create AND (since the test began sending what the create sends) by the probe. Granted
-   *    about server A and carried onto server B, it offers B an exemption nobody granted it: a
-   *    password travelling in the clear to a host that was never asked about;
-   *  · `suggestion` — a canonical host offered by A's certificate, which says nothing about B.
-   *
-   * NOT called by the checkbox's own handler, which would un-check it the instant it was ticked.
-   * The distinction is the point: toggling the consent is not changing the thing it is about.
-   */
-  const retireHostEvidence = useCallback(() => {
-    clearVerdict();
-    setInsecureOffer(false);
-    setSuggestion(null);
-    setTyped((v) => (v.allowInsecure ? { ...v, allowInsecure: false } : v));
-    // The failed write's sentence goes with it, through `clearVerdict` above — which retires it on
-    // EVERY field edit, not only on a host change.
-  }, [clearVerdict]);
+  const clearVerdict = useCallback(() => { setProbeOk(null); setProbeBad(null); }, []);
   const [probeOk, setProbeOk] = useState<{ host: string; user: string; folders: number | null } | null>(null);
   const [probeBad, setProbeBad] = useState<{ reason: string | null; message: string } | null>(null);
   /** Enough typed to ask the question at all — the same three fields the endpoint requires. */
   const canProbe = Boolean(typed.provider && typed.address.trim() && typed.pass);
-  /**
-   * THE OAUTH DOOR OPENING UNDER A RUNNING TEST RETIRES IT.
-   *
-   * `microsoftOauth` depends on a capability read that resolves after mount, so it can become true
-   * while somebody is part-way through the app-password path they were correctly offered a moment
-   * earlier. When it does, "Continue" stops being a password step and becomes the consent
-   * ceremony — a different act entirely — so any verdict about the password, settled or still in
-   * flight, is about a path nobody is taking any more.
-   */
-  useEffect(() => {
-    if (microsoftOauth) clearVerdict();
-  }, [microsoftOauth, clearVerdict]);
-
   const runProbe = useCallback(async () => {
     if (!typed.provider) return;
     const mine = ++probeSeq.current;
@@ -2397,23 +2337,14 @@ export function MailboxSection() {
                   <input
                     id="mb-imap" className="join-input" autoComplete="off" spellCheck={false}
                     value={typed.imapHost}
-                    onChange={(e) => {
-                      setTyped((v) => ({ ...v, imapHost: e.target.value }));
-                      retireHostEvidence();
-                    }}
+                    onChange={(e) => { setTyped((v) => ({ ...v, imapHost: e.target.value })); clearVerdict(); }}
                     required
                   />
                   <label className="join-label" htmlFor="mb-smtp">{t("smtpLabel")}</label>
                   <input
                     id="mb-smtp" className="join-input" autoComplete="off" spellCheck={false}
                     value={typed.smtpHost}
-                    onChange={(e) => {
-                      setTyped((v) => ({ ...v, smtpHost: e.target.value }));
-                      /* THE FOURTH HOST-CHANGING SITE. An SMTP failure mints a suggestion about
-                         the SMTP host, so leaving it after the field changes lets one press
-                         replace the new host with a name proved about the old one. */
-                      retireHostEvidence();
-                    }}
+                    onChange={(e) => { setTyped((v) => ({ ...v, smtpHost: e.target.value })); clearVerdict(); }}
                     required
                   />
                   {suggestion ? (
@@ -2473,23 +2404,13 @@ export function MailboxSection() {
             <Button onClick={() => {
               setStage("list"); setTyped(emptyTyped()); setMsAppPassword(false); setError(null);
               setInsecureOffer(false); setSuggestion(null);
-              // RETIRES, and it has to: cancelling mid-request used to reset the form and leave
-              // the request live, so reopening Connect could receive the OLD answer with nothing
-              // pressed — a verdict appearing over an empty form.
-              clearVerdict();
+              setProbeOk(null); setProbeBad(null);
             }}>
               {t("cancel")}
             </Button>
           </div>
 
-          {/* ── THE VERDICT RENDERS ONLY WHERE THE TEST IS OFFERED ───────────────────────────
-              `microsoftOauth` is not a stable fact about the form: the deployment's OAuth
-              availability is read asynchronously, so it can flip to true UNDER a person who
-              already chose Microsoft, typed an app password and pressed Test. The fields and the
-              Test button vanish, "Continue" becomes the consent ceremony — and without this gate
-              the app-password verdict stayed on screen, describing a path the next press no longer
-              takes. The effect above retires it; this keeps the frame before that honest. */}
-          {!microsoftOauth && probing ? (
+          {probing ? (
             <SettingsVerdict
               state="wait"
               headline={tob("testing", {
@@ -2497,7 +2418,7 @@ export function MailboxSection() {
               })}
             />
           ) : null}
-          {!microsoftOauth && !probing && probeOk ? (
+          {!probing && probeOk ? (
             <SettingsVerdict
               state="ok"
               headline={tob("probeOk", {
@@ -2508,7 +2429,7 @@ export function MailboxSection() {
           ) : null}
           {/* THE SERVER'S OWN SENTENCE when the taxonomy has no member this build knows — a newer
               API that adds one must degrade to something true, and the message always is. */}
-          {!microsoftOauth && !probing && probeBad ? (
+          {!probing && probeBad ? (
             <SettingsVerdict
               state="bad"
               headline={probeBad.reason
