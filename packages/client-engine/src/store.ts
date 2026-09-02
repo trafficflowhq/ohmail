@@ -370,20 +370,38 @@ export abstract class BaseMirrorStore implements MirrorStore {
     return rec && rec.entity !== null ? (rec.entity as T) : undefined;
   }
 
-  list<T = unknown>(type: string): T[] {
-    const out: T[] = [];
-    for (const rec of this.records.values()) {
-      if (rec.type === type && rec.entity !== null) out.push(rec.entity as T);
+  /**
+   * PER-TYPE BUCKETS, REBUILT LAZILY ONCE PER VERSION — `list`/`entries` used to walk EVERY
+   * record for EVERY query, so on a mailbox tens of thousands deep a `list("tag")` over three
+   * tags cost a whole-mirror pass, and one render's dozen small-type queries cost a dozen of
+   * them. One walk per version builds every type's bucket; each call then copies its own
+   * bucket only (a fresh array per call — callers sort the result in place, and that contract
+   * predates this cache). Keyed on `ver`, which every write path already bumps; a write
+   * between two reads of the same version cannot exist (writes bump), so a bucket can never
+   * serve stale rows.
+   */
+  private typeBuckets: { v: number; byType: Map<string, MirrorRecord[]> } | null = null;
+
+  private bucketsOf(type: string): MirrorRecord[] {
+    if (this.typeBuckets === null || this.typeBuckets.v !== this.ver) {
+      const byType = new Map<string, MirrorRecord[]>();
+      for (const rec of this.records.values()) {
+        if (rec.entity === null) continue;
+        const arr = byType.get(rec.type);
+        if (arr) arr.push(rec);
+        else byType.set(rec.type, [rec]);
+      }
+      this.typeBuckets = { v: this.ver, byType };
     }
-    return out;
+    return this.typeBuckets.byType.get(type) ?? [];
+  }
+
+  list<T = unknown>(type: string): T[] {
+    return this.bucketsOf(type).map((rec) => rec.entity as T);
   }
 
   entries<T = unknown>(type: string): Array<{ id: string; entity: T }> {
-    const out: Array<{ id: string; entity: T }> = [];
-    for (const rec of this.records.values()) {
-      if (rec.type === type && rec.entity !== null) out.push({ id: rec.id, entity: rec.entity as T });
-    }
-    return out;
+    return this.bucketsOf(type).map((rec) => ({ id: rec.id, entity: rec.entity as T }));
   }
 
   getMeta<T = unknown>(key: string): T | undefined {

@@ -651,6 +651,7 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
       this.records.clear();
       this.meta.clear();
       this.highSeq = 0;
+      this.ver++; // hydration is a change: any per-version cache over the records is stale
       return;
     }
     const db = await this.open();
@@ -673,6 +674,8 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
     for (let i = 0; i < metaKeys.length; i++) {
       this.meta.set(String(metaKeys[i]), metaVals[i]);
     }
+    this.ver++; // hydration replaced the records wholesale — see the base store's type buckets
+
     this.cursor = (this.meta.get(CURSOR_KEY) as Cursor | undefined) ?? "0";
     this.meta.delete(CURSOR_KEY);
     // The ownership stamp is this store's bookkeeping, not the application's meta — it

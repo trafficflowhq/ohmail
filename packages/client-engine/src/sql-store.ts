@@ -264,6 +264,7 @@ export class SqlMirrorStore extends BaseMirrorStore {
         this.meta.set(String(row.key), JSON.parse(String(row.value)));
       }
     }
+    this.ver++; // hydration replaced the records wholesale — see the base store's type buckets
     this.cursor = (this.meta.get(CURSOR_KEY) as Cursor | undefined) ?? "0";
     this.meta.delete(CURSOR_KEY);
     // The ownership stamp is this store's bookkeeping, not the application's meta — it must
