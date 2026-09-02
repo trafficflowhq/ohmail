@@ -16,6 +16,144 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.13.7] — 2026-09-02
+
+Mail at scale, a setup that describes what it actually did, and a Send button
+that says what is happening. Beside those: an install that keeps your mail on
+this computer can now let a mailbox go, the notification switches offer only
+what something can deliver, and the ohmarchy face stopped clipping the top edge
+off boxed surfaces.
+
+### Reads opens straight away, however much mail is behind it
+
+Opening Reads built a row for every message in the pile before it could paint
+anything, so a large mailbox left the view blank for a long time and the whole
+window stopped answering while it worked. On mailboxes of tens of thousands of
+messages that was the difference between a client you can use and one you wait
+for.
+
+Reads now draws only the rows that fit on screen and asks the local mirror for
+the next page as you scroll, and the work that decides what goes where happens
+off the thread that draws. First paint is bounded by the size of the window
+rather than by the size of the mailbox.
+
+### The action pill folds only when it really runs out of room
+
+The row's action pill collapsed to its short form on a guess about the width
+rather than on the width it was given, so it folded on rows with room to spare
+and stayed wide on rows without it. It now folds on measurement.
+
+### Setting up reports what this install did, not what some install did
+
+Three ways the guided setup could describe work that had not happened here:
+
+- Connecting a mailbox that another install is already organizing skipped the
+  screen that says so, and the summary at the end then claimed senders screened
+  and folders created — work the other install had done. The "already organized
+  elsewhere" screen now appears whenever the check before consent finds another
+  install holding the mailbox, agreeing is the choice to take the mailbox over
+  rather than a silent demotion, and the summary describes this install's own
+  role: one that only reads says that it reads.
+- "How far back should the Screener look?" started on 90 days while calling one
+  year the usual answer. It starts on one year.
+- The Screener's "all time" setting saved and did nothing. The code that decides
+  which senders the Screener asks about never read it, so the pane said the
+  Screener would ask about everyone and the queue did not change. It now widens
+  the queue as it says.
+
+### A mailbox can be let go from an install on this computer
+
+An install that keeps your mail on this computer can now remove a mailbox from
+Settings → Mailboxes. Removing one releases the organizer claim, deletes this
+computer's copy of the mail, and closes any scheduled sends; connecting the same
+address again shows each message once. In 0.13.6 the removal itself was already
+correct — there was no control that reached it, and the note for that release
+described a flow you could not get to.
+
+### Send says what it is doing, and cannot hang
+
+Pressing Send could sit for several seconds with nothing on screen to say the
+message was on its way, and a send that stalled had nothing to stop it.
+
+A send opens a fresh connection to the mail server for every press, and how long
+that takes depends on the provider — invisible on some, several seconds on
+others. Each individual network step already had a deadline; the sequence of them
+did not, so every step could sit just under its own limit while the press had
+nothing to wait on.
+
+The request now answers as soon as the message is reserved, and an attempt has a
+ceiling of its own. What a breach means depends on where it lands: before
+anything has been offered to a server the message provably did not go, so it is
+recorded as not sent and Send is the retry; after, the outcome is genuinely
+unknown, the request answers "queued", and the recovery that has always existed
+resolves it — a later attempt under the same key reports the live one and
+searches the Sent folder before deciding anything. Nothing is ever sent twice.
+
+The button carries that state. It keeps its accent fill while locked, and while
+sending a thin band of light passes along its foot — motion inside the control's
+own shape, not a spinner. A confirmed send completes the band once and settles on
+"Sent"; a queued submission rests with a sentence under the row. Reduced motion
+keeps the labels and drops the movement.
+
+### Settings offers only the notifications something can deliver
+
+The notifications pane offered four switches. One of them reached anything: new
+mail in the Ohbox. A new sender waiting, a scheduled message's outcome and a
+device pairing were described but drawn by nothing, on any platform — three
+controls that could not act, sitting above an assurance about what notifications
+contain. The pane now offers a switch only for events something actually draws;
+the others reappear as switches when something draws them.
+
+### Ring surfaces keep their top edge on the ohmarchy face
+
+A tile's edge on the ohmarchy face is an outer ring painted in the pixels beside
+the box, and a scroll container clips at its padding edge — so a ringed surface
+standing flush at a scroller's top lost the rows its top edge lives in while the
+other three edges stood in room the layout already reserved. The compose card,
+the settings pane and a selected first row all showed three edges out of four.
+Every scroller now reserves the ring's width at its top: nothing under paper,
+where no ring is painted, and the ring's exact width under ohmarchy.
+
+## [0.13.6] — 2026-09-02
+
+A fix release for the guided setup that 0.13.5 introduced. On the "on this
+computer" door that setup could not be reached at all, which is the whole of the
+release.
+
+### Connecting a mailbox on this computer opens the setup, instead of skipping it
+
+Connecting a mailbox on the standalone door dropped you straight into the mail
+client. Nothing opened the guided setup — no welcome, no statement of what would
+be moved where, no question about a model, no progress screen. The flow existed
+and had no way in on that door; it was reachable only from Settings, after the
+fact.
+
+Connecting opens it now, and which screen it opens on is derived from the state
+of the mailbox rather than from a step counter, so quitting and coming back
+resumes where you were.
+
+**A change in behaviour worth knowing before you upgrade:** a mailbox you connect
+on that door is now a *reader* until you agree to the re-arrangement — ohmail
+reads and mirrors it and creates nothing, moves nothing, until you press Agree on
+the consent screen. An install that is already organizing a mailbox keeps
+organizing it; nothing about existing setups changes.
+
+### Removing a mailbox and adding it back no longer doubles every message
+
+After removing a mailbox from a standalone install and connecting the same
+address again, every message was served twice and every conversation became a
+thread holding its own duplicates. The local copy of the removed mailbox was not
+being cleared, so the second connection added a second copy of everything beside
+the first.
+
+### A self-hosted server names itself on the reader banner
+
+A server you run wrote "ohmail Cloud" into its own users' mailboxes. That name
+travels in the organizer claim inside the mailbox, so it showed up on the "organized
+by" banner and to anyone opening that folder in another mail client — naming a
+hosted service they are not a customer of as the thing that had taken their mail.
+A self-hosted deployment now names its own origin.
+
 ## [0.13.5] — 2026-09-02
 
 Setting ohmail up is a guided flow now. Beside that: an install that has handed
@@ -3161,7 +3299,9 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.13.5...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.13.7...HEAD
+[0.13.7]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.7
+[0.13.6]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.6
 [0.13.5]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.5
 [0.13.4]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.4
 [0.13.3]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.3
