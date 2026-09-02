@@ -1,5 +1,9 @@
 import { and, eq, ne, sql } from "drizzle-orm";
-import { mailboxes, standDownMemory } from "@trafficflow/db";
+import { accountSettings, mailboxes, standDownMemory } from "@trafficflow/db";
+// The product default and the scope union, from the ONE place that owns them — never a second
+// literal `60` and never a hand-written string union. `consent-cutline.ts` re-exports these from
+// core for the same reason and its header says so.
+import { DEFAULT_DORMANCY_DAYS, type ScreeningScope } from "@trafficflow/core/mail";
 import { isCliEntry } from "@trafficflow/worker/entry";
 import { openLocalDb, type LocalDb } from "./db.js";
 
@@ -209,10 +213,82 @@ export async function authorizeOrganizerTakeover(
  * Idempotent, and writes nothing unless there is a stand-down to end — so a second press is not
  * a second becoming, and a press on a healthy or removed mailbox is a no-op that says so.
  */
+/**
+ * THE SCREENING ANSWER THE CONSENT CARRIES — the half this door was missing entirely.
+ *
+ * ── WHAT WENT WRONG WITHOUT IT ────────────────────────────────────────────────────────────
+ *
+ * This function wrote `organize_consented_at` and `takeover_authorized_at` and NOTHING else, on
+ * the door that is the standalone install's whole onboarding. `account_settings` was never
+ * touched, so `screening_baseline_at` stayed NULL — and the cutline reads
+ * `(screeningBaselineAt ?? now()) - dormancyDays`. With no baseline the window is measured from
+ * the moment of the read rather than from the moment the person agreed, so a mailbox with two
+ * years of history has its ENTIRE backlog fall outside the window and move to `ohmail/Screener`
+ * — whatever window the person chose, and whether they chose `all_time` or not. The window
+ * control was decorative on this door.
+ *
+ * The hosted door has always written all four in one transaction
+ * (`MailboxService.organizeHere`), and this block is that shape brought across rather than a
+ * second design: same COALESCE on the baseline, same "never store the default" rule for the
+ * dial, same validation bounds.
+ *
+ * ── AND WHY IT CANNOT BE A SECOND REQUEST ─────────────────────────────────────────────────
+ *
+ * `FirstRunHost.organize` says it: the baseline is what the window is measured from and the
+ * consent is what writes it, so a separate "set the window" call leaves a gap in which the
+ * consent exists and the window does not — and during that gap the cutoff is the product
+ * default, not the answer the person just gave. One write, or the control lies.
+ */
+export interface LocalScreeningConsent {
+  /** 1–365. Absent means "the person did not move the dial" and the default is stored as NULL. */
+  dormancyDays?: number;
+  /** `window` screens by the dial; `all_time` screens the whole history the baseline sits above. */
+  scope?: ScreeningScope;
+}
+
+/** A screening answer this install refuses to store — the bounds, restated as the hosted door's. */
+export class LocalConsentRefusal extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LocalConsentRefusal";
+  }
+}
+
 export async function requestOrganizerTakeover(
   db: LocalDb,
-  input: { mailboxId: string; now: Date },
+  input: {
+    mailboxId: string; now: Date;
+    /**
+     * THE ACCOUNT THE SCREENING STATE BELONGS TO. Required WITH `screening` and meaningless
+     * without it: `account_settings` is keyed by account, and this install serves exactly one —
+     * the launch session's, resolved by the route before this is called. It is a parameter
+     * rather than a lookup so this function never has to guess which account a local store is
+     * for, which is the kind of guess that silently writes the wrong row on a store with two.
+     */
+    accountId?: string;
+    /** See {@link LocalScreeningConsent}. Absent ⇒ the Settings claim-back, which asks nothing. */
+    screening?: LocalScreeningConsent;
+  },
 ): Promise<TakeoverAuthorizationResult> {
+  /* -- THE BOUNDS ARE CHECKED BEFORE THE TRANSACTION, AND THEY THROW -------------------------
+   *
+   * `MailboxService.organizeHere` throws a 400 for both of these and the local door must not be
+   * more permissive than the hosted one about what it will store: a `dormancyDays` of 0 or
+   * 100000 is a cutline nobody can reason about, and an unknown scope is a string the read side
+   * has no branch for. Outside the transaction because a refusal must write nothing at all, and
+   * because a validation failure is not a database concern.
+   */
+  const days = input.screening?.dormancyDays;
+  if (days !== undefined && (!Number.isInteger(days) || days < 1 || days > 365)) {
+    throw new LocalConsentRefusal("dormancyDays must be an integer between 1 and 365");
+  }
+  const scope: ScreeningScope = input.screening?.scope ?? "window";
+  if (scope !== "window" && scope !== "all_time") {
+    throw new LocalConsentRefusal("screeningScope must be window or all_time");
+  }
+  if (input.screening && !input.accountId) {
+    throw new LocalConsentRefusal("accountId is required when a screening answer is supplied");
+  }
   const [row] = await db
     .select({
       id: mailboxes.id,
@@ -242,17 +318,63 @@ export async function requestOrganizerTakeover(
     return { outcome: "already_organizing", previousReason: null, mailboxId: row.id };
   }
 
-  await db
-    .update(mailboxes)
-    .set({
-      // `.toISOString()` plus the cast: a bare `Date` inside a raw `sql` fragment has no column
-      // type to coerce against, and postgres-js binds it as TEXT and throws. This store is PGlite,
-      // which accepts it — so the guard here is inherited from the hosted door rather than
-      // observed on this one, and it is spelled the same way on purpose.
-      organizeConsentedAt: sql`coalesce(${mailboxes.organizeConsentedAt}, ${input.now.toISOString()}::timestamptz)`,
-      takeoverAuthorizedAt: input.now,
-    })
-    .where(and(eq(mailboxes.id, row.id), ne(mailboxes.status, "disabled")));
+  /* -- ONE TRANSACTION, BECAUSE THE CONSENT AND THE WINDOW ARE ONE ANSWER --------------------
+   *
+   * The settings upsert goes FIRST and the mailbox row second — the same order every other
+   * writer of `account_settings` takes (`setDormancyDays`, `setThemeFace`, the hosted
+   * `organizeHere`), so the lock chain runs one direction and these cannot deadlock against
+   * them. A crash between the two would otherwise leave a consented mailbox with no baseline,
+   * which is the exact defect this closes, reached by a narrower window.
+   */
+  await db.transaction(async (tx) => {
+    if (input.screening) {
+      // NEVER STORE THE DEFAULT for the dial — `setDormancyDays`' rule and the hosted door's,
+      // verbatim, so the product default can move without rewriting every install that never
+      // chose. NULL here reads back as the default, and that is the point.
+      const stored = days === undefined || days === DEFAULT_DORMANCY_DAYS ? null : days;
+      await tx.insert(accountSettings)
+        .values({
+          accountId: input.accountId!,
+          dormancyDays: stored,
+          screeningScope: scope,
+          screeningBaselineAt: input.now,
+          updatedAt: input.now,
+        })
+        .onConflictDoUpdate({
+          target: accountSettings.accountId,
+          set: {
+            // The two dials ARE the answer the person just gave, so they are overwritten.
+            dormancyDays: stored,
+            screeningScope: scope,
+            /* -- THE BASELINE IS WRITTEN ONLY WHILE NULL, AND IN SQL -----------------------
+             *
+             * It is the instant the account's screening history begins. Moving it forward on a
+             * re-run would slide a live install's cutline: every message between the original
+             * baseline and now would fall outside the window on the next pass and the backlog
+             * would move — the same damage as having no baseline at all, arriving later and
+             * looking like a sync bug.
+             *
+             * `coalesce` in SQL rather than a read-then-write so two consents racing (the flow
+             * and a Settings press, or two windows of the same install) produce ONE baseline
+             * without this transaction having to read the row first.
+             */
+            screeningBaselineAt: sql`coalesce(${accountSettings.screeningBaselineAt}, ${input.now.toISOString()}::timestamptz)`,
+            updatedAt: input.now,
+          },
+        });
+    }
+    await tx
+      .update(mailboxes)
+      .set({
+        // `.toISOString()` plus the cast: a bare `Date` inside a raw `sql` fragment has no column
+        // type to coerce against, and postgres-js binds it as TEXT and throws. This store is PGlite,
+        // which accepts it — so the guard here is inherited from the hosted door rather than
+        // observed on this one, and it is spelled the same way on purpose.
+        organizeConsentedAt: sql`coalesce(${mailboxes.organizeConsentedAt}, ${input.now.toISOString()}::timestamptz)`,
+        takeoverAuthorizedAt: input.now,
+      })
+      .where(and(eq(mailboxes.id, row.id), ne(mailboxes.status, "disabled")));
+  });
 
   // Derived, for the reason the CLI arm above gives — this is the half the Settings button uses.
   return { outcome: "authorized", previousReason: standDownMemory(row), mailboxId: row.id };

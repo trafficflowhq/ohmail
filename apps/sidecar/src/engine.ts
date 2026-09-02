@@ -2926,9 +2926,30 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         const localRemoveMatch = req.method === "DELETE"
           ? /^\/local\/mailboxes\/([0-9a-fA-F-]{36})$/.exec(url.pathname)
           : null;
+        /* -- `POST /local/mailboxes/:id/organize` — THE FIRST-RUN CONSENT, ON THIS DOOR -------
+         *
+         * The shared table's `POST /mailboxes/:id/organize` is `stepUp: true`, which on THIS door
+         * is not a guard but a permanent refusal: the launch session's second-factor stamp is
+         * written once at boot (`identity.ts#mintLaunchSession`, "there is no second factor on a
+         * local install"), so `withStepUp` refuses from five minutes after launch for the life of
+         * the process — which is every machine that has been open longer than a coffee. That is
+         * the same shape `DELETE /local/mailboxes/:id` was added for, and it is recorded in its
+         * note below; here it would strand the standalone install's ONLY onboarding path, so the
+         * flow could never be completed on the door the flow exists for.
+         *
+         * The per-launch bearer is the authority, exactly as it is for the three routes beside
+         * this one: minted at boot, added shell-side, never reaching the window, impossible for a
+         * page to compose. Holding it IS being the person sitting at this machine.
+         *
+         * `stepUpWindowMs` is NOT widened. The window is right for the door it was written for;
+         * what is wrong is applying a second factor to a tier that has none. */
+        const localOrganizeMatch = req.method === "POST"
+          ? /^\/local\/mailboxes\/([0-9a-fA-F-]{36})\/organize$/.exec(url.pathname)
+          : null;
         const localAction = (req.method === "DELETE" && url.pathname === "/local/stored-login")
           || (req.method === "POST" && url.pathname === "/local/organizer/takeover")
-          || localRemoveMatch !== null;
+          || localRemoveMatch !== null
+          || localOrganizeMatch !== null;
         if (localAction) {
           const header = req.headers.get("authorization");
           const token = header && /^Bearer\s+/i.test(header)
@@ -2940,6 +2961,74 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               JSON.stringify({ error: { code: "unauthorized", message: "authentication required" } }),
               { status: 401, headers: { "content-type": "application/json" } },
             );
+          }
+          if (localOrganizeMatch) {
+            /* -- AGREE AND START ORGANIZING, WITH THE WINDOW IN THE SAME WRITE ---------------
+             *
+             * The ceremony is `requestOrganizerTakeover`'s and is NOT re-implemented here — this
+             * handler is the transport and the outcome, the same division the takeover route
+             * below keeps. What is new is that the SCREENING ANSWER travels with the consent:
+             * `screening_baseline_at`, `dormancy_days` and `screening_scope` are written in the
+             * same transaction as `organize_consented_at`, because the baseline is what the
+             * window is measured from. Written separately, there is a gap in which the consent
+             * exists and the window does not, and in that gap the cutoff is the product default
+             * rather than the answer the person just gave.
+             *
+             * The account is the LAUNCH SESSION's, never a value from the body. This install
+             * serves one account and `core` is the session just resolved above; taking it from
+             * the request would let a body name a different account's settings row.
+             */
+            const mailboxId = localOrganizeMatch[1]!;
+            let body: { screening?: { dormancyDays?: unknown; scope?: unknown } } = {};
+            try {
+              body = (await req.json()) as typeof body;
+            } catch {
+              /* an absent or unparseable body is "no screening answer" — the claim-back shape */
+            }
+            // The dial arrives over JSON, so a string that looks like a number is a real shape.
+            // It is NOT coerced: `requestOrganizerTakeover` refuses a non-integer, and coercing
+            // here would turn a client bug into a silently different window.
+            const raw = body.screening;
+            const screening = raw
+              ? {
+                  ...(raw.dormancyDays === undefined
+                    ? {}
+                    : { dormancyDays: raw.dormancyDays as number }),
+                  ...(raw.scope === undefined ? {} : { scope: raw.scope as "window" | "all_time" }),
+                }
+              : undefined;
+            try {
+              const result = await requestOrganizerTakeover(db, {
+                mailboxId, now: now(), accountId: core.accountId,
+                ...(screening ? { screening } : {}),
+              });
+              log("local_mailbox_organize_consented", {
+                verdict: result.outcome,
+                // The ANSWER, never the mailbox: this line is instrumentation about a ceremony,
+                // and `ALLOWED_FIELDS` drops anything else anyway.
+                reason: "a person agreed to let this machine organize this mailbox; the consent, "
+                  + "the screening baseline and the window were written together, and the lease "
+                  + "is still the authority",
+              });
+              return new Response(
+                JSON.stringify({ outcome: result.outcome, previousReason: result.previousReason }),
+                { status: 200, headers: { "content-type": "application/json" } },
+              );
+            } catch (err) {
+              // A refused screening answer is a 400 with the refusal's own sentence; anything
+              // else is internal. Mapped by hand because this handler sits AHEAD of the route
+              // table and therefore ahead of `withErrorEnvelope`.
+              const refused = (err as { name?: string }).name === "LocalConsentRefusal";
+              log("local_mailbox_organize_failed", { err });
+              return new Response(
+                JSON.stringify({
+                  error: refused
+                    ? { code: "validation_failed", message: (err as Error).message }
+                    : { code: "internal", message: "internal error" },
+                }),
+                { status: refused ? 400 : 500, headers: { "content-type": "application/json" } },
+              );
+            }
           }
           if (localRemoveMatch) {
             /* -- REMOVING A MAILBOX ON A STANDALONE INSTALL
