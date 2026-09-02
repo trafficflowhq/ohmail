@@ -150,6 +150,22 @@ export interface Route {
    * share a word.
    */
   firstRun: boolean;
+  /**
+   * IS THIS A RE-RUN — `#/first-run/again`, from Settings → Mailboxes.
+   *
+   * It exists because {@link firstRun} alone cannot express it. The flow's opening screen is
+   * DERIVED from truth-conditions, and the first of those is the completion stamp: an account
+   * that has been through setup derives to "nothing to do", which is exactly right for a boot
+   * and exactly wrong for somebody who just pressed "Run setup again". The alternative — clearing
+   * the stamp — would be an un-complete instruction, and there deliberately is none: nothing in
+   * this product un-finishes onboarding, because a control that silently reopens setup on every
+   * future boot is worse than a route segment.
+   *
+   * So the INTENT rides the URL. A re-run opens on the consent statement and walks forward from
+   * there, pre-filled from what the account already stored, and re-stamps completion when it is
+   * left — the same ending as a first run.
+   */
+  firstRunRerun: boolean;
 }
 
 export function parseHash(hash: string): Route {
@@ -162,12 +178,12 @@ export function parseHash(hash: string): Route {
   const withMsg = (route: Route): Route =>
     messageId !== null && MESSAGE_VIEWS.includes(route.view) ? { ...route, messageId } : route;
   if (raw.startsWith("tag/") && raw.slice(4)) {
-    return withMsg({ view: "tag", tagId: raw.slice(4), folderId: null, screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false });
+    return withMsg({ view: "tag", tagId: raw.slice(4), folderId: null, screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false });
   }
   // `#/folder/<entityId>` — one of the mailbox's own folders (FOLDERS-SPEC.md §3, the rail).
   // The tag branch's shape exactly: an id the mirror does not hold falls back in the shell.
   if (raw.startsWith("folder/") && raw.slice(7)) {
-    return withMsg({ view: "folder", tagId: null, folderId: raw.slice(7), screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false });
+    return withMsg({ view: "folder", tagId: null, folderId: raw.slice(7), screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false });
   }
   if (raw === "screener" || raw.startsWith("screener/")) {
     const sub = raw.split("/")[1];
@@ -180,6 +196,7 @@ export function parseHash(hash: string): Route {
       settingsPane: null,
       messageId: null,
       firstRun: false,
+      firstRunRerun: false,
     };
   }
   // `#/triage`, `#/triage/aside`, `#/triage/resurface`. An unknown sub-path falls to the first
@@ -197,6 +214,7 @@ export function parseHash(hash: string): Route {
       settingsPane: null,
       messageId: null,
       firstRun: false,
+      firstRunRerun: false,
     });
   }
   // `#/settings`, `#/settings/devices`, … A named pane is validated against `PANE_IDS`; an
@@ -214,19 +232,21 @@ export function parseHash(hash: string): Route {
       settingsPane: (PANE_IDS as readonly string[]).includes(sub ?? "") ? (sub as PaneId) : null,
       messageId: null,
       firstRun: false,
+      firstRunRerun: false,
     };
   }
   // `#/first-run` — the setup stage, OVER whatever the shell would otherwise show. The view is
   // the Ohbox because that is where leaving the stage lands, and because a route must name one;
   // the flag is what puts the dialog on top of it. See {@link Route.firstRun}.
-  if (raw === "first-run") {
+  if (raw === "first-run" || raw === "first-run/again") {
     return {
       view: "ohbox", tagId: null, folderId: null, screenerSegment: "waiting",
       triagePile: "reply", settingsPane: null, messageId: null, firstRun: true,
+      firstRunRerun: raw === "first-run/again",
     };
   }
   const view = (VIEWS as readonly string[]).includes(raw) ? (raw as ViewId) : "ohbox";
-  return withMsg({ view, tagId: null, folderId: null, screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false });
+  return withMsg({ view, tagId: null, folderId: null, screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false });
 }
 
 /**
@@ -238,7 +258,7 @@ export function canonicalHash(route: Route): string {
   // FIRST, and before the tail: the stage's hash names no view and carries no open message, so
   // every branch below would spell it as something else and `normalizedHash` would then rewrite
   // `#/first-run` to `#/ohbox` on the first render — closing the flow by correcting the bar.
-  if (route.firstRun) return "#/first-run";
+  if (route.firstRun) return route.firstRunRerun ? "#/first-run/again" : "#/first-run";
   // The open-message tail rides any place-path whose view can show one — `parseHash` already
   // refused it everywhere else, so the guard here is for routes built by hand.
   const tail =
@@ -305,8 +325,8 @@ export function go(view: Exclude<ViewId, "tag" | "folder">): void {
  * OPEN THE FIRST-RUN STAGE. A hash ASSIGNMENT, so it stacks in history: Back walks out of setup
  * the way it walks out of a reading, which is what a person who opened it from Settings expects.
  */
-export function goFirstRun(): void {
-  window.location.hash = "#/first-run";
+export function goFirstRun(opts: { rerun?: boolean } = {}): void {
+  window.location.hash = opts.rerun ? "#/first-run/again" : "#/first-run";
 }
 
 export function goTag(tagId: string): void {

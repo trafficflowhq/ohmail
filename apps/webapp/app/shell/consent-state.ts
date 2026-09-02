@@ -351,6 +351,20 @@ export interface ConsentState {
    * whether anybody has answered at all, and only the pair is a licence to render.
    */
   onboardingCompletedAt: string | null;
+  /**
+   * THE SCREENING MODE — `'window'` (the cutline is `screeningBaselineAt − dormancyDays`) or
+   * `'all_time'` (no cutline at all; nothing is listed under History unscreened).
+   *
+   * The THIRD half of the cutline arithmetic, and the one this object was missing: a client
+   * holding two of the three partitions its mirror differently from the server that counted for
+   * it. Read here so a RE-RUN of setup can pre-fill the window choice from what the account
+   * actually stored rather than from the product default — a re-run that showed "One year" over
+   * an account on all-time would be a control that misreports the state it is about to change.
+   *
+   * `'window'` at rest, and an unrecognised string collapses to it: that is the behaviour every
+   * client had before the mode existed, so the absent case is not a guess.
+   */
+  screeningScope: "window" | "all_time";
 }
 
 const RESTING: ConsentState = {
@@ -408,6 +422,9 @@ const RESTING: ConsentState = {
   // {@link ConsentState.onboardingCompletedAt}: it is the value that would OPEN a setup dialog,
   // which is why the mount site gates on `known` as well and never on this alone.
   onboardingCompletedAt: null,
+  // WINDOWED AT REST — the behaviour every build had before the mode existed, so an API too old
+  // to carry it and a failed read land on exactly what that server actually does.
+  screeningScope: "window",
 };
 
 /** The `boot-cache.ts` scope this hook owns. Exported for the sign-out test and nothing else. */
@@ -708,6 +725,10 @@ export function useConsentState(
           // nobody has finished or cancelled setup. Both leave the flow eligible to open, which
           // is only reachable at all once `known` is true one line above.
           onboardingCompletedAt: wire.onboardingCompletedAt ?? null,
+          // NORMALISED, not trusted — `locale`'s rule: the column's CHECK and `consentSettings`
+          // both close the set, and anything else is a server this build does not understand,
+          // which must land on the pre-mode behaviour rather than on an unknown partition.
+          screeningScope: wire.screeningScope === "all_time" ? "all_time" : "window",
           known: true,
           // Both of these are DERIVED on the way out (see the return) and are written here only
           // because the state object carries them. Nothing may read them off `state`.

@@ -59,6 +59,10 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslations } from "next-intl";
 import { Button, SettingsNote, SettingsRow, SettingsSection } from "@ohmail/ui";
+/* The first-run flow's route helper. The pane NAVIGATES rather than rendering the stage: the
+   stage lives in the shared shell above every pane, so a person who opens it from here keeps the
+   app behind it and lands back in this pane when they leave. */
+import { goFirstRun } from "../../shell/routing";
 import {
   ApiError,
   apiConfigured,
@@ -2541,6 +2545,31 @@ export function MailboxSection() {
         <p className="acct-lead">
           {removing ? t("removeWorking") : editing ? t("savingEdit") : t("connecting")}
         </p>
+      ) : null}
+
+      {/* ── RUN SETUP AGAIN ──────────────────────────────────────────────────────────────────
+       *
+       * The way back into the first-run flow for somebody who has already been through it. It
+       * opens on the consent statement and walks forward from there — what ohmail files, how far
+       * back it screens, and AI — with what is set now filled in from what the account stored,
+       * and nothing is written until the person agrees.
+       *
+       * ONLY WITH A MAILBOX. The flow's later screens are ABOUT a mailbox: the window is measured
+       * from the consent on one, and the summary reports what happened to one. With none
+       * connected, the row would open a re-run that immediately becomes a first run — which is
+       * what "Connect a mailbox" above already is, said once instead of twice.
+       *
+       * `#/first-run/again` and not `#/first-run`: a finished account derives to "nothing to do",
+       * correctly, so the RE-RUN INTENT has to ride the route. The bare hash would open, find the
+       * completion stamp, and close again on the same render. */}
+      {stage === "list" && connected.length > 0 ? (
+        <SettingsRow
+          label={t("setupAgain")}
+          description={t("setupAgainWhy")}
+          control={
+            <Button onClick={() => goFirstRun({ rerun: true })}>{t("setupAgainAction")}</Button>
+          }
+        />
       ) : null}
     </SettingsSection>
   );

@@ -906,7 +906,27 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
             <p className="join-hint">{t("mailboxConnected", { address: displayAddress(connected.address) })}</p>
           )}
           <div className="join-actions">
-            <Link className="btn primary" href="/">{t("openOhmail")}</Link>
+            {/* ── INTO THE FIRST-RUN FLOW, NOT INTO A COLD MAIL CLIENT ────────────────────────
+             *
+             * The funnel proves an address, takes a plan and connects a mailbox. It does not say
+             * what ohmail is about to DO to that mailbox, how far back it will screen, or whether
+             * a model should help — and until this link those three questions had no screen at
+             * all on this door: the person landed in the Ohbox and the organizing began.
+             *
+             * `#/first-run` is where they are asked. It opens on the consent statement when a
+             * mailbox was connected here (which is the ordinary path) and on the mailbox step when
+             * one was not, because the flow reads what is actually stored rather than what this
+             * screen thinks happened.
+             *
+             * NEVER EARLIER THAN THIS SCREEN, on this door. The flow's first real act is
+             * connecting or consenting to a mailbox, and both routes behind it are refused for an
+             * unverified address — so opening it before the address is proven would be a
+             * ceremony whose every button answers 403. Reaching `done` means verification is
+             * behind us.
+             *
+             * The FRAGMENT survives the rewrite of `/` to the mail client: it never leaves the
+             * browser, which is the same mechanism `/login#/settings` already relies on. */}
+            <Link className="btn primary" href="/#/first-run">{t("openOhmail")}</Link>
           </div>
         </>
       )}

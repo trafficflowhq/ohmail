@@ -136,6 +136,19 @@ export interface FirstRunProps {
   organizedSince?: string;
   /** When the holder was last seen, in words, for the stopped banner. Interpolated likewise. */
   organizerLastSeen?: string;
+  /**
+   * IS THIS A RE-RUN from Settings — `#/first-run/again`. See {@link firstRunStep}.
+   */
+  rerun?: boolean;
+  /**
+   * WHAT THE ACCOUNT ALREADY STORED, so a re-run is pre-filled from truth rather than from the
+   * product default. Absent on a first run, where there is nothing stored to show.
+   *
+   * A re-run that showed "One year" over an account screening all time would be a control that
+   * misreports the state it is about to change — which is the same defect class as a switch
+   * drawn ON over a write that failed.
+   */
+  screening?: { dormancyDays: number; scope: "window" | "all_time" };
 }
 
 /**
@@ -145,9 +158,27 @@ export interface FirstRunProps {
  * cursor/derivation interaction is the part with rows, and rows are what a table test is for.
  */
 export function firstRunStep(
-  facts: OnboardingFacts, at: OnboardingStep | null,
+  facts: OnboardingFacts, at: OnboardingStep | null, rerun = false,
 ): OnboardingStep | null {
   const derived = deriveOnboardingStep(facts);
+  /* ── A RE-RUN IS AN INTENT, AND IT OUTRANKS THE COMPLETION STAMP ─────────────────────────
+   *
+   * `rerun` comes from the ROUTE (`#/first-run/again`), which is the only place it can come
+   * from: an account that has been through setup derives to "nothing to do", correctly, and
+   * that is exactly what somebody who just pressed "Run setup again" does not want. The
+   * alternative would be to CLEAR the stamp, and there is deliberately no instruction to do
+   * that — nothing un-finishes onboarding, because a control that silently reopens setup on
+   * every future boot is worse than a route segment.
+   *
+   * It opens on the consent statement, not on the welcome and not on the derived step. A re-run
+   * is for the three things a person comes back to change — what ohmail files, how far back, and
+   * AI — and it is pre-filled from what the account already stored. The one exception is an
+   * account with no mailbox, where there is nothing to re-run and the flow is a first run.
+   */
+  if (rerun) {
+    if (at !== null) return at;
+    return facts.mailbox === null ? "mailbox" : "consent";
+  }
   // THE DERIVATION CLOSES THE FLOW AND THE CURSOR MAY NOT REOPEN IT. `null` means the
   // completion stamp is set — cancelled or finished — and a cursor left over from the press
   // that stamped it would keep the stage on screen after the person asked to leave.
@@ -161,7 +192,7 @@ export function firstRunStep(
 
 export function FirstRun({
   host, facts, onRefresh, onLeave, pull, serverMessageCount, decide, resumed,
-  mailboxId, organizedSince, organizerLastSeen,
+  mailboxId, organizedSince, organizerLastSeen, rerun, screening,
 }: FirstRunProps) {
   const t = useTranslations("onboarding");
   const tm = useTranslations("mailboxes");
@@ -177,7 +208,7 @@ export function FirstRun({
   /** A write that failed, in the server's own words. Cleared by the next attempt. */
   const [problem, setProblem] = useState<string | null>(null);
 
-  const step = firstRunStep(facts, at);
+  const step = firstRunStep(facts, at, rerun === true);
   const path = useMemo(() => onboardingPath(facts), [facts]);
 
   /**
@@ -335,8 +366,24 @@ export function FirstRun({
 
   /* ── THE WINDOW AND THE AI ANSWER ──────────────────────────────────────────────────── */
 
-  const [win, setWin] = useState<WindowChoice>("365");
-  const [ai, setAi] = useState<"yes" | "no">("no");
+  /**
+   * THE WINDOW, pre-filled from truth on a re-run and 365 on a first run.
+   *
+   * 365 is written EXPLICITLY rather than left to the product default, which is 60 and is pinned
+   * twice elsewhere: the dial a person sees on this screen and the dial that gets stored have to
+   * be the same number, and a first run that showed one and stored the other would be exactly the
+   * lie this flow's copy is written against.
+   *
+   * A stored value that is not one of the four offered rungs falls to the nearest OFFER rather
+   * than to the default — somebody who set 120 in Settings should not be shown "One year".
+   */
+  const [win, setWin] = useState<WindowChoice>(() => initialWindow(screening));
+  const [ai, setAi] = useState<"yes" | "no">(
+    // The posture, where the door has one. `on` and `on-unconfigured` are both a "yes" that was
+    // already given; `unset` and `off` both render as "no", which is what the radio group can
+    // say — the difference between them lives in the derivation, not in this control.
+    () => (facts.ai === "on" || facts.ai === "on-unconfigured" ? "yes" : "no"),
+  );
   const [scope, setScope] = useState<DecisionScope>("sender");
 
   /* ── THE ELSEWHERE CHOICE ──────────────────────────────────────────────────────────── */
@@ -619,7 +666,27 @@ export function FirstRun({
                   },
                 ]}
               />
-              {claimed ? <SettingsVerdict state="wait" headline={t("elsewhereQueued")} /> : null}
+              {/* ── THE VERDICT IS DOOR-AWARE, BECAUSE THE MECHANISM DIFFERS TODAY ────────
+                  On Cloud and self-host the worker re-reads the authorization on its next pass,
+                  so "on its next pass — within a minute" is true and is what the flow says.
+
+                  ON THE STANDALONE DOOR IT IS NOT TRUE YET. The sidecar reads the takeover flag
+                  ONCE, when it assembles its engine, so a claim made by a RUNNING install is not
+                  spent until the app is restarted. The flow must not promise a pass that will
+                  not happen: it says what actually has to be done, in the sentence the mailbox
+                  pane already uses for exactly this on exactly this door.
+
+                  This is a temporary difference, not a permanent one — the engine is being taught
+                  to promote on its next cycle. When it does, this branch collapses to the one
+                  sentence and the pinned test below it goes with it. */}
+              {claimed ? (
+                <SettingsVerdict
+                  state="wait"
+                  headline={host.door === "local"
+                    ? tm("organizeHereQueued")
+                    : t("elsewhereQueued")}
+                />
+              ) : null}
               {problem ? <SettingsVerdict state="bad" headline={problem} /> : null}
               {foot({ back: true, primary: next(t("continue")) })}
             </>
@@ -894,6 +961,29 @@ export function FirstRun({
       </div>
     </div>
   );
+}
+
+/**
+ * WHICH RUNG A STORED WINDOW SITS ON.
+ *
+ * `all_time` is a MODE and not a number, so it is answered first — reading it off `dormancyDays`
+ * would put an account that screens everything onto whatever day-count happens to be stored
+ * beside the mode. Everything else picks the CLOSEST offered rung, because the four on screen are
+ * an offer and not the set of storable values: Settings will store any day-count from 1 to 365.
+ */
+export function initialWindow(
+  screening?: { dormancyDays: number; scope: "window" | "all_time" },
+): WindowChoice {
+  if (!screening) return "365";
+  if (screening.scope === "all_time") return "all";
+  const rungs = [90, 180, 365] as const;
+  let best: WindowChoice = "365";
+  let bestGap = Number.POSITIVE_INFINITY;
+  for (const r of rungs) {
+    const gap = Math.abs(r - screening.dormancyDays);
+    if (gap < bestGap) { bestGap = gap; best = String(r) as WindowChoice; }
+  }
+  return best;
 }
 
 /** The first sentence of the consent statement, re-shown under the window choice. */

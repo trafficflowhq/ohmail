@@ -7143,6 +7143,14 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
             mirrorCount: mirroredCount,
           }}
           decide={firstRunDecide}
+          /* THE RE-RUN INTENT, off the route. See `Route.firstRunRerun`: it cannot be derived,
+             because a finished account derives to "nothing to do" — which is right for a boot
+             and wrong for somebody who just asked to run setup again. */
+          rerun={route.firstRunRerun}
+          /* WHAT THE ACCOUNT ALREADY STORED, so a re-run shows the state it is about to change.
+             `dormancyDays` is always a number on this object; `screeningScope` rests `window`,
+             which is what every build did before the mode existed. */
+          screening={{ dormancyDays: consent.dormancyDays, scope: consent.screeningScope }}
           /* RE-READ `GET /mailboxes` — the route every write in this flow changes (the create,
              the claim, the consent stamp). The account's consent row re-reads itself: every
              consent-settings write appends a `settings` change row, the wake channel rings, and
