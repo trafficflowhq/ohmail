@@ -218,10 +218,11 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     const el = await render(null);
     await act(async () => { organizeButton(el)!.click(); });
     const text = el.textContent ?? "";
-    // The cost to the other install, stated BEFORE the confirm — it becomes a reader and keeps
-    // its copy. A ceremony that only said "are you sure" would make somebody guess at that.
-    expect(text).toContain("zorin-9950 stands down the next time it checks");
-    expect(text).toContain("Its copy of your mail is left alone.");
+    // The cost to the other install, stated BEFORE the confirm — it keeps its copy either way,
+    // and it is NAMED, so the sentence is about a machine rather than about "another install".
+    // A ceremony that only said "are you sure" would make somebody guess at both.
+    expect(text).toContain("zorin-9950");
+    expect(text).toContain("left alone either way");
     expect(bridged, "the first press wrote something instead of asking").toEqual([]);
   });
 
@@ -385,7 +386,7 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     const el = await render(null);
     await act(async () => { organizeButton(el)!.click(); });
     const text = el.textContent ?? "";
-    expect(text).toContain("after you quit and reopen ohmail");
+    expect(text).toContain("Quit and reopen ohmail and");
     expect(text, "the ceremony promised a pass this engine will not make")
       .not.toContain("starts organizing on its next pass");
   });
@@ -395,7 +396,30 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     await act(async () => { organizeButton(el)!.click(); });
     const text = el.textContent ?? "";
     expect(text).toContain("starts organizing on its next pass");
-    expect(text).not.toContain("quit and reopen");
+    expect(text).not.toContain("Quit and reopen");
+  });
+
+  /**
+   * NEITHER CONFIRMATION MAY PROMISE THE MAILBOX.
+   *
+   * `authorize OrganizerTakeover` says it in its own docblock: *"this grants permission to ASK,
+   * never permission to WIN"* — an organizer still renewing keeps the mailbox regardless of what
+   * was authorized. Both sentences said the takeover happens, flat, and the acknowledgement one
+   * press later carried the caveat, so the ceremony contradicted itself in both vocabularies. The
+   * review named only the legacy one, because that is the sentence the diff had touched.
+   */
+  it.each([
+    ["a modern reader", null],
+    ["a legacy stand-down", "legacy"],
+  ])("%s is told this asks for the mailbox rather than takes it", async (_what, kind) => {
+    if (kind === "legacy") FACTS = [LEGACY_STAND_DOWN];
+    const el = await render(null);
+    await act(async () => { organizeButton(el)!.click(); });
+    const text = el.textContent ?? "";
+    expect(text).toContain("does not take it");
+    expect(text, "the confirmation promised a takeover the lease can refuse")
+      .toContain("it keeps the mailbox and nothing changes here");
+    expect(text).toContain("left alone either way");
   });
 
   it("tells a legacy install to relaunch, which is the mechanism on that engine", async () => {
