@@ -241,7 +241,11 @@ async function admittedSendAdapter(deps: ApiDeps, mailboxId: string): Promise<Se
       deps.db, { mailboxId, max: MAX_IMAP_PER_MAILBOX, now: now() },
     );
   } catch (err) {
-    deps.logger?.error?.("send_reconcile_admission_failed", { mailboxId, err: String(err) });
+    // `err` itself, not `String(err)`: the logger reduces a thrown value to its class and code,
+    // and stringifying first makes every line read `errorClass: "String"` — the missing-port
+    // refusal, a pool timeout and a programming error all identical, which is the one thing an
+    // error-level line exists to tell apart.
+    deps.logger?.error?.("send_reconcile_admission_failed", { mailboxId, err });
     throw new TransientDialRefusal(mailboxId, "the IMAP admission counter could not be consulted");
   }
   if (!admitted) {
@@ -264,7 +268,7 @@ async function admittedSendAdapter(deps: ApiDeps, mailboxId: string): Promise<Se
     try {
       await imapAdmission(deps).release(deps.db, mailboxId, now());
     } catch (err) {
-      deps.logger?.warn?.("imap_slot_release_failed", { mailboxId, err: String(err) });
+      deps.logger?.warn?.("imap_slot_release_failed", { mailboxId, err });
     }
   };
 

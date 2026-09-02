@@ -10,7 +10,7 @@ import {
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { ServiceContext } from "./context.js";
 import type { AttachmentAdapter, OpenAdapter } from "./attachments-service.js";
-import { ServiceError, TransientDialRefusal } from "./errors.js";
+import { ServiceError, SettleFailed, TransientDialRefusal } from "./errors.js";
 import { sanitizeOutboundHtml } from "./outbound-html.js";
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
@@ -1966,7 +1966,15 @@ export class SendService {
     ctx: ServiceContext, row: typeof outboundSends.$inferSelect, mailboxId: string,
     by: ResolveStaleBy,
   ): Promise<ResolveStaleOutcome> {
-    const seq = await this.finalizeSent(ctx, row.id, row.mintedMessageId, row.draftId, mailboxId);
+    // A THROW HERE IS A WRITE FAILURE, NOT A PROBE FAILURE — tagged so the reconciling pass
+    // cannot apply its give-up to it and record `unverified` for a message the Sent folder had
+    // just confirmed. See {@link SettleFailed}.
+    let seq: number | null;
+    try {
+      seq = await this.finalizeSent(ctx, row.id, row.mintedMessageId, row.draftId, mailboxId);
+    } catch (err) {
+      throw new SettleFailed("sent", err);
+    }
     if (seq === null) return this.answerWinner(ctx, row);
     return { status: "sent", providerMessageId: row.mintedMessageId, draftId: row.draftId, seq, by };
   }
@@ -1975,7 +1983,13 @@ export class SendService {
   private async settleUnverified(
     ctx: ServiceContext, row: typeof outboundSends.$inferSelect, by: ResolveStaleBy,
   ): Promise<ResolveStaleOutcome> {
-    const seq = await this.finalizeUnverified(ctx, row.id, row.draftId);
+    // See {@link SettleFailed} — the evidence was in; only the write failed.
+    let seq: number | null;
+    try {
+      seq = await this.finalizeUnverified(ctx, row.id, row.draftId);
+    } catch (err) {
+      throw new SettleFailed("unverified", err);
+    }
     if (seq === null) return this.answerWinner(ctx, row);
     return { status: "unverified", providerMessageId: null, draftId: row.draftId, seq, by };
   }

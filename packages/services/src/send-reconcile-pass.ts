@@ -2,6 +2,7 @@ import { and, eq, lt, ne } from "drizzle-orm";
 import { drafts, mailboxes, outboundSends, type Tx } from "@trafficflow/db";
 import { createLogger, type Logger, type OpenSendAdapter, type SendAdapter } from "@trafficflow/core/mail";
 import type { Db, ServiceContext } from "./context.js";
+import { SettleFailed, TransientDialRefusal } from "./errors.js";
 import { SCHEDULED_SEND_BATCH, SCHEDULED_SEND_EXPIRY_MS } from "./schedule-send-pass.js";
 import { sendService, SEND_STALE_AFTER_MS, type SendService } from "./send-service.js";
 
@@ -71,9 +72,12 @@ import { sendService, SEND_STALE_AFTER_MS, type SendService } from "./send-servi
  * both. **LOGINS** are capped at {@link SEND_RECONCILE_BATCH} per invocation — that is the
  * expensive thing, it is what the 60-second platform ceiling is budgeted against, and it is
  * counted where a connection is actually opened rather than where one is intended.
- * **ROWS EXAMINED** are capped at `SEND_RECONCILE_BATCH × SEND_RECONCILE_SCAN_FACTOR` from the
- * dialable window plus `SEND_RECONCILE_BATCH` from the `error` window — sixteen today — because
- * a row's mirror arm is one indexed read and making it wait a minute for that buys nothing.
+ * **ROWS EXAMINED** are capped at `SEND_RECONCILE_BATCH × SEND_RECONCILE_SCAN_FACTOR` from EACH
+ * of the two claim windows — twelve and twelve, twenty-four today — because a row's mirror arm is
+ * one indexed read and making it wait a minute for that buys nothing. The `error` window is sized
+ * off the examination factor and NOT off the login budget, deliberately: rows in it are never
+ * dialled, so pinning them to the number of logins would have throttled the one thing they can
+ * still get (the mirror arm, and the give-up that ends them) to a quarter of its rate.
  *
  * One connection per DISTINCT mailbox (so N ids on one mailbox cost one LOGIN, not N, and a
  * mailbox already open is free rather than charged a slot), dialled only for a mailbox whose
@@ -82,9 +86,10 @@ import { sendService, SEND_STALE_AFTER_MS, type SendService } from "./send-servi
  */
 
 /**
- * LOGINS one invocation may open — not rows it may resolve, which is up to
- * `this × SEND_RECONCILE_SCAN_FACTOR` plus the `error` window, since a mirror hit settles a row
- * terminally without a connection. PINNED to {@link SCHEDULED_SEND_BATCH} rather than chosen:
+ * LOGIN ATTEMPTS one invocation may make — not rows it may resolve, which is up to
+ * `this × SEND_RECONCILE_SCAN_FACTOR` from each of the two claim windows, since a mirror hit
+ * settles a row terminally without a connection. ATTEMPTS rather than successes: a connect that
+ * fails has still logged in as far as the provider is concerned. PINNED to {@link SCHEDULED_SEND_BATCH} rather than chosen:
  * this pass shares its host, its cadence and its platform ceiling with the scheduled sender, and
  * its per-dial cost is strictly smaller (a probe, never a submission). A number of its own would
  * be two constants that have to be reasoned about together and can drift apart.
@@ -207,7 +212,8 @@ export async function runSendReconcilePass(
   };
 
   const rows = await claimStale(
-    db, now(), batch * SEND_RECONCILE_SCAN_FACTOR, batch, deps.accountEligible,
+    db, now(), batch * SEND_RECONCILE_SCAN_FACTOR, batch * SEND_RECONCILE_SCAN_FACTOR,
+    deps.accountEligible,
   );
   result.claimed = rows.length;
   if (rows.length === 0) return result;
@@ -229,9 +235,29 @@ export async function runSendReconcilePass(
   const openOnce: OpenSendAdapter = async (mailboxId: string): Promise<SendAdapter> => {
     const cached = shared.get(mailboxId);
     if (cached) return cached;
-    const real = await deps.openSendAdapter(mailboxId);
-    // HERE, not at the gate: this is the line a LOGIN actually happened on. A factory that
-    // refused (admission full, no credentials) throws above and charges nothing.
+    /**
+     * CHARGE THE ATTEMPT, NOT THE SUCCESS — and the difference is the whole point of the cap.
+     *
+     * `makeSendAdapter` connects, which LOGS IN. A mailbox with a rotated password or an
+     * unreachable host therefore costs a real login and then throws, and charging only the
+     * successful path meant those cost NOTHING: `mayDial` is satisfied by `status='connected'`,
+     * and nothing in this pass ever demotes a mailbox (only the sync worker writes `'error'`), so
+     * every dialable row of a broken-but-`connected` mailbox would attempt a fresh login every
+     * minute — up to the whole examination window rather than the batch. That is verbatim the
+     * hazard the `error` window exists to avoid ("another failed LOGIN is how a recoverable fault
+     * becomes a locked account"), made worse by the change meant to remove head-of-line blocking.
+     *
+     * A {@link TransientDialRefusal} is the one throw that costs nothing, because it is raised
+     * BEFORE the wire: the admission counter refusing, or failing to answer. Everything else
+     * touched the network and is charged.
+     */
+    let real: SendAdapter;
+    try {
+      real = await deps.openSendAdapter(mailboxId);
+    } catch (err) {
+      if (!(err instanceof TransientDialRefusal)) dialled += 1;
+      throw err;
+    }
     dialled += 1;
     held.set(mailboxId, real);
     const wrapper = probeOnly(real);
@@ -336,7 +362,12 @@ export async function runSendReconcilePass(
         // wrong terminal write, so it is not close. (A factory that refused before connecting
         // left no entry, so this is already a no-op for that path.)
         await forget(row.mailboxId);
-        if (!givingUp) {
+        // A WRITE THAT FAILED AFTER THE EVIDENCE WAS IN NEVER GIVES UP, whatever the row's age.
+        // The give-up's mirror-only re-resolution would take a probe answer of "the message IS in
+        // Sent", throw it away, and record `unverified` — terminally — for a message the server
+        // had confirmed milliseconds earlier. The database is what failed; the next cycle
+        // re-probes and re-writes, and `pending` is exactly what a failed commit should leave.
+        if (err instanceof SettleFailed || !givingUp) {
           result.deferred += 1;
           log.warn("send_reconcile_deferred", {
             sendId: row.send.id, accountId: row.send.accountId, draftId: row.send.draftId, err,

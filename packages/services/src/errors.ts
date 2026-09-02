@@ -65,3 +65,29 @@ export class TransientDialRefusal extends Error {
     this.name = "TransientDialRefusal";
   }
 }
+
+/**
+ * THE EVIDENCE WAS IN; WRITING IT DOWN IS WHAT FAILED.
+ *
+ * Raised by {@link SendService.resolveStale} when a finalize transaction throws AFTER the Sent
+ * folder (or the mirror) has already answered. It exists to keep those two apart, because the
+ * reconciling pass draws opposite conclusions from them:
+ *
+ *  · a PROBE that threw means the mailbox could not be asked, so after a day of trying the
+ *    honest ending is `unverified`;
+ *  · a WRITE that threw means the mailbox WAS asked and answered — possibly `sent` — and the
+ *    only thing that failed was the database. Applying the give-up to that would take a probe
+ *    answer of "the message is in Sent", discard it, and record the opposite: `unverified` for a
+ *    message the Sent folder demonstrably held milliseconds earlier, terminally, with nothing
+ *    ever re-examining it.
+ *
+ * So this one always defers. The next cycle re-probes and re-writes, and the row stays `pending`
+ * meanwhile — which is exactly what a database that cannot commit should leave behind.
+ */
+export class SettleFailed extends Error {
+  constructor(readonly decided: "sent" | "unverified", cause: unknown) {
+    super(`the reservation could not be settled as ${decided}`);
+    this.name = "SettleFailed";
+    this.cause = cause;
+  }
+}

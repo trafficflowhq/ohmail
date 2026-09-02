@@ -161,11 +161,14 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
     // nothing here is time-critical to the second, and a row that waits one more minute has
     // already waited ten.
     firstDelayMs: 105 * 1000,
-    // The pass opens at most `SEND_RECONCILE_BATCH` LOGINS per invocation, which is the cost the
-    // 60-second ceiling is actually budgeted against; this bound is the caller's mirror of that
-    // ceiling, not a hope. It EXAMINES more rows than that — a mirror hit settles a reservation
-    // with one indexed read and no connection — so the row count is not the number to budget
-    // from, and this comment says logins for that reason.
+    // The pass makes at most `SEND_RECONCILE_BATCH` LOGIN ATTEMPTS per invocation, which is the
+    // cost the 60-second ceiling is actually budgeted against; this bound is the caller's mirror
+    // of that ceiling, not a hope. ATTEMPTS, not successes, and the distinction is what keeps
+    // this comment true: a mailbox that is unreachable spends the connect timeout and throws, and
+    // if those went uncharged a single broken mailbox could spend more than this whole ceiling
+    // inside one invocation. It EXAMINES more rows than it dials — a mirror hit settles a
+    // reservation with one indexed read and no connection — so the row count is not the number to
+    // budget from.
     timeoutMs: 60 * 1000,
     // A tenth of the cadence — the sender's reason, one target over.
     jitterMs: 6 * 1000,
