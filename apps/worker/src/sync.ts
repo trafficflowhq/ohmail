@@ -13,7 +13,7 @@ import { LeaseUnavailableError } from "@trafficflow/core/adapters/organizer-leas
 // `stand-down-sends.ts`'s reason, and the module reaches `schema-mail.js` alone. A type-only
 // import, so nothing of the db package enters this file's runtime graph.
 import type { OrganizerRole } from "@trafficflow/db";
-import type { WorkerRepo, DrizzleRepo, PendingFolderState } from "@trafficflow/core/adapters/drizzle-repo";
+import type { WorkerRepo, DrizzleRepo, PendingFolderState, PendingFlagState } from "@trafficflow/core/adapters/drizzle-repo";
 import { ClassifierFaultError } from "./classifier-fault.js";
 import {
   DeadLetterLedger, classifyIngestFault, nextAttemptAfter,
@@ -2005,6 +2005,95 @@ async function fileOne(deps: SyncDeps, p: PendingPhysical, special: SpecialFolde
 }
 
 /**
+ * ── A PENDING `\Seen` WITH NO LOCATOR: WHAT IT IS, AND WHAT IS OWED TO IT ────────────────────
+ *
+ * This arm was `if (!p.nativeLocator) continue;` — the one branch of {@link reconcileFlags} that
+ * left the queue without a bound, without an audit row and without a log line, while every
+ * sibling arm (gone, transport, refused, committed) writes at least one of the three. A user's
+ * "mark as read" that landed here therefore disappeared in exactly the shape a person reports as
+ * *"I marked it read on the desktop and the mailbox never saw it"*: the local row says read, the
+ * server was never asked, and nothing anywhere records that a request was dropped.
+ *
+ * ── THE INVARIANT ───────────────────────────────────────────────────────────────────────────
+ *
+ * **A pending flag intent whose message has no locator cannot be sent and will not become
+ * sendable on its own; it is deferred on the shared backoff for as long as a locator could still
+ * arrive, and then retired with an audit row that names why.**
+ *
+ * The first half is a fact about the writes, not a guess. `messages.native_locator` is REQUIRED
+ * at insert (`InsertMessageInput.nativeLocator`, non-optional), so no message is born without
+ * one, and it is set to NULL at exactly two sites — both in `DrizzleRepo`'s folder-delete sweep,
+ * and both of which tombstone the row (`deleted_at`) and husk its body in the same statement
+ * group. The message's only watched copy went to Trash with the folder its user deleted; a
+ * `STORE` has no UID to name.
+ *
+ * The second half is why this is a DEFERRAL first and a retirement second rather than an
+ * immediate void. The tombstoned header row survives deliberately — for identity, attribution
+ * and the resurrect-on-return path — so a copy CAN come back, and while it might, throwing the
+ * user's intent away is the worse error of the two. What may not continue is reading the row
+ * every cycle for ever with nothing to show for it.
+ *
+ * ── WHY NOT THE `MessageGoneError` ARM'S IMMEDIATE VOID ─────────────────────────────────────
+ *
+ * That arm converges `observed_seen` to `desired_seen` and it is allowed to, because
+ * `primaryInstanceVanished` has just proved the copy is gone. That predicate deliberately answers
+ * FALSE here — it reads `native_locator IS NOT NULL AND NOT EXISTS(...)`, so an absent locator is
+ * "an incomplete record", never "a disappearance", precisely so that a row with no locator cannot
+ * manufacture adoption evidence. Reusing its write without its proof would fabricate an
+ * observation of a server that was never asked, which is the same lie the bare `continue` told,
+ * with a row to make it durable.
+ *
+ * ── THE BOUND ───────────────────────────────────────────────────────────────────────────────
+ *
+ * {@link RECONCILE_BACKOFF_MINUTES}, the same schedule every other unconvergeable mutation in
+ * this file takes, so a locator-less row costs 5 reads over ~7 hours instead of one per cycle for
+ * the life of the mailbox. At the end of the schedule the row is retired: `reconcile_status`
+ * leaves `pending` the only way this port allows — `upsertFlagState` with `observed = desired` —
+ * and that write is honest ONLY because it is paired with the terminal audit row, which records
+ * that the convergence was a retirement and not an observation. Auditors read
+ * `reconcile.flags.retired`, never a bare `reconcile.flags`.
+ */
+async function retireLocatorlessFlag(deps: SyncDeps, p: PendingFlagState): Promise<void> {
+  const { accountId, mailboxId, log } = deps;
+  const attempts = (p.attempts ?? 0) + 1;
+  const spent = attempts >= RECONCILE_BACKOFF_MINUTES.length;
+  await fencedGroup(deps, async (r) => {
+    await r.recordAudit(
+      accountId,
+      spent ? "reconcile.flags.retired" : "reconcile.flags.no_locator",
+      {
+        messageId: p.messageId,
+        seen: p.desiredSeen,
+        attempts,
+        reason: spent
+          ? "the message has no locator and the deferral schedule is spent, so the read-state " +
+            "intent is retired rather than re-read every cycle for ever; the server was never asked"
+          : "the message has no locator, so there is no UID to STORE against; the intent is kept " +
+            "and deferred in case a copy returns",
+      },
+      null,
+    );
+    if (spent) {
+      // The ONLY write that takes this row out of `pending` through this port. Paired with the
+      // audit row above, and never issued without it — see the header.
+      await r.upsertFlagState(p.messageId, {
+        desiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us",
+      });
+    } else {
+      await r.deferFlagReconcile(p.messageId, {
+        attempts, nextAttemptAt: nextReconcileAttemptAfter(attempts, new Date()),
+      });
+    }
+  });
+  log?.warn("reconcile_flag_no_locator", {
+    mailboxId, accountId, messageId: p.messageId, attempts,
+    state: spent ? "retired" : "deferred",
+    reason: "a pending read-state intent has no locator to STORE against; the message's only " +
+      "watched copy went with a deleted folder",
+  });
+}
+
+/**
  * Push OUR intended read-state to IMAP — the `\Seen` mirror of `reconcileFolders`, and the
  * reason `PATCH /messages` can write intent and stop.
  *
@@ -2026,7 +2115,7 @@ async function reconcileFlags(deps: SyncDeps): Promise<void> {
       await fencedWrite(deps, (r) => r.upsertFlagState(p.messageId, { desiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us" }));
       continue;
     }
-    if (!p.nativeLocator) continue;
+    if (!p.nativeLocator) { await retireLocatorlessFlag(deps, p); continue; }
     try {
       await fenceImapMutation(deps);
       await adapter.setFlags(p.nativeLocator, { seen: p.desiredSeen });
