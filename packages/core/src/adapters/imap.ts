@@ -1340,9 +1340,17 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
      * The LIST row stays as the second source (and `resolveOhmailFolder` now prefers it over a
      * name's own separator for the same reason: a server statement outranks a derivation).
      */
-    const nsDelimiter = personalNamespacesOf(this.client as unknown as MetaNamespaceSource)[0]?.delimiter;
-    this.delimiter = (typeof nsDelimiter === "string" && nsDelimiter.length === 1 ? nsDelimiter : undefined)
-      ?? list.find((f) => f.path.toUpperCase() === "INBOX")?.delimiter ?? list[0]?.delimiter ?? "/";
+    /* ONE character, from whichever source answers — the same filter `metaAlphabet` applies with
+       its own `one()`. Guarding only the namespace half (as the first version of this did) leaves
+       a server whose LIST reports an empty or multi-character delimiter handing the adapter one
+       alphabet and the resolution another, which is the exact divergence this line exists to end.
+       Total, or it is not an invariant. */
+    const one = (d: unknown): string | undefined =>
+      (typeof d === "string" && d.length === 1 ? d : undefined);
+    const ns = personalNamespacesOf(this.client as unknown as MetaNamespaceSource);
+    this.delimiter = one(ns[0]?.delimiter)
+      ?? one(list.find((f) => f.path.toUpperCase() === "INBOX")?.delimiter)
+      ?? one(list[0]?.delimiter) ?? "/";
     this.sentFolder = this.findSent(list);
     // AFTER the delimiter and the Sent resolution, both of which it reads. See
     // {@link ImapAdapter.passiveFolders}: this is discovery for free, off a LIST already issued.
@@ -1505,7 +1513,10 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
      */
     const namespaces = personalNamespacesOf(this.client as unknown as MetaNamespaceSource);
     for (const canonical of OHMAIL_FOLDERS) {
-      let path = this.toServerPath(canonical);
+      /* `const`: the CREATE address is the adapter's own spelling and nothing may re-point it.
+         A mutable binding here is the shape the defect had — `path = at.path` — so the next
+         person to reach for it has to change the declaration first and think about why. */
+      const path = this.toServerPath(canonical);
       try {
         const at = resolveOhmailFolder({ list, bare: path, namespaces, canonical });
         /*
@@ -2241,12 +2252,38 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * `Backup.` is refused and the folder is created under our own name.
    */
   private isOwnFolderPath(
-    found: string, bare: string, namespaces: readonly { prefix?: string; delimiter?: string | null }[],
+    found: string, bare: string,
+    namespaces: readonly { prefix?: string; delimiter?: string | null }[],
   ): boolean {
     if (namespaces.length > 0) return true;
     const prefix = found.slice(0, found.length - bare.length);
     if (prefix === "") return true;
     const parent = prefix.slice(0, prefix.length - this.delimiter.length);
+    /*
+     * ── THE LITERAL `INBOX`, AND IT IS A DELIBERATE TRADE RATHER THAN AN OVERSIGHT ────────
+     *
+     * Review asked for the LIST-derived test the resolution uses — `list.some(f => f.path ===
+     * parent)` — on the grounds that `resolveOhmailFolder` says its rule is "derived rather than
+     * hardcoded". Measured: that reintroduces the defect this function exists for. In the
+     * `Backup.ohmail.Reads` case `Backup` IS a listed mailbox, so the derived test accepts it,
+     * the CREATE is skipped, and our folder is never made.
+     *
+     * The two rules must differ because their failures differ, which is the same asymmetry the
+     * strict/loose split rests on: for the lease READ a wrong answer is ONE wrong answer, bounded
+     * by two-matches-is-a-refusal; for a create-if-absent a wrong answer is a folder that never
+     * exists, and every organize move into it fails NONEXISTENT for the life of the account.
+     *
+     * So the parent must be the personal ROOT, and on a server that answered no NAMESPACE the
+     * only root that can be named without guessing is `INBOX` — the one mailbox name RFC 3501
+     * mandates. `resolveOhmailFolder`'s own sentence is untouched and stays true OF ITSELF: this
+     * is a second, narrower gate in a different file, not a restatement of that one.
+     *
+     * WHAT IT COSTS, stated rather than hidden: a server that answers no NAMESPACE *and* whose
+     * personal root is not spelled `INBOX` stops recognising our folders, and all five are
+     * re-CREATEd on every connect — `IMAP-ENSUREFOLDERS-PREFIX-BLIND`'s original symptom for that
+     * one server class. That is round trips, each swallowed as "already exists", and it is the
+     * benign side of the trade. Filed rather than left implicit.
+     */
     return parent.toUpperCase() === "INBOX";
   }
 
