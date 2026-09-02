@@ -61,6 +61,27 @@ export const NOTICE_EVENTS: readonly NoticeEvent[] = [
 ] as const;
 
 /**
+ * THE EVENTS SOME SURFACE CAN ACTUALLY DELIVER TODAY.
+ *
+ * Not a preference and not a roadmap — a statement about which emitters exist. It is here, beside
+ * the vocabulary, because the Settings pane must offer a switch for an event only if turning that
+ * switch on changes something. A control whose every position means the same thing is the exact
+ * defect this whole surface was built to remove, and it comes back the moment the vocabulary
+ * grows faster than the emitters do.
+ *
+ * Only `ohbox` qualifies at present: the desktop's unread sink draws it, and the browser's
+ * service worker draws the closed-window case for it. A Screener arrival, a scheduled send's
+ * outcome and a pairing event are all modelled by {@link decideNotices} and all currently reach
+ * no emitter — so the pane withholds their switches rather than offering three controls that
+ * cannot act.
+ *
+ * A census over the emitters' own source keeps this list honest in both directions: an event
+ * listed here that no emitter names fails, and so does an emitter that draws an event this list
+ * does not admit.
+ */
+export const DELIVERABLE_EVENTS: readonly NoticeEvent[] = ["ohbox"] as const;
+
+/**
  * What the operating system says about drawing notices at all.
  *
  * `unsupported` is not a failure: a platform with no notification centre is a supported place to

@@ -64,6 +64,7 @@ export {
 // each have to remember the master switch. Pure: no platform, no catalogue, no sentence.
 export {
   DEFAULT_CHANNELS,
+  DELIVERABLE_EVENTS,
   NOTICE_EVENTS,
   channelsAreLive,
   decideNotices,

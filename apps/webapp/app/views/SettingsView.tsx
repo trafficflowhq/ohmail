@@ -30,6 +30,7 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import {
   DEFAULT_CHANNELS,
+  DELIVERABLE_EVENTS,
   channelsAreLive,
   type Folder,
   type NoticePermission,
@@ -1131,7 +1132,11 @@ export function SettingsView({
                       that cannot change anything — the same shape one row up. */}
                   {channelsAreLive(notifyChannels, notifyPermission) ? (
                     <>
-                      {NOTIFY_ROWS.map((r) => (
+                      {/* ONLY THE EVENTS SOMETHING CAN ACTUALLY DELIVER. The other three are
+                          modelled by the gate and reach no emitter yet, so offering their
+                          switches would put three controls on screen whose every position means
+                          the same thing — which is what this pane replaced. */}
+                      {NOTIFY_ROWS.filter((r) => DELIVERABLE_EVENTS.includes(r.key)).map((r) => (
                         <SettingsRow
                           key={r.key}
                           label={t(r.label)}
