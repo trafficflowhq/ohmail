@@ -24,7 +24,7 @@ import {
 } from "@trafficflow/db";
 import {
   attachmentsService, awayResponderService, contactsService, draftingService, draftsService,
-  kbService, runScheduledSendPass, scheduleService, tagsService,
+  kbService, runAwayResponderPass, runScheduledSendPass, scheduleService, tagsService,
   makeApprovalService, makeAuthConfig, makeMailboxService, makePrivacyService,
   makeScreenerService, makeUnsubscribeService, messageService, nodeHostResolver,
   nodeOneClickPost, notifyRulesService, resolveSession,
@@ -2877,6 +2877,62 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       };
 
       /**
+       * THE AWAY RESPONDER, ON THE DOOR THAT ONLY EXISTS WHILE THE WINDOW IS OPEN (mail 0087).
+       *
+       * The same ONE implementation the hosted API host runs (`runAwayResponderPass`), for the
+       * reason `sendScheduled` above states about its own pass: the reservation, the per-sender
+       * throttle and the ledger have to agree across every host, or two installs organizing the
+       * same mailbox at different moments would answer one correspondent twice with two separate
+       * records neither of which could see the other. Only the transport differs — `openLocalSend`,
+       * the exact adapter a manual send from this door dials.
+       *
+       * ── WHAT THIS DOOR HONESTLY PROMISES ─────────────────────────────────────────────────
+       *
+       * Replies go out while ohmail is open on this computer, and not otherwise. That is a weaker
+       * promise than the hosted door's and the settings pane SAYS SO — "Replies are sent while
+       * ohmail is open on this computer" — rather than offering a control that quietly does less
+       * than the same control does on Cloud. Mail that arrives overnight is answered on the next
+       * launch's first drain, and the throttle is what stops that first drain answering a week of
+       * correspondents at once.
+       *
+       * ── ORGANIZER ONLY, TWICE OVER, AND BOTH ARE DELIBERATE ──────────────────────────────
+       *
+       * The gate here, and the organizer JOIN inside the pass. Neither is redundant: this gate is
+       * what stops a READER install spending a drain on a pass that would decide nothing, and the
+       * JOIN is what makes the decision impossible rather than merely unreached. An away reply is
+       * not a send a person pressed — it is an automatic message sent on somebody's behalf when
+       * mail arrives — so a reader that answered would be a second responder on one mailbox, and a
+       * stranger writing once would get two identical replies from the same person, one of them
+       * from a machine that was told to stop organizing the mailbox.
+       *
+       * `mailboxIds: [mb.id]` for `sendScheduled`'s reason verbatim: this call is reached once per
+       * RUNTIME, and without the narrowing each organizing mailbox would scan and claim for every
+       * other organizing mailbox in the install.
+       */
+      const answerAway = async (): Promise<void> => {
+        try {
+          const r = await runAwayResponderPass(db as never, {
+            openSendAdapter: openLocalSend,
+            mailboxIds: [mb.id],
+            now,
+          });
+          if (r.examined > 0) {
+            log("away_responder_pass", {
+              accounts: r.accounts, examined: r.examined, sent: r.sent,
+              unverified: r.unverified, throttled: r.throttled, suppressed: r.suppressed,
+              deferred: r.deferred, capped: r.capped,
+            });
+          }
+        } catch (err) {
+          log("away_responder_pass_failed", {
+            err,
+            reason: "no away reply was attempted this drain and no candidate was decided; the " +
+              "next drain re-reads the same window, and mail continues to arrive either way",
+          });
+        }
+      };
+
+      /**
        * The drain itself. Never called from outside this closure, and — since mail 0083 — reached
        * by a READER as well as by an organizer; `organizer.organizing` is what separates them, both
        * for the passes below and for the `role` every cycle runs under.
@@ -2923,6 +2979,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // mailbox's organizer knows nothing about, at a time nobody re-chose. The gate makes the
         // close's failure cost a delay rather than a delivery.
         if (organizer.organizing) await sendScheduled();
+        // The away responder, directly after the appointment clock and gated the same way. AFTER
+        // the cycles would be wrong for the reason the placement note above gives about
+        // `sendScheduled`: an away reply has a clock on it too — it is a promise about mail that
+        // has just arrived — and it must not wait out a hundred-cycle backlog drain. Its own SMTP
+        // dial fails independently of the inbound cycles, and the pass contains its own faults.
+        if (organizer.organizing) await answerAway();
         let cycles = 0;
         /** Did a cycle report an empty backlog, or did the loop simply run out of cycles? */
         let drained = false;

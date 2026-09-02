@@ -4,7 +4,7 @@ import { makeOwnedDb, makeChangeWakeHub, isSuspended } from "@trafficflow/db/clo
 import { createLogger, UNMETERED_STORAGE_CAP } from "@trafficflow/core";
 import { makeSendAdapter } from "@trafficflow/api";
 import {
-  runScheduledSendPass, runSendReconcilePass, SEND_RECONCILE_NET_TIMEOUTS,
+  runAwayResponderPass, runScheduledSendPass, runSendReconcilePass, SEND_RECONCILE_NET_TIMEOUTS,
 } from "@trafficflow/services";
 import { loadServerConfig } from "./config.js";
 import { buildDeps, buildServerServices, oauthProviderFor, type ServerRuntime } from "./deps.js";
@@ -198,6 +198,40 @@ async function main(): Promise<void> {
            * never projects a sent copy and never assembles a body.
            */
           await reconcileStrandedSends();
+           * THE AWAY RESPONDER, ON THE SAME TICK (mail 0087) — one always-on process, one clock.
+           *
+           * On this host the two passes share a tick rather than each arming their own, which is
+           * the opposite of the hosted deployment's shape and right for the opposite reason: there,
+           * two serverless invocations each get their own 60-second ceiling and must not share one;
+           * here there is no ceiling and no invocation, so a second timer would only add a second
+           * thing that can drift, fail to be cleared on shutdown, and overlap itself.
+           *
+           * AFTER the scheduled sender, deliberately: an appointment has a stated time and an away
+           * reply does not, so if one pass is going to be delayed by the other it should be this
+           * one. Its own try/catch, so a responder fault never costs the appointment clock its
+           * cadence — the containment rule every pass on every host here follows.
+           *
+           * `accountEligible` is the suspension gate, on the handle this host runs on; there is no
+           * mailbox filter, because a self-host serves its own account's mailboxes and the pass's
+           * organizer JOIN is what keeps it off a mailbox this install merely reads.
+           */
+          try {
+            const a = await runAwayResponderPass(owned.db, {
+              openSendAdapter: (mailboxId) => makeSendAdapter(buildDeps(new Request(cfg.origin), rt), mailboxId),
+              accountEligible: async (accountId, handle) =>
+                !(await isSuspended(handle as unknown as Tx, accountId)),
+              log: logger,
+            });
+            if (a.examined > 0) {
+              logger.info("away_responder_pass", {
+                accounts: a.accounts, examined: a.examined, sent: a.sent,
+                unverified: a.unverified, throttled: a.throttled, suppressed: a.suppressed,
+                deferred: a.deferred, capped: a.capped,
+              });
+            }
+          } catch (err) {
+            logger.error("away_responder_pass_failed", { err });
+          }
         } catch (err) {
           // The pass absorbs per-row faults itself; this catches the claim. The appointments
           // stand and the next minute asks again — one bad pass never kills the cadence.
