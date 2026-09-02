@@ -16,46 +16,6 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
-## [0.13.6] — 2026-09-02
-
-A fix release for the guided setup that 0.13.5 introduced. On the "on this
-computer" door that setup could not be reached at all, which is the whole of the
-release.
-
-### Connecting a mailbox on this computer opens the setup, instead of skipping it
-
-Connecting a mailbox on the standalone door dropped you straight into the mail
-client. Nothing opened the guided setup — no welcome, no statement of what would
-be moved where, no question about a model, no progress screen. The flow existed
-and had no way in on that door; it was reachable only from Settings, after the
-fact.
-
-Connecting opens it now, and which screen it opens on is derived from the state
-of the mailbox rather than from a step counter, so quitting and coming back
-resumes where you were.
-
-**A change in behaviour worth knowing before you upgrade:** a mailbox you connect
-on that door is now a *reader* until you agree to the re-arrangement — ohmail
-reads and mirrors it and creates nothing, moves nothing, until you press Agree on
-the consent screen. An install that is already organizing a mailbox keeps
-organizing it; nothing about existing setups changes.
-
-### Removing a mailbox and adding it back no longer doubles every message
-
-After removing a mailbox from a standalone install and connecting the same
-address again, every message was served twice and every conversation became a
-thread holding its own duplicates. The local copy of the removed mailbox was not
-being cleared, so the second connection added a second copy of everything beside
-the first.
-
-### A self-hosted server names itself on the reader banner
-
-A server you run wrote "ohmail Cloud" into its own users' mailboxes. That name
-travels in the organizer claim inside the mailbox, so it showed up on the "organized
-by" banner and to anyone opening that folder in another mail client — naming a
-hosted service they are not a customer of as the thing that had taken their mail.
-A self-hosted deployment now names its own origin.
-
 ## [0.13.5] — 2026-09-02
 
 Setting ohmail up is a guided flow now. Beside that: an install that has handed
@@ -3201,8 +3161,7 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.13.6...HEAD
-[0.13.6]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.6
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.13.5...HEAD
 [0.13.5]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.5
 [0.13.4]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.4
 [0.13.3]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.3

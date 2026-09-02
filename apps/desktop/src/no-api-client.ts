@@ -450,33 +450,6 @@ export interface SeedReviewWire {
     truncated: boolean;
 }
 
-/**
- * WEB PUSH — the browser's subscription plumbing, absent, and its absence is what BROKE the build.
- *
- * `notification-settings.ts` is shared shell code and imports this name unconditionally
- * (`import { apiConfigured, push as pushApi } from "../api-client"`). `vite.config.ts` aliases
- * that module to THIS one in both desktop artifacts, so a missing export here is not a missing
- * feature — it is an unresolved import, and the desktop bundle fails on every platform.
- *
- * It stayed invisible to `tsc` because the alias is the bundler's, not the compiler's: the
- * typecheck resolves the real module and is green while the bundle cannot be built at all. The
- * file header's rule — "when the real module's surface changes, change this one in the same
- * commit" — is exactly this, and the desktop typecheck is NOT what notices it.
- *
- * A typed refusal rather than a stub that answers: the desktop tier has no Cloud account and no
- * push service, and `notification-settings.ts` asks `apiConfigured()` before it acts, so nothing
- * here is reached on this build. Reaching it anyway must throw rather than quietly open a socket.
- */
-export const push: {
-    vapidKey: () => Promise<{
-        publicKey: string | null;
-    }>;
-    subscribe: (endpoint: string, p256dh: string, auth: string) => Promise<{
-        id: string;
-    }>;
-    unsubscribe: (id: string) => Promise<void>;
-} = absent;
-
 export const consent: {
     state: () => Promise<ConsentStateWire>;
     setAutoSuggest: (enabled: boolean) => Promise<{
