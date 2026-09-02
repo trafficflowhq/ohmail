@@ -77,6 +77,26 @@ Nothing is connected and nothing is fetched — there is no stored password, so
 no server is contacted and no mail is copied or organized — but the entry
 reappears, and clearing it properly is the next release's work.
 
+### Connecting a mailbox something else already organizes now says so
+
+Exactly one thing organizes a mailbox at a time. Before ohmail takes that on it
+asks whether something already is — another computer of yours, or the hosted
+service — and if so it tells you who, and asks, instead of offering the plain
+"organize this mailbox" statement. That question came back "nobody" on a whole
+class of mail servers, whatever the true answer was.
+
+ohmail keeps a small housekeeping folder in the mailbox and looked for it by name
+at the top of the folder tree. Servers that keep everything beneath a top-level
+INBOX file it one level in and list it there, so the name never matched. On a
+mailbox another machine was actively organizing, the warning did not appear and
+you could take it over without being told anything was there.
+
+The folder is now found where the server actually keeps it — under the personal
+folder prefix the server declares, or at the top of the tree when there is no
+prefix — and the side that reads it and the side that writes it now resolve it
+the same way, so they cannot end up pointed at different folders. Where two
+folders could both be it, ohmail says it cannot tell rather than guessing.
+
 ### Send says what it is doing, and cannot hang
 
 Pressing Send could sit for several seconds with nothing on screen to say the

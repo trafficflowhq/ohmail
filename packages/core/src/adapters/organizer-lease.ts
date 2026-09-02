@@ -60,6 +60,251 @@ export const META_FOLDER = "ohmail/_meta";
 /** `true` iff {@link META_FOLDER} is absent from the watched set. Asserted by the suite. */
 export const META_FOLDER_IS_UNWATCHED: boolean = !(WATCHED_FOLDERS as readonly string[]).includes(META_FOLDER);
 
+/* ══ WHERE `ohmail/_meta` ACTUALLY LIVES ON THIS SERVER ═══════════════════════════════════════
+ *
+ * `toServerPath(META_FOLDER)` answers what the folder is CALLED — `ohmail._meta` on a
+ * dot-delimited server, `ohmail/_meta` on a slash-delimited one. It does not answer where it
+ * IS, and on a server with a personal-namespace prefix those are different strings.
+ *
+ * ── THE FAILURE, MEASURED LIVE ──────────────────────────────────────────────────────────────
+ *
+ * Dovecot with `NAMESPACE` personal prefix `INBOX.` and delimiter `.` — the shape both live
+ * mailboxes this project has ever run against report — files a root-named CREATE under the
+ * prefix and then LISTS it there. So the folder Cloud has been writing its claim into for
+ * months is `INBOX.ohmail._meta`, while `toServerPath(META_FOLDER)` says `ohmail._meta`, and
+ * every read that asked `list.some((f) => f.path === p)` answered NO on a mailbox holding a
+ * live claim with a heartbeat minutes old.
+ *
+ * That answer was load-bearing in the worst possible place. The pre-consent peek reports "no
+ * holder" from it, the guided flow's "somebody else organizes this mailbox" step never renders,
+ * and a person connecting a mailbox their other machine is actively organizing is shown the
+ * plain consent statement and agrees to take it without ever being told. The single-organizer
+ * invariant rests on this read.
+ *
+ * ── SO THE RESOLUTION IS ONE FUNCTION, USED BY BOTH SIDES ──────────────────────────────────
+ *
+ * The consented path and the APPEND-less peek go through {@link makeMetaFolderRef} and nothing
+ * else. Two spellings of "where is `_meta`" is precisely how a reader and a writer end up
+ * pointed at different folders — the reader seeing nobody while the writer renews beside it —
+ * so there is one, and `meta-folder.test.ts` censuses the source to keep it that way.
+ */
+
+/**
+ * A LIST row, as much of one as the meta-folder resolution reads.
+ *
+ * `delimiter` is optional because it is a client-library convenience rather than something every
+ * fake carries. It is read the way {@link LeaseImapClient.mailbox} is read: absence means
+ * "unknown", never a value.
+ */
+export interface MetaFolderRow {
+  readonly path: string;
+  readonly subscribed?: boolean;
+  readonly delimiter?: string;
+}
+
+/** One personal namespace, as RFC 2342's NAMESPACE response describes it. */
+export interface MetaNamespaceEntry {
+  /** Already delimiter-terminated by the client library — `INBOX.`, not `INBOX`. */
+  readonly prefix?: string;
+  /** NIL for a namespace with no hierarchy, which RFC 2342 §5 allows. */
+  readonly delimiter?: string | null;
+}
+
+/**
+ * The NAMESPACE half of a client, read structurally and defensively.
+ *
+ * `ImapFlow` sets both fields during `connect()` — and sets them even on a server without the
+ * NAMESPACE extension, by falling back to `LIST "" ""`, which is why the authoritative branch
+ * below is the one that runs in production rather than the derived one. A client that exposes
+ * neither is not an error; it takes the derived branch.
+ */
+export interface MetaNamespaceSource {
+  readonly namespace?: MetaNamespaceEntry | null | undefined;
+  readonly namespaces?: { readonly personal?: readonly MetaNamespaceEntry[] | false | null } | null | undefined;
+}
+
+/** Where `ohmail/_meta` is — or, when nothing holds it yet, where it should be created. */
+export interface MetaFolderLocation {
+  /** The server path to CREATE, SELECT, APPEND and EXPUNGE at. */
+  readonly path: string;
+  /** The LIST row that matched, or `null` when no such folder exists on this server. */
+  readonly row: MetaFolderRow | null;
+}
+
+/**
+ * TWO FOLDERS BOTH LOOK LIKE `ohmail/_meta`, AND PICKING ONE IS THE THING THIS MUST NOT DO.
+ *
+ * Reachable on a server offering both a root namespace and a prefixed one, where an older build
+ * created `ohmail._meta` at the root and a newer one created `INBOX.ohmail._meta`. Choosing
+ * either would put the reader and the writer in different folders for as long as both exist,
+ * which is the dual-organizer bug with a longer fuse: each install renews a claim the other
+ * cannot see, and both organize.
+ *
+ * It THROWS, and every caller's wrapper turns that into {@link LeaseUnavailableError} — "I could
+ * not look", which §3.4 requires be unreachable from "nobody holds it". A mailbox in this state
+ * needs a person to delete one of the two folders; nothing here can know which.
+ */
+export class AmbiguousMetaFolderError extends Error {
+  readonly paths: readonly string[];
+  constructor(paths: readonly string[]) {
+    super(
+      `${META_FOLDER} resolves to more than one folder on this server (${paths.join(", ")}), so which `
+      + `one carries the organizer lease is unknown; nothing was read and nothing was written`,
+    );
+    this.name = "AmbiguousMetaFolderError";
+    this.paths = paths;
+  }
+}
+
+/** `META_FOLDER` is exactly two segments, and both halves are needed to read a mapped spelling. */
+const META_HEAD = META_FOLDER.slice(0, META_FOLDER.indexOf("/"));
+const META_TAIL = META_FOLDER.slice(META_FOLDER.indexOf("/") + 1);
+
+/**
+ * The personal namespaces a client learned at login, most-preferred first.
+ *
+ * `namespaces.personal` before `namespace` because the first is the whole list and the second is
+ * only its head — a server declaring two personal namespaces would otherwise have one of them
+ * silently invisible to the match below.
+ */
+export function personalNamespacesOf(client: MetaNamespaceSource | undefined): readonly MetaNamespaceEntry[] {
+  if (client === undefined || client === null) return [];
+  const declared = client.namespaces?.personal;
+  if (Array.isArray(declared) && declared.length > 0) return declared;
+  const one = client.namespace;
+  return one ? [one] : [];
+}
+
+/**
+ * The delimiter `bare` is SPELLED IN — which is the only one that matters here, because a prefix
+ * is concatenated onto `bare` and a path may not mix alphabets.
+ *
+ * Read from `bare` itself first, and that is not a trick: `toServerPath` IS the live connection's
+ * delimiter mapping, and `META_FOLDER` is two segments, so whatever it put between them is this
+ * server's delimiter, discovered rather than guessed. NAMESPACE and the LIST rows are the
+ * fallbacks for a seam that mapped it to something else — a fake, or a future canonical name with
+ * a different shape.
+ */
+function metaDelimiter(bare: string, list: readonly MetaFolderRow[], ns: readonly MetaNamespaceEntry[]): string {
+  const between = bare.slice(META_HEAD.length, bare.length - META_TAIL.length);
+  if (between.length === 1) return between;
+  for (const entry of ns) {
+    if (typeof entry.delimiter === "string" && entry.delimiter.length === 1) return entry.delimiter;
+  }
+  const row = list.find((f) => f.path.toUpperCase() === "INBOX") ?? list[0];
+  if (typeof row?.delimiter === "string" && row.delimiter.length === 1) return row.delimiter;
+  return "/";
+}
+
+/**
+ * FIND `ohmail/_meta` ON THIS SERVER, OR SAY WHERE TO PUT IT. Pure — a LIST and a NAMESPACE in,
+ * a path out.
+ *
+ * ── HOW A PREFIX IS ACCEPTED, AND WHY NOT ANY SUFFIX MATCH ─────────────────────────────────
+ *
+ * Matching every row that merely ENDS in `ohmail._meta` would adopt a customer's own
+ * `Backup.ohmail._meta` as the organizer lease. So a prefix has to be credible:
+ *
+ *  · **When the client reports personal namespaces, only those prefixes count.** This is the
+ *    authoritative branch and the one that runs against any real connection.
+ *  · **Otherwise a prefix counts when the server LISTS the mailbox it names** — `INBOX.` because
+ *    `INBOX` is a mailbox on that server. Derived from the LIST rather than hardcoded, so a
+ *    server whose personal namespace is not spelled `INBOX` is found on the same rule.
+ *
+ * The root spelling is always a candidate, whatever NAMESPACE says, because an install that ran
+ * before this resolution existed may have left its `_meta` there — and that folder holds the
+ * claim a newer install must still see. Two matches is {@link AmbiguousMetaFolderError}, never a
+ * choice.
+ *
+ * When nothing matches, the path returned is the FIRST declared personal prefix plus the mapped
+ * name: the server would file a root-named CREATE there anyway, and creating at the name LIST
+ * will report is what stops the next reader from having to guess at all.
+ */
+export function resolveMetaFolder(input: {
+  list: readonly MetaFolderRow[];
+  /** `toServerPath(META_FOLDER)` — the mapped name, without a namespace prefix. */
+  bare: string;
+  namespaces?: readonly MetaNamespaceEntry[];
+}): MetaFolderLocation {
+  const { list, bare } = input;
+  const ns = input.namespaces ?? [];
+  const delimiter = metaDelimiter(bare, list, ns);
+  const declared = ns
+    .map((entry) => entry.prefix ?? "")
+    .filter((prefix) => prefix !== "" && prefix.endsWith(delimiter));
+  // A CLIENT THAT ANSWERED IS AUTHORITATIVE EVEN WHEN ITS ANSWER IS "no prefix", and reading
+  // this off `declared.length` instead would be a hole in exactly the servers most people use.
+  // Gmail and Fastmail declare ONE personal namespace whose prefix is empty; that is a positive
+  // statement that mailboxes live at the root, so the only candidate is the root. Falling
+  // through to the derived branch there would let a customer's own `Archive/ohmail/_meta` — any
+  // folder under any listed parent — be adopted as this mailbox's organizer lease.
+  const authoritative = ns.length > 0;
+
+  const credible = (prefix: string): boolean => {
+    if (prefix === "" || !prefix.endsWith(delimiter)) return false;
+    if (authoritative) return declared.includes(prefix);
+    const parent = prefix.slice(0, prefix.length - delimiter.length);
+    return list.some((f) => f.path === parent);
+  };
+
+  const hits = list.filter((f) => f.path === bare
+    || (f.path.endsWith(bare) && credible(f.path.slice(0, f.path.length - bare.length))));
+
+  if (hits.length > 1) throw new AmbiguousMetaFolderError(hits.map((f) => f.path));
+  const hit = hits[0];
+  if (hit !== undefined) return { path: hit.path, row: hit };
+  return { path: `${declared[0] ?? ""}${bare}`, row: null };
+}
+
+/** The minimum a client has to be for {@link makeMetaFolderRef} to resolve against it. */
+export interface MetaFolderClient extends MetaNamespaceSource {
+  list(): Promise<MetaFolderRow[]>;
+}
+
+/**
+ * `ohmail/_meta` on ONE connection: resolve it once, then address it.
+ *
+ * The memo is per REF, and every IO factory builds a fresh one per call, so it lives exactly as
+ * long as one gate cycle or one peek — long enough that `ensureMetaFolder` → `listClaims` →
+ * `appendClaim` costs one LIST rather than three, and short enough that a folder created or
+ * moved between cycles is seen on the next one.
+ */
+export interface MetaFolderRef {
+  /** LIST and resolve, fresh. Also warms {@link MetaFolderRef.path}. */
+  locate(): Promise<MetaFolderLocation>;
+  /** The path to address, resolving on first use and remembered after. */
+  path(): Promise<string>;
+  /** Remember a path the SERVER named — a CREATE's landed path is truer than any derivation. */
+  adopt(path: string): void;
+}
+
+export function makeMetaFolderRef(
+  client: MetaFolderClient,
+  toServerPath: (canonical: string) => string,
+): MetaFolderRef {
+  let known: string | null = null;
+
+  const locate = async (): Promise<MetaFolderLocation> => {
+    const at = resolveMetaFolder({
+      list: await client.list(),
+      bare: toServerPath(META_FOLDER),
+      namespaces: personalNamespacesOf(client),
+    });
+    known = at.path;
+    return at;
+  };
+
+  return {
+    locate,
+    async path(): Promise<string> {
+      return known ?? (await locate()).path;
+    },
+    adopt(path: string): void {
+      known = path;
+    },
+  };
+}
+
 /** The claim format this build writes and understands. */
 export const CLAIM_PROTOCOL = 1;
 
@@ -859,15 +1104,25 @@ export interface LeasePeekIo {
  * somebody's mailbox to answer a question about it is a side effect no read should have — it also
  * changes the answer for the next reader, from "no folder" to "empty folder". An absent folder is
  * reported as zero claims, which is the truth: nobody has ever organized this mailbox.
+ *
+ * It finds the folder through {@link makeMetaFolderRef}, the same resolution {@link makeLeaseIo}
+ * writes through. That sharing is the fix for the defect described there: this read used to
+ * compare LIST paths against `toServerPath(META_FOLDER)` for EQUALITY, so on every server with a
+ * personal-namespace prefix it reported "nobody organizes this mailbox" while the claim sat one
+ * prefix away, renewing.
  */
 export function makeLeasePeekIo(client: LeaseImapClient, toServerPath: (canonical: string) => string): LeasePeekIo {
+  const meta = makeMetaFolderRef(client, toServerPath);
   return {
     async listClaims(): Promise<RawClaimMessage[]> {
-      const p = toServerPath(META_FOLDER);
-      const list = await client.list();
-      if (!list.some((f) => f.path === p)) return [];
+      const at = await meta.locate();
+      // An ABSENT folder is zero claims — the truth, and the semantics this object's docblock
+      // promises. A folder that could not be RESOLVED is a throw, which `readLeasePeek` turns
+      // into `LeaseUnavailableError`: "I could not look" and "nobody holds it" must stay
+      // unreachable from one another.
+      if (at.row === null) return [];
 
-      const lock = await client.getMailboxLock(p);
+      const lock = await client.getMailboxLock(at.path);
       try {
         const out: RawClaimMessage[] = [];
         // The same defensive read `makeLeaseIo.listClaims` documents at length: `1:*` is not a
@@ -1032,7 +1287,7 @@ export interface LeaseIo {
  * `imap-types.ts`, which is what keeps `imap.ts → organizer-lease.ts` a one-way edge with no
  * cycle.
  */
-export interface LeaseImapClient {
+export interface LeaseImapClient extends MetaFolderClient {
   /**
    * The SELECTED mailbox, which `getMailboxLock` sets, and whose `exists` is its message count.
    *
@@ -1041,7 +1296,6 @@ export interface LeaseImapClient {
    * exactly as before, so absence means "unknown", never "empty".
    */
   readonly mailbox?: { exists?: number } | false;
-  list(): Promise<Array<{ path: string; subscribed?: boolean }>>;
   mailboxCreate(path: string): Promise<unknown>;
   mailboxUnsubscribe(path: string): Promise<unknown>;
   getMailboxLock(path: string): Promise<{ release(): void }>;
@@ -1066,16 +1320,22 @@ export interface LeaseImapClient {
  * client is not shown an unread count for our bookkeeping.
  */
 export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: string) => string): LeaseIo {
-  const path = (): string => toServerPath(META_FOLDER);
+  // ONE resolution, shared with the APPEND-less peek. A writer and a reader that spell "where is
+  // `_meta`" differently is exactly how each ends up renewing a claim the other cannot see.
+  const meta = makeMetaFolderRef(client, toServerPath);
 
   return {
     async ensureMetaFolder(): Promise<void> {
-      const p = path();
-      const list = await client.list();
-      const found = list.find((f) => f.path === p);
+      const at = await meta.locate();
+      const found = at.row;
       if (!found) {
         try {
-          await client.mailboxCreate(p);
+          const info = await client.mailboxCreate(at.path);
+          // THE SERVER'S OWN ANSWER, where it gives one — `ImapAdapter.createFolder` follows the
+          // same rule for the same measured reason: a root-named CREATE lands under the personal
+          // namespace on some servers, and the path the server reports is the one LIST will show.
+          const landed = (info as { path?: string } | undefined)?.path;
+          if (typeof landed === "string" && landed !== "") meta.adopt(landed);
         } catch (err) {
           if (!/already exists/i.test(String((err as Error).message))) throw err;
         }
@@ -1083,11 +1343,11 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
       // UNSUBSCRIBED, always — a subscribed `_meta` shows up in every other mail client the user
       // owns, as a folder of machine bookkeeping they did not ask for. `ListResponse.subscribed`
       // means this is assertable against a real server rather than merely requested.
-      if (!found || found.subscribed) await client.mailboxUnsubscribe(p);
+      if (!found || found.subscribed) await client.mailboxUnsubscribe(await meta.path());
     },
 
     async listClaims(): Promise<RawClaimMessage[]> {
-      const lock = await client.getMailboxLock(path());
+      const lock = await client.getMailboxLock(await meta.path());
       try {
         const out: RawClaimMessage[] = [];
         // AN EMPTY `_meta` IS THE NORMAL STATE OF A FRESH MAILBOX, AND `1:*` IS NOT A VALID
@@ -1126,13 +1386,13 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
     },
 
     async appendClaim(raw: string): Promise<void> {
-      await client.append(path(), raw, ["\\Seen"]);
+      await client.append(await meta.path(), raw, ["\\Seen"]);
     },
 
     async removeClaims(refs: readonly unknown[]): Promise<void> {
       const uids = refs.filter((r): r is number => typeof r === "number");
       if (uids.length === 0) return;
-      const lock = await client.getMailboxLock(path());
+      const lock = await client.getMailboxLock(await meta.path());
       try {
         // imapflow's `messageDelete` RESOLVES `false` when the server refuses the STORE/EXPUNGE
         // — it does not reject. Swallowing that made a refused removal indistinguishable from a

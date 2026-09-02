@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { META_FOLDER } from "./organizer-lease.js";
+import { META_FOLDER, makeMetaFolderRef, type MetaFolderClient } from "./organizer-lease.js";
 
 /**
  * THE PORTABLE ORGANIZER PROFILE — how a mailbox carries its own organizer configuration.
@@ -523,9 +523,8 @@ export interface ProfileIo {
  * `ImapFlow`, for the lease's reason: the IO layer stays testable against a fake, and this
  * module never imports the client library.
  */
-export interface ProfileImapClient {
+export interface ProfileImapClient extends MetaFolderClient {
   readonly mailbox?: { exists?: number } | false;
-  list(): Promise<Array<{ path: string; subscribed?: boolean }>>;
   mailboxCreate(path: string): Promise<unknown>;
   mailboxUnsubscribe(path: string): Promise<unknown>;
   getMailboxLock(path: string): Promise<{ release(): void }>;
@@ -547,25 +546,29 @@ export interface ProfileImapClient {
  * count for bookkeeping.
  */
 export function makeProfileIo(client: ProfileImapClient, toServerPath: (canonical: string) => string): ProfileIo {
-  const path = (): string => toServerPath(META_FOLDER);
+  // The lease's resolution, not a second one. The profile and the claim share a folder, so a
+  // second spelling of where that folder is would put the settings document and the lease in
+  // different places on exactly the servers where it matters.
+  const meta = makeMetaFolderRef(client, toServerPath);
 
   return {
     async ensureMetaFolder(): Promise<void> {
-      const p = path();
-      const list = await client.list();
-      const found = list.find((f) => f.path === p);
+      const at = await meta.locate();
+      const found = at.row;
       if (!found) {
         try {
-          await client.mailboxCreate(p);
+          const info = await client.mailboxCreate(at.path);
+          const landed = (info as { path?: string } | undefined)?.path;
+          if (typeof landed === "string" && landed !== "") meta.adopt(landed);
         } catch (err) {
           if (!/already exists/i.test(String((err as Error).message))) throw err;
         }
       }
-      if (!found || found.subscribed) await client.mailboxUnsubscribe(p);
+      if (!found || found.subscribed) await client.mailboxUnsubscribe(await meta.path());
     },
 
     async listProfileMessages(): Promise<RawProfileMessage[]> {
-      const lock = await client.getMailboxLock(path());
+      const lock = await client.getMailboxLock(await meta.path());
       try {
         const out: RawProfileMessage[] = [];
         // The lease's empty-mailbox defence, verbatim: `1:*` is not a valid messageset against
@@ -585,13 +588,13 @@ export function makeProfileIo(client: ProfileImapClient, toServerPath: (canonica
     },
 
     async appendProfile(raw: string): Promise<void> {
-      await client.append(path(), raw, ["\\Seen"]);
+      await client.append(await meta.path(), raw, ["\\Seen"]);
     },
 
     async removeProfiles(refs: readonly unknown[]): Promise<void> {
       const uids = refs.filter((r): r is number => typeof r === "number");
       if (uids.length === 0) return;
-      const lock = await client.getMailboxLock(path());
+      const lock = await client.getMailboxLock(await meta.path());
       try {
         await client.messageDelete(uids, { uid: true });
       } finally {
