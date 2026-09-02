@@ -4,7 +4,6 @@ import { accountSettings, mailboxes, standDownMemory } from "@trafficflow/db";
 // literal `60` and never a hand-written string union. `consent-cutline.ts` re-exports these from
 // core for the same reason and its header says so.
 import { DEFAULT_DORMANCY_DAYS, type ScreeningScope } from "@trafficflow/core/mail";
-import { isCliEntry } from "@trafficflow/worker/entry";
 import { openLocalDb, type LocalDb } from "./db.js";
 
 /**
@@ -391,9 +390,9 @@ export const TAKEOVER_MESSAGES: Record<TakeoverAuthorizationOutcome, string> = {
 };
 
 /**
- * The command.
- *
- *   node dist/organize-here.js
+ * The command's body. `organize-here-cli.ts` is what RUNS it, and the separation is deliberate:
+ * this module is imported by the engine, and a module the engine imports must never execute
+ * itself. See that file for what happens when it does.
  *
  * Reads the same environment the engine does, so the mailbox is named exactly once. It needs the
  * database to itself: the engine holds an exclusive lock on the data directory while it runs, and
@@ -417,14 +416,4 @@ export async function runOrganizeHere(env: NodeJS.ProcessEnv = process.env): Pro
   } finally {
     await opened.close();
   }
-}
-
-if (isCliEntry(import.meta.url)) {
-  void runOrganizeHere().then(
-    (code) => process.exit(code),
-    (err: unknown) => {
-      process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-      process.exit(1);
-    },
-  );
 }
