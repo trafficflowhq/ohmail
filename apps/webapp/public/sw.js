@@ -18,9 +18,30 @@
  *
  * So: `event.data` is never parsed, never read, never logged. The words below come from the
  * PAGE — written into a cache entry by the app itself, in the user's own language — and the tap
- * target is this app's own origin. The worst a hostile paired server can do is cause a spurious
- * notice with our fixed text, which is inside the power it already has (it decides whether to
- * wake at all) rather than a new one.
+ * target is this app's own origin. Within this handler, the worst a hostile paired server can do
+ * is cause a spurious notice with our fixed text, which is inside the power it already has (it
+ * decides whether to wake at all) rather than a new one.
+ *
+ * ── AND THE LIMIT OF THAT, WHICH IS NOT THIS FILE'S TO FIX ────────────────────────────────
+ *
+ * "Within this handler" is doing real work in that sentence. Safari implements DECLARATIVE WEB
+ * PUSH: a payload that parses as a declarative notification is rendered by the BROWSER, and this
+ * handler is never entered. Everything above is then bypassed — the title, the body and the
+ * navigation target come from the payload, which is exactly the primitive this file was written
+ * to deny. Nothing a service worker can do prevents it; the choice is made before any of our code
+ * runs.
+ *
+ * What that does and does not mean, stated precisely rather than reassuringly:
+ *
+ *  · this project's own sender emits a closed constant that is NOT a declarative notification, so
+ *    on every browser its wakes reach this handler and behave as described;
+ *  · a paired server the user does not control — a self-hosted install, a friend's machine —
+ *    CAN send a declarative payload, and on Safari it will be drawn with text and a tap target
+ *    that server chose. On that path the no-mail-content property is a property of the SERVER,
+ *    not of this client.
+ *
+ * It is recorded rather than papered over because the comment above would otherwise be a promise
+ * the code cannot keep on a shipping browser.
  *
  * ── AND ONLY WHEN NO WINDOW IS LOOKING ────────────────────────────────────────────────────
  *

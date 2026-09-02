@@ -108,7 +108,22 @@ export class PushService implements PushServicePort {
       // registration down with the credential. The body's `deviceId` stays honored for the
       // transports that already used it; the session wins when it names a device.
       let deviceId = body.deviceId ?? null;
-      if (transport === "unifiedpush" && ctx.sessionId) {
+      /**
+       * ── `webpush` JOINED THIS, AND IT HAD TO ────────────────────────────────────────────
+       *
+       * It read `unifiedpush` alone for as long as the phone was the only client whose rows were
+       * ever dialled. Browser rows were stored and never sent to, so a `device_id` of null cost
+       * nothing. It costs something now: the sign-out and device-revoke prunes are DEVICE-SCOPED,
+       * so a null there means signing out of a browser leaves its registration live and the
+       * server goes on waking a browser for an account it is no longer signed into.
+       *
+       * A browser has a device row like any other client (`devices.kind` is `'web'` or a native
+       * kind), so the session names one and stamping it makes the existing prune reach these rows
+       * with no new mechanism.
+       *
+       * `apns` stays out: its identity is the device token it already carries.
+       */
+      if ((transport === "unifiedpush" || transport === "webpush") && ctx.sessionId) {
         const [s] = await tx.select({ deviceId: sessions.deviceId }).from(sessions)
           .where(eq(sessions.id, ctx.sessionId)).limit(1);
         if (s?.deviceId) deviceId = s.deviceId;

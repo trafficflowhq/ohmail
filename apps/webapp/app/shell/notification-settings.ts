@@ -133,7 +133,7 @@ export interface NotificationHost {
    * Never throws to the caller: a registration that could not be made is a browser that will not
    * be woken while closed, and that is not a reason to move a control the user set.
    */
-  syncSubscription?: (wanted: boolean) => Promise<void>;
+  syncSubscription?: (wanted: boolean) => Promise<PushSyncOutcome | null>;
 }
 
 /**
@@ -149,14 +149,18 @@ export const browserNotificationHost: NotificationHost = {
    * uses for the same reason.
    */
   syncSubscription: async (wanted: boolean) => {
-    if (!apiConfigured()) return;
+    /* `null` means "there was nothing to reconcile here", which is not the same as a failure and
+       must not be rendered as one. `apiConfigured()` is false in every desktop build — its Cloud
+       adapter is aliased out of the bundle — so this is a no-op there even though the module is
+       compiled in, the same guard `consent-state.ts` uses for the same reason. */
+    if (!apiConfigured()) return null;
     try {
-      await syncWebPush(wanted, pushApi);
+      return await syncWebPush(wanted, pushApi);
     } catch {
-      /* Swallowed deliberately. Every outcome that MATTERS to the user is already on screen —
-         the OS permission state and the stored switches — and a failed registration changes
-         neither. Surfacing it as an error would report "notifications are broken" for a browser
-         whose only loss is being woken while shut. */
+      /* `syncWebPush` maps every failure to an outcome, so this is the contract being wrong
+         rather than a path that is expected. Reported as the state that is true either way: the
+         server does not have a registration this browser can rely on. */
+      return "not_registered";
     }
   },
   permission: browserPermission,
@@ -277,61 +281,180 @@ export interface PushApi {
 
 /** Where the row id is remembered, so `unsubscribe` can name it after a reload. */
 const SUBSCRIPTION_ID_KEY = "ohmail.notifications.subscriptionId";
+/**
+ * And WHICH ENDPOINT that row was made for.
+ *
+ * A push service may replace a subscription on its own — the endpoint and the key pair both
+ * change — and the browser is then holding a live subscription the server has never heard of,
+ * while the stored row points at an address that no longer exists. Nothing throws: the server
+ * keeps dialling a dead endpoint until it is pruned, and this browser is simply never woken
+ * again. Comparing the stored endpoint against the live one is what turns that silent state into
+ * an ordinary re-announcement on the next visit.
+ */
+const SUBSCRIPTION_ENDPOINT_KEY = "ohmail.notifications.subscriptionEndpoint";
+
+/** What `syncWebPush` did, or why it could not. */
+export type PushSyncOutcome =
+  | "subscribed" | "unsubscribed" | "unchanged"
+  | "no_server_key"        // this deployment has no VAPID keypair — supported, not an error
+  | "unsupported"          // no service worker, or a subscription with no keys
+  | "row_remains"          // the browser is unsubscribed; the server row could not be deleted
+  | "not_registered";      // this browser holds a subscription the server never recorded
+
+const readId = (): string | null => {
+  try { return globalThis.localStorage?.getItem(SUBSCRIPTION_ID_KEY) ?? null; } catch { return null; }
+};
+const readEndpoint = (): string | null => {
+  try { return globalThis.localStorage?.getItem(SUBSCRIPTION_ENDPOINT_KEY) ?? null; } catch { return null; }
+};
+/** Id and endpoint move together — a row is only ever meaningful with the address it was made for. */
+const writeId = (id: string | null, endpoint?: string): void => {
+  try {
+    if (id === null) {
+      globalThis.localStorage?.removeItem(SUBSCRIPTION_ID_KEY);
+      globalThis.localStorage?.removeItem(SUBSCRIPTION_ENDPOINT_KEY);
+    } else {
+      globalThis.localStorage?.setItem(SUBSCRIPTION_ID_KEY, id);
+      if (endpoint !== undefined) globalThis.localStorage?.setItem(SUBSCRIPTION_ENDPOINT_KEY, endpoint);
+    }
+  } catch { /* blocked store */ }
+};
 
 /**
- * Bring this browser's subscription into line with the switches. Idempotent, and safe to call on
- * every change.
+ * ONE AT A TIME, IN THE ORDER THEY WERE ASKED FOR.
  *
- * Returns what actually happened, so a caller can render a refusal rather than a silent nothing:
- * `"subscribed"`, `"unsubscribed"`, `"unchanged"`, or `"no_server_key"` — that last one is a
- * deployment with no VAPID keypair, which is a supported configuration and not an error.
+ * Two presses in quick succession used to interleave: an ON that had not finished asking the
+ * server for its key, and an OFF that then found no subscription to remove and reported
+ * "unchanged" — after which the ON's `subscribe()` landed and the browser was registered with
+ * every switch off. The mobile client already learned this and queues its wake mutations for the
+ * same reason; this is that queue.
  *
- * **Every failure leaves the switches alone.** A subscription that could not be created is a
- * browser that will not be woken while closed; it is not a reason to flip a control the user set,
- * and the pane says which state it is in from the OS and the store, never from this.
+ * Both arms of `then` are the operation, so a rejected predecessor still lets the next run.
  */
-export async function syncWebPush(
-  wanted: boolean, api: PushApi,
-): Promise<"subscribed" | "unsubscribed" | "unchanged" | "no_server_key" | "unsupported"> {
-  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return "unsupported";
-  const reg = await navigator.serviceWorker.register("/sw.js");
-  const existing = await reg.pushManager.getSubscription();
+let chain: Promise<unknown> = Promise.resolve();
+function serialize<T>(op: () => Promise<T>): Promise<T> {
+  const next = chain.then(op, op);
+  chain = next.catch(() => undefined);
+  return next;
+}
 
-  if (!wanted) {
-    if (existing === null) return "unchanged";
-    let id: string | null = null;
-    try { id = globalThis.localStorage?.getItem(SUBSCRIPTION_ID_KEY) ?? null; } catch { id = null; }
-    // LOCAL FIRST, then the server. Unsubscribing locally is what actually stops the browser
-    // being woken; the server row is tidied after. Doing it the other way round leaves a browser
-    // still subscribed if the network call fails.
-    await existing.unsubscribe();
-    try { globalThis.localStorage?.removeItem(SUBSCRIPTION_ID_KEY); } catch { /* blocked store */ }
-    if (id !== null) {
-      // A failure here leaves a row the server will prune when its endpoint stops accepting.
-      try { await api.unsubscribe(id); } catch { /* pruned later */ }
-    }
-    return "unsubscribed";
+/**
+ * Bring this browser's subscription into line with the switches. Idempotent, safe to call on
+ * every change AND on mount, and serialized against itself.
+ *
+ * Returns what actually happened, so the pane can say a true sentence instead of a silent
+ * nothing — `no_server_key` and `row_remains` are both states a person can act on.
+ *
+ * **It never throws and never moves a switch.** A registration that could not be made is a
+ * browser that will not be woken while closed; that is not a reason to flip a control somebody
+ * set. What it must not do is leave a state that cannot be recovered from, which is what the
+ * three orderings below are about.
+ */
+export function syncWebPush(wanted: boolean, api: PushApi): Promise<PushSyncOutcome> {
+  return serialize(() => syncWebPushNow(wanted, api));
+}
+
+async function syncWebPushNow(wanted: boolean, api: PushApi): Promise<PushSyncOutcome> {
+  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return "unsupported";
+  let reg: ServiceWorkerRegistration;
+  let existing: PushSubscription | null;
+  try {
+    reg = await navigator.serviceWorker.register("/sw.js");
+    existing = await reg.pushManager.getSubscription();
+  } catch {
+    return "unsupported";
   }
 
-  if (existing !== null) return "unchanged";
-  const { publicKey } = await api.vapidKey();
+  if (!wanted) {
+    const id = readId();
+    if (existing === null) {
+      /* NO LOCAL SUBSCRIPTION, BUT PERHAPS A ROW. A browser that cleared its site data, or a
+         previous attempt that unsubscribed and then failed to delete, leaves an id with nothing
+         under it. The row is what causes wakes, so it is still worth removing. */
+      if (id === null) return "unchanged";
+      try { await api.unsubscribe(id); writeId(null); return "unsubscribed"; }
+      catch { return "row_remains"; }
+    }
+    /* LOCAL FIRST — unsubscribing here is what actually stops this browser being woken — but the
+       server delete is attempted EVEN IF that throws. Returning early on a local failure used to
+       leave both halves live: the browser still had its endpoint and the row still pointed at it. */
+    let localGone = true;
+    try { await existing.unsubscribe(); } catch { localGone = false; }
+    if (id === null) return localGone ? "unsubscribed" : "row_remains";
+    try {
+      await api.unsubscribe(id);
+      writeId(null);
+      return localGone ? "unsubscribed" : "row_remains";
+    } catch {
+      /* THE ID SURVIVES A FAILED DELETE, and that is the whole point. Erasing it here made the
+         row unreachable for ever: nothing else knows its name, so a retry could never be made and
+         the server went on dialling an endpoint this browser had already dropped. Keeping it means
+         the next OFF — or the mount reconciliation — tries again. */
+      return "row_remains";
+    }
+  }
+
+  if (existing !== null) {
+    /* A LOCAL SUBSCRIPTION THE SERVER NEVER RECORDED. `subscribe()` can succeed and the POST
+       after it fail; before this the result was permanent, because every later call saw a
+       subscription and answered "unchanged" while no row existed and no wake could ever arrive.
+       Re-announcing an endpoint the server already has is free — it dedupes on the endpoint — so
+       the safe move is to announce it again rather than to assume. */
+    const knownId = readId();
+    /* THE STORED ROW MUST NAME THIS ENDPOINT. A rotation leaves both true at once — there IS a
+       subscription and there IS a row — while they describe different addresses, which is the one
+       case a bare id check reads as "nothing to do". */
+    if (knownId !== null && readEndpoint() === existing.endpoint) return "unchanged";
+    const keys = subscriptionKeys(existing);
+    if (keys === null) return "unsupported";
+    try {
+      const { id } = await api.subscribe(existing.endpoint, keys.p256dh, keys.auth);
+      /* The superseded row is dropped AFTER the new one exists, so a failure here never leaves
+         this browser with no registration at all. A row for a dead endpoint is pruned by the
+         sender anyway; a browser with none is simply never woken. */
+      if (knownId !== null && knownId !== id) {
+        try { await api.unsubscribe(knownId); } catch { /* pruned when its endpoint stops answering */ }
+      }
+      writeId(id, existing.endpoint);
+      return "subscribed";
+    } catch {
+      return "not_registered";
+    }
+  }
+
+  let publicKey: string | null;
+  try { ({ publicKey } = await api.vapidKey()); } catch { return "not_registered"; }
   if (publicKey === null || publicKey.trim() === "") return "no_server_key";
 
-  const sub = await reg.pushManager.subscribe({
-    // REQUIRED by every browser that implements this, and honest here: the worker draws a notice
-    // for exactly the case this subscription exists for. A silent-push subscription would be a
-    // promise this code does not keep.
-    userVisibleOnly: true,
-    applicationServerKey: decodeVapidKey(publicKey.trim()),
-  });
+  let sub: PushSubscription;
+  try {
+    sub = await reg.pushManager.subscribe({
+      // REQUIRED by every browser that implements this, and honest here: the worker draws a notice
+      // for exactly the case this subscription exists for. A silent-push subscription would be a
+      // promise this code does not keep.
+      userVisibleOnly: true,
+      applicationServerKey: decodeVapidKey(publicKey.trim()),
+    });
+  } catch {
+    return "not_registered";
+  }
   const keys = subscriptionKeys(sub);
   if (keys === null) {
     // A subscription with no keys cannot be sealed to, and the sender refuses to send in the
     // clear. Undo it rather than leaving a registration nothing will ever use.
-    await sub.unsubscribe();
+    try { await sub.unsubscribe(); } catch { /* nothing better to do */ }
     return "unsupported";
   }
-  const { id } = await api.subscribe(sub.endpoint, keys.p256dh, keys.auth);
-  try { globalThis.localStorage?.setItem(SUBSCRIPTION_ID_KEY, id); } catch { /* blocked store */ }
-  return "subscribed";
+  try {
+    const { id } = await api.subscribe(sub.endpoint, keys.p256dh, keys.auth);
+    writeId(id, sub.endpoint);
+    return "subscribed";
+  } catch {
+    /* ROLL THE LOCAL HALF BACK. Leaving it subscribed with no row is the stuck state above —
+       every later call would see a subscription and never retry the POST. Undoing it means the
+       next attempt starts clean. */
+    try { await sub.unsubscribe(); } catch { /* nothing better to do */ }
+    return "not_registered";
+  }
 }
+

@@ -26,7 +26,7 @@
  * STANDALONE install still passes nothing, which is the invariant that was always the point:
  * no account, no pane, structurally rather than by remembering.
  */
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import {
   DEFAULT_CHANNELS,
@@ -65,6 +65,7 @@ import {
   writeChannels,
   writeNotifyState,
   type NotificationHost,
+  type PushSyncOutcome,
 } from "../shell/notification-settings";
 import { useZoneNav } from "../shell/zone-nav";
 import { RulesView, type RuleOutcome } from "./RulesView";
@@ -801,6 +802,21 @@ export function SettingsView({
   /* A press writes, and the pane renders what was written — Lane D's control grammar. The master
      is the only switch that can ASK: a permission prompt has to come from a user gesture, and one
      fired on mount is the behaviour browsers punish with a permanent block. */
+  /**
+   * WHAT THE LAST RECONCILIATION SAID, when it said something worth showing.
+   *
+   * Only the three outcomes a person can act on are held: a server with no signing key, a row
+   * that outlived its browser, and a registration that did not happen. The ordinary outcomes are
+   * not state — nothing on screen should move because a subscription was created exactly as
+   * expected.
+   */
+  const [delivery, setDelivery] = useState<PushSyncOutcome | null>(null);
+  const noteFor = (o: PushSyncOutcome | null): string | null =>
+    o === "no_server_key" ? t("notifyNoServerKey")
+      : o === "row_remains" ? t("notifyRowRemains")
+        : o === "not_registered" ? t("notifyNotRegistered")
+          : null;
+
   const setNotify = useCallback((next: NotificationChannels, at: NoticePermission) => {
     setNotifyChannels(next);
     writeChannels(next);
@@ -815,8 +831,40 @@ export function SettingsView({
          never reads the push payload and so has no other source for them. */
     const wanted = subscriptionWanted(next, at);
     void writeNotifyState(wanted, "ohmail", t("notifyClosedBody"));
-    void notificationHost.syncSubscription?.(wanted);
+    void notificationHost.syncSubscription?.(wanted).then((o) => { setDelivery(o); });
   }, [notificationHost, t]);
+
+  /**
+   * ── RECONCILE ON MOUNT, BECAUSE THE STORED INTENT IS ALREADY "ON" ────────────────────────
+   *
+   * The defaults are master-on and new-mail-on, so the ordinary first visit has an intent to be
+   * woken that NOTHING HAS ACTED ON: before this, a subscription was only ever created by a
+   * PRESS, and a reader whose browser had already granted permission got a pane that said yes to
+   * everything over a browser no server could reach. The same held for anybody upgrading into
+   * this build, which is everybody.
+   *
+   * Reconciling here also picks up the recoverable failures the sync now reports rather than
+   * swallows — a row that outlived its browser, a registration that did not land — so they are
+   * retried on the next visit instead of being permanent.
+   *
+   * `setDelivery` runs only for an outcome worth a sentence. That keeps a pane that reconciled
+   * normally from re-rendering, which matters beyond tidiness: an unconditional state write here
+   * makes every test that mounts this view without `act` print a React warning, and a suite that
+   * prints warnings is one where a real one is not noticed.
+   */
+  useEffect(() => {
+    let alive = true;
+    const wanted = subscriptionWanted(notifyChannels, notifyPermission);
+    void writeNotifyState(wanted, "ohmail", t("notifyClosedBody"));
+    void notificationHost.syncSubscription?.(wanted).then((o) => {
+      if (!alive) return;
+      if (o === "no_server_key" || o === "row_remains" || o === "not_registered") setDelivery(o);
+    });
+    return () => { alive = false; };
+    // Mount and host only. Re-running on every `notifyChannels` change would duplicate the write
+    // `setNotify` already makes for the press that changed them.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notificationHost]);
   const pressMaster = useCallback(async (want: boolean) => {
     let state = notificationHost.permission();
     if (want && state === "default") {
@@ -1127,6 +1175,14 @@ export function SettingsView({
                   ) : null}
                   {notifyPermission === "default" ? (
                     <SettingsNote>{t("notifyAskFirst")}</SettingsNote>
+                  ) : null}
+                  {/* WHAT THE SERVER SAID, when it said something a person can act on. A switch
+                      set to ON over a deployment that cannot sign a wake is the shape this pane
+                      exists to remove — the control is not a lie (the intent is real, and the
+                      per-event switches still govern while ohmail is open) but leaving the
+                      delivery half unsaid would be. */}
+                  {noteFor(delivery) !== null ? (
+                    <SettingsNote>{noteFor(delivery)!}</SettingsNote>
                   ) : null}
                   {/* HOW FAR THE CHOICE REACHES — `LocaleContext`'s rule, for its reason: the row
                       says so, because a claim that is right on one surface is false on another.
