@@ -12,7 +12,7 @@ import {
   type PostJson,
 } from "@trafficflow/db/cloud";
 import type { MailboxAdapter, ImapConfig } from "@trafficflow/core/adapters/imap";
-import { buildVersionOf } from "./build-version.js";
+import { buildIdentityOf, buildVersionOf, type BuildIdentitySource } from "./build-version.js";
 import type { MailboxSelection } from "./mailboxes.js";
 import type { ThreadBackfillPass } from "./thread-backfill.js";
 
@@ -743,7 +743,8 @@ export function selectionOf(config: WorkerConfig): MailboxSelection {
  * into `apps/sidecar`'s import graph. The three-source order and the reason for it are in that
  * file; every existing importer of `buildVersionOf` is unaffected.
  */
-export { buildVersionOf };
+export { buildIdentityOf, buildVersionOf };
+export type { BuildIdentitySource };
 
 /**
  * Why the build identity is unknown, or null.
@@ -758,11 +759,38 @@ export { buildVersionOf };
  * rides in the JSON beside `version` and changes no verdict. `health-bounds.e2e.test.ts` pins
  * that: a snapshot with `version: "dev"` and this set is still `healthy`.
  */
-export const buildIdentityErrorOf = (environment: string, version: string): string | null =>
-  environment === "production" && version === "dev"
-    ? "no build identity: apps/worker/BUILD_VERSION is absent from this image " +
-      "(the deploy script writes it) and neither RAILWAY_GIT_COMMIT_SHA nor TF_BUILD_VERSION is set"
-    : null;
+export const buildIdentityErrorOf = (
+  environment: string,
+  version: string,
+  source: BuildIdentitySource = version === "dev" ? "none" : "file",
+): string | null => {
+  if (environment !== "production") return null;
+  if (source === "none" || version === "dev") {
+    return "no build identity: apps/worker/BUILD_VERSION is absent from this image " +
+      "(the deploy script writes it) and neither RAILWAY_GIT_COMMIT_SHA nor TF_BUILD_VERSION is set";
+  }
+  // ── THE ARM THAT HAD TO BE ADDED, AND THE INCIDENT THAT ADDED IT ─────────────────────────
+  //
+  // A variable-sourced label is the state this whole module was built to make impossible, and
+  // for ten days it was the state production was ACTUALLY in while reporting no fault at all:
+  // the file never reached the image, the variable answered in its place, and `version` named a
+  // commit the running image was never built from. The old rule fired only on the literal
+  // string `dev`, so the fallback silently DEFEATED the detector it was supposed to trigger —
+  // an absent label was converted into a present, wrong one, which is the worse of the two and
+  // the harder to disbelieve.
+  //
+  // Reported, never thrown, for the same reason as the arm above (the platform gates the
+  // deployment on this endpoint, so a refusal here refuses the fix). `version` still carries the
+  // variable's value: it is the operator's stated intent and suppressing it would lose the one
+  // clue to what they meant. What changes is that the JSON no longer presents it as an identity
+  // read out of the artifact.
+  if (source === "variable") {
+    return "build identity came from TF_BUILD_VERSION, not from the image: " +
+      "apps/worker/BUILD_VERSION is absent from this container, so `version` names whatever " +
+      "the variable was last set to and may name a build this image was never built from";
+  }
+  return null;
+};
 
 /**
  * `TF_API_CRON_URL` + `TF_API_CRON_SECRET` — both-or-neither, and the URL must parse as an
@@ -822,7 +850,7 @@ function apiCronFrom(env: NodeJS.ProcessEnv): { baseUrl: string; secret: string 
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
   const environment = env.TF_ENV ?? env.RAILWAY_ENVIRONMENT_NAME ?? "production";
-  const buildVersion = buildVersionOf(env);
+  const { version: buildVersion, source: buildVersionSource } = buildIdentityOf(env);
   const url = req(env, "DATABASE_URL_SESSION");
   // ONE definition, imported — not the same two regexes copied here "verbatim", which is
   // how both copies went stale together. On some hosted poolers the mode is a PORT (6543 = transaction),
@@ -898,7 +926,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     instanceId: instanceIdFrom(env),
     environment,
     buildVersion,
-    buildError: buildIdentityErrorOf(environment, buildVersion),
+    buildError: buildIdentityErrorOf(environment, buildVersion, buildVersionSource),
     organizer: {
       ...(env.TF_ORGANIZER_INSTALL_ID ? { installId: env.TF_ORGANIZER_INSTALL_ID } : {}),
       // ── HOW THIS DEPLOYMENT NAMES ITSELF IN SOMEBODY'S MAILBOX ────────────────────────────

@@ -63,5 +63,38 @@ const buildVersionFile = (): string => {
  * where a tool that stores an empty environment variable will happily list it as set. A blank
  * label has to fall through to the next source rather than be reported as an identity.
  */
+export type BuildIdentitySource = "platform" | "file" | "variable" | "none";
+
+/**
+ * The label AND where it came from, because the two are separate facts and only the pair can
+ * distinguish a good identity from a confident lie.
+ *
+ * ── WHY THE SOURCE HAD TO BECOME AN OUTPUT ────────────────────────────────────────────────
+ *
+ * The fallback chain is correct and stays exactly as it was. What was missing is that the LAST
+ * two terms mean opposite things about trust and the caller could not tell them apart: a
+ * `variable` answer is a sha somebody typed beside the artifact, and it is reported with the
+ * same confidence as one read out of the image. Measured in production 2026-09-01 — the file
+ * never reached the image, `TF_BUILD_VERSION` answered instead, and `/health` named a commit
+ * from ten days earlier while every process signal said the deploy had landed. The label was
+ * not missing; it was WRONG, which no consumer could see, because the only thing that had ever
+ * been reported as a fault was the literal string `dev`.
+ *
+ * So the resolution publishes its own provenance and the health report decides what to say
+ * about it. `buildVersionOf` is unchanged for every existing importer.
+ */
+export const buildIdentityOf = (
+  env: NodeJS.ProcessEnv,
+  file: () => string = buildVersionFile,
+): { version: string; source: BuildIdentitySource } => {
+  const platform = env.RAILWAY_GIT_COMMIT_SHA?.trim();
+  if (platform) return { version: platform, source: "platform" };
+  const fromFile = file().trim();
+  if (fromFile) return { version: fromFile, source: "file" };
+  const variable = env.TF_BUILD_VERSION?.trim();
+  if (variable) return { version: variable, source: "variable" };
+  return { version: "dev", source: "none" };
+};
+
 export const buildVersionOf = (env: NodeJS.ProcessEnv, file: () => string = buildVersionFile): string =>
-  env.RAILWAY_GIT_COMMIT_SHA?.trim() || file().trim() || env.TF_BUILD_VERSION?.trim() || "dev";
+  buildIdentityOf(env, file).version;
