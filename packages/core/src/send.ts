@@ -82,6 +82,20 @@ export interface SendAdapter {
   /** True iff a message with `messageId` (an `<id@host>` header) exists in Sent. */
   messageInSent(messageId: string): Promise<boolean>;
   close(): Promise<void>;
+  /**
+   * TEAR THE CONNECTION DOWN NOW, for a caller that has ABANDONED a timed-out operation — and
+   * the reason this is on the seam rather than left to `close` is written out at
+   * `ImapAdapter.forceClose`: imapflow serialises commands, so a graceful LOGOUT queues BEHIND
+   * whatever command is hung, and a caller that abandoned a probe and then awaited `close` waits
+   * exactly as long as the hang it was escaping. Destroying the socket is also the only thing
+   * that actually ends the hung command.
+   *
+   * OPTIONAL, and the optionality is about the CALLER's knowledge rather than the adapter's:
+   * every wrapper of a real `ImapAdapter` can supply it, a spy has nothing to destroy. A consumer
+   * must fall back to `close` when it is absent — and should bound that call, because the fallback
+   * is the very thing this exists to avoid.
+   */
+  forceClose?(): void;
 }
 
 /** Injected factory: open a connected send adapter for a mailbox. */

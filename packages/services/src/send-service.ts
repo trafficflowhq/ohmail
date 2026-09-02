@@ -1957,7 +1957,17 @@ export class SendService {
         ? await this.settleSent(ctx, row, mailboxId, "probe")
         : await this.settleUnverified(ctx, row, "probe");
     } finally {
-      await adapter.close();
+      // SWALLOWED, and it is not defensive tidying. This `finally` REPLACES whatever the try
+      // produced, so a close that rejects on an already-broken socket would (a) throw away the
+      // `SettleFailed` tag the reconciling pass uses to decide never to give up on a row whose
+      // probe had already answered, and (b) on the client door — where this is a real connection,
+      // not the pass's no-op wrapper — turn a send that was just committed as `sent` into a 500.
+      // The send path's own abandoned-submission close (`send`'s `finally`) is guarded the same
+      // way. NOT every close in this file is: the forward-attachment fetch above still awaits a
+      // bare `adapter.close()` in its `finally`, where a rejection would fail a forward whose
+      // attachments had already been read. Outside this lane's scope, and named rather than
+      // implied by a sentence claiming they all are.
+      await adapter.close().catch(() => { /* the connection is already broken */ });
     }
   }
 

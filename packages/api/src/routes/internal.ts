@@ -290,6 +290,17 @@ async function admittedSendAdapter(deps: ApiDeps, mailboxId: string): Promise<Se
         await release();
       }
     },
+    // FORWARDED, and the slot still comes back. A caller reaches for this because it abandoned a
+    // timed-out operation, so it must not be made to wait — the release is fired and not awaited,
+    // and its own failure path already logs. Losing it leaves the mailbox one unit short until the
+    // stale-window reclaim, which is the bounded direction; blocking here would reintroduce the
+    // hang this method exists to escape.
+    ...(adapter.forceClose ? {
+      forceClose: (): void => {
+        adapter.forceClose!();
+        void release();
+      },
+    } : {}),
   };
 }
 
