@@ -133,7 +133,14 @@ export interface NotificationHost {
    * Never throws to the caller: a registration that could not be made is a browser that will not
    * be woken while closed, and that is not a reason to move a control the user set.
    */
-  syncSubscription?: (wanted: boolean) => Promise<PushSyncOutcome | null>;
+  /**
+   * `opts.forceAnnounce` — do NOT accept a stored id as proof this browser owns the row.
+   *
+   * Only the BOOT path passes it; see {@link reconcileWakeRegistration}. The settings pane keeps
+   * the cheap `unchanged` shortcut because a person pressing a switch has already proved whose
+   * session it is.
+   */
+  syncSubscription?: (wanted: boolean, opts?: { forceAnnounce?: boolean }) => Promise<PushSyncOutcome | null>;
 }
 
 /**
@@ -148,14 +155,14 @@ export const browserNotificationHost: NotificationHost = {
    * is a no-op there even though the module is compiled in, the same guard `consent-state.ts`
    * uses for the same reason.
    */
-  syncSubscription: async (wanted: boolean) => {
+  syncSubscription: async (wanted: boolean, opts?: { forceAnnounce?: boolean }) => {
     /* `null` means "there was nothing to reconcile here", which is not the same as a failure and
        must not be rendered as one. `apiConfigured()` is false in every desktop build — its Cloud
        adapter is aliased out of the bundle — so this is a no-op there even though the module is
        compiled in, the same guard `consent-state.ts` uses for the same reason. */
     if (!apiConfigured()) return null;
     try {
-      return await syncWebPush(wanted, pushApi);
+      return await syncWebPush(wanted, pushApi, opts);
     } catch {
       /* `syncWebPush` maps every failure to an outcome, so this is the contract being wrong
          rather than a path that is expected. Reported as the state that is true either way: the
@@ -386,26 +393,34 @@ function serialize<T>(op: () => Promise<T>): Promise<T> {
  * set. What it must not do is leave a state that cannot be recovered from, which is what the
  * three orderings below are about.
  */
-export function syncWebPush(wanted: boolean, api: PushApi): Promise<PushSyncOutcome> {
-  return serialize(() => syncWebPushNow(wanted, api));
+export function syncWebPush(
+  wanted: boolean, api: PushApi, opts?: { forceAnnounce?: boolean },
+): Promise<PushSyncOutcome> {
+  return serialize(() => syncWebPushNow(wanted, api, opts));
 }
 
 /**
  * DID THE SERVER ACTUALLY NAME A ROW?
  *
- * `POST /push/subscriptions` answers `{ id }`, and there is a live path on which `id` comes back
- * UNDEFINED: the insert conflicts on the coalesced unique index — the endpoint is already
- * registered — and the fallback lookup is scoped to the CALLER's account, so a row belonging to a
- * DIFFERENT account on the same browser is found by neither. The endpoint then returns `{}`.
+ * DEFENCE, NOT A KNOWN PATH — and the difference is worth stating, because an earlier version of
+ * this comment asserted the path and was wrong about a neighbouring module.
  *
- * Left unchecked, `writeId(undefined, …)` stores the literal string "undefined" (it only treats
- * `null` as a removal) and the sync reports `subscribed` — a browser that believes it holds a
- * registration it does not, under an id that names nothing. Reported as what is true instead:
- * nothing here established a row this browser can rely on.
+ * It claimed the cross-account endpoint conflict makes `POST /push/subscriptions` answer `{}`. It
+ * does not: `push-service.ts` falls back to an account-scoped lookup and that lookup THROWS
+ * `ServiceError("internal", 500, …)` when it misses, which the caller's own `catch` already maps
+ * to `not_registered`. So the server does not hand back an id-less 201 today.
+ *
+ * The guard stays because it costs nothing and the failure it prevents is silent: `writeId`
+ * treats only `null` as a removal, so an absent id would be stored as the literal string
+ * `"undefined"` and the sync would report `subscribed` — a browser believing it holds a
+ * registration under an id that names nothing, which never retries because every later call sees
+ * a subscription. Reported instead as what is true either way.
  */
 const namedRow = (id: unknown): id is string => typeof id === "string" && id.length > 0;
 
-async function syncWebPushNow(wanted: boolean, api: PushApi): Promise<PushSyncOutcome> {
+async function syncWebPushNow(
+  wanted: boolean, api: PushApi, opts?: { forceAnnounce?: boolean },
+): Promise<PushSyncOutcome> {
   if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return "unsupported";
   let reg: ServiceWorkerRegistration;
   let existing: PushSubscription | null;
@@ -455,7 +470,26 @@ async function syncWebPushNow(wanted: boolean, api: PushApi): Promise<PushSyncOu
     /* THE STORED ROW MUST NAME THIS ENDPOINT. A rotation leaves both true at once — there IS a
        subscription and there IS a row — while they describe different addresses, which is the one
        case a bare id check reads as "nothing to do". */
-    if (knownId !== null && readEndpoint() === existing.endpoint) return "unchanged";
+    /*
+     * ── `unchanged` IS NOT PROOF OF OWNERSHIP, AND THE BOOT PATH MAY NOT TAKE IT ──────────
+     *
+     * This shortcut attests that a STORED id matches the live endpoint. It says nothing about
+     * WHICH ACCOUNT owns the row — and the browser cannot know that; only the server can.
+     *
+     * On a shared browser that matters. `sign-out.ts` awaits the revoke at :130 and sweeps
+     * `NOTIFICATION_SUBSCRIPTION_PREFIX` at :182, strictly after — so an unload that beat the
+     * local `unsubscribe()` (which runs inside that awaited call) necessarily beat the sweep too.
+     * A's id AND A's endpoint both survive into B's session. Without `forceAnnounce` the boot
+     * gets `unchanged`, reads it as "this browser owns a row", and re-arms the service worker for
+     * a registration that is still A's.
+     *
+     * So the boot re-announces instead. It is cheap for the legitimate case — the POST dedupes on
+     * the endpoint — and for a FOREIGN row the account-scoped lookup behind it cannot find one,
+     * which is the refusal that keeps the worker dark.
+     */
+    if (!opts?.forceAnnounce && knownId !== null && readEndpoint() === existing.endpoint) {
+      return "unchanged";
+    }
     const keys = subscriptionKeys(existing);
     if (keys === null) return "unsupported";
     try {
@@ -464,6 +498,10 @@ async function syncWebPushNow(wanted: boolean, api: PushApi): Promise<PushSyncOu
       /* The superseded row is dropped AFTER the new one exists, so a failure here never leaves
          this browser with no registration at all. A row for a dead endpoint is pruned by the
          sender anyway; a browser with none is simply never woken. */
+      /* THE SAME ENDPOINT DEDUPES TO THE SAME ROW, so the ordinary boot re-announce leaves
+         `knownId === id` and this arm does not fire. It is reached when the SERVER names a
+         different row — an endpoint rotation — which is the case it was written for and not
+         something `forceAnnounce` manufactures. */
       if (knownId !== null && knownId !== id) {
         try { await api.unsubscribe(knownId); } catch { /* pruned when its endpoint stops answering */ }
       }
@@ -624,6 +662,47 @@ async function revokeWakeRegistrationNow(): Promise<PushSyncOutcome | null> {
 }
 
 /**
+ * SET THE `enabled` BYTE AND KEEP THE WORDS THAT ARE THERE.
+ *
+ * ── WHY THE RECONCILE MAY NOT WRITE THE WORDS ITSELF ──────────────────────────────────────
+ *
+ * Every call in this module goes through ONE queue, and the boot commit enqueues in an order the
+ * effect order does not suggest. `reconcileWakeRegistration` runs synchronously into
+ * `syncSubscription`, so the push round trip is enqueued FIRST; the locale relabel is enqueued
+ * SECOND; and the reconcile's own final write is enqueued only once the round trip RESOLVES —
+ * THIRD, carrying a `body` captured at boot in the DEVICE's language.
+ *
+ * So whenever `GET /consent` adopts the account locale while the push request is still in flight
+ * — the ordinary case, one request against register-SW + getSubscription + vapidKey + subscribe —
+ * the relabel wrote German at position 2 and the reconcile overwrote it with English at position
+ * 3. Which is the defect the relabel was added to fix, undone by its own neighbour.
+ *
+ * The last writer therefore does not carry words. `body` survives only as the value to use if
+ * there is no entry at all to preserve — a state the relabel normally rules out before this runs.
+ */
+export function setNotifyEnabled(enabled: boolean, fallbackBody: string): Promise<void> {
+  return serialize(async () => {
+    try {
+      if (typeof caches === "undefined") return;
+      const cache = await caches.open(NOTIFY_CACHE);
+      const held = await cache.match(NOTIFY_STATE_URL);
+      const prior = held ? ((await held.json()) as { title?: unknown; body?: unknown }) : null;
+      const title = typeof prior?.title === "string" ? prior.title : "ohmail";
+      const body = typeof prior?.body === "string" ? prior.body : fallbackBody;
+      await cache.put(
+        NOTIFY_STATE_URL,
+        new Response(JSON.stringify({ enabled, title, body }), {
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    } catch {
+      /* No Cache API, or storage refused. With no entry the worker draws nothing, which is the
+         safe direction — the same argument `writeNotifyStateNow` makes. */
+    }
+  });
+}
+
+/**
  * RE-LABEL THE WORKER'S WORDS, and touch nothing else.
  *
  * The account's locale is adopted AFTER boot, off `GET /consent`. By then the boot reconcile has
@@ -645,10 +724,14 @@ export function updateNotifyWords(title: string, body: string): Promise<void> {
     try {
       if (typeof caches === "undefined") return;
       const cache = await caches.open(NOTIFY_CACHE);
+      /* AN ABSENT ENTRY IS CREATED, DISARMED. It has to be: on the boot commit this runs BEFORE
+         the reconcile's own write lands (see the ordering note there), so returning early would
+         leave the words for the reconcile to supply — which is the clobber this exists to end.
+         `enabled: false` is the only safe value to invent: a worker with no permission draws
+         nothing, and the reconcile sets the byte immediately after. */
       const held = await cache.match(NOTIFY_STATE_URL);
-      if (!held) return;
-      const { enabled } = (await held.json()) as { enabled?: unknown };
-      if (typeof enabled !== "boolean") return;
+      const prior = held ? ((await held.json()) as { enabled?: unknown }) : null;
+      const enabled = typeof prior?.enabled === "boolean" ? prior.enabled : false;
       await cache.put(
         NOTIFY_STATE_URL,
         new Response(JSON.stringify({ enabled, title, body }), {
@@ -755,18 +838,36 @@ async function reconcileWakeRegistrationNow(body: string): Promise<PushSyncOutco
    * Every other answer — `row_remains`, `not_registered`, `no_server_key`, `unsupported` — leaves
    * the honest state as the one that draws nothing.
    */
+  /*
+   * ── WHAT `forceAnnounce` COSTS, AND WHY IT IS ACCEPTED ──────────────────────────────────
+   *
+   * Every signed-in boot now issues the POST rather than trusting a stored id, so a boot on a bad
+   * connection reaches {@link WAKE_BUDGET_MS} more often than one that could shortcut. The
+   * timeout answer is `not_registered`, which leaves the worker DARK for a reader who legitimately
+   * owns the row — they get no closed-browser notices until the next boot lands the round trip.
+   *
+   * That is the direction to fail in, and it is chosen rather than inherited. The alternative is
+   * enabling on a timeout, which is exactly the defect: "I could not confirm" would render as
+   * "this browser owns the row", on the one machine — a shared browser — where the row may be
+   * somebody else's. A missed notice is recoverable on the next boot; a stranger's mail announced
+   * on your lock screen is not.
+   */
   let outcome: PushSyncOutcome | null;
   try {
-    outcome = (await browserNotificationHost.syncSubscription?.(true)) ?? null;
+    outcome = (await browserNotificationHost.syncSubscription?.(true, { forceAnnounce: true })) ?? null;
   } catch {
     /* The host's own guard threw before its try block could catch — a mocked `../api-client`
        with no `apiConfigured`, or a platform without one. Reported as the state that is true
        either way: nothing here established a registration this browser can rely on. */
     outcome = "not_registered";
   }
-  const ours = outcome === "subscribed" || outcome === "unchanged";
+  /* `subscribed` ALONE. `unchanged` is reachable only without `forceAnnounce`, and it attests to a
+     stored id rather than to ownership — see the shortcut in `syncWebPushNow`. The announce above
+     is forced precisely so that the only way to reach `true` here is a row the server named for
+     THIS session. */
+  const ours = outcome === "subscribed";
   try {
-    await writeNotifyState(ours, "ohmail", body);
+    await setNotifyEnabled(ours, body);
   } catch { /* no Cache API, or refused */ }
   return outcome;
 }
