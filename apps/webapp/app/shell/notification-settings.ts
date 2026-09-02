@@ -543,6 +543,47 @@ async function syncWebPushNow(wanted: boolean, api: PushApi): Promise<PushSyncOu
  * would otherwise throw out of the guard itself and skip the rest of the sign-out.
  */
 export async function revokeWakeRegistration(): Promise<PushSyncOutcome | null> {
+  /*
+   * ── BOUNDED, AND THE BOUND IS LOAD-BEARING ──────────────────────────────────────────────
+   *
+   * FOUND BY REVIEW, and it inverted this file's neighbour's central invariant — "the wipe runs
+   * REGARDLESS". Two facts compose into a sign-out that never completes. Every call below goes
+   * through the module-global {@link serialize} queue, so it cannot START until every op already
+   * queued has settled; and the queued ops are `fetch`es with no timeout (`api-client.ts` passes
+   * an undefined `signal`, and `fetch` has no default). The settings pane fires
+   * `writeNotifyState` + `syncSubscription` on mount, and the sign-out control lives INSIDE that
+   * pane — so on a captive portal whose `GET /push/vapid-key` merely stalls, the chain never
+   * advances, `signOut` blocks here for ever, the server logout is never issued and the local
+   * wipe never runs. The session stays live and the whole mailbox stays in IndexedDB on a machine
+   * somebody has just said they are done with: strictly worse than the residue this closes.
+   *
+   * So the revoke gets a budget and the sign-out proceeds without it. The loser of the race is
+   * NOT cancelled — the queued delete may still land later, which is a free win and never a
+   * correctness question, because every store this decides about is swept unconditionally either
+   * way. `row_remains` is the honest answer on a timeout: nothing here proved the row gone.
+   */
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const budget = new Promise<PushSyncOutcome>((resolve) => {
+    timer = setTimeout(() => resolve("row_remains"), REVOKE_BUDGET_MS);
+  });
+  try {
+    return await Promise.race([revokeWakeRegistrationNow(), budget]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/**
+ * How long a sign-out will wait for the revoke before going on without it.
+ *
+ * Long enough for an ordinary round trip on a poor connection, short enough that nobody reads it
+ * as a hang. The number is a bound on a BEST-EFFORT step, not a request deadline: what it
+ * protects is the two acts after it, which are the ones a user is entitled to.
+ */
+const REVOKE_BUDGET_MS = 4_000;
+
+/** The revoke itself. Never throws; see {@link revokeWakeRegistration} for the bound around it. */
+async function revokeWakeRegistrationNow(): Promise<PushSyncOutcome | null> {
   // The words go first and unconditionally: it is the one half that needs neither the network nor
   // a live subscription, so a browser that fails everything below still refuses to draw.
   try { await writeNotifyState(false, "", ""); } catch { /* no Cache API, or storage refused */ }

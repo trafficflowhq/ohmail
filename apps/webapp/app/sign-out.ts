@@ -91,7 +91,15 @@ export interface SignOutResult {
  * no session left to retry from. Two callers, one implementation, and the census in
  * `sign-out-clears-durable-stores.test.ts` reads this list.
  */
-export async function forgetThisBrowser(owner?: string): Promise<{
+export async function forgetThisBrowser(
+  owner?: string,
+  /**
+   * `revokeWake: false` says the CALLER has already taken the wake registration down while it
+   * still had a session to do it with. Only `signOut` passes it, and only because it must: see
+   * the block below.
+   */
+  opts: { revokeWake?: boolean } = {},
+): Promise<{
   remaining: string[];
   inventoryComplete: boolean;
 }> {
@@ -107,11 +115,19 @@ export async function forgetThisBrowser(owner?: string): Promise<{
    * why none of them puts a sentence on screen.
    *
    * On the ERASURE door the server rows went with the account, so what this does there is drop
-   * the browser's own subscription and stop the worker being able to draw; on the SIGN-OUT door
-   * `signOut` has already called it once with a live session, and this second call finds nothing
-   * left to reconcile. One implementation, both doors, neither able to be forgotten.
+   * the browser's own subscription and stop the worker being able to draw.
+   *
+   * ── AND `signOut` OPTS OUT, WHICH IS NOT A TIDINESS POINT ───────────────────────────────
+   *
+   * FOUND BY REVIEW. `signOut` has already revoked, with a LIVE session; by the time it reaches
+   * here `auth.logout()` has revoked that session. Running the revoke again would re-register the
+   * service worker and re-issue `DELETE /push/subscriptions/:id` against a dead credential — and
+   * the API client reads the 401 as recoverable, so it burns an `/auth/refresh` round trip before
+   * failing. That is two more network awaits on the flaky-network sign-out, which is exactly the
+   * case the budget above exists for. The second call is skipped rather than the call site
+   * removed, so the erasure door keeps its own revoke and neither door can be forgotten.
    */
-  await revokeWakeRegistration();
+  if (opts.revokeWake !== false) await revokeWakeRegistration();
   // The boot caches: the account's dormancy window, screening baseline and own addresses,
   // remembered so the next boot can paint the partitioned piles before the server answers
   // (`shell/boot-cache.ts`). Cleared by prefix, not by owner — this browser forgets, including
@@ -255,7 +271,8 @@ export async function signOut(owner?: string): Promise<SignOutResult> {
     serverRefused = alreadyGone ? null : err instanceof Error ? err.message : String(err);
   }
   {
-    const local = await forgetThisBrowser(owner);
+    // `revokeWake: false` — already done above, with the session that authorized it.
+    const local = await forgetThisBrowser(owner, { revokeWake: false });
     // `cleared` needs BOTH: nothing left, and a browser that could actually be asked. Where
     // neither `databases()` nor a usable registry exists, an empty list only means "the two
     // names I already knew are gone" — see `clearAllMirrors`'s own header.
