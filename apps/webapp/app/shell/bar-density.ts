@@ -133,11 +133,11 @@ export function useBarDensity(): {
     const abarStyle = abar ? getComputedStyle(abar) : null;
     const padL = abarStyle ? parseFloat(abarStyle.paddingLeft) : NaN;
     const padR = abarStyle ? parseFloat(abarStyle.paddingRight) : NaN;
-    // The fallback fires on ANY unreadable read — a NaN pair must not admit 12 phantom px.
+    // The fallback fires on ANY unreadable read: half a measurement is not a measurement,
+    // and an unreadable side silently contributing zero would grant phantom pixels to the
+    // admission walk — the overflow direction, the one the ladder exists to prevent.
     const pillPad =
-      Number.isFinite(padL) || Number.isFinite(padR)
-        ? (Number.isFinite(padL) ? padL : 0) + (Number.isFinite(padR) ? padR : 0)
-        : PILL_PADDING_PX;
+      Number.isFinite(padL) && Number.isFinite(padR) ? padL + padR : PILL_PADDING_PX;
     const avail =
       rect.width -
       (parseFloat(style.paddingLeft) || 0) -
