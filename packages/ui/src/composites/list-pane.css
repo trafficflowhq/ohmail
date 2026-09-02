@@ -24,7 +24,18 @@
 /* 132px of this was clearance for a capsule that floated over the bottom of every view. The
    capsule is a group at the foot of the rail now (`.rail-dock`), so nothing overlaps the end of
    the list and the only thing left to reserve is the full falloff of the last row's shadow. */
-.scroller{overflow-y:auto;flex:1;min-height:0;padding-bottom:48px}
+/* THE RING'S ROOM AT THE TOP OF EVERY SCROLLER. A tile's edge is an OUTER box-shadow — under
+   ohmarchy a 2px spread ring (`--lift-*`), under paper a 1px ring at 2.5% plus falloff — and an
+   outer shadow is painted OUTSIDE the box, in the pixels beside it. A scrollport clips at its
+   padding edge, so a ringed surface standing flush at a scroller's top (the compose card, the
+   settings pane, a selected first row) had its top edge cut while left, right and bottom stood
+   in the room the sides and the 48px foot already reserve — three edges, no top (owner report,
+   macOS, the ohmarchy face). The room is the ring's own width, as the product of tokens the
+   zone ring is built from (zone-cursor.css): `--focus-w × --teach` is 0 under paper, where
+   nothing may move by a pixel, and 2px under ohmarchy, where the ring is 2px. One rule for
+   every scroller rather than a margin per surface, because the clip belongs to the scroller and
+   the next boxed surface put inside one must not repeat the defect. */
+.scroller{overflow-y:auto;flex:1;min-height:0;padding-top:calc(var(--focus-w) * var(--teach));padding-bottom:48px}
 .grouplabel{font-size:12px;font-weight:600;color:var(--ink3);padding:16px 30px 6px}
 .rows{padding:0 16px} /* wide enough that a raised row's shadow isn't sheared at the pane edge */
 /* No-collapse rule: mail is never hidden behind a "+n more" affordance, so

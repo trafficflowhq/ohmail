@@ -6,7 +6,12 @@
 .row.sel{
   background:var(--float);
   box-shadow:var(--lift-2);
-  transform:translateY(-1px);
+  /* The 1px lift is paper's: a raised object comes toward the light. A ring face raises
+     nothing — Hyprland's focused window stays where it is and changes its border — so under
+     ohmarchy the hop is multiplied away by the teaching switch (0 → -1px, paper byte-identical;
+     1 → 0). It is also what lets the scroller's top room (list-pane.css) be exactly the ring's
+     width: a selected first row that hopped would carry a third of its ring past the clip. */
+  transform:translateY(calc(-1px * (1 - var(--teach))));
   position:relative;z-index:1;
 }
 .row-top{display:flex;align-items:baseline;gap:8px}
