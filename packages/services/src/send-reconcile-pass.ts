@@ -1,4 +1,4 @@
-import { and, eq, lt } from "drizzle-orm";
+import { and, eq, lt, ne } from "drizzle-orm";
 import { drafts, mailboxes, outboundSends, type Tx } from "@trafficflow/db";
 import { createLogger, type Logger, type OpenSendAdapter, type SendAdapter } from "@trafficflow/core/mail";
 import type { Db, ServiceContext } from "./context.js";
@@ -67,17 +67,27 @@ import { sendService, SEND_STALE_AFTER_MS, type SendService } from "./send-servi
  *
  * ── THE BOUND ──────────────────────────────────────────────────────────────────────────────
  *
- * At most {@link SEND_RECONCILE_BATCH} rows per invocation, one connection per DISTINCT mailbox
- * in the batch (so N ids on one mailbox cost one LOGIN, not N), dialled only for a mailbox whose
+ * TWO numbers, because the two costs are two orders of magnitude apart and one bound cannot serve
+ * both. **LOGINS** are capped at {@link SEND_RECONCILE_BATCH} per invocation — that is the
+ * expensive thing, it is what the 60-second platform ceiling is budgeted against, and it is
+ * counted where a connection is actually opened rather than where one is intended.
+ * **ROWS EXAMINED** are capped at `SEND_RECONCILE_BATCH × SEND_RECONCILE_SCAN_FACTOR` from the
+ * dialable window plus `SEND_RECONCILE_BATCH` from the `error` window — sixteen today — because
+ * a row's mirror arm is one indexed read and making it wait a minute for that buys nothing.
+ *
+ * One connection per DISTINCT mailbox (so N ids on one mailbox cost one LOGIN, not N, and a
+ * mailbox already open is free rather than charged a slot), dialled only for a mailbox whose
  * status is `connected`, and on the hosted host wrapped in the same per-mailbox IMAP admission
  * counter every other dialler on that host goes through. No transaction spans a probe.
  */
 
 /**
- * Rows one invocation resolves. PINNED to {@link SCHEDULED_SEND_BATCH} rather than chosen: this
- * pass shares its host, its cadence and its platform ceiling with the scheduled sender, and its
- * per-row cost is strictly smaller (a probe, never a submission). A number of its own would be
- * two constants that have to be reasoned about together and can drift apart.
+ * LOGINS one invocation may open — not rows it may resolve, which is up to
+ * `this × SEND_RECONCILE_SCAN_FACTOR` plus the `error` window, since a mirror hit settles a row
+ * terminally without a connection. PINNED to {@link SCHEDULED_SEND_BATCH} rather than chosen:
+ * this pass shares its host, its cadence and its platform ceiling with the scheduled sender, and
+ * its per-dial cost is strictly smaller (a probe, never a submission). A number of its own would
+ * be two constants that have to be reasoned about together and can drift apart.
  */
 export const SEND_RECONCILE_BATCH = SCHEDULED_SEND_BATCH;
 
@@ -93,14 +103,21 @@ export const SEND_RECONCILE_BATCH = SCHEDULED_SEND_BATCH;
  * keeps throwing) would fill the whole window every minute until the 24-hour give-up, and **no
  * newer stranded reservation would be examined for a day** — every draft behind them reading
  * "Sending…" the entire time. That is the head-of-line failure `schedule-send-pass.ts` documents
- * and answers with a paged scan; gating the dial rather than the claim, which this pass does for
- * suspended accounts, covers only that one of the three sources.
+ * and answers with a paged scan.
  *
- * The answer here is cheaper than paging because the two costs are wildly different: the MIRROR
- * arm is one indexed read and the IMAP arm is a LOGIN. So the batch bounds DIALS, this factor
- * bounds examinations, and every row in the wider window still gets its mirror arm — which is the
- * arm that resolves a stranded row without a connection at all. A deferring row now costs one
- * indexed read and yields its dial slot to a row that can use it.
+ * Three things together bound it here, and the third names what is left:
+ *
+ *  1. **The two costs are separated.** The MIRROR arm is one indexed read; the IMAP arm is a
+ *     LOGIN. The batch bounds LOGINS, this factor bounds EXAMINATIONS, and a deferring row now
+ *     costs one indexed read instead of a dial slot.
+ *  2. **`error` mailboxes have their own window** (`claimStale`), so the source that can never be
+ *     resolved by dialling cannot crowd out the rows this pass can actually finish.
+ *  3. **A suspended account's rows are still in the dialable window**, because suspension is not
+ *     a column this query can read — it is the injected `accountEligible` gate. One parked
+ *     account with more than this many stranded sends can therefore still delay newer rows until
+ *     its suspension lifts or the give-up fires. BOUNDED, NOT REMOVED, and said out loud rather
+ *     than left for somebody to discover: the fix, if it is ever observed, is the paged
+ *     eligibility-filtered keyset scan `schedule-send-pass.ts` already carries.
  */
 export const SEND_RECONCILE_SCAN_FACTOR = 4;
 
@@ -190,12 +207,18 @@ export async function runSendReconcilePass(
   };
 
   const rows = await claimStale(
-    db, now(), batch * SEND_RECONCILE_SCAN_FACTOR, deps.accountEligible,
+    db, now(), batch * SEND_RECONCILE_SCAN_FACTOR, batch, deps.accountEligible,
   );
   result.claimed = rows.length;
   if (rows.length === 0) return result;
 
-  /** Dials spent this invocation. The batch bounds THIS, not the number of rows examined. */
+  /**
+   * LOGINS actually opened this invocation. The batch bounds THIS, not the rows examined — and
+   * counting real connections rather than intentions is load-bearing: a row the mirror answers,
+   * or one whose mailbox refuses admission, opens no socket, and charging it a slot would defer
+   * healthy dialable rows behind it having spent nothing. That is the head-of-line block the
+   * scan factor exists to remove, relocated from the claim window into the budget.
+   */
   let dialled = 0;
 
   // ONE real connection per distinct mailbox in the batch, closed once at the end. The wrapper
@@ -207,6 +230,9 @@ export async function runSendReconcilePass(
     const cached = shared.get(mailboxId);
     if (cached) return cached;
     const real = await deps.openSendAdapter(mailboxId);
+    // HERE, not at the gate: this is the line a LOGIN actually happened on. A factory that
+    // refused (admission full, no credentials) throws above and charges nothing.
+    dialled += 1;
     held.set(mailboxId, real);
     const wrapper = probeOnly(real);
     shared.set(mailboxId, wrapper);
@@ -266,15 +292,18 @@ export async function runSendReconcilePass(
        * — and it still got its mirror arm, which is the arm that resolves most rows anyway.
        * Folding it into the give-up would close a reservation the pass never actually probed.
        */
-      const outOfBudget = mayDial && dialled >= batch;
+      // A mailbox this invocation ALREADY holds a connection to is free: reusing it is the whole
+      // point of the memo, and charging it a slot would make "N ids on one mailbox cost one
+      // LOGIN, not N" false — a mailbox with a dozen strandings would drain three a minute over
+      // one socket it had already paid for.
+      const outOfBudget = mayDial && !shared.has(row.mailboxId) && dialled >= batch;
       const willDial = mayDial && !outOfBudget;
-      const wouldWait = !mayDial && row.mailboxStatus !== "disabled";
       const onMiss: "unverified" | "defer" =
         outOfBudget ? "defer"
+        : willDial ? "unverified"
         : row.mailboxStatus === "disabled" ? "unverified"
-        : wouldWait && !givingUp ? "defer"
-        : "unverified";
-      if (willDial) dialled += 1;
+        : givingUp ? "unverified"
+        : "defer";
       /**
        * Was this row closed because a DAY PASSED, or because the answer was knowable? Recorded
        * as a fact here rather than inferred from the outcome afterwards, because the two are
@@ -282,7 +311,8 @@ export async function runSendReconcilePass(
        * its row's age, so an age-plus-outcome test would count every old disconnected mailbox as
        * a give-up and make the loudest counter on this pass mean something it does not.
        */
-      let closedByAge = wouldWait && givingUp && !outOfBudget;
+      let closedByAge =
+        !willDial && !outOfBudget && row.mailboxStatus !== "disabled" && givingUp;
 
       let outcome;
       try {
@@ -295,9 +325,16 @@ export async function runSendReconcilePass(
         // exists to avoid — unless it is old enough that no further cycle is worth waiting for,
         // in which case the mirror arm gets one last read and then the honest ambiguous answer.
         //
-        // The connection is dropped from the memo first, whatever happens next: the rows behind
-        // this one on the same mailbox must re-dial rather than inherit a socket that has just
-        // proved it cannot answer.
+        // The connection is dropped from the memo first, whatever happens next.
+        //
+        // DELIBERATELY CONSERVATIVE, and worth being exact about rather than claiming more than
+        // is true: this catch also sees throws the connection did not cause — a database fault in
+        // the finalize AFTER a successful probe, for instance. Those discard a healthy handle and
+        // cost the next row on that mailbox one re-dial. Keeping a DEAD handle costs every
+        // remaining row on that mailbox, and for a row past the give-up it costs a terminal
+        // `unverified` written off one socket failure. The trade is one wasted LOGIN against a
+        // wrong terminal write, so it is not close. (A factory that refused before connecting
+        // left no entry, so this is already a no-op for that path.)
         await forget(row.mailboxId);
         if (!givingUp) {
           result.deferred += 1;
@@ -316,7 +353,13 @@ export async function runSendReconcilePass(
           outcome = await sends.resolveStale(ctx, row.send, row.mailboxId, null, "unverified");
         } catch (giveUpErr) {
           result.deferred += 1;
-          log.warn("send_reconcile_deferred", {
+          // ITS OWN EVENT, not the quiet one. A give-up that could not be WRITTEN is the 24-hour
+          // bound silently ceasing to exist: if this starts failing for every row the pass
+          // reports rising `deferred` with `gaveUp: 0`, which is indistinguishable from a healthy
+          // pass full of undialable mailboxes, while the reservations stay `pending` for ever.
+          // `gaveUp` is documented as the loud counter; the failure to reach it has to be louder,
+          // not quieter.
+          log.error("send_reconcile_give_up_failed", {
             sendId: row.send.id, accountId: row.send.accountId, draftId: row.send.draftId,
             err: giveUpErr,
           });
@@ -415,12 +458,12 @@ function probeOnly(real: SendAdapter): SendAdapter {
  * `ORDER BY created_at` so the oldest — the ones a person has been staring at longest — go first.
  */
 async function claimStale(
-  db: Db, now: Date, batch: number,
+  db: Db, now: Date, dialWindow: number, waitWindow: number,
   accountEligible: ((accountId: string, db: Db) => Promise<boolean>) | undefined,
 ): Promise<StaleRow[]> {
   return (db as unknown as Tx).transaction(async (tx) => {
     const staleBefore = new Date(now.getTime() - SEND_STALE_AFTER_MS);
-    const found = await tx.select({
+    const page = (dialable: boolean, limit: number) => tx.select({
       id: outboundSends.id,
       accountId: outboundSends.accountId,
       idempotencyKey: outboundSends.idempotencyKey,
@@ -439,10 +482,38 @@ async function claimStale(
       .where(and(
         eq(outboundSends.status, "pending"),
         lt(outboundSends.createdAt, staleBefore),
+        dialable ? ne(mailboxes.status, "error") : eq(mailboxes.status, "error"),
       ))
       .orderBy(outboundSends.createdAt)
-      .limit(batch)
+      .limit(limit)
       .for("update", { of: outboundSends, skipLocked: true });
+
+    /**
+     * TWO WINDOWS, because a mailbox in `error` can never be resolved by dialling and would
+     * otherwise monopolise the one window there was.
+     *
+     * A row on an `error` mailbox is never dialled — a probe there is another failed LOGIN, which
+     * is how a recoverable fault becomes a locked account — so it defers on every cycle until the
+     * give-up, and being among the oldest by construction it is re-selected every minute. One
+     * mailbox stuck in `error` with a dozen strandings would therefore fill a single oldest-first
+     * window for a full day and no other account's reservation would be examined at all.
+     *
+     * Giving those rows their own small window removes that structurally: they still get the
+     * MIRROR arm (a disconnected mailbox does not un-send the mail that already left it, and the
+     * mirror may well hold it) and the give-up still closes them, but they cannot crowd out the
+     * rows this pass can actually finish.
+     *
+     * **The residual, stated rather than papered over:** a SUSPENDED account's rows sit in the
+     * dialable window (suspension is not a column this query can read — it is the injected
+     * `accountEligible` gate), so one parked account with more than `dialWindow` stranded sends
+     * can still delay newer rows until its suspension lifts or the give-up fires. Bounded, not
+     * removed. `schedule-send-pass.ts` answers the same shape with a paged, eligibility-filtered
+     * keyset scan, which is the fix if this is ever observed.
+     */
+    const found = [
+      ...await page(true, dialWindow),
+      ...await page(false, waitWindow),
+    ];
 
     // One eligibility read per DISTINCT account, memoised, and run on THIS transaction's handle
     // rather than a captured outer one — the deadlock rule on

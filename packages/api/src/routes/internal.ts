@@ -207,11 +207,16 @@ export const SEND_RECONCILE_CRON_PATH = "/internal/sends/reconcile/run";
  * the handle closes. There is no local in-process slot here because there is no queue to hold
  * one — a refusal is a defer, and the row is examined again a minute later.
  *
- * A REFUSAL IS A `ServiceError`, deliberately: that is what the pass's resolver reads as "this
- * mailbox cannot be dialled", which defers the row instead of writing a terminal state off a
- * dial that never happened. A counter that THREW (a database fault, not a refusal) propagates,
- * because failing open here would be a mailbox dialled without admission — the exact state the
- * counter exists to prevent.
+ * A REFUSAL IS A `TransientDialRefusal`, AND EMPHATICALLY NOT A `ServiceError` — this paragraph
+ * used to say the opposite, and the opposite was the defect. `SendService.resolveStale` reads a
+ * factory `ServiceError` as "this mailbox can never be dialled again" and calls
+ * `settleUnverified` — a TERMINAL write, not a defer. Correct for a mailbox whose credential rows
+ * are gone; catastrophic for one that is merely busy or for a host that configured no counter at
+ * all. So both the refusal AND any throw from consulting the counter are re-raised as transient,
+ * and the pass defers the row.
+ *
+ * Nothing here fails OPEN: neither path dials. What changes is only whether a row is left alone
+ * for the next cycle or written off without the Sent folder ever being read.
  *
  * The release is best-effort and never silent: losing it leaves the mailbox one unit short until
  * the stale-window reclaim resets it, which is the bounded direction; throwing would replace a

@@ -161,8 +161,11 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
     // nothing here is time-critical to the second, and a row that waits one more minute has
     // already waited ten.
     firstDelayMs: 105 * 1000,
-    // The pass claims only what one serverless invocation can probe inside its own 60-second
-    // ceiling; this bound is the caller's mirror of that ceiling, not a hope.
+    // The pass opens at most `SEND_RECONCILE_BATCH` LOGINS per invocation, which is the cost the
+    // 60-second ceiling is actually budgeted against; this bound is the caller's mirror of that
+    // ceiling, not a hope. It EXAMINES more rows than that — a mirror hit settles a reservation
+    // with one indexed read and no connection — so the row count is not the number to budget
+    // from, and this comment says logins for that reason.
     timeoutMs: 60 * 1000,
     // A tenth of the cadence — the sender's reason, one target over.
     jitterMs: 6 * 1000,
