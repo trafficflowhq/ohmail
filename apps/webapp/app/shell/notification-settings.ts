@@ -224,7 +224,19 @@ export const NOTIFY_STATE_URL = "/__ohmail_notify_state";
  * written rather than the entry being deleted, so a worker that reads a stale cache sees an
  * explicit "do not draw" instead of a miss it has to interpret.
  */
-export async function writeNotifyState(
+export function writeNotifyState(
+  enabled: boolean, title: string, body: string,
+): Promise<void> {
+  /* THROUGH THE SAME QUEUE AS THE SUBSCRIPTION, and that is the point rather than tidiness.
+     These were two independent fire-and-forget writes, so a fast OFF/ON pair could land in
+     either order: a stale `enabled: false` arriving after a later `enabled: true` leaves the
+     worker refusing to draw for a browser that is subscribed and expecting notices, with nothing
+     on screen to explain it. One queue makes call order the order they are applied in — and puts
+     them in order relative to the subscription changes they accompany. */
+  return serialize(() => writeNotifyStateNow(enabled, title, body));
+}
+
+async function writeNotifyStateNow(
   enabled: boolean, title: string, body: string,
 ): Promise<void> {
   try {
@@ -237,8 +249,12 @@ export async function writeNotifyState(
       }),
     );
   } catch {
-    /* No Cache API, or storage refused. The worker then draws nothing, which is the safe way
-       for this to fail: a missing state is read as "do not draw". */
+    /* No Cache API, or storage refused. With no entry at all the worker draws nothing, which is
+       the safe direction. The case this CANNOT make safe is a failed write over an OLDER entry
+       that says `enabled: true` — the stale value survives and the worker would still draw. What
+       stops that mattering is the subscription: an intent that turned to false drops it, so the
+       server has no endpoint to dial and the worker is never entered. The two have to fail
+       together for a notice to arrive after an OFF. */
   }
 }
 
