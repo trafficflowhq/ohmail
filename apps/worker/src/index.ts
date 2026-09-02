@@ -2394,8 +2394,11 @@ export async function startWorkerWithLock(
          * import prompt on a screen for a mailbox this install does not organize. The read itself
          * is harmless, but the MARKER it writes is what the confirm surface renders.
          *
-         * On promotion the hold is armed by the attach that follows it, which is the first cycle
-         * with anything to inherit.
+         * A PROMOTION DOES NOT COME THROUGH HERE. This used to read "on promotion the hold is
+         * armed by the attach that follows it, which is the first cycle with anything to
+         * inherit", and mail 0083 removed the re-attach that sentence depended on: a reader is
+         * promoted IN PLACE, on the cycle path. The promotion arms its own hold there, and the
+         * two call sites are the two ways a process can become this mailbox's organizer.
          */
         if (role === "organizer") await rt.profile.armHoldFromFolder();
 
@@ -3433,6 +3436,27 @@ export async function startWorkerWithLock(
             // direction: everything this runtime remembers about the mailbox it remembered as a
             // READER, and the cycle that follows is going to move mail on the strength of it.
             rt.deps.knownSet?.drop("organizer promotion");
+            /* ── AND THE IMPORT HOLD IS ARMED HERE, BECAUSE NO ATTACH IS COMING ─────────────
+             *
+             * `armHoldFromFolder` detects a foreign profile document and holds it, so an
+             * organizer TAKING a mailbox over adopts the placement it is inheriting instead of
+             * re-screening a history somebody else already sorted. Its only other call site is
+             * inside `attach()`, whose comment promised that "on promotion the hold is armed by
+             * the attach that follows it".
+             *
+             * No attach follows a promotion any more. Mail 0083 made the READER -> ORGANIZER flip
+             * happen IN PLACE — that is the point of the reader model, and the line above says so
+             * — so the promise was left naming a re-attach that had been deleted. The sequence it
+             * left open is TAKEOVER-RESCREEN exactly: a reader on a mailbox a desktop organizes,
+             * a claim-back authorized, the gate promotes, and `runSyncCycle` runs on this very
+             * pass with `importDecisionOpen === false` and files the inherited history into
+             * `ohmail/Screener` — while `onOrganize`, below, seeds the answering document only
+             * after the cycle that needed it.
+             *
+             * BEFORE `runSyncCycle`, for the same reason `ensureFolders` is: the first cycle is
+             * the one that does the damage, so arming it afterwards arms it too late.
+             */
+            await rt.profile.armHoldFromFolder();
             log.info("organizer_promoted", {
               mailboxId: rt.mailboxId, accountId: rt.accountId,
               reason: "a human asked this install to organize this mailbox and the lease agreed; "
@@ -3561,15 +3585,32 @@ export async function startWorkerWithLock(
           // the end of `attach()`. A mailbox that completed a cycle is not in a failure backoff;
           // one that merely connected is not yet evidence of anything.
           quarantine.delete(rt.mailboxId);
-          // ── THE PORTABLE PROFILE'S WRITE-BEHIND TICK ─────────────────────────────────────
-          //
-          // HERE and only here, because this line is reachable only after `mayOrganize` said
-          // organize AND `runSyncCycle` completed — the lease gate above is the single-writer
-          // mechanism, and the profile module deliberately re-derives none of it. Never throws;
-          // a settings copy that cannot be written must not count against a mailbox whose
-          // provider did nothing wrong. Debounced inside (`TF_PROFILE_FLUSH_MS`), so a burst of
-          // screener verdicts between two ticks is one append.
-          await rt.profile.onOrganize();
+          /* ── THE PORTABLE PROFILE'S WRITE-BEHIND TICK ────────────────────────────────────
+           *
+           * Never throws; a settings copy that cannot be written must not count against a mailbox
+           * whose provider did nothing wrong. Debounced inside (`TF_PROFILE_FLUSH_MS`), so a
+           * burst of screener verdicts between two ticks is one append.
+           *
+           * ── THE ROLE CHECK, WHICH THIS COMMENT USED TO ARGUE WAS UNNECESSARY ───────────
+           *
+           * It read: *"HERE and only here, because this line is reachable only after
+           * `mayOrganize` said organize AND `runSyncCycle` completed — the lease gate above is
+           * the single-writer mechanism, and the profile module deliberately re-derives none of
+           * it."* That was true while a loser DETACHED. Mail 0083 made a loser a reader that
+           * keeps cycling, so `organize === false` now falls through the gate, through
+           * `runSyncCycle`, and onto this line — and the single-writer mechanism the comment
+           * delegated to had stopped covering it.
+           *
+           * Measured, not reasoned: a Cloud worker demoted by a live desktop claim appended a
+           * profile document to `ohmail/_meta` on the next cycle — one `profileAppends`, on a
+           * mailbox another install organizes, in the one folder a LOCAL install and Cloud share.
+           * Two installs writing settings documents into one `_meta` is the co-tenancy hazard
+           * that folder's own fixture is built to expose, and the reader had no business in it:
+           * a reader mirrors, marks read and sends. Publishing the mailbox's configuration is an
+           * organizer's act, and `armHoldFromFolder` on the attach path is already gated on
+           * exactly this test for exactly this reason.
+           */
+          if (rt.role === "organizer") await rt.profile.onOrganize();
           // ── THE FIRST STAMP DOES NOT WAIT FOR THE REST OF THE ROTATION ──────────────────
           //
           // The batched write below the loop stamps everything that synced this pass, and that is

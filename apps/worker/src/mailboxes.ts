@@ -1206,8 +1206,13 @@ import { type MailboxDisabledReason, isMailboxDisabledReason } from "@trafficflo
 export type { MailboxDisabledReason };
 
 /**
- * Stand a mailbox down: `disabled`, with the lease reason, atomically. Returns false when the
- * write was FENCED OUT — the mailbox is already disabled, or this instance no longer leads.
+ * Stand a mailbox down: `organizer_role='reader'` plus the holder columns, atomically. Returns
+ * false when the write was FENCED OUT — the mailbox is already disabled, or this instance no
+ * longer leads.
+ *
+ * This line used to read "`disabled`, with the lease reason". Mail 0083 moved the decision onto
+ * the role and left `disabled_reason` with no writer here — see the block inside the statement —
+ * so the summary was describing the write this function used to perform.
  *
  * ── AN UNRECOGNISED REASON IS COERCED, NEVER DROPPED AND NEVER THROWN ──────────────────────
  *
@@ -1240,10 +1245,18 @@ export async function markMailboxStoodDown(
 ): Promise<boolean> {
   const safe: MailboxDisabledReason =
     isMailboxDisabledReason(reason) ? reason : "organized_elsewhere:unknown";
-  // The kind, from the CLAIM where there is one and from the reason otherwise. The two agree by
-  // construction (`readMailboxLease` derives the reason from the same claim), and the fallback is
+  // The kind, from the CLAIM where there is one and from the reason otherwise. The fallback is
   // what keeps the column populated for a malformed claim, whose reason is the honest
   // `organized_elsewhere:unknown`.
+  //
+  // THEY DO NOT ALWAYS AGREE, and this comment used to say they did ("by construction, because
+  // `readMailboxLease` derives the reason from the same claim"). The unrankable arm is the
+  // counter-example: a claim from a FUTURE PROTOCOL parses its `X-Ohmail-Organizer-Kind` header
+  // perfectly — `cloud`, say — while the verdict is `organized_elsewhere:unknown`, because what
+  // could not be ranked was the protocol and not the kind. The row is better for the
+  // disagreement: the banner names "ohmail Cloud (next)" rather than "something". What is not
+  // acceptable is a comment asserting an equality the code does not maintain, so it is stated as
+  // a preference for the claim's own answer, which is what the expression actually encodes.
   const kind = (opts.by?.kind ?? safe.split(":")[1] ?? "unknown") as OrganizerKind;
   return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes).set({
     // ── MAIL 0083: THE ROLE, NOT THE STATUS ───────────────────────────────────────────────

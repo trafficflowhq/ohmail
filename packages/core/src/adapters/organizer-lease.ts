@@ -1240,9 +1240,34 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
     .filter((r): r is unknown => r !== undefined);
 
   if (verdict.verdict !== "organize") {
-    if (ourRefs.length > 0) {
+    /* ── THE LOSER RELEASES ITS OWN CLAIMS AND NEVER THE WINNER'S ────────────────────────────
+     *
+     * `ourRefs` matches on INSTALL ID ALONE, while the verdict decides ours-ness by install id
+     * AND nonce (`rawOurs` / `isOurs` in `decideLease`). Against a CLONE — two deployments sharing
+     * one install id, which is the hazard the per-write nonce exists for — those two disagree by
+     * construction: the peer's claim carries our id, so the release below treated the claim that
+     * had just BEATEN us as ours and expunged it.
+     *
+     * The folder then read empty, `decideLease`'s "nobody has ever organized this mailbox" arm
+     * said organize, and the loser re-seized on its very next pass — two live deployments taking
+     * one mailbox from each other indefinitely, produced by the defence that exists to stop it.
+     *
+     * This was harmless while a loser DETACHED: there was no next pass. A loser is now a reader
+     * that keeps polling, so the same expunge became a live re-seize loop, and the bound is one
+     * poll interval rather than a staleness window.
+     *
+     * `ourRefs` itself is deliberately not narrowed — the renew below reuses it to expunge our
+     * own superseded claims, and those carry older nonces by design, so a nonce-narrowed
+     * `ourRefs` would leak a claim per cycle. The exclusion belongs to this branch alone, and it
+     * is stated as the invariant rather than as a nonce comparison: whoever won, we do not touch
+     * their claim. On an `available` verdict there is no winner to protect — the residue is stale
+     * or malformed and clearing our own id out of it is the point — so the guard is `stand_down`.
+     */
+    const winner = verdict.verdict === "stand_down" ? verdict.by?.ref : undefined;
+    const toRelease = winner === undefined ? ourRefs : ourRefs.filter((r) => r !== winner);
+    if (toRelease.length > 0) {
       try {
-        await io.removeClaims(ourRefs);
+        await io.removeClaims(toRelease);
       } catch (err) {
         // Failing to release is not failing to stand down. We are already not organizing; the
         // only cost is that the winner waits out the staleness window. Logged, never thrown —
