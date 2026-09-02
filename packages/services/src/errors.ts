@@ -36,3 +36,32 @@ export class IdempotencyRaceLost extends Error {
     this.name = "IdempotencyRaceLost";
   }
 }
+
+/**
+ * THE DIAL COULD NOT BE ATTEMPTED **NOW**, AND ANOTHER CYCLE MAY DO BETTER.
+ *
+ * Thrown by an `OpenSendAdapter` that refused before any socket existed, for a reason that is
+ * expected to pass — the hosted reconciler's per-mailbox IMAP admission counter being full is the
+ * one that exists today. It says nothing whatever about the message.
+ *
+ * ── WHY IT IS A SEPARATE CLASS AND NOT A {@link ServiceError} ────────────────────────────────
+ *
+ * {@link SendService.resolveStale} reads a `ServiceError` from the adapter factory as "this
+ * mailbox can never be dialled again" — the case where its credential rows are gone — and answers
+ * `unverified` on the spot, because leaving such a row `pending` would strand it for ever. That
+ * inference is right for a permanent refusal and CATASTROPHIC for a transient one: a mailbox
+ * merely BUSY (the cap is two, and the attachment path holds the same slots) would have its
+ * stranded reservation written to a terminal `unverified` WITHOUT THE SENT FOLDER EVER BEING
+ * LOOKED AT — telling somebody to go and check for a message that is most likely sitting in it,
+ * and terminal means no later cycle revisits it.
+ *
+ * So the distinction cannot live in `resolveStale`, which does not know what a given factory's
+ * refusals mean. It lives with the factory that does: throw this, and the resolver propagates it
+ * untouched so the caller defers the row and asks again next cycle.
+ */
+export class TransientDialRefusal extends Error {
+  constructor(readonly mailboxId: string, reason: string) {
+    super(reason);
+    this.name = "TransientDialRefusal";
+  }
+}

@@ -7,9 +7,9 @@ import { sql } from "drizzle-orm";
 import { silentLogger, type Logger } from "@trafficflow/core";
 import type { Tx } from "@trafficflow/db";
 import {
-  reapStaleWebSessions, reconcileBillingMirror, recordReconcileFailure, type AdminDb,
+  reapStaleWebSessions, reconcileBillingMirror, recordReconcileFailure,
+  runScheduledSendPass, runSendReconcilePass, TransientDialRefusal, type AdminDb,
 } from "@trafficflow/services";
-import { runScheduledSendPass, runSendReconcilePass, ServiceError } from "@trafficflow/services";
 import type { SendAdapter } from "@trafficflow/core/mail";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
 import { makeSendAdapter } from "../send-adapter.js";
@@ -223,8 +223,15 @@ async function admittedSendAdapter(deps: ApiDeps, mailboxId: string): Promise<Se
     deps.db, { mailboxId, max: MAX_IMAP_PER_MAILBOX, now: now() },
   );
   if (!admitted) {
-    throw new ServiceError(
-      "mailbox_busy", 429,
+    // A `TransientDialRefusal` AND EMPHATICALLY NOT A `ServiceError`. The resolver reads a
+    // `ServiceError` from a factory as "this mailbox can never be dialled again" and writes a
+    // TERMINAL `unverified` on the spot — correct for a mailbox whose credentials are gone, and
+    // exactly wrong here, where the only fact is that two other requests hold the slots right
+    // now (the cap is two, and the attachment path holds the same ones). Writing `unverified`
+    // for that would tell somebody their send could not be confirmed without the Sent folder
+    // ever having been looked at, and terminal means no later cycle would ever look.
+    throw new TransientDialRefusal(
+      mailboxId,
       "this mailbox is at its connection ceiling; the reservation is examined again next cycle",
     );
   }

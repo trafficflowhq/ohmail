@@ -10,7 +10,7 @@ import {
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { ServiceContext } from "./context.js";
 import type { AttachmentAdapter, OpenAdapter } from "./attachments-service.js";
-import { ServiceError } from "./errors.js";
+import { ServiceError, TransientDialRefusal } from "./errors.js";
 import { sanitizeOutboundHtml } from "./outbound-html.js";
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
@@ -1926,6 +1926,13 @@ export class SendService {
     try {
       adapter = await openAdapter(mailboxId);
     } catch (err) {
+      // A REFUSAL THE FACTORY CALLS TRANSIENT IS NOT EVIDENCE ABOUT THE MESSAGE. It propagates
+      // untouched, so the caller defers this row and asks again next cycle. Checked FIRST and
+      // kept a distinct class rather than folded into the branch below, because the two are
+      // opposite conclusions from a superficially identical event — see {@link
+      // TransientDialRefusal}, which records what treating a busy mailbox as a permanent one
+      // would write.
+      if (err instanceof TransientDialRefusal) throw err;
       // See the docblock: a mailbox that can never be dialled again is decided now, not left to
       // page for ever. Anything that is not a typed refusal is a fault, and propagates.
       if (err instanceof ServiceError) return this.settleUnverified(ctx, row, "undialable");
