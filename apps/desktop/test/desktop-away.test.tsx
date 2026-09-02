@@ -138,8 +138,8 @@ const click = async (el: Element): Promise<void> => {
 beforeEach(() => {
   asked = [];
   stored = {
-    enabled: false, subject: null, body: null, startsAt: null, endsAt: null,
-    audience: "screened_in", updatedAt: null,
+    enabled: false, body: null, startsAt: null, endsAt: null,
+    audience: "screened_in", throttle: "per_day", updatedAt: null,
   };
   engineAnswering();
   /* BOOBY TRAP. Nothing on this path may reach the hosted client: this window has
@@ -171,17 +171,18 @@ describe("the away responder on the hosted door", () => {
   });
 
   it("reads the account's row over the pipe, and draws the stored state", async () => {
-    stored = { ...stored, enabled: true, subject: "Away", body: "Back Monday.", audience: "everyone" };
+    stored = { ...stored, enabled: true, body: "Back Monday.", audience: "everyone", throttle: "per_week" };
     await mountRow();
     expect(asked).toEqual([{ method: "GET", url: AWAY_PATH, body: null }]);
-    expect((hostEl.querySelector("#away-subject") as HTMLInputElement).value).toBe("Away");
+    expect((hostEl.querySelector("#away-body") as HTMLTextAreaElement).value).toBe("Back Monday.");
     expect((hostEl.querySelector('[role="switch"]') as HTMLElement).getAttribute("aria-checked")).toBe("true");
+    // There is no subject to draw: the responder replies in the correspondent's own thread.
+    expect(hostEl.querySelector("#away-subject")).toBeNull();
   });
 
   it("saves the whole row in ONE explicit PUT — one press, one enablement episode", async () => {
     await mountRow();
     await click(hostEl.querySelector('[role="switch"]')!);
-    setNative(hostEl.querySelector("#away-subject") as HTMLInputElement, "Away");
     setNative(hostEl.querySelector("#away-body") as HTMLTextAreaElement, "Back Monday.");
     const save = [...hostEl.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Save")!;
     await click(save);
@@ -192,8 +193,8 @@ describe("the away responder on the hosted door", () => {
     // A FULL REPLACE, every field named — the route stores what it is handed. A partial body would
     // blank the fields it omitted on a row somebody had already filled in.
     expect(puts[0]!.body).toEqual({
-      enabled: true, subject: "Away", body: "Back Monday.",
-      startsAt: null, endsAt: null, audience: "screened_in",
+      enabled: true, body: "Back Monday.",
+      startsAt: null, endsAt: null, audience: "screened_in", throttle: "per_day",
     });
     expect(hostEl.textContent).toContain("Saved.");
     // …and no second read: the control renders the PUT's own echo.
@@ -227,11 +228,31 @@ describe("the door that may configure an away responder", () => {
     expect(awayDoorFor(serving({ mode: "cloud" }))).toBe("cloud");
   });
 
-  it("is NEVER the standalone door — the sender lives in the hosted worker", () => {
-    // Not "would be refused": the local engine answers this route perfectly well. Nothing on this
-    // door sends the reply, so a control here would store a configuration that answers nobody.
-    expect(awayDoorFor(serving({ mode: "local" }))).toBeNull();
-    expect(awayDoorFor(serving({ mode: "local", credentialState: "ready" }))).toBeNull();
+  /**
+   * THE STANDALONE ARM, which this block used to assert was permanently `null`.
+   *
+   * It said: *"is NEVER the standalone door — the sender lives in the hosted worker… Nothing on
+   * this door sends the reply, so a control here would store a configuration that answers
+   * nobody."* True when written, and false since the pass moved into `@trafficflow/services` —
+   * which the desktop engine bundles — and began running in the sidecar's drain with this
+   * machine's own SMTP dial.
+   *
+   * The promise on that door is genuinely smaller (replies go out while the app is open) and the
+   * pane says so; that is a sentence, not a reason to withhold the control. It is asserted for
+   * BOTH credential states because the credential is not what gates it: the responder is
+   * configuration, and hiding the setting on the launch where somebody is mid-setup is the
+   * failure `profileImportDoorFor` already argues against.
+   */
+  it("is ALSO the standalone door — the engine on this machine sends while the window is open", () => {
+    expect(awayDoorFor(serving({ mode: "local" }))).toBe("local");
+    expect(awayDoorFor(serving({ mode: "local", credentialState: "ready" }))).toBe("local");
+    expect(awayDoorFor(serving({ mode: "local", credentialState: "absent" }))).toBe("local");
+  });
+
+  it("distinguishes the two live doors rather than answering a boolean", () => {
+    // The caller needs WHICH door: `"local"` also selects the "while ohmail is open on this
+    // computer" note, and a boolean would put that sentence on the hosted pane where it is false.
+    expect(awayDoorFor(serving({ mode: "local" }))).not.toBe(awayDoorFor(serving({ mode: "cloud" })));
   });
 
   it("is nothing while there is no hosted session, no door, or no answer from the shell", () => {
@@ -258,10 +279,13 @@ describe("the wiring, pinned by source", () => {
     "utf8",
   );
 
-  it("the window hands its transport in on the hosted door and on no other", () => {
-    expect(gate).toMatch(
-      /\{\.\.\.\(awayDoorFor\(status\) === "cloud" \? \{ awayTransport: awayOverBridge \} : \{\}\)\}/,
-    );
+  it("the window hands its transport in on EITHER live door, and says which one", () => {
+    // One wire, both doors — the engine decides what to do with the request (forward it to the
+    // account, or answer it out of the store on this machine). `awayIsLocal` carries the only
+    // difference the window is responsible for: the sentence about replies going out while the
+    // app is open, which is true on one door and false on the other.
+    expect(gate).toMatch(/awayDoorFor\(status\) !== null/);
+    expect(gate).toMatch(/awayTransport: awayOverBridge, awayIsLocal: awayDoorFor\(status\) === "local"/);
   });
 
   it("the shared shell admits a host transport as a second way to be supported", () => {
@@ -269,7 +293,9 @@ describe("the wiring, pinned by source", () => {
     // `apiConfigured()` is false in this build whatever door it came in by.
     expect(shell).toMatch(/const awaySupported = autoOptIn\.supported \|\| awayTransport !== undefined;/);
     expect(shell).toMatch(/awaySection=\{demo \|\| !awaySupported \? undefined : \(/);
-    expect(shell).toMatch(/<AwayResponderRow onChanged=\{awayNotice\.update\} transport=\{awayTransport\} \/>/);
+    expect(shell).toMatch(
+      /<AwayResponderRow onChanged=\{awayNotice\.update\} transport=\{awayTransport\} local=\{awayIsLocal \?\? false\} \/>/,
+    );
   });
 
   it("the shared files name none of the transport — no bridge, no Tauri, no engine", () => {

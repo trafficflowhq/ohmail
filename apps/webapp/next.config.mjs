@@ -635,10 +635,14 @@ assertPublicFlavorNotOverridden(process.env[PUBLIC_FLAVOR_VAR], selfhost);
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // @trafficflow/core is here for exactly ONE entry point: `@trafficflow/core/ics`, whose
-  // exports target is the dependency-free SOURCE file (see its header). The barrel and every
-  // other subpath stay node-only (mailparser, node:crypto) and must never be imported from
-  // this app — `MessageBody.tsx` documents that boundary.
+  // @trafficflow/core is here for its dependency-free SOURCE subpaths and nothing else — today
+  // `@trafficflow/core/ics` (read directly by this app) and `@trafficflow/core/reply-subject`
+  // (reached through `@ohmail/client-engine`'s `mutations.ts`, which is transpiled beside it).
+  // Both resolve through core's own exports map; neither needs a webpack alias, because unlike the
+  // desktop's published mirror this tree always has the workspace link.
+  //
+  // The barrel and every other subpath stay node-only (mailparser, node:crypto) and must never be
+  // imported from this app — `MessageBody.tsx` documents that boundary.
   transpilePackages: ["@ohmail/ui", "@ohmail/tokens", "@ohmail/fixtures", "@ohmail/client-engine", "@trafficflow/core"],
 
   // `NEXT_PUBLIC_API_BASE` is DERIVED, never set by hand. The topology wants the browser to call

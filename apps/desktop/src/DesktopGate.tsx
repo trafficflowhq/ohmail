@@ -779,13 +779,22 @@ export function DesktopGate() {
            The shared shell offers this control when `apiConfigured()` says there is a server — and
            that is false in EVERY desktop build, both doors, because this bundle aliases the Cloud
            client to a refusing stub. So the responder was withheld from a hosted install that has a
-           real account behind it, which was wrong, and from a standalone install, which is right and
-           is a product boundary rather than a plumbing gap: nothing on that door SENDS the reply.
-           A TRANSPORT and not a section, unlike the two seams above: this is the same control over
-           the same hosted row, and a second copy of it would be a second definition of when an
-           enablement episode begins — the key the worker files its at-most-once record under.
-           `awayDoorFor` is where the rule lives, as a pure function a test can drive. */
-        {...(awayDoorFor(status) === "cloud" ? { awayTransport: awayOverBridge } : {})}
+           real account behind it, which was wrong — and from a standalone install, which THIS SLICE
+           makes wrong too: the sentence that stood here, "nothing on that door SENDS the reply", was
+           true only while the pass lived in the hosted worker's private module map. It lives in
+           `@trafficflow/services` now, which this engine bundles, and the sidecar's drain runs it
+           with this machine's own SMTP dial.
+
+           A TRANSPORT and not a section, unlike the two seams above: it is the same control over
+           whichever row the door owns, and a second copy of it would be a second definition of what
+           the responder stores. `awayDoorFor` is where the rule lives, as a pure function a test can
+           drive, and it returns WHICH door — because the wire is identical on both and only the
+           pane's promise differs. `awayIsLocal` carries that difference and nothing else: on the
+           standalone door the replies go out only while this window is open, and the pane says so
+           rather than borrowing Cloud's always-on copy. */
+        {...(awayDoorFor(status) !== null
+          ? { awayTransport: awayOverBridge, awayIsLocal: awayDoorFor(status) === "local" }
+          : {})}
         /* SETTINGS FOUND ON A MAILBOX — the profile-import card, on BOTH doors, and this is the
            desktop-standalone tier gaining the flow's flagship case: a mailbox that arrives
            carrying another ohmail's settings (leave Cloud, install the app) is asked before

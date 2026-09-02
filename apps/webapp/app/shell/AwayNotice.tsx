@@ -25,12 +25,22 @@
  * claim may only ever come from the server's own row. There is no path from "I do not know" to
  * "replies are going out".
  *
- * ── COPY IS A SHIM, ON PURPOSE ───────────────────────────────────────────────────────────
+ * ── ONE KEY, TWO SELECTS ─────────────────────────────────────────────────────────────────
  *
- * Literals in {@link COPY}, exactly as `AwayResponderRow` holds its own: one object, one place,
- * ready for the i18n pass. TWO sentences and not one, because the audience is part of the claim
- * — `screened_in` answers only senders already let in, and a single sentence covering both
- * audiences would be false for one of them.
+ * This was two keys, one per audience, because "a single sentence covering both audiences would
+ * be false for one of them". That reasoning was right and does not scale: the notice now has to
+ * carry the RATE as well, and a key per combination is eight sentences to write, translate and
+ * keep in agreement — where the failure mode is one of the eight quietly describing a responder
+ * that behaves differently.
+ *
+ * So it is ONE ICU message with two `select`s, which is what ICU is for: the catalogue holds one
+ * sentence whose two variable parts are enumerated, a translator sees the whole sentence rather
+ * than eight fragments, and adding a fifth rate is one arm rather than four keys. Both selects
+ * fall through to `other` — `screened_in` and `per_day`, the two defaults — so a value this
+ * component has not been taught still produces a true sentence rather than an empty one.
+ *
+ * The claim it makes is a claim about the SERVER's behaviour: the pass's throttle, not this
+ * component's. If the throttle's meaning changes, this sentence is edited in the same change.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -40,6 +50,7 @@ import type { AwayTransport } from "./AwayResponderRow";
 import { go } from "./routing";
 
 type Audience = AwayResponderWire["audience"];
+type Throttle = AwayResponderWire["throttle"];
 
 /** THE COPY SHIM. One object, so the i18n pass has one thing to move. */
 /**
@@ -51,22 +62,26 @@ type Audience = AwayResponderWire["audience"];
  * about the responder in one place.
  */
 export const AWAY_NOTICE_COPY = {
-  noticeScreenedIn: "Away responder is on — people you've let in get your away note.",
-  noticeEveryone: "Away responder is on — everyone who writes gets your away note.",
+  notice:
+    "Away responder is on — {audience, select, everyone {everyone who writes} other {people you've let in}} "
+    + "{throttle, select, always {gets a reply to every message} per_message {gets one reply, until you change the text} "
+    + "per_week {gets a reply at most once a week} other {gets a reply at most once a day}}.",
   noticeSettings: "Away settings",
 } as const;
 
 export interface AwayNoticeState {
   /** Is the responder ON, as the server's row last answered or echoed. Resting false. */
   on: boolean;
-  /** Who gets a reply — decides which sentence the notice may truthfully say. */
+  /** Who gets a reply — one half of what the notice may truthfully say. */
   audience: Audience;
+  /** How often each of them gets one — the other half. */
+  throttle: Throttle;
   /**
    * THE SETTINGS ROW'S ECHO. `AwayResponderRow` calls this with what the SERVER answered —
    * its mount load and every save echo, never what a click asked for — so the row and this
    * notice can only agree. It is the whole of how a same-tab edit reaches the Ohbox.
    */
-  update: (next: { enabled: boolean; audience: Audience }) => void;
+  update: (next: { enabled: boolean; audience: Audience; throttle: Throttle }) => void;
 }
 
 /**
@@ -80,9 +95,10 @@ export interface AwayNoticeState {
  * what a browser tab has.
  */
 export function useAwayNotice(active: boolean, transport?: AwayTransport): AwayNoticeState {
-  const [state, setState] = useState<{ on: boolean; audience: Audience }>({
+  const [state, setState] = useState<{ on: boolean; audience: Audience; throttle: Throttle }>({
     on: false,
     audience: "screened_in",
+    throttle: "per_day",
   });
 
   /* Through a ref so the effect below keeps its `[active]` deps — ONE read per shell mount is the
@@ -103,7 +119,9 @@ export function useAwayNotice(active: boolean, transport?: AwayTransport): AwayN
     void (async () => {
       try {
         const loaded = await via.state();
-        if (alive) setState({ on: loaded.enabled, audience: loaded.audience });
+        if (alive) {
+          setState({ on: loaded.enabled, audience: loaded.audience, throttle: loaded.throttle });
+        }
       } catch {
         // No server, or a refused read: the notice stays absent, which is the surface this
         // slice found — never a claim the server has not made.
@@ -112,11 +130,11 @@ export function useAwayNotice(active: boolean, transport?: AwayTransport): AwayN
     return () => { alive = false; };
   }, [active]);
 
-  const update = useCallback((next: { enabled: boolean; audience: Audience }) => {
-    setState({ on: next.enabled, audience: next.audience });
+  const update = useCallback((next: { enabled: boolean; audience: Audience; throttle: Throttle }) => {
+    setState({ on: next.enabled, audience: next.audience, throttle: next.throttle });
   }, []);
 
-  return { on: state.on, audience: state.audience, update };
+  return { on: state.on, audience: state.audience, throttle: state.throttle, update };
 }
 
 /**
@@ -144,11 +162,11 @@ function openAwaySettings(): void {
  * `role="status"`: the responder being on is exactly the kind of ambient fact a screen reader
  * should hear once and not be interrupted by.
  */
-export function AwayNotice({ audience }: { audience: Audience }) {
+export function AwayNotice({ audience, throttle }: { audience: Audience; throttle: Throttle }) {
   const t = useTranslations("away");
   return (
     <div className="ohx-notice" role="status">
-      <span>{audience === "everyone" ? t("noticeEveryone") : t("noticeScreenedIn")}</span>
+      <span>{t("notice", { audience, throttle })}</span>
       <button type="button" onClick={openAwaySettings}>
         {t("noticeSettings")}
       </button>

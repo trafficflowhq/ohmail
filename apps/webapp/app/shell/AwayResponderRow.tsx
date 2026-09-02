@@ -7,17 +7,23 @@
  * /away-responder` was reachable only by hand, and nothing read what it stored. So this is the
  * whole of the configuration, deliberately small — the switch, what it says, and WHO gets it.
  *
- * ── WHY IT IS A FORM WITH A SAVE, AND NOT FOUR LIVE CONTROLS ─────────────────────────────────
+ * ── WHY IT IS A FORM WITH A SAVE, AND NOT FIVE LIVE CONTROLS ─────────────────────────────────
  *
  * Every other control in Settings writes on the press: a switch flips, a dial moves, one field
- * changes. This one cannot, for a reason that is about the feature and not about the widget.
+ * changes. This one does not, and the ORIGINAL reason has since been engineered away — which is
+ * worth recording, because it is no longer the reason.
  *
- * `PUT /away-responder` is a FULL REPLACE, and the row's `updatedAt` is the away responder's
- * ENABLEMENT EPISODE — the key the worker's at-most-once record is filed under. So every write
- * starts a new episode and re-arms a reply to every correspondent already answered. A debounced
- * autosave on a text field would mint one episode per keystroke pause, and somebody fixing a typo
- * mid-holiday would answer their correspondents again, once per pause. One explicit press is one
- * episode, which is the honest number.
+ * It used to be that `updatedAt` was the responder's "enablement episode", the key the at-most-once
+ * record was filed under, so every save re-armed a reply to every correspondent already answered
+ * and a debounced autosave would have minted one episode per keystroke pause. That is fixed rather
+ * than mitigated: the window's floor is `enabled_at`, which moves only on OFF → ON, and
+ * `throttle='per_message'` is keyed by a HASH OF THE TEXT. Saving without editing now changes
+ * nothing about who gets answered.
+ *
+ * The form stays a form for a plainer reason: `PUT /away-responder` is a FULL REPLACE, and the
+ * message is prose. A live-saving textarea would write a half-typed sentence into mail that goes
+ * out in somebody's name while they are not looking. One explicit press is one decision about what
+ * strangers will read.
  *
  * ── THE AUDIENCE IS THE CONTROL THAT MATTERS, AND ITS DEFAULT IS THE NARROW ONE ──────────────
  *
@@ -27,13 +33,21 @@
  * somebody makes rather than a default they inherit, and the copy says which is which without
  * scolding anybody for picking the wider one.
  *
+ * ── AND THE RATE IS THE CONTROL THAT WAS MISSING ─────────────────────────────────────────────
+ *
+ * "Each person is answered once per enablement" used to be a consequence of the schema that nobody
+ * had chosen and nobody could change. It is a setting now — every message, once per text, once a
+ * day (the default), once a week — because the right answer differs by why somebody is away: a day
+ * out of the office and a month on sabbatical are not the same promise to make to a correspondent
+ * who writes every morning.
+ *
  * The description under the switch says what the responder will NOT do, because that is the part
- * nobody can see: mailing lists, no-reply addresses, security mail and the account's own addresses
- * are never answered, and each correspondent is answered once. NONE OF THAT IS ENFORCED HERE — the
- * suppressions live in the server-side sender, and this component only reports them. So the copy
- * below is a claim about somebody else's code, which makes it the one thing in this file that can go
+ * nobody can see: mailing lists, no-reply addresses, security mail, senders screened out, and the
+ * account's own addresses are never answered. NONE OF THAT IS ENFORCED HERE — the suppressions are
+ * `packages/core/src/away-eligibility.ts`'s and this component only reports them. So the copy below
+ * is a claim about somebody else's code, which makes it the one thing in this file that can go
  * quietly false: if a guard is ever relaxed, this sentence has to be edited in the same change, and
- * a promise of protection may never be added here before the sender implements it.
+ * a promise of protection may never be added here before the guard exists.
  *
  * ── COPY IS A SHIM, ON PURPOSE ───────────────────────────────────────────────────────────────
  *
@@ -58,23 +72,28 @@ import { away as awayApi, type AwayResponderWire } from "../api-client";
  */
 export const AWAY_COPY = {
   title: "Away responder",
-  on: "On. One reply per person, from the mailbox they wrote to.",
+  on: "On. Replies to new mail, from the mailbox it arrived in.",
   off: "Off. Nothing is sent.",
-  subjectLabel: "Subject",
   bodyLabel: "Message",
   audienceLabel: "Who gets a reply",
   screenedIn: "People I've let in",
   everyone: "Everyone who writes",
   screenedInNote: "Senders still waiting in the Screener are not answered.",
   everyoneNote: "Strangers in the Screener are answered too — they learn this address is read.",
+  throttleLabel: "How often per person",
+  always: "Every message",
+  per_message: "Once, until you change the text",
+  per_day: "At most once a day",
+  per_week: "At most once a week",
   never:
-    "Never sent to mailing lists, no-reply addresses, security mail, or your own addresses. "
-    + "Each person is answered once until you change these settings.",
+    "Never sent to mailing lists, no-reply addresses, security mail, senders you've screened out, "
+    + "or your own addresses.",
+  localNote: "Replies are sent while ohmail is open on this computer.",
   save: "Save",
   saving: "Saving…",
   saved: "Saved.",
   failed: "That did not save. Nothing changed.",
-  incomplete: "Add a subject and a message before turning this on.",
+  incomplete: "Add a message before turning this on.",
   unreachable: "Your away settings could not be read just now. Nothing here has changed.",
 } as const;
 
@@ -89,14 +108,16 @@ type Audience = AwayResponderWire["audience"];
  *
  * THE DESKTOP CANNOT. Its content policy forbids the window opening a socket at all, and the Cloud
  * client is not compiled into that build — `apps/desktop/vite.config.ts` aliases this module's
- * `../api-client` to a stub whose every value export refuses. On the HOSTED door that window still
- * has an account behind it: the request goes down the pipe to the mail engine on this machine,
- * which serves no `/away-responder` locally and therefore forwards it to the account with the
- * bearer. Same endpoint, same stored row, same hosted sender — one hop more.
+ * `../api-client` to a stub whose every value export refuses. Both of its doors therefore send the
+ * request down the pipe to the mail engine on this machine, and what the engine does with it
+ * differs: on the HOSTED door it forwards to the account with the bearer, so the row is the hosted
+ * account's; on the STANDALONE door it answers out of the database on this machine, and the drain
+ * in that same engine is what sends. Same endpoint, same fields, same control — see {@link local}
+ * for the one sentence that differs.
  *
  * So the transport is a parameter and everything else here is shared. A second copy of this control
- * for the desktop would be a second definition of what one enablement episode is, and the episode
- * is the key the worker's at-most-once record is filed under.
+ * for the desktop would be a second definition of what the responder stores and what its copy
+ * promises, on the one surface in the product that decides what strangers are told.
  */
 export interface AwayTransport {
   state: () => Promise<AwayResponderWire>;
@@ -106,22 +127,47 @@ export interface AwayTransport {
 /** The two audiences, in the order the control draws them. Labels are resolved at render. */
 const AUDIENCE_IDS: readonly Audience[] = ["screened_in", "everyone"];
 
+type Throttle = AwayResponderWire["throttle"];
+
+/**
+ * The four rates, LOOSEST FIRST, which is the order the sentence they form reads in: every message,
+ * then once per text, then a day, then a week. `per_day` is the default and sits third rather than
+ * first on purpose — the control shows where the default sits on a range, instead of presenting it
+ * as the leading option and the rest as departures from it.
+ */
+const THROTTLE_IDS: readonly Throttle[] = ["always", "per_message", "per_day", "per_week"];
+
 type Draft = Omit<AwayResponderWire, "updatedAt">;
 
 const RESTING: Draft = {
-  enabled: false, subject: null, body: null, startsAt: null, endsAt: null, audience: "screened_in",
+  enabled: false, body: null, startsAt: null, endsAt: null,
+  audience: "screened_in", throttle: "per_day",
 };
 
-export function AwayResponderRow({ onChanged, transport }: {
+export function AwayResponderRow({ onChanged, transport, local = false }: {
   /**
    * THE SHELL'S ECHO — how the Ohbox notice (`AwayNotice.tsx`) learns of a same-tab edit
    * without a refetch. Called with what the SERVER answered — the mount load and every save
    * echo, never what a click asked for — so the row and any listener can only agree.
    * Optional: this row predates the notice, and a mount with nothing to tell stays valid.
    */
-  onChanged?: (state: { enabled: boolean; audience: Audience }) => void;
+  onChanged?: (state: { enabled: boolean; audience: Audience; throttle: Throttle }) => void;
   /** The two calls, or the hosted client. See {@link AwayTransport}. */
   transport?: AwayTransport;
+  /**
+   * IS THIS THE STANDALONE DOOR? — decides one sentence, and only that.
+   *
+   * On a standalone install the replies are sent by the engine on THIS machine, which runs only
+   * while the window is open. The control is otherwise identical (same row, same endpoint shape,
+   * same stored fields), so this is a note and not a mode — but it is a note the pane may not omit:
+   * offering a responder that silently does nothing overnight, under copy written for a door that
+   * never sleeps, is the control lying about what it does.
+   *
+   * Defaults to false, which is the HOSTED reading, and that default is safe in the direction that
+   * matters: a hosted pane that wrongly showed the note would understate a promise it does keep,
+   * and the caller that would have to get it wrong (`DesktopGate`) reads it from `awayDoorFor`.
+   */
+  local?: boolean;
 } = {}) {
   const t = useTranslations("away");
   /**
@@ -178,10 +224,11 @@ export function AwayResponderRow({ onChanged, transport }: {
         const loaded = await wireOf().state();
         if (!alive.current) return;
         setDraft({
-          enabled: loaded.enabled, subject: loaded.subject, body: loaded.body,
-          startsAt: loaded.startsAt, endsAt: loaded.endsAt, audience: loaded.audience,
+          enabled: loaded.enabled, body: loaded.body,
+          startsAt: loaded.startsAt, endsAt: loaded.endsAt,
+          audience: loaded.audience, throttle: loaded.throttle,
         });
-        changed.current?.({ enabled: loaded.enabled, audience: loaded.audience });
+        changed.current?.({ enabled: loaded.enabled, audience: loaded.audience, throttle: loaded.throttle });
       } catch {
         // No server, or a refused read. The CONTROLS stay absent rather than offering one whose
         // Save would fail — a responder somebody believes they configured is worse than none — and
@@ -193,7 +240,10 @@ export function AwayResponderRow({ onChanged, transport }: {
 
   if (!draft) return unreachable ? <p className="set-note-inline">{t("unreachable")}</p> : null;
 
-  const complete = (draft.subject ?? "").trim().length > 0 && (draft.body ?? "").trim().length > 0;
+  // The MESSAGE alone now: the responder composes no subject of its own, so the only thing that
+  // can be missing is the words. The server holds the same line (`liveResponders` skips a responder
+  // with an empty body), and this is that requirement stated where somebody can see why.
+  const complete = (draft.body ?? "").trim().length > 0;
   const edit = (patch: Partial<Draft>): void => {
     setState("idle");
     setDraft((d) => (d ? { ...d, ...patch } : d));
@@ -212,10 +262,11 @@ export function AwayResponderRow({ onChanged, transport }: {
         if (!alive.current) return;
         // Set from the ECHO, never from what was asked for: the server is what the worker reads.
         setDraft({
-          enabled: stored.enabled, subject: stored.subject, body: stored.body,
-          startsAt: stored.startsAt, endsAt: stored.endsAt, audience: stored.audience,
+          enabled: stored.enabled, body: stored.body,
+          startsAt: stored.startsAt, endsAt: stored.endsAt,
+          audience: stored.audience, throttle: stored.throttle,
         });
-        changed.current?.({ enabled: stored.enabled, audience: stored.audience });
+        changed.current?.({ enabled: stored.enabled, audience: stored.audience, throttle: stored.throttle });
         setState("saved");
       } catch {
         if (alive.current) setState("failed");
@@ -239,22 +290,15 @@ export function AwayResponderRow({ onChanged, transport }: {
           />
         }
       />
-      {/* THE TWO THINGS SOMEBODY WRITES ARE FIELDS, NOT ROWS. `SettingsRow` puts its control at
-          the right of a label, which is right for a switch and wrong for prose: the subject line
-          got a 200px flex basis and the message a three-row textarea in the same gutter, so the
-          one control in Settings whose content is a sentence people will read was the narrowest
-          one on the pane. `SettingsField` is label above, control at full width, hint below —
-          and its `htmlFor` gives each control a VISIBLE accessible name, which is what the
-          `aria-label` here was standing in for. */}
-      <SettingsField htmlFor="away-subject" label={t("subjectLabel")}>
-        <input
-          id="away-subject"
-          type="text"
-          value={draft.subject ?? ""}
-          disabled={pending}
-          onChange={(e) => edit({ subject: e.target.value })}
-        />
-      </SettingsField>
+      {/* THE ONE THING SOMEBODY WRITES IS A FIELD, NOT A ROW. `SettingsRow` puts its control at
+          the right of a label, which is right for a switch and wrong for prose: the message got a
+          three-row textarea in a narrow gutter, so the one control in Settings whose content is a
+          sentence people will read was the narrowest one on the pane. `SettingsField` is label
+          above, control at full width, hint below — and its `htmlFor` gives the control a VISIBLE
+          accessible name, which is what the `aria-label` here was standing in for.
+
+          The SUBJECT field that stood above this one is gone: the responder replies in the
+          correspondent's own thread under `Re: <their subject>`, so there is nothing to compose. */}
       <SettingsField htmlFor="away-body" label={t("bodyLabel")}>
         <textarea
           id="away-body"
@@ -276,7 +320,40 @@ export function AwayResponderRow({ onChanged, transport }: {
           />
         }
       />
+      {/* THE RATE. `SegmentedControl` because the four members are one ordered range and somebody
+          choosing between them is choosing a POSITION on it — a select would hide three of the four
+          behind a press and lose that. Same widget as the audience row above, so the two settings
+          that decide who hears from this address and how often read as one pair.
+
+          A designer pass may restyle this; the shape is the existing control, not a new one. */}
+      <SettingsRow
+        label={t("throttleLabel")}
+        control={
+          <SegmentedControl<Throttle>
+            options={THROTTLE_IDS.map((id) => ({ id, label: t(id) }))}
+            value={draft.throttle}
+            ariaLabel={t("throttleLabel")}
+            onChange={(throttle) => edit({ throttle })}
+          />
+        }
+      />
+      {/* WHAT THE RESPONDER WILL NOT DO — the part nobody can see, and therefore the part that has
+          to be said. NONE OF IT IS ENFORCED HERE: the suppressions live in
+          `packages/core/src/away-eligibility.ts` and this sentence only reports them, which makes
+          it a claim about somebody else's code. If a guard is ever relaxed, this line is edited in
+          the same change, and a promise of protection may never be added here before the guard
+          exists. `screened out` was added to it in the same commit that made
+          `AWAY_NEVER_ANSWERED_FOLDERS` audience-blind.
+
+          The per-person rate is deliberately NOT restated here: it is the control directly above,
+          and a sentence repeating it would go stale the moment the two disagree. */}
       <p className="set-note-inline">{t("never")}</p>
+      {/* THE STANDALONE PROMISE, and it is only true on that door. An install with no account
+          behind it answers mail from THIS machine while the window is open, so "your responder is
+          on" would be a promise the app cannot keep overnight. The hosted door keeps it, and says
+          nothing extra. `localNote` is rendered on the strength of the transport the host passed,
+          not on a guess about the environment — see `AwayTransport`. */}
+      {local ? <p className="set-note-inline">{t("localNote")}</p> : null}
       {/* THE VERB AND ITS ANSWER, TOGETHER. The outcome used to render as a bare `<span>` after a
           `gate-actions` div — the sign-in gate's container, borrowed on a settings pane — so the
           one press in Settings that starts an enablement episode reported into loose text below

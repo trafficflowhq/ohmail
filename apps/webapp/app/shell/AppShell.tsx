@@ -671,6 +671,7 @@ export function AppShell({
   screeningSection,
   screenerSuggest,
   awayTransport,
+  awayIsLocal,
   profileImportTransport,
   consentTransport,
   olderBodyWire,
@@ -891,19 +892,39 @@ export function AppShell({
    * that is written is the hosted account's own, and the hosted worker sends from it — exactly as
    * for a browser tab.
    *
-   * ── AND WHY A STANDALONE INSTALL STILL GETS NOTHING ─────────────────────────────────────────
+   * ── THE STANDALONE DOOR GETS IT TOO NOW, AND THIS PARAGRAPH USED TO SAY THE OPPOSITE ───────
    *
-   * That is a product boundary rather than a missing transport, and it is structural: the sender is
-   * a pass in the hosted service, whose module map deliberately does not publish it — a rule that
-   * service's own build holds rather than one somebody remembers. An always-on
-   * replier cannot live in an application that only runs while its window is open, and both installs
-   * organize the SAME mailbox under one lease — two responders would keep two separate at-most-once
-   * records and answer the same correspondent twice. So the standalone door wires no transport, this
-   * shell offers no control, and `SettingsView` grows no nav entry.
+   * It said the standalone install "still gets nothing", that this was "a product boundary rather
+   * than a missing transport", and that "an always-on replier cannot live in an application that
+   * only runs while its window is open". The first two are simply no longer true and the third was
+   * an argument for a WEAKER PROMISE, not for no feature: replies go out while ohmail is open on
+   * that computer, the pane says exactly that, and mail that arrives overnight is answered on the
+   * next launch's first drain.
+   *
+   * What made it possible is that the sender is no longer a pass in the hosted worker's private
+   * module map. It is `runAwayResponderPass` in `@trafficflow/services`, which the desktop engine
+   * already bundles, so the standalone door runs the SAME implementation with its own SMTP dial —
+   * the sync pipeline's one-implementation rule, applied to replying.
+   *
+   * The two-responders objection was real and is answered structurally rather than by withholding
+   * the door: exactly one install organizes a mailbox at a time (the lease), the pass's candidate
+   * query JOINs `organizer_role='organizer'`, and the reservation is a UNIQUE on (account, message).
+   * A reader answers nobody, and two runners racing one message produce one reply.
    *
    * Absent ⇒ the hosted client, which is what a browser tab has, gated on `autoOptIn.supported`.
    */
   awayTransport?: AwayTransport;
+  /**
+   * IS THE AWAY CONTROL ON THE STANDALONE DOOR? — passed straight through to
+   * `AwayResponderRow.local`, where it decides one sentence: "Replies are sent while ohmail is open
+   * on this computer."
+   *
+   * Separate from {@link awayTransport} being present, because the two answer different questions —
+   * the transport says "this host has its own wire", which is true on BOTH desktop doors, and this
+   * says "the replies leave from this machine", which is true on only one of them. Collapsing them
+   * would put the standalone sentence on the hosted desktop pane, where it is false.
+   */
+  awayIsLocal?: boolean;
   /**
    * THE PROFILE IMPORT'S THREE CALLS, WHEN THE HOST HAS ITS OWN WIRE — the desktop, on BOTH of
    * its doors, and nobody else.
@@ -1080,6 +1101,7 @@ export function AppShell({
             screeningSection={screeningSection}
             screenerSuggest={screenerSuggest}
             awayTransport={awayTransport}
+            awayIsLocal={awayIsLocal}
             profileImportTransport={profileImportTransport}
             consentTransport={consentTransport}
             olderBodyWire={olderBodyWire}
@@ -1133,7 +1155,7 @@ function MailStateHost({ probe, freshnessProbe, children }: { probe?: MailboxPro
   );
 }
 
-function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, billingSection, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, notificationHost, screeningSection, screenerSuggest, awayTransport, profileImportTransport, consentTransport, olderBodyWire, junkWire, suggestWire, aiCredits, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
+function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, billingSection, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, notificationHost, screeningSection, screenerSuggest, awayTransport, awayIsLocal, profileImportTransport, consentTransport, olderBodyWire, junkWire, suggestWire, aiCredits, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
   /** The pull settle watch's read — the same probe `MailStateHost` above provides the strip. */
   mailboxFacts?: MailboxProbe;
   /** The host's surface declaration for the attach ceiling — see `AppShell`'s prop of this name. */
@@ -1156,6 +1178,7 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
     absorb: (rows: Array<{ address: string; suggestion: SenderSuggestion }>) => void;
   }) => ReactNode;
   awayTransport?: AwayTransport;
+  awayIsLocal?: boolean;
   profileImportTransport?: ProfileImportTransport;
   consentTransport?: ConsentTransport;
   /** The reach-past body wire — see the outer prop of the same name. */
@@ -6356,7 +6379,7 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
                        absent, so OhboxView's spacing never reserves an empty band. */
                     const away = demo || !awaySupported || !awayNotice.on
                       ? null
-                      : <AwayNotice audience={awayNotice.audience} />;
+                      : <AwayNotice audience={awayNotice.audience} throttle={awayNotice.throttle} />;
                     /* ── ONE ASK AT A TIME ON A FIRST RUN ──────────────────────────────
                        MEASURED on the released 0.13.7: at +15 s after connecting a mailbox a
                        person faced THREE asks at once — the setup flow's modal, the OS
@@ -7017,7 +7040,7 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
                    without a refetch — the row reports what the SERVER answered, never what a
                    click asked for, into the one `useAwayNotice` state the shell holds. */
                 awaySection={demo || !awaySupported ? undefined : (
-                  <AwayResponderRow onChanged={awayNotice.update} transport={awayTransport} />
+                  <AwayResponderRow onChanged={awayNotice.update} transport={awayTransport} local={awayIsLocal ?? false} />
                 )}
                 billingSection={demo ? undefined : billingSection}
                 /* ABOUT — the one injected pane the demo also gets, because the demo has

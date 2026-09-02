@@ -8,23 +8,34 @@
  * whose value exports refuse. The request goes down the pipe to the mail engine on this machine
  * instead, exactly as `cloud-suggest.ts` sends the Screener's purchase.
  *
- * ── ONE DOOR ONLY, AND THAT IS THE PRODUCT RATHER THAN THE PLUMBING ─────────────────────────
+ * ── BOTH DOORS NOW, AND THIS HEADER USED TO ARGUE THE OPPOSITE ──────────────────────────────
  *
- * `DesktopScreening` and `local-ai.ts` are offered on BOTH doors, because on the standalone door
- * the engine answers those routes out of the database on this machine. This module is wired on the
- * HOSTED door alone (`awayDoorFor` in `doors.js`), and the reason is not that a standalone engine
- * would refuse — it would answer perfectly well, and that is exactly the trap. What sends an away
- * reply is a scheduled pass in the hosted worker. Nothing else can reach it: the worker's package
- * publishes four subpaths and the responder is not among them, which is a rule the build enforces
- * rather than one somebody remembers. An always-on replier cannot exist in an application that only
- * runs while its window is open, and both installs organize the SAME mailbox under one lease — two
- * responders would keep two separate at-most-once records and answer the same correspondent twice,
- * neither record seeing the other.
+ * It said "ONE DOOR ONLY": that the responder was "a scheduled pass in the hosted worker", that
+ * "nothing else can reach it", and that "an always-on replier cannot exist in an application that
+ * only runs while its window is open" — so a standalone install got "no control at all rather than
+ * one that stores a configuration and answers nobody".
  *
- * So a standalone install gets no control at all rather than one that stores a configuration and
- * answers nobody. On the hosted door the engine serves no `/away-responder` of its own and forwards
- * it to the account with the bearer, so the row that is written IS the hosted account's row and the
- * hosted worker is what sends from it.
+ * The premise was true and is not any more. The pass is `runAwayResponderPass` in
+ * `@trafficflow/services`, which the desktop engine bundles, and the sidecar's drain runs it with
+ * this machine's own SMTP dial. A standalone install therefore stores a configuration that IS
+ * acted on — by the engine on this computer, while the window is open, which is a smaller promise
+ * than Cloud's and is the sentence the pane now carries ("Replies are sent while ohmail is open on
+ * this computer").
+ *
+ * The two-responders objection in that paragraph was the real one, and it is answered structurally
+ * rather than by withholding the door. Exactly one install organizes a mailbox at a time — the
+ * lease — the pass's candidate query JOINs `organizer_role='organizer'`, and the reservation is a
+ * UNIQUE on (account, message). A reader answers nobody, and two runners racing one message produce
+ * one reply between them.
+ *
+ * ── SO WHAT DOES THIS MODULE STILL DO, AND ON WHICH DOOR ────────────────────────────────────
+ *
+ * It is the WIRE, and the same wire serves both. On the HOSTED door the engine serves no
+ * `/away-responder` of its own and forwards it to the account with the bearer, so the row written
+ * is the hosted account's. On the STANDALONE door the engine answers the same path out of the
+ * database on this machine. Same request from the window's point of view, two different rows behind
+ * it — which is why `awayDoorFor` returns WHICH door rather than a boolean: the pane's copy differs
+ * even though this transport does not.
  *
  * ── WHAT A REFUSAL MEANS HERE ───────────────────────────────────────────────────────────────
  *
@@ -43,11 +54,15 @@ import type { AwayResponderWire } from "../../webapp/app/api-client";
 /**
  * The hosted route, addressed root-relative like every path in this window.
  *
- * Exported because the engine has to do the right thing with it and "the right thing" is one
- * specific thing: this endpoint must be FORWARDED on the hosted door, never answered out of the
- * local mirror. `cloud-read.ts`'s table is the list of routes that are served locally, and this one
- * is deliberately absent from it — a locally-answered `PUT` here would store an away responder on
- * this machine that no worker anywhere reads.
+ * Exported because the engine has to do the right thing with it, and the right thing is
+ * door-dependent: on the HOSTED door this endpoint must be FORWARDED to the account, never answered
+ * out of the local mirror — `cloud-read.ts`'s table lists the routes served locally and this one is
+ * deliberately absent from it, because a locally-answered `PUT` there would store a responder on
+ * this machine while the account's own row, which the hosted clock reads, stayed as it was.
+ *
+ * On the STANDALONE door there is no account to forward to and the engine answers it itself, which
+ * is the ordinary shape for every route on that door. That asymmetry is `cloud-read.ts`'s whole
+ * subject and needs no exception for this path.
  */
 export const AWAY_PATH = "/away-responder";
 

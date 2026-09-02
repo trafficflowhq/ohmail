@@ -209,28 +209,40 @@ export function suggestDoorFor(status: EngineStatus | null): SuggestDoor {
 }
 
 /**
- * WHETHER THIS INSTALL MAY CONFIGURE AN AWAY RESPONDER — a decision, so it is a function here and
+ * WHICH DOOR'S AWAY RESPONDER THIS INSTALL MAY CONFIGURE — a decision, so it is a function here and
  * not a condition buried in a render, for the reason `gateFor` and `suggestDoorFor` are.
  *
- * It is NOT the same question as `suggestDoorFor`, even though the two agree on every status they
- * have ever been shown. That one is about SPENDING: never offer a purchase control with no ledger
- * behind it. This one is about a SENDER, and the rule is stronger than "the control would refuse".
+ * ── IT RETURNS `"local"` NOW, AND THIS DOCBLOCK USED TO ARGUE IT NEVER COULD ────────────────
  *
- *  · STANDALONE. The engine on this machine would answer `GET/PUT /away-responder` perfectly well
- *    out of its own database, and that is exactly why the check has to be here rather than left to
- *    the route. Nothing on this door SENDS the reply: the responder is a scheduled pass in the
- *    hosted service, whose module map publishes four entry points and not that one — a rule its own
- *    build holds rather than one somebody remembers. An always-on replier cannot live in an app
- *    that only runs while its window is open. So the control is absent, and a stored configuration
- *    that answers nobody is impossible rather than merely unlikely.
- *  · HOSTED, SIGNED IN. The account is real, the engine forwards this endpoint to it with the
- *    bearer, and the hosted worker sends from the row that is written. Identical to a browser tab
- *    with one hop more.
- *  · HOSTED, NOT SIGNED IN — or no door yet, or no answer from the shell. `null`, like the suggest
- *    control's: every read would be refused, and a settings pane whose only state is an error about
- *    something it cannot fix from inside itself is worse than no pane.
+ * The standalone arm said: *"Nothing on this door SENDS the reply: the responder is a scheduled
+ * pass in the hosted service, whose module map publishes four entry points and not that one… An
+ * always-on replier cannot live in an app that only runs while its window is open."* The first
+ * sentence stopped being true when the pass moved to `@trafficflow/services` — which the desktop
+ * engine already bundles — and runs in the sidecar's drain with this machine's own SMTP dial.
+ *
+ * The second sentence was never an argument for withholding the control; it was an argument for a
+ * SMALLER PROMISE. So the promise is smaller and it is stated on the pane: "Replies are sent while
+ * ohmail is open on this computer." Mail that arrives overnight is answered on the next launch's
+ * first drain, and the per-person throttle is what keeps that drain from answering a week of
+ * correspondents at once.
+ *
+ *  · STANDALONE — `"local"`, whenever the engine is serving. The engine answers `GET/PUT
+ *    /away-responder` out of its own database and its own drain sends from it. A credential the
+ *    engine cannot read is not a reason to withhold the CONTROL: the responder is configuration,
+ *    the pane's own failed-read state already covers an engine that will not answer, and gating on
+ *    the password would hide the setting on exactly the launch where somebody is mid-setup.
+ *  · HOSTED, SIGNED IN — `"cloud"`. The account is real, the engine forwards this endpoint to it
+ *    with the bearer, and the hosted clock sends from the row that is written. Identical to a
+ *    browser tab with one hop more.
+ *  · HOSTED, NOT SIGNED IN — or no answer from the shell. `null`, like the suggest control's:
+ *    every read would be refused, and a settings pane whose only state is an error about something
+ *    it cannot fix from inside itself is worse than no pane.
+ *
+ * The two live arms are NOT interchangeable at the call site: `"local"` also selects the sentence
+ * above, and `DesktopGate` reads this function's answer rather than re-deriving the mode.
  */
-export function awayDoorFor(status: EngineStatus | null): "cloud" | null {
+export function awayDoorFor(status: EngineStatus | null): "local" | "cloud" | null {
+  if (status?.mode === "local") return "local";
   return status?.mode === "cloud" && status.credentialState === "ready" ? "cloud" : null;
 }
 
@@ -238,12 +250,16 @@ export function awayDoorFor(status: EngineStatus | null): "cloud" | null {
  * WHETHER THIS INSTALL MAY ASK ABOUT SETTINGS FOUND ON A MAILBOX — the profile-import card's
  * door rule, a pure function here for the reason `gateFor` and `awayDoorFor` are.
  *
- * It is NOT `awayDoorFor` under another name, and the difference is the standalone arm. The
- * responder is withheld there because nothing on that door SENDS the reply; the confirm-import
- * flow has no such absent half — the engine on this machine mounts the three routes itself and
- * answers them out of its own store, and the standalone door is the flow's flagship case: a
- * mailbox that arrives carrying another ohmail's settings (leave Cloud, install the app) is
- * asked before anything is applied.
+ * It now returns the SAME shape as `awayDoorFor` for every status either has been shown, and it is
+ * still deliberately a separate function. The old note here said the difference was the standalone
+ * arm — "the responder is withheld there because nothing on that door SENDS the reply" — and that
+ * ceased to be true when the responder's pass moved into the engine's own bundle. The reason to
+ * keep two functions is the one `accountDoorFor` gives below: they ask different questions, and a
+ * change to either must not be a silent change to the other.
+ *
+ * The standalone door is this flow's flagship case: the engine on this machine mounts the three
+ * routes itself and answers them out of its own store, and a mailbox that arrives carrying another
+ * ohmail's settings (leave Cloud, install the app) is asked before anything is applied.
  *
  *  · STANDALONE — always, even without the mailbox password. The card's resting question is a
  *    marker read the engine answers without dialling, and a held question it cannot re-verify
@@ -268,11 +284,14 @@ export function profileImportDoorFor(status: EngineStatus | null): "local" | "cl
  * (`cloud-suggest.ts`, which the opt-in's quote runs on), and the three panes that exist only
  * because there is an account behind this window — Subscription, Security and Account.
  *
- * It agrees with {@link awayDoorFor} on every status either has been shown, and it is deliberately
- * a separate function rather than a second caller of that one. They ask different questions and one
- * of them could move: that one is about whether a REPLY CAN BE SENT, a fact about the hosted
- * worker's schedule; this one is about whether there is an ACCOUNT TO READ AND WRITE. Collapsing
- * them would make a change to either a silent change to the other.
+ * It NO LONGER agrees with {@link awayDoorFor}, and that divergence is exactly why the two were
+ * kept apart. This note used to say they agreed "on every status either has been shown" while
+ * warning that "one of them could move". One of them moved: the away responder now answers
+ * `"local"` on the standalone door, because the reply is sent by the engine on this machine.
+ * This function still answers `null` there, and must — a standalone install has no account, so
+ * there is no subscription, no second factor, no ledger and nothing to administer. Had these been
+ * one function, the responder's new arm would have opened four panes onto an account that does not
+ * exist.
  *
  *  · STANDALONE. There is no account, so there is nothing here to administer: no consent row to
  *    store a window or a spending watermark in, no ledger to price against, no subscription and no

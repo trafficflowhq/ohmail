@@ -1647,12 +1647,24 @@ export const consent = {
 /** The single per-account autoresponder row, as `GET/PUT /away-responder` serve it. */
 export interface AwayResponderWire {
   enabled: boolean;
-  subject: string | null;
+  /**
+   * NO `subject`. The responder is REPLY-ONLY: it answers with `Re: <what the correspondent
+   * wrote>`, threaded by `In-Reply-To`/`References`, so there is no subject for anyone to compose.
+   * The server accepts the field from an older client and ignores it, which is what keeps a browser
+   * tab that has not reloaded from 400ing on every save — including the save that turns the
+   * responder off.
+   */
   body: string | null;
   startsAt: string | null;
   endsAt: string | null;
   /** Who gets an automatic reply. `screened_in` restricts it to senders past the Screener. */
   audience: "screened_in" | "everyone";
+  /**
+   * How often ONE PERSON may be answered. `per_day` is the default and what every existing
+   * responder carries. `per_message` means "once, until you change the text" — keyed by the text
+   * itself, so saving without editing does not re-answer anybody.
+   */
+  throttle: "always" | "per_message" | "per_day" | "per_week";
   updatedAt: string | null;
 }
 
