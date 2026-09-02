@@ -227,15 +227,6 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     fence: "leader lock; the ledger is reached only through the injected gate (the local engine injects none)",
   },
   {
-    name: "away_responder",
-    module: `${W}/away-responder.ts`, entry: "awayResponderPass",
-    triggers: ["cycle-tail"],
-    cadence: "every cycle tail, per account with an active away window",
-    budget: "AWAY_BATCH candidates, AWAY_SENDS_PER_CYCLE sends",
-    owns: "one away reply per correspondent per window, suppressions stated",
-    fence: "leader lock; sends go through the send machine's reservation",
-  },
-  {
     name: "global_maintenance",
     module: `${W}/index.ts`, entry: "MAINTENANCE_EVERY_MS",
     triggers: ["cycle-tail"],

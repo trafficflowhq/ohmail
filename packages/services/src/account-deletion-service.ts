@@ -7,8 +7,10 @@ import {
   approvals,
   attachments,
   auditLog,
+  awayReplies,
   awayResponderSent,
   awayResponders,
+  awaySenderState,
   changeLog,
   contactNotes,
   contacts,
@@ -383,6 +385,14 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     // `account_id` column and fails on any surviving row, which is what makes this a red test rather
     // than a quiet retention if a future table is added and forgotten.
     await drop("away_responder_sent", tx.delete(awayResponderSent).where(eq(awayResponderSent.accountId, accountId)));
+    // The 0087 pair, and they are here for `away_responder_sent`'s reason stated one line up
+    // rather than for tidiness: `away_replies.sender` and `away_sender_state.sender` are
+    // CORRESPONDENTS' email addresses — somebody else's personal data, held because we sent them
+    // mail — and `away_replies` additionally records that a named person wrote to this account and
+    // when. That is exactly the class the catalog sweep in `account-deletion.test.ts` enumerates,
+    // so both go, and both were red in that sweep until they did.
+    await drop("away_replies", tx.delete(awayReplies).where(eq(awayReplies.accountId, accountId)));
+    await drop("away_sender_state", tx.delete(awaySenderState).where(eq(awaySenderState.accountId, accountId)));
     await drop("away_responders", tx.delete(awayResponders).where(eq(awayResponders.accountId, accountId)));
     await drop("rules", tx.delete(rules).where(eq(rules.accountId, accountId)));
     await drop("graduations", tx.delete(graduations).where(eq(graduations.accountId, accountId)));

@@ -189,7 +189,7 @@ export {
   type CreateNotifyRuleBody, type ListNotifyRulesOptions,
 } from "./notify-rules-service.js";
 export {
-  AwayResponderService, awayResponderService,
+  AwayResponderService, awayResponderService, nextEnabledAt,
   type AwayResponderBody,
 } from "./away-responder-service.js";
 export {
@@ -232,6 +232,14 @@ export {
   runScheduledSendPass, SCHEDULED_SEND_BATCH, SCHEDULED_SEND_EXPIRY_MS, SCHEDULED_SEND_SCAN_FACTOR,
   type ScheduledSendPassDeps, type ScheduledSendPassResult,
 } from "./schedule-send-pass.js";
+// The away responder's pass. MAIL-HALF, by the same test as the scheduled sender beside it: it
+// names no cloud table (the suspension gate is injected) and imports only the mail schema and
+// core's mail entry point — so the desktop engine, which is the standalone door's whole runtime,
+// can carry it. That is what makes "reply while ohmail is open" the same implementation as Cloud's.
+export {
+  runAwayResponderPass, AWAY_SENDS_PER_RUN, AWAY_BATCH, AWAY_ACCOUNTS_PER_RUN, AWAY_THROTTLES,
+  type AwayThrottle, type AwayResponderPassDeps, type AwayResponderPassResult,
+} from "./away-responder-pass.js";
 export {
   SendService, sendService, SEND_STALE_AFTER_MS,
   SEND_ATTEMPT_CEILING_MS, SEND_TIMEOUT_SENTENCE,

@@ -87,7 +87,6 @@ import { screenerAutoSuggestPass } from "./screener-auto-suggest.js";
 import { syncKickPass } from "./sync-kick.js";
 import { sensitiveBackfillPass } from "./sensitive-backfill.js";
 import { storageEvictPass } from "./storage-evict.js";
-import { awayResponderPass } from "./away-responder.js";
 import { isCliEntry, flushExit, installCrashHandlers } from "./entry.js";
 import {
   startPushWake, pushEndpointGuardFromEnv, vapidFromEnv, type RunningPushWake,
@@ -4609,63 +4608,6 @@ export async function startWorkerWithLock(
               "stored drops out of the candidate query, so the next cycle resumes at the next " +
               "unbought sender; a charge with no stored row is retried free (the ledger source " +
               "is the message, so the retry answers `duplicate`)",
-          });
-        }
-      }
-
-      // ── THE AWAY RESPONDER'S SENDER — the only pass here that SENDS MAIL ─────────────────
-      //
-      // Its OWN try/catch and loop, for the reason every block above has one: one account's failure
-      // must not skip the rest. It runs LAST of the per-account passes, and that position is
-      // load-bearing rather than cosmetic — `folder_state` is what `audience='screened_in'` reads,
-      // so a reply must not be decided before the passes above have finished placing this cycle's
-      // mail. A message with no placement yet is treated as un-admitted, so getting the order wrong
-      // would suppress replies rather than send wrong ones; last is still the correct order.
-      //
-      // `openSend` hands over the ATTACHED adapter for the mailbox the message arrived in — the one
-      // this process already holds the organizer lease on, with SMTP configured from the same
-      // credential rows. `null` for a mailbox this instance is not attached to, which is a
-      // suppression and not an error: the shard that does hold it answers instead.
-      for (const accountId of passAccounts) {
-        if (stopped) return;
-        try {
-          const { ran, sent, suppressed, capped } = await awayResponderPass(
-            db as unknown as Tx,
-            {
-              accountId, log,
-              /* -- A READER SENDS NO AWAY REPLY (mail 0083) ---------------------------------
-               *
-               * `runtimes` now holds READER runtimes — that is the whole point of the mode, and
-               * it is what made this line dangerous. It used to hand over the attached adapter
-               * for any mailbox this process holds, on the reasoning stated just above: *"the one
-               * this process already holds the organizer lease on"*. That sentence stopped being
-               * true of `runtimes.get(...)` the moment a loser stayed attached.
-               *
-               * A reader MAY send — a send is a person pressing send, and it completes in the
-               * request. An away reply is not that: it is an automatic message the ORGANIZER
-               * sends on the person's behalf when mail arrives, and its at-most-once claim is
-               * per-STORE. So a reader and the real organizer would each hold their own claim and
-               * each reply, and a stranger writing once would get two identical auto-replies from
-               * the same person — from a machine that was told to stop organizing the mailbox.
-               *
-               * `null` is a SUPPRESSION and not an error, which is exactly the contract this hook
-               * already has for a mailbox this instance is not attached to. The organizer's own
-               * process answers instead.
-               */
-              openSend: async (mailboxId) => {
-                const rt = runtimes.get(mailboxId);
-                return rt && rt.role === "organizer" ? rt.adapter : null;
-              },
-            },
-            new Date(),
-          );
-          if (ran && sent > 0) log.info("away_responder_pass", { accountId, sent, suppressed, capped });
-        } catch (err) {
-          log.error("away_responder_failed", {
-            accountId, err,
-            reason: "no reply is sent when this throws — the at-most-once claim commits in the same " +
-              "statement it is read by, so a failure before SMTP leaves the sender unanswered and " +
-              "a failure after it leaves the claim spent; neither sends a second copy",
           });
         }
       }

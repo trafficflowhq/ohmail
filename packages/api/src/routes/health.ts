@@ -948,6 +948,26 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // a guarded UPDATE that would merely fail loudly. No worker half: the sync host neither reads
   // nor writes the column. Deploy order: migration → API, no third step.
   ["sessions", "last_synced_at"],
+  // mail 0087_away_reply_throttle — the per-person throttle, the reply ledger and the enablement
+  // instant. `away_responders.throttle` is the probe, and it is the COLUMN rather than either new
+  // table because the column is the half that can be missed silently: a database without
+  // `away_replies` or `away_sender_state` answers 42P01 the first time the pass runs, which the
+  // pass's own try/catch logs loudly and which sends nothing. A database that took the two tables
+  // and not this column is the quiet one — the pass would read an absent `throttle` and have to
+  // resolve it to SOME member, and the member it fell through to would decide how often a stranger
+  // is answered.
+  //
+  // `AwayResponderService` selects whole rows (`select().from(awayResponders)`), so an API ahead of
+  // the migration 42703s both `GET` and `PUT /away-responder` — the settings pane and the Ohbox
+  // notice, not just the pass. Deploy order: migration → API → worker, the first arrow
+  // load-bearing exactly as 0051's entry states it.
+  //
+  // No CHECK marker, for 0051's own reason one screen up: the column arrives NOT NULL with a
+  // DEFAULT in the statement before the constraint, so a database that took the column and not the
+  // CHECK still resolves every row to `per_day` — the default — and the service's closed-set
+  // validator refuses anything else at the boundary. A missing CHECK costs a defence in depth, not
+  // a delivery rate.
+  ["away_responders", "throttle"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -1639,13 +1659,27 @@ export const MAIL_EXPECTED_MARKERS =
  * one-time re-screen's durable resume point and the instant of the walk it belongs to (the
  * window its completion check looks back over). Two markers for a two-column migration, as
  * `0078_inbound_quiet` above. They are columns on `mailboxes`, and `MailboxService` selects whole
- * rows, so an API ahead of them 42703s the mailbox list rather than only the operator pass. It is
- * the newest entry.
+ * rows, so an API ahead of them 42703s the mailbox list rather than only the operator pass.
  *
  * `0083_organizer_role` is probed as FIVE columns and FOUR CHECKs — see both lists' own entries
- * for why five and not nine. It is the newest entry, so it is also the tag below, and the object
- * `health.test.ts` names as its proof is `mailboxes_organizer_role_closed`: the CHECK rather than
- * the column, 0082's rule, because the constraint is the stronger probe of the two.
+ * for why five and not nine. The object `health.test.ts` names as its proof is
+ * `mailboxes_organizer_role_closed`: the CHECK rather than the column, 0082's rule, because the
+ * constraint is the stronger probe of the two.
+ *
+ * `0084_ai_answered` is probed as `accounts.ai_answered_at`.
+ *
+ * `0085_heal_disabled_readers` and `0086_heal_reader_address_wide` are DATA-ONLY and get no marker
+ * — no column, no constraint, nothing to probe. `health.test.ts` skips such entries by reading
+ * their statements, which is why the tag below skips over them too.
+ *
+ * `0087_away_reply_throttle` is probed as `away_responders.throttle` — see that marker's own entry
+ * for why the column and not either of the two tables the migration creates. **It is the newest
+ * entry, so it is also the tag below.**
+ *
+ * That last sentence is the one this docblock keeps getting wrong, and it is now attached to the
+ * marker that is actually newest rather than left on an older one. It stood on `0081` and then on
+ * `0083` while the tag had already moved to `0084`, so the file asserted "newest" of three
+ * different entries at once. If you add a marker, move the sentence.
  *
  * **THE FIRST VERSION OF THIS BUMPED THE TAG AND ADDED NO MARKER, on the stated ground that "the
  * census probes COLUMNS". That ground is false and the mistake is recorded rather than quietly
@@ -1659,7 +1693,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0084_ai_answered";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0087_away_reply_throttle";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */

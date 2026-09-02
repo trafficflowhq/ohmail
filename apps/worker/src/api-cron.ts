@@ -65,7 +65,8 @@ import { silentLogger, type Logger } from "@trafficflow/core";
  */
 export interface ApiCronTarget {
   /** Closed name, stable across renames of the path — the key an operator greps for. */
-  target: "billing_reconcile" | "sessions_reap" | "smtp_size" | "scheduled_send" | "send_reconcile";
+  target: "billing_reconcile" | "sessions_reap" | "smtp_size" | "scheduled_send"
+    | "send_reconcile" | "away_responder";
   /** The API route, poked as `GET {baseUrl}{route}` with the bearer secret. */
   route: string;
   /** The cadence. Jitter (up to {@link jitterMs}) is ADDED per wait, never subtracted. */
@@ -171,6 +172,32 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
     // budget from.
     timeoutMs: 60 * 1000,
     // A tenth of the cadence — the sender's reason, one target over.
+    // THE AWAY RESPONDER'S SENDER (mail 0087) — and its being here at all is the fix.
+    //
+    // The pass used to run INSIDE this worker, on the cycle tail. It could not work: this platform
+    // blocks outbound SMTP submission at the port level — `smtp-size.ts` measured twelve hosts,
+    // every dial a timeout, IMAP to the same host 300 ms — so every reply this app ever tried to
+    // send threw, and each throw kept the at-most-once claim that silenced that correspondent for
+    // the rest of the episode. The pass now lives in `@trafficflow/services` and runs on the API
+    // host, which can dial; this entry is the clock that pokes it, exactly as `scheduled_send`
+    // above is for the same reason (plus the second one both share: the services package may not
+    // enter this app's runtime dependency set — see package.json).
+    //
+    // EVERY MINUTE, matching the sender clock beside it: "away" is a promise about mail that has
+    // just arrived, and a coarser cadence would make the reply's delay visible to the person who
+    // wrote. The route bounds its own work (AWAY_SENDS_PER_RUN, one bounded candidate page per
+    // account), so an idle minute costs one indexed read of a table with no live responder in it —
+    // which is ~every minute, for ~every deployment.
+    target: "away_responder",
+    route: "/internal/away/run",
+    everyMs: 60 * 1000,
+    // Its OWN first delay, deliberately not sharing `scheduled_send`'s 45 s: two targets that fire
+    // together on every leader takeover would put two SMTP-dialling invocations on the same host at
+    // the same instant, every deploy. Past the takeover window, and offset from the sender's.
+    firstDelayMs: 52 * 1000,
+    // The route claims only what one serverless invocation can deliver inside its own 60-second
+    // ceiling; this bound is the caller's mirror of that ceiling, not a hope.
+    timeoutMs: 60 * 1000,
     jitterMs: 6 * 1000,
   },
 ];

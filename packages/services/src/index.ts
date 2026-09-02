@@ -167,7 +167,7 @@ export {
   type CreateNotifyRuleBody, type ListNotifyRulesOptions,
 } from "./notify-rules-service.js";
 export {
-  AwayResponderService, awayResponderService,
+  AwayResponderService, awayResponderService, nextEnabledAt,
   type AwayResponderBody,
 } from "./away-responder-service.js";
 export {
@@ -216,6 +216,9 @@ export {
   SEND_RECONCILE_DIAL_DEADLINE_MS, SEND_RECONCILE_GIVE_UP_MS, SEND_RECONCILE_SCAN_FACTOR,
   type SendReconcilePassDeps, type SendReconcilePassResult,
 } from "./send-reconcile-pass.js";
+  runAwayResponderPass, AWAY_SENDS_PER_RUN, AWAY_BATCH, AWAY_ACCOUNTS_PER_RUN, AWAY_THROTTLES,
+  type AwayThrottle, type AwayResponderPassDeps, type AwayResponderPassResult,
+} from "./away-responder-pass.js";
 export {
   SendService, sendService, SEND_STALE_AFTER_MS, SEND_FAILED_SENTENCE,
   SEND_ATTEMPT_CEILING_MS, SEND_TIMEOUT_SENTENCE,

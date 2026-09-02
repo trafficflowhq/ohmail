@@ -844,7 +844,13 @@ export interface NotifyRuleDTO {
 
 export interface AwayResponderDTO {
   enabled: boolean;
-  subject: string | null;
+  /**
+   * The responder is REPLY-ONLY (mail 0087): it carries no subject of its own and answers with
+   * `Re: <what the correspondent wrote>`, threaded by `In-Reply-To`/`References`. `subject` is
+   * therefore GONE from this contract — the column survives one release for a rolling deploy's
+   * sake, unread and unwritten, and `put` accepts the field and ignores it so an older client's
+   * save is not a 400. It is dropped by a 0.15 contract migration.
+   */
   body: string | null;
   startsAt: ISODateTime | null;
   endsAt: ISODateTime | null;
@@ -854,6 +860,15 @@ export interface AwayResponderDTO {
    * first-contact stranger still held there. Never null: see the column's note in `schema-mail.ts`.
    */
   audience: "screened_in" | "everyone";
+  /**
+   * HOW OFTEN ONE PERSON MAY BE ANSWERED — `'per_day'` when omitted by a client, which is both the
+   * column default and what every row migrated by 0087 carries.
+   *
+   * `'per_message'` means "once, until you change the text" and is keyed by a hash of the body, not
+   * by this row's `updatedAt`: a save is not an edit, and keying on the row is what made switching
+   * the responder off and on again re-answer every correspondent.
+   */
+  throttle: "always" | "per_message" | "per_day" | "per_week";
   updatedAt: ISODateTime | null;  // null when never configured (default disabled shape)
 }
 

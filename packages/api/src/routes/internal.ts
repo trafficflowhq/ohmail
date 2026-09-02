@@ -12,6 +12,7 @@ import {
   TransientDialRefusal, type AdminDb,
 } from "@trafficflow/services";
 import type { SendAdapter } from "@trafficflow/core/mail";
+import { runAwayResponderPass, runScheduledSendPass } from "@trafficflow/services";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
 import { makeSendAdapter } from "../send-adapter.js";
 import { MAX_IMAP_PER_MAILBOX } from "../attachments-adapter.js";
@@ -310,6 +311,12 @@ async function admittedSendAdapter(deps: ApiDeps, mailboxId: string): Promise<Se
     } : {}),
   };
 }
+ * The away responder's clock. A SEPARATE route from the scheduled sender's, not a second pass
+ * folded into it: that invocation already budgets its own sends against this platform's 60-second
+ * ceiling, and a slow away run sharing it would eat the appointment clock's margin. Two routes,
+ * two cron entries, two independent deadlines.
+ */
+export const AWAY_RESPONDER_CRON_PATH = "/internal/away/run";
 
 /** class + code, never message text — the same scrubbing rule as `billing_events.error`. */
 function scrubError(err: unknown): string {
@@ -961,6 +968,31 @@ export const internalRoutes: Route[] = [
     options: { public: true, anonymous: true, raw: true },
     handler: async (req, deps) => {
       const log = (deps.logger ?? silentLogger).child({ route: SEND_RECONCILE_CRON_PATH });
+     * `GET /internal/away/run` — THE AWAY RESPONDER'S SENDER (mail 0087).
+     *
+     * The scheduled sender's shape verbatim, and it is on THIS host for the same measured reason
+     * plus one that is specific to this feature: the sync worker's platform blocks outbound SMTP
+     * submission at the port level (`apps/worker/src/smtp-size.ts` — twelve hosts, every dial a
+     * timeout), and the responder used to run THERE. The consequence was not a slow responder; it
+     * was a responder that had almost certainly never delivered a single reply, with each failed
+     * dial keeping its at-most-once claim and silencing that correspondent for the episode. Moving
+     * the pass to the host that can actually dial is the whole of the fix.
+     *
+     * It runs on `deps.db`, the runtime connection, for the scheduled sender's reason: it reads and
+     * writes `away_replies`/`away_sender_state` and dials the user's own mail servers through their
+     * decrypted credentials — user-table machinery the content-blind staff handle does not hold and
+     * must not gain.
+     *
+     * Overlapping pokes are SAFE: the reservation is `INSERT … ON CONFLICT DO NOTHING RETURNING`,
+     * so two invocations racing one message split it rather than answering twice, and the per-sender
+     * throttle is an upsert whose `WHERE` decides. That is the property the whole pass is built on.
+     */
+    method: "GET",
+    pattern: AWAY_RESPONDER_CRON_PATH,
+    cost: "unauthenticated",
+    options: { public: true, anonymous: true, raw: true },
+    handler: async (req, deps) => {
+      const log = (deps.logger ?? silentLogger).child({ route: AWAY_RESPONDER_CRON_PATH });
       const cfg = deps.alerts;
       if (!cfg || cfg.secret.trim().length === 0) {
         return json(404, { error: { code: "not_found" } });
@@ -981,6 +1013,24 @@ export const internalRoutes: Route[] = [
           // HANDED handle for its deadlock reason. It gates the DIAL rather than the claim here
           // — see `SendReconcilePassDeps.accountEligible` for why excluding the rows would
           // starve every account behind a parked one.
+        log.warn("away_responder_unauthorized", {});
+        return json(401, { error: { code: "unauthorized" } });
+      }
+      try {
+        const result = await runAwayResponderPass(deps.db, {
+          openSendAdapter: deps.services?.sendAdapter
+            ?? ((mailboxId: string) => makeSendAdapter(deps, mailboxId)),
+          // THE SUSPENSION GATE, injected here because the fact is the cloud half's
+          // (`account_suspensions`) and the pass ships in the desktop engine bundle, which may not
+          // name a cloud table. A suspended account's automation must not keep firing — mail
+          // leaving somebody's mailbox is exactly such automation — so its candidates are not even
+          // examined and nothing is recorded as decided, which is what lets the replies go out
+          // promptly once the suspension lifts.
+          //
+          // Unlike the scheduled sender's, this call is NOT inside a claim transaction (the
+          // reservation here is per-reply and opens later), so the deadlock rule that forces the
+          // handed handle does not bite. The signature matches the sibling's anyway so that one
+          // injector serves both.
           accountEligible: async (accountId, handle) =>
             !(await isSuspended(handle as unknown as Tx, accountId)),
           log,
@@ -993,6 +1043,13 @@ export const internalRoutes: Route[] = [
         // are already absorbed inside the pass — this catches only the claim itself.
         log.error("send_reconcile_pass_failed", { err });
         return json(503, { error: { code: "send_reconcile_pass_failed" } });
+        if (result.examined > 0 || result.sent > 0) log.info("away_responder_pass", { ...result });
+        return json(200, { now: deps.now().toISOString(), ...result });
+      } catch (err) {
+        // `raw` means no error envelope above this handler; it must never throw. Per-account and
+        // per-row faults are absorbed inside the pass — this catches only the live-responder probe.
+        log.error("away_responder_pass_failed", { err });
+        return json(503, { error: { code: "away_responder_pass_failed" } });
       }
     },
   },

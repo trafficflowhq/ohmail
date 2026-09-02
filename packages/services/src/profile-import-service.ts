@@ -15,7 +15,8 @@ import { serializeOrganizerProfile } from "@trafficflow/core/adapters/organizer-
 import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { MAX_BODY_CONTAINS_CHARS, MAX_SUBJECT_CONTAINS_CHARS } from "./rules-service.js";
-import { AWAY_AUDIENCES } from "./away-responder-service.js";
+import { AWAY_AUDIENCES, nextEnabledAt } from "./away-responder-service.js";
+import { AWAY_THROTTLES, type AwayThrottle } from "./away-responder-pass.js";
 import { MAX_TAG_NAME_CHARS } from "./tags-service.js";
 
 /**
@@ -611,19 +612,36 @@ export class ProfileImportService {
         // reversed range is the same refusal the PUT gives. NUL-carrying text cannot be stored.
         const valid = startsAt !== INVALID_TERM && endsAt !== INVALID_TERM
           && !(startsAt !== null && endsAt !== null && startsAt.getTime() > endsAt.getTime())
-          && !(a.subject !== null && hasNul(a.subject)) && !(a.body !== null && hasNul(a.body));
+          && !(a.body !== null && hasNul(a.body));
         if (valid) {
           awayApplied = true;
+          const enabled = a.enabled === true;
+          // The throttle is narrowed the same way the audience is, and for a sharper reason: an
+          // unrecognised member here is a document written by a NEWER ohmail than this one, and the
+          // safe reading of a rate we do not understand is the default rate rather than the fastest
+          // one. `per_day` is the column's default and what 0087 wrote onto every migrated row.
+          const throttle = (AWAY_THROTTLES as readonly string[]).includes(a.throttle)
+            ? a.throttle as AwayThrottle : "per_day";
+          /* THE SAME `nextEnabledAt` THE PUT USES — the one implementation, and this is the second
+             writer it exists for. An import that lands on an account whose responder is ALREADY ON
+             must not move the floor, or importing settings mid-trip would strand exactly the
+             backlog `enabled_at` was added to keep answerable. */
+          const [prevAway] = await tx.select({ enabledAt: awayResponders.enabledAt })
+            .from(awayResponders).where(eq(awayResponders.accountId, ctx.accountId)).limit(1);
+          const enabledAt = nextEnabledAt(prevAway?.enabledAt ?? null, enabled, now);
           await tx.insert(awayResponders).values({
-            accountId: ctx.accountId, enabled: a.enabled === true,
-            subject: a.subject, body: a.body,
+            accountId: ctx.accountId, enabled,
+            body: a.body,
             startsAt, endsAt,
-            audience, updatedAt: now,
+            audience, throttle, enabledAt, updatedAt: now,
           }).onConflictDoUpdate({
             target: awayResponders.accountId,
+            // `subject` is neither read from the document nor written: the responder is reply-only
+            // since 0087. A document produced by an older ohmail still carries one, and it is
+            // ignored exactly as the PUT ignores a legacy client's.
             set: {
-              enabled: a.enabled === true, subject: a.subject, body: a.body,
-              startsAt, endsAt, audience, updatedAt: now,
+              enabled, body: a.body,
+              startsAt, endsAt, audience, throttle, enabledAt, updatedAt: now,
             },
           });
         }
