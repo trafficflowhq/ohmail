@@ -130,11 +130,18 @@ export const StreamShell = forwardRef<
      * here, because a passive cleanup runs against detached DOM whose geometry is gone.
      */
     onLeave?: (state: StreamLeaveState) => void;
+    /**
+     * The view's order over the WHOLE pile (`-1` for an id it does not hold) — what lets the
+     * leave-range tracker keep a displayed card's claim after the sliding window unmounts it;
+     * see `measure()`. Optional: without it the tracker judges by the mounted order, which is
+     * only sound when nothing ever unmounts (a bare test mount).
+     */
+    pileIndexOf?: (id: string) => number;
     /** Changes re-scan the container for [data-unseen] cards. */
     contentKey: unknown;
     children: ReactNode;
   }
->(function StreamShell({ ariaLabel, onCurrentChange, onSeen, onNear, onLeave, contentKey, children }, ref) {
+>(function StreamShell({ ariaLabel, onCurrentChange, onSeen, onNear, onLeave, pileIndexOf, contentKey, children }, ref) {
   const divRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef(0);
   const dwellRef = useRef(0);
@@ -165,6 +172,8 @@ export const StreamShell = forwardRef<
   onNearRef.current = onNear;
   const onLeaveRef = useRef(onLeave);
   onLeaveRef.current = onLeave;
+  const pileIndexOfRef = useRef(pileIndexOf);
+  pileIndexOfRef.current = pileIndexOf;
 
   const observer = useSeenOnScroll({
     root: divRef,
@@ -205,15 +214,31 @@ export const StreamShell = forwardRef<
       bottomVisible = c.dataset.sid!;
     }
     if (topVisible === null) return;
-    const order = cards.map((c) => c.dataset.sid!);
     const kept = rangeRef.current.newestSeenId;
-    const keptIdx = kept === null ? -1 : order.indexOf(kept);
-    rangeRef.current = {
-      // The newest (lowest-index) card ever displayed wins; a vanished tracked card falls
-      // back to what is on screen rather than pinning the commit to a message that is gone.
-      newestSeenId: keptIdx >= 0 && keptIdx < order.indexOf(topVisible) ? kept : topVisible,
-      bottomVisibleId: bottomVisible,
-    };
+    let newest = topVisible;
+    if (kept !== null) {
+      const pIdx = pileIndexOfRef.current;
+      if (pIdx) {
+        /**
+         * JUDGED IN THE PILE'S ORDER, NOT THE MOUNTED DOM'S. Under the sliding window
+         * (`stream-window.ts`) the tracked card UNMOUNTS as the reader scrolls on; a
+         * mounted-order lookup then failed and this tracker silently handed the claim to
+         * whatever stood at the top of a much deeper viewport — so the leave-commit anchored
+         * the waterline hundreds of cards below anything ever displayed. The view owns the
+         * pile's order, so it answers; a card the PILE no longer holds (a delta removed it)
+         * still falls back to what is on screen.
+         */
+        const ki = pIdx(kept);
+        const ti = pIdx(topVisible);
+        if (ki >= 0 && (ti < 0 || ki < ti)) newest = kept;
+      } else {
+        // No pile order provided (a bare mount, older tests): the mounted order, as before.
+        const order = cards.map((c) => c.dataset.sid!);
+        const keptIdx = order.indexOf(kept);
+        if (keptIdx >= 0 && keptIdx < order.indexOf(topVisible)) newest = kept;
+      }
+    }
+    rangeRef.current = { newestSeenId: newest, bottomVisibleId: bottomVisible };
   };
   const measureRef = useRef(measure);
   measureRef.current = measure;

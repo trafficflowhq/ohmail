@@ -200,6 +200,13 @@ export function ReceiptsView({
   const seenTo = Math.max(0, win.end - fresh);
   const showWaterline = waterline != null && win.start <= fresh && win.end > fresh;
   const streamIds = useMemo(() => all.map((m) => m.id), [all]);
+  /** The pile's order by id, for the leave-range tracker — see `StreamShell.pileIndexOf`. */
+  const pileIndex = useMemo(() => {
+    const m = new Map<string, number>();
+    streamIds.forEach((id, i) => m.set(id, i));
+    return m;
+  }, [streamIds]);
+  const pileIndexOf = useCallback((id: string) => pileIndex.get(id) ?? -1, [pileIndex]);
   const stream = useStreamWindow({
     ids: streamIds,
     getRoot: () => streamRef.current?.element() ?? null,
@@ -489,6 +496,7 @@ export function ReceiptsView({
         onCurrentChange={onCur}
         onSeen={seenMark}
         onLeave={onStreamLeave}
+        pileIndexOf={pileIndexOf}
         /* The MOUNTED slice is the key: a window move mounts new cards, and the seen observer
            re-scans on this value — without it a card mounted by a slide would never mark
            itself seen. Keyed on the slice's own ids, not the pile's (see `ReadsView`). */

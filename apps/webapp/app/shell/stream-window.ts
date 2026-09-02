@@ -236,7 +236,18 @@ export function useStreamWindow({
 
   /** A pile that shrank under the window (deltas, a filter) must not leave indices dangling:
    *  the RENDERED range is the stored one re-clamped against today's pile, every render. */
-  const eff = total === 0 ? { start: 0, end: 0 } : clamp(range.start, range.end);
+  let eff = total === 0 ? { start: 0, end: 0 } : clamp(range.start, range.end);
+  /**
+   * THE OPENING WINDOW FOLLOWS A GROWING PILE. A view mounted MID-DRAIN sees a pile of a few
+   * rows and stores a window to match; the rows that land afterwards must widen the resting
+   * slice back to the opening size WITHOUT waiting for a scroll — there may never be one, and
+   * a window pinned at those first rows is a mailbox that looks two messages long. Applied
+   * only while the window rests at the top: after the first slide the sampler owns the range,
+   * and re-widening a deliberately-moved window would fight it.
+   */
+  if (total > 0 && eff.start === 0 && eff.end < Math.min(total, STREAM_MOUNT_INITIAL)) {
+    eff = { start: 0, end: Math.min(total, STREAM_MOUNT_INITIAL) };
+  }
   rangeRef.current = eff;
 
   const ensure = useCallback((index: number) => {

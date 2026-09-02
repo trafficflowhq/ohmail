@@ -223,6 +223,13 @@ export function ReadsView({
    * the target — `pendingScroll` below is that ordering, made state instead of a race.
    */
   const streamIds = useMemo(() => all.map((m) => m.id), [all]);
+  /** The pile's order by id, for the leave-range tracker — see `StreamShell.pileIndexOf`. */
+  const pileIndex = useMemo(() => {
+    const m = new Map<string, number>();
+    streamIds.forEach((id, i) => m.set(id, i));
+    return m;
+  }, [streamIds]);
+  const pileIndexOf = useCallback((id: string) => pileIndex.get(id) ?? -1, [pileIndex]);
   const stream = useStreamWindow({
     ids: streamIds,
     getRoot: () => streamRef.current?.element() ?? null,
@@ -716,6 +723,7 @@ export function ReadsView({
         onCurrentChange={onCur}
         onSeen={seenMark}
         onLeave={onStreamLeave}
+        pileIndexOf={pileIndexOf}
         /* The viewport-intent body fetch (B.3): a card nearing the fold hydrates so its
            rendered viewer is ready as it arrives. `hydrateBody` is idempotent + single-flight,
            so it composes with the current-card fetch above without double-spending. */
