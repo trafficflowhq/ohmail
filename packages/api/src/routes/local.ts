@@ -72,6 +72,95 @@ import { helloRoutes } from "./hello.js";
  * finite 503 that the client adapter already tolerates as "no wake signal, keep polling `/sync`".
  * Dropping the module would answer 404 instead, which is a different contract for no gain.
  */
+/**
+ * THE CONSENT GROUP WITH THE FOLDERS FLAG TAKEN OUT — for every door built from this table.
+ *
+ * That is the STANDALONE door and the SELF-HOST one, because `selfHostRoutes` spreads
+ * `localRoutes` whole (which is why `consentRoutes` was removed from its own list as a double
+ * mount). Both are correct to strip, and for one reason: `foldersRoutes` is spread at
+ * `routes/index.ts` and NOWHERE else, so the four verbs exist on the HOSTED table alone. Neither
+ * door built from this one can serve them, so on neither may the flag be raised.
+ *
+ * ── WHY THIS EXISTS, AND WHAT mail 0083 BROKE ON ITS WAY PAST ──────────────────────────────
+ *
+ * The sidecar's client-route coverage census exempts four `/folders` verbs from the LOCAL
+ * census, and the exemption is DERIVED rather than declared: it re-measures a chain and hands back
+ * nothing when any link stops holding. Link four was *"the standalone engine cannot answer
+ * `GET /consent`"* — the read whose answer is the only thing that can raise `foldersEnabled` off
+ * its resting `false`.
+ *
+ * Mounting `consentRoutes` here (the screening window, above) broke that link on purpose and did
+ * not notice this one. It is not theoretical: `apps/desktop/src/local-consent.ts` composes
+ * `PATCH /consent/settings { foldersEnabled }`, so a standalone user could switch folders ON, the
+ * rail would mount, and all four verbs would answer 404 — this table serves NO folder route at
+ * all, not even the summary.
+ *
+ * ── WHY THE FLAG AND NOT THE VERBS ────────────────────────────────────────────────────────
+ *
+ * Serving the four verbs is the other repair and it is a FEATURE, not a fix: the standalone engine
+ * owns the IMAP connection, so folder create/rename/delete there is real work with real failure
+ * modes, and mounting the routes without it would be a larger lie than the one being closed. The
+ * rule this codebase already keeps is the smaller one — a control wired to nothing is worse than
+ * an absent one — so the flag is withheld until the verbs exist.
+ *
+ * ── WHY AT THE ROUTE AND NOT IN THE WINDOW ────────────────────────────────────────────────
+ *
+ * Gating the desktop's toggle would work today and is a check somebody can forget. Here it is
+ * structural: on this table the field cannot be written and cannot be read as anything but off, so
+ * no client — this one, a future one, or a hand-made request with the launch bearer — can raise it.
+ * That is also what re-licenses the census exemption, on a link that is true again.
+ *
+ * The HOSTED table is untouched: it spreads `consentRoutes` directly (`routes/index.ts`) and it is
+ * the table that actually serves the verbs, so the flag means something there.
+ *
+ * READ AND WRITE BOTH, because either alone is a half-truth: a GET that reported `on` over a PATCH
+ * that refused would show a rail the server had just declined to enable.
+ */
+function withoutFoldersFlag(routes: Route[]): Route[] {
+  return routes.map((r) => {
+    const isSettings = r.method === "PATCH" && r.pattern === "/consent/settings";
+    const isRead = r.method === "GET" && r.pattern === "/consent";
+    if (!isSettings && !isRead) return r;
+    return {
+      ...r,
+      handler: async (req, deps, params) => {
+        if (isSettings) {
+          /* The body is read ONCE by the wrapped handler, so the field is removed by handing it a
+             request whose body no longer carries it rather than by reading it here first — a
+             second `readBody` on the same request would consume the stream the handler needs.
+             An absent field is "untouched", which is exactly the semantics `applyConsentSettings`
+             already gives it; a PRESENT `foldersEnabled` is dropped silently rather than refused,
+             because a 400 would be a worse answer to a client asking for a feature this door does
+             not have — and no shipped client asks for it on this door except through a toggle that
+             is going away. */
+          const body = (await req.clone().json().catch(() => ({}))) as Record<string, unknown>;
+          if ("foldersEnabled" in body) {
+            const { foldersEnabled: _dropped, ...rest } = body;
+            const stripped = new Request(req.url, {
+              method: req.method,
+              headers: req.headers,
+              body: JSON.stringify(rest),
+            });
+            return r.handler(stripped, deps, params);
+          }
+          return r.handler(req, deps, params);
+        }
+        /* THE READ. `foldersEnabledAt` is forced to null so the flag reads OFF whatever the row
+           holds — a row written on another door before this install was pointed at the database,
+           or by a build that predates this wrapper. */
+        const res = await r.handler(req, deps, params);
+        if (res.status !== 200) return res;
+        const wire = (await res.clone().json().catch(() => null)) as Record<string, unknown> | null;
+        if (wire === null || !("foldersEnabledAt" in wire)) return res;
+        return new Response(JSON.stringify({ ...wire, foldersEnabledAt: null }), {
+          status: res.status,
+          headers: res.headers,
+        });
+      },
+    };
+  });
+}
+
 export const localRoutes: Route[] = [
   ...healthRoutes,
   ...helloRoutes,
@@ -107,7 +196,7 @@ export const localRoutes: Route[] = [
    * and a standalone user who can choose a window can also re-run the seed review and clear
    * screening state. The routes are account-scoped and this host serves exactly one account.
    */
-  ...consentRoutes,
+  ...withoutFoldersFlag(consentRoutes),
   ...approvalRoutes,
   ...triageRoutes,
   ...searchRoutes,
