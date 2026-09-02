@@ -17,7 +17,7 @@
  * sweep; the `justSeen` set below is dedup, not state), and LEAVING the view commits the
  * waterline in one anchored `feed_mark_seen` via `onLeaveSeen`.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { presentsUnread } from "@ohmail/client-engine";
 import type { EngineMessage, MessageBody, TagDTO, WaterlineMeta } from "@ohmail/client-engine";
@@ -199,8 +199,9 @@ export function ReceiptsView({
   const seenFrom = Math.max(0, win.start - fresh);
   const seenTo = Math.max(0, win.end - fresh);
   const showWaterline = waterline != null && win.start <= fresh && win.end > fresh;
+  const streamIds = useMemo(() => all.map((m) => m.id), [all]);
   const stream = useStreamWindow({
-    total: all.length,
+    ids: streamIds,
     getRoot: () => streamRef.current?.element() ?? null,
   });
   /* A scroll to a card that is not in the DOM is a silent no-op (`StreamShell.scrollTo`), so
@@ -488,10 +489,10 @@ export function ReceiptsView({
         onCurrentChange={onCur}
         onSeen={seenMark}
         onLeave={onStreamLeave}
-        /* The run length is part of the key: growth mounts NEW cards, and the seen observer
-           re-scans on this value — without it a card mounted by a growth commit would never
-           mark itself seen. */
-        contentKey={`${stream.count}:${all.map((m) => m.id).join(",")}`}
+        /* The MOUNTED slice is the key: a window move mounts new cards, and the seen observer
+           re-scans on this value — without it a card mounted by a slide would never mark
+           itself seen. Keyed on the slice's own ids, not the pile's (see `ReadsView`). */
+        contentKey={`${stream.start}:${streamIds.slice(stream.start, stream.end).join(",")}`}
       >
         <div className="stream-top">
           <h1>{t("title")}</h1>
@@ -500,19 +501,25 @@ export function ReceiptsView({
         <div className="stream-hints">
           <ShortcutHint />
         </div>
-        {all.slice(0, Math.min(stream.count, fresh)).map(card)}
-        {/* The line marks the fresh/seen junction in the stream, so it renders once the run
-            has reached it — a junction drawn below cards that are not the last fresh ones
-            would lie. Same rule, same shape, as `ReadsView`. */}
-        {waterline && stream.count >= fresh ? (
+        {/* Reserved height above the window — same shape as `ReadsView`. */}
+        {stream.padTopPx > 0 ? (
+          <div aria-hidden data-stream-head style={{ height: stream.padTopPx }} />
+        ) : null}
+        {all.slice(Math.min(stream.start, fresh), Math.min(stream.end, fresh)).map(card)}
+        {/* The line marks the fresh/seen junction in the stream, so it renders while that
+            junction is inside the mounted window — a junction drawn against the wrong
+            neighbours would lie. Same rule, same shape, as `ReadsView`. */}
+        {waterline && stream.start <= fresh && stream.end >= fresh ? (
           <Waterline label={tr("waterline")} meta={wlMeta} />
         ) : null}
-        {all.slice(fresh, stream.count).map(card)}
-        {/* Growth sentinel, then the reserved height standing in for the unmounted tail. */}
-        <div ref={stream.sentinelRef} data-stream-sentinel aria-hidden />
-        {stream.tailPx > 0 ? <div aria-hidden data-stream-tail style={{ height: stream.tailPx }} /> : null}
-        {/* The end-of-pile line is a claim; it is made only over a fully mounted pile. */}
-        {stream.count >= all.length ? <div className="tail-row">{t("tail")}</div> : null}
+        {all.slice(Math.max(fresh, stream.start), Math.max(fresh, stream.end)).map(card)}
+        {/* The reserved height standing in for the unmounted tail. */}
+        {stream.padBottomPx > 0 ? (
+          <div aria-hidden data-stream-tail style={{ height: stream.padBottomPx }} />
+        ) : null}
+        {/* The end-of-pile line is a claim; it is made only while the pile's last card is
+            mounted above it. */}
+        {stream.end >= all.length ? <div className="tail-row">{t("tail")}</div> : null}
       </StreamShell>
     </section>
   );

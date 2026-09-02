@@ -212,22 +212,28 @@ export function ReadsView({
   const seenFrom = Math.max(0, win.start - freshCount);
   const seenTo = Math.max(0, win.end - freshCount);
   /**
-   * THE STREAM MOUNTS AN OPENING RUN over the same `[fresh, seen]` order and grows toward the
-   * reader — `stream-window.ts` carries the whole argument (why a prefix and not a window, why
-   * `\Seen` stays intact, why growth re-arms). Mounting the pile whole was the dominant cost of
-   * switching into this view: one card per message, built before first paint, measured at
-   * 1.6–1.8 s of blocked main thread with the pile two thousand deep.
+   * THE STREAM IS A SLIDING WINDOW over the same `[fresh, seen]` order — only the cards near
+   * the viewport are in the DOM, with measured-height spacers standing in for the rest.
+   * `stream-window.ts` carries the whole argument (why the growing prefix it replaces made
+   * scroll depth a permanent tax, how per-card heights keep the spacers honest, what `\Seen`
+   * honesty means under a window).
    *
    * A scroll to a card that is not in the DOM is a silent no-op (`StreamShell.scrollTo`), so
    * every jump goes through `ensure` first and the scroll runs AFTER the commit that mounted
    * the target — `pendingScroll` below is that ordering, made state instead of a race.
    */
+  const streamIds = useMemo(() => all.map((m) => m.id), [all]);
   const stream = useStreamWindow({
-    total: all.length,
+    ids: streamIds,
     getRoot: () => streamRef.current?.element() ?? null,
   });
-  const streamFresh = partition.fresh.slice(0, Math.min(stream.count, freshCount));
-  const streamSeen = partition.seen.slice(0, Math.max(0, stream.count - freshCount));
+  /* The windowed slice, split at the waterline's junction exactly as the list splits its own. */
+  const sFreshFrom = Math.min(stream.start, freshCount);
+  const sFreshTo = Math.min(stream.end, freshCount);
+  const sSeenFrom = Math.max(0, stream.start - freshCount);
+  const sSeenTo = Math.max(0, stream.end - freshCount);
+  const streamFresh = partition.fresh.slice(sFreshFrom, sFreshTo);
+  const streamSeen = partition.seen.slice(sSeenFrom, sSeenTo);
   /**
    * THE SCROLL THAT WAITS FOR ITS CARD — and, for a jump from outside, the OPEN that waits for
    * the scroll.
@@ -498,7 +504,7 @@ export function ReadsView({
 
   // j/k step cards; ↵ toggles the current card's clamp. Declared into the registry so
   // the `?` sheet knows they exist and so the shell's global map yields to them here.
-  const order = all.map((m) => m.id);
+  const order = streamIds;
   const at = current ? order.indexOf(current) : -1;
   /* ↓/↑ are j/k — one pair of closures under four keycaps, registered into the zone model
      below so the arrows yield to the rail when focus is there (`zone-nav.tsx`). */
@@ -714,10 +720,11 @@ export function ReadsView({
            rendered viewer is ready as it arrives. `hydrateBody` is idempotent + single-flight,
            so it composes with the current-card fetch above without double-spending. */
         onNear={hydrateBody}
-        /* The run length is part of the key: growth mounts NEW cards, and both of the shell's
-           observers re-scan on this value — without it a card mounted by a growth commit would
-           never hydrate on approach and never mark itself seen. */
-        contentKey={`${stream.count}:${all.map((m) => m.id).join(",")}`}
+        /* The MOUNTED slice is the key: a window move mounts new cards, and both of the shell's
+           observers re-scan on this value — without it a card mounted by a slide would never
+           hydrate on approach and never mark itself seen. Keyed on the slice's own ids (not
+           the pile's — joining 20 000 ids built a 100 KB string per render at scale). */
+        contentKey={`${stream.start}:${streamIds.slice(stream.start, stream.end).join(",")}`}
       >
         <div className="stream-top">
           <h1>{t("title")}</h1>
@@ -726,20 +733,25 @@ export function ReadsView({
         <div className="stream-hints">
           <ShortcutHint />
         </div>
+        {/* Reserved height above the window — the mail the reader scrolled past keeps its room. */}
+        {stream.padTopPx > 0 ? (
+          <div aria-hidden data-stream-head style={{ height: stream.padTopPx }} />
+        ) : null}
         {streamFresh.map(card)}
-        {/* The waterline marks the fresh/seen junction, so it renders once the run has reached
-            it — a junction drawn below cards that are not the last fresh ones would lie. */}
-        {partition.waterline && stream.count >= freshCount ? (
+        {/* The waterline marks the fresh/seen junction, so it renders while that junction is
+            inside the mounted window — a junction drawn against the wrong neighbours would lie. */}
+        {partition.waterline && stream.start <= freshCount && stream.end >= freshCount ? (
           <Waterline label={t("waterline")} meta={wlMeta} />
         ) : null}
         {streamSeen.map(card)}
-        {/* The growth sentinel, then the reserved height standing in for the unmounted tail —
-            the scrollbar still says how much mail there is. Both invisible furniture. */}
-        <div ref={stream.sentinelRef} data-stream-sentinel aria-hidden />
-        {stream.tailPx > 0 ? <div aria-hidden data-stream-tail style={{ height: stream.tailPx }} /> : null}
-        {/* The end-of-pile line is a CLAIM ("that's everything"), so it is only made once
-            everything is actually mounted above it. */}
-        {stream.count >= all.length ? <div className="tail-row">{t("streamTail")}</div> : null}
+        {/* The reserved height standing in for the unmounted tail — the scrollbar still says
+            how much mail there is. Invisible furniture. */}
+        {stream.padBottomPx > 0 ? (
+          <div aria-hidden data-stream-tail style={{ height: stream.padBottomPx }} />
+        ) : null}
+        {/* The end-of-pile line is a CLAIM ("that's everything"), so it is only made while the
+            pile's last card is actually mounted above it. */}
+        {stream.end >= all.length ? <div className="tail-row">{t("streamTail")}</div> : null}
       </StreamShell>
     </section>
   );
