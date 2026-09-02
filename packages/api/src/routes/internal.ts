@@ -8,7 +8,8 @@ import { silentLogger, type Logger } from "@trafficflow/core";
 import type { Tx } from "@trafficflow/db";
 import {
   reapStaleWebSessions, reconcileBillingMirror, recordReconcileFailure,
-  runScheduledSendPass, runSendReconcilePass, TransientDialRefusal, type AdminDb,
+  runScheduledSendPass, runSendReconcilePass, SEND_RECONCILE_NET_TIMEOUTS,
+  TransientDialRefusal, type AdminDb,
 } from "@trafficflow/services";
 import type { SendAdapter } from "@trafficflow/core/mail";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
@@ -274,7 +275,13 @@ async function admittedSendAdapter(deps: ApiDeps, mailboxId: string): Promise<Se
 
   let adapter: SendAdapter;
   try {
-    adapter = await makeSendAdapter(deps, mailboxId);
+    adapter = await makeSendAdapter(deps, mailboxId, {
+      // THE RECONCILER'S OWN DEADLINES, not the send path's. Three dials share one 60-second
+      // invocation here, where the defaults were chosen for a single send to fit in — and a
+      // breach of these is the ADAPTER's honest answer rather than a caller giving up on a
+      // command that then keeps running, which is why they are threaded and not raced.
+      timeouts: SEND_RECONCILE_NET_TIMEOUTS,
+    });
   } catch (err) {
     // The slot must go back or this instance leaks it until the stale-window reclaim.
     await release();

@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { mailboxCredentials } from "@trafficflow/db";
 import { ImapAdapter, buildImapAuth, type CredMetaAuth } from "@trafficflow/core/adapters/imap";
+import type { NetTimeouts } from "@trafficflow/core/adapters/imap";
 import type { SendAdapter } from "@trafficflow/core/mail";
 import { ServiceError } from "@trafficflow/services/mail";
 import type { ApiDeps } from "./deps.js";
@@ -28,7 +29,9 @@ interface CredMeta extends CredMetaAuth {
  * imap secret (the single-credential generic-IMAP convention) rather than error —
  * many providers use one password for both transports.
  */
-export async function makeSendAdapter(deps: ApiDeps, mailboxId: string): Promise<SendAdapter> {
+export async function makeSendAdapter(
+  deps: ApiDeps, mailboxId: string, opts: { timeouts?: Partial<NetTimeouts> } = {},
+): Promise<SendAdapter> {
   const rows = await deps.db.select().from(mailboxCredentials)
     .where(eq(mailboxCredentials.mailboxId, mailboxId));
 
@@ -78,6 +81,15 @@ export async function makeSendAdapter(deps: ApiDeps, mailboxId: string): Promise
     host: imapMeta.host ?? "",
     port: imapMeta.port ?? 993,
     secure: imapMeta.secure ?? true,
+    // SHORTER DEADLINES FOR A CALLER THAT HAS LESS TIME, threaded rather than raced.
+    //
+    // The reconciling pass runs three dials inside the same 60-second invocation the default
+    // 15 s connect + 15 s greeting were chosen for ONE send to fit in. Racing them from outside
+    // was tried and is worse than useless: an abandoned operation still owns imapflow's command
+    // queue, so the caller learns nothing and the socket lives on. Handing the ADAPTER a shorter
+    // deadline means a breach is the adapter's own honest "this mailbox did not answer" — which
+    // is a fact the caller can act on, and which its give-up may legitimately act on after a day.
+    ...(opts.timeouts ? { timeouts: opts.timeouts } : {}),
     // The connect-time plaintext consent, threaded like the worker threads it — an IMAP append
     // to the Sent folder of a consented no-TLS mailbox must dial the way the probe proved.
     ...(imapMeta.insecureConsent === true ? { allowInsecure: true } : {}),
@@ -111,6 +123,14 @@ export async function makeSendAdapter(deps: ApiDeps, mailboxId: string): Promise
     },
     messageInSent: (messageId) => adapter.messageInSent(messageId),
     close: () => adapter.close(),
+    // FORWARDED, and without it the seam is decorative. `SendAdapter.forceClose` exists for a
+    // caller that has abandoned a timed-out operation: imapflow serialises commands, so a
+    // graceful LOGOUT queues behind the hung one and the polite path waits out the very hang it
+    // is escaping. This wrapper is a hand-written literal, so an `ImapAdapter` method that is not
+    // named here simply does not exist to the caller — which is how the reconciler's abandonment
+    // path was silently taking the fallback in production while its test passed against a spy
+    // that did define it.
+    forceClose: () => { adapter.forceClose(); },
   };
 }
 
