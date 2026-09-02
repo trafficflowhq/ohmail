@@ -113,7 +113,17 @@ async function patch<T>(body: Record<string, unknown>): Promise<T> {
 export const consentOverBridge: ConsentTransport = {
   state: async () => jsonOf<ConsentStateWire>(await bridgeFetch(CONSENT_PATH)),
   setAutoSuggest: (enabled) => patch<{ autoSuggestAt: string | null }>({ autoSuggest: enabled }),
-  setDormancyDays: (days) => patch<{ dormancyDays: number }>({ dormancyDays: days }),
+  /* THE WINDOW AND ITS MODE, one call and one PATCH — the hosted door's shape exactly, so the
+     two doors cannot answer "how far back does the Screener ask?" differently. `consentRoutes`
+     are mounted on `localRoutes`, so this is the same route and the same single writer; the
+     standalone door is UNGATED (there is no account to step up), and the hosted door's own
+     step-up applies where the route requires it. Absent halves are omitted from the body, not
+     sent as null — see the api-client note. */
+  setDormancyDays: (days, scope) =>
+    patch<{ dormancyDays?: number; screeningScope?: "window" | "all_time" }>({
+      ...(days !== undefined ? { dormancyDays: days } : {}),
+      ...(scope !== undefined ? { screeningScope: scope } : {}),
+    }),
   setBlockRemoteImages: (blocked) =>
     patch<{ blockRemoteImagesAt: string | null }>({ blockRemoteImages: blocked }),
   setBlockTrackingPixels: (blocked) =>

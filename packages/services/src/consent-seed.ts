@@ -1153,21 +1153,49 @@ export async function mailboxSignatures(
  * `updated_at` means a concurrent seed confirmation keeps its `seed_confirmed_at`. Proven under real
  * Postgres because PGlite serialises the race by construction.
  *
- * Returns the EFFECTIVE window — always a number — so the caller echoes what the account will be
- * counted with, which is what the open tab re-partitions on.
+ * ── "ALL TIME" IS A MODE OF THIS SAME DIAL, SO IT IS THIS SAME WRITER ──────────────────────
+ *
+ * `account_settings.screening_scope` ('window' | 'all_time', mail 0083) decides whether the
+ * cutline exists at all: `all_time` means no cutoff and no dormancy, in `resolveScreeningCutoff`
+ * and in `consent-cutline.ts` alike. It is NOT a second dial beside this one — it is the same
+ * question's other answer — so it is written HERE, by the one writer, in the one upsert. A second
+ * writer touching `screening_scope` would be two functions racing one primary key with no
+ * ordering between them, and the pair would be able to disagree: an account in `all_time` with a
+ * 90-day window stored under it has two answers to "how far back does the Screener ask?".
+ *
+ * EITHER FIELD MAY BE ABSENT, and absent means UNTOUCHED — which is what lets every existing
+ * caller keep its meaning while the route gains a second field. A caller that moves only the
+ * window must not drag an `all_time` account back into a window nobody chose; a caller that
+ * moves only the mode must not re-assert a window it never read. Both absent is a 400, for the
+ * route's own reason: a write that changes nothing and reports success is a control that lies
+ * about having acted.
+ *
+ * Returns the EFFECTIVE window — always a number — and the effective mode, so the caller echoes
+ * what the account will be counted with, which is what the open tab re-partitions on.
  */
 export async function setDormancyDays(
-  ctx: ServiceContext, days: number | null,
-): Promise<{ dormancyDays: number }> {
-  if (days !== null && (!Number.isInteger(days) || days < 1 || days > 365)) {
+  ctx: ServiceContext, days: number | null | undefined, scope?: "window" | "all_time",
+): Promise<{ dormancyDays: number; screeningScope: "window" | "all_time" }> {
+  if (days === undefined && scope === undefined) {
+    throw new ServiceError(
+      "validation_failed", 400, "one of dormancyDays or screeningScope must be given",
+    );
+  }
+  if (days !== null && days !== undefined && (!Number.isInteger(days) || days < 1 || days > 365)) {
     throw new ServiceError(
       "validation_failed", 400,
       "dormancyDays must be an integer between 1 and 365, or null",
     );
   }
+  if (scope !== undefined && scope !== "window" && scope !== "all_time") {
+    throw new ServiceError("validation_failed", 400, "screeningScope must be window or all_time");
+  }
   // NEVER STORE THE DEFAULT — see the note above. `null` and the default both mean "use the product
   // default", so both persist NULL and let the read side substitute it.
   const stored = days === null || days === DEFAULT_DORMANCY_DAYS ? null : days;
+  /** Did the caller NAME the window? `undefined` leaves the column exactly as it is. */
+  const setsWindow = days !== undefined;
+  let effective: { dormancyDays: number | null; screeningScope: string } | undefined;
   // Column-scoped upsert unchanged; the transaction adds the settings change row — see
   // {@link recordSettingsChange}.
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
@@ -1177,15 +1205,55 @@ export async function setDormancyDays(
     // order a single chain (accounts → settings → sequence row). `erasure-fence.ts` carries
     // the two-sided argument.
     await fenceErasedAccount(tx, ctx.accountId);
-    await tx.insert(accountSettings)
-      .values({ accountId: ctx.accountId, dormancyDays: stored, updatedAt: ctx.now() })
+    /* ── UPSERT, NEVER UPDATE, AND THAT IS NOT A STYLE CHOICE ────────────────────────────
+       A fresh STANDALONE install has NO `account_settings` row at all — driven against a
+       live local engine, where the table came back empty over a fully-imported mailbox. An
+       UPDATE would match zero rows, report success and store nothing, so the ladder anybody
+       just chose would be silently discarded on exactly the door where the flow that offers
+       it is the funnel. Rows here are created lazily by whichever feature writes first,
+       which is why every writer of this table upserts. */
+    const [row] = await tx.insert(accountSettings)
+      .values({
+        accountId: ctx.accountId,
+        // Both fields are ABSENT-MEANS-UNTOUCHED, symmetrically. On a fresh row an omitted
+        // window is NULL ("track the product default") and an omitted mode takes the
+        // column's own `NOT NULL DEFAULT 'window'` — both the honest answers for a row
+        // nobody has written yet.
+        ...(setsWindow ? { dormancyDays: stored } : {}),
+        ...(scope !== undefined ? { screeningScope: scope } : {}),
+        updatedAt: ctx.now(),
+      })
       .onConflictDoUpdate({
         target: accountSettings.accountId,
-        set: { dormancyDays: stored, updatedAt: ctx.now() },
+        set: {
+          // ABSENT MEANS UNTOUCHED, the route's own field-present-⇒-acted-on rule carried
+          // into the writer, and it has to hold in BOTH directions: a caller that names only
+          // the mode must not re-assert a window it never read, and a caller that names only
+          // the window must not silently drag an `all_time` account back into a window
+          // nobody chose. Re-asserting either one would also clobber a concurrent writer of
+          // the other, which is the whole reason this table's writers are column-scoped.
+          ...(setsWindow ? { dormancyDays: stored } : {}),
+          ...(scope !== undefined ? { screeningScope: scope } : {}),
+          updatedAt: ctx.now(),
+        },
+      })
+      // Both columns read back from the row the write produced, rather than inferred: when
+      // `scope` is absent the stored mode is whatever it already was, and this is the only
+      // way to echo it without a second read racing the same transaction.
+      .returning({
+        dormancyDays: accountSettings.dormancyDays,
+        screeningScope: accountSettings.screeningScope,
       });
+    effective = row;
     await recordSettingsChange(tx, ctx.accountId); // AFTER the settings row — the global lock order above
   });
-  return { dormancyDays: stored ?? DEFAULT_DORMANCY_DAYS };
+  return {
+    dormancyDays: effective?.dormancyDays ?? DEFAULT_DORMANCY_DAYS,
+    // Narrowed, never projected verbatim: the column is `text` with a CHECK, and anything
+    // outside the closed set must read as the safe mode rather than reach a client as a
+    // third state no surface has copy for.
+    screeningScope: effective?.screeningScope === "all_time" ? "all_time" : "window",
+  };
 }
 
 /**

@@ -1095,8 +1095,11 @@
       "title": "When a sender goes quiet",
       "description": "Days of quiet before a sender you've never decided about waits in History instead of the Screener.",
       "dayLabel": "{days}",
+      "allTime": "All time",
       "ariaLabel": "Days before a sender goes quiet",
       "microcopy": "This only changes who the Screener asks you about. No mail moves, and anything unread always shows.",
+      "microcopyWider": "Screening further back adds older senders to the Screener queue. Their mail stays where it is — it moves only when you decide about them.",
+      "microcopyAllTime": "The Screener asks about every sender you have never decided about, however long ago they wrote. Nothing moves until you decide.",
       "failed": "Couldn't save that — try again."
     },
     "channel": {

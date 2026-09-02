@@ -1095,8 +1095,11 @@
       "title": "Wenn ein Absender still wird",
       "description": "Tage Stille, bis ein Absender, über den du nie entschieden hast, in der Historie statt im Screener wartet.",
       "dayLabel": "{days}",
+      "allTime": "Gesamter Zeitraum",
       "ariaLabel": "Tage, bis ein Absender als still gilt",
       "microcopy": "Das ändert nur, über wen der Screener dich fragt. Es wird keine Post verschoben, und Ungelesenes wird immer gezeigt.",
+      "microcopyWider": "Weiter zurück zu screenen nimmt ältere Absender in die Screener-Liste auf. Ihre Post bleibt, wo sie ist — sie wird erst verschoben, wenn du über sie entscheidest.",
+      "microcopyAllTime": "Der Screener fragt dich zu jedem Absender, über den du nie entschieden hast — egal, wie lange das her ist. Bis du entscheidest, wird nichts verschoben.",
       "failed": "Das ließ sich nicht speichern — versuch es nochmal."
     },
     "channel": {

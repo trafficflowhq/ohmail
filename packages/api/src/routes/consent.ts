@@ -127,6 +127,13 @@ interface SeedConfirmBody {
 interface ConsentSettingsBody {
   autoSuggest?: unknown;
   dormancyDays?: unknown;
+  /**
+   * `'window'` | `'all_time'` — whether the Screener's cutline exists at all (mail 0083).
+   *
+   * The other answer to `dormancyDays`' own question rather than a knob beside it, so the two
+   * travel to ONE writer and land in ONE upsert. `all_time` means no cutoff and no dormancy.
+   */
+  screeningScope?: unknown;
   blockRemoteImages?: unknown;
   blockTrackingPixels?: unknown;
   blockAutoUnsubscribe?: unknown;
@@ -184,7 +191,8 @@ interface ConsentSettingsBody {
 async function applyConsentSettings(
   ctx: ReturnType<typeof serviceContext>, body: ConsentSettingsBody,
 ): Promise<{
-  autoSuggestAt?: string | null; dormancyDays?: number; blockRemoteImagesAt?: string | null;
+  autoSuggestAt?: string | null; dormancyDays?: number;
+  screeningScope?: "window" | "all_time"; blockRemoteImagesAt?: string | null;
   loadTrackingPixelsAt?: string | null;
   blockAutoUnsubscribeAt?: string | null; foldersEnabledAt?: string | null;
   folderMailboxesOff?: Record<string, string>; signatures?: Record<string, string>;
@@ -192,6 +200,7 @@ async function applyConsentSettings(
 }> {
   const hasAuto = "autoSuggest" in body;
   const hasDormancy = "dormancyDays" in body;
+  const hasScope = "screeningScope" in body;
   const hasImages = "blockRemoteImages" in body;
   const hasPixels = "blockTrackingPixels" in body;
   const hasAutoUnsub = "blockAutoUnsubscribe" in body;
@@ -201,13 +210,14 @@ async function applyConsentSettings(
   const hasLocale = "locale" in body;
   const hasThemeFace = "themeFace" in body;
   const hasOnboarding = "onboardingCompleted" in body;
-  if (!hasAuto && !hasDormancy && !hasImages && !hasPixels && !hasAutoUnsub && !hasFolders
-      && !hasFolderMailboxes && !hasSignatures && !hasLocale && !hasThemeFace && !hasOnboarding) {
+  if (!hasAuto && !hasDormancy && !hasScope && !hasImages && !hasPixels && !hasAutoUnsub
+      && !hasFolders && !hasFolderMailboxes && !hasSignatures && !hasLocale && !hasThemeFace
+      && !hasOnboarding) {
     throw new ServiceError(
       "validation_failed", 400,
-      "at least one of autoSuggest, dormancyDays, blockRemoteImages, blockTrackingPixels, " +
-      "blockAutoUnsubscribe, foldersEnabled, folderMailboxes, signatures, locale, themeFace or " +
-      "onboardingCompleted is required",
+      "at least one of autoSuggest, dormancyDays, screeningScope, blockRemoteImages, " +
+      "blockTrackingPixels, blockAutoUnsubscribe, foldersEnabled, folderMailboxes, signatures, " +
+      "locale, themeFace or onboardingCompleted is required",
     );
   }
 
@@ -226,6 +236,24 @@ async function applyConsentSettings(
       throw new ServiceError("validation_failed", 400, "dormancyDays must be a number or null");
     }
     dormancy = d;
+  }
+  /**
+   * ONLY THE TWO MEMBERS OF THE CLOSED SET, and no `null` among them.
+   *
+   * `dormancyDays` accepts `null` because null THERE is a real answer — "track the product
+   * default". There is no such answer here: the column is `NOT NULL DEFAULT 'window'`, so a
+   * `null` on the wire could only mean "I do not know", and coercing that to `'window'` would
+   * turn a garbled request into "narrow this account back to a window", silently undoing an
+   * explicit "all time". Same rule, same direction, as every boolean on this route.
+   */
+  let scope: "window" | "all_time" | undefined;
+  if (hasScope) {
+    if (body.screeningScope !== "window" && body.screeningScope !== "all_time") {
+      throw new ServiceError(
+        "validation_failed", 400, "screeningScope must be 'window' or 'all_time'",
+      );
+    }
+    scope = body.screeningScope;
   }
   /**
    * ONLY THE TWO BOOLEANS, and the reason is the same one `autoSuggest` gives with the sign
@@ -429,7 +457,8 @@ async function applyConsentSettings(
   }
 
   const out: {
-    autoSuggestAt?: string | null; dormancyDays?: number; blockRemoteImagesAt?: string | null;
+    autoSuggestAt?: string | null; dormancyDays?: number;
+  screeningScope?: "window" | "all_time"; blockRemoteImagesAt?: string | null;
     loadTrackingPixelsAt?: string | null;
     blockAutoUnsubscribeAt?: string | null; foldersEnabledAt?: string | null;
     folderMailboxesOff?: Record<string, string>; signatures?: Record<string, string>;
@@ -440,8 +469,19 @@ async function applyConsentSettings(
     if (hasAuto) {
       out.autoSuggestAt = (await setAutoSuggest(txCtx, auto!)).autoSuggestAt;
     }
-    if (hasDormancy) {
-      out.dormancyDays = (await setDormancyDays(txCtx, dormancy as number | null)).dormancyDays;
+    /* ── ONE CALL FOR THE PAIR, because they are one answer (mail 0083) ─────────────────
+       The window and the mode answer the same question — "how far back does the Screener
+       ask?" — and `setDormancyDays` is its single writer, so both fields reach
+       `account_settings` in one upsert under one lock. Two calls would be two writers racing
+       one primary key with nothing ordering them, and the pair could end up disagreeing: an
+       account in `all_time` with a 90-day window under it has two answers at once.
+
+       Each field is forwarded ONLY if the caller named it; the writer treats absent as
+       untouched in both directions, and the echo carries back only what was acted on. */
+    if (hasDormancy || hasScope) {
+      const res = await setDormancyDays(txCtx, dormancy, scope);
+      if (hasDormancy) out.dormancyDays = res.dormancyDays;
+      if (hasScope) out.screeningScope = res.screeningScope;
     }
     if (hasImages) {
       out.blockRemoteImagesAt = (await setBlockRemoteImages(txCtx, blockImages!)).blockRemoteImagesAt;

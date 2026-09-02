@@ -482,8 +482,9 @@ export const consent: {
     setAutoSuggest: (enabled: boolean) => Promise<{
         autoSuggestAt: string | null;
     }>;
-    setDormancyDays: (days: number | null) => Promise<{
-        dormancyDays: number;
+    setDormancyDays: (days: number | null | undefined, scope?: "window" | "all_time") => Promise<{
+        dormancyDays?: number;
+        screeningScope?: "window" | "all_time";
     }>;
     setBlockRemoteImages: (blocked: boolean) => Promise<{
         blockRemoteImagesAt: string | null;

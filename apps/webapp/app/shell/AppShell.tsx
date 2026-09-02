@@ -6808,7 +6808,8 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
                    wrong-then-right flash `ScreeningSection` avoids by loading before it draws. Absent
                    on the demo (`useConsentState(!demo)` never fetches, so `known` stays false). */
                 dormancySection={demo || !consent.known ? undefined : (
-                  <DormancyRow days={consent.dormancyDays} setDormancyDays={consent.setDormancyDays} />
+                  <DormancyRow days={consent.dormancyDays} scope={consent.screeningScope}
+                    setDormancyDays={consent.setDormancyDays} />
                 )}
                 /* REMOTE IMAGES. Gated on `consent.known` for a sharper version of the dial's
                    reason: the resting value is MANUAL, so drawing the row before the server has

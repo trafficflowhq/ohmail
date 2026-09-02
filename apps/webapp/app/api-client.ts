@@ -1477,16 +1477,30 @@ export const consent = {
    * with `dormancyDays` in the body instead of `autoSuggest` (field-present ⇒ acted-on, so the two
    * never touch each other's column).
    *
-   * `days` is an integer 1–365, or `null` to revert to the product default. The server refuses
+   * ── AND "ALL TIME", WHICH IS THIS SAME DIAL'S OTHER ANSWER ─────────────────────────────
+ *
+ * `scope` is `'window'` (the cutline is `screeningBaselineAt − dormancyDays`) or `'all_time'`
+ * (no cutline at all). It rides THIS call rather than one of its own because the two are one
+ * answer to one question, and the server writes them in one upsert for the same reason. Either
+ * argument may be omitted and omitted means UNTOUCHED, in both directions; the echo carries back
+ * only the halves that were named.
+ *
+ * `days` is an integer 1–365, or `null` to revert to the product default. The server refuses
    * anything outside the band with a 400 rather than storing a value that would later crash the
    * `GET /consent` read, and it NEVER stores the default itself — so the response's `dormancyDays`
    * is the EFFECTIVE window (a null store reads back as the default). The caller updates its hook
    * from that echo, which is what re-partitions the open tab.
    */
-  setDormancyDays: (days: number | null) =>
-    api<{ dormancyDays: number }>("/consent/settings", {
+  setDormancyDays: (days: number | null | undefined, scope?: "window" | "all_time") =>
+    api<{ dormancyDays?: number; screeningScope?: "window" | "all_time" }>("/consent/settings", {
       method: "PATCH",
-      body: { dormancyDays: days },
+      body: {
+        // FIELD-PRESENT ⇒ ACTED ON, so an unnamed half must not appear on the wire at all: a
+        // `dormancyDays: undefined` would serialise away, but naming it explicitly is what
+        // keeps "leave the other one alone" a property of the request rather than of JSON.
+        ...(days !== undefined ? { dormancyDays: days } : {}),
+        ...(scope !== undefined ? { screeningScope: scope } : {}),
+      },
     }),
   /**
    * KEEP THE PER-MESSAGE "SHOW IMAGES" FLOW, OR LET IMAGES LOAD — the third knob on the same

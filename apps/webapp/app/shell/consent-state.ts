@@ -70,7 +70,16 @@ import { readOwner } from "./owner-cookie";
 export interface ConsentTransport {
   state: () => Promise<ConsentStateWire>;
   setAutoSuggest: (enabled: boolean) => Promise<{ autoSuggestAt: string | null }>;
-  setDormancyDays: (days: number | null) => Promise<{ dormancyDays: number }>;
+  /**
+   * THE SCREENING WINDOW AND ITS MODE — one call, because they are one answer (mail 0083).
+   *
+   * Either argument may be omitted, and omitted means UNTOUCHED: Settings names both when the
+   * person picks a number and only the mode when they pick "all time". The echo carries back
+   * only the halves that were acted on, which is what the hook folds into its state.
+   */
+  setDormancyDays: (
+    days: number | null | undefined, scope?: "window" | "all_time",
+  ) => Promise<{ dormancyDays?: number; screeningScope?: "window" | "all_time" }>;
   setBlockRemoteImages: (blocked: boolean) => Promise<{ blockRemoteImagesAt: string | null }>;
   setBlockTrackingPixels: (blocked: boolean) => Promise<{ loadTrackingPixelsAt: string | null }>;
   setBlockAutoUnsubscribe: (blocked: boolean) => Promise<{ blockAutoUnsubscribeAt: string | null }>;
@@ -96,7 +105,7 @@ export interface ConsentTransport {
 const CLOUD_CONSENT: ConsentTransport = {
   state: () => consentApi.state(),
   setAutoSuggest: (enabled) => consentApi.setAutoSuggest(enabled),
-  setDormancyDays: (days) => consentApi.setDormancyDays(days),
+  setDormancyDays: (days, scope) => consentApi.setDormancyDays(days, scope),
   setBlockRemoteImages: (blocked) => consentApi.setBlockRemoteImages(blocked),
   setBlockTrackingPixels: (blocked) => consentApi.setBlockTrackingPixels(blocked),
   setBlockAutoUnsubscribe: (blocked) => consentApi.setBlockAutoUnsubscribe(blocked),
@@ -539,7 +548,9 @@ export function useConsentState(
    * so setting it from the echo re-partitions the same render — a component with its own fetch would
    * leave the open tab counting with the stale window.
    */
-  setDormancyDays: (days: number | null) => Promise<number>;
+  setDormancyDays: (
+    days: number | null | undefined, scope?: "window" | "all_time",
+  ) => Promise<number>;
   /**
    * Keep the per-message "Show images" flow, or let images load, and keep the local answer in step
    * with the stored one.
@@ -904,16 +915,27 @@ export function useConsentState(
     return on;
   }, [applyEcho]);
 
-  const setDormancyDays = useCallback(async (days: number | null): Promise<number> => {
+  const setDormancyDays = useCallback(async (
+    days: number | null | undefined, scope?: "window" | "all_time",
+  ): Promise<number> => {
     // The user's act outranks every read in flight — see `writeEpoch`. Bumped BEFORE the
     // request, so a re-ask racing this write is discarded whatever it answers.
     writeEpoch.current += 1;
     const at = era.current;
-    const res = await link.current.setDormancyDays(days);
+    const res = await link.current.setDormancyDays(days, scope);
     // FROM THE SERVER ECHO, never the argument — the server stores the default as NULL and reads it
     // back as the default number, so this is the window the partition memo must re-key on.
-    applyEcho(at, (prev) => ({ ...prev, dormancyDays: res.dormancyDays }));
-    return res.dormancyDays;
+    //
+    // EACH HALF ONLY IF THE ECHO CARRIES IT. The route answers with what it acted on, so a call
+    // that named only the mode returns no window: folding an absent one in as `undefined` would
+    // blank the dial the pane renders, and folding it in as the default would show a window the
+    // account does not have. Absent means "unchanged", exactly as it does on the wire.
+    applyEcho(at, (prev) => ({
+      ...prev,
+      ...(res.dormancyDays !== undefined ? { dormancyDays: res.dormancyDays } : {}),
+      ...(res.screeningScope !== undefined ? { screeningScope: res.screeningScope } : {}),
+    }));
+    return res.dormancyDays ?? days ?? DEFAULT_DORMANCY_DAYS;
   }, [applyEcho]);
 
   const setBlockRemoteImages = useCallback(async (blocked: boolean): Promise<boolean> => {
