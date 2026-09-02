@@ -20,9 +20,9 @@ Signed installers — a real Apple Developer ID and an Authenticode certificate.
 
 Mail at scale, a setup that describes what it actually did, and a Send button
 that says what is happening. Beside those: an install that keeps your mail on
-this computer can now let a mailbox go, the notification switches offer only
-what something can deliver, and the ohmarchy face stopped clipping the top edge
-off boxed surfaces.
+this computer can now let a mailbox go, the three columns can be resized and
+remember their widths, the notification switches offer only what something can
+deliver, and the ohmarchy face stopped clipping the top edge off boxed surfaces.
 
 ### Reads opens straight away, however much mail is behind it
 
@@ -101,6 +101,40 @@ sending a thin band of light passes along its foot — motion inside the control
 own shape, not a spinner. A confirmed send completes the band once and settles on
 "Sent"; a queued submission rests with a sentence under the row. Reduced motion
 keeps the labels and drops the movement.
+
+### The three columns can be resized, and stay where you put them
+
+The sidebar, the message list and the reading pane had fixed widths. The two
+gaps between them are now the handles: the gap itself takes a resize cursor, and
+a line down its centre appears as you approach it and turns to the focus colour
+while you drag. There is no grip and there are no dots — the line is drawn at the
+same width the focused tile's border is drawn at, so it is a hairline in the
+light interface and matches the border weight in the tiling one.
+
+The sidebar clamps between 200 and 360 pixels and the list between 320 and 720,
+and the reading pane always keeps at least 480. Those limits are enforced by the
+layout rather than by the drag, so narrowing the window gives way on its own and
+widening it again brings your width back — the number you chose is not
+overwritten by a window you made smaller for a minute.
+
+Your widths are stored on this machine, not on your account: a laptop and a large
+display are allowed to disagree about how wide a sidebar should be. They are read
+back before the first frame is drawn, so the window opens at the size you left it
+rather than resizing itself a moment later, and the loading silhouette stands in
+the same three columns the mail will.
+
+The separators are real controls, not just drag targets. Tab reaches them; the
+arrow keys move a seam by 16 pixels, or 64 with Shift; Home and End go to the
+limits; Backspace, Delete or a double-click puts one seam back to its default and
+leaves the other where it is. Those keys apply only while a separator has focus,
+so the arrow keys mean what they have always meant everywhere else. Below the
+width where the three columns collapse into one there are no seams, so there are
+no handles and no extra stops on the keyboard walk.
+
+One smaller correction rides along: the gap between the list and the reading pane
+was fixed at 16 pixels and now follows the layout's own spacing, which leaves it
+unchanged in the light interface and brings it into line with the tighter spacing
+the tiling one uses everywhere else.
 
 ### Settings offers only the notifications something can deliver
 

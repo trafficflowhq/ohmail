@@ -36,11 +36,16 @@
  * ── THE KEYS ARE THE WIDGET'S OWN, AND DELIBERATELY NOT IN THE REGISTRY ─────────────────────
  *
  * ←/→ move by 16px, with Shift by 64, Home/End go to the floor and the ceiling, Backspace or
- * Delete resets — but ONLY while the handle holds focus, and the handler stops the event before
- * it reaches the document. That is what keeps the zone model's own ←/→ intact: the shell's
- * dispatcher is a bubble listener on `document` (`keymap.tsx`), so an event stopped at this
- * element never reaches it, and the moment focus leaves the handle every key means what it
- * always meant.
+ * Delete resets — but ONLY while the handle holds focus, and the handler CLAIMS the event so
+ * nothing else acts on it. That is what keeps the zone model's own ←/→ intact, and the moment
+ * focus leaves the handle every key means what it always meant.
+ *
+ * Claiming it takes `stopImmediatePropagation` on the native event and not `stopPropagation`,
+ * for a reason that is invisible from this file and is written out at the handler itself: on
+ * the web door React and the keyboard registry are two bubble listeners on the SAME node, and
+ * `stopPropagation` does nothing about a sibling. An earlier draft of this paragraph asserted
+ * the opposite; it was wrong, and the guard now watches the call rather than the outcome
+ * because no test DOM can tell the two apart.
  *
  * These are not app verbs and they get no chord in the registry, for the same reason the rich
  * editor's and a `<select>`'s keys have none: the `?` sheet lists what the app does, and a
@@ -173,10 +178,44 @@ function Handle({ kind, label, state }: HandleProps) {
     return () => window.removeEventListener("resize", announce);
   }, [announce]);
 
+  /**
+   * LEAVE THE DRAG STATE BEHIND AND THE WHOLE SHELL IS UNUSABLE, so clearing it is a function
+   * every exit calls rather than a line inside `onPointerUp`.
+   *
+   * `.deck.col-resizing` puts `cursor: col-resize !important` and `user-select: none !important`
+   * on the deck and EVERY descendant and takes pointer events off every mail-body iframe. That
+   * is correct for the half-second of a gesture and catastrophic if it sticks: nothing is
+   * selectable, every cursor is a resize cursor and message bodies stop accepting clicks, until
+   * the reader reloads. A pointerup is not guaranteed to arrive at this element — the list's
+   * handle is portalled into whichever view is mounted, so a route change mid-gesture unmounts
+   * it, and `setPointerCapture` can be refused — so the class is cleared on unmount and on
+   * `lostpointercapture` as well as on release.
+   */
+  const endDrag = useCallback((persist: boolean) => {
+    if (!drag.current) return;
+    drag.current = null;
+    el.current?.classList.remove("dragging");
+    document.querySelector(".deck")?.classList.remove("col-resizing");
+    // Whatever the gesture settled on — including "nothing", which persists the record
+    // unchanged rather than inventing a width for a press that never moved.
+    if (persist) apply(state.current, true);
+  }, [apply, state]);
+
+  useEffect(() => () => {
+    drag.current = null;
+    document.querySelector(".deck")?.classList.remove("col-resizing");
+  }, []);
+
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
     drag.current = { x: e.clientX, from: measure() };
-    e.currentTarget.setPointerCapture(e.pointerId);
+    // Wrapped: a browser that refuses capture must still get a working drag — the class and the
+    // move handler do the work, and `lostpointercapture`/unmount are what clean up after it.
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      /* capture unavailable — the gesture still runs, and still ends */
+    }
     e.currentTarget.classList.add("dragging");
     document.querySelector(".deck")?.classList.add("col-resizing");
     // `preventDefault` stops the drag from starting a text selection — and it also suppresses
@@ -194,20 +233,16 @@ function Handle({ kind, label, state }: HandleProps) {
     set(d.from + (e.clientX - d.x), false);
   };
 
-  const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!drag.current) return;
-    drag.current = null;
-    e.currentTarget.classList.remove("dragging");
-    document.querySelector(".deck")?.classList.remove("col-resizing");
-    // Whatever the gesture settled on — including "nothing", which persists the record
-    // unchanged rather than inventing a width for a press that never moved.
-    apply(state.current, true);
-  };
+  const onPointerUp = () => endDrag(true);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     const step = e.shiftKey ? BIG_STEP : STEP;
     const floor = kind === "rail" ? RAIL.min : LIST.min;
-    const ceiling = kind === "rail" ? RAIL.max : LIST.max;
+    // THE CEILING `End` GOES TO IS THE ONE `aria-valuemax` NAMES. The list's is a function of
+    // the room, so on a narrow-but-split window the raw 720 is unreachable — storing it would
+    // put the record past the maximum the reader was just told about, and re-expand the column
+    // by hundreds of pixels the next time the window was widened.
+    const ceiling = kind === "rail" ? RAIL.max : listCeiling();
     let handled = true;
     if (e.key === "ArrowLeft") set(measure() - step, true);
     else if (e.key === "ArrowRight") set(measure() + step, true);
@@ -217,9 +252,33 @@ function Handle({ kind, label, state }: HandleProps) {
     else handled = false;
     if (!handled) return;
     e.preventDefault();
-    // The shell's dispatcher is a bubble listener on `document`; stopping here is what keeps
-    // the zone model's ←/→ from also firing while this widget owns the keys.
-    e.stopPropagation();
+    /**
+     * `stopImmediatePropagation` ON THE NATIVE EVENT, AND NOTHING ELSE — not `stopPropagation`,
+     * and not both, because the first already does everything the second does.
+     *
+     * The first draft called only `stopPropagation`, on the stated but false premise that the
+     * shell's dispatcher is "a bubble listener on `document`, so an event stopped at this
+     * element never reaches it". Two reviews caught it before it reached anyone.
+     *
+     * The App Router hydrates the WHOLE DOCUMENT (`next/dist/client/app-index.js`:
+     * `const appElement = document; hydrateRoot(appElement, …)`), so React's delegated keydown
+     * listener and `keymap.tsx`'s `document.addEventListener("keydown", …)` are two bubble
+     * listeners on the SAME node. `stopPropagation` only stops an event moving to the next
+     * NODE; it does nothing about a second listener already attached to the one it is on. So
+     * React's runs first, this handler stopped propagation, and the registry ran anyway — →
+     * would widen the rail AND fire the zone model's "step into the reader", pulling focus off
+     * the separator, which made keyboard resizing single-shot in a browser and fine on the
+     * desktop (whose entry mounts at `#root`, below `document`).
+     *
+     * Only `stopImmediatePropagation` stops a sibling listener. `MoreMenu.tsx` measured this on
+     * a deployed build and states the same mechanism; this is the sixth surface to need it.
+     *
+     * A TEST DOM CANNOT REPRODUCE IT — a harness mounts React into a `<div>`, where React's
+     * listener really is below `document` and a plain `stopPropagation` really does work. So
+     * the guard watches the CALL and not the outcome (`column-handles.test.tsx`), which is the
+     * only thing that differs between the broken build and this one.
+     */
+    e.nativeEvent.stopImmediatePropagation();
   };
 
   return (
@@ -237,6 +296,7 @@ function Handle({ kind, label, state }: HandleProps) {
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
+      onLostPointerCapture={onPointerUp}
       onDoubleClick={reset}
       onKeyDown={onKeyDown}
     />

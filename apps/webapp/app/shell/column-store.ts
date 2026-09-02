@@ -54,14 +54,22 @@
  * without either of them measuring anything.
  */
 
+import { UI_KEYS } from "./persisted-ui";
+
 /**
- * The store's key and its shape. `v` is present so a future geometry that means something
+ * The store's key and its shape. The key itself comes from `UI_KEYS` rather than being spelled
+ * again here: that table is what keeps every key this app writes greppable from one prefix, and
+ * it is the string `sign-out-clears-durable-stores.test.ts` rules on. Two copies of it would let
+ * the store read one key while the sign-out census classified another — and the census would
+ * still pass, because it only checks that every literal it FINDS is dispositioned.
+ *
+ * `v` is present so a future geometry that means something
  * different by `rail`/`list` can be told from this one: an unrecognised version reads as NO
  * PREFERENCE (the defaults stand) rather than as a value to repair, because a repaired guess
  * at an unknown shape is how a stale jar produces a layout nobody chose. The next write
  * replaces it with a v1 record.
  */
-export const COLUMNS_KEY = "ohmail.ui.columns";
+export const COLUMNS_KEY = UI_KEYS.columns;
 export const COLUMNS_VERSION = 1;
 
 export interface ColumnState {
@@ -89,9 +97,33 @@ export const LIST = { min: 320, max: 720, dflt: 400, viewerMin: 480 } as const;
 export const STEP = 16;
 export const BIG_STEP = 64;
 
-/** The two custom properties the geometry hangs on. Absent = today's stylesheet, verbatim. */
+/** The custom properties the geometry hangs on. Absent = today's stylesheet, verbatim. */
 export const RAIL_VAR = "--rail-w";
 export const SPLIT_VAR = "--split-user";
+/**
+ * …AND A SECOND TRACK LIST FOR THE BOOT SILHOUETTE, WHICH IS NOT THE SAME BOX.
+ *
+ * `--split-user` contains `calc(100% - …)`, and `100%` means the element the property is USED
+ * on. In the shell that is `.view.split`, which the rail and one gap have already been taken
+ * out of; the silhouette's `.boot-sk-window` is the whole deck, rail included, and is therefore
+ * a few hundred pixels wider. Handing it the same string made it draw a list up to
+ * `rail + gap` wider than the shell it becomes — the exact snap on every cold boot that reading
+ * the chosen widths was supposed to remove.
+ *
+ * It cannot be repaired at the point of use: a `var()` inside a custom property is substituted
+ * where the property is DECLARED (`:root`), not where it is read, so no per-element override
+ * can reach inside it. So the room is baked in per box, by the one function below, and the
+ * agreement table in `column-geometry.test.ts` compares both properties.
+ */
+export const SPLIT_SK_VAR = "--split-user-sk";
+
+/** The rail's track, as CSS. One string, so the stylesheet and the stamp cannot drift. */
+export const RAIL_TRACK = `clamp(${RAIL.min}px, var(${RAIL_VAR}, ${RAIL.dflt}px), ${RAIL.max}px)`;
+
+/** What is left for the list once the reading column keeps its floor — per box. */
+const ROOM_SPLIT = `calc(100% - ${LIST.viewerMin}px - var(--gap-tile))`;
+const ROOM_SKELETON =
+  `calc(100% - ${RAIL_TRACK} - var(--gap-tile) - ${LIST.viewerMin}px - var(--gap-tile))`;
 
 const clamp = (px: number, lo: number, hi: number): number =>
   Math.round(Math.min(hi, Math.max(lo, px)));
@@ -111,11 +143,27 @@ export const clampList = (px: number): number => clamp(px, LIST.min, LIST.max);
  * door's inline stamp, and the desktop's. `column-geometry.test.ts` compares the stamp's output
  * against this for a table of stored values, including hostile ones.
  */
-export function splitUserValue(listPx: number): string {
-  return `minmax(${LIST.min}px, min(${listPx}px, calc(100% - ${LIST.viewerMin}px - var(--gap-tile)))) 1fr`;
+function splitTracks(listPx: number, room: string): string {
+  return `minmax(${LIST.min}px, min(${listPx}px, ${room})) 1fr`;
 }
 
-/** A stored record, or `null` for "no preference" — an unreadable jar included. */
+/** The shell's split — `100%` is `.view.split`, the rail already taken out of it. */
+export function splitUserValue(listPx: number): string {
+  return splitTracks(listPx, ROOM_SPLIT);
+}
+
+/** The silhouette's — `100%` is the whole deck, so the rail and its gap come out here. */
+export function splitSkeletonValue(listPx: number): string {
+  return splitTracks(listPx, ROOM_SKELETON);
+}
+
+/**
+ * The stored record, reduced to what this build understands — and an EMPTY record, never `null`,
+ * for every "no preference" case: an empty jar, a version this build does not know, a malformed
+ * value, and a jar that refuses to be read at all. One shape out means callers never branch on
+ * which kind of nothing they got, and the empty record is exactly what `applyColumnVars` turns
+ * into "remove both properties", which is the default geometry.
+ */
 export function readColumns(storage?: Storage | null): ColumnState {
   try {
     const jar = storage ?? window.localStorage;
@@ -173,8 +221,13 @@ export function writeColumns(state: ColumnState, storage?: Storage | null): void
 export function applyColumnVars(root: HTMLElement, state: ColumnState): void {
   if (state.rail !== undefined) root.style.setProperty(RAIL_VAR, `${state.rail}px`);
   else root.style.removeProperty(RAIL_VAR);
-  if (state.list !== undefined) root.style.setProperty(SPLIT_VAR, splitUserValue(state.list));
-  else root.style.removeProperty(SPLIT_VAR);
+  if (state.list !== undefined) {
+    root.style.setProperty(SPLIT_VAR, splitUserValue(state.list));
+    root.style.setProperty(SPLIT_SK_VAR, splitSkeletonValue(state.list));
+  } else {
+    root.style.removeProperty(SPLIT_VAR);
+    root.style.removeProperty(SPLIT_SK_VAR);
+  }
 }
 
 /**
@@ -207,7 +260,8 @@ export function columnsBootScript(): string {
     `if(typeof c.rail==="number"&&isFinite(c.rail)){n=Math.round(Math.min(${RAIL.max},Math.max(${RAIL.min},c.rail)));` +
     `d.setProperty(${JSON.stringify(RAIL_VAR)},n+"px")}` +
     `if(typeof c.list==="number"&&isFinite(c.list)){n=Math.round(Math.min(${LIST.max},Math.max(${LIST.min},c.list)));` +
-    `d.setProperty(${JSON.stringify(SPLIT_VAR)},"minmax(${LIST.min}px, min("+n+"px, calc(100% - ${LIST.viewerMin}px - var(--gap-tile)))) 1fr")}` +
+    `d.setProperty(${JSON.stringify(SPLIT_VAR)},"minmax(${LIST.min}px, min("+n+"px, ${ROOM_SPLIT})) 1fr");` +
+    `d.setProperty(${JSON.stringify(SPLIT_SK_VAR)},"minmax(${LIST.min}px, min("+n+"px, ${ROOM_SKELETON})) 1fr")}` +
     `}catch(e){}})()`
   );
 }

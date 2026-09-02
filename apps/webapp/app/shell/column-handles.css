@@ -50,6 +50,15 @@
 .col-handle:hover::before {
   opacity: 1;
 }
+/* `:focus` and not only `:focus-visible`. A press on the handle cancels its own default action
+   (to stop a text selection starting), which also cancels the focus it would have given — so
+   the focus is taken by hand, and a programmatic focus during a mouse gesture does NOT match
+   `:focus-visible` in Chrome or Firefox. Without this the line vanishes the moment the drag
+   ends while the separator still owns the arrow keys: the one state where the reader most
+   needs to be told the keys will resize a column. */
+.col-handle:focus::before {
+  opacity: 1;
+}
 /* The line IS the focus indication — a ring around a one-gap-wide strip would sit on top of
    the two tiles it separates and read as a border on the wrong thing. */
 .col-handle:focus-visible {
@@ -60,8 +69,15 @@
   opacity: 1;
   background: var(--focus, var(--accent));
 }
+/* The rail's handle is absolute inside `.deck`, whose containing block is its PADDING box — so
+   `top/bottom: 0` would run it `--gap-edge` past the columns at both ends, putting a resize
+   cursor and a visible line in the window frame. It is inset by the same token the deck pads
+   by, which is exactly where the tiles begin and end. (The list's handle lives inside
+   `.list-col`, which has no padding, so `top/bottom: 0` is already the column's own extent.) */
 .col-handle-rail {
   left: calc(var(--gap-edge) + var(--rail-track));
+  top: var(--gap-edge);
+  bottom: var(--gap-edge);
 }
 .col-handle-list {
   right: calc(-1 * var(--gap-tile));

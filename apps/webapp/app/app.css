@@ -3946,12 +3946,14 @@ textarea.c-input:read-only {
      is about to stand at 304/560 is exactly the visible re-layout this geometry exists to
      prevent, so it reads the same two properties the shell does (`shell/column-store.ts`),
      with the shipped defaults as the fall-through. `--split-user`'s viewer floor is measured
-     against this element rather than against `.view.split`, which is a few hundred pixels
-     wider; the two disagree only in the last inch of a very narrow window, and being one
-     column-clamp out for one frame is well inside "close enough that nothing jumps". */
+     against THIS box and not against `.view.split`, which the rail and a gap have already been
+     taken out of — so this reads `--split-user-sk`, the same chosen width with the rail
+     subtracted (`shell/column-store.ts`). Handing it the shell's own string instead drew a list
+     up to `rail + gap` too wide and put the snap back on every cold boot, which review caught
+     before it shipped. */
   grid-template-columns:
     clamp(200px, var(--rail-w, 224px), 360px)
-    var(--split-user, minmax(320px, 400px) 1fr);
+    var(--split-user-sk, minmax(320px, 400px) 1fr);
   gap: 0 var(--gap-tile); /* mirrors .deck — the skeleton must sit exactly where the shell will */
   /* NO own height or width: in the gate this sits absolutely at `inset:16px`
      (`.gate-boot > .boot-sk`), where the inset IS the box — an explicit dimension beside two
