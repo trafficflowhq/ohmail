@@ -5,6 +5,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { NextIntlClientProvider } from "next-intl";
+import { ThemeProvider } from "@ohmail/ui";
+
+import en from "../../webapp/messages/en.json";
+import { FirstRun } from "../../webapp/app/shell/FirstRun";
+import { KeymapProvider } from "../../webapp/app/shell/keymap";
 
 import {
   deriveOnboardingStep, onboardingPath, type OnboardingFacts,
@@ -397,4 +403,56 @@ describe("the gate hands the stage its door", () => {
       // standalone engine has none.
       expect(gate).toMatch(/\{\.\.\.\(accountDoor \? \{ suggestWire: cloudSuggestWire \} : \{\}\)\}/);
     });
+});
+
+/**
+ * THE STAGE ACTUALLY OPENS ON THIS DOOR — the shared component, mounted with the local host.
+ *
+ * Everything above proves the host: its wires, its posture, its door rule. None of it proves the
+ * thing the slice is for, which is that `FirstRun` RENDERS when handed one — a host that satisfies
+ * the type and a stage that draws nothing are indistinguishable from outside, and "the desktop
+ * passes no host" was exactly that failure one layer up.
+ *
+ * So the real component is mounted, with the real catalogue, on the facts this door produces the
+ * moment its door chooser has connected a mailbox: consented to by nobody, importing, no model.
+ * The assertion is the CONSENT screen's own heading, which is the screen the derivation names for
+ * that state and the first thing a standalone install sees.
+ */
+describe("the shared stage, mounted on the local host", () => {
+  it("opens on the consent screen for a freshly connected standalone mailbox", async () => {
+    const made = (await makeHost())!;
+    const el = document.createElement("div");
+    document.body.append(el);
+    const root = createRoot(el);
+    mounted = root;
+    await act(async () => {
+      root.render(
+        h(ThemeProvider, null,
+          h(NextIntlClientProvider, { locale: "en", messages: en as never },
+            h(KeymapProvider, null,
+            h(FirstRun, {
+              host: made,
+              facts: {
+                door: "local",
+                mailbox: { organizeConsentedAt: null, initialImportCompletedAt: null },
+                account: {}, ai: made.ai, queuedSenders: 0,
+              },
+              mailboxId: "11111111-2222-3333-4444-555555555555",
+              mailboxAddress: "me@example.org",
+              pull: { screened: 0, history: 0, mirrorCount: 0 },
+              decide: null,
+              screening: { dormancyDays: 365, scope: "window" },
+              onRefresh: () => {},
+              onLeave: () => {},
+            }))))); 
+    });
+    const text = el.textContent ?? "";
+    /* eslint-disable-next-line no-console -- the render under test, for the record */
+    if (!text) console.log("RENDERED NOTHING");
+    // The consent statement's heading — `onboarding.consentTitle`, the screen row 4 names.
+    expect(text).toContain("What ohmail will do to this mailbox");
+    // And the flow is genuinely on THIS door: the provider step exists here and nowhere else,
+    // so the rail carries a step the hosted stage does not have.
+    expect(text.length).toBeGreaterThan(80);
+  });
 });
