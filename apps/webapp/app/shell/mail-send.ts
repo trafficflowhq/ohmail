@@ -112,10 +112,11 @@ export const SENT_BEAT_MS = 600;
 /**
  * When a send that is still going stops saying "Sending" and starts saying "Still sending".
  *
- * Measured against the thing it describes: a healthy send on a plain IMAP/SMTP mailbox settles
- * in well under a second and a Gmail mailbox takes 2–6 s, mostly in the cold dial. So four
- * seconds is past every ordinary send and short of the point where a person decides the button
- * is broken — the state it answers.
+ * Chosen against what a send actually costs. The slowest part of one is the cold connection the
+ * send path opens for every press, and how long that takes depends on the mail provider — fast
+ * enough to be invisible on some, several seconds on others. Four seconds is past every ordinary
+ * send and short of the point where a person decides the button is broken, which is the state
+ * this line answers.
  */
 export const SENDING_LONG_MS = 4_000;
 

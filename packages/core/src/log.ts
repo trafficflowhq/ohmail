@@ -183,8 +183,8 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // ── The SEND path's own phase durations, and `sendId`, added WITH the line that emits them ──
   //
   // `send_phases` decomposes one attempt: the reservation transaction, the attachment assembly,
-  // the cold dial (`openMs` — measured as the largest and by far the most variable phase on one
-  // shipped provider), the SMTP session and Sent APPEND, the finalize, and the sent-copy
+  // the cold dial (`openMs`, which on some providers is the largest and by far the most variable
+  // phase of the whole attempt), the SMTP session and Sent APPEND, the finalize, and the sent-copy
   // projection. The whole point of the line is the SPLIT — a total nobody can decompose is the
   // state that made "sending is slow" an investigation rather than a reading — so a census that
   // keeps `totalMs` and drops the other six keeps the one number that was never the question.

@@ -605,11 +605,11 @@ export const SEND_FAILED_SENTENCE =
  * deadline without any of them tripping, so the sequence has no ceiling at all, and the press
  * that started it has nothing to wait on but the platform's own kill.
  *
- * MEASURED, which is why the number is what it is. Dialling the three shipped provider shapes
- * the way `makeSendAdapter` does — a fresh adapter per press — the plain-IMAP and Infomaniak
- * mailboxes complete the whole attempt in well under a second, and a Gmail mailbox spends
- * 1.0–8.5 s in `connect()` ALONE, varying eightfold between consecutive presses on one account.
- * So the honest ceiling is far above every healthy attempt and far below the 60-second
+ * The number is chosen against what the sequence actually costs, not guessed. A send opens a
+ * FRESH adapter every time, so every press pays a full cold dial; on some providers that dial is
+ * the largest phase of the attempt and swings by nearly an order of magnitude between consecutive
+ * presses on one mailbox, while on others the whole attempt finishes in a fraction of a second.
+ * A ceiling therefore has to sit far above every healthy attempt and far below the 60-second
  * serverless invocation limit that is otherwise the only thing that ends a hung one — being
  * killed BY the platform is the one failure with no error handling at all: no `finally`, no
  * `close()`, no response, and a reservation left `pending` with nobody told.
