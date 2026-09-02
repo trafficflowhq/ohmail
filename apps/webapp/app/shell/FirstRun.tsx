@@ -326,6 +326,12 @@ export function FirstRun({
     testSeq.current += 1;
     setVerdict(null);
     setTesting(false);
+    /* AND THE FAILED WRITE'S OWN SENTENCE, which is the second thing on this screen that reports
+       on a configuration. A refused connect sets `problem`; editing the address afterwards used to
+       leave that refusal standing beside the new one, so the screen carried a server's complaint
+       about a mailbox nobody is trying any more — and a fresh green test did not remove it either,
+       because the two were written by different code paths and only one of them was retired. */
+    setProblem(null);
   }, []);
   const preset = providerById(providerId);
 

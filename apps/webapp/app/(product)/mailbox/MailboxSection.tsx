@@ -1389,12 +1389,11 @@ export function MailboxSection() {
         smtpHost: s.transport === "smtp" || both ? s.host : v.smtpHost,
       };
     });
-    setSuggestion(null);
     setError(null);
-    // IT REWRITES A HOST, so it clears the verdict like every other write to one. This press can
-    // change BOTH hosts at once (the vanity pair), which is exactly the case where a green tick
-    // for the old IMAP host is most likely to be left standing over a new one.
-    clearVerdict();
+    // IT REWRITES A HOST, so everything learned about the old one goes — the verdict, the
+    // plaintext consent and the offer behind it. This press can change BOTH hosts at once (the
+    // vanity pair), which is exactly where stale evidence is likeliest to be left standing.
+    retireHostEvidence();
   };
 
   const fail = (err: unknown): void => {
@@ -1663,12 +1662,10 @@ export function MailboxSection() {
     setMsAppPassword(false);
     // AND THE VERDICT GOES WITH IT. A provider change changes which server would be dialled, so a
     // green tick from the previous choice is evidence about a different host entirely.
-    clearVerdict();
-    // SO DOES THE PLAINTEXT OPT-IN. It is a consent about ONE server that reported no TLS at all,
-    // and carrying it into a different provider's attempt would offer that server the same
-    // exemption on evidence gathered about somebody else's. The checkbox only reappears when a
-    // server reports `tls_unavailable` again.
-    setTyped((v) => ({ ...v, allowInsecure: false }));
+    // EVERYTHING LEARNED ABOUT THE OLD SERVER GOES, not only the verdict: the plaintext consent,
+    // the offer that produced it, and the certificate's host suggestion are all evidence about a
+    // host this form no longer addresses.
+    retireHostEvidence();
   };
 
   /** Open the edit form for one mailbox. Starts empty — the stored settings are not on the wire. */
@@ -1801,6 +1798,30 @@ export function MailboxSection() {
     setProbeBad(null);
     setProbing(false);
   }, []);
+
+  /**
+   * RETIRE EVERYTHING THAT WAS LEARNED ABOUT THE PREVIOUS SERVER — not just the test's verdict.
+   *
+   * Three things on this form are EVIDENCE ABOUT ONE HOST, and all three used to survive a change
+   * of that host:
+   *
+   *  · `insecureOffer` — the plaintext checkbox, which only appears because a server reported it
+   *    has no TLS at all;
+   *  · `typed.allowInsecure` — the consent itself, and this is the one that matters. It is sent by
+   *    the create AND (since the test began sending what the create sends) by the probe. Granted
+   *    about server A and carried onto server B, it offers B an exemption nobody granted it: a
+   *    password travelling in the clear to a host that was never asked about;
+   *  · `suggestion` — a canonical host offered by A's certificate, which says nothing about B.
+   *
+   * NOT called by the checkbox's own handler, which would un-check it the instant it was ticked.
+   * The distinction is the point: toggling the consent is not changing the thing it is about.
+   */
+  const retireHostEvidence = useCallback(() => {
+    clearVerdict();
+    setInsecureOffer(false);
+    setSuggestion(null);
+    setTyped((v) => (v.allowInsecure ? { ...v, allowInsecure: false } : v));
+  }, [clearVerdict]);
   const [probeOk, setProbeOk] = useState<{ host: string; user: string; folders: number | null } | null>(null);
   const [probeBad, setProbeBad] = useState<{ reason: string | null; message: string } | null>(null);
   /** Enough typed to ask the question at all — the same three fields the endpoint requires. */
@@ -2368,7 +2389,10 @@ export function MailboxSection() {
                   <input
                     id="mb-imap" className="join-input" autoComplete="off" spellCheck={false}
                     value={typed.imapHost}
-                    onChange={(e) => { setTyped((v) => ({ ...v, imapHost: e.target.value })); clearVerdict(); }}
+                    onChange={(e) => {
+                      setTyped((v) => ({ ...v, imapHost: e.target.value }));
+                      retireHostEvidence();
+                    }}
                     required
                   />
                   <label className="join-label" htmlFor="mb-smtp">{t("smtpLabel")}</label>
