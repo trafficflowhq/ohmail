@@ -134,6 +134,16 @@ const UNKNOWN_HOLDER: MailboxFacts = {
   organizedBy: { kind: "unknown", name: null, since: "2026-08-28T09:00:00.000Z" },
 };
 
+/** A LIVE CLOUD holder. `decideLease` rule 5 refuses a local install over this one, authorized or not. */
+const CLOUD_HELD: MailboxFacts = {
+  ...READER, id: "mbx-cloud",
+  organizedBy: { kind: "cloud", name: "ohmail Cloud", since: "2026-08-28T09:00:00.000Z" },
+  organizerState: "held",
+};
+
+/** A cloud holder that has STOPPED renewing — rules 7-8 leave the request free to win. */
+const CLOUD_STOPPED: MailboxFacts = { ...CLOUD_HELD, id: "mbx-cloud-quiet", organizerState: "stopped" };
+
 /** A stand-down as an engine PREDATING the role column reports one: no role, `disabled` + reason. */
 const LEGACY_STAND_DOWN: MailboxFacts = {
   ...READER, id: "mbx-legacy",
@@ -388,19 +398,60 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     const text = el.textContent ?? "";
     expect(text).toContain("Quit and reopen ohmail and");
     expect(text, "the ceremony promised a pass this engine will not make")
-      .not.toContain("starts organizing on its next pass");
+      .not.toContain("takes over on its next pass");
   });
 
   it("and a MODERN reader is promised the pass, not a relaunch, at the confirmation", async () => {
     const el = await render(null);
     await act(async () => { organizeButton(el)!.click(); });
     const text = el.textContent ?? "";
-    expect(text).toContain("starts organizing on its next pass");
+    expect(text).toContain("takes over on its next pass");
     expect(text).not.toContain("Quit and reopen");
   });
 
   /**
-   * NEITHER CONFIRMATION MAY PROMISE THE MAILBOX.
+   * THE CONFIRMATION SAYS WHAT THE LEASE CAN ACTUALLY GRANT, AND THAT DEPENDS ON WHO HOLDS IT.
+   *
+   * `decideLease` ranks cloud > local > unknown and this install is local, so an authorized
+   * request DISPLACES a live local peer (rule 6) and is refused by a live cloud or unknown holder
+   * (rules 5 and 2) whatever was authorized. One universal sentence is therefore wrong in one
+   * direction or the other — and the copy here was wrong in BOTH in turn: it promised the takeover
+   * flat, and then, correcting that, promised a running holder always keeps the mailbox.
+   */
+  it("promises the takeover against a live LOCAL peer, which the lease will displace", async () => {
+    const el = await render(null);
+    await act(async () => { organizeButton(el)!.click(); });
+    const text = el.textContent ?? "";
+    expect(text).toContain("takes over on its next pass");
+    expect(text, "the renewal race is the only thing that saves the peer, and it is stated")
+      .toContain("unless it renews its claim first");
+    expect(text, "a displaceable peer was described as unbeatable")
+      .not.toContain("cannot take a mailbox from it");
+  });
+
+  it("does not promise a takeover a live CLOUD holder will refuse", async () => {
+    FACTS = [CLOUD_HELD];
+    const el = await render(null);
+    await act(async () => { organizeButton(el)!.click(); });
+    const text = el.textContent ?? "";
+    expect(text, "the confirmation promised what rule 5 refuses even with authorization")
+      .toContain("cannot take a mailbox from it");
+    expect(text).toContain("Stop it organizing there first");
+    expect(text).not.toContain("takes over on its next pass");
+  });
+
+  it("…and promises it again once that cloud holder has stopped checking in", async () => {
+    FACTS = [CLOUD_STOPPED];
+    const el = await render(null);
+    await act(async () => { organizeButton(el)!.click(); });
+    const text = el.textContent ?? "";
+    expect(text, "a quiet holder is beatable and the confirmation withheld that")
+      .toContain("takes over on its next pass");
+    expect(text).not.toContain("cannot take a mailbox from it");
+  });
+
+  /**
+   * AND NEITHER CONFIRMATION MAY PROMISE THE MAILBOX OUTRIGHT.
    *
    * `authorize OrganizerTakeover` says it in its own docblock: *"this grants permission to ASK,
    * never permission to WIN"* — an organizer still renewing keeps the mailbox regardless of what
@@ -411,15 +462,16 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
   it.each([
     ["a modern reader", null],
     ["a legacy stand-down", "legacy"],
-  ])("%s is told this asks for the mailbox rather than takes it", async (_what, kind) => {
+  ])("%s is told the other install keeps its copy either way", async (_what, kind) => {
     if (kind === "legacy") FACTS = [LEGACY_STAND_DOWN];
     const el = await render(null);
     await act(async () => { organizeButton(el)!.click(); });
     const text = el.textContent ?? "";
-    expect(text).toContain("does not take it");
-    expect(text, "the confirmation promised a takeover the lease can refuse")
-      .toContain("it keeps the mailbox and nothing changes here");
+    // The cost to the other side is the one thing true of every branch: it is not killed, and its
+    // copy of the mail survives whichever way the lease decides.
     expect(text).toContain("left alone either way");
+    expect(text, "a confirmation stated an outcome with no condition on it at all")
+      .toMatch(/unless|If it is still running|may keep the mailbox/);
   });
 
   it("tells a legacy install to relaunch, which is the mechanism on that engine", async () => {

@@ -551,6 +551,27 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
    */
   const claimTarget = facts.find(claimable) ?? null;
 
+  /**
+   * WHETHER THE LEASE CAN GRANT WHAT THIS PRESS ASKS FOR — and it depends on WHO holds it.
+   *
+   * `decideLease` (`organizer-lease.ts:556-585`) ranks kinds cloud > local > unknown, and this
+   * install is `local`:
+   *
+   *   · a live LOCAL peer — rule 6 — is DISPLACED by an authorized request, unless it renews
+   *     during the gate. The direct promise is true here;
+   *   · a live CLOUD holder — rule 5 — wins "even with authorization". §4 gives a local install no
+   *     path over a live Cloud on purpose: the honest action is to stop it organizing there;
+   *   · a live UNKNOWN kind — rule 2 — stands us down and no authorization overrides it;
+   *   · anything stopped or gone quiet — rules 7-8 — leaves the request free to win.
+   *
+   * So one universal sentence is wrong in one direction or the other, which is how the copy here
+   * was wrong twice: first promising the takeover flat, then promising a running holder always
+   * keeps it. This is the branch, and it is on the row's own two columns.
+   */
+  const claimWouldBeRefused = (m: MailboxFacts): boolean =>
+    m.organizerState === "held"
+    && (m.organizedBy?.kind === "cloud" || m.organizedBy?.kind === "unknown");
+
   /** The holder's own name for a sentence, or the kind when it did not send one. */
   const holderOf = (m: MailboxFacts): string =>
     m.organizedBy?.name
@@ -658,7 +679,9 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
                 later. It also names no holder, because a legacy row carries no holder columns. */}
             {claimTarget.legacyStandDown === true
               ? t("organizeHereWhatLegacy")
-              : t("organizeHereWhat", { name: holderOf(claimTarget) })}
+              : claimWouldBeRefused(claimTarget)
+                ? t("organizeHereWhatBlocked", { name: holderOf(claimTarget) })
+                : t("organizeHereWhat", { name: holderOf(claimTarget) })}
           </span>
           <Button
             variant="primary"
