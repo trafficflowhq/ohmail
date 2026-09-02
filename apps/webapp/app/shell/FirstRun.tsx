@@ -300,6 +300,26 @@ export function FirstRun({
    * on it, so a stale green would arm a submit for a configuration nobody proved.
    */
   const testSeq = useRef(0);
+  /**
+   * RETIRE WHATEVER IS IN FLIGHT, and clear what is on screen — one act, because they are one
+   * fact: this form no longer describes the thing that was asked about.
+   *
+   * The generation counter alone does NOT do this, and believing it did was the defect a third
+   * review round found in the second round's fix. Advancing the sequence only when a test STARTS
+   * orders concurrent presses and nothing else: press Test for A, edit the host to B while it is
+   * pending, and A's answer still carries the current generation, so it lands — over B, with the
+   * gate on "Connect and continue" opening for a configuration nobody proved. The clear has to
+   * advance the sequence too, which is what makes an EDIT invalidate a request rather than merely
+   * blank the screen.
+   *
+   * `setTesting(false)` with it: the request is no longer ours, so the pending line must not go on
+   * describing it.
+   */
+  const retireTest = useCallback(() => {
+    testSeq.current += 1;
+    setVerdict(null);
+    setTesting(false);
+  }, []);
   const preset = providerById(providerId);
 
   /**
@@ -323,9 +343,10 @@ export function FirstRun({
     }
     // THE VERDICT IS ABOUT A CONFIGURATION, NOT ABOUT A FORM. Changing the provider changes
     // which server would be dialled, so a green tick left standing would authorise "Connect and
-    // continue" on evidence gathered against a different host entirely.
-    setVerdict(null);
-  }, [imapHost, providerId, smtpHost]);
+    // continue" on evidence gathered against a different host entirely — and a test still in
+    // flight against the old provider would land the same way, which is why this RETIRES.
+    retireTest();
+  }, [imapHost, providerId, retireTest, smtpHost]);
 
   const mailboxInput = useCallback((): FirstRunMailboxInput => {
     const port = Number(imapPort);
@@ -541,33 +562,33 @@ export function FirstRun({
               <div className="set-fields">
                 <SettingsField htmlFor={`${ids}-address`} label={t("address")}>
                   <input id={`${ids}-address`} type="email" autoComplete="email" value={address}
-                    onChange={(e) => { setAddress(e.target.value); setVerdict(null); }} />
+                    onChange={(e) => { setAddress(e.target.value); retireTest(); }} />
                 </SettingsField>
                 <SettingsField htmlFor={`${ids}-pass`} label={t("password")}
                   hint={host.door === "local" ? t("passwordHint") : t("passwordHintCloud")}>
                   <input id={`${ids}-pass`} type="password" autoComplete="off" value={pass}
-                    onChange={(e) => { setPass(e.target.value); setVerdict(null); }} />
+                    onChange={(e) => { setPass(e.target.value); retireTest(); }} />
                 </SettingsField>
               </div>
               {preset.manual ? (
                 <div className="set-fields">
                   <SettingsField htmlFor={`${ids}-imap`} label={t("imapHost")}>
                     <input id={`${ids}-imap`} className="set-mono" value={imapHost}
-                      onChange={(e) => { setImapHost(e.target.value); setVerdict(null); }} />
+                      onChange={(e) => { setImapHost(e.target.value); retireTest(); }} />
                   </SettingsField>
                   <SettingsField htmlFor={`${ids}-imap-port`} label={t("imapPort")}>
                     <input id={`${ids}-imap-port`} className="set-mono" inputMode="numeric"
                       value={imapPort}
-                      onChange={(e) => { setImapPort(e.target.value); setVerdict(null); }} />
+                      onChange={(e) => { setImapPort(e.target.value); retireTest(); }} />
                   </SettingsField>
                   <SettingsField htmlFor={`${ids}-smtp`} label={t("smtpHost")}>
                     <input id={`${ids}-smtp`} className="set-mono" value={smtpHost}
-                      onChange={(e) => { setSmtpHost(e.target.value); setVerdict(null); }} />
+                      onChange={(e) => { setSmtpHost(e.target.value); retireTest(); }} />
                   </SettingsField>
                   <SettingsField htmlFor={`${ids}-smtp-port`} label={t("smtpPort")}>
                     <input id={`${ids}-smtp-port`} className="set-mono" inputMode="numeric"
                       value={smtpPort}
-                      onChange={(e) => { setSmtpPort(e.target.value); setVerdict(null); }} />
+                      onChange={(e) => { setSmtpPort(e.target.value); retireTest(); }} />
                   </SettingsField>
                 </div>
               ) : null}

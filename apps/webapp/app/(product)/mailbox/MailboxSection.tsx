@@ -1449,6 +1449,11 @@ export function MailboxSection() {
       setError(null);
       setInsecureOffer(false);
       setSuggestion(null);
+      // AND THE VERDICT GOES WITH THE FORM IT DESCRIBED. Without this a successful connect left
+      // the tick standing, so reopening Connect later rendered it over an EMPTY form — a green
+      // verdict about a mailbox that is already connected, presented as evidence about a mailbox
+      // nobody has typed yet.
+      clearVerdict();
       setStage("list");
       await refresh();
       // A mailbox that has just been connected is exactly the case the account strip exists for, so it
@@ -1658,8 +1663,7 @@ export function MailboxSection() {
     setMsAppPassword(false);
     // AND THE VERDICT GOES WITH IT. A provider change changes which server would be dialled, so a
     // green tick from the previous choice is evidence about a different host entirely.
-    setProbeOk(null);
-    setProbeBad(null);
+    clearVerdict();
     // SO DOES THE PLAINTEXT OPT-IN. It is a consent about ONE server that reported no TLS at all,
     // and carrying it into a different provider's attempt would offer that server the same
     // exemption on evidence gathered about somebody else's. The checkbox only reappears when a
@@ -1782,7 +1786,21 @@ export function MailboxSection() {
    * verdict; this form's primary leads to a step-up ceremony rather than straight to a write, so
    * here the verdict informs rather than authorises — but it still may not be stale.
    */
-  const clearVerdict = useCallback(() => { setProbeOk(null); setProbeBad(null); }, []);
+  const clearVerdict = useCallback(() => {
+    /* IT RETIRES THE REQUEST, not just the sentence — and believing the generation counter alone
+       did that was the defect a third review round found in the second round's fix. Advancing the
+       sequence only when a test STARTS orders concurrent presses and nothing else: press Test for
+       A, edit a field to B while it is pending, and A's answer still carries the current
+       generation, so it lands over B. The edit has to advance the sequence, which is what makes it
+       invalidate a request rather than merely blank the screen.
+
+       `setProbing(false)` with it: the request is no longer ours, so the pending line must stop
+       claiming it and the button must come back. */
+    probeSeq.current += 1;
+    setProbeOk(null);
+    setProbeBad(null);
+    setProbing(false);
+  }, []);
   const [probeOk, setProbeOk] = useState<{ host: string; user: string; folders: number | null } | null>(null);
   const [probeBad, setProbeBad] = useState<{ reason: string | null; message: string } | null>(null);
   /** Enough typed to ask the question at all — the same three fields the endpoint requires. */
@@ -2404,7 +2422,10 @@ export function MailboxSection() {
             <Button onClick={() => {
               setStage("list"); setTyped(emptyTyped()); setMsAppPassword(false); setError(null);
               setInsecureOffer(false); setSuggestion(null);
-              setProbeOk(null); setProbeBad(null);
+              // RETIRES, and it has to: cancelling mid-request used to reset the form and leave
+              // the request live, so reopening Connect could receive the OLD answer with nothing
+              // pressed — a verdict appearing over an empty form.
+              clearVerdict();
             }}>
               {t("cancel")}
             </Button>
