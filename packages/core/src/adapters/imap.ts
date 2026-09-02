@@ -103,6 +103,9 @@ import {
   FILING_BATCH_MAX, type MoveManyResult,
   JUNK_BY_NAME, TRASH_BY_NAME, type SpecialFolders,
 } from "./imap-types.js";
+// The SSRF gate's other half. `pinned-fetch.ts` owns it because a pin and a gate are one
+// mechanism (its header says so); this file is the mail-leg consumer — see `ImapConfig.pin`.
+import { pinnedLookup } from "../net/pinned-fetch.js";
 import {
   makeLeaseIo, makeLeasePeekIo,
   type LeaseImapClient, type LeaseIo, type LeasePeekIo,
@@ -271,16 +274,46 @@ export function imapFlowOptions(
   opts: Pick<ImapAdapterOpts, "logger"> = {},
 ): ImapFlowOptions {
   const t: NetTimeouts = { ...DEFAULT_NET_TIMEOUTS, ...(config.timeouts ?? {}) };
+  const floor = imapTlsFloor(config.host, config.secure, config.allowInsecure === true).options;
+  const pin = dialPin(config.pin);
   return {
     // `config.auth` is the RESOLVED wire form: `{ user, pass }` or `{ user, accessToken }`. This
     // function stays pure/sync — the OAuth CALLBACK is awaited by `connect()` BEFORE it reaches here,
     // so the TLS-floor guards can keep asserting the whole assembled option set. imapflow reads
     // `auth.accessToken` and issues XOAUTH2 with no password on the wire.
     host: config.host, port: config.port,
-    ...imapTlsFloor(config.host, config.secure, config.allowInsecure === true).options,
+    ...floor,
+    /**
+     * THE PIN, MERGED INTO THE FLOOR AND NEVER REPLACING IT (see {@link ImapConfig.pin}).
+     *
+     * `tls` is the ONE option bag imapflow forwards to the connector: `connect()` builds
+     * `Object.assign({ host, servername, port }, this.options.tls)` and hands it to `tls.connect`
+     * OR `net.connect` (`imap-flow.js:1811`, `:1932`), so a `lookup` here reaches the socket on
+     * BOTH the implicit-TLS and the STARTTLS rung. A top-level `lookup` would be read by neither.
+     *
+     * The spread is `{ ...floor.tls, lookup }`, so every key of {@link TLS_FLOOR} survives — this
+     * is the path whose failure mode is a transcript containing a plaintext password, and a pin
+     * that quietly dropped `rejectUnauthorized` would be a worse hole than the one it closes.
+     * `host` and `servername` are untouched, so certificate validation still runs against the
+     * name; only the address the kernel dials is fixed. The STARTTLS upgrade
+     * (`upgradeToSTARTTLS`) hands `tls.connect` an already-open `socket`, where `lookup` is inert.
+     */
+    ...(pin ? { tls: { ...floor.tls, lookup: pinnedLookup(pin) } } : {}),
     auth: config.auth, qresync: true, logger: opts.logger ? undefined : false,
     connectionTimeout: t.connectionMs, greetingTimeout: t.greetingMs, socketTimeout: t.socketMs,
   };
+}
+
+/**
+ * A config's pin, normalised: the addresses to dial, or `undefined` for "dial by name".
+ *
+ * An EMPTY array is `undefined` and not "connect to nothing". The pin narrows a dial that the
+ * SSRF gate has already permitted; it is not a second refusal mechanism, and a caller that
+ * threaded an empty list would otherwise turn a permitted probe into an unexplainable connect
+ * failure at the socket layer, far from the check that produced it.
+ */
+function dialPin(pin: readonly string[] | undefined): readonly string[] | undefined {
+  return pin !== undefined && pin.length > 0 ? pin : undefined;
 }
 
 /** Is this the OAuth2 (callback-carrying) auth member? */
@@ -304,13 +337,36 @@ export async function resolveImapAuth(auth: ImapAuth): Promise<ResolvedImapAuth>
   return auth;
 }
 
-/** The complete nodemailer transport option set for a config's SMTP block. See {@link imapFlowOptions}. */
+/**
+ * The complete nodemailer transport option set for a config's SMTP block. See {@link imapFlowOptions}.
+ *
+ * ── THE SUBMISSION LEG'S PIN IS A DIFFERENT MECHANISM FROM THE IMAP LEG'S, AND HAS TO BE ────
+ *
+ * `lookup` is useless here. nodemailer does its own name resolution BEFORE connecting —
+ * `shared.resolveHostname` (`smtp-connection/index.js:305` and `:345`, both branches) replaces
+ * `opts.host` with an address it resolved itself and caches the answer — so `net.connect` is
+ * handed a literal and never consults a `lookup` at all. That resolution is the second lookup the
+ * pin exists to remove.
+ *
+ * So the pin is applied where nodemailer will actually honour it: the DIAL HOST becomes the
+ * cleared address, and `resolveHostname` short-circuits on it (`net.isIP` → "nothing to do here").
+ * `servername` still carries the NAME — {@link smtpTlsFloor} derives it from `smtp.host`, which is
+ * why the floor is computed from the name above and the host substituted after — so the implicit
+ * TLS dial and the STARTTLS upgrade both validate the certificate against the name the user typed.
+ *
+ * ONE address is dialled where the IMAP leg pins the whole cleared set, because nodemailer's host
+ * is a scalar and there is no per-address retry to preserve. Every address in the set was cleared,
+ * so the choice is arbitrary rather than weaker; the cost is that a provider whose first A record
+ * is down fails the submission probe instead of falling through to the second, which is a refusal
+ * the person can act on and not a hole.
+ */
 export function smtpTransportOptions(config: ImapConfig): SMTPTransport.Options {
   const smtp = config.smtp;
   if (!smtp) throw new Error("smtpTransportOptions(): ImapConfig.smtp is not configured");
   const t: NetTimeouts = { ...DEFAULT_NET_TIMEOUTS, ...(config.timeouts ?? {}) };
+  const pin = dialPin(smtp.pin);
   return {
-    host: smtp.host, port: smtp.port,
+    host: pin ? pin[0]! : smtp.host, port: smtp.port,
     ...smtpTlsFloor(smtp.host, smtp.secure).options,
     auth: smtp.auth,
     connectionTimeout: t.connectionMs, greetingTimeout: t.greetingMs, socketTimeout: t.socketMs,
@@ -647,7 +703,13 @@ function loginAuth(auth: SmtpSizeDialAuth): Parameters<SMTPConnection["login"]>[
 }
 
 export async function verifySmtpLogin(
-  smtp: { host: string; port: number; secure: boolean; auth: SmtpSizeDialAuth },
+  smtp: {
+    host: string; port: number; secure: boolean; auth: SmtpSizeDialAuth;
+    /** The submission host's cleared addresses — see {@link ImapConfig.pin}. The add-time probe
+     * sets it (its host came from a request body and has just been through the SSRF gate); every
+     * stored-credential caller leaves it undefined and dials by name exactly as before. */
+    pin?: readonly string[];
+  },
   timeouts?: Partial<NetTimeouts>,
 ): Promise<SmtpLoginProof> {
   const password = "pass" in smtp.auth ? smtp.auth : null;
@@ -665,6 +727,9 @@ export async function verifySmtpLogin(
     smtp: {
       host: smtp.host, port: smtp.port, secure: smtp.secure,
       ...(password ? { auth: password } : {}),
+      // The pin travels on the SUBMISSION block, because that is the block `smtpTransportOptions`
+      // dials from. The top-level fields above are the IMAP half and it reads none of them.
+      ...(smtp.pin ? { pin: smtp.pin } : {}),
     },
     ...(timeouts ? { timeouts } : {}),
   });

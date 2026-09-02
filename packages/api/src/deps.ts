@@ -180,7 +180,12 @@ export interface ApiServices {
    * IMAP side.
    */
   smtpVerify?: (
-    smtp: { host: string; port: number; secure: boolean; auth: { user: string; pass: string } },
+    smtp: {
+      host: string; port: number; secure: boolean; auth: { user: string; pass: string };
+      /** The addresses the deployment's {@link ProbeHostGuard} cleared, when it cleared any. The
+       * dial connects to one of these and never re-resolves `host` — see `ImapConfig.pin`. */
+      pin?: readonly string[];
+    },
   ) => Promise<SmtpLoginProof | void>;
   /**
    * The add-time IMAP/SMTP probe's SSRF/port gate — see {@link ProbeHostGuard}. The hosted

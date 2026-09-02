@@ -582,7 +582,43 @@ export interface ImapConfig {
    */
   allowInsecure?: boolean;
   auth: ImapAuth;
-  smtp?: { host: string; port: number; secure: boolean; auth?: { user: string; pass: string } };
+  /**
+   * THE ADDRESSES THIS DIAL MAY CONNECT TO — the SSRF gate's return value, carried to the socket.
+   *
+   * `assertPublicHost` resolves a caller-supplied hostname and clears its addresses. That
+   * clearance is worth nothing if the dial then resolves the NAME a second time: a DNS-rebinding
+   * server answers the gate's lookup with a public address and the socket's independent lookup
+   * with `169.254.169.254`, and the gate has cleared one host while the connection goes to
+   * another. Validate-then-re-resolve is a time-of-check/time-of-use window the size of the whole
+   * guard — the argument is written out at the top of `packages/core/src/net/pinned-fetch.ts`,
+   * and this field is that argument applied to the mail legs instead of to HTTP.
+   *
+   * ── WHAT IT CHANGES, AND WHAT IT DELIBERATELY DOES NOT ──────────────────────────────────────
+   *
+   * ONLY the IP the packets go to. `host` stays the NAME on both transports, so SNI
+   * ({@link sniServername}), certificate hostname validation and any name-based virtual hosting
+   * still see the name the user typed — a pin that weakened certificate validation would be
+   * trading one hole for a worse one. See {@link imapFlowOptions} for the IMAP half (a `lookup`
+   * in the `tls` slot, which is the one option bag imapflow forwards to `net`/`tls.connect`) and
+   * `smtpTransportOptions` for the SMTP half, where nodemailer resolves the name ITSELF before
+   * connecting and the only way to pin it is to hand it an address with `servername` already set.
+   *
+   * ── ABSENT MEANS "DIAL BY NAME", AND THAT IS THE HISTORICAL PATH BYTE FOR BYTE ──────────────
+   *
+   * Every stored-credential dialler (the worker, the send adapter, the attachment adapter) leaves
+   * this undefined and is unchanged by it. It is set on the ADD-TIME PROBE, which is the one
+   * dialler whose host arrives in a request body and has just been through the gate — and only on
+   * the HOSTED policy, because the local policy (`ALLOW_ANY_PROBE_HOST`) clears nothing and so has
+   * nothing to pin to. An empty array is treated as absent rather than as "connect to nothing":
+   * the pin narrows a dial, it is not a second refusal mechanism.
+   */
+  pin?: readonly string[];
+  smtp?: {
+    host: string; port: number; secure: boolean; auth?: { user: string; pass: string };
+    /** The submission leg's own pin — see {@link ImapConfig.pin}. Resolved separately because the
+     * submission host is a different name from the IMAP host and was cleared by its own check. */
+    pin?: readonly string[];
+  };
   sentDomain?: string;
   /**
    * Network deadlines, in ms, for BOTH transports (see {@link DEFAULT_NET_TIMEOUTS}).

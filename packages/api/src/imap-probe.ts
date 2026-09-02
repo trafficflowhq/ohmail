@@ -47,9 +47,49 @@ export const MAIL_PROBE_PORTS: Record<"imap" | "smtp", ReadonlySet<number>> = {
 /**
  * The add-time probe's host/port gate. `check` throws a {@link ServiceError} to refuse a dial
  * before it happens; a return is permission to dial. Read from `deps.services.probeHostGuard`.
+ *
+ * ── THE RETURN VALUE IS THE PIN, AND IT USED TO BE `void` ───────────────────────────────────
+ *
+ * `void` made this HALF a guard. The check resolved the hostname, cleared its addresses, and then
+ * handed the same NAME to the dialler, which resolved it a SECOND time — so a DNS-rebinding
+ * server answers the check with a public address and answers the socket's independent lookup with
+ * `169.254.169.254`, and the connect oracle this guard exists to close is open again through the
+ * window between the two lookups. `assertPublicHost`'s own docblock has said so since it started
+ * returning the addresses ("Returns the validated address(es) to pin to"); this interface was
+ * discarding them.
+ *
+ * So a permit is now the ADDRESSES the dial may connect to, threaded to the socket as
+ * `ImapConfig.pin`. `null` means "no pin" and belongs to a policy that cleared nothing —
+ * {@link ALLOW_ANY_PROBE_HOST}, where there is no resolution to be raced. It is deliberately not
+ * an empty array: "I checked nothing" and "I checked and nothing is permitted" must not be the
+ * same value at a seam whose whole job is to bound a socket.
  */
 export interface ProbeHostGuard {
-  check(host: string, port: number | undefined, transport: "imap" | "smtp"): Promise<void>;
+  check(host: string, port: number | undefined, transport: "imap" | "smtp"): Promise<readonly string[] | null>;
+}
+
+/**
+ * The most addresses one probe will pin to. A DNS answer is attacker-influenced input — the
+ * hostname came from a request body — and `assertPublicHost` returns every A/AAAA record it
+ * cleared, with no ceiling of its own; a TCP-mode answer can carry thousands. The pin is carried
+ * per dial and materialised into a lookup table, so it is bounded here rather than left to
+ * whatever the resolver returns.
+ *
+ * TRUNCATING IS SAFE AND REFUSING WOULD NOT BE: every address in the list was already cleared as
+ * public, so keeping the first few narrows the dial without widening what it may reach. The
+ * failure mode of the cap is a probe that cannot reach a server whose working address is the
+ * seventeenth record — a refusal the person can act on, not a connection to somewhere unchecked.
+ * Sixteen is far above any real mail host's record count (the largest providers publish 2–8).
+ */
+export const MAX_PINNED_PROBE_ADDRESSES = 16;
+
+/**
+ * The guard's answer as the dialler takes it: a bounded address list, or `undefined` for
+ * "dial by name" (the local policy, which cleared nothing). See {@link MAX_PINNED_PROBE_ADDRESSES}.
+ */
+function pinFrom(cleared: readonly string[] | null): readonly string[] | undefined {
+  if (cleared === null || cleared.length === 0) return undefined;
+  return cleared.slice(0, MAX_PINNED_PROBE_ADDRESSES);
 }
 
 /**
@@ -59,7 +99,10 @@ export interface ProbeHostGuard {
  * deployment cannot get "allow any host" by forgetting to wire the enforcing guard.
  */
 export const ALLOW_ANY_PROBE_HOST: ProbeHostGuard = {
-  async check() { /* local install: a LAN mail server on a non-standard port is legitimate */ },
+  // `null`, never `[]`: this policy resolves nothing, so it has no cleared address to pin to and
+  // must say so. A pin here would also be wrong on the merits — a desktop user's mail server may
+  // be a mDNS/LAN name whose address the OS resolver is the only thing that knows.
+  async check() { return null; /* local install: a LAN mail server on a non-standard port is legitimate */ },
 };
 
 /**
@@ -70,7 +113,9 @@ export const ALLOW_ANY_PROBE_HOST: ProbeHostGuard = {
  */
 export function makeProbeHostGuard(resolver: HostResolver): ProbeHostGuard {
   return {
-    async check(host: string, port: number | undefined, transport: "imap" | "smtp"): Promise<void> {
+    async check(
+      host: string, port: number | undefined, transport: "imap" | "smtp",
+    ): Promise<readonly string[]> {
       if (port !== undefined && !MAIL_PROBE_PORTS[transport].has(port)) {
         throw new ServiceError(
           "validation_failed", 400,
@@ -78,7 +123,9 @@ export function makeProbeHostGuard(resolver: HostResolver): ProbeHostGuard {
         );
       }
       // Throws on a private/unresolvable/unparseable host — the port must never be opened to one.
-      await assertPublicHost(host, resolver);
+      // The RETURN is the cleared address set, and returning it is the half that makes this a
+      // whole guard rather than a check the socket is free to ignore. See {@link ProbeHostGuard}.
+      return await assertPublicHost(host, resolver);
     },
   };
 }
@@ -697,7 +744,12 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
     // a host that resolves to a private/loopback/link-local address and a non-mail port, closing
     // the connect oracle and the cert-identity disclosure at the network layer. No-op on a local
     // install (see {@link ALLOW_ANY_PROBE_HOST}). It throws its own ServiceError to refuse.
-    await hostGuard.check(input.imap.host, input.imap.port, "imap");
+    //
+    // RESOLVED ONCE, HERE, FOR THE WHOLE LADDER. The permit is the cleared address set and every
+    // rung below dials THAT, so the name is never resolved a second time: not between the check
+    // and the first dial, and not between rung 993 and rung 143. A DNS answer that changes after
+    // this line cannot move any connection this probe opens.
+    const pin = pinFrom(await hostGuard.check(input.imap.host, input.imap.port, "imap"));
 
     const key = probeAdmissionKey(input.accountId, input.address);
 
@@ -733,10 +785,13 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
       attempt: ProbeAttempt, allowInsecure: boolean,
     ): Promise<{ ok: true; folders?: number } | { ok: false; err: unknown; timedOut: boolean }> => {
       const adapter = makeAdapter({
+        // The NAME, still — SNI and certificate validation must see what the user typed. Only
+        // `pin` decides which address the socket goes to. See `ImapConfig.pin`.
         host: input.imap.host,
         port: attempt.port,
         secure: attempt.secure,
         ...(allowInsecure ? { allowInsecure: true } : {}),
+        ...(pin ? { pin } : {}),
         auth,
         timeouts: PROBE_TIMEOUTS,
       });
@@ -1014,7 +1069,13 @@ export interface SmtpProbeOptions {
    * keeps meaning exactly what it meant.
    */
   dial?: (
-    smtp: { host: string; port: number; secure: boolean; auth: { user: string; pass: string } },
+    smtp: {
+      host: string; port: number; secure: boolean; auth: { user: string; pass: string };
+      /** The cleared addresses this dial may connect to, when the deployment's guard cleared any
+       * — see {@link ProbeHostGuard}. Optional so every existing double keeps compiling and keeps
+       * meaning what it meant; a double that ignores it simply asserts less than the real dial. */
+      pin?: readonly string[];
+    },
   ) => Promise<SmtpLoginProof | void>;
   resolveCname?: (host: string) => Promise<string | null>;
 }
@@ -1030,8 +1091,10 @@ export function makeSmtpProbe(deps: ApiDeps, opts: SmtpProbeOptions = {}): SmtpP
   const hostGuard = probeHostGuardFor(deps);
 
   return async (input: SmtpProbeInput): Promise<ImapProbeVerdict> => {
-    // SSRF/port gate, same as the IMAP probe — refused hosts and non-mail ports never reach a dial.
-    await hostGuard.check(input.smtp.host, input.smtp.port, "smtp");
+    // SSRF/port gate, same as the IMAP probe — refused hosts and non-mail ports never reach a dial,
+    // and the permit is the pin every rung of the submission ladder dials. The submission host is
+    // its own name and gets its own check, so its pin is separate from the IMAP leg's.
+    const pin = pinFrom(await hostGuard.check(input.smtp.host, input.smtp.port, "smtp"));
 
     const key = smtpProbeAdmissionKey(input.accountId, input.address);
     if (!await imapAdmission(deps).acquire(deps.db, { mailboxId: key, max, now: deps.now() })) throw busy();
@@ -1053,8 +1116,10 @@ export function makeSmtpProbe(deps: ApiDeps, opts: SmtpProbeOptions = {}): SmtpP
         let proof: SmtpLoginProof | void = undefined;
         try {
           proof = await withDeadline(dial({
+            // The NAME, for SNI and the certificate check; `pin` alone decides the address.
             host: input.smtp.host, port: attempt.port, secure: attempt.secure,
             auth: { user: input.smtp.user, pass: input.smtp.pass },
+            ...(pin ? { pin } : {}),
           }), Math.max(1, budgetLeft()));
         } catch (err) {
           failure = { err };
