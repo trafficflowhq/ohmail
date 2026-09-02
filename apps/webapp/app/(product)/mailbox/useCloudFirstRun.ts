@@ -30,7 +30,7 @@
  * says, because the switch's resting value is not an answer.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type {
   FirstRunHost, FirstRunMailboxInput, FirstRunOrganizeOutcome,
@@ -80,6 +80,16 @@ export function useCloudFirstRun(demo: boolean, pairNode?: ReactNode): FirstRunH
    * union was written for.
    */
   const [aiAnswered, setAiAnswered] = useState<boolean | null>(null);
+  /**
+   * A WRITE HAS STARTED, so the boot read no longer applies — USER-ALWAYS-WINS, and it is the
+   * folders flag's own rule (`apps/mobile/src/state/folders-flag.ts`) for the same measured race.
+   *
+   * `aiSettings.get()` is issued at mount and can settle AFTER a PATCH the person made, carrying
+   * the account as it was BEFORE their answer. Its setter was unconditional, so a late boot read
+   * overwrote the answer, the posture went back to `unset`, and the AI screen reopened. Marked
+   * BEFORE the request leaves, because a read that started earlier must lose whatever it answers.
+   */
+  const wrote = useRef(false);
   /** The operator's key, self-host only. `undefined` until `/hello` answers, and on managed. */
   const [operatorAi, setOperatorAi] = useState<boolean | undefined>(undefined);
 
@@ -88,7 +98,9 @@ export function useCloudFirstRun(demo: boolean, pairNode?: ReactNode): FirstRunH
     let live = true;
     void aiSettings.get()
       .then((r: { aiEnabled: boolean; aiAnswered?: boolean }) => {
-        if (!live) return;
+        // `wrote` is the supersede check — see its own note. Not merely `live`: the component is
+        // still mounted in exactly the case this is for.
+        if (!live || wrote.current) return;
         setAiEnabled(r.aiEnabled);
         setAiAnswered(r.aiAnswered === true);
       })
@@ -156,13 +168,21 @@ export function useCloudFirstRun(demo: boolean, pairNode?: ReactNode): FirstRunH
   }, []);
 
   const writeAi = useCallback(async (enabled: boolean) => {
+    // BEFORE the request leaves — see `wrote`. A read already in the air must lose from here on.
+    wrote.current = true;
     const r = await aiSettings.set(enabled);
-    /* THE ANSWER IS RECORDED BY THE WRITE, so the posture moves off `unset` here even when the
-       switch did not — which is the common case, since `ai_enabled` rests `true` and "Yes" is a
-       write of the value the account already had. The server stamps it either way
-       (`setAiEnabled`); this is the echo of that, not an optimistic guess. An API before 0084
-       omits the field and this stays `false`, which keeps the pre-migration behaviour exactly. */
-    setAiAnswered((r as { aiAnswered?: boolean }).aiAnswered === true);
+    /* A SUCCESSFUL WRITE IS ITSELF THE ANSWER, and reading the echo strictly was a regression.
+       The posture must move off `unset` here even when the switch did not — the common case,
+       since `ai_enabled` rests `true` and "Yes" writes the value the account already had.
+       Against a PRE-0084 API the PATCH succeeds and omits the field, so `=== true` stored
+       `false`: the flow cleared its cursor, re-derived `unset`, and returned to the question it
+       had just asked, indefinitely. The old client did not have that — its posture read
+       `aiEnabled ? "on" : "unset"`, so "Yes" walked past — which makes it a regression this
+       change introduced rather than one it inherited.
+       The person answered; that is a fact about THIS run whatever the server can store. On a
+       0084 API the stamp is durable and a resumed run walks past too; on an older one it is not,
+       and a later resume asks again — the pre-migration behaviour, and the safe direction. */
+    setAiAnswered(true);
     // THE ECHO, NOT THE ARGUMENT. The posture the flow re-derives from must be what the server
     // stored, so a write the server clamped or refused cannot leave this client believing it
     // took — the discipline `autoSuggest` states for the one flag that authorises spending, and
