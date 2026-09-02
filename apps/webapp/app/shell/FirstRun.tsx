@@ -542,7 +542,28 @@ export function FirstRun({
         )) : null}
 
         {step === "mailbox" ? screen(
-          () => { if (tested) void run(async () => { await host.connect(mailboxInput()); }); },
+          () => {
+            /* ── BACK ONTO THIS SCREEN MUST NOT CONNECT A SECOND MAILBOX ────────────────────
+             *
+             * This step's forward verb CREATES, and Back from the consent screen lands here —
+             * on a run whose mailbox already exists. Pressing it again would call `connect` for
+             * a mailbox that is already connected, on the strength of a verdict from before it
+             * was. So when the facts already hold a mailbox, the press CONTINUES: the work this
+             * screen does has been done, and the person is walking back through it, not redoing
+             * it.
+             *
+             * The derivation agrees — it answers `consent` for this state — which is what makes
+             * "continue" the honest reading of the press rather than a special case. */
+            if (facts.mailbox !== null) { forward(); return; }
+            if (!tested) return;
+            void run(async () => {
+              await host.connect(mailboxInput());
+              /* AND THE VERDICT IS RETIRED WITH THE FORM IT DESCRIBED. It proved a login that has
+               * since been stored; leaving it standing would arm this screen's primary again the
+               * moment somebody walked back onto it. */
+              retireTest();
+            });
+          },
           (
             <>
               <h1 id={`${ids}-title`}>{t("mailboxTitle")}</h1>
