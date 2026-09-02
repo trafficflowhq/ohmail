@@ -129,6 +129,17 @@ function addressRows(el: HTMLElement): HTMLElement[] {
   ) as HTMLElement[];
 }
 
+/**
+ * WHICH MAILBOX THE ENGINE SAYS IT IS OPENING — `engine_status.mailboxId`, forwarded by the gate.
+ *
+ * The Remove control is gated on it, because the local removal route releases the claim and wipes
+ * this machine's mirror only for the engine's OWN mailbox; on any other row it tombstones and
+ * deletes the credential and nothing else, so the confirmation's fifth consequence would be a
+ * promise the request does not keep. Defaults to the fixture's row — the ordinary case, one
+ * mailbox, the one the engine serves.
+ */
+let SERVED: string | undefined = "mbx-1";
+
 async function render(door: string | null): Promise<HTMLElement> {
   /* Imported inside, so the module graph is built after `vi.mock` is registered. */
   const { DesktopMailboxes } = await import("../src/DesktopMailboxes.js");
@@ -143,7 +154,9 @@ async function render(door: string | null): Promise<HTMLElement> {
         h(
           ThemeProvider,
           { storageKey: "ohmail.theme" },
-          h(ToastHost, null, h(DesktopMailboxes, { door })),
+          h(ToastHost, null, h(DesktopMailboxes, {
+            door, ...(SERVED === undefined ? {} : { servedMailboxId: SERVED }),
+          })),
         ),
       ),
     );
@@ -173,6 +186,7 @@ function buttonExactly(el: HTMLElement, label: string): HTMLButtonElement | null
 
 beforeEach(() => {
   FACTS = [MAILBOX];
+  SERVED = "mbx-1";
   MIRRORED = 0;
   MAIL_STATE = { key: "quiet", clock: false, settled: true };
   FRESHNESS = { state: "current" };
@@ -445,6 +459,35 @@ describe("the desktop mailbox pane on the standalone door", () => {
     await act(async () => { buttonExactly(el, "Keep it")!.click(); });
     expect(el.querySelector('[role="alertdialog"]')).toBeNull();
     expect(bridged).toEqual([]);
+  });
+
+  it("a row the ENGINE DOES NOT SERVE offers no Remove — the wipe would not happen", async () => {
+    /* The local route releases the claim and wipes this machine's copy of the mail only
+       `if (mailboxId === world.mailboxId)`; on any other row it tombstones and deletes the
+       credential and nothing else. The confirmation states the wipe as one of its five
+       consequences, so offering it there would be a panel promising an act the request does not
+       perform. Reachable rather than theoretical: reconfiguring the door to a different address
+       mints a new row and leaves the old one `connected` behind it. */
+    FACTS = [
+      { ...MAILBOX, id: "mbx-old", address: "previous@example.test" },
+      { ...MAILBOX, id: "mbx-1", address: "someone@example.test" },
+    ];
+    const el = await render("local");
+    expect(addressRows(el).length).toBe(2);
+    // Exactly one Remove, and it is on the row the engine is opening.
+    expect([...el.querySelectorAll("button")]
+      .filter((b) => (b.textContent ?? "").trim() === "Remove").length).toBe(1);
+    await act(async () => { buttonExactly(el, "Remove")!.click(); });
+    expect(el.querySelector('[role="alertdialog"]')!.textContent ?? "")
+      .toContain("Remove someone@example.test?");
+  });
+
+  it("and an engine that did not say which mailbox it serves offers none at all", async () => {
+    // Absent is "the shell did not say", and the control is withheld — the safe direction, on the
+    // rule every optional field on this surface follows.
+    SERVED = undefined;
+    const el = await render("local");
+    expect(buttonExactly(el, "Remove")).toBeNull();
   });
 
   it("a DISCONNECTED row offers no Remove — there is nothing left to remove", async () => {

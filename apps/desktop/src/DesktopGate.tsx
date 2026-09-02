@@ -679,7 +679,16 @@ export function DesktopGate() {
            `mailbox` entities, which only the invented world has — so on a real install it was an
            empty pane; that fallback is deleted now. This one reads the same facts the sync line
            does, and names its mode from the door (Cloud on the hosted door, local on the other). */
-        {...(engine ? { mailboxSection: <DesktopMailboxes door={status?.mode ?? null} /> } : {})}
+        {...(engine ? { mailboxSection: (
+          /* `servedMailboxId` is what the ENGINE is actually opening. The removal route
+             releases the claim and wipes this machine's mirror only for that one mailbox
+             (`if (mailboxId === world.mailboxId)`), so the pane may only state that
+             consequence about that row — see its own note on the confirmation. */
+          <DesktopMailboxes
+            door={status?.mode ?? null}
+            {...(status?.mailboxId ? { servedMailboxId: status.mailboxId } : {})}
+          />
+        ) } : {})}
         /* SETTINGS → SCREENER. The shared shell's own section reaches an API client that is not
            in this build, so it drew nothing and the pane was blank. This is the same three
            controls over the same three columns, over the pipe. */

@@ -134,8 +134,6 @@ export interface FirstRunProps {
    * values, not elements. The decision card's line is a whole line of its own and may be a node.
    */
   organizedSince?: string;
-  /** When the holder was last seen, in words, for the stopped banner. Interpolated likewise. */
-  organizerLastSeen?: string;
   /**
    * THE CONNECTED MAILBOX'S ADDRESS, for the one screen that has to say WHICH mailbox this run is
    * about. Absent before one exists, which is exactly when that screen is a form instead.
@@ -166,6 +164,26 @@ export function firstRunStep(
   facts: OnboardingFacts, at: OnboardingStep | null, rerun = false, claimAnswered = false,
 ): OnboardingStep | null {
   const derived = deriveOnboardingStep(facts);
+  /**
+   * IS THERE A CLAIM QUESTION OUTSTANDING — read from the FACTS, not from `derived`.
+   *
+   * `derived` cannot answer this on the path that needs it most. Row 1 returns `null` for any
+   * account carrying a completion stamp, so on `#/first-run/again` the guard below would be
+   * structurally inert — and the walk that reaches it is short: connect a mailbox somebody else
+   * holds, CANCEL on the consent screen (cancel stamps completion, which is the whole point of
+   * the stamp), then press "Run setup again". The re-run arm opens on the consent statement, the
+   * claim question is never shown, and Agree writes a consent the lease is about to decline.
+   * That is the measured defect arriving through the other door.
+   *
+   * `flowIsOpen` keeps row 1's authority where row 1 has it: on a BOOT the completion stamp
+   * still closes the stage, so the reader ending — which leaves the mailbox a consent-less
+   * reader with a holder for ever — does not re-open this screen at every launch.
+   */
+  const mb = facts.mailbox;
+  const claimPending = mb !== null
+    && Boolean(mb.organizedBy && (mb.organizedBy.kind || mb.organizedBy.name))
+    && !mb.organizeConsentedAt;
+  const flowIsOpen = rerun || derived !== null;
   /* ── THE CLAIM QUESTION IS NOT SKIPPABLE, AND THE CURSOR USED TO SKIP IT SILENTLY ────────
    *
    * MEASURED on the released 0.13.6, on a fresh standalone connect to a mailbox ohmail Cloud
@@ -191,7 +209,7 @@ export function firstRunStep(
    * The three cursors exempted are the ones at or BEFORE this screen in the path
    * (`onboardingPath`: welcome → mailbox → elsewhere). Back has to work.
    */
-  if (derived === "elsewhere" && !claimAnswered
+  if (flowIsOpen && claimPending && !claimAnswered
       && at !== "welcome" && at !== "mailbox" && at !== "elsewhere") {
     return "elsewhere";
   }
@@ -226,7 +244,7 @@ export function firstRunStep(
 
 export function FirstRun({
   host, facts: wireFacts, onRefresh, onLeave, pull, serverMessageCount, decide, resumed,
-  mailboxId, organizedSince, organizerLastSeen, rerun, screening, mailboxAddress,
+  mailboxId, organizedSince, rerun, screening, mailboxAddress,
 }: FirstRunProps) {
   const t = useTranslations("onboarding");
   const tm = useTranslations("mailboxes");
@@ -854,10 +872,12 @@ export function FirstRun({
                   ? tm("readerLabelLegacy")
                   : tm("readerLabel", { name: holderName(facts)! })}
                 description={facts.mailbox?.organizerState === "stopped"
-                  ? tm("readerStopped", {
-                    name: holderName(facts) ?? tm("readerHolderUnknown"),
-                    when: organizerLastSeen ?? "",
-                  })
+                  /* NO AGE, and the prop that carried one is gone with it. `readerStopped` took a
+                     `{when}` and was handed `organizedBy.since` — which is when that install
+                     BECAME the organizer, not when it was last seen; the heartbeat is
+                     deliberately not persisted. The copy dropped the placeholder and this kept
+                     feeding it, which is a prop with a caller and no consumer. */
+                  ? tm("readerStopped", { name: holderName(facts) ?? tm("readerHolderUnknown") })
                   : holderName(facts) === null
                     ? tm("readerSinceUnknown", { since: organizedSince ?? "" })
                     : facts.mailbox?.organizedBy?.kind === "cloud"

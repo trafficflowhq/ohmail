@@ -1964,8 +1964,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * The consent arm below returns BEFORE `readMailboxLease`, and it has to: that function is not
      * a report, it APPENDS on an empty folder. But returning early also means never learning who
      * holds the mailbox — and the holder is exactly what the screens before consent have to say.
-     * The flow's "somebody else organizes this" step is `organizerRole = 'reader' AND organizedBy`
-     * (`deriveOnboardingStep` row 3), and Settings → Mailboxes renders the same four columns; with
+     * The flow's "somebody else organizes this" step turns on `organizedBy` AND the absence of
+     * a consent stamp (`deriveOnboardingStep` row 3) — it deliberately does NOT ask for the role,
+     * because the role is written by the STAND-DOWN and these columns by this peek, so requiring
+     * both would mean waiting for a demotion to be told about a claim already seen.
+     * Settings → Mailboxes renders the same four columns; with
      * none of them written, a person connecting a mailbox their other machine organizes would be
      * shown the plain consent statement and would agree to take it without ever being told.
      *

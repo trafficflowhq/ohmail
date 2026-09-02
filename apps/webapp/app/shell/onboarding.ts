@@ -285,12 +285,24 @@ export function onboardingPath(facts: OnboardingFacts): OnboardingStep[] {
   // omitted the screen the derivation resumes on would make Continue walk away from the screen
   // the facts had just selected.
   //
-  // Deliberately NOT gated on `!consented`, unlike row 3. The two answer different questions:
-  // row 3 says where a run RESUMES (and a mailbox already consented to must not be asked for
-  // consent again), while this says what the walk CONTAINS — and the re-entry path, a consented
-  // mailbox another install has since taken, is walked through this screen from the Settings
-  // banner. The screen has an arm for exactly that state and it is reachable only through here.
-  if (mb && Boolean(mb.organizedBy && (mb.organizedBy.kind || mb.organizedBy.name))) {
+  // ── AND IT IS NOT THE HOLDER ALONE, BECAUSE A PROMOTED INSTALL KEEPS ITS OLD HOLDER ──────
+  //
+  // `!consented || isReader`, and the second clause is what row 3 does not need. Row 3 is gated
+  // on `!consented`, so a consented mailbox can never route it wrong; the PATH is walked, and
+  // the two doors clean up differently after a takeover. The hosted worker's
+  // `clearOrganizerStandDown` nulls all four holder columns with the role; the standalone
+  // engine's promote arm writes `organizer_role = 'organizer'` and says in so many words that
+  // "the two clean-up columns are deliberately NOT touched". So a standalone install that HAS
+  // taken a mailbox over is `organizer` with `organized_by_*` still naming the install it took
+  // it from — and on the holder alone this arm would put "somebody else organizes this" into
+  // the walk for a mailbox this machine organizes, one Back press from the re-run's consent
+  // statement, with a claim button that would fire `organize` against itself.
+  //
+  // The re-entry case the clause exists for is unaffected: a mailbox this account consented to
+  // and another install has since TAKEN is a `reader`, which is the arm that screen serves.
+  if (mb
+      && Boolean(mb.organizedBy && (mb.organizedBy.kind || mb.organizedBy.name))
+      && (!mb.organizeConsentedAt || mb.organizerRole === "reader")) {
     out.push("elsewhere");
   }
   out.push("consent", "window", "ai");

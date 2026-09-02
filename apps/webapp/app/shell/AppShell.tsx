@@ -84,6 +84,7 @@ import {
 import { PullNewMail, usePullNewMail } from "./PullNewMail";
 import { useOlderMail } from "./older-mail";
 import { PLACE_LABEL, avatarHue, hueOf, initialsOf, resurfaceLabel, tomorrowNine } from "./format";
+import { activeFormatLocale, activeFormatZone } from "./locale";
 import { displayAddress, displayDomain } from "./idn";
 import { MessagePane, type BulkAction, type MessageAction } from "./MessagePane";
 import { AttachmentPreview } from "../components/AttachmentPreview";
@@ -1780,6 +1781,16 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
    * treating "cannot see" as "none connected".
    */
   const firstRunMailbox = facts === null ? null : facts[0] ?? null;
+  /** The holder's "since" instant as a DATE in the app's own language — see the mount below. */
+  const holderSince = useMemo(() => {
+    const iso = firstRunMailbox?.organizedBy?.since;
+    if (!iso) return null;
+    const at = new Date(iso);
+    if (Number.isNaN(at.getTime())) return null;
+    return at.toLocaleDateString(activeFormatLocale(), {
+      dateStyle: "medium", timeZone: activeFormatZone(),
+    });
+  }, [firstRunMailbox]);
   const onboardingFacts: OnboardingFacts | null = useMemo(() => {
     if (!firstRun || facts === null) return null;
     return {
@@ -6166,6 +6177,7 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
             ariaLabel={t("rail.ariaMain")}
           />
 
+
           <main className="stage" onClickCapture={onStageClickCapture}>
             {/* SETTINGS FOUND ON A MAILBOX — floated over whichever view (or the seed review)
                 is up, never replacing it: an offer somebody may answer in a week must not gate
@@ -7183,6 +7195,18 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
              mailbox step once a mailbox exists, where the form is withheld and a statement
              stands in its place. */
           {...(firstRunMailbox?.address ? { mailboxAddress: firstRunMailbox.address } : {})}
+          /* ── WHEN THE HOLDER BECAME THE ORGANIZER, IN WORDS — AND NOTHING PASSED IT ────────
+             `FirstRunProps.organizedSince` is interpolated into `mailboxes.readerSince*` by two
+             screens (the claim question's banner, and now a reader's summary), and this mount —
+             the only one there is — never supplied it. Both rendered "Since  · ohmail Cloud."
+             with a blank where the date belongs, which is a sentence that reads as a bug about
+             the mailbox rather than about the copy. Withheld when the DTO names no instant, so
+             the screens keep their own "we do not know" arm instead of printing an empty one.
+
+             A DATE, with no clock on it, and the same formatting the desktop pane uses for the
+             same sentence: this is a standing fact somebody reads once, and a timestamp on it
+             invites watching a heartbeat that is deliberately not persisted. */
+          {...(holderSince ? { organizedSince: holderSince } : {})}
           serverMessageCount={firstRunMailbox?.serverMessageCount}
           /* The counters. `screened` is what the mirror holds MINUS what History lists —
              everything that has been through the screening partition — and `history` is that

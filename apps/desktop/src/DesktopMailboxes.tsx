@@ -439,7 +439,24 @@ function statusOf(door?: string | null): EngineStatus | null {
     : null;
 }
 
-export function DesktopMailboxes({ door }: { door?: string | null }) {
+/**
+ * `servedMailboxId` is the mailbox the ENGINE is opening, from `engine_status`.
+ *
+ * It gates the REMOVE control, and that is narrower than it looks: the local removal
+ * route releases the organizer claim, wipes this machine's copy of the mail and stops the
+ * timer only `if (mailboxId === world.mailboxId)` — for any other row it tombstones and
+ * deletes the credential and nothing else. The confirmation states five consequences and
+ * one of them is the wipe, so offering it on a row the engine does not serve would be a
+ * panel promising an act the request does not perform. Reachable rather than theoretical:
+ * reconfiguring the door to a different address mints a new row and leaves the old one
+ * `connected` behind it.
+ *
+ * ABSENT means the shell did not say, and the control is withheld — the safe direction,
+ * on the same rule every optional field on this surface follows.
+ */
+export function DesktopMailboxes(
+  { door, servedMailboxId }: { door?: string | null; servedMailboxId?: string },
+) {
   const t = useTranslations("mailboxes");
   /* The SAME binding the sync line reads, and `refresh` is what its own comment offers this pane:
      "Re-read the mailbox facts now. The Settings pane calls it after a connect or a resync." */
@@ -963,7 +980,7 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
                       destructive press is two screens away behind the account's second factor;
                       here there is no second factor to ask for, so the statement of consequences
                       IS the ceremony and it has to carry its weight. */}
-                  {!cloud ? (
+                  {!cloud && servedMailboxId === shown.id ? (
                     <Button
                       className="mbx-btn"
                       variant="ghost"

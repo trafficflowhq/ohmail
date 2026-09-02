@@ -2257,7 +2257,15 @@ describe("the UI bundle's build config", () => {
    */
   it("hands the shared settings screen the panes only this shell can fill", () => {
     const gate = read("src/DesktopGate.tsx");
-    expect(gate).toMatch(/mailboxSection: <DesktopMailboxes door=\{status\?\.mode \?\? null\} \/>/);
+    expect(gate).toMatch(/mailboxSection: \([\s\S]{0,600}?<DesktopMailboxes\b/);
+    expect(gate).toMatch(/door=\{status\?\.mode \?\? null\}/);
+    /* AND WHICH MAILBOX THE ENGINE IS OPENING, which the pane cannot learn any other way.
+       It gates the Remove control: the local removal route releases the organizer claim and wipes
+       this machine's copy of the mail only for the engine's OWN mailbox, so a Remove offered on
+       any other row would state a consequence the request does not perform. Withheld when the
+       shell did not say, which is the safe direction and is why this is a spread. */
+    expect(gate, "the pane cannot tell which row the removal would actually wipe")
+      .toMatch(/\{\.\.\.\(status\?\.mailboxId \? \{ servedMailboxId: status\.mailboxId \} : \{\}\)\}/);
     expect(gate).toMatch(/aboutSection: <DesktopAbout status=/);
     expect(gate).toMatch(/mailboxFacts: readMailboxFacts/);
 
