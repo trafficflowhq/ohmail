@@ -328,7 +328,7 @@ export function ReceiptsView({
     if (current) hydrateBody(current);
   }, [current, hydrateBody]);
 
-  const order = all.map((m) => m.id);
+  const order = streamIds; // the memoized pile order — not a fresh O(n) array per render
   // O(1) off the pile index — indexOf walked the whole pile on every render.
   const at = current ? pileIndexOf(current) : -1;
   /* ↓/↑ are j/k — one pair of closures under four keycaps, registered into the zone model

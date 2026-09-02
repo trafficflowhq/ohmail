@@ -65,8 +65,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 /** The opening window: several viewports of collapsed cards, mounted before first paint. */
 export const STREAM_MOUNT_INITIAL = 60;
 
-/** A never-measured card's height — `contain-intrinsic-size`'s own guess, kept in step. */
-export const STREAM_CARD_ESTIMATE_PX = 200;
+/** A never-measured card's OUTER height — `contain-intrinsic-size`'s 200px box guess plus the
+ *  card's standing 20px bottom margin, matching what the measured cache stores. */
+export const STREAM_CARD_ESTIMATE_PX = 220;
 
 /** The mounted window may never exceed this many cards, wherever the reader scrolls. */
 export const STREAM_WINDOW_MAX = 120;
@@ -147,10 +148,15 @@ export function useStreamWindow({
        * WebKit (the desktop's webview) has none, and the stream visibly jumped under the
        * reader on every shed. Margins are read per card — cheap, the walk is window-bounded.
        */
+      // Layout is judged on the BOX alone: a card with no layout can still resolve margins,
+      // and caching bare margins as a card's whole height would collapse the spacers by the
+      // difference — the very jump this outer-height cache exists to remove.
+      if (c.offsetHeight <= 0) continue;
       const cs = getComputedStyle(c);
-      const h =
-        c.offsetHeight + (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0);
-      if (h > 0) heights.current.set(c.dataset.sid!, h);
+      heights.current.set(
+        c.dataset.sid!,
+        c.offsetHeight + (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0),
+      );
     }
     // A render-scope closure; the element is stable for the mounted stream's life.
     // eslint-disable-next-line react-hooks/exhaustive-deps

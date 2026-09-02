@@ -131,9 +131,13 @@ export function useBarDensity(): {
        row's parent IS the pill; the fallback covers an unparseable read only. */
     const abar = row.parentElement;
     const abarStyle = abar ? getComputedStyle(abar) : null;
-    const pillPad = abarStyle
-      ? (parseFloat(abarStyle.paddingLeft) || 0) + (parseFloat(abarStyle.paddingRight) || 0)
-      : PILL_PADDING_PX;
+    const padL = abarStyle ? parseFloat(abarStyle.paddingLeft) : NaN;
+    const padR = abarStyle ? parseFloat(abarStyle.paddingRight) : NaN;
+    // The fallback fires on ANY unreadable read — a NaN pair must not admit 12 phantom px.
+    const pillPad =
+      Number.isFinite(padL) || Number.isFinite(padR)
+        ? (Number.isFinite(padL) ? padL : 0) + (Number.isFinite(padR) ? padR : 0)
+        : PILL_PADDING_PX;
     const avail =
       rect.width -
       (parseFloat(style.paddingLeft) || 0) -
