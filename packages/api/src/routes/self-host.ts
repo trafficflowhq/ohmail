@@ -28,8 +28,6 @@ import { attachmentStagingRoutes } from "./attachment-staging.js";
 // `DELETE /account` — erasure as a route, because on a multi-user server "delete the data
 // directory" is not an answer any one user can be given.
 import { accountRoutes } from "./account.js";
-// Onboarding consent: the seed review, the dormancy dial, reset.
-import { consentRoutes } from "./consent.js";
 // `GET/PATCH /account/ai` — the account-level AI off switch. Meaningful here: the operator
 // supplies the model key, and each user still decides whether their own mail reaches it.
 import { aiSettingsRoutes } from "./ai-settings.js";
@@ -132,7 +130,18 @@ export const selfHostRoutes: Route[] = [
   ...mailboxDeviceOAuthRoutes,
   ...attachmentStagingRoutes,
   ...accountRoutes,
-  ...consentRoutes,
+  /* `consentRoutes` USED TO BE SPREAD HERE, AND SINCE mail 0083 THAT WAS A DOUBLE MOUNT.
+   *
+   * `localRoutes` gained the consent group when the screening window was extended to the
+   * standalone door, and this table spreads `localRoutes` whole — so all six consent routes were
+   * mounted twice in the self-host table. The router matches the first, so nothing behaved
+   * differently and nothing failed; what it broke is every census that counts this table, and the
+   * hello census caught it exactly as it was built to.
+   *
+   * Removed rather than made conditional: the self-host door serves consent because it serves
+   * `localRoutes`, and stating that once is what keeps the groups disjoint. A future table that
+   * wants consent WITHOUT the local group spreads it explicitly, and the census will say so.
+   */
   ...aiSettingsRoutes,
   ...proposalsRoutes,
   ...internalRoutes,
