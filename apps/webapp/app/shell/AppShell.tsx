@@ -138,6 +138,7 @@ import { useDraftReply, type DraftedReply } from "./draft-reply";
 import { RichEditor } from "./RichEditor";
 import { TagPicker, placePicker, type TagPickerState } from "./TagPicker";
 import { KeymapProvider, useKeyBindings, type KeyBinding } from "./keymap";
+import { createSeenBatcher } from "./seen-batch";
 import { readColumnHidden, readColumnHiddenFor, watchZeroPushTier, zeroPushTier } from "./narrow";
 import { ZoneCursor, currentZone, setRailSummon } from "./zone-nav";
 import "./zone-cursor.css";
@@ -4360,13 +4361,51 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
    * way out ({@link commitFeedSeen}). This used to re-send the current anchor with every
    * dwell-mark, which meant a first mark on a line-less pile MINTED a line mid-visit and the
    * partition reshuffled under the reader.
+   *
+   * BATCHED — one mutation per pause, not per card. Every mutation bumps the mirror version
+   * and a bump re-derives the whole selector chain over the whole mirror, which `seen-batch.ts`
+   * measured as 8× the blocked main-thread time of the identical scroll on an all-read pile.
+   * The batchers live for the SHELL, not the view, so marks pending across a view switch still
+   * flush; the leave seams below (`commitFeedSeen`, `pagehide`) drain them first so a departing
+   * visit's glances are on the wire before — and never instead of — the anchored commit.
    */
-  const readsMarkSeen = useCallback(
-    (id: string) => {
-      void engine.mutate({ kind: "feed_mark_seen", view: "reads", messageIds: [id] });
-    },
+  const readsSeenBatch = useMemo(
+    () =>
+      createSeenBatcher((ids) => {
+        void engine.mutate({ kind: "feed_mark_seen", view: "reads", messageIds: ids });
+      }),
     [engine],
   );
+  /** Receipts' per-card glance marks, batched the same way (see `readsSeenBatch`). */
+  const receiptsSeenBatch = useMemo(
+    () =>
+      createSeenBatcher((ids) => {
+        void engine.mutate({ kind: "mark_seen", messageIds: ids, unread: false, via: "glance" });
+      }),
+    [engine],
+  );
+  const readsMarkSeen = useCallback((id: string) => readsSeenBatch.add(id), [readsSeenBatch]);
+  const receiptsMarkSeen = useCallback(
+    (id: string) => receiptsSeenBatch.add(id),
+    [receiptsSeenBatch],
+  );
+  /**
+   * The dying-tab drain — `StreamShell`'s own pagehide argument, applied to the batch: the
+   * engine's durable outbox persists the dispatched verb before the wire, so a flush in the
+   * tab's last milliseconds is deliverable on the next boot. Unmount drains too (the desktop
+   * shell is torn down without a pagehide when a window is programmatically rebuilt).
+   */
+  useEffect(() => {
+    const drain = (): void => {
+      readsSeenBatch.flushNow();
+      receiptsSeenBatch.flushNow();
+    };
+    window.addEventListener("pagehide", drain);
+    return () => {
+      window.removeEventListener("pagehide", drain);
+      drain();
+    };
+  }, [readsSeenBatch, receiptsSeenBatch]);
 
   /**
    * THE LEAVE-COMMIT, both streams — one anchored `feed_mark_seen` per departure, the
@@ -4379,6 +4418,8 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
   const commitFeedSeen = useCallback(
     (view: FeedView) =>
       (commit: { upToId: string; messageIds: string[] }) => {
+        // The departing visit's pending glance marks go first — see `readsSeenBatch`.
+        (view === "reads" ? readsSeenBatch : receiptsSeenBatch).flushNow();
         const held = engine.read().get<WaterlineMeta>("view_meta", waterlineIdOf(view));
         if (commit.messageIds.length === 0 && held?.newestSeenId === commit.upToId) return;
         void engine.mutate({
@@ -4388,7 +4429,7 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
           messageIds: commit.messageIds,
         });
       },
-    [engine],
+    [engine, readsSeenBatch, receiptsSeenBatch],
   );
   const commitReadsSeen = useMemo(() => commitFeedSeen("reads"), [commitFeedSeen]);
   const commitReceiptsSeen = useMemo(() => commitFeedSeen("receipts"), [commitFeedSeen]);
@@ -6305,9 +6346,10 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
                 onCur={setReceiptsCur}
                 unreadCount={receiptsUnread}
                 isUnread={receiptsIsUnread}
-                /* The per-card dwell mark — a glance, like Reads' `readsMarkSeen`, and labelled
-                   so the engine holds a resurfaced row's pin back from it. */
-                markSeen={(id) => markSeen([id], false, "glance")}
+                /* The per-card dwell mark — a glance, like Reads' `readsMarkSeen`, batched the
+                   same way, and labelled so the engine holds a resurfaced row's pin back from
+                   it (the label rides the batcher's one mutation). */
+                markSeen={receiptsMarkSeen}
                 onLeaveSeen={commitReceiptsSeen}
                 bodyOf={bodyOfMessage}
                 hydrateBody={hydrateBody}
