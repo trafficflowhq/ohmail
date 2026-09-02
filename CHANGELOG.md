@@ -16,6 +16,14 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.13.8] — 2026-09-02
+
+Notifications that survive signing out and back in, and mailboxes that keep their
+folders under a prefix. Both are corrections rather than new ground, and in each one
+the app had a case where it was confidently wrong: announcing the previous person's
+mail on a shared computer, or reporting that nobody was organizing a mailbox that
+somebody was.
+
 ### Notifications come back when you sign back in
 
 Signing out correctly took this browser's notification registration down. Nothing
@@ -3423,7 +3431,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.13.7...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.13.8...HEAD
+[0.13.8]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.8
 [0.13.7]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.7
 [0.13.6]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.6
 [0.13.5]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.5
