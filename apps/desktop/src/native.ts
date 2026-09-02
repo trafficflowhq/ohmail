@@ -321,8 +321,15 @@ async function listen<T>(
  * shell has no idea what a message is. A refusal — the user has notifications turned off for
  * ohmail, or the platform has none — comes back as a rejection and is the caller's to swallow;
  * a notification that could not be shown must never take a mail client down.
+ *
+ * NAMED `postOsNotice` AND NOT `notify`, WHICH IS WHAT IT USED TO BE. `notify` is also the
+ * client-engine's subscriber callback, with dozens of call sites of that unrelated sense
+ * across the shared sources. The census that enforces "nothing draws a notice outside an
+ * emitter" has to key on a name, and a name meaning two things makes its output mostly false
+ * positives — a guard whose result has to be hand-filtered is one nobody keeps. The Rust
+ * command this invokes is still `notify`; only the binding was renamed.
  */
-export async function notify(title: string, body: string): Promise<void> {
+export async function postOsNotice(title: string, body: string): Promise<void> {
   const shell = internals();
   if (!shell) return;
   await shell.invoke(NOTIFY_COMMAND, { title, body });

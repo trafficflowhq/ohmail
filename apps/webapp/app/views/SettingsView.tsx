@@ -26,9 +26,17 @@
  * STANDALONE install still passes nothing, which is the invariant that was always the point:
  * no account, no pane, structurally rather than by remembering.
  */
-import { useState, type ReactNode } from "react";
+import { useCallback, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
-import type { Folder, RuleDTO, TagDTO } from "@ohmail/client-engine";
+import {
+  DEFAULT_CHANNELS,
+  channelsAreLive,
+  type Folder,
+  type NoticePermission,
+  type NotificationChannels,
+  type RuleDTO,
+  type TagDTO,
+} from "@ohmail/client-engine";
 import {
   Button,
   SegmentedControl,
@@ -50,6 +58,12 @@ import { LanguageRow } from "../shell/LanguageRow";
 import { FaceRow, type ApplyFaceAllDevices } from "../shell/FaceRow";
 import { ImageQualityRow } from "../shell/ImageQualityRow";
 import { PANE_IDS, type PaneId } from "../shell/routing";
+import {
+  browserNotificationHost,
+  readChannels,
+  writeChannels,
+  type NotificationHost,
+} from "../shell/notification-settings";
 import { useZoneNav } from "../shell/zone-nav";
 import { RulesView, type RuleOutcome } from "./RulesView";
 
@@ -79,6 +93,21 @@ export { PANE_IDS, type PaneId } from "../shell/routing";
  * The pane says so instead. This list therefore now describes the PROTOTYPE's channels, and
  * whichever slice ships real delivery inherits it as the starting vocabulary.
  */
+/**
+ * THE FOUR REAL EVENTS, in the order the pane lists them: the two arrivals somebody is waiting
+ * for, then the outcome of something they asked for, then the security one.
+ *
+ * `key` is the field on {@link NotificationChannels}; the two copy keys are derived from the id
+ * so a row cannot be added without adding its words. Distinct from the demo's
+ * {@link NOTIFICATION_CHANNELS} below, which is the prototype's vocabulary and drives nothing.
+ */
+const NOTIFY_ROWS = [
+  { key: "ohbox", label: "notifyOhbox", why: "notifyOhboxWhy" },
+  { key: "screener", label: "notifyScreener", why: "notifyScreenerWhy" },
+  { key: "scheduled", label: "notifyScheduled", why: "notifyScheduledWhy" },
+  { key: "pairing", label: "notifyPairing", why: "notifyPairingWhy" },
+] as const;
+
 const NOTIFICATION_CHANNELS: Array<{ id: string; enabled: boolean }> = [
   { id: "people", enabled: true },
   { id: "known", enabled: true },
@@ -402,7 +431,15 @@ export function SettingsView({
   initialPane,
   pane: routePane,
   onSelectPane,
+  notificationHost = browserNotificationHost,
 }: {
+  /**
+   * WHERE THE OS ANSWER COMES FROM. The browser reads `Notification` directly; the desktop
+   * webview cannot hold the permission at all and asks its shell, so that host injects its
+   * own reader. Defaulted rather than required because the browser is the only host that
+   * needs no injection, and a required prop here would reach every test that renders a pane.
+   */
+  notificationHost?: NotificationHost;
   /** The demo world's VIP block, or `null` on any account — see {@link NotificationsMeta}. */
   notifications: NotificationsMeta | null;
   tags: TagDTO[];
@@ -737,6 +774,46 @@ export function SettingsView({
   const [localPane, setPane] = useState<PaneId>(() => initialPane ?? initialPaneFromUrl());
   const pane = routePane ?? localPane;
   const [channels, setChannels] = useState(NOTIFICATION_CHANNELS);
+
+  /* THE REAL SWITCHES. `channels` above is the DEMO's prototype list and drives nothing; these
+     are this install's stored choices and the OS's own answer about whether any of it may be
+     drawn. Read lazily so a blocked `localStorage` costs one render rather than a throw. */
+  const [notifyChannels, setNotifyChannels] = useState<NotificationChannels>(
+    () => (typeof window === "undefined" ? { ...DEFAULT_CHANNELS } : readChannels()),
+  );
+  /* Read in the INITIALIZER, not in a mount effect. The server render has no `Notification`, so
+     it answers `unsupported` there and the real state on the client's first paint — which is both
+     honest and one render rather than two. It was a mount effect first, and that queued a state
+     update after every render of this pane: harmless in the product, but it made every OTHER
+     settings test that mounts this view without wrapping in `act` print a React warning, which is
+     how a suite acquires noise that later hides something real. */
+  const [notifyPermission, setNotifyPermission] = useState<NoticePermission>(
+    () => (typeof window === "undefined" ? "unsupported" : notificationHost.permission()),
+  );
+  /* NO mount effect. A `setState` from one is logged by React as an update outside `act` in every
+     test that mounts this pane without wrapping — even when the value is unchanged and the render
+     is bailed out, because the warning is attached to the call and not to the re-render. The
+     initializer above is the whole read; the host is a per-surface constant, so there is no later
+     moment for the answer to arrive. `pressMaster` re-reads it directly when it matters. */
+
+  /* A press writes, and the pane renders what was written — Lane D's control grammar. The master
+     is the only switch that can ASK: a permission prompt has to come from a user gesture, and one
+     fired on mount is the behaviour browsers punish with a permanent block. */
+  const setNotify = useCallback((next: NotificationChannels) => {
+    setNotifyChannels(next);
+    writeChannels(next);
+  }, []);
+  const pressMaster = useCallback(async (want: boolean) => {
+    let state = notificationHost.permission();
+    if (want && state === "default") {
+      state = await notificationHost.request();
+      setNotifyPermission(state);
+    }
+    /* A refusal leaves the switch OFF. Storing `master: true` under a denied OS would render a
+       switch claiming ON over a platform that draws nothing — the exact lie this pane replaced. */
+    if (want && state !== "granted") return;
+    setNotify({ ...notifyChannels, master: want });
+  }, [notificationHost, notifyChannels, setNotify]);
   const [vips, setVips] = useState<string[] | null>(null);
   const [learned, setLearned] = useState<"open" | "accepted" | "dismissed">("open");
   /** The mirror's list until the user changes it; `null` (and absent) on a live account. */
@@ -956,23 +1033,92 @@ export function SettingsView({
 
           {shown === "notifications" ? (
             <SettingsSection>
-              {/* THE HONEST STATE FOR EVERY REAL ACCOUNT (SET-M1). Nothing in the product
-                  delivers a notification: the client never asks the browser for permission,
-                  registers no service worker and creates no push subscription, and the one
-                  server piece that exists (`POST /push/subscriptions`) stores registrations
-                  no sender ever reads. The switches that used to render here — two of them
-                  ON — were controls whose every position meant nothing, which is the
-                  built-and-dead shape this file's other panes are structured to avoid
-                  (see {@link mailboxSection}: absent ⇒ withheld, never offered dead). So a
-                  live account gets one factual sentence and no switch. `notifications` (the
-                  mirror's `view_meta` row) exists only in the fixture world — `/sync` has no
-                  such entity — so gating the prototype screen on it keeps the DEMO's
-                  Notifications pane exactly as designed, framed by the demo ribbon.
-                  Guarded by test/notifications-honest-state.test.tsx; the consumer that replaces
-                  this sentence is the change that ships real permission + subscription +
-                  delivery. */}
+              {/* THE REAL CONTROLS, FOR EVERY LIVE ACCOUNT.
+                  This branch used to hold one sentence saying ohmail delivered no notifications
+                  at all, because it did not: the client asked for no permission, registered no
+                  worker, and the switches that had been here were controls whose every position
+                  meant nothing. That sentence outlived its truth — the desktop build was posting
+                  a system notice on every rise in the unread count the whole time it was on
+                  screen — which is the worst version of this bug, since a false sentence is
+                  harder to notice than a dead switch.
+                  So the switches are real now and each one gates an emitter, the master gates all
+                  of them, and the pane renders the platform's own answer rather than assuming it.
+                  `notifications` (the mirror's `view_meta` row) still exists only in the fixture
+                  world — the sync feed has no such entity — so the branch below keeps the DEMO's
+                  prototype screen exactly as designed, framed by the demo ribbon. */}
               {!notifications ? (
-                <p className="set-note-inline">{t("notificationsUnavailable")}</p>
+                <>
+                  {/* THE MASTER. Disabled — not merely off — when the platform refuses, because a
+                      live switch over a refusing OS is a control whose ON position means nothing,
+                      which is the defect this pane used to BE. `checked` is the stored value AND
+                      the OS's answer: no switch may claim ON while the platform draws nothing. */}
+                  <SettingsRow
+                    label={t("notifyMaster")}
+                    description={t("notifyMasterWhy")}
+                    control={
+                      <Switch
+                        checked={notifyChannels.master && notifyPermission === "granted"}
+                        disabled={notifyPermission === "denied" || notifyPermission === "unsupported"}
+                        ariaLabel={t("notifyMaster")}
+                        onChange={(v) => void pressMaster(v)}
+                      />
+                    }
+                  />
+                  {/* The four events, and the identifying-details switch, appear only while the
+                      master is live. Rendering them under a dead master would offer four controls
+                      that cannot change anything — the same shape one row up. */}
+                  {channelsAreLive(notifyChannels, notifyPermission) ? (
+                    <>
+                      {NOTIFY_ROWS.map((r) => (
+                        <SettingsRow
+                          key={r.key}
+                          label={t(r.label)}
+                          description={t(r.why)}
+                          control={
+                            <Switch
+                              checked={notifyChannels[r.key]}
+                              ariaLabel={t(r.label)}
+                              onChange={(v) => setNotify({ ...notifyChannels, [r.key]: v })}
+                            />
+                          }
+                        />
+                      ))}
+                      <SettingsRow
+                        label={t("notifyIdentify")}
+                        description={t("notifyIdentifyWhy")}
+                        control={
+                          <Switch
+                            checked={notifyChannels.showSenderAndSubject}
+                            ariaLabel={t("notifyIdentify")}
+                            onChange={(v) =>
+                              setNotify({ ...notifyChannels, showSenderAndSubject: v })
+                            }
+                          />
+                        }
+                      />
+                    </>
+                  ) : null}
+                  {/* THE OS STATE, SAID PLAINLY. `denied` names the system settings as the place
+                      to change it and never tells somebody to turn it on here, because ohmail
+                      cannot; `default` says an ask is coming, which is why nothing has arrived. */}
+                  {notifyPermission === "denied" ? (
+                    <SettingsNote>{t("notifyDenied")}</SettingsNote>
+                  ) : null}
+                  {notifyPermission === "unsupported" ? (
+                    <SettingsNote>{t("notifyUnsupported")}</SettingsNote>
+                  ) : null}
+                  {notifyPermission === "default" ? (
+                    <SettingsNote>{t("notifyAskFirst")}</SettingsNote>
+                  ) : null}
+                  {/* HOW FAR THE CHOICE REACHES — `LocaleContext`'s rule, for its reason: the row
+                      says so, because a claim that is right on one surface is false on another.
+                      These are per-device: the OS permission cannot travel, and wanting mail to
+                      interrupt your phone but not your work laptop is the ordinary case. */}
+                  <SettingsNote>{t("notifyReach")}</SettingsNote>
+                  {/* Now TRUE of the code above it: the gate composes every notice on this device
+                      from the mirror, and the wake that prompts one carries a closed constant. */}
+                  <SettingsNote>{t("notificationPrivacy")}</SettingsNote>
+                </>
               ) : null}
               {notifications ? (
                 <>

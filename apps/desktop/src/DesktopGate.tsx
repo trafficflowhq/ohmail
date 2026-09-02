@@ -86,8 +86,10 @@ import { useLocalFirstRun } from "./local-first-run.js";
 import { LocalSuggest } from "./local-suggest.js";
 import { CloudSuggest } from "./CloudSuggest.js";
 import {
-  claimMailto, notify, onMailto, onMenuCommand, onMenuNavigate, setBadge, type MenuCommand,
+  claimMailto, postOsNotice, onMailto, onMenuCommand, onMenuNavigate, setBadge, type MenuCommand,
 } from "./native.js";
+import { decideNotices } from "@ohmail/client-engine";
+import { readChannels } from "../../webapp/app/shell/notification-settings";
 import { parseMailto, type MailtoDraft } from "./mailto.js";
 import { DefaultMailAsk, DefaultMailRow } from "./DesktopDefaultMail.js";
 import { createLocalEngine, type EngineStatus } from "./bridge-fetch.js";
@@ -912,12 +914,38 @@ function useUnreadSink(): (unread: number) => void {
     const before = previous.current;
     previous.current = unread;
     /* Swallowed rather than reported: a platform that cannot draw a badge (Windows carries an
-       overlay icon instead) must not leave an unhandled rejection behind a piece of decoration. */
+       overlay icon instead) must not leave an unhandled rejection behind a piece of decoration.
+       The BADGE is deliberately outside the notification switches: it is a number on an icon the
+       user is already looking at, not an interruption, and turning notifications off should not
+       cost somebody their unread count. */
     void setBadge(unread).catch(() => {});
-    if (before === null || unread <= before) return;
     if (typeof document !== "undefined" && document.hasFocus()) return;
-    const fresh = unread - before;
-    void notify(
+
+    /* ── THE GATE, AND WHY THIS CALL EXISTS AT ALL ────────────────────────────────────────
+       This emitter used to fire unconditionally, while Settings said in as many words that
+       ohmail "doesn't send notifications yet — nothing is delivered to this browser or any
+       device". Both halves shipped in the same build: the sentence renders whenever the mirror
+       carries no notifications row, which on the desktop is always, because the only thing that
+       ever wrote that row is the fixture adapter and this build stubs it out. So the app told
+       you about new mail and its own settings screen said it never would.
+
+       Now it asks the shared gate, exactly as the browser and the phone do. `decideNotices` is
+       handed the counts and the stored switches and answers with what may be drawn — nothing at
+       all when the master is off, which is what "fully off" has to mean. */
+    const spec = decideNotices(
+      before === null ? null : { ohboxUnread: before, screenerWaiting: 0 },
+      { ohboxUnread: unread, screenerWaiting: 0 },
+      readChannels(),
+      /* The shell holds the OS permission, not this window: its `notify` command asks the
+         platform itself on first use and reports a refusal as a rejection, which the catch below
+         absorbs. Passing "granted" here says "this window may ask the shell", not "the OS has
+         agreed" — the gate's other three states belong to hosts that can read the answer. */
+      "granted",
+    ).find((n) => n.event === "ohbox");
+    if (spec === undefined) return;
+
+    const fresh = spec.count;
+    void postOsNotice(
       "ohmail",
       fresh === 1 ? "One new message for you." : `${fresh} new messages for you.`,
     ).catch(() => {

@@ -11,7 +11,7 @@ import {
   MENU_VIEWS,
   badgeCount,
   codeOfLinkPayload,
-  notify,
+  postOsNotice,
   onMenuCommand,
   onMenuNavigate,
   openWeb,
@@ -146,7 +146,7 @@ describe("the menu's navigation", () => {
   /** Outside the app there is no menu — and no failure either. */
   it("is silent when there is no shell to listen to", async () => {
     await expect(onMenuNavigate(() => undefined)).resolves.toBeUndefined();
-    await expect(notify("t", "b")).resolves.toBeUndefined();
+    await expect(postOsNotice("t", "b")).resolves.toBeUndefined();
     await expect(setBadge(3)).resolves.toBeUndefined();
   });
 });
@@ -168,7 +168,7 @@ describe("the badge and the notification", () => {
 
   it("hands the notification's words over whole", async () => {
     const shell = shellAnswering();
-    await notify("ohmail", "One new message for you.");
+    await postOsNotice("ohmail", "One new message for you.");
     expect(shell.asked).toEqual([
       { command: "notify", payload: { title: "ohmail", body: "One new message for you." } },
     ]);
