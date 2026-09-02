@@ -117,9 +117,26 @@ export class PushService implements PushServicePort {
        * so a null there means signing out of a browser leaves its registration live and the
        * server goes on waking a browser for an account it is no longer signed into.
        *
-       * A browser has a device row like any other client (`devices.kind` is `'web'` or a native
-       * kind), so the session names one and stamping it makes the existing prune reach these rows
-       * with no new mechanism.
+       * ── AND FOR A BROWSER THIS STAMP IS A NO-OP. IT DOES NOT CLOSE THAT CASE. ───────────
+       *
+       * An earlier version of this comment claimed a browser has a device row like any other
+       * client, and it is false in this tree. `AUTO_MINT_DEVICE_LABELS` in
+       * `auth/session-lifecycle.ts` covers the four DESKTOP kinds ONLY, so a browser ceremony
+       * mints no device row and an exchanged web session's `device_id` is null —
+       * `auth-service.test.ts` asserts exactly that through the real ceremony. The guard below is
+       * `if (s?.deviceId)`, so for a browser it never fires and the row stays deviceless.
+       *
+       * What the stamp DOES reach is `unifiedpush`, whose sessions are a paired phone's and do
+       * carry a device. Kept for that, and for any transport whose session later names one.
+       *
+       * A BROWSER'S ROW IS CLOSED FROM THE CLIENT, because the client is the only party that can
+       * name it: the server cannot tell one deviceless registration on an account from another,
+       * and deleting them all would silently end a second browser's notifications. So the browser
+       * keeps the row id this method returns and issues the account-scoped
+       * `DELETE /push/subscriptions/:id` ({@link PushService.unsubscribe}) BEFORE `auth.logout()`
+       * revokes the session that authorizes it. `logout-push-prune.pg.test.ts` holds both halves:
+       * that the device-scoped prune does not reach a deviceless row, and that the client's
+       * delete does.
        *
        * `apns` stays out: its identity is the device token it already carries.
        */
