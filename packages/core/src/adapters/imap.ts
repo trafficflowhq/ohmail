@@ -107,6 +107,7 @@ import {
 // mechanism (its header says so); this file is the mail-leg consumer — see `ImapConfig.pin`.
 import { pinnedLookup } from "../net/pinned-fetch.js";
 import {
+  AmbiguousMetaFolderError,
   makeLeaseIo, makeLeasePeekIo, personalNamespacesOf, resolveOhmailFolder,
   type LeaseImapClient, type LeaseIo, type LeasePeekIo, type MetaNamespaceSource,
 } from "./organizer-lease.js";
@@ -1321,7 +1322,27 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       await this.client.connect();
     }
     const list = await this.listBounded();
-    this.delimiter = list.find((f) => f.path.toUpperCase() === "INBOX")?.delimiter ?? list[0]?.delimiter ?? "/";
+    /*
+     * ── ONE ALPHABET FOR THE WHOLE ADAPTER, AND THE NAMESPACE WINS ─────────────────────────
+     *
+     * This used to read the LIST alone, which made the adapter and the lease resolution capable
+     * of disagreeing: `resolveOhmailFolder` takes the FIRST personal namespace's delimiter above
+     * everything (`metaAlphabet` argues why — the prefix is concatenated onto the mapped name and
+     * is the half that cannot be re-spelled), while `toServerPath` took the LIST's.
+     *
+     * When the two disagree the adapter builds a SECOND folder tree: `ensureFolders` creates at
+     * the resolution's spelling and every other call site — move, SELECT, setFlags — addresses
+     * `toServerPath(canonical)` at the LIST's, so a message filed into `ohmail/Reads` goes to a
+     * path that does not exist. Reading the namespace here first is what makes one spelling
+     * serve both, rather than making the create path agree with the resolver and the move path
+     * disagree with them both.
+     *
+     * The LIST row stays as the second source (and `resolveOhmailFolder` now prefers it over a
+     * name's own separator for the same reason: a server statement outranks a derivation).
+     */
+    const nsDelimiter = personalNamespacesOf(this.client as unknown as MetaNamespaceSource)[0]?.delimiter;
+    this.delimiter = (typeof nsDelimiter === "string" && nsDelimiter.length === 1 ? nsDelimiter : undefined)
+      ?? list.find((f) => f.path.toUpperCase() === "INBOX")?.delimiter ?? list[0]?.delimiter ?? "/";
     this.sentFolder = this.findSent(list);
     // AFTER the delimiter and the Sent resolution, both of which it reads. See
     // {@link ImapAdapter.passiveFolders}: this is discovery for free, off a LIST already issued.
@@ -1465,18 +1486,50 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
      * swallowed below. The cost was five round trips per connection, for ever.
      *
      * The lease's resolution answers it — same prefix-credibility rule, one canonical name at a
-     * time — and its answer is better than a boolean: where the folder is ABSENT it names the
-     * path to create, prefix included, instead of filing a root-named CREATE and trusting the
-     * server to put it somewhere sensible.
+     * time.
+     *
+     * ── IT DECIDES EXISTENCE, AND NOTHING ELSE. NOT THE PATH TO CREATE. ────────────────────
+     *
+     * A first version of this used the resolution's own `path` for the CREATE, on the reasoning
+     * that naming the prefix beats trusting the server to place a root-named folder. Review
+     * caught what that costs: EVERY other call site — move, SELECT, setFlags — addresses
+     * `toServerPath(canonical)`, which is deliberately UNPREFIXED because `ImapFlow` prepends the
+     * namespace prefix to every path it sends. Creating at the already-prefixed path made the
+     * adapter write to one name and read from another, so a second folder tree accumulated on
+     * every connect and organize moves landed on NONEXISTENT.
+     *
+     * So the CREATE keeps the spelling the whole adapter uses, and the resolution is consulted
+     * only for "is it already there". One alphabet, one address. `connect()` reads the NAMESPACE
+     * delimiter before the LIST's for the same reason: the adapter and the resolution must not be
+     * able to disagree about how a name is spelled.
      */
     const namespaces = personalNamespacesOf(this.client as unknown as MetaNamespaceSource);
     for (const canonical of OHMAIL_FOLDERS) {
       let path = this.toServerPath(canonical);
       try {
         const at = resolveOhmailFolder({ list, bare: path, namespaces, canonical });
-        if (at.row !== null) continue;
-        path = at.path;
-      } catch {
+        /*
+         * ── A MATCH IS NOT ENOUGH TO SKIP A CREATE. WHOSE FOLDER IS IT? ──────────────────
+         *
+         * The resolution's no-NAMESPACE branch accepts a prefix whose parent the server merely
+         * LISTS, and says so: a customer's own `Backup.ohmail.Reads` IS adopted when `Backup` is
+         * a listed folder. For the LEASE that trade is argued and accepted — a read may be
+         * occasionally wrong and is bounded by two-matches-is-a-refusal.
+         *
+         * IT DOES NOT TRANSFER TO A CREATE-IF-ABSENT. A read that answers wrongly is one wrong
+         * answer; a CREATE that never happens leaves the folder missing for the life of the
+         * account, and every later move into `ohmail/Reads` lands on NONEXISTENT. So the
+         * skip-the-CREATE decision takes the strict half of the rule: ours is the root, or the
+         * personal namespace's own root, and nothing else. Anything else falls through and is
+         * created under our own name — where `already exists` still absorbs a genuine race.
+         */
+        if (at.row !== null && this.isOwnFolderPath(at.path, path, namespaces)) continue;
+      } catch (err) {
+        /* NARROW, and named. A bare `catch` here swallowed every throw out of the resolution
+           identically — including a programming error inside it — and then proceeded to a
+           root-named CREATE as if nothing had happened, where "already exists" absorbed the
+           second symptom too. Only the ambiguity is survivable; everything else is a fault. */
+        if (!(err instanceof AmbiguousMetaFolderError)) throw err;
         /* AmbiguousMetaFolderError — two credible candidates for one of our names. It is the
            honest refusal where a LEASE is at stake, because reading a claim from the wrong
            folder breaks the single-organizer invariant. Here nothing is being read: this is a
@@ -2173,6 +2226,28 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // breach instead, so the cause survives the trip.
     this.assertUsable();
     return makeLeasePeekIo(this.client as unknown as LeaseImapClient, (c) => this.toServerPath(c));
+  }
+
+  /**
+   * IS THIS LIST ROW OUR FOLDER, or somebody else's directory that happens to end in our name?
+   *
+   * `resolveOhmailFolder`'s authoritative branch already answers this — it accepts only the FIRST
+   * personal namespace's prefix — so when the client declared namespaces the resolution's own
+   * answer stands. The derived branch is the loose one: with no NAMESPACE to ask it accepts any
+   * prefix whose parent the server LISTS, which is the right trade for a lease read and the wrong
+   * one for deciding not to create a folder at all.
+   *
+   * So on that branch the prefix must be the personal ROOT: empty, or `INBOX` + delimiter.
+   * `Backup.` is refused and the folder is created under our own name.
+   */
+  private isOwnFolderPath(
+    found: string, bare: string, namespaces: readonly { prefix?: string; delimiter?: string | null }[],
+  ): boolean {
+    if (namespaces.length > 0) return true;
+    const prefix = found.slice(0, found.length - bare.length);
+    if (prefix === "") return true;
+    const parent = prefix.slice(0, prefix.length - this.delimiter.length);
+    return parent.toUpperCase() === "INBOX";
   }
 
   toServerPath(canonical: string): string {

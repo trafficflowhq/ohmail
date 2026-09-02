@@ -157,8 +157,6 @@ export class AmbiguousMetaFolderError extends Error {
 }
 
 /** `META_FOLDER` is exactly two segments, and both halves are needed to read a mapped spelling. */
-const META_HEAD = META_FOLDER.slice(0, META_FOLDER.indexOf("/"));
-const META_TAIL = META_FOLDER.slice(META_FOLDER.indexOf("/") + 1);
 
 /**
  * The personal namespaces a client learned at login, most-preferred first.
@@ -230,10 +228,19 @@ function metaAlphabet(
      FIXED tail length here was the bug in waiting: `_meta` is five characters, so slicing by it
      found the right separator for `ohmail.Reads` by coincidence and garbage for
      `ohmail.Screener`. */
+  const one = (d: unknown): string | undefined => (typeof d === "string" && d.length === 1 ? d : undefined);
   const cut = canonical.indexOf("/");
+  if (cut === -1) {
+    /* A SINGLE-SEGMENT NAME has no separator to discover and nothing to re-spell — `INBOX` is
+       one `WATCHED_FOLDERS` entry away from arriving here now that this is a general export.
+       Without this the slice arithmetic below is nonsense rather than merely wrong: `head` drops
+       the name's last character (`slice(0, -1)`), `tail` is the whole name, and the re-spelling
+       builds a folder path out of the overlap. */
+    const only = list.find((f) => f.path.toUpperCase() === "INBOX") ?? list[0];
+    return { delimiter: one(ns[0]?.delimiter) ?? one(only?.delimiter) ?? "/", bare };
+  }
   const head = canonical.slice(0, cut);
   const tail = canonical.slice(cut + 1);
-  const one = (d: unknown): string | undefined => (typeof d === "string" && d.length === 1 ? d : undefined);
   const between = one(bare.slice(head.length, bare.length - tail.length));
   const row = list.find((f) => f.path.toUpperCase() === "INBOX") ?? list[0];
   const delimiter = one(ns[0]?.delimiter) ?? one(row?.delimiter) ?? between ?? "/";
