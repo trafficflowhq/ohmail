@@ -460,3 +460,143 @@ describe("the model form's test action reports to the person who pressed it", ()
     expect(el.querySelector(".set-verdict")).toBeNull();
   });
 });
+
+/**
+ * ═══ A MODEL SERVER WITH NOTHING PULLED — the block that was three untruths deep ═══════════
+ *
+ * Reported from a fresh Ollama install, which is exactly the state a first-run flow meets it in:
+ *
+ *   "The model you chose cannot be used. the model server is running and does not have
+ *    'llama3.2'. Pick one of the 0 models below."
+ *
+ * Nobody chose `llama3.2` — it is the shipped default and no list had ever been offered. The
+ * engine's sentence names one model as the thing that is missing when everything is missing. And
+ * the instruction points at an empty select. Every path out of the screen was a lie about what
+ * had happened or a pointer at nothing.
+ *
+ * The cases below are on the COUNT and not on the provider alone, because the arm that produced
+ * this is shared with the case that works — a server holding three models and not the chosen one
+ * — and that case must keep its sentence. The last two mount the form, because the pure
+ * derivation cannot see the empty-select note underneath it, which was the fourth dead end.
+ *
+ * Watched red, each restored:
+ *  · delete the `count === 0` arm                → the Ollama and keyed cases, on the headline;
+ *  · keep the engine detail in the Ollama arm    → the "names no model" case;
+ *  · restore the unconditional `modelsWait` note → the "does not say test first" case.
+ */
+describe("verdictOf when the endpoint lists NO models at all", () => {
+  const EMPTY = 'the model server is running and does not have "llama3.2"';
+
+  it("OLLAMA: says the server is running and has nothing pulled, and gives the command", () => {
+    const v = verdictOf(
+      statusOf({
+        provider: "ollama",
+        reason: "unreachable",
+        probe: probe({ reason: "model_absent", detail: EMPTY, models: [] }),
+      }),
+      t, NOW, null,
+    );
+    expect(v.headline).toBe(en.aiProvider.verdictNoModelsOllama);
+    // The repair is a command, and it is the whole point of this arm.
+    expect(v.detail).toContain("ollama pull gemma3:12b");
+    // `off`, not `bad`: nothing is broken. It is `verdictNoKey`'s situation with a different noun.
+    expect(v.state).toBe("off");
+  });
+
+  it("…and it names NO model, because the person chose none and none is missing in particular", () => {
+    const v = verdictOf(
+      statusOf({
+        provider: "ollama",
+        reason: "unreachable",
+        probe: probe({ reason: "model_absent", detail: EMPTY, models: [] }),
+      }),
+      t, NOW, null,
+    );
+    const all = [v.headline, v.detail ?? "", v.hint ?? ""].join(" ");
+    expect(all, "the block asserted the default model's name against an empty server")
+      .not.toContain("llama3.2\"");
+    expect(all, "the engine's sentence about one missing model was carried through")
+      .not.toContain(EMPTY);
+    expect(all, "it pointed at a list with nothing in it").not.toMatch(/\b0 models\b/);
+    expect(all, "nobody chose anything").not.toBe(en.aiProvider.verdictModelAbsent);
+  });
+
+  it("CONTROL: one model that is not the chosen one keeps the sentence that was right", () => {
+    // Which is what says the case above is about the EMPTY list and not about `model_absent`.
+    const v = verdictOf(
+      statusOf({
+        provider: "ollama",
+        reason: "unreachable",
+        probe: probe({ reason: "model_absent", detail: EMPTY, models: ["mistral"] }),
+      }),
+      t, NOW, null,
+    );
+    expect(v.headline).toBe(en.aiProvider.verdictModelAbsent);
+    expect(v.detail).toBe(EMPTY);
+    expect(v.hint).toContain("1");
+  });
+
+  it("A KEYED VENDOR that lists nothing says so, and offers no command it does not have", () => {
+    const v = verdictOf(
+      statusOf({
+        provider: "openai",
+        reason: "unreachable",
+        probe: probe({ reason: "model_absent", detail: "no models", models: [] }),
+      }),
+      t, NOW, null,
+    );
+    expect(v.headline).toContain("OpenAI");
+    expect(v.headline).not.toBe(en.aiProvider.verdictModelAbsent);
+    expect([v.headline, v.detail ?? "", v.hint ?? ""].join(" "))
+      .not.toContain("ollama pull");
+    expect(v.hint, "it still pointed at the models below").toBeUndefined();
+  });
+
+  it("GERMAN carries the same command — a pull instruction is useless translated away", () => {
+    const v = verdictOf(
+      statusOf({
+        provider: "ollama",
+        reason: "unreachable",
+        probe: probe({ reason: "model_absent", detail: EMPTY, models: [] }),
+      }),
+      tDe, NOW, null,
+    );
+    expect(v.headline).toBe(de.aiProvider.verdictNoModelsOllama);
+    expect(v.detail).toContain("ollama pull gemma3:12b");
+  });
+
+  it("the rendered form does not tell somebody who just tested to test first", async () => {
+    // The fourth dead end, and the one the pure derivation cannot see: with no models the model
+    // section falls back to "Test first — the list comes from Ollama", under a verdict reporting
+    // the test that had just run.
+    const el = await mount(
+      statusOf({
+        provider: "ollama",
+        reason: "unreachable",
+        probe: probe({ reason: "model_absent", detail: EMPTY, models: [] }),
+      }),
+    );
+    expect(el.textContent ?? "").toContain(en.aiProvider.verdictNoModelsOllama);
+    expect(el.textContent ?? "", "it asked for a test that had just been run")
+      .not.toContain("Test first");
+  });
+
+  it("CONTROL: before anything has been asked, `Test first` is exactly right", async () => {
+    const el = await mount(statusOf({ provider: "ollama", reason: "unverified", probe: null }));
+    expect(el.textContent ?? "").toContain("Test first");
+  });
+
+  it("and the test verb stays pressable, because pulling a model is the way out", async () => {
+    const el = await mount(
+      statusOf({
+        provider: "ollama",
+        reason: "unreachable",
+        probe: probe({ reason: "model_absent", detail: EMPTY, models: [] }),
+      }),
+    );
+    const test = [...el.querySelectorAll("button")]
+      .find((b) => (b.textContent ?? "").includes(en.aiProvider.testServer));
+    expect(test, "the model server test button is not on screen").toBeDefined();
+    expect(test!.disabled, "the one control that repairs this state was disabled").toBe(false);
+  });
+});

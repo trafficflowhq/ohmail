@@ -186,7 +186,46 @@ export function verdictOf(
          * sentence rides in the detail beside the pointer that repairs it. That is `local-ai.ts`'s
          * standing rule: the engine's words for what happened, ours for what to do next.
          */
+        /**
+         * ── AN EMPTY LIST IS A DIFFERENT SITUATION, AND THE SHARED SENTENCE LIED ABOUT IT ────
+         *
+         * Reported from a fresh Ollama install, which is exactly when the list is empty. The
+         * block read:
+         *
+         *   "The model you chose cannot be used. the model server is running and does not have
+         *    'llama3.2'. Pick one of the 0 models below."
+         *
+         * Three untruths and no way out. Nobody CHOSE `llama3.2` — it is the shipped default and
+         * the person had never been offered a list. The engine's sentence names one model as the
+         * thing that is missing when every model is missing. And "pick one of the 0 models below"
+         * points at an empty select.
+         *
+         * So a zero-length list gets its own arm, and the engine's own sentence is DROPPED rather
+         * than shown under a better headline: `local-ai.ts`'s rule is "the engine's words for what
+         * happened, ours for what to do next", and here the engine has no words for what happened
+         * that are true. On Ollama the repair is a command, so the command is the detail. On a
+         * keyed vendor there is no command to give and the honest line is that it listed nothing.
+         *
+         * `off` rather than `bad`, on `verdictNoKey`'s precedent: nothing is broken, a step has
+         * not been taken yet. The test verb stays enabled either way — it is gated on `working`
+         * alone — so the sentence and the button agree.
+         */
         case "model_absent":
+          if (count === 0) {
+            return p === "ollama"
+              ? {
+                state: "off",
+                headline: t("verdictNoModelsOllama"),
+                detail: t("verdictNoModelsOllamaPull"),
+                ...stamped,
+              }
+              : {
+                state: "bad",
+                headline: t("verdictNoModelsListed", { vendor }),
+                ...(status.probe?.detail ? { detail: status.probe.detail } : {}),
+                ...stamped,
+              };
+          }
           return {
             state: "bad",
             headline: t("verdictModelAbsent"),
@@ -578,7 +617,11 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
             ) : null}
           </SettingsActions>
         </>
-      ) : choice !== "none" ? (
+      ) : choice !== "none" && status.probe === null ? (
+        /* "Test first — the list comes from Ollama" is true ONLY while nothing has asked it. After
+           a probe that came back with no models it is the fourth dead end in the same block: the
+           person has just tested, and is told to test. Once a probe has run the verdict above is
+           the answer — it names what happened and what to do — so nothing stands here. */
         <p className="set-note-inline">{t("modelsWait", { vendor: VENDOR[choice] })}</p>
       ) : null}
 
