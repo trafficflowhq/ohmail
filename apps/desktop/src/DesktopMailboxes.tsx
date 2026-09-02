@@ -810,11 +810,14 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
                  press be honoured on the next pass instead; until it does, this sentence is what
                  is true.
 
-                 What still differs is where losing leaves this install. A modern reader keeps
-                 reading — that is what a reader IS. A legacy stand-down closed its handle and
-                 stopped its timer, so it goes on reading nothing; saying otherwise was the
-                 collapse over-reaching. The blocked holder has no branch here at all, because it
-                 has no confirm button to produce one. */
+                 What still differs is where losing leaves this install, and there are three
+                 answers rather than one. A modern reader keeps reading — that is what a reader IS.
+                 A legacy stand-down closed its handle and stopped its timer, so it goes on reading
+                 nothing. And a blocked holder keeps the mailbox for as long as it is checking in,
+                 with no renewal race to lose — so its sentence names the order that works instead
+                 of a condition that does not apply to it, and it does NOT claim the request is
+                 held: the same loop that cannot see the stamp clears it on its next stand-down
+                 poll, so asking again after the other organizer stops is the reliable path. */
               shown.legacyStandDown === true ? (
                 <SettingsVerdict state="off" headline={t("organizeHereQueuedLegacy")} />
               ) : claimWouldBeRefused(shown) ? (

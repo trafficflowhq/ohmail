@@ -448,7 +448,9 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     const text = el.textContent ?? "";
     expect(text, "the confirmation promised what rule 5 refuses even with authorization")
       .toContain("cannot take it yet");
-    expect(text).toContain("Stop it organizing there, then quit and reopen ohmail");
+    expect(text).toContain("Stop it organizing there first, then come back and ask again");
+    expect(text, "a request the running loop can clear was described as kept")
+      .not.toMatch(/kept until then|is kept/);
     expect(text).not.toContain("unless zorin-9950 renews its claim first");
 
     /* AND THE PRESS IS STILL THERE. Withholding it depended on `organizerState` moving off `held`
@@ -471,8 +473,10 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     await act(async () => { organizeButton(el)!.click(); });
     await act(async () => { confirmButton(el)!.click(); });
     const text = el.textContent ?? "";
-    expect(text).toContain("keeps this mailbox while it is still checking in");
+    expect(text).toContain("keeps this mailbox for as long as it is still checking in");
     expect(text).toContain("whatever was asked for here");
+    // The reliable order, because the request itself is not durable against the running loop.
+    expect(text).toContain("then ask again and reopen ohmail");
     expect(text, "a blocked request was answered with the local peer's renewal race")
       .not.toContain("renews its claim first");
   });
