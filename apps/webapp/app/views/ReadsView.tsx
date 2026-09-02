@@ -723,7 +723,7 @@ export function ReadsView({
         /* The MOUNTED slice is the key: a window move mounts new cards, and both of the shell's
            observers re-scan on this value — without it a card mounted by a slide would never
            hydrate on approach and never mark itself seen. Keyed on the slice's own ids (not
-           the pile's — joining 20 000 ids built a 100 KB string per render at scale). */
+           the pile's — joining every id built a string as big as the mailbox per render). */
         contentKey={`${stream.start}:${streamIds.slice(stream.start, stream.end).join(",")}`}
       >
         <div className="stream-top">

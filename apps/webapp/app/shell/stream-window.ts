@@ -29,9 +29,8 @@
  * Stream cards are variable-height (a clamped snippet, an expanded reading, a hydrated html
  * body), so unlike `list-window.ts` one measurement cannot stand for all of them. Every
  * mounted card's height is read after each render and cached BY MESSAGE ID; a card that has
- * never been laid out contributes {@link STREAM_CARD_ESTIMATE_PX} — the OUTER-height twin of
- * the `contain-intrinsic-size: auto 200px` box guess: the box plus the card's standing bottom
- * margin, because the cache stores outer heights and the two must mean the same thing.
+ * never been laid out contributes {@link STREAM_CARD_ESTIMATE_PX} — the same guess
+ * `contain-intrinsic-size: auto 200px` makes for a mounted card the browser has not rendered.
  * The spacers are sums over that cache, so they get truer the more of the pile the reader has
  * actually passed, and `StreamShell`'s anchoring loop (which corrects a landing against the
  * REAL geometry over several frames) absorbs the drift the estimates leave.
@@ -66,9 +65,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 /** The opening window: several viewports of collapsed cards, mounted before first paint. */
 export const STREAM_MOUNT_INITIAL = 60;
 
-/** A never-measured card's OUTER height — `contain-intrinsic-size`'s 200px box guess plus the
- *  card's standing 20px bottom margin, matching what the measured cache stores. */
-export const STREAM_CARD_ESTIMATE_PX = 220;
+/** A never-measured card's height — `contain-intrinsic-size`'s own guess, kept in step. */
+export const STREAM_CARD_ESTIMATE_PX = 200;
 
 /** The mounted window may never exceed this many cards, wherever the reader scrolls. */
 export const STREAM_WINDOW_MAX = 120;
@@ -141,23 +139,8 @@ export function useStreamWindow({
     const el = getRoot();
     if (!el) return;
     for (const c of el.querySelectorAll<HTMLElement>(".scast[data-sid]")) {
-      /**
-       * The OUTER height — box plus vertical margins. `.scast` carries a 20px bottom margin
-       * (stream.css), and `offsetHeight` alone understated every unmounted card by it, so a
-       * window commit that shed two dozen cards into the top spacer shrank the content above
-       * the viewport by ~480px in one commit. Chromium's scroll anchoring papered over that;
-       * WebKit (the desktop's webview) has none, and the stream visibly jumped under the
-       * reader on every shed. Margins are read per card — cheap, the walk is window-bounded.
-       */
-      // Layout is judged on the BOX alone: a card with no layout can still resolve margins,
-      // and caching bare margins as a card's whole height would collapse the spacers by the
-      // difference — the very jump this outer-height cache exists to remove.
-      if (c.offsetHeight <= 0) continue;
-      const cs = getComputedStyle(c);
-      heights.current.set(
-        c.dataset.sid!,
-        c.offsetHeight + (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0),
-      );
+      const h = c.offsetHeight;
+      if (h > 0) heights.current.set(c.dataset.sid!, h);
     }
     // A render-scope closure; the element is stable for the mounted stream's life.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -253,18 +236,7 @@ export function useStreamWindow({
 
   /** A pile that shrank under the window (deltas, a filter) must not leave indices dangling:
    *  the RENDERED range is the stored one re-clamped against today's pile, every render. */
-  let eff = total === 0 ? { start: 0, end: 0 } : clamp(range.start, range.end);
-  /**
-   * THE OPENING WINDOW FOLLOWS A GROWING PILE. A view mounted MID-DRAIN sees a pile of a few
-   * rows and stores a window to match; the rows that land afterwards must widen the resting
-   * slice back to the opening size WITHOUT waiting for a scroll — there may never be one, and
-   * a window pinned at those first rows is a mailbox that looks two messages long. Applied
-   * only while the window rests at the top: after the first slide the sampler owns the range,
-   * and re-widening a deliberately-moved window would fight it.
-   */
-  if (total > 0 && eff.start === 0 && eff.end < Math.min(total, STREAM_MOUNT_INITIAL)) {
-    eff = { start: 0, end: Math.min(total, STREAM_MOUNT_INITIAL) };
-  }
+  const eff = total === 0 ? { start: 0, end: 0 } : clamp(range.start, range.end);
   rangeRef.current = eff;
 
   const ensure = useCallback((index: number) => {
