@@ -158,6 +158,23 @@ export const SEND_RECONCILE_GIVE_UP_MS = SCHEDULED_SEND_EXPIRY_MS;
  * Eight, eight and ten against the defaults' fifteen, fifteen and twenty-five: this pass budgets
  * {@link SEND_RECONCILE_BATCH} dials inside the one invocation those defaults were sized for a
  * single send to fit. A cold LOGIN measures 1–3 s, so eight is still generous.
+ *
+ * ── WHAT THESE DO **NOT** BOUND, WHICH THE PREVIOUS VERSION OF THIS COMMENT GOT WRONG ───────
+ *
+ * They bound the TCP+TLS connect, the greeting, and socket INACTIVITY. They do not bound a
+ * command whose responses keep arriving: `ImapAdapter.connect()` issues a LIST after the
+ * greeting, and every command through `ImapAdapter.bounded()` carries
+ * `IMAP_READ_DEADLINE_MS` — 180 seconds, three times this whole invocation. A server that
+ * greets, accepts LOGIN and then dribbles its LIST is inside every one of these numbers.
+ *
+ * That is a KNOWN, ACCEPTED RESIDUAL and not an oversight: the pass runs no caller-side race on
+ * the dial, because racing does not stop the command (imapflow serialises them, so the socket
+ * lives on and the abandoning caller learns nothing) and a caller-side ceiling below the
+ * adapter's own allowance made every slow-but-working mailbox breach on every cycle. What the
+ * residual costs is bounded and self-healing: the invocation is killed at the platform ceiling,
+ * the teardown does not run, and the admission slots those handles hold are returned by the
+ * stale-window reclaim. What it never costs is a wrong answer about somebody's mail — nothing
+ * is written on that path at all.
  */
 export const SEND_RECONCILE_NET_TIMEOUTS = {
   connectionMs: 8_000,
@@ -168,30 +185,47 @@ export const SEND_RECONCILE_NET_TIMEOUTS = {
 /**
  * PER-CALL CEILING on the Sent-folder SEARCH, and on nothing else.
  *
- * The dial is bounded by {@link SEND_RECONCILE_NET_TIMEOUTS} inside the adapter, which is
- * strictly better. This one remains because a SEARCH runs on an ALREADY-ESTABLISHED socket, where
- * the only adapter-side bound is `socketMs` inactivity — a server that trickles untagged
- * responses can hold one open indefinitely without ever being idle. A breach here is treated as
- * this pass's own doing rather than the mailbox's: the row defers and the handle is destroyed,
- * because the abandoned SEARCH still owns the command queue.
+ * The dial is handed {@link SEND_RECONCILE_NET_TIMEOUTS} instead of being raced, for the reasons
+ * recorded there. This one ceiling remains because the SEARCH's own adapter-side bound is
+ * `IMAP_READ_DEADLINE_MS` — 180 seconds, three times this invocation — so "the adapter will stop
+ * it" is true only on a timescale that has already lost. (`socketMs` does not help: it is an
+ * INACTIVITY timer, and a server trickling untagged responses is never idle. `imap-bounds.ts`
+ * documents that as the slow-loris instrument.)
+ *
+ * A breach here is this pass's own impatience rather than the mailbox's failure, so it never
+ * counts as evidence — but past the day-long give-up it is still UNDECIDABLE, and undecidable is
+ * what that deadline exists to end. The handle is destroyed either way, because the abandoned
+ * SEARCH still owns the command queue.
  */
 export const SEND_RECONCILE_CALL_CEILING_MS = 10_000;
+
+/**
+ * Ceiling on the end-of-pass teardown, which is a shorter job than a probe: a LOGOUT on a healthy
+ * connection is one round trip. It is separate from {@link SEND_RECONCILE_CALL_CEILING_MS} because
+ * it lands at the very end of the invocation, where the remaining budget is smallest — and the
+ * derived worst case in the suite is what forced it to be its own number rather than a reuse.
+ */
+export const SEND_RECONCILE_CLOSE_CEILING_MS = 5_000;
 
 /**
  * How late into an invocation any NEW socket work may still be started. Past this the remaining
  * rows are deferred exactly as if the login budget were spent — they keep their mirror arm, and
  * they are first in line next minute.
  *
- * FIFTEEN, and the number IS the arithmetic rather than a feeling. The worst case is this
+ * TWELVE, and the number IS the arithmetic rather than a feeling. The worst case is this
  * deadline (a row starting the instant before it), plus that row's dial bounded inside the
  * adapter by {@link SEND_RECONCILE_NET_TIMEOUTS} (8 + 8), plus its probe ceiling
- * ({@link SEND_RECONCILE_CALL_CEILING_MS}), plus the concurrent teardown (one more ceiling) —
- * 51 s inside the platform's 60. Twenty-five put it at 61 and did NOT fit, which the suite
- * caught rather than production: `send-reconcile.test.ts` pins this sum, so raising any of the
- * four without re-deriving it is a red test. A normal dial measures 1–3 s, so fifteen seconds is
- * ample for all {@link SEND_RECONCILE_BATCH} of them to have started.
+ * ({@link SEND_RECONCILE_CALL_CEILING_MS}), plus the concurrent teardown
+ * ({@link SEND_RECONCILE_CLOSE_CEILING_MS}) — 53 s inside the platform's 60.
+ *
+ * The suite DERIVES that sum from the constants rather than restating it, and it has now caught
+ * two wrong versions of it: twenty-five seconds put the total at 61, and a first attempt at the
+ * derivation omitted `socketMs` — which is what actually bounds the LOGIN and the LIST — so the
+ * one constant most likely to be raised was the one the guard could not see. A normal dial
+ * measures 1–3 s, so twelve seconds is ample for all {@link SEND_RECONCILE_BATCH} to have
+ * started.
  */
-export const SEND_RECONCILE_DIAL_DEADLINE_MS = 15_000;
+export const SEND_RECONCILE_DIAL_DEADLINE_MS = 12_000;
 
 /**
  * A CEILING BREACH, kept apart from a work rejection.
@@ -242,13 +276,14 @@ function abandon(adapter: SendAdapter): void {
 }
 
 /**
- * Race one socket operation against a ceiling. The abandoned promise is followed and its adapter
- * ABANDONED rather than closed politely — see {@link abandon}, which is where the cost of getting
- * this wrong is recorded.
+ * Race one operation against a ceiling.
+ *
+ * The abandoned promise is FOLLOWED — its rejection swallowed — so an operation that fails after
+ * we stopped waiting cannot surface as an unhandled rejection. It is not otherwise acted on: the
+ * only caller that needed to tear down a late arrival was the dial, and the dial is no longer
+ * raced. Whoever holds the handle abandons it; see {@link abandon}.
  */
-async function bounded<T>(
-  what: string, work: Promise<T>, ceilingMs: number, onLateAdapter?: (v: T) => void,
-): Promise<T> {
+async function bounded<T>(what: string, work: Promise<T>, ceilingMs: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const ceiling = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new SendReconcileCeilingExceeded(what, ceilingMs)), ceilingMs);
@@ -256,11 +291,9 @@ async function bounded<T>(
   try {
     return await Promise.race([work, ceiling]);
   } catch (err) {
-    // Followed whatever happened, so a LOGIN that lands after we stopped waiting cannot leave an
-    // authenticated connection with no handle to it.
     void work.then(
-      (v) => { if (onLateAdapter) onLateAdapter(v); },
-      () => { /* it failed too; there is nothing to tear down */ },
+      () => { /* the caller that owns the handle is the one that tears it down */ },
+      () => { /* it failed too; nothing to do */ },
     );
     throw err;
   } finally {
@@ -494,8 +527,7 @@ export async function runSendReconcilePass(
       }
       const willDial = mayDial && !outOfBudget;
       const onMiss: "unverified" | "defer" =
-        outOfBudget ? "defer"
-        : willDial ? "unverified"
+        willDial ? "unverified"
         : row.mailboxStatus === "disabled" ? "unverified"
         : givingUp ? "unverified"
         : "defer";
@@ -506,8 +538,13 @@ export async function runSendReconcilePass(
        * its row's age, so an age-plus-outcome test would count every old disconnected mailbox as
        * a give-up and make the loudest counter on this pass mean something it does not.
        */
-      let closedByAge =
-        !willDial && !outOfBudget && row.mailboxStatus !== "disabled" && givingUp;
+      // PAST THE DAY, ANY ROW THIS PASS DID NOT DECIDE IS CLOSED — including one it simply never
+      // got to. `outOfBudget` used to be excluded, on the reasoning that closing a row we never
+      // probed is unfair; a day of never getting to it is not a near miss, it is the same
+      // permanent "Sending…" by another route, and the ruling's rule is undecidable-past-24h
+      // rather than probed-and-undecided. A `disabled` mailbox is still not a give-up: that one
+      // was decided on its first cycle, by evidence.
+      let closedByAge = !willDial && row.mailboxStatus !== "disabled" && givingUp;
 
       let outcome;
       try {
@@ -530,7 +567,14 @@ export async function runSendReconcilePass(
         // connect-plus-greeting allowance. Giving up on that would write terminal `unverified`
         // for a mailbox that was reachable the whole time, every minute, until the day expired.
         // It is charged a login (the wire was touched) and it waits.
-        if (err instanceof SendReconcileCeilingExceeded) {
+        if (err instanceof SendReconcileCeilingExceeded && !givingUp) {
+          // BEFORE the give-up, and only before it. A breach is not evidence about the mailbox,
+          // so a fresh row waits — but a row a whole DAY of cycles could not decide is exactly
+          // what the give-up is for, and exempting it outright (which the previous round did)
+          // strands the draft at "Sending…" for ever with `gaveUp: 0`, charging a login a minute
+          // to a mailbox whose Sent SEARCH is simply slower than ten seconds. That is the state
+          // this module exists to end, reintroduced by a rule meant to protect it.
+          //
           // THE HANDLE MUST GO FIRST. The abandoned SEARCH still owns imapflow's command queue,
           // so leaving it memoised would queue every following row on this mailbox behind a
           // command that can never answer — each burning the full ceiling, none of them charged a
@@ -564,7 +608,8 @@ export async function runSendReconcilePass(
           });
           continue;
         }
-        // Anything else: the handle is treated as SUSPECT and dropped. Not because everything
+        // Anything else — including a ceiling breach that has now aged past the give-up: the
+        // handle is treated as SUSPECT and dropped. Not because everything
         // reaching here came from the connection — a pool timeout in the mirror read, or a throw
         // from `resolveStale`'s own close, land here too and the socket had no part in either —
         // but because the two are not distinguishable at this point and the costs are asymmetric:
@@ -637,17 +682,13 @@ export async function runSendReconcilePass(
       }
     }
   } finally {
-    // BOUNDED, and sequential closes are why: three handles whose LOGOUT queues behind a hung
-    // command would add three socket timeouts AFTER all the work, past the platform ceiling, with
-    // nothing left to show for it. These are handles the pass believes are healthy, so the polite
-    // path is tried — with a ceiling, and `abandon` behind it.
-    // CONCURRENTLY, and that is arithmetic rather than taste: closing three handles in sequence
+    // BOUNDED AND CONCURRENT, and that is arithmetic rather than taste: closing three handles in sequence
     // under a ten-second ceiling each is thirty seconds AFTER all the work, which put the worst
     // case past the platform's sixty and got the loop itself killed — leaving the remaining
     // handles unclosed and their admission slots held, the exact harm the bound exists to avoid.
     await Promise.all([...held.values()].map(async (adapter) => {
       try {
-        await bounded("close", adapter.close(), SEND_RECONCILE_CALL_CEILING_MS);
+        await bounded("close", adapter.close(), SEND_RECONCILE_CLOSE_CEILING_MS);
       } catch {
         abandon(adapter);
       }

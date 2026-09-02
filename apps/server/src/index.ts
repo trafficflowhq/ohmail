@@ -3,7 +3,9 @@ import { setupProdDatabase } from "@trafficflow/db/admin";
 import { makeOwnedDb, makeChangeWakeHub, isSuspended } from "@trafficflow/db/cloud";
 import { createLogger, UNMETERED_STORAGE_CAP } from "@trafficflow/core";
 import { makeSendAdapter } from "@trafficflow/api";
-import { runScheduledSendPass, runSendReconcilePass } from "@trafficflow/services";
+import {
+  runScheduledSendPass, runSendReconcilePass, SEND_RECONCILE_NET_TIMEOUTS,
+} from "@trafficflow/services";
 import { loadServerConfig } from "./config.js";
 import { buildDeps, buildServerServices, oauthProviderFor, type ServerRuntime } from "./deps.js";
 import { handleServerRequest } from "./handler.js";
@@ -139,7 +141,12 @@ async function main(): Promise<void> {
     try {
       const passDeps = buildDeps(new Request(cfg.origin), rt);
       const r = await runSendReconcilePass(owned.db, {
-        openSendAdapter: (mailboxId) => makeSendAdapter(passDeps, mailboxId),
+        // THE SAME DEADLINES THE HOSTED DOOR THREADS, and this caller was missed when they were
+        // introduced — leaving the only other production runner of this pass with no dial bound
+        // at all. It matters differently here: nothing kills this process, so one mailbox whose
+        // LIST trickles parks the awaited pass and stalls the whole send clock behind it.
+        openSendAdapter: (mailboxId) =>
+          makeSendAdapter(passDeps, mailboxId, { timeouts: SEND_RECONCILE_NET_TIMEOUTS }),
         // On the HANDED handle — the deadlock rule on `ScheduledSendPassDeps.accountEligible`.
         accountEligible: async (accountId, handle) =>
           !(await isSuspended(handle as unknown as Tx, accountId)),
