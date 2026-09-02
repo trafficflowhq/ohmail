@@ -1786,6 +1786,23 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * right to seize this mailbox back from wherever it may go next.
      */
     let takeoverAuthorized = world.takeoverAuthorizedAt !== null;
+    /**
+     * THE EXACT STAMP THIS PASS READ, so the stand-down can clear THAT ONE and not whatever is on
+     * the row by the time it writes.
+     *
+     * The gate reads the stamp, then reads the LEASE — a network round trip against the user's own
+     * IMAP server, which can take seconds. A press landing inside that window writes a stamp this
+     * pass never saw and never offered to the lease, and an unconditional
+     * `takeoverAuthorizedAt: null` in the stand-down would erase it: the route answered
+     * `authorized`, the person carried on working, and the request is gone with nothing anywhere
+     * saying so. Narrow, and exactly the class this whole round is about — a press consumed by a
+     * pass that could not act on it.
+     *
+     * Comparing rather than serializing, because serializing is the wrong instrument here: the
+     * route must stay answerable while a slow lease read is in flight, and making it wait on the
+     * gate would block a button press behind an IMAP timeout.
+     */
+    let observedTakeoverAt: Date | null = world.takeoverAuthorizedAt;
 
     /**
      * CLOSE THE SEND-LATER APPOINTMENTS A STAND-DOWN ORPHANS — the local half of
@@ -1899,7 +1916,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       try {
         const [row] = await db.select({ at: mailboxes.takeoverAuthorizedAt })
           .from(mailboxes).where(eq(mailboxes.id, world.mailboxId)).limit(1);
-        if (row) takeoverAuthorized = row.at !== null;
+        if (row) { takeoverAuthorized = row.at !== null; observedTakeoverAt = row.at; }
       } catch (err) {
         log("organizer_takeover_reread_failed", {
           err,
@@ -2086,7 +2103,15 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             organizedByName: organizerDisplayName(outcome.by?.displayName ?? null),
             organizedSince: outcome.by?.claimedAt ?? null,
             organizerState: outcome.state,
-            takeoverAuthorizedAt: null,
+            /* THE STAMP THIS PASS READ, and only that one — see {@link observedTakeoverAt}. A
+               press that landed while the lease was being read was never offered to it, and
+               clearing it here would answer a request nothing ever considered. `IS NOT DISTINCT
+               FROM` rather than `=` so the ordinary case (both NULL) matches: SQL equality on two
+               NULLs is NULL, which would make this a no-op on every stand-down that had no stamp
+               and leave the column's own value untouched — harmless there, and the wrong shape to
+               rely on. */
+            takeoverAuthorizedAt: sql`case when ${mailboxes.takeoverAuthorizedAt} is not distinct from ${observedTakeoverAt}
+              then null else ${mailboxes.takeoverAuthorizedAt} end`,
           })
           .where(eq(mailboxes.id, world.mailboxId));
       } catch (err) {
