@@ -913,11 +913,41 @@ export function FirstRun({
               <SettingsRow label={t("doneFolders")} description={t("doneWhere")} />
             </div>
             <p className="set-note-inline">{t("doneSettings")}</p>
-            {foot({ cancel: false, primary: next(t("doneOpen")) })}
+            {/* ── THE PAIR OFFER IS A SECOND VERB HERE, AND IT HAS TO BE ────────────────────
+             *
+             * `pair` is in the path and lights a rail dot, and NOTHING COULD REACH IT: this
+             * screen's only verb stamps completion and leaves, so the pairing step was rendered
+             * by no state the flow could produce. Found while building the render harness, before
+             * a pixel — the step existed in the type, the path and the rail, and in no reachable
+             * run.
+             *
+             * A second VERB rather than making "Open ohmail" advance, because that label would
+             * then be false: it would not open ohmail, it would show another setup screen. Two
+             * true labels beat one that navigates somewhere its words do not name.
+             *
+             * Withheld where the door does not pair, structurally: no panel, no offer, and the
+             * step is skipped rather than rendered empty. */}
+            {foot({
+              cancel: false,
+              primary: (
+                <>
+                  {host.pairNode ? (
+                    <Button variant="ghost" onClick={() => goTo("pair")} disabled={busy}>
+                      {t("pairTitle")}
+                    </Button>
+                  ) : null}
+                  {next(t("doneOpen"))}
+                </>
+              ),
+            })}
           </>
         )) : null}
 
-        {step === "pair" ? screen(onLeave, (
+        {/* THE LAST SCREEN, reached only from the summary's second verb — and it IS what stamps
+            on that path, because taking the pair offer means the summary's "Open ohmail" was not
+            pressed. Skipping it therefore has to END the run rather than abandon it: "Later" and
+            Cancel are the same act here, which is why the foot carries no Cancel of its own. */}
+        {step === "pair" ? screen(leave, (
           <>
             <h1 id={`${ids}-title`}>{t("pairTitle")}</h1>
             <p className="sub">{t("pairLead")}</p>
