@@ -226,7 +226,8 @@ async function main(): Promise<void> {
               logger.info("away_responder_pass", {
                 accounts: a.accounts, examined: a.examined, sent: a.sent,
                 unverified: a.unverified, throttled: a.throttled, suppressed: a.suppressed,
-                deferred: a.deferred, capped: a.capped,
+                deferredAccounts: a.deferredAccounts, deferredCandidates: a.deferredCandidates,
+                capped: a.capped,
               });
             }
           } catch (err) {

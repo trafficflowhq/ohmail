@@ -2920,7 +2920,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             log("away_responder_pass", {
               accounts: r.accounts, examined: r.examined, sent: r.sent,
               unverified: r.unverified, throttled: r.throttled, suppressed: r.suppressed,
-              deferred: r.deferred, capped: r.capped,
+              deferredAccounts: r.deferredAccounts, deferredCandidates: r.deferredCandidates,
+              capped: r.capped,
             });
           }
         } catch (err) {

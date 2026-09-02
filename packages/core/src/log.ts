@@ -455,7 +455,7 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // because we sent them mail, and a log line naming who wrote to a person while they were away is
   // a disclosure about both of them. The lines carry `messageId` and `mailboxId` — ids that point
   // into rows the deletion sweep erases — and the responder's own text is never logged either.
-  "throttled", "suppressed", "throttle",
+  "throttled", "suppressed", "throttle", "deferredAccounts", "deferredCandidates",
   // `mirrorDraining` is the OTHER half of the same `shutdown` line, and it is here because
   // `inFlight` alone was misleading rather than merely incomplete: the Cloud mirror's pull is not a
   // stdio request, so `inFlight` reads 0 in exactly the case where the mirror is what the quit is

@@ -75,6 +75,23 @@ export type AwaySuppression =
   | "screened_out"
   | "not_screened_in"
   | "already_replied"
+  /**
+   * The two AWAY-ONLY header verdicts, and they are their own members rather than reusing
+   * `auto_submitted` / `service_sender`.
+   *
+   * They were folded into those two at first, which contradicted this module's own rule one screen
+   * up — "two reasons rather than one, because an operator reading 'we did not answer this' needs
+   * to know which of the two happened". A stored `reason` of `auto_submitted` would have been
+   * ambiguous between "the sender marked this message as automatic" (RFC 3834, the loop stop) and
+   * "the sender's Exchange asked us not to auto-reply" (a policy header on ordinary human mail),
+   * which are different facts with different remediations.
+   *
+   *  · `auto_reply_suppressed` — `X-Auto-Response-Suppress: OOF|AutoReply|All`.
+   *  · `null_return_path` — an empty `Return-Path` (`<>`): a bounce, or a notification whose
+   *    sender has declared it accepts no reply.
+   */
+  | "auto_reply_suppressed"
+  | "null_return_path"
   | AutoReplySuppression;
 
 /** The audiences, as the closed set the service validator and this module share. */
@@ -168,7 +185,7 @@ export function awayEligibility(
   // about authorship. So they live here, where the decision is exactly "may we auto-reply".
   const suppressHeader = awayHeaderValues(candidate.headers, "x-auto-response-suppress");
   if (suppressHeader?.some((v) => /\b(?:oof|autoreply|all)\b/i.test(v)) ?? false) {
-    return "auto_submitted";
+    return "auto_reply_suppressed";
   }
   const precedence = awayHeaderValues(candidate.headers, "precedence");
   if (precedence?.some((v) => /\b(?:list|junk)\b/i.test(v)) ?? false) return "list_mail";
@@ -176,7 +193,7 @@ export function awayEligibility(
   // sender has declared it will accept no reply. Answering it is undeliverable at best and a
   // bounce loop at worst. Only an EMPTY one — a present, non-empty Return-Path is ordinary mail.
   const returnPath = awayHeaderValues(candidate.headers, "return-path");
-  if (returnPath?.some((v) => v.trim() === "" || v.trim() === "<>") ?? false) return "service_sender";
+  if (returnPath?.some((v) => v.trim() === "" || v.trim() === "<>") ?? false) return "null_return_path";
 
   // ALREADY ANSWERED — a manual reply the person sent themselves, or an earlier automatic one from
   // any install. Last because it is the only member whose evidence the pass had to go and fetch.

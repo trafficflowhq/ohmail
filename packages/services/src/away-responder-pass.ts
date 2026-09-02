@@ -81,6 +81,13 @@ export const AWAY_ACCOUNTS_PER_RUN = 50;
 export const AWAY_THROTTLES = ["always", "per_message", "per_day", "per_week"] as const;
 export type AwayThrottle = (typeof AWAY_THROTTLES)[number];
 
+/**
+ * How many ids a reply's `References` may carry. Twenty is past what any client renders and well
+ * short of anything a server refuses; the root is always kept, so a longer thread loses its middle
+ * rather than its identity.
+ */
+export const AWAY_REFERENCES_MAX = 20;
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEK_MS = 7 * DAY_MS;
 
@@ -145,10 +152,18 @@ export interface AwayResponderPassResult {
   /** An eligibility guard held. */
   suppressed: number;
   /**
-   * Left for the next run WITHOUT a ledger row — a mailbox whose adapter would not open, or an
-   * account the eligibility gate parked. Nothing is decided and nothing is spent.
+   * ACCOUNTS the suspension gate parked. Nothing about them was read or decided.
+   *
+   * Two counters and not one, because the old single `deferred` mixed units: this arm counted
+   * ACCOUNTS and the send-path arm counted CANDIDATES, so `deferred: 51` could be fifty-one
+   * messages, or one suspended account plus fifty messages, and an operator had no way to tell.
    */
-  deferred: number;
+  deferredAccounts: number;
+  /**
+   * CANDIDATES left for the next run without a ledger row, because their mailbox had no send path.
+   * Nothing is decided and no reservation is spent.
+   */
+  deferredCandidates: number;
   /** True ⇒ the send budget was reached and there was more to answer. */
   capped: boolean;
 }
@@ -192,17 +207,24 @@ export async function runAwayResponderPass(
   const budget = deps.sendsPerRun ?? AWAY_SENDS_PER_RUN;
   const result: AwayResponderPassResult = {
     accounts: 0, examined: 0, sent: 0, unverified: 0, throttled: 0, suppressed: 0,
-    deferred: 0, capped: false,
+    deferredAccounts: 0, deferredCandidates: 0, capped: false,
   };
 
   /* NONE MEANS NONE, decided before a single row is read. See the field's own note. */
   if (deps.mailboxIds !== undefined && deps.mailboxIds.length === 0) return result;
 
+  /* Before the probe: a responder enabled by an older API build carries no enablement instant and
+     would be invisible to it for ever. See {@link healMissingEnabledAt}. */
+  await healMissingEnabledAt(db, now());
   const live = await liveResponders(db, now(), deps.mailboxIds);
-  result.accounts = live.length;
 
   for (const responder of live) {
     if (result.sent >= budget) { result.capped = true; break; }
+    /* COUNTED HERE AND NOT FROM `live.length`, because the budget can break this loop on account
+       one of thirty: reporting the PROBE's size would tell an operator judging fleet coverage that
+       thirty accounts were served when twenty-nine were never read. `capped: true` beside it is
+       what says the rest are waiting. */
+    result.accounts += 1;
     try {
       await answerForAccount(db, deps, responder, result, budget, batch, now, log);
     } catch (err) {
@@ -221,16 +243,48 @@ export async function runAwayResponderPass(
 /**
  * THE PROBE — every responder that is LIVE right now, in one indexed read.
  *
- * `enabled_at IS NOT NULL` is required and not merely read: it is the floor's first half, and a
- * responder that is `enabled` with no enablement instant is a row 0087 could not backfill (it was
- * not enabled when the migration ran) and that no writer since produces. Treating a NULL as "the
- * beginning of time" would answer the entire stored backlog the moment such a row appeared.
+ * `enabled_at IS NOT NULL` is required and not merely read: it is the floor's first half, and
+ * treating a NULL as "the beginning of time" would answer the entire stored backlog the moment
+ * such a row appeared.
+ *
+ * ── AND THERE IS A WRITER THAT PRODUCES ONE, WHICH THIS COMMENT USED TO DENY ───────────────
+ *
+ * It said the state was one "that no writer since produces". That is false during a rolling
+ * deploy, and 0087 GUARANTEES the window exists — it promises an API one version older keeps
+ * working, and that older `put` neither inserts nor sets `enabled_at`, which has no column
+ * DEFAULT. Concrete sequence: 0087 applies; somebody whose responder is off (so `enabled_at` is
+ * NULL, which is what `nextEnabledAt` writes) saves `enabled: true` against an instance still on
+ * the previous build; the row is enabled with a NULL instant; and this probe would exclude it
+ * FOR EVER — no error, no self-heal, a responder silently dead for the whole trip.
+ *
+ * So the pass heals it: {@link healMissingEnabledAt} stamps `now()` on exactly that shape before
+ * the probe runs. `now()` and not `updated_at`, because the safe reading of "we do not know when
+ * this was switched on" is "it is switched on as of this instant" — the run that heals answers no
+ * backlog, and the next one answers ordinarily.
  *
  * NOTHING IS COMPOSED HERE. A responder with no body is not a responder with a default — it is an
  * unfinished one, and inventing text would put words nobody wrote into mail sent in their name.
  * The Settings form requires it; this is the same requirement where it cannot be bypassed. The
  * SUBJECT is deliberately not consulted at all any more: the reply derives its own.
  */
+/**
+ * STAMP AN ENABLEMENT INSTANT ON A ROW THAT IS ENABLED WITHOUT ONE.
+ *
+ * The rolling-deploy shape described on {@link liveResponders}: an API one version older enables a
+ * responder without writing `enabled_at`, and the probe would then exclude the row for ever. One
+ * guarded UPDATE per run, matching nothing on a healthy deployment.
+ *
+ * `now` rather than `updated_at`: a row healed here answers NO backlog, because its floor is the
+ * instant of the heal. That is the same direction every other absent-evidence decision in this
+ * feature takes — an unanswered correspondent is recoverable, a stranger answered from a window
+ * nobody chose is not.
+ */
+async function healMissingEnabledAt(db: Db, at: Date): Promise<void> {
+  await (db as unknown as Tx).update(awayResponders)
+    .set({ enabledAt: at })
+    .where(and(eq(awayResponders.enabled, true), isNull(awayResponders.enabledAt)));
+}
+
 async function liveResponders(
   db: Db, at: Date, mailboxIds: readonly string[] | undefined,
 ): Promise<LiveResponder[]> {
@@ -251,6 +305,14 @@ async function liveResponders(
       or(isNull(awayResponders.startsAt), sql`${awayResponders.startsAt} <= ${at.toISOString()}::timestamptz`)!,
       or(isNull(awayResponders.endsAt), sql`${awayResponders.endsAt} >= ${at.toISOString()}::timestamptz`)!,
     ))
+    /* DETERMINISTIC, and it decides two things rather than one. Without an ORDER BY, Postgres
+       returns whatever the scan produces, so (a) WHICH 50 responders are considered at all when
+       more than 50 are live is arbitrary, and (b) the walk order is stable in practice — which,
+       against a GLOBAL send budget, means an account early in that order with steady inbound mail
+       consumes every send on every tick and an account later in it never gets one. Ordering by
+       `enabled_at` puts the responder that has been waiting longest first, so the fleet drains in
+       a defensible order instead of a scan-dependent one. */
+    .orderBy(asc(awayResponders.enabledAt), asc(awayResponders.accountId))
     .limit(AWAY_ACCOUNTS_PER_RUN);
 
   const out: LiveResponder[] = [];
@@ -286,7 +348,7 @@ async function answerForAccount(
   // examined at all, so nothing is recorded as suppressed and the replies go out promptly once the
   // suspension lifts — see the field's note.
   if (deps.accountEligible && !(await deps.accountEligible(responder.accountId, db))) {
-    result.deferred += 1;
+    result.deferredAccounts += 1;
     return;
   }
 
@@ -303,13 +365,24 @@ async function answerForAccount(
 
   const textHash = awayTextHash(responder.body);
 
-  // ── ONE ADAPTER PER DISTINCT MAILBOX, RESOLVED BEFORE ITS CANDIDATES ARE CLAIMED ──────────
+  // ── ELIGIBILITY FIRST, THE ADAPTER ONLY FOR WHAT SURVIVES IT ─────────────────────────────
   //
-  // The ordering is the point. A factory that throws — no credentials, a mailbox disconnected since
-  // the mail arrived, a standalone install with no SMTP configured — must cost NOTHING: no ledger
-  // row, no spent reservation, no correspondent silently marked answered. It is `deferred`, and the
-  // next run tries again. This is risk 5 in the ruling ("injected default = untested branch"), and
-  // it is the branch a standalone install with no submission server actually takes.
+  // The order here was the other way round and it was wrong in a way this file's own header
+  // claimed it was not. `awayEligibility` needs no network, no adapter and no clock, but it used to
+  // be reached only INSIDE the `try` that follows a successful `openSendAdapter` — so a mailbox
+  // whose factory throws (no credentials, disconnected since the mail arrived, a standalone install
+  // with no submission server) left ALL of its candidates deferred with no ledger row.
+  //
+  // That is a starvation shape, not merely a wasted run: `readCandidates` is oldest-first with a
+  // fixed `limit`, and the ledger anti-join is the only thing that removes a row from the set. Those
+  // undecidable candidates therefore occupy the oldest page of every subsequent run for ever, and
+  // once there are `batch` of them NOTHING behind them on that account is examined again —
+  // including candidates on a different, perfectly healthy mailbox — the pass starved by its own
+  // away arm, reintroduced by the ordering, in the function whose header says the design avoids it.
+  //
+  // So: decide every candidate first (a suppression writes its ledger row and leaves the set
+  // permanently, whether or not this mailbox can dial), and open a transport LAZILY, only when a
+  // candidate has actually survived to the point of needing one.
   const byMailbox = new Map<string, Candidate[]>();
   for (const c of candidates) {
     const held = byMailbox.get(c.mailboxId);
@@ -318,27 +391,44 @@ async function answerForAccount(
 
   for (const [mailboxId, group] of byMailbox) {
     if (result.sent >= budget) { result.capped = true; return; }
-    let adapter: SendAdapter;
-    try {
-      adapter = await deps.openSendAdapter(mailboxId);
-    } catch (err) {
-      result.deferred += group.length;
-      log.warn("away_responder_no_send_path", {
-        accountId: responder.accountId, mailboxId, err,
-        reason: "no ledger row was written and no reservation was spent — these candidates are " +
-          "examined again next run, and nobody is recorded as answered",
-      });
-      continue;
-    }
+
+    /* THE TRANSPORT, OPENED AT MOST ONCE PER MAILBOX AND ONLY ON DEMAND. `null` once a factory has
+       thrown, so a broken mailbox costs ONE failed dial per run rather than one per candidate. */
+    /* A one-field box rather than a bare `let`: the handle is assigned inside a closure and read
+       in `finally`, and TypeScript narrows a closure-assigned `let` to `never` at the read. */
+    const held: { adapter: SendAdapter | null } = { adapter: null };
+    let openFailed = false;
+    const transport = async (): Promise<SendAdapter | null> => {
+      if (held.adapter || openFailed) return held.adapter;
+      try {
+        held.adapter = await deps.openSendAdapter(mailboxId);
+      } catch (err) {
+        openFailed = true;
+        log.warn("away_responder_no_send_path", {
+          accountId: responder.accountId, mailboxId, err,
+          reason: "no reservation was spent and no correspondent was recorded as answered — the " +
+            "candidates that needed a send are examined again next run; the ones an eligibility " +
+            "guard refused were decided anyway, so they cannot pin the page",
+        });
+      }
+      return held.adapter;
+    };
+
     try {
       for (const candidate of group) {
         if (result.sent >= budget) { result.capped = true; return; }
-        await answerOne(db, responder, candidate, ownAddresses, textHash, adapter, result, now, log);
+        await answerOne(
+          db, responder, candidate, ownAddresses, textHash, transport, result, now, log,
+        );
       }
     } finally {
       // ALWAYS, including the send-budget return above: a leaked authenticated socket on the send
-      // path is worse than elsewhere, because what follows it is a retry of a send.
-      await adapter.close().catch(() => { /* already broken; nothing here can act on it */ });
+      // path is worse than elsewhere, because what follows it is a retry of a send. `adapter` is
+      // null when nothing on this mailbox ever needed a transport, which is the common case for a
+      // page of mailing-list mail.
+      if (held.adapter) {
+        await held.adapter.close().catch(() => { /* already broken; nothing to act on */ });
+      }
     }
   }
 }
@@ -371,7 +461,6 @@ async function answerForAccount(
 async function readCandidates(
   db: Db, responder: LiveResponder, mailboxIds: readonly string[] | undefined, batch: number,
 ): Promise<Candidate[]> {
-  const floorIso = responder.floor.toISOString();
   const rows = await (db as unknown as Tx).select({
     id: messages.id,
     mailboxId: messages.mailboxId,
@@ -411,7 +500,25 @@ async function readCandidates(
   })
     .from(messages)
     .innerJoin(mailboxes, eq(mailboxes.id, messages.mailboxId))
-    .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
+    /* ── AN INNER JOIN, AND THIS IS A SUPPRESSION-SET HOLE IF IT IS NOT ────────────────────
+     *
+     * It was a LEFT join, with `candidate.headers ?? {}` downstream. `{}` reads as "no markers" —
+     * which is the PERMISSIVE answer — so a message with no stored body cleared `List-Id`,
+     * `List-Unsubscribe`, `Feedback-ID`, `Precedence`, `Auto-Submitted`, `X-Auto-Response-Suppress`
+     * and the empty `Return-Path` in one go and fell straight through to "send".
+     *
+     * Body-less rows are not hypothetical: the desktop's Cloud mirror inserts `messages` without
+     * bodies and fetches them afterwards — there is a dedicated backfill keyed on exactly
+     * `isNull(messageBodies.messageId)` — and it writes `organizerRole ?? "organizer"`, so such a
+     * row satisfies the organizer JOIN above. The concrete failure is an auto-reply to a mailing
+     * list (delivered to every subscriber, and public) or to another responder (an unbounded loop
+     * between two mail systems) — the two outcomes `rules.ts` calls the loudest possible.
+     *
+     * So a message whose body has not arrived is NOT A CANDIDATE YET rather than a candidate with
+     * no markers. It costs a poll interval and it fails toward silence, which is the same ruling
+     * `away-eligibility.ts` makes about an absent folder placement: absent evidence may not select
+     * the branch that sends mail. */
+    .innerJoin(messageBodies, eq(messageBodies.messageId, messages.id))
     .leftJoin(folderState, eq(folderState.messageId, messages.id))
     .leftJoin(awayReplies, and(
       eq(awayReplies.accountId, messages.accountId), eq(awayReplies.messageId, messages.id),
@@ -429,7 +536,6 @@ async function readCandidates(
       ...(mailboxIds === undefined ? [] : [inArray(messages.mailboxId, [...mailboxIds])]),
       // A guard against a NULL date slipping through the comparison on a driver that folds it.
       isNotNull(messages.date),
-      sql`${floorIso}::timestamptz IS NOT NULL`,
     ))
     // Oldest first: if the budget clips this run, the people who wrote first are answered first.
     .orderBy(asc(messages.createdAt), asc(messages.id))
@@ -477,8 +583,8 @@ async function readCandidates(
  */
 async function answerOne(
   db: Db, responder: LiveResponder, candidate: Candidate, ownAddresses: ReadonlySet<string>,
-  textHash: string, adapter: SendAdapter, result: AwayResponderPassResult,
-  now: () => Date, log: Logger,
+  textHash: string, transport: () => Promise<SendAdapter | null>,
+  result: AwayResponderPassResult, now: () => Date, log: Logger,
 ): Promise<void> {
   const sender = awayNormalizeAddress(candidate.fromAddress);
 
@@ -499,7 +605,24 @@ async function answerOne(
     return;
   }
 
-  // ── 2. THE RESERVATION AND THE ATOMIC THROTTLE ───────────────────────────────────────────
+  // ── 2. THE TRANSPORT, RESOLVED BETWEEN THE VERDICT AND THE RESERVATION ───────────────────
+  //
+  // Deliberately AFTER eligibility and BEFORE the reservation, and both halves of that placement
+  // are load-bearing:
+  //
+  //   after eligibility — a mailbox that cannot dial still DECIDES the candidates a guard refuses,
+  //     so they leave the set for good instead of pinning the oldest page of every later run;
+  //   before the reservation — a candidate that would need a send but has no path must cost
+  //     NOTHING: no ledger row, no spent throttle, nobody recorded as answered. It is `deferred`
+  //     and the next run tries again, which is risk 5 in the ruling and the branch a standalone
+  //     install with no submission server actually takes.
+  const adapter = await transport();
+  if (!adapter) {
+    result.deferredCandidates += 1;
+    return;
+  }
+
+  // ── 3. THE RESERVATION AND THE ATOMIC THROTTLE ───────────────────────────────────────────
   const at = now();
   const minted = mintMessageId(domainOf(candidate.ownAddress));
   const reservation = await reserve(db, responder, candidate, sender, textHash, minted, at);
@@ -515,7 +638,7 @@ async function answerOne(
     return;
   }
 
-  // ── 3. THE SEND ──────────────────────────────────────────────────────────────────────────
+  // ── 4. THE SEND ──────────────────────────────────────────────────────────────────────────
   try {
     await adapter.send({
       from: candidate.ownAddress,
@@ -561,7 +684,7 @@ async function answerOne(
     return;
   }
 
-  // ── 4. THE FINALIZE, compare-and-swap ────────────────────────────────────────────────────
+  // ── 5. THE FINALIZE, compare-and-swap ────────────────────────────────────────────────────
   await finalize(db, candidate, responder.accountId, "sent", null, minted, now());
   result.sent += 1;
   log.info("away_reply_sent", {
@@ -655,8 +778,15 @@ async function reserve(
     if (admitted.length === 0) {
       // THE THROTTLE REFUSED. The ledger row is finalized in this same transaction — the candidate
       // is decided, leaves the set for good, and carries the reason an operator needs.
+      //
+      // `mintedMessageId` is CLEARED, and that is not tidiness. The id is minted before the
+      // reservation so that a crash between the reservation and the send leaves an attributable
+      // one; a throttled row had no send, so an id left standing on it would be a `<uuid@domain>`
+      // that appears in no Sent folder and never will. The column's whole purpose is to correlate a
+      // ledger row with a delivered copy, and a value that correlates with nothing is worse than
+      // NULL — it is a thread an operator can pull for as long as they like.
       await tx.update(awayReplies)
-        .set({ outcome: "throttled", reason: responder.throttle, sentAt: null })
+        .set({ outcome: "throttled", reason: responder.throttle, sentAt: null, mintedMessageId: null })
         .where(and(eq(awayReplies.id, claim[0]!.id), eq(awayReplies.outcome, "pending")));
       return "throttled";
     }
@@ -715,18 +845,35 @@ async function recordDecision(
 }
 
 /**
- * The `References` chain for the reply: the parent's own chain plus the parent's id.
+ * The `References` chain for the reply: the parent's own chain, then the parent's id LAST.
  *
- * Deduplicated and bounded — a chain that already ends with the parent (some clients store it that
- * way) must not repeat it, and a pathological thread must not produce an unbounded header. Twenty
- * ids is well past what any client renders and short of anything a server would refuse.
+ * ── TWO BUGS THIS HAD, BOTH IN THE HEADER IT ALREADY CARRIED ─────────────────────────────────
+ *
+ * It used to test only whether the parent was the chain's LAST element before appending it. A
+ * parent that appeared MID-chain — `<a> <p> <b>` with parent `<p>`, which is what a client that
+ * reorders or a forwarded thread produces — therefore appended a duplicate, the dedup kept the
+ * FIRST occurrence, and the result was `<a> <p> <b>`: a chain whose last id is not the message
+ * being replied to. RFC 5322 §3.6.4 is what strict clients use to place a reply, and the function's
+ * own sentence ("the parent's own chain PLUS the parent") was the thing it did not do.
+ *
+ * And the trim took the LAST twenty (`slice(-20)`), which drops the thread ROOT — the one id RFC
+ * 5322 §3.6.4 says to keep when a chain must be shortened, because it is what identifies the
+ * conversation. Trimming now keeps the root and drops from the middle, which is the shape every
+ * mail client that shortens a chain uses.
  */
 function referencesFor(parentChain: string | null, parentId: string): string {
-  const ids = (parentChain ?? "").split(/\s+/).filter((s) => s.length > 0);
-  if (ids[ids.length - 1] !== parentId) ids.push(parentId);
   const seen = new Set<string>();
-  const unique = ids.filter((id) => (seen.has(id) ? false : (seen.add(id), true)));
-  return unique.slice(-20).join(" ");
+  const ids: string[] = [];
+  for (const id of (parentChain ?? "").split(/\s+/)) {
+    // The parent is removed wherever it sits and re-appended below, so it can only ever be last.
+    if (id.length === 0 || id === parentId || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  ids.push(parentId);
+  if (ids.length <= AWAY_REFERENCES_MAX) return ids.join(" ");
+  // Root first, then the most recent tail — never a window that has lost the conversation's id.
+  return [ids[0]!, ...ids.slice(-(AWAY_REFERENCES_MAX - 1))].join(" ");
 }
 
 /**

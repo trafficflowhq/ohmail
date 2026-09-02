@@ -36,14 +36,31 @@
 -- time the moment the new pass starts. So `away_sender_state` is seeded from the old record: one
 -- row per (account, sender) at that sender's most recent `sent_at`.
 --
--- That seed is suppressive for `per_day` and `per_week` — a sender answered an hour ago stays
--- unanswered for the rest of the window — and it is deliberately NOT suppressive for
--- `per_message`, because there is no honest value to seed `last_text_hash` with: the old table
--- never recorded what the responder said. The sentinel below cannot equal any real hash (it is not
--- 64 hex characters), so a `per_message` responder treats every seeded sender as "the text has
--- changed" and answers them once more. That is the safe direction: being answered once more is
--- recoverable, and never being answered is not — the same ruling 0051 made about its own episode
--- key, applied to the migration that replaces it.
+-- WHAT THE SEED ACTUALLY BUYS, stated exactly, because the first version of this header claimed
+-- more than it delivers. It said the seed keeps a recently-answered sender "unanswered for the rest
+-- of the window". IT DOES NOT. The predicate is `last_replied_at <= now - 24h` (or 7 days), so the
+-- seed suppresses for ONE THROTTLE INTERVAL and no longer. It stops the new pass answering the
+-- whole address book the minute it starts, which is what it is for; it does not preserve 0051's
+-- once-per-episode behaviour, because nothing here can.
+--
+-- SO BE PLAIN ABOUT THE BEHAVIOUR CHANGE, since a live responder is exactly who this touches.
+-- 0051 answered each correspondent ONCE per enablement episode. From this migration a responder
+-- that was live when it ran answers each correspondent at most once a DAY, for as long as it stays
+-- on. Somebody two weeks into a trip whose forty correspondents have each had their one reply will
+-- now reply to each of them again, up to once a day, if they keep writing.
+--
+-- That is a widening, it is deliberate, and it is the ruling's stated acceptance criterion for
+-- existing rows (`throttle:"per_day"` after 0087). The reason it is the right default rather than
+-- the narrowest: `per_day` is what the settings copy calls "at most once a day", it is the value
+-- the column carries for every row created afterwards, and a migration that silently gave existing
+-- users a DIFFERENT rate from every new user would make the setting mean two things. Anybody who
+-- wants the old shape has `per_message`, which is the closest honest equivalent and is one press.
+--
+-- `last_text_hash` is a sentinel rather than a hash because the old table never recorded what the
+-- responder said. It cannot equal any real `awayTextHash` output (which is 64 hex characters), so a
+-- `per_message` responder treats every seeded sender as "the text has changed" and answers them
+-- once more. That is the safe direction: being answered once more is recoverable, and never being
+-- answered is not — the same ruling 0051 made about its own episode key, applied to its replacement.
 --
 -- `ON CONFLICT DO NOTHING` because the pass may already be running against a database mid-deploy;
 -- a live row is newer than anything this seed could write and must win.
