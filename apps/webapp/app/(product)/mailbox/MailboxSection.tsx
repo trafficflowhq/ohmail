@@ -1821,6 +1821,10 @@ export function MailboxSection() {
     setInsecureOffer(false);
     setSuggestion(null);
     setTyped((v) => (v.allowInsecure ? { ...v, allowInsecure: false } : v));
+    /* AND THE FAILED WRITE'S OWN SENTENCE. A refused create writes `error` — a hostname mismatch
+       naming a specific server, most sharply — and it is evidence about the host that produced it
+       exactly as the verdict is. It was the one thing on this form still surviving a host change. */
+    setError(null);
   }, [clearVerdict]);
   const [probeOk, setProbeOk] = useState<{ host: string; user: string; folders: number | null } | null>(null);
   const [probeBad, setProbeBad] = useState<{ reason: string | null; message: string } | null>(null);
@@ -2399,7 +2403,13 @@ export function MailboxSection() {
                   <input
                     id="mb-smtp" className="join-input" autoComplete="off" spellCheck={false}
                     value={typed.smtpHost}
-                    onChange={(e) => { setTyped((v) => ({ ...v, smtpHost: e.target.value })); clearVerdict(); }}
+                    onChange={(e) => {
+                      setTyped((v) => ({ ...v, smtpHost: e.target.value }));
+                      /* THE FOURTH HOST-CHANGING SITE. An SMTP failure mints a suggestion about
+                         the SMTP host, so leaving it after the field changes lets one press
+                         replace the new host with a name proved about the old one. */
+                      retireHostEvidence();
+                    }}
                     required
                   />
                   {suggestion ? (

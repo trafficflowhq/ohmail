@@ -228,13 +228,24 @@ export function FirstRun({
    * one leaves the person on a screen whose question the facts have already answered.
    */
   const run = useCallback(async (write: () => Promise<void>, keepCursor?: OnboardingStep) => {
+    /* THE FORM'S GENERATION AT THE MOMENT THIS STARTED. `retireTest` advances it on every edit, so
+       this is exactly "has the form moved since I was sent". A WRITE needs it for the same reason
+       the test does, and it was missed because a write looks like it cannot be overtaken: press
+       Connect for A, edit the address to B while it is in flight, A is refused — and the refusal
+       was written unconditionally, so A's sentence appeared over B with no B press. The evidence
+       had been retired and then re-arrived. */
+    const mine = testSeq.current;
     setBusy(true);
     setProblem(null);
     try {
       await write();
       setAt(keepCursor ?? null);
     } catch (err) {
-      setProblem(host.probeMessage(err) ?? String((err as { message?: string })?.message ?? err));
+      // The CURSOR still moves — the derivation is entitled to answer over the newest facts
+      // whatever happened here — but the SENTENCE belongs to a form that is gone.
+      if (testSeq.current === mine) {
+        setProblem(host.probeMessage(err) ?? String((err as { message?: string })?.message ?? err));
+      }
       setAt(null);
     } finally {
       setBusy(false);
