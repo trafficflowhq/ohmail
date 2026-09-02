@@ -2,6 +2,10 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import { accounts, mailboxes, sessions, users, standDownMemory } from "@trafficflow/db";
 import { generateToken, hashToken } from "@trafficflow/services/mail";
 import type { LocalDb } from "./db.js";
+// The seed decision, as a pure predicate with its own six-case table test. It lives beside the
+// roster because it is a question about the roster — "would making this row resurrect a mailbox
+// somebody removed?" — and not about the environment that names the address.
+import { shouldSeedMailbox } from "./roster.js";
 
 /**
  * THE LOCAL WORLD: who the desktop user is, to a schema that was written for Cloud.
@@ -38,6 +42,20 @@ import type { LocalDb } from "./db.js";
 export interface LocalWorld {
   accountId: string;
   userId: string;
+  /**
+   * THE SEED MAILBOX — the row the shell's single-mailbox surfaces answer for, which since the
+   * install can hold several is a narrower thing than "the mailbox".
+   *
+   * It is the live row whose address matches the one this launch was configured with; failing
+   * that, the OLDEST live row; failing that, the empty string. The middle arm is what keeps an
+   * install working after its seed was removed with others left behind — `config.json` goes on
+   * naming an address nothing serves, and answering the mailbox that IS there is more honest than
+   * answering none.
+   *
+   * `""` is reachable only on an install with no mailboxes at all, which the shell does not spawn
+   * into (it starts no engine without `OHMAIL_IMAP_HOST`/`USER`). It is stated in the type rather
+   * than assumed away, because the alternative is a lookup that silently matches no row.
+   */
   mailboxId: string;
   /**
    * The lease reason this mailbox's row remembers, when it remembers one — `organized_elsewhere:*`.
@@ -79,7 +97,14 @@ export interface EnsureLocalWorldInput {
 }
 
 /**
- * Find-or-create the one account, user and mailbox. Idempotent: the second launch finds all three.
+ * Find-or-create the one account and the one user, and — only when the roster says a mailbox is
+ * genuinely missing — the SEED mailbox. Idempotent: the second launch finds all three.
+ *
+ * The account and the user are still exactly one each, for the reasons the header gives. The
+ * MAILBOX is not: an install holds as many rows as the person has connected, and this function
+ * creates at most the first of them. Every later mailbox arrives through `POST /local/mailboxes`
+ * with a probed credential, which is the only way one should — the environment can name one
+ * address, and a door that minted rows from it would have no way to prove any of them.
  *
  * The mailbox lookup honours the partial unique index `mailboxes_active_address_uq`
  * (`packages/db/src/schema-mail.ts`) — `(account_id, lower(address)) where status <> 'disabled'` —
@@ -131,47 +156,98 @@ export async function ensureLocalWorld(db: LocalDb, input: EnsureLocalWorldInput
         .returning({ id: users.id })
     )[0]!.id;
 
-  // Active first, then a stood-down row for the same address. Ordered rather than filtered, so a
-  // user who removed the mailbox and re-added it still gets the ACTIVE row and not the paused one.
-  const existingMailbox = (
-    await db
-      .select({
-        id: mailboxes.id,
-        status: mailboxes.status,
-        disabledReason: mailboxes.disabledReason,
-        // Mail 0083 — the stand-down's record moved onto these two, and `standDownMemory` is the
-        // one place that reads all four together. Selected here rather than derived from `status`
-        // because `status` no longer knows.
-        organizerRole: mailboxes.organizerRole,
-        organizedByKind: mailboxes.organizedByKind,
-        // …and the CONSENT, because `reader` is the pre-consent state as well as the demoted one
-        // and only this column tells them apart (`schema-mail.ts#organizerRole` says so). Without
-        // it `standDownMemory` reads a mailbox nobody has been asked to organize as one somebody
-        // took away.
-        organizeConsentedAt: mailboxes.organizeConsentedAt,
-        takeoverAuthorizedAt: mailboxes.takeoverAuthorizedAt,
-      })
-      .from(mailboxes)
-      .where(
-        and(
+  /* ── EVERY ROW THIS INSTALL HOLDS, NOT ONLY THE ONE NAMED BY THE ENVIRONMENT ──────────────
+   *
+   * This used to be a `limit(1)` lookup of the seed address, because an install had exactly one
+   * mailbox and finding it WAS finding the install's mailbox. It is now the whole non-tombstoned
+   * set, for two reasons that are really the same one:
+   *
+   *  · the ROSTER — every live row gets a runtime, so the caller needs them all;
+   *  · the SEED DECISION — {@link shouldSeedMailbox} turns on whether ANY other mailbox is live,
+   *    not merely on whether this address has a row. Without that, an install whose seed was
+   *    removed while a second mailbox remained would mint the seed again on the next launch:
+   *    `config.json` still carries the address (removing one of several is not a sign-out), no
+   *    active row matches it, and the old rule reads exactly that as "make one".
+   *
+   * The predicate is UNCHANGED from the single-mailbox version — `status <> 'disabled' or
+   * disabled_reason is not null` — and the docblock above still describes it exactly: a reader is
+   * live, a paused row (`disabled` WITH a reason) is the same mailbox and must not be duplicated,
+   * and a tombstone (`disabled`, reason NULL) is excluded so a re-add mints a fresh row.
+   *
+   * Ordered active-first and then oldest-first: the first arm is the old lookup's tie-break for
+   * one address, the second is the roster's own contract (`LocalRoster` — insertion order is
+   * `created_at` order).
+   */
+  const nonTombstoned = await db
+    .select({
+      id: mailboxes.id,
+      address: mailboxes.address,
+      status: mailboxes.status,
+      disabledReason: mailboxes.disabledReason,
+      organizerRole: mailboxes.organizerRole,
+      organizedByKind: mailboxes.organizedByKind,
+      organizeConsentedAt: mailboxes.organizeConsentedAt,
+      takeoverAuthorizedAt: mailboxes.takeoverAuthorizedAt,
+    })
+    .from(mailboxes)
+    .where(and(
+      eq(mailboxes.accountId, accountId),
+      sql`(${mailboxes.status} <> 'disabled' or ${mailboxes.disabledReason} is not null)`,
+    ))
+    .orderBy(sql`(${mailboxes.status} <> 'disabled') desc`, mailboxes.createdAt, mailboxes.id);
+
+  const wanted = input.address.trim().toLowerCase();
+  const seedRow = wanted
+    ? nonTombstoned.find((r) => r.address.trim().toLowerCase() === wanted) ?? null
+    : null;
+
+  /* Asked ONLY when no live row carries the address, because that is the only case whose answer
+     it changes — and it is one indexed read that an ordinary launch never makes. A tombstone plus
+     an empty roster is a first-run install (seed); a tombstone plus anything live is a seed
+     somebody removed (do not resurrect). */
+  const tombstonedSeed = seedRow === null && wanted
+    ? (await db
+        .select({ id: mailboxes.id })
+        .from(mailboxes)
+        .where(and(
           eq(mailboxes.accountId, accountId),
-          sql`lower(${mailboxes.address}) = ${input.address.toLowerCase()}`,
-          sql`(${mailboxes.status} <> 'disabled' or ${mailboxes.disabledReason} is not null)`,
-        ),
-      )
-      .orderBy(sql`(${mailboxes.status} <> 'disabled') desc`)
-      .limit(1)
-  )[0];
-  if (existingMailbox) {
+          sql`lower(${mailboxes.address}) = ${wanted}`,
+          eq(mailboxes.status, "disabled"),
+          isNull(mailboxes.disabledReason),
+        ))
+        .limit(1)).length > 0
+    : false;
+
+  const seed = shouldSeedMailbox({
+    seedAddress: input.address,
+    activeSeedRow: seedRow !== null,
+    tombstonedSeed,
+    rosterEmpty: nonTombstoned.length === 0,
+  });
+
+  if (!seed) {
+    /* THE SEED'S ROW IS THE ONE THE SHELL'S SINGLE-MAILBOX SURFACES ANSWER FOR, and when the seed
+       address has no row the OLDEST LIVE ONE stands in. That fallback is what keeps a working
+       install from reporting itself unconfigured after its seed was removed: `config.json` names
+       an address nothing serves, and the honest answer is the mailbox that IS there rather than
+       nothing at all. With no rows at all the id is the empty string — a state the shell does not
+       spawn into (it will not start an engine without `OHMAIL_IMAP_HOST`/`USER`), stated here
+       rather than left to be a lookup that silently matches no row. */
+    const standing = seedRow ?? nonTombstoned.find((r) => r.status !== "disabled") ?? null;
     return {
       accountId,
       userId,
-      mailboxId: existingMailbox.id,
-      standDownReason: standDownMemory(existingMailbox),
-      takeoverAuthorizedAt: existingMailbox.takeoverAuthorizedAt ?? null,
+      mailboxId: standing?.id ?? "",
+      standDownReason: standing ? standDownMemory(standing) : null,
+      takeoverAuthorizedAt: standing?.takeoverAuthorizedAt ?? null,
     };
   }
 
+  /* Reaching here means {@link shouldSeedMailbox} said SEED, which by its own case 2 means no
+     non-tombstoned row carries this address. The second lookup that used to stand here — the same
+     address, the same predicate, `limit(1)` — could therefore only ever answer nothing, so it is
+     gone rather than kept as a belt-and-braces read that no launch can take. The find half of
+     "find-or-create" is the roster read above; this is the create. */
   const mailboxId = (
     await db
       .insert(mailboxes)
@@ -227,6 +303,62 @@ export async function ensureLocalWorld(db: LocalDb, input: EnsureLocalWorldInput
   )[0]!.id;
 
   return { accountId, userId, mailboxId, standDownReason: null, takeoverAuthorizedAt: null };
+}
+
+/** One live mailbox, as the boot reads it before building a runtime for it. */
+export interface LocalRosterRow {
+  id: string;
+  address: string;
+  displayName: string | null;
+  standDownReason: string | null;
+  takeoverAuthorizedAt: Date | null;
+}
+
+/**
+ * EVERY MAILBOX THIS INSTALL RUNS, oldest first — the boot's one roster read.
+ *
+ * `status <> 'disabled'` and nothing else. That is narrower than the predicate
+ * {@link ensureLocalWorld} uses to decide whether a row already exists, and the difference is the
+ * point: a paused row (`disabled` WITH a reason) is the same mailbox and must not be duplicated,
+ * but it is not RUNNING and must not be given a login, a claim or a poll timer. Being found and
+ * being attached are different questions about the same row.
+ *
+ * ── READ ONCE, AT BOOT, AND NEVER ON A TIMER ──────────────────────────────────────────────────
+ *
+ * The hosted worker re-reads its roster periodically because other processes write its
+ * `mailboxes` table. Here the only writers are this engine's own routes, so attach and detach are
+ * events — `POST /local/mailboxes` and `DELETE /local/mailboxes/:id` — and a poll would be this
+ * process asking itself something it already knows.
+ */
+export async function loadLocalRoster(db: LocalDb, accountId: string): Promise<LocalRosterRow[]> {
+  const rows = await db
+    .select({
+      id: mailboxes.id,
+      address: mailboxes.address,
+      displayName: mailboxes.displayName,
+      status: mailboxes.status,
+      disabledReason: mailboxes.disabledReason,
+      // The four `standDownMemory` reads together — see {@link LocalWorld.standDownReason}. Read
+      // per row rather than once for the install, because a stand-down is a fact about ONE
+      // mailbox: a machine can be the organizer of one and a reader of another at the same time.
+      organizerRole: mailboxes.organizerRole,
+      organizedByKind: mailboxes.organizedByKind,
+      organizeConsentedAt: mailboxes.organizeConsentedAt,
+      takeoverAuthorizedAt: mailboxes.takeoverAuthorizedAt,
+    })
+    .from(mailboxes)
+    .where(and(
+      eq(mailboxes.accountId, accountId),
+      sql`${mailboxes.status} <> 'disabled'`,
+    ))
+    .orderBy(mailboxes.createdAt, mailboxes.id);
+  return rows.map((r) => ({
+    id: r.id,
+    address: r.address,
+    displayName: r.displayName ?? null,
+    standDownReason: standDownMemory(r),
+    takeoverAuthorizedAt: r.takeoverAuthorizedAt ?? null,
+  }));
 }
 
 export interface LaunchSession {
