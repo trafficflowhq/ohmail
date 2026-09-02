@@ -81,9 +81,17 @@ export function DesktopAbout({ status }: { status: EngineStatus }) {
         app is fast and works offline. Stop using ohmail and your mail is exactly where you left
         it.
       </SettingsNote>
+      {/* THE SUBPROCESSOR LIST IS ABOUT THE HOSTED SERVICE, so it is named on the door that uses
+          one and not on the other. On the local door this computer opens the mail server itself
+          and nothing about the mail reaches us — so there is no company in that path for the list
+          to describe, and pointing at it offers to explain a policy that does not govern the
+          install being read. The same argument `AboutSection` makes for a self-host build. Privacy
+          and the source stay on both doors: the first governs the app itself, the second is what
+          lets anyone check either claim. */}
       <SettingsNote>
-        Privacy and the list of companies we rely on: ohmail.app/privacy and
-        ohmail.app/subprocessors. Source: github.com/trafficflowhq/ohmail.
+        {status.mode === "cloud"
+          ? "Privacy and the list of companies we rely on: ohmail.app/privacy and ohmail.app/subprocessors. Source: github.com/trafficflowhq/ohmail."
+          : "Privacy: ohmail.app/privacy. Source: github.com/trafficflowhq/ohmail."}
       </SettingsNote>
     </SettingsSection>
   );

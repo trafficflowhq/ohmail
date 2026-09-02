@@ -51,26 +51,40 @@ const DOOR_NAME: Record<string, string> = {
  * type it again, type it again for a different reason, finish the server change you started, and
  * "this engine is newer than this window, so carry on". Collapsing them into "connected / not
  * connected" is how somebody is sent to re-enter a password that was never the problem.
+ *
+ * ── AND THE ROW IS NOT CALLED THE SAME THING ON BOTH DOORS ──────────────────────────────────
+ *
+ * It was "Login: Signed in" everywhere, which is one word for two different things. On the hosted
+ * door there is a sign-in and a session, so "Account session" is what the row is about. On the
+ * standalone door there is NO sign-in at all — the credential is the mailbox password this
+ * computer holds for an IMAP server — so "Login" invited somebody to look for an account they do
+ * not have, and "Signed out" described a state that has no signing-in to undo. The label and the
+ * two words the ordinary states carry now come from the door, and the three unusual states keep
+ * their own sentences, which are about the stored secret either way.
  */
-function credentialLine(status: EngineStatus): { value: string; description: string } {
+function credentialLine(status: EngineStatus): { label: string; value: string; description: string } {
   const cloud = status.mode === "cloud";
+  const label = cloud ? "Account session" : "Mailbox password";
   switch (status.credentialState) {
     case "ready":
       return {
-        value: "Signed in",
+        label,
+        value: cloud ? "Signed in" : "Stored",
         description: cloud
           ? "This install holds a session for your hosted account."
-          : `Your mailbox password is stored on this ${MACHINE_WORD} and works.`,
+          : `Sealed under a key in this ${MACHINE_WORD}'s keychain, and working.`,
       };
     case "absent":
       return {
-        value: "Signed out",
+        label,
+        value: cloud ? "Signed out" : "Not stored",
         description: cloud
           ? "There is no session for this account on this machine. Sign in again below."
           : `No mailbox password is stored on this ${MACHINE_WORD}, so nothing is being synced yet.`,
       };
     case "unreadable":
       return {
+        label,
         value: "Needs re-entering",
         description:
           "Something is stored, and this install's key does not open it. Entering it again " +
@@ -94,6 +108,7 @@ function credentialLine(status: EngineStatus): { value: string; description: str
        reassurance about credential handling that is broader than the code is worse than none. */
     case "foreign-host":
       return {
+        label,
         value: "Server changed",
         description:
           "The stored password was set up for a different mail server than this install is now " +
@@ -102,11 +117,40 @@ function credentialLine(status: EngineStatus): { value: string; description: str
       };
     default:
       return {
+        label,
         value: "Unknown",
         description:
           "The mail engine did not say, which happens when it is newer than this window. " +
           "Nothing is wrong.",
       };
+  }
+}
+
+/**
+ * WHY THE ENGINE ROW IS DRAWN AT ALL, and it is drawn only when it is the problem.
+ *
+ * "Mail engine: Running" was a permanent row stating the ordinary case. It is the ordinary case on
+ * every healthy install, which makes it a line that never says anything — and a settings pane whose
+ * rows are mostly noise is one whose one real warning gets read as noise too. `serving` renders
+ * nothing now; every other state renders the row with the sentence for THAT state, because the
+ * recoveries differ and "stopped and did not come back" is false of an engine that is still coming
+ * up. That distinction is the whole reason this is a function and not one string.
+ */
+function engineWhy(status: EngineStatus): string {
+  switch (status.state) {
+    case "starting":
+    case "restarting":
+      return "The process that opens your mailbox is coming up. Nothing is being synced until it does.";
+    case "stopped":
+      return "The process that opens your mailbox is not running, so nothing is being synced.";
+    case "failed":
+      return "The process that opens your mailbox stopped and did not come back.";
+    case "no_key":
+      return `This ${MACHINE_WORD}'s keystore would not answer, so the stored password cannot be opened.`;
+    case "not_configured":
+      return "No mailbox has been chosen on this install yet.";
+    default:
+      return "The mail engine did not say what it is doing, which happens when it is newer than this window.";
   }
 }
 
@@ -185,11 +229,15 @@ export function DesktopSettings({
       />
       <SettingsRow label="Connected through" description={doorDescription(status.mode)} value={door} />
       <SettingsRow
-        label="Login"
+        label={credential.label}
         description={credential.description}
         value={credential.value}
       />
-      <SettingsRow label="Mail engine" description="The process that opens your mailbox." value={engineLine(status)} />
+      {/* Only when it is NOT serving — see `engineWhy`. A row that says "Running" on every healthy
+          install is a row nobody reads, including on the day it stops saying it. */}
+      {status.state === "serving" ? null : (
+        <SettingsRow label="Mail engine" description={engineWhy(status)} value={engineLine(status)} />
+      )}
 
       <SettingsSubhead>Changing this install</SettingsSubhead>
 

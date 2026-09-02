@@ -3,7 +3,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import { DesktopAutoSuggest } from "../src/DesktopAutoSuggest.js";
+import { DesktopAutoSuggest, autoSuggestCopy } from "../src/DesktopAutoSuggest.js";
+import { DESKTOP_PANE_LABEL } from "../src/DesktopSettings.js";
 
 /**
  * "SUGGEST FOR NEW SENDERS AUTOMATICALLY" — the row, mounted, on every state the engine can be in.
@@ -173,6 +174,20 @@ describe("the automatic-suggestion row on the standalone door", () => {
     expect(theSwitch()?.getAttribute("aria-checked")).toBe("true");
     expect(text()).toContain("no model set up yet");
     expect(text()).not.toContain("the model you configured");
+  });
+
+  /**
+   * AND IT POINTS AT A PANE THE NAV ACTUALLY DRAWS.
+   *
+   * The actionable half of that sentence said "under This install" — the pane's OLD heading. It is
+   * `DESKTOP_PANE_LABEL` now ("Desktop"), which `DesktopGate` hands straight to the Settings nav,
+   * so the instruction named a heading no window had drawn since the rename. Pinned against the
+   * constant and not against a second literal, because a second literal is exactly what drifted.
+   */
+  it("sends somebody to the pane the nav actually draws", () => {
+    const said = autoSuggestCopy({ on: false, since: null, modelReady: false });
+    expect(said).toContain(`under ${DESKTOP_PANE_LABEL}`);
+    expect(said).not.toContain("under This install");
   });
 
   it("draws nothing on a door that does not serve the route", async () => {

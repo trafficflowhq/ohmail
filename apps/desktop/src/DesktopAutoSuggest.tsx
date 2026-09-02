@@ -48,7 +48,7 @@ import {
 export function autoSuggestCopy(value: AutoSuggestState): string {
   if (!value.modelReady) {
     return "This install has no model set up yet, so nothing is being suggested. Add your own API " +
-      "key or point ohmail at a model on this machine under This install, and suggestions start " +
+      "key or point ohmail at a model on this machine under Desktop, and suggestions start " +
       "with the next batch of mail.";
   }
   if (!value.on) {

@@ -19,6 +19,9 @@ import {
   commandOfMenuPayload,
   viewOfMenuPayload,
 } from "../src/native.js";
+import { NextIntlClientProvider } from "next-intl";
+
+import en from "../../webapp/messages/en.json";
 import { DesktopSettings } from "../src/DesktopSettings.js";
 import { MACHINE_WORD } from "../src/platform.js";
 import type { EngineStatus } from "../src/bridge-fetch.js";
@@ -190,13 +193,20 @@ describe("Settings → this install", () => {
     document.body.append(hostEl);
     root = createRoot(hostEl);
     await act(async () => {
+      /* THE PANE'S MODEL FORM READS THE CATALOGUE, so it needs the provider the real shell
+         wraps every window in (`DesktopLocale`). The real catalogue, not a stub: a stub would
+         let this file assert words the app does not ship. */
       root.render(
-        h(DesktopSettings, {
-          status,
-          onStatus,
-          onSwitchDoor: () => {},
-          onSignIn: () => {},
-        }),
+        h(
+          NextIntlClientProvider,
+          { locale: "en", messages: en as never, timeZone: "Europe/Zurich" },
+          h(DesktopSettings, {
+            status,
+            onStatus,
+            onSwitchDoor: () => {},
+            onSignIn: () => {},
+          }),
+        ),
       );
     });
   };
@@ -229,13 +239,49 @@ describe("Settings → this install", () => {
        (darwin → Mac, win32 → PC, linux → computer) is `desktop-platform.test.ts`'s. */
     expect(text).toContain(`On this ${MACHINE_WORD}`);
     expect(text).not.toContain("On this Mac");
-    expect(text).toContain("Signed in");
+
+    /* THE CREDENTIAL ROW IS NOT CALLED THE SAME THING ON BOTH DOORS, and this case used to
+       assert that it was. It said "Signed in" here — on a STANDALONE install, where there is no
+       sign-in, no session and no account: the credential is the mailbox password this computer
+       holds for an IMAP server. "Login / Signed in" invited somebody to look for an account they
+       do not have, and its `absent` twin said "Signed out" about a state that has no signing-in
+       to undo. The hosted door keeps both words, because there they are true — pinned in the
+       next case, so the two doors are held apart rather than merely accommodated. */
+    expect(text).toContain("Mailbox password");
+    expect(text).toContain("Stored");
+    expect(text, "the standalone door named a sign-in it does not have").not.toContain("Signed in");
+
+    /* AND THE ENGINE ROW IS ABSENT WHILE THE ENGINE IS SERVING. "Mail engine: Running" was a
+       permanent row stating the ordinary case on every healthy install, which is a line nobody
+       reads — including on the day it stops saying it. Its states are pinned below. */
+    expect(text, "a healthy install still carries a row that only ever says Running")
+      .not.toContain("Mail engine");
+  });
+
+  it("shows the mail engine only when it is the problem", async () => {
+    await mount({ ...SERVING, state: "failed", reason: "the engine exited" });
+    const text = hostEl.textContent ?? "";
+    expect(text).toContain("Mail engine");
+    // The sentence is the one for THIS state — "stopped and did not come back" is false of an
+    // engine that is still coming up, which is why there is a sentence per state.
+    expect(text).toContain("stopped and did not come back");
+
+    await act(() => root.unmount());
+    hostEl.remove();
+    await mount({ ...SERVING, state: "starting" });
+    const starting = hostEl.textContent ?? "";
+    expect(starting).toContain("Mail engine");
+    expect(starting).toContain("coming up");
+    expect(starting, "a starting engine was described as one that did not come back")
+      .not.toContain("did not come back");
   });
 
   it("names the OTHER door when the install came in by it", async () => {
     await mount({ ...SERVING, mode: "cloud", credentialState: "absent" });
     const text = hostEl.textContent ?? "";
     expect(text).toContain("ohmail Cloud");
+    // The hosted door DOES have a session, so it keeps the sign-in vocabulary.
+    expect(text).toContain("Account session");
     expect(text).toContain("Signed out");
     // A cloud install that has lost its session is offered the way back.
     expect([...hostEl.querySelectorAll("button")].map((b) => b.textContent)).toContain("Sign in");
