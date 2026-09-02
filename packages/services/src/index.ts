@@ -36,6 +36,11 @@ export {
 } from "./learning-service.js";
 export {
   ScreenerService, makeScreenerService, SCREENER_FOLDER,
+  // The suggest purchase's per-process admission control. Exported for the tests that drive it
+  // directly — the money property (a sender is never charged for a queue position) can only be
+  // driven by a test that can occupy the gate a purchase actually uses. Nothing in the product
+  // imports either name.
+  LaneGate, suggestLaneGate,
   type ScreenerDeps, type ScreenBody, type ScreenDecisionResult, type ScreenIdempotency,
 } from "./screener-service.js";
 export {
