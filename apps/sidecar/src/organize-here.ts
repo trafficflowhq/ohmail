@@ -153,7 +153,11 @@ export async function authorizeOrganizerTakeover(
     .update(mailboxes)
     .set({
       disabledReason: null,
-      organizeConsentedAt: sql`coalesce(${mailboxes.organizeConsentedAt}, ${input.now})`,
+      // `.toISOString()` plus the cast: a bare `Date` inside a raw `sql` fragment has no column
+      // type to coerce against, and postgres-js binds it as TEXT and throws. This store is PGlite,
+      // which accepts it — so the guard here is inherited from the hosted door rather than
+      // observed on this one, and it is spelled the same way on purpose.
+      organizeConsentedAt: sql`coalesce(${mailboxes.organizeConsentedAt}, ${input.now.toISOString()}::timestamptz)`,
       takeoverAuthorizedAt: input.now,
     })
     .where(and(eq(mailboxes.id, row.id), ne(mailboxes.status, "disabled")));
@@ -225,7 +229,11 @@ export async function requestOrganizerTakeover(
   await db
     .update(mailboxes)
     .set({
-      organizeConsentedAt: sql`coalesce(${mailboxes.organizeConsentedAt}, ${input.now})`,
+      // `.toISOString()` plus the cast: a bare `Date` inside a raw `sql` fragment has no column
+      // type to coerce against, and postgres-js binds it as TEXT and throws. This store is PGlite,
+      // which accepts it — so the guard here is inherited from the hosted door rather than
+      // observed on this one, and it is spelled the same way on purpose.
+      organizeConsentedAt: sql`coalesce(${mailboxes.organizeConsentedAt}, ${input.now.toISOString()}::timestamptz)`,
       takeoverAuthorizedAt: input.now,
     })
     .where(and(eq(mailboxes.id, row.id), ne(mailboxes.status, "disabled")));

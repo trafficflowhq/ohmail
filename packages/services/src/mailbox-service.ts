@@ -2001,7 +2001,8 @@ export class MailboxService {
               screeningScope: scope,
               // The column's own guard, in SQL so two consents racing produce ONE baseline
               // without this transaction having to read the row first.
-              screeningBaselineAt: sql`coalesce(${accountSettings.screeningBaselineAt}, ${ctx.now()})`,
+              // Same cast, same reason as the mailbox row's consent below — see its note.
+              screeningBaselineAt: sql`coalesce(${accountSettings.screeningBaselineAt}, ${ctx.now().toISOString()}::timestamptz)`,
               updatedAt: ctx.now(),
             },
           });
@@ -2021,7 +2022,14 @@ export class MailboxService {
         // claiming a mailbox back after a handover, must not rewrite the record of when the person
         // originally said yes. It is also what makes this method idempotent in the way that
         // matters — two presses produce one consent and one spendable stamp.
-        organizeConsentedAt: sql`coalesce(${mailboxes.organizeConsentedAt}, ${ctx.now()})`,
+        // `.toISOString()` PLUS AN EXPLICIT CAST, and this is not defensive spelling — it is the
+        // idiom `markMailboxFailed` records as having bitten twice. Inside a raw `sql` fragment
+        // there is no column type to coerce a bare `Date` against, so postgres-js binds it as
+        // TEXT and the driver throws `The "string" argument must be ... Received an instance of
+        // Date`. PGlite accepts the bare Date happily, so the unit suite stays green while
+        // production throws — which is exactly what happened here, caught by the real-Postgres
+        // run and by nothing else.
+        organizeConsentedAt: sql`coalesce(${mailboxes.organizeConsentedAt}, ${ctx.now().toISOString()}::timestamptz)`,
         // Rows written before mail 0083 still carry a stand-down reason; clear it with the rest so
         // a mailbox being organized here does not also claim somebody else organizes it.
         disabledReason: null,
