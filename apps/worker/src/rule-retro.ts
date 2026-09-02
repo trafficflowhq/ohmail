@@ -532,10 +532,30 @@ async function selectCandidates(
       DESTINATIONS.map((f) => sql`${f}`), sql`, `,
     )})`}`,
     eq(folderState.lastSetBy, "us"),
-    // The mailbox is one Cloud still organizes.
+    /* -- THE MAILBOX IS ONE THIS INSTALL STILL ORGANIZES — BOTH HALVES (mail 0083) ----------
+     *
+     * `status = 'disabled'` was the whole test, and it stopped being sufficient the moment the
+     * loser of an organizer lease became a READER instead of a disabled row. A reader is
+     * `connected`, so without the second clause this pass took its rows as candidates and wrote
+     * `desired_folder` with `last_set_by: 'us'` on a mailbox another install is arranging.
+     *
+     * The rows are REACHABLE, which is why this is a defect rather than a theoretical one. A
+     * reader's own ingest writes `'external'`, so its NEW mail is out of reach by data — but a
+     * demoted organizer keeps its store, and every row it filed while it WAS the organizer is
+     * still `'us'`. Those are exactly the rows a new rule's retro pass would re-file.
+     *
+     * The consequence is not merely a queued move. `reconcileFolders` is skipped for a reader, so
+     * nothing executes it today — and that is the trap: the intent sits in `folder_state` waiting,
+     * and fires in full the instant the install is ever promoted. Mail moved by a decision taken
+     * when this install had no right to take it, arriving one handover later.
+     *
+     * ONE `NOT EXISTS` rather than two, because the two facts are one question about one row and
+     * splitting them would let a future edit answer half of it.
+     */
     sql`not exists (
       select 1 from ${mailboxes} mb
-       where mb.id = ${messages.mailboxId} and mb.status = 'disabled'
+       where mb.id = ${messages.mailboxId}
+         and (mb.status = 'disabled' or mb.organizer_role <> 'organizer')
     )`,
     // 2 — the user has triaged this message.
     sql`not exists (

@@ -669,6 +669,26 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
   // for any other reason is deferred or failed ON ITS OWN ROW (`folder_ops.status`), never by
   // wedging the mailbox's mail flow behind it.
   let folderOpsOweMore = false;
+  /* -- BOTH USER-COMMANDED PASSES ARE THE ORGANIZER'S, AND THIS GATE WAS MISSING ------------
+   *
+   * `SyncDeps.role`'s own doc says a reader skips the folder-ops pass and the one-time junk
+   * sweep. It said so before this line existed, which made it a FALSE CLAIM in a file where a
+   * comment is the claim under test — and the gap it described was the more exploitable half of
+   * the reader mode, not a documentation slip.
+   *
+   * Both passes execute COMMANDS that were RECORDED EARLIER, by an install that was the organizer
+   * when the person pressed the button: a `folder_ops` row (create/rename/delete a real IMAP
+   * folder) and `mailboxes.junk_sweep_requested_at` (move the whole Quarantine pile into the
+   * provider's Junk). Neither is refused at the API any more once recorded — the API's job was to
+   * record it — so a demotion between the press and the cycle turned a queued command into a real
+   * IMAP mutation on a mailbox another install now organizes. Worse than a live decision, because
+   * nobody is at the screen to notice.
+   *
+   * They are SKIPPED, not deferred: the rows stand, and the organizer's own cycle serves them.
+   * `folder_ops` is a durable table and the sweep stamp is a durable column, so nothing is lost —
+   * which is the same reason `reconcileFolders` is skipped rather than drained.
+   */
+  if (!readerMode) {
   try {
     const opsOut = await folderOpsPass({
       repo, adapter, accountId, mailboxId,
@@ -687,6 +707,7 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
   } catch (err) {
     rethrowFenced(err);
     log?.warn("folder_ops_pass_failed", { mailboxId, accountId, err });
+  }
   }
 
   // ── THE ONE-TIME SWEEP, WHEN ITS PRESS IS RECORDED (FOLDERS-SPEC.md §16.1) ──────────────
@@ -715,7 +736,9 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
   // fence refusals leave this block: anything else is logged and the mailbox's mail flow
   // continues, exactly as the folder-ops pass above.
   let sweepOwesMore = false;
-  if (deps.junkSweep !== undefined) {
+  // `!readerMode &&` — see the block above the folder-ops pass; the same argument, the same
+  // recorded-earlier command, and the same answer (skip, the stamp stands, the organizer serves it).
+  if (!readerMode && deps.junkSweep !== undefined) {
     try {
       const observed = await deps.junkSweep.requested();
       if (observed !== null) {

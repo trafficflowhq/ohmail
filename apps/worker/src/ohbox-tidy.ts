@@ -697,9 +697,17 @@ async function selectCandidates(
     eq(messages.accountId, opts.accountId),
     eq(folderState.desiredFolder, OHBOX),
     eq(folderState.lastSetBy, "us"),
+    // BOTH HALVES since mail 0083 — see the identical clause in `rule-retro.ts` for the full
+    // argument. `status = 'disabled'` alone stopped being sufficient when the loser of an
+    // organizer lease became a READER (connected, syncing) instead of a disabled row: a demoted
+    // organizer keeps every `folder_state` row it filed while it WAS the organizer, those rows are
+    // `last_set_by: 'us'`, and this pass would re-file them on a mailbox another install now
+    // arranges. Nothing executes them while the install is a reader, which is the trap — the
+    // intent waits in the table and fires in full on the next promotion.
     sql`not exists (
       select 1 from ${mailboxes} mb
-       where mb.id = ${messages.mailboxId} and mb.status = 'disabled'
+       where mb.id = ${messages.mailboxId}
+         and (mb.status = 'disabled' or mb.organizer_role <> 'organizer')
     )`,
     // USER ALWAYS WINS — an in-app drag back into the Ohbox. Matches change_log_move_to_inbox_idx.
     sql`not exists (

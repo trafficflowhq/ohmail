@@ -1,5 +1,6 @@
 import { and, eq, sql } from "drizzle-orm";
 import {
+  assertAccountOrganizes,
   accountSettings, contacts, folderState, learningSignals, messages, recordChange,
   routingDecisions, rules, type Tx,
 } from "@trafficflow/db";
@@ -128,6 +129,26 @@ export async function resetScreeningState(ctx: ServiceContext): Promise<ResetRes
     // ── ERASURE FENCE, FIRST — before the settings lock below. The chain is accounts →
     // settings → sequence row; `erasure-fence.ts` states why it must be the first lock.
     await fenceErasedAccount(tx, ctx.accountId);
+    /* -- A READER'S ACCOUNT DOES NOT RESET SCREENING (mail 0083) --------------------------
+     *
+     * This one nearly escaped the reader ruling, because "reset" reads like a local clear. It is
+     * not: it DELETES EVERY RULE, clears the learning signals and graduations, and drops the
+     * screening baseline. Rules are the router; the baseline is the cutline the router measures
+     * from. So this is the largest single organizing act in the product — larger than any decide
+     * — and it was reachable from an install that organizes nothing.
+     *
+     * The damage is not confined to the install that pressed it. Rules TRAVEL: they are the
+     * substance of the profile document in `ohmail/_meta`, so a reader that wiped them would hand
+     * the actual organizer an empty rule set at its next profile read, and every sender the person
+     * had ever decided about would go back to the Screener — on the machine that IS organizing
+     * their mail, from a button pressed on one that is not.
+     *
+     * ACCOUNT-SCOPED, matching `decide` and the rules doors: the state being reset belongs to the
+     * account, so the question is whether this install organizes ANYTHING. Placed after the
+     * erasure fence and before the settings lock, so the lock chain (accounts → settings →
+     * sequence row) is unchanged — this read takes no lock of its own.
+     */
+    await assertAccountOrganizes(tx as unknown as Tx, ctx.accountId);
     /**
      * THE GLOBAL LOCK ORDER — `account_settings` FIRST, the sequence row second (the rule and
      * its reproduction live at `recordSettingsChange`, consent-seed.ts). This transaction was
