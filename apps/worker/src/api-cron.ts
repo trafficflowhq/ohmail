@@ -65,7 +65,7 @@ import { silentLogger, type Logger } from "@trafficflow/core";
  */
 export interface ApiCronTarget {
   /** Closed name, stable across renames of the path — the key an operator greps for. */
-  target: "billing_reconcile" | "sessions_reap" | "smtp_size" | "scheduled_send";
+  target: "billing_reconcile" | "sessions_reap" | "smtp_size" | "scheduled_send" | "send_reconcile";
   /** The API route, poked as `GET {baseUrl}{route}` with the bearer secret. */
   route: string;
   /** The cadence. Jitter (up to {@link jitterMs}) is ADDED per wait, never subtracted. */
@@ -139,6 +139,32 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
     // 60-second ceiling; this bound is the caller's mirror of that ceiling, not a hope.
     timeoutMs: 60 * 1000,
     // A tenth of the cadence — see {@link ApiCronTarget.jitterMs}.
+    jitterMs: 6 * 1000,
+  },
+  {
+    // THE RECONCILER for stranded send reservations — a `pending` row whose sender died or was
+    // killed by its platform, which no client is coming back to retry. Its own route rather than
+    // a second job on the sender's above: that invocation already budgets three sends of up to
+    // twenty seconds each against the same sixty-second kill, so sharing it would spend the
+    // sender's remaining time on this one's probes.
+    //
+    // EVERY MINUTE, and the cadence is what the alert threshold is written against: a row becomes
+    // eligible ten minutes after it was reserved, and `stuckSendMs` (fifteen minutes) leaves this
+    // clock several cycles to drain it before a human is paged. A slower cadence here would make
+    // that alarm fire on healthy reconciliation.
+    target: "send_reconcile",
+    route: "/internal/sends/reconcile/run",
+    everyMs: 60 * 1000,
+    // Its own stagger, DISTINCT from the sender's 45 s: the two run on the same host and both
+    // may dial the same person's mailbox, so landing them together would be two clocks competing
+    // for one admission slot every minute, for ever. Late in the cycle rather than early —
+    // nothing here is time-critical to the second, and a row that waits one more minute has
+    // already waited ten.
+    firstDelayMs: 105 * 1000,
+    // The pass claims only what one serverless invocation can probe inside its own 60-second
+    // ceiling; this bound is the caller's mirror of that ceiling, not a hope.
+    timeoutMs: 60 * 1000,
+    // A tenth of the cadence — the sender's reason, one target over.
     jitterMs: 6 * 1000,
   },
 ];

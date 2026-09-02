@@ -1973,8 +1973,11 @@ export const drafts = pgTable("drafts", {
   // cleared on a terminal outcome or a cancel. `send_error` is the failure sentence from an
   // appointment that could not be kept, shown in the Drafts row, cleared by the next edit or
   // schedule. The appointment lives HERE and never on `outbound_sends`, whose `pending` rows mean
-  // "an invocation is live right now" — the stuck-send alarm keeps that reading because no
-  // reservation exists until the appointment is due. The migration file carries the full design. ──
+  // "an invocation is live right now, OR one died holding this" — no reservation exists until the
+  // appointment is due, and the reconciling pass (`send-reconcile-pass.ts`) is what tells the two
+  // apart, ten minutes on. The stuck-send alarm reads the RESIDUE of that: a row still `pending`
+  // past its threshold is one the reconciler has not drained, not merely one that is live.
+  // The migration file carries the full design. ──
   sendAt: timestamp("send_at", { withTimezone: true }),
   sendKey: text("send_key"),
   sendError: text("send_error"),

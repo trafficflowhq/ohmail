@@ -9,9 +9,12 @@ import type { Tx } from "@trafficflow/db";
 import {
   reapStaleWebSessions, reconcileBillingMirror, recordReconcileFailure, type AdminDb,
 } from "@trafficflow/services";
-import { runScheduledSendPass } from "@trafficflow/services";
+import { runScheduledSendPass, runSendReconcilePass, ServiceError } from "@trafficflow/services";
+import type { SendAdapter } from "@trafficflow/core/mail";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
 import { makeSendAdapter } from "../send-adapter.js";
+import { MAX_IMAP_PER_MAILBOX } from "../attachments-adapter.js";
+import { imapAdmission } from "./shared.js";
 import type { AlertsConfig } from "../deps-cloud.js";
 import type { AlertArmHealth, AlertSinkSummary, ApiDeps } from "../deps.js";
 import type {} from "../deps-cloud.js";
@@ -181,6 +184,81 @@ export const BILLING_RECONCILE_CRON_PATH = "/internal/billing/reconcile/run";
  * caused) — while this host runs `SendService` on every manual send already.
  */
 export const SCHEDULED_SEND_CRON_PATH = "/internal/sends/scheduled/run";
+
+/**
+ * `GET /internal/sends/reconcile/run` — the RECONCILING pass for stranded send reservations.
+ *
+ * A SEPARATE route from the sender's clock one line up, and the separation is a budget rather
+ * than a preference: that invocation already plans three sends of up to twenty seconds each
+ * against this platform's sixty-second kill, so hanging a second batch of work off it would
+ * spend the sender's remaining time on the reconciler's. Both are poked every minute by the same
+ * worker clock, on their own staggers.
+ *
+ * `runSendReconcilePass` holds the whole policy — what "stranded" means, which mailboxes may be
+ * dialled, and why nothing on this path can submit.
+ */
+export const SEND_RECONCILE_CRON_PATH = "/internal/sends/reconcile/run";
+
+/**
+ * `makeSendAdapter` UNDER THE PER-MAILBOX IMAP ADMISSION COUNTER — the reconciling pass's dial.
+ *
+ * The attachment path's `openImapUnderCap` shape, reduced to the half this caller needs: acquire
+ * before the credential is decrypted and long before a socket exists, release exactly once when
+ * the handle closes. There is no local in-process slot here because there is no queue to hold
+ * one — a refusal is a defer, and the row is examined again a minute later.
+ *
+ * A REFUSAL IS A `ServiceError`, deliberately: that is what the pass's resolver reads as "this
+ * mailbox cannot be dialled", which defers the row instead of writing a terminal state off a
+ * dial that never happened. A counter that THREW (a database fault, not a refusal) propagates,
+ * because failing open here would be a mailbox dialled without admission — the exact state the
+ * counter exists to prevent.
+ *
+ * The release is best-effort and never silent: losing it leaves the mailbox one unit short until
+ * the stale-window reclaim resets it, which is the bounded direction; throwing would replace a
+ * completed probe with an error about our own bookkeeping.
+ */
+async function admittedSendAdapter(deps: ApiDeps, mailboxId: string): Promise<SendAdapter> {
+  const now = (): Date => deps.now?.() ?? new Date();
+  const admitted = await imapAdmission(deps).acquire(
+    deps.db, { mailboxId, max: MAX_IMAP_PER_MAILBOX, now: now() },
+  );
+  if (!admitted) {
+    throw new ServiceError(
+      "mailbox_busy", 429,
+      "this mailbox is at its connection ceiling; the reservation is examined again next cycle",
+    );
+  }
+  let released = false;
+  const release = async (): Promise<void> => {
+    if (released) return;
+    released = true;
+    try {
+      await imapAdmission(deps).release(deps.db, mailboxId, now());
+    } catch (err) {
+      deps.logger?.warn?.("imap_slot_release_failed", { mailboxId, err: String(err) });
+    }
+  };
+
+  let adapter: SendAdapter;
+  try {
+    adapter = await makeSendAdapter(deps, mailboxId);
+  } catch (err) {
+    // The slot must go back or this instance leaks it until the stale-window reclaim.
+    await release();
+    throw err;
+  }
+  return {
+    send: (msg) => adapter.send(msg),
+    messageInSent: (messageId) => adapter.messageInSent(messageId),
+    close: async () => {
+      try {
+        await adapter.close();
+      } finally {
+        await release();
+      }
+    },
+  };
+}
 
 /** class + code, never message text — the same scrubbing rule as `billing_events.error`. */
 function scrubError(err: unknown): string {
@@ -795,6 +873,75 @@ export const internalRoutes: Route[] = [
         // faults are already absorbed inside the pass — this catches only the claim itself.
         log.error("scheduled_send_pass_failed", { err });
         return json(503, { error: { code: "scheduled_send_pass_failed" } });
+      }
+    },
+  },
+  {
+    /**
+     * `GET /internal/sends/reconcile/run` — the reconciler for stranded send RESERVATIONS.
+     *
+     * The scheduled sender's route above, shape for shape and each borrowed property
+     * load-bearing for the reasons stated there: GET, either shared secret in constant time, 404
+     * on a deployment that armed no internal surface — which does mean stranded reservations are
+     * NOT reconciled there, and that is the honest state of a host nobody armed a clock on.
+     * It runs on `deps.db`, the runtime connection, for the same reason: it reads and writes
+     * `drafts`/`outbound_sends` and dials the user's own mail servers through their decrypted
+     * credentials.
+     *
+     * Overlapping pokes are safe for a reason ONE STEP STRONGER than the sender's, and worth
+     * stating because the sender's reason does not apply here. That claim flips a status and so
+     * genuinely splits the due set; this one writes nothing, so two pokes CAN select the same
+     * row. What they cannot do is both write it: every finalizer is compare-and-swap on
+     * `status='pending'`, and the loser reads back and reports the winner's state. The cost of an
+     * overlap is a duplicate probe, never a wrong outcome and never a second envelope.
+     *
+     * ── THE DIAL GOES THROUGH ADMISSION, LIKE EVERY OTHER DIAL ON THIS HOST ─────────────────
+     *
+     * The pass opens at most one connection per distinct mailbox in a batch of three, but "at
+     * most three" is a statement about ONE invocation and this host runs many. The per-mailbox
+     * admission counter is what makes it a statement about the deployment, and it is the same
+     * counter the attachment and probe paths hold — so a mailbox already at its ceiling refuses
+     * this pass rather than becoming the connection that trips the provider's own limit. A
+     * refusal is a DEFER: the pass counts it and the row is examined again next minute.
+     */
+    method: "GET",
+    pattern: SEND_RECONCILE_CRON_PATH,
+    cost: "unauthenticated",
+    options: { public: true, anonymous: true, raw: true },
+    handler: async (req, deps) => {
+      const log = (deps.logger ?? silentLogger).child({ route: SEND_RECONCILE_CRON_PATH });
+      const cfg = deps.alerts;
+      if (!cfg || cfg.secret.trim().length === 0) {
+        return json(404, { error: { code: "not_found" } });
+      }
+      const cron = cfg.cronSecret?.trim();
+      const authorized = presentsSecret(req, cfg.secret)
+        || (cron !== undefined && cron.length > 0 && presentsSecret(req, cron));
+      if (!authorized) {
+        log.warn("send_reconcile_unauthorized", {});
+        return json(401, { error: { code: "unauthorized" } });
+      }
+      try {
+        const result = await runSendReconcilePass(deps.db, {
+          openSendAdapter: deps.services?.sendAdapter
+            ?? ((mailboxId: string) => admittedSendAdapter(deps, mailboxId)),
+          // THE SUSPENSION GATE, injected here for `runScheduledSendPass`'s reason (the fact is
+          // the cloud half's and the pass ships in the desktop engine bundle) and read on the
+          // HANDED handle for its deadlock reason. It gates the DIAL rather than the claim here
+          // — see `SendReconcilePassDeps.accountEligible` for why excluding the rows would
+          // starve every account behind a parked one.
+          accountEligible: async (accountId, handle) =>
+            !(await isSuspended(handle as unknown as Tx, accountId)),
+          log,
+          now: deps.now,
+        });
+        if (result.claimed > 0) log.info("send_reconcile_pass", { ...result });
+        return json(200, { now: deps.now().toISOString(), ...result });
+      } catch (err) {
+        // `raw` means no error envelope above this handler; it must never throw. Per-row faults
+        // are already absorbed inside the pass — this catches only the claim itself.
+        log.error("send_reconcile_pass_failed", { err });
+        return json(503, { error: { code: "send_reconcile_pass_failed" } });
       }
     },
   },

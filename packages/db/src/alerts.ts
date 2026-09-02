@@ -154,7 +154,22 @@ export type AlertSeverity = "critical" | "warning";
 export interface AlertThresholds {
   /** No leader heartbeat for longer than this ⇒ the worker is down. Arch doc: 2 minutes. */
   leaderStaleMs: number;
-  /** `outbound_sends.status='pending'` older than this is stuck. Arch doc: 10 minutes. */
+  /**
+   * `outbound_sends.status='pending'` older than this is stuck — AND THE SENTENCE THIS ALERT
+   * MEANS HAS CHANGED, which is why the number did.
+   *
+   * It used to mean "a sender died and nothing will ever resolve this row", and ten minutes —
+   * `SEND_STALE_AFTER_MS`, the age past which no invocation can still be running — was exactly
+   * right for that: the moment a row became unresolvable, a human was the only remedy.
+   *
+   * A reconciling pass now examines such a row every minute, so the same reading would page on
+   * the ordinary case: a row goes stale at ten minutes and is resolved on the next cycle. What
+   * is worth waking somebody for is the reconciler NOT DRAINING — and fifteen minutes is that
+   * statement with the arithmetic behind it: ten to become eligible, plus five for the
+   * once-a-minute clock (its cadence plus jitter, several cycles over) to have had every
+   * chance. A row still `pending` then is one the reconciler is deferring or never sees, which
+   * is a real fault and the one this rule now names.
+   */
   stuckSendMs: number;
   /** An on-duty mailbox not synced within this is lagging. Arch doc: 15 minutes. */
   syncLagMs: number;
@@ -206,7 +221,7 @@ export interface AlertThresholds {
 
 export const DEFAULT_ALERT_THRESHOLDS: AlertThresholds = {
   leaderStaleMs: 2 * 60 * 1000,
-  stuckSendMs: 10 * 60 * 1000,
+  stuckSendMs: 15 * 60 * 1000,
   syncLagMs: 15 * 60 * 1000,
   syncLagSustainMs: 15 * 60 * 1000,
   syncLagCriticalMs: 2 * 60 * 60 * 1000,
@@ -397,6 +412,11 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   // one older than the threshold means the process that reserved it died mid-flight. Never
   // auto-resent (the resolver checks Sent first) — which is precisely why a human has to be
   // told the queue is not draining.
+  //
+  // WHAT THIS RULE NOW MEANS is "the RECONCILER is not draining", not "a sender died": a
+  // reconciling pass examines every stale reservation once a minute, so a row that reaches this
+  // threshold has survived several of its cycles. See {@link AlertThresholds.stuckSendMs} for
+  // the arithmetic behind the number.
   const stuckBefore = new Date(now.getTime() - t.stuckSendMs);
   const stuck = await db
     .select({
@@ -417,6 +437,7 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
       detail:
         `${stuckCount} outbound_sends row(s) have been 'pending' longer than ` +
         `${humanAge(Math.round(t.stuckSendMs / 1000))}; the oldest is ${humanAge(oldestSeconds)} old. ` +
+        `The reconciling pass has had several cycles at these and has not resolved them. ` +
         `The user believes these were sent. They are never auto-resent.`,
       count: stuckCount,
       oldestSeconds,

@@ -211,6 +211,10 @@ export {
   type ScheduledSendPassDeps, type ScheduledSendPassResult,
 } from "./schedule-send-pass.js";
 export {
+  runSendReconcilePass, SEND_RECONCILE_BATCH, SEND_RECONCILE_GIVE_UP_MS,
+  type SendReconcilePassDeps, type SendReconcilePassResult,
+} from "./send-reconcile-pass.js";
+export {
   SendService, sendService, SEND_STALE_AFTER_MS, SEND_FAILED_SENTENCE,
   SEND_ATTEMPT_CEILING_MS, SEND_TIMEOUT_SENTENCE,
   SEND_ATTACHMENT_MAX_TOTAL_BYTES, SEND_ATTACHMENT_FIELD_MAX_CHARS,
@@ -218,7 +222,7 @@ export {
   SEND_MIME_ENVELOPE_BYTES, SEND_STAGED_OBJECT_MAX_BYTES, attachmentBudgetFor,
   effectiveAttachmentCap, sendSurfaceFor,
   type SendDeps, type SendResult, type SendAttachment, type SendInput,
-  type StagedAttachmentSource,
+  type StagedAttachmentSource, type ResolveStaleBy, type ResolveStaleOutcome,
 } from "./send-service.js";
 export {
   WorkflowsService, workflowsService,

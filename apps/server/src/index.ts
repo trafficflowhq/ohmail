@@ -3,7 +3,7 @@ import { setupProdDatabase } from "@trafficflow/db/admin";
 import { makeOwnedDb, makeChangeWakeHub, isSuspended } from "@trafficflow/db/cloud";
 import { createLogger, UNMETERED_STORAGE_CAP } from "@trafficflow/core";
 import { makeSendAdapter } from "@trafficflow/api";
-import { runScheduledSendPass } from "@trafficflow/services";
+import { runScheduledSendPass, runSendReconcilePass } from "@trafficflow/services";
 import { loadServerConfig } from "./config.js";
 import { buildDeps, buildServerServices, oauthProviderFor, type ServerRuntime } from "./deps.js";
 import { handleServerRequest } from "./handler.js";
@@ -129,6 +129,32 @@ async function main(): Promise<void> {
    * message as `pending` until the recovery arm resolves it a poll-eternity later.
    */
   let sendPassInFlight: Promise<void> | null = null;
+  /**
+   * The reconciling half of the send clock — stranded `pending` reservations, resolved by the
+   * same verify-by-Sent the client's own retry runs. Its own function because it runs on BOTH
+   * arms of the tick below (after a good sender pass, and after a failed one), and its own
+   * `try` because a claim that fails here must not look like the sender's.
+   */
+  const reconcileStrandedSends = async (): Promise<void> => {
+    try {
+      const passDeps = buildDeps(new Request(cfg.origin), rt);
+      const r = await runSendReconcilePass(owned.db, {
+        openSendAdapter: (mailboxId) => makeSendAdapter(passDeps, mailboxId),
+        // On the HANDED handle — the deadlock rule on `ScheduledSendPassDeps.accountEligible`.
+        accountEligible: async (accountId, handle) =>
+          !(await isSuspended(handle as unknown as Tx, accountId)),
+        log: logger,
+      });
+      if (r.claimed > 0) {
+        logger.info("send_reconcile_pass", {
+          claimed: r.claimed, sent: r.sent, unverified: r.unverified,
+          deferred: r.deferred, resolvedElsewhere: r.resolvedElsewhere, gaveUp: r.gaveUp,
+        });
+      }
+    } catch (err) {
+      logger.error("send_reconcile_pass_failed", { err });
+    }
+  };
   const armSendClock = (delayMs: number): void => {
     if (sendClockStopped) return;
     sendClock = setTimeout(() => {
@@ -151,10 +177,29 @@ async function main(): Promise<void> {
               failed: r.failed, deferred: r.deferred,
             });
           }
+          /**
+           * AND THEN THE RECONCILER, on the same tick and AFTER the sender.
+           *
+           * After, because the sender is the only thing on this box that CREATES a stranded
+           * reservation, and a reconciler that ran first would spend the cycle examining rows
+           * whose fate the sender is about to decide. It is one clock rather than two for the
+           * same reason the hosted deployment splits them into two: there, both are serverless
+           * invocations racing a platform kill and sharing one is a budget error; here nothing
+           * kills the process, so a second timer would buy only a second thing to shut down.
+           *
+           * No `resolveStorageCap` and no `surfaceMaxTotalBytes`: this pass never sends, so it
+           * never projects a sent copy and never assembles a body.
+           */
+          await reconcileStrandedSends();
         } catch (err) {
           // The pass absorbs per-row faults itself; this catches the claim. The appointments
           // stand and the next minute asks again — one bad pass never kills the cadence.
           logger.error("scheduled_send_pass_failed", { err });
+          // …AND THE RECONCILER STILL RUNS. Its own claim is independent of the sender's, so a
+          // sender whose claim is failing must not also stop stranded reservations being
+          // resolved — that pairing would take out both halves of the send path's recovery at
+          // once, and the second half is the one nothing else can do.
+          await reconcileStrandedSends();
         } finally {
           sendPassInFlight = null;
           armSendClock(SCHEDULED_SEND_EVERY_MS);

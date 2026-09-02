@@ -417,6 +417,25 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // census refused it every time, leaving a line about outbound mail unable to say how much
   // mail went out.
   "draftId", "claimed", "sent", "unverified", "deferred",
+  // ── The SEND RECONCILER's two counters, added WITH the call sites ──
+  //
+  // The pass that resolves a `pending` reservation nobody is coming back for reports the four
+  // above plus these two, and the two are separated for the same "three different 3am questions"
+  // reason: `resolvedElsewhere` is how often this pass raced another resolver and lost the
+  // compare-and-swap — healthy in ones, a sign of a second clock running if it dominates a
+  // summary — and `gaveUp` is the strictly worse number, how many rows were closed as ambiguous
+  // because a whole day of cycles could not decide them. Folding either into `deferred` would
+  // hide the one outcome where somebody's draft was settled by a clock rather than by evidence.
+  //
+  // Both are `++` counters on a literal result object, so they are structurally integers and can
+  // carry no content. `decidedBy` is the reconciler's own decision word — a member of the closed
+  // `ResolveStaleBy` union, five literals this repository wrote, beside `disabledReason` and
+  // `syncBlockedReason` and for that entry's exact reason: it names HOW a row was decided
+  // (`mirror`, `probe`, `undialable`, `elsewhere`, `deferred`) and never a server's own words.
+  // Spelled out rather than `by`, because a two-letter generic name on a GLOBAL allowlist is an
+  // open door for the next call site that happens to reach for it — this list's own header, on
+  // why an allowlist is keyed by name and the names have to be worth allowing.
+  "resolvedElsewhere", "gaveUp", "decidedBy",
   // `mirrorDraining` is the OTHER half of the same `shutdown` line, and it is here because
   // `inFlight` alone was misleading rather than merely incomplete: the Cloud mirror's pull is not a
   // stdio request, so `inFlight` reads 0 in exactly the case where the mirror is what the quit is

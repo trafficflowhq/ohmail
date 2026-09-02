@@ -3,14 +3,14 @@ import {
   attachments, drafts, mailboxes, messageBodies, messages, outboundSends, recordChange, threads, type Tx,
 } from "@trafficflow/db";
 import {
-  createLogger, isMessageGone, mintMessageId, recordSentMessage,
+  createLogger, isMessageGone, mintMessageId, normalizeMessageId, recordSentMessage,
   type AppendedSent, type EmailAddress, type Logger, type NativeLocator, type OutboundMessage,
-  type OpenSendAdapter, type RepoPort, type RoutingPort, type StorageCap,
+  type OpenSendAdapter, type RepoPort, type RoutingPort, type SendAdapter, type StorageCap,
 } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { ServiceContext } from "./context.js";
 import type { AttachmentAdapter, OpenAdapter } from "./attachments-service.js";
-import { ServiceError } from "./errors.js";
+import { ServiceError, SettleFailed, TransientDialRefusal } from "./errors.js";
 import { sanitizeOutboundHtml } from "./outbound-html.js";
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
@@ -675,6 +675,33 @@ export interface SendResult {
   providerMessageId: string | null;
   draftId: string;
   seq: number | null;
+}
+
+/**
+ * HOW a stale reservation was decided — the half of {@link ResolveStaleOutcome} the reconciling
+ * pass counts and the client path discards.
+ *
+ *  · `mirror`      the account's own `messages` mirror already holds the minted id. No dial.
+ *  · `probe`       the Sent folder was searched over a live connection and answered.
+ *  · `undialable`  no dial was possible or permitted and the caller asked for a decision anyway
+ *                  (a `disabled` mailbox, a mailbox whose credentials are gone, a give-up).
+ *  · `elsewhere`   the compare-and-swap matched nothing: another resolver had already written a
+ *                  terminal state, and `status` is THEIRS, re-read.
+ *  · `deferred`    nothing was written and nothing is claimed — try again next cycle.
+ */
+export type ResolveStaleBy = "mirror" | "probe" | "undialable" | "elsewhere" | "deferred";
+
+/**
+ * What became of one stale reservation. `status` is `pending` only alongside `by: "deferred"`,
+ * which is the one outcome that wrote nothing.
+ */
+export interface ResolveStaleOutcome {
+  status: "sent" | "unverified" | "failed" | "pending";
+  providerMessageId: string | null;
+  draftId: string;
+  /** The `change_log` seq this call emitted, or `null` when it emitted none. */
+  seq: number | null;
+  by: ResolveStaleBy;
 }
 
 /**
@@ -1796,28 +1823,220 @@ export class SendService {
     // later) and NOT a probe. Older than that, no invocation can still be running, so the row
     // is genuinely orphaned and verify-by-Sent is the correct recovery.
     //
-    // NOTE the remaining gap, and it is recorded as such: this recovery only runs
-    // when the USER retries with the same key. A stranded row that is never retried stays
-    // `pending` forever, and the WORKER pass that reconciles it is not yet built.
+    // This recovery is no longer the ONLY one. It runs when the USER retries with the same key,
+    // and `runSendReconcilePass` runs the identical resolution on a clock for a row nobody
+    // retries — both through {@link SendService.resolveStale}, which is the single writer.
     const ageMs = ctx.now().getTime() - row.createdAt.getTime();
     if (ageMs < SEND_STALE_AFTER_MS) {
       return { status: "in_flight", providerMessageId: null, draftId: row.draftId, seq: null };
     }
 
-    // A genuinely STALE reservation → verify-by-Sent recovery. Open the adapter ONLY
-    // to probe Sent; `send` is NEVER called on this path.
-    const adapter = await deps.openSendAdapter(mailboxId);
+    // A genuinely STALE reservation → verify-by-Sent recovery. `send` is NEVER called on this
+    // path; the client door may always dial, so the factory goes through unwrapped.
+    const out = await this.resolveStale(ctx, row, mailboxId, deps.openSendAdapter);
+    // `pending` comes back only from a re-read that still saw no terminal state, which on this
+    // door means somebody owns the row right now — the same answer a young reservation gets, and
+    // the only one that neither claims an outcome nor invites a resend.
+    if (out.status === "pending") {
+      return { status: "in_flight", providerMessageId: null, draftId: out.draftId, seq: null };
+    }
+    return {
+      status: out.status, providerMessageId: out.providerMessageId, draftId: out.draftId, seq: out.seq,
+    };
+  }
+
+  /**
+   * RESOLVE ONE STALE RESERVATION — the single implementation of "decide what became of a
+   * `pending` row that no live invocation owns", shared by the client's same-key retry
+   * ({@link SendService.resumeExisting}) and the reconciling pass (`send-reconcile-pass.ts`).
+   *
+   * It exists as one function because the two callers write the SAME terminal states from the
+   * SAME evidence, and a second copy of that decision is the fork the one-implementation rule
+   * forbids — the more so here, where the states are terminal and what they encode is the rule
+   * this whole path exists for: never resend on ambiguity.
+   *
+   * ── TWO ARMS, AND THE ORDER IS LOAD-BEARING ────────────────────────────────────────────────
+   *
+   * 1. **The MIRROR arm, which costs no dial.** `ImapAdapter.send` APPENDs our own copy to Sent
+   *    and the worker's Sent-folder watch ingests it like any other message, so a delivered send
+   *    usually has a `messages` row carrying the very `message_id_header` this reservation
+   *    minted. Reading that row settles the question with an indexed lookup
+   *    (`messages_account_message_id_header_idx`) instead of a LOGIN.
+   *
+   *    **A MISS SAYS NOTHING.** The mirror lags the mailbox by up to a poll interval, and on the
+   *    reconciling pass the row being examined is minutes old by construction — so "not in the
+   *    mirror" is indistinguishable from "not synced yet". Only the IMAP arm may write
+   *    `unverified`; a mirror miss falls through to it and, where no dial is permitted, to the
+   *    caller's stated `onMiss`.
+   *
+   * 2. **The IMAP arm** — `messageInSent`, the probe this service has always used. Found ⇒
+   *    `sent`. Not found ⇒ `unverified`: the adapter answered, so the Sent folder genuinely does
+   *    not hold the id. A THROW (including {@link ImapBoundExceeded}) is neither: it propagates
+   *    with the row untouched, because writing a terminal state off a connection that failed is
+   *    exactly the ambiguity this path exists to avoid.
+   *
+   * `openAdapter` is `null` for a caller that may NOT dial (the pass's `disabled`/`error`
+   * mailboxes — see the pass), and `onMiss` then says what a mirror miss MEANS: `"unverified"`
+   * writes the ambiguous terminal state now, `"defer"` leaves the row exactly as found for a
+   * later cycle. A caller that hands a factory always gets a probe.
+   *
+   * A **factory `ServiceError`** — a mailbox whose credential rows are gone
+   * (`send-adapter.ts:36`) — is resolved as `unverified` rather than raised, and that is a
+   * decision about EVIDENCE and not a swallowed error: no adapter can ever be built for that
+   * mailbox again, so no later cycle can decide the row, and leaving it `pending` forever is the
+   * permanently-unresolvable state this whole path exists to remove. A probe that throws is the
+   * opposite case (the next cycle may well succeed) and is not caught here.
+   *
+   * ── AND THE CAS LOSER ANSWERS THE WINNER'S STATE ───────────────────────────────────────────
+   *
+   * All three finalizers are compare-and-swap on `status='pending'`, so exactly one resolver ever
+   * writes a terminal state. When this call's CAS matches zero rows somebody else resolved the
+   * row while we probed: the answer is the state THEY wrote, re-read from the reservation and
+   * returned as `by: "elsewhere"` — never `queued`, never `in_flight`, and never a second probe.
+   * Overlapping resolvers therefore cost a duplicate read, never a wrong write.
+   */
+  async resolveStale(
+    ctx: ServiceContext,
+    row: typeof outboundSends.$inferSelect,
+    mailboxId: string,
+    openAdapter: OpenSendAdapter | null,
+    onMiss: "unverified" | "defer" = "unverified",
+  ): Promise<ResolveStaleOutcome> {
+    // ── 1. The mirror arm. Account-scoped like every read in this service.
+    //
+    // NORMALIZED, and this is the whole arm: `mintedMessageId` is `<uuid@domain>` WITH the angle
+    // brackets (`mintMessageId`), while `messages.message_id_header` is written through
+    // `normalizeMessageId`, which STRIPS them — `record-at-send.pg.test.ts` pins that column as
+    // `providerMessageId.replace(/[<>]/g, "")`. Comparing the two spellings matches zero rows for
+    // every real send, so the arm silently never fired: every row paid a LOGIN, and — far worse —
+    // on the no-dial branches the mirror is the ONLY evidence there is, so a `disabled` mailbox
+    // or a give-up would write terminal `unverified` over a message the mirror was holding all
+    // along. That is the exact wrong write this whole slice exists to prevent.
+    //
+    // It shipped green because the first version of the test seeded the header WITH brackets,
+    // which no writer in this codebase does.
+    const mintedKey = normalizeMessageId(row.mintedMessageId);
+    const mirrored = mintedKey === null ? [] : await ctx.db.select({ id: messages.id })
+      .from(messages)
+      .where(and(
+        eq(messages.accountId, ctx.accountId),
+        eq(messages.messageIdHeader, mintedKey),
+      ))
+      .limit(1);
+    if (mirrored.length > 0) return this.settleSent(ctx, row, mailboxId, "mirror");
+
+    // ── 2. The IMAP arm, when this caller may dial at all.
+    if (openAdapter === null) {
+      if (onMiss === "defer") {
+        return {
+          status: "pending", providerMessageId: null, draftId: row.draftId, seq: null, by: "deferred",
+        };
+      }
+      return this.settleUnverified(ctx, row, "undialable");
+    }
+
+    let adapter: SendAdapter;
+    try {
+      adapter = await openAdapter(mailboxId);
+    } catch (err) {
+      // A REFUSAL THE FACTORY CALLS TRANSIENT IS NOT EVIDENCE ABOUT THE MESSAGE. It propagates
+      // untouched, so the caller defers this row and asks again next cycle. Checked FIRST and
+      // kept a distinct class rather than folded into the branch below, because the two are
+      // opposite conclusions from a superficially identical event — see {@link
+      // TransientDialRefusal}, which records what treating a busy mailbox as a permanent one
+      // would write.
+      if (err instanceof TransientDialRefusal) throw err;
+      // See the docblock: a mailbox that can never be dialled again is decided now, not left to
+      // page for ever. Anything that is not a typed refusal is a fault, and propagates.
+      if (err instanceof ServiceError) return this.settleUnverified(ctx, row, "undialable");
+      throw err;
+    }
     try {
       const inSent = await adapter.messageInSent(row.mintedMessageId);
-      if (inSent) {
-        const seq = await this.finalizeSent(ctx, row.id, row.mintedMessageId, row.draftId, mailboxId);
-        return { status: "sent", providerMessageId: row.mintedMessageId, draftId: row.draftId, seq };
-      }
-      const seq = await this.finalizeUnverified(ctx, row.id, row.draftId);
-      return { status: "unverified", providerMessageId: null, draftId: row.draftId, seq };
+      return inSent
+        ? await this.settleSent(ctx, row, mailboxId, "probe")
+        : await this.settleUnverified(ctx, row, "probe");
     } finally {
-      await adapter.close();
+      // SWALLOWED, and it is not defensive tidying. This `finally` REPLACES whatever the try
+      // produced, so a close that rejects on an already-broken socket would (a) throw away the
+      // `SettleFailed` tag the reconciling pass uses to decide never to give up on a row whose
+      // probe had already answered, and (b) on the client door — where this is a real connection,
+      // not the pass's no-op wrapper — turn a send that was just committed as `sent` into a 500.
+      // The send path's own abandoned-submission close (`send`'s `finally`) is guarded the same
+      // way. NOT every close in this file is: the forward-attachment fetch above still awaits a
+      // bare `adapter.close()` in its `finally`, where a rejection would fail a forward whose
+      // attachments had already been read. Outside this lane's scope, and named rather than
+      // implied by a sentence claiming they all are.
+      await adapter.close().catch(() => { /* the connection is already broken */ });
     }
+  }
+
+  /** `finalizeSent`, plus the CAS-loser re-read. See {@link SendService.resolveStale}. */
+  private async settleSent(
+    ctx: ServiceContext, row: typeof outboundSends.$inferSelect, mailboxId: string,
+    by: ResolveStaleBy,
+  ): Promise<ResolveStaleOutcome> {
+    // A THROW HERE IS A WRITE FAILURE, NOT A PROBE FAILURE — tagged so the reconciling pass
+    // cannot apply its give-up to it and record `unverified` for a message the Sent folder had
+    // just confirmed. See {@link SettleFailed}.
+    // `answerWinner` IS INSIDE THE TRY, not after it. Its re-read is part of settling: a pool
+    // fault there is still "the mailbox answered and the database could not record it", and
+    // leaving it untagged would let the reconciling pass apply its give-up to a row whose probe
+    // had already spoken.
+    try {
+      const seq = await this.finalizeSent(ctx, row.id, row.mintedMessageId, row.draftId, mailboxId);
+      if (seq === null) return await this.answerWinner(ctx, row);
+      return { status: "sent", providerMessageId: row.mintedMessageId, draftId: row.draftId, seq, by };
+    } catch (err) {
+      throw new SettleFailed("sent", err);
+    }
+  }
+
+  /** `finalizeUnverified`, plus the CAS-loser re-read. See {@link SendService.resolveStale}. */
+  private async settleUnverified(
+    ctx: ServiceContext, row: typeof outboundSends.$inferSelect, by: ResolveStaleBy,
+  ): Promise<ResolveStaleOutcome> {
+    // See {@link SettleFailed} — the evidence was in; only the write failed.
+    // `answerWinner` inside the try, for `settleSent`'s reason.
+    try {
+      const seq = await this.finalizeUnverified(ctx, row.id, row.draftId);
+      if (seq === null) return await this.answerWinner(ctx, row);
+      return { status: "unverified", providerMessageId: null, draftId: row.draftId, seq, by };
+    } catch (err) {
+      throw new SettleFailed("unverified", err);
+    }
+  }
+
+  /**
+   * THE STATE THE WINNER WROTE, read back after a lost CAS.
+   *
+   * `sent` and `unverified` are the only states a resolver can have written; `failed` is
+   * reachable too (the pre-SMTP window finalizes it) and is answered honestly rather than
+   * flattened, because a caller told "unverified" about a row that definitively never left would
+   * be sent to look in a Sent folder for a message that provably is not there. A row that somehow
+   * reads `pending` again is answered as a defer: nothing was written and nothing is claimed.
+   */
+  private async answerWinner(
+    ctx: ServiceContext, row: typeof outboundSends.$inferSelect,
+  ): Promise<ResolveStaleOutcome> {
+    const [now] = await ctx.db.select({
+      status: outboundSends.status, providerMessageId: outboundSends.providerMessageId,
+    }).from(outboundSends)
+      .where(and(eq(outboundSends.id, row.id), eq(outboundSends.accountId, ctx.accountId)))
+      .limit(1);
+    const status = (now?.status ?? "pending") as ResolveStaleOutcome["status"];
+    if (status === "pending") {
+      return {
+        status: "pending", providerMessageId: null, draftId: row.draftId, seq: null, by: "deferred",
+      };
+    }
+    return {
+      status,
+      providerMessageId: status === "sent" ? (now?.providerMessageId ?? row.mintedMessageId) : null,
+      draftId: row.draftId,
+      seq: null,
+      by: "elsewhere",
+    };
   }
 
   /**
@@ -1862,17 +2081,31 @@ export class SendService {
    */
   private async finalizeSent(
     ctx: ServiceContext, sendId: string, providerMessageId: string, draftId: string, mailboxId: string,
-  ): Promise<number> {
+  ): Promise<number | null> {
     const now = ctx.now();
     const seq = await asTx(ctx).transaction(async (tx) => {
-      await tx.update(outboundSends).set({ status: "sent", providerMessageId, sentAt: now })
-        .where(eq(outboundSends.id, sendId));
+      const won = await tx.update(outboundSends)
+        .set({ status: "sent", providerMessageId, sentAt: now })
+        .where(and(eq(outboundSends.id, sendId), eq(outboundSends.status, "pending")))
+        .returning({ id: outboundSends.id });
+      // THE CAS LOST — see {@link SendService.resolveStale}. Nothing else in this transaction may
+      // run: the draft belongs to whoever won, and a `recordChange` here would publish a `draft`
+      // update announcing a state this call did not write.
+      if (won.length === 0) return null;
       // `sendAt`/`sendKey` cleared IN THE SAME transaction that records the terminal outcome
       // (mail 0077): they are the scheduled-send recovery predicate, and an appointment that
       // outlived its delivery would be re-claimed by the sweep and replayed forever. A manual
       // send carries NULLs here anyway, so this is byte-identical for it.
+      //
+      // `status='sending'` is the draft's OWN compare-and-swap, and it is a separate question
+      // from the reservation's: a draft a person has already recovered by hand, or one a
+      // different terminal path returned to `draft`, must not be dragged back out of the state
+      // it is in by a finalize that arrives afterwards. Winning the reservation says what became
+      // of the SEND; this says the composer is still waiting to be told.
       await tx.update(drafts).set({ status: "sent", sendAt: null, sendKey: null, updatedAt: now })
-        .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId)));
+        .where(and(
+          eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId), eq(drafts.status, "sending"),
+        ));
       // See the note above: the doorbell is skipped rather than waited on, because waiting here
       // strands a message that has already been sent. `SKIP LOCKED` needs the row to be selected,
       // so the update is driven by a subquery rather than by `where id = ...` directly.
@@ -1884,7 +2117,7 @@ export class SendService {
         accountId: ctx.accountId, entityType: "draft", entityId: draftId, op: "update", meta: null,
       });
     });
-    return Number(seq);
+    return seq === null ? null : Number(seq);
   }
 
   /**
@@ -1969,33 +2202,58 @@ export class SendService {
   ): Promise<void> {
     const now = ctx.now();
     await asTx(ctx).transaction(async (tx) => {
-      await tx.update(outboundSends).set({ status: "failed" }).where(eq(outboundSends.id, sendId));
+      // Compare-and-swap, for {@link SendService.finalizeSent}'s reason: exactly one resolver
+      // writes a terminal state. This one is reachable only from the pre-SMTP window, which owns
+      // the reservation it is finalizing — but "the only writer today" is not a property a
+      // predicate-free UPDATE preserves, and a `failed` written over a `sent` would be the one
+      // thing this whole path exists to prevent, one direction reversed.
+      const won = await tx.update(outboundSends).set({ status: "failed" })
+        .where(and(eq(outboundSends.id, sendId), eq(outboundSends.status, "pending")))
+        .returning({ id: outboundSends.id });
+      if (won.length === 0) return;
       await tx.update(drafts)
         .set({
           status: "draft", sendAt: null, sendKey: null, updatedAt: now,
           sendError: sql`case when ${drafts.sendAt} is not null then ${sentence}
                               else ${drafts.sendError} end`,
         })
-        .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId)));
+        .where(and(
+          eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId), eq(drafts.status, "sending"),
+        ));
       await recordChange(tx, {
         accountId: ctx.accountId, entityType: "draft", entityId: draftId, op: "update", meta: null,
       });
     });
   }
 
-  /** FINALIZE-unverified tx: the ambiguous terminal state; the draft surfaces `unverified`. */
-  private async finalizeUnverified(ctx: ServiceContext, sendId: string, draftId: string): Promise<number> {
+  /**
+   * FINALIZE-unverified tx: the ambiguous terminal state; the draft surfaces `unverified`.
+   * Compare-and-swap on the reservation, and on the draft, for {@link SendService.finalizeSent}'s
+   * reasons — `null` when the CAS matched nothing, which means somebody else resolved this row.
+   */
+  private async finalizeUnverified(
+    ctx: ServiceContext, sendId: string, draftId: string,
+  ): Promise<number | null> {
     const now = ctx.now();
     const seq = await asTx(ctx).transaction(async (tx) => {
-      await tx.update(outboundSends).set({ status: "unverified" }).where(eq(outboundSends.id, sendId));
+      const won = await tx.update(outboundSends).set({ status: "unverified" })
+        .where(and(eq(outboundSends.id, sendId), eq(outboundSends.status, "pending")))
+        .returning({ id: outboundSends.id });
+      // THE SHARPEST OF THE THREE. Without this predicate a reconciling pass that probed while a
+      // late `finalizeSent` committed would overwrite `sent` with `unverified` — turning a
+      // message the user demonstrably sent into "we couldn't confirm this", and sending them to
+      // look for it in a folder it is already in.
+      if (won.length === 0) return null;
       // The appointment bookkeeping ends with the terminal outcome — `finalizeSent`'s rule.
       await tx.update(drafts).set({ status: "unverified", sendAt: null, sendKey: null, updatedAt: now })
-        .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId)));
+        .where(and(
+          eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId), eq(drafts.status, "sending"),
+        ));
       return recordChange(tx, {
         accountId: ctx.accountId, entityType: "draft", entityId: draftId, op: "update", meta: null,
       });
     });
-    return Number(seq);
+    return seq === null ? null : Number(seq);
   }
 }
 
