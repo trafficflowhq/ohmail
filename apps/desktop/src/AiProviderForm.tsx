@@ -221,8 +221,13 @@ export function verdictOf(
               }
               : {
                 state: "bad",
+                /* THE ENGINE'S SENTENCE IS DROPPED ON THIS HALF TOO. It read `status.probe.detail`
+                   here until a review round pointed out that the arm was stating a rule its other
+                   half broke: that detail names ONE model as the thing that is missing, which
+                   under a headline that has just said the vendor listed NOTHING is the same
+                   untruth this arm exists to remove, reproduced for a keyed vendor. The headline
+                   is the whole of what is true here, and there is no command to add. */
                 headline: t("verdictNoModelsListed", { vendor }),
-                ...(status.probe?.detail ? { detail: status.probe.detail } : {}),
                 ...stamped,
               };
           }

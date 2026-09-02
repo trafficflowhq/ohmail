@@ -62,7 +62,17 @@ import { openLocalDb, type LocalDb } from "./db.js";
 export type TakeoverAuthorizationOutcome =
   /** The mailbox was stood down. It is now clear to organize, and one takeover is authorized. */
   | "authorized"
-  /** The mailbox is not stood down; this install already organizes it. Nothing was written. */
+  /**
+   * The mailbox is not stood down; this install already organizes it, so no stamp is written and
+   * none may be — a second press is not a second becoming.
+   *
+   * WHAT IT MEANS DIFFERS BY CALLER, and it used to read "Nothing was written" for both.
+   * {@link authorizeOrganizerTakeover} (the CLI) writes nothing on this outcome and its message
+   * still says so. {@link requestOrganizerTakeover} (the button, and the setup flow) DOES write
+   * when a `screening` answer rides along: the window and the scope are the answer the person
+   * just gave, and a re-run of setup is the ordinary way to reach this branch. It can also throw
+   * a `LocalConsentRefusal` from that write, on the same bounds as the first-consent path.
+   */
   | "already_organizing"
   /** The mailbox was REMOVED from this install, which is not a stand-down. Nothing was written. */
   | "removed"

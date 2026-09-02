@@ -537,11 +537,12 @@ describe("verdictOf when the endpoint lists NO models at all", () => {
   });
 
   it("A KEYED VENDOR that lists nothing says so, and offers no command it does not have", () => {
+    const said = '"gpt-4.1-mini" is not on the list';
     const v = verdictOf(
       statusOf({
         provider: "openai",
         reason: "unreachable",
-        probe: probe({ reason: "model_absent", detail: "no models", models: [] }),
+        probe: probe({ reason: "model_absent", detail: said, models: [] }),
       }),
       t, NOW, null,
     );
@@ -550,6 +551,13 @@ describe("verdictOf when the endpoint lists NO models at all", () => {
     expect([v.headline, v.detail ?? "", v.hint ?? ""].join(" "))
       .not.toContain("ollama pull");
     expect(v.hint, "it still pointed at the models below").toBeUndefined();
+    /* THE SAME RULE AS THE OLLAMA ARM, and it was not applied here until a review round asked.
+       The engine's sentence names ONE model as the thing that is missing, and on an empty list
+       everything is missing — so under a headline that has just said the vendor listed nothing,
+       it reproduces exactly the untruth this whole arm exists to remove. The arm may not state a
+       rule its other half breaks. */
+    expect(v.detail, "the engine's one-model sentence was shown over an empty list")
+      .toBeUndefined();
   });
 
   it("GERMAN carries the same command — a pull instruction is useless translated away", () => {

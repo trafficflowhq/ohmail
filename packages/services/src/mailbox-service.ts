@@ -53,7 +53,17 @@ export type MailboxTakeoverResult =
    * than by omission. Nothing decides on it; it is the sentence the person is shown.
    */
   | { outcome: "authorized"; previousReason: string | null }
-  /** This install already organizes it, and consent is already recorded. Nothing written. */
+  /**
+   * This install already organizes it, and consent is already recorded — so no stamp is written
+   * and none may be: a second press is not a second becoming.
+   *
+   * NOT "nothing written", which is what this line said until 2026-09-02 and what every caller
+   * reasoned from. A `screening` block on this outcome IS applied — the window and the scope are
+   * the answer the person just gave, and a re-run of setup is the ordinary way to reach this
+   * branch. It can also throw a 400 from that write, on the same bounds as the first-consent
+   * path. See the branch itself in {@link MailboxService.organizeHere} for why the refusal and
+   * the write are separable.
+   */
   | { outcome: "already_organizing" }
   /** Disconnected by the user, which is not a stand-down. Reconnect it instead. Nothing written. */
   | { outcome: "disconnected" };
@@ -1973,50 +1983,6 @@ export class MailboxService {
   private static readonly PULL_MIN_GAP_MS = 5_000;
 
   /**
-   * THE ONE CLAIM CEREMONY, FOR EVERY DOOR — ask this install to organize this mailbox.
-   *
-   * ── THE RULE THIS IMPLEMENTS, AND THE HALF PEOPLE GET WRONG ────────────────────────────────
-   *
-   * Exactly one active organizer per mailbox, ever. Ceasing to organize is always automatic;
-   * BECOMING an organizer always requires an explicit human action — and that second half binds
-   * the hosted service exactly as it binds a desktop install. There is no billing event, no
-   * re-subscription and no deploy that may quietly make this side the organizer again of a mailbox
-   * somebody deliberately moved to their own machine. This method is that human action, and it is
-   * the mirror of the `organize here` command a local install already has.
-   *
-   * ── IT AUTHORIZES AN ASK. IT DOES NOT WIN ANYTHING ─────────────────────────────────────────
-   *
-   * Nothing here opens IMAP, and that is a hard boundary rather than an implementation detail:
-   * organization lands in real folders on the user's server, and it is the WORKER that moves mail,
-   * through desired state, so that a serverless function can never leave a mailbox half-organized.
-   * All this writes is a stamp. The worker's next roster pass reads the claim in the mailbox and
-   * decides — and if another organizer is still renewing and outranks us, this side stands down
-   * again on that same pass and the stamp is voided with it.
-   *
-   * ── THREE COLUMNS, ONE STATEMENT, AND EACH OMISSION HAS ITS OWN FAILURE ────────────────────
-   *
-   * Learned on the local side and true verbatim here:
-   *
-   *  · The stamp alone is INERT. A row that still carries a stand-down reason is refused before
-   *    the gate is ever consulted, so the mailbox never reaches the code the stamp is for.
-   *  · Clearing the reason alone gets as far as consulting the claim, which then reports the
-   *    mailbox merely *available* — nobody renewing, nobody authorized — and this side stands down
-   *    again on the same pass. An action that appears to do nothing, at exactly the moment
-   *    somebody chose to use it.
-   *  · Restoring the status alone is the one that CORRUPTS. A stand-down and a user's
-   *    disconnect share `status='disabled'` and are told apart ONLY by whether a reason is set, so
-   *    clearing the reason without restoring the status converts a paused mailbox into a
-   *    tombstone.
-   *
-   * ── AND WHY A DISCONNECTED MAILBOX IS REFUSED RATHER THAN REVIVED ──────────────────────────
-   *
-   * `disabled` with NO reason is a mailbox the user disconnected. Re-adding it is a different
-   * action with different consequences — it needs credentials, it consumes an allowance slot as a
-   * new connection, and it is reached through a different door. Quietly converting a takeover into
-   * a resurrection would bring back a mailbox somebody deliberately removed, and would do it
-   * without the credential it no longer has.
-   */
-  /**
    * THE ACCOUNT'S SCREENING STATE — the half of the consent that is not about the mailbox row.
    *
    * See {@link OrganizeHereInput.screening}. Three columns, one upsert, and the baseline is the
@@ -2077,6 +2043,50 @@ export class MailboxService {
       });
   }
 
+  /**
+   * THE ONE CLAIM CEREMONY, FOR EVERY DOOR — ask this install to organize this mailbox.
+   *
+   * ── THE RULE THIS IMPLEMENTS, AND THE HALF PEOPLE GET WRONG ────────────────────────────────
+   *
+   * Exactly one active organizer per mailbox, ever. Ceasing to organize is always automatic;
+   * BECOMING an organizer always requires an explicit human action — and that second half binds
+   * the hosted service exactly as it binds a desktop install. There is no billing event, no
+   * re-subscription and no deploy that may quietly make this side the organizer again of a mailbox
+   * somebody deliberately moved to their own machine. This method is that human action, and it is
+   * the mirror of the `organize here` command a local install already has.
+   *
+   * ── IT AUTHORIZES AN ASK. IT DOES NOT WIN ANYTHING ─────────────────────────────────────────
+   *
+   * Nothing here opens IMAP, and that is a hard boundary rather than an implementation detail:
+   * organization lands in real folders on the user's server, and it is the WORKER that moves mail,
+   * through desired state, so that a serverless function can never leave a mailbox half-organized.
+   * All this writes is a stamp. The worker's next roster pass reads the claim in the mailbox and
+   * decides — and if another organizer is still renewing and outranks us, this side stands down
+   * again on that same pass and the stamp is voided with it.
+   *
+   * ── THREE COLUMNS, ONE STATEMENT, AND EACH OMISSION HAS ITS OWN FAILURE ────────────────────
+   *
+   * Learned on the local side and true verbatim here:
+   *
+   *  · The stamp alone is INERT. A row that still carries a stand-down reason is refused before
+   *    the gate is ever consulted, so the mailbox never reaches the code the stamp is for.
+   *  · Clearing the reason alone gets as far as consulting the claim, which then reports the
+   *    mailbox merely *available* — nobody renewing, nobody authorized — and this side stands down
+   *    again on the same pass. An action that appears to do nothing, at exactly the moment
+   *    somebody chose to use it.
+   *  · Restoring the status alone is the one that CORRUPTS. A stand-down and a user's
+   *    disconnect share `status='disabled'` and are told apart ONLY by whether a reason is set, so
+   *    clearing the reason without restoring the status converts a paused mailbox into a
+   *    tombstone.
+   *
+   * ── AND WHY A DISCONNECTED MAILBOX IS REFUSED RATHER THAN REVIVED ──────────────────────────
+   *
+   * `disabled` with NO reason is a mailbox the user disconnected. Re-adding it is a different
+   * action with different consequences — it needs credentials, it consumes an allowance slot as a
+   * new connection, and it is reached through a different door. Quietly converting a takeover into
+   * a resurrection would bring back a mailbox somebody deliberately removed, and would do it
+   * without the credential it no longer has.
+   */
   async organizeHere(
     ctx: ServiceContext, id: string, input: OrganizeHereInput = {},
     opts?: UpdateMailboxOptions,
