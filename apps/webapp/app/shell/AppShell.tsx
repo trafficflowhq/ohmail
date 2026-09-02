@@ -1460,6 +1460,12 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
             now,
             dormancyDays: consent.dormancyDays,
             baselineAt: consent.screeningBaselineAt,
+            // THE MODE, or the window it names is resolved and then ignored (mail 0083). The
+            // server's router has honoured `all_time` since the column landed; this partition is
+            // what the Screener queue and the History placement are actually built from on the
+            // client, so without this line the Settings control writes a value the open tab —
+            // and, on a standalone install, the whole product — never reads.
+            screeningScope: consent.screeningScope,
             ownAddresses,
             // The History-lens gate (spec §16.5): the CONSENT answer, not the mirror's folder
             // entities — stale entities after a missed disable must not keep the lens on.
@@ -1467,7 +1473,7 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
           }),
     [
       demo, consent.known, consent.standalone, reader, version, now, consent.dormancyDays,
-      consent.screeningBaselineAt, ownAddresses, consent.foldersEnabled,
+      consent.screeningBaselineAt, consent.screeningScope, ownAddresses, consent.foldersEnabled,
     ],
   );
   /**

@@ -467,6 +467,66 @@ export interface SeedReviewWire {
  * push service, and `notification-settings.ts` asks `apiConfigured()` before it acts, so nothing
  * here is reached on this build. Reaching it anyway must throw rather than quietly open a socket.
  */
+export interface DeviceDTO {
+    id: string;
+    kind:
+        | "web" | "macos"
+        | "desktop-linux" | "desktop-macos" | "desktop-windows"
+        | "mobile-android" | "mobile-ios"
+        | (string & {});
+    label: string;
+    createdAt: string;
+    lastSeenAt: string;
+    ip: string;
+    current: boolean;
+    named?: boolean;
+    pushToken: string | null;
+}
+
+export interface PairingTokenDTO {
+    id: string;
+    grant: "invite" | "device-pair";
+    label: string;
+    createdAt: string;
+    expiresAt: string;
+    consumedAt: string | null;
+    revokedAt: string | null;
+    status: "live" | "consumed" | "revoked" | "expired";
+}
+
+/**
+ * SESSIONS AND PAIRING — the two remaining Cloud surfaces, absent, and added BEFORE anything
+ * imports them rather than after a build breaks.
+ *
+ * `push` above was added reactively, once a shared-shell import of it had already broken the
+ * desktop bundle on every platform. These two are the same shape waiting to happen: they are
+ * account-scoped Cloud surfaces that shared `shell/` code could reach for at any time, and the
+ * failure mode is an unresolved import at bundle time that no typecheck can see — the alias is
+ * the bundler's, so `tsc` resolves the REAL module and stays green.
+ *
+ * `test/no-api-client-census.test.ts` now compares the two export sets directly, so the next
+ * addition to the real client is a red test rather than a red release.
+ */
+export const devices: {
+    list: () => Promise<{ items: DeviceDTO[] }>;
+    revoke: (id: string) => Promise<void>;
+    revokeWebSessions: () => Promise<{ revoked: number }>;
+} = absent;
+
+export const pair: {
+    mint: (b: { label?: string }) => Promise<{
+        id: string; token: string; grant: "invite"; label: string; expiresAt: string;
+    }>;
+    mintDevice: (b: { label?: string }) => Promise<{
+        id: string; token: string; grant: "device-pair"; label: string; expiresAt: string;
+    }>;
+    list: () => Promise<{ items: PairingTokenDTO[] }>;
+    revoke: (id: string) => Promise<void>;
+    redeemInvite: (b: { token: string; email: string }) => Promise<{
+        grant: "invite"; invite: { code: string; email: string; expiresAt: string };
+    }>;
+} = absent;
+
 export const push: {
     vapidKey: () => Promise<{
         publicKey: string | null;

@@ -96,10 +96,22 @@ export function toMailboxFacts(m: MailboxDTO): MailboxFacts {
     // nothing breaks either way — the `??` is left off because the seam is where that distinction
     // was destroyed the last two times, not because this consumer needs it.
     smtpMaxSizeBytes: m.smtpMaxSizeBytes,
+    // ── NEVER `?? new Date()`, AND THE COMMENT THAT STOOD HERE WAS WRONG ABOUT WHY ──────
+    //
     // The server has sent this since mail 0001 and always will (`toDTO` reads a NOT NULL
-    // column). The fallback exists so a stale cached bundle cannot crash the strip on a
-    // field it was compiled without, and it degrades to "no elapsed time", never to a wrong
-    // one — `minutesSince(null)` is `null`, which the copy renders as "moments ago".
-    createdAt: m.createdAt ?? new Date().toISOString(),
+    // column), so the fallback exists only for a stale cached bundle compiled without the
+    // field. It claimed to degrade to "no elapsed time"; it did not. A now-stamp is perfectly
+    // parseable, so `minutesSince` answers 0 rather than null, and — the half that matters —
+    // `importFloorSpeaks` obeys the import floor ABSOLUTELY for `IMPORT_FLOOR_MAX_MS` (24 h)
+    // measured from this value. Re-stamping it as NOW on every poll means `now - connectedAt`
+    // is always ~0, the bound can never elapse, and the strip announces "Syncing your mail"
+    // for ever over a finished mirror. The guard was load-bearing in exactly the case it got
+    // wrong, which is why it is worth fixing on a path that is currently unreachable.
+    //
+    // The empty string is "the server did not say", and every reader already treats an
+    // unparseable stamp as unknown: the floor's `Number.isFinite` guard takes the corroborated
+    // path, `earliest` skips it, `minutesSince` answers null. The desktop's own narrowing
+    // (`DesktopMailboxes.tsx`) carries the same rule for the same reason.
+    createdAt: m.createdAt ?? "",
   };
 }

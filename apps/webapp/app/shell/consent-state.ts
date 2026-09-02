@@ -930,12 +930,26 @@ export function useConsentState(
     // that named only the mode returns no window: folding an absent one in as `undefined` would
     // blank the dial the pane renders, and folding it in as the default would show a window the
     // account does not have. Absent means "unchanged", exactly as it does on the wire.
-    applyEcho(at, (prev) => ({
-      ...prev,
-      ...(res.dormancyDays !== undefined ? { dormancyDays: res.dormancyDays } : {}),
-      ...(res.screeningScope !== undefined ? { screeningScope: res.screeningScope } : {}),
-    }));
-    return res.dormancyDays ?? days ?? DEFAULT_DORMANCY_DAYS;
+    /* THE EFFECTIVE WINDOW IS READ OUT OF THE FOLD, never fabricated after it.
+       A mode-only write ("all time") names no window, so the route correctly echoes none — and a
+       `?? DEFAULT_DORMANCY_DAYS` here would answer 60 about an account holding 180, which is a
+       number this function invented. The true answer is the one the state ends the fold with: the
+       echo's window when there was one, and the untouched stored window when there was not.
+       Captured from inside the updater because that is the only place the previous state is in
+       scope without making this callback re-identify on every window change. */
+    let effective: number | undefined;
+    applyEcho(at, (prev) => {
+      const next = {
+        ...prev,
+        ...(res.dormancyDays !== undefined ? { dormancyDays: res.dormancyDays } : {}),
+        ...(res.screeningScope !== undefined ? { screeningScope: res.screeningScope } : {}),
+      };
+      effective = next.dormancyDays;
+      return next;
+    });
+    // `applyEcho` DROPS a fold whose era is stale, so the updater may never run. Then this write
+    // is not the one describing the account any more and the echo is the only thing it may report.
+    return effective ?? res.dormancyDays ?? DEFAULT_DORMANCY_DAYS;
   }, [applyEcho]);
 
   const setBlockRemoteImages = useCallback(async (blocked: boolean): Promise<boolean> => {

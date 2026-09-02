@@ -182,6 +182,24 @@ export interface ConsentOptions {
    */
   baselineAt?: Date | string | null;
   /**
+   * SCREENING SCOPE — `account_settings.screening_scope` (mail 0083), the window's other answer.
+   *
+   * `'window'` (or absent) is the dial above. `'all_time'` is a MODE and not a window value, which
+   * is why it needed a column of its own: `dormancy_days` is bounded 1-365 at the write site and
+   * NULL means the default, so no number in that column can spell "no cutoff".
+   *
+   * RE-DECLARED here rather than imported, exactly as {@link DEFAULT_DORMANCY_DAYS} is: this
+   * package ships in the Desktop app and has no `@trafficflow/core` dependency. The parity test
+   * pins this resolution to `resolveScreeningCutoff`'s, and the ORDER is part of that parity —
+   * `all_time` is tested before the baseline, so the mode wins for an account that has already
+   * screened something, which is every account the control is offered to.
+   *
+   * Anything that is not exactly `'all_time'` is the window. An unrecognised stored value reads as
+   * the narrower mode, which is the direction a bad value must fail in: screening everything is a
+   * lot of moved mail to undo by hand.
+   */
+  screeningScope?: "window" | "all_time" | string | null;
+  /**
    * The account's OWN mailbox addresses. Mail from these is the user writing, not a
    * correspondent writing, so it is never a candidate for a place and never makes anybody
    * active.
@@ -305,8 +323,27 @@ function messageMs(m: EngineMessage): number | null {
 /** The cutoff both halves of the cutline measure from. See {@link ConsentOptions.baselineAt}. */
 export function cutlineFor(opts: ConsentOptions): { cutoff: number; baselined: boolean } {
   const now = opts.now ?? new Date();
-  const days = opts.dormancyDays ?? DEFAULT_DORMANCY_DAYS;
   const raw = opts.baselineAt == null ? null : new Date(opts.baselineAt).getTime();
+  /* -- "ALL TIME" IS NO CUTOFF, AND IT IS THE FIRST TEST FOR THE SERVER'S REASON (mail 0083) --
+   *
+   * `resolveScreeningCutoff` answers `undefined` here — "hold every unruled sender's mail whatever
+   * its date". This side has no `undefined` to answer: `cutoff` is a number both halves compare
+   * against (`ms >= cutoff` for active, `ms < cutoff` for History), so the value that means the
+   * same thing is `-Infinity`. Every parseable date is then at or after it, so every undecided
+   * sender is ACTIVE and nothing at all falls into History — which is the mode's whole promise:
+   * senders past the old cutline join the Screener QUEUE, and no mail moves until a decision.
+   *
+   * ABOVE the baseline read, mirroring the server exactly. The other order would make the mode
+   * silently inert for every account that has ever screened anything.
+   *
+   * `baselined` still answers whether a baseline EXISTS, because it gates a different question —
+   * whether unread mail outranks age — and the mode does not change that fact about the account.
+   */
+  if (opts.screeningScope === "all_time") {
+    const baseRaw = raw !== null && Number.isFinite(raw) ? raw : null;
+    return { cutoff: -Infinity, baselined: baseRaw !== null };
+  }
+  const days = opts.dormancyDays ?? DEFAULT_DORMANCY_DAYS;
   // An unparseable stored value is treated as ABSENT, not as epoch 0: a baseline of 1970 would
   // make every message post-cutoff and pin every undecided sender in the queue for ever, which is
   // the loudest possible failure for a value nobody can see. Absent is today's behaviour.
