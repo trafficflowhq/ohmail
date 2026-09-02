@@ -107,8 +107,8 @@ import {
 // mechanism (its header says so); this file is the mail-leg consumer — see `ImapConfig.pin`.
 import { pinnedLookup } from "../net/pinned-fetch.js";
 import {
-  makeLeaseIo, makeLeasePeekIo,
-  type LeaseImapClient, type LeaseIo, type LeasePeekIo,
+  makeLeaseIo, makeLeasePeekIo, personalNamespacesOf, resolveOhmailFolder,
+  type LeaseImapClient, type LeaseIo, type LeasePeekIo, type MetaNamespaceSource,
 } from "./organizer-lease.js";
 import { makeProfileIo, type ProfileImapClient, type ProfileIo } from "./organizer-profile.js";
 // The HARD per-message ceiling `normalizeMime` enforces after a download — imported so
@@ -1449,12 +1449,41 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
 
   async ensureFolders(): Promise<void> {
     const list = await this.listBounded();
-    const existing = new Set(list.map((f) => f.path));
     this.sentFolder = this.findSent(list);
     this.learnPassiveFolders(list);
+    /*
+     * ── A PREFIXED SERVER'S OWN FOLDERS ARE OURS, AND USED TO BE INVISIBLE ──────────────────
+     *
+     * `existing.has(this.toServerPath(canonical))` is a string equality against the LIST, which
+     * is the shape `resolveMetaFolder` was written to replace. On a server with a personal
+     * namespace — Dovecot's `INBOX.`, and `ImapFlow` prepends that prefix to every path LIST
+     * hands back — `toServerPath("ohmail/Reads")` is `ohmail.Reads` while the row reads
+     * `INBOX.ohmail.Reads`, so NOT ONE of the five was ever recognised and all five were
+     * re-CREATEd on every single connect.
+     *
+     * Nothing broke, which is why it survived: each CREATE came back "already exists" and was
+     * swallowed below. The cost was five round trips per connection, for ever.
+     *
+     * The lease's resolution answers it — same prefix-credibility rule, one canonical name at a
+     * time — and its answer is better than a boolean: where the folder is ABSENT it names the
+     * path to create, prefix included, instead of filing a root-named CREATE and trusting the
+     * server to put it somewhere sensible.
+     */
+    const namespaces = personalNamespacesOf(this.client as unknown as MetaNamespaceSource);
     for (const canonical of OHMAIL_FOLDERS) {
-      const path = this.toServerPath(canonical);
-      if (existing.has(path)) continue;
+      let path = this.toServerPath(canonical);
+      try {
+        const at = resolveOhmailFolder({ list, bare: path, namespaces, canonical });
+        if (at.row !== null) continue;
+        path = at.path;
+      } catch {
+        /* AmbiguousMetaFolderError — two credible candidates for one of our names. It is the
+           honest refusal where a LEASE is at stake, because reading a claim from the wrong
+           folder breaks the single-organizer invariant. Here nothing is being read: this is a
+           create-if-absent, and refusing to connect over it would be a worse answer than the
+           behaviour this replaced. Fall through to the root-named CREATE the server will file
+           under its own prefix anyway, and let "already exists" absorb it as it always did. */
+      }
       try {
         await this.client.mailboxCreate(path);
       } catch (err) {

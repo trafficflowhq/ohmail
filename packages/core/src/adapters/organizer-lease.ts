@@ -197,14 +197,25 @@ function metaAlphabet(
   bare: string,
   list: readonly MetaFolderRow[],
   ns: readonly MetaNamespaceEntry[],
+  canonical: string,
 ): { delimiter: string; bare: string } {
+  /* The two segments of THIS canonical name, not `ohmail/_meta`'s. Every folder this resolution
+     serves is exactly two segments (`WATCHED_FOLDERS`), and reading the split off the canonical
+     rather than off two module constants is what lets the watched folders share the rule — with
+     `ohmail/_meta` still passing its own name and getting exactly what it got before. Deriving a
+     FIXED tail length here was the bug in waiting: `_meta` is five characters, so slicing by it
+     found the right separator for `ohmail.Reads` by coincidence and garbage for
+     `ohmail.Screener`. */
+  const cut = canonical.indexOf("/");
+  const head = canonical.slice(0, cut);
+  const tail = canonical.slice(cut + 1);
   const one = (d: unknown): string | undefined => (typeof d === "string" && d.length === 1 ? d : undefined);
-  const between = one(bare.slice(META_HEAD.length, bare.length - META_TAIL.length));
+  const between = one(bare.slice(head.length, bare.length - tail.length));
   const row = list.find((f) => f.path.toUpperCase() === "INBOX") ?? list[0];
   const delimiter = one(ns[0]?.delimiter) ?? between ?? one(row?.delimiter) ?? "/";
   return {
     delimiter,
-    bare: between !== undefined && between !== delimiter ? `${META_HEAD}${delimiter}${META_TAIL}` : bare,
+    bare: between !== undefined && between !== delimiter ? `${head}${delimiter}${tail}` : bare,
   };
 }
 
@@ -243,9 +254,34 @@ export function resolveMetaFolder(input: {
   bare: string;
   namespaces?: readonly MetaNamespaceEntry[];
 }): MetaFolderLocation {
+  return resolveOhmailFolder({ ...input, canonical: META_FOLDER });
+}
+
+/**
+ * THE SAME RESOLUTION, FOR ANY ONE OF OUR FOLDERS — `ohmail/_meta` is just the caller with the
+ * strictest need.
+ *
+ * Generalised from one canonical name to the set because `ImapAdapter.ensureFolders` had the
+ * defect this function was written to fix, in the same shape and for the same reason: it matched
+ * `OHMAIL_FOLDERS` against the LIST by string equality, so on a server with a personal-namespace
+ * prefix NONE of the five watched folders was ever recognised and all five were re-CREATEd on
+ * every connect. Every CREATE was caught as "already exists", so it cost round trips and nothing
+ * else — which is why it is a generalisation rather than an incident.
+ *
+ * Read {@link resolveMetaFolder}'s docstring for the rule itself; the prefix-credibility argument
+ * is identical and is not restated here. The only difference is which name is being looked for.
+ */
+export function resolveOhmailFolder(input: {
+  list: readonly MetaFolderRow[];
+  /** `toServerPath(canonical)` — the mapped name, without a namespace prefix. */
+  bare: string;
+  namespaces?: readonly MetaNamespaceEntry[];
+  /** The canonical, slash-spelled name `bare` is the server mapping of. Exactly two segments. */
+  canonical: string;
+}): MetaFolderLocation {
   const { list } = input;
   const ns = input.namespaces ?? [];
-  const { delimiter, bare } = metaAlphabet(input.bare, list, ns);
+  const { delimiter, bare } = metaAlphabet(input.bare, list, ns, input.canonical);
   // A CLIENT THAT ANSWERED IS AUTHORITATIVE EVEN WHEN ITS ANSWER IS "no prefix", and reading
   // this off "are there any NON-EMPTY prefixes" instead would be a hole in exactly the servers
   // most people use. Gmail and Fastmail declare ONE personal namespace whose prefix is empty;
