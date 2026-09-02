@@ -11,7 +11,7 @@ import type { MailboxFacts } from "../../webapp/app/shell/mail-state";
 /**
  * ═══ "ORGANIZE HERE INSTEAD" — THE EXIT FROM READING SOMEBODY ELSE'S MAILBOX ══════════════
  *
- * `QAR-DESKTOP-CANNOT-RECLAIM-MAILBOX`. Measured on the released 0.13.2 AppImage against a real
+ * Measured on the released 0.13.2 AppImage against a real
  * mailbox whose `ohmail/_meta` carried a 25-minute-stale local claim: the install stood down
  * (`verdict=available`, `organized_elsewhere:local`, `heldBy=zorin-9950`) and had **no way back at
  * all**. Three exits were walked and all three are closed:
@@ -253,8 +253,7 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     // when the engine read the lease only at launch; the gate spends the stamp on its next tick
     // now, so the instruction was to do something neither needed nor helpful.
     const text = el.textContent ?? "";
-    expect(text).toContain("This computer takes over on its next pass");
-    expect(text, "the retired restart instruction is still on screen").not.toContain("Quit and reopen");
+    expect(text).toContain("Quit and reopen ohmail to organize this mailbox");
 
     // The row's own state moved, so the pane re-reads rather than keeping the banner on screen.
     expect(refreshed).toBe(1);
@@ -271,7 +270,7 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     await act(async () => { organizeButton(el)!.click(); });
     await act(async () => { confirmButton(el)!.click(); });
     expect(el.textContent).toContain("This machine already organizes that mailbox");
-    expect(el.textContent).not.toContain("This computer takes over on its next pass");
+    expect(el.textContent).not.toContain("Quit and reopen ohmail to organize this mailbox");
   });
 
   /**
@@ -288,9 +287,9 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     await act(async () => { organizeButton(el)!.click(); });
     await act(async () => { confirmButton(el)!.click(); });
     const text = el.textContent ?? "";
-    expect(text).toContain("This computer takes over on its next pass");
+    expect(text).toContain("Quit and reopen ohmail to organize this mailbox");
     expect(text, "the request was reported as a certainty the lease can refuse")
-      .toContain("unless the other install is still running");
+      .toContain("it keeps the mailbox and this one goes on reading");
     // A spinner claims something is in flight. Nothing is: the request is written and done.
     expect(el.querySelector(".set-verdict.wait"), "a recorded request was drawn as a pending one")
       .toBeNull();
@@ -305,13 +304,13 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     const el = await render(null);
     await act(async () => { organizeButton(el)!.click(); });
     await act(async () => { confirmButton(el)!.click(); });
-    expect(el.textContent).toContain("This computer takes over on its next pass");
+    expect(el.textContent).toContain("Quit and reopen ohmail to organize this mailbox");
 
     // The next poll: the gate promoted this install.
     FACTS = [{ ...READER, organizerRole: "organizer", organizedBy: null, organizerState: null }];
     await act(async () => { root!.render(await paneNode(null)); });
     expect(el.textContent, "a completed takeover still reported itself as pending")
-      .not.toContain("This computer takes over on its next pass");
+      .not.toContain("Quit and reopen ohmail to organize this mailbox");
     expect(el.textContent).not.toContain("Organized by");
   });
 
@@ -397,16 +396,29 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     await act(async () => { organizeButton(el)!.click(); });
     const text = el.textContent ?? "";
     expect(text).toContain("Quit and reopen ohmail and");
-    expect(text, "the ceremony promised a pass this engine will not make")
-      .not.toContain("takes over on its next pass");
+    // A legacy row has no holder columns, so its sentence names nobody.
+    expect(text).toContain("unless the other install renews its claim first");
   });
 
-  it("and a MODERN reader is promised the pass, not a relaunch, at the confirmation", async () => {
+  /**
+   * BOTH ENGINES NEED THE RELAUNCH, and the split that said otherwise was a distinction the code
+   * does not make. `world` is assembled once (`engine.ts:892`) and `takeoverAuthorized` derived
+   * from it once (`:1788`); the route writes only the row, so the running loop keeps passing
+   * `takeover: "none"` and its stand-down path clears the stamp. If the engine ever re-reads that
+   * column per cycle, the press becomes effective on the next pass and this expectation is the one
+   * that should change first.
+   */
+  it("tells a MODERN reader the same thing, because the same thing is true of it", async () => {
     const el = await render(null);
     await act(async () => { organizeButton(el)!.click(); });
+    await act(async () => { confirmButton(el)!.click(); });
     const text = el.textContent ?? "";
-    expect(text).toContain("takes over on its next pass");
-    expect(text).not.toContain("Quit and reopen");
+    expect(text).toContain("Quit and reopen ohmail to organize this mailbox");
+    expect(text, "the modern engine was promised a pass its running loop never makes")
+      .not.toContain("takes over on its next pass");
+    // A reader that loses the race keeps reading — that is what a reader IS, and it is the one
+    // thing the legacy row cannot say.
+    expect(text).toContain("this one goes on reading");
   });
 
   /**
@@ -422,11 +434,11 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     const el = await render(null);
     await act(async () => { organizeButton(el)!.click(); });
     const text = el.textContent ?? "";
-    expect(text).toContain("takes over on its next pass");
+    expect(text).toContain("Quit and reopen ohmail");
     expect(text, "the renewal race is the only thing that saves the peer, and it is stated")
-      .toContain("unless it renews its claim first");
+      .toContain("unless zorin-9950 renews its claim first");
     expect(text, "a displaceable peer was described as unbeatable")
-      .not.toContain("cannot take a mailbox from it");
+      .not.toContain("cannot take it yet");
   });
 
   it("does not promise a takeover a live CLOUD holder will refuse", async () => {
@@ -435,9 +447,51 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     await act(async () => { organizeButton(el)!.click(); });
     const text = el.textContent ?? "";
     expect(text, "the confirmation promised what rule 5 refuses even with authorization")
-      .toContain("cannot take a mailbox from it");
-    expect(text).toContain("Stop it organizing there first");
-    expect(text).not.toContain("takes over on its next pass");
+      .toContain("cannot take it yet");
+    expect(text).toContain("Stop it organizing there first, then come back and ask again");
+    expect(text, "a request the running loop can clear was described as kept")
+      .not.toMatch(/kept until then|is kept/);
+    expect(text).not.toContain("unless zorin-9950 renews its claim first");
+
+    /* AND THE PRESS IS STILL THERE. Withholding it depended on `organizerState` moving off `held`
+       once the other holder stopped — and if it does not, somebody who follows the sentence above
+       returns to a pane whose only control has disappeared, which is the dead end this surface
+       exists to close. Recording the request costs nothing and waits for the relaunch. */
+    expect(confirmButton(el), "the only way back vanished for a holder that may since have stopped")
+      .not.toBeNull();
+    expect(buttonSaying(el, "Cancel")).not.toBeNull();
+  });
+
+  /**
+   * AND ITS ANSWER DOES NOT BORROW THE OTHER BRANCH'S CONDITION. Rules 5 and 2 reject this holder
+   * outright — the renewal race is the LOCAL peer's condition, and saying it here would tell
+   * somebody the holder wins only if it renews, when it wins regardless.
+   */
+  it("answers a blocked request with the reason that actually applies", async () => {
+    FACTS = [CLOUD_HELD];
+    const el = await render(null);
+    await act(async () => { organizeButton(el)!.click(); });
+    await act(async () => { confirmButton(el)!.click(); });
+    const text = el.textContent ?? "";
+    expect(text).toContain("keeps this mailbox for as long as it is still checking in");
+    expect(text).toContain("whatever was asked for here");
+    // The reliable order, because the request itself is not durable against the running loop.
+    expect(text).toContain("then ask again and reopen ohmail");
+    expect(text, "a blocked request was answered with the local peer's renewal race")
+      .not.toContain("renews its claim first");
+  });
+
+  /**
+   * AN UNOBSERVED STATE IS NOT A STOPPED ONE. `organizerState` is `null` until this install's first
+   * lease look, and stays null when that look fails — so a perfectly fresh cloud claim reports
+   * `null`, and treating it as beatable promised a takeover rules 5 and 2 refuse.
+   */
+  it("does not read an unobserved organizer state as a beatable one", async () => {
+    FACTS = [{ ...CLOUD_HELD, id: "mbx-cloud-unlooked", organizerState: null }];
+    const el = await render(null);
+    await act(async () => { organizeButton(el)!.click(); });
+    expect(el.textContent, "a state nobody has looked at was treated as stopped")
+      .toContain("cannot take it yet");
   });
 
   it("…and promises it again once that cloud holder has stopped checking in", async () => {
@@ -446,8 +500,8 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     await act(async () => { organizeButton(el)!.click(); });
     const text = el.textContent ?? "";
     expect(text, "a quiet holder is beatable and the confirmation withheld that")
-      .toContain("takes over on its next pass");
-    expect(text).not.toContain("cannot take a mailbox from it");
+      .toContain("Quit and reopen ohmail");
+    expect(text).not.toContain("cannot take it yet");
   });
 
   /**
@@ -470,8 +524,9 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     // The cost to the other side is the one thing true of every branch: it is not killed, and its
     // copy of the mail survives whichever way the lease decides.
     expect(text).toContain("left alone either way");
+    expect(text).toContain("does not take it");
     expect(text, "a confirmation stated an outcome with no condition on it at all")
-      .toMatch(/unless|If it is still running|may keep the mailbox/);
+      .toMatch(/unless .* renews its claim first/);
   });
 
   it("tells a legacy install to relaunch, which is the mechanism on that engine", async () => {
@@ -481,19 +536,90 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     await act(async () => { confirmButton(el)!.click(); });
     const text = el.textContent ?? "";
     expect(text, "the row the legacy arm exists for got no acknowledgement at all")
-      .toContain("Quit and reopen ohmail");
-    expect(text).toContain("it keeps the mailbox and this one stands down again");
-    // …and NOT the modern sentence, which promises a pass this engine will not make.
-    expect(text).not.toContain("takes over on its next pass");
+      .toContain("Quit and reopen ohmail to organize this mailbox");
+    // A legacy stand-down closed its handle and stopped its timer, so it reads NOTHING while it
+    // waits. The modern reader's tail would be false here.
+    expect(text).toContain("this one stays stood down");
+    expect(text, "a stood-down legacy install was told it goes on reading")
+      .not.toContain("goes on reading");
   });
 
-  it("and a MODERN reader is never told to relaunch", async () => {
+
+  /**
+   * AND THE RETRY IS STILL THERE AFTERWARDS, because the answer tells somebody to use it.
+   *
+   * `reclaimed` records that a request was made and is never cleared — correct for a request that
+   * can succeed, since the row's own role is what ends it. A blocked request can never succeed, so
+   * its entry hid the button for the life of the pane while the sentence beside it said "stop it
+   * organizing there, then ask again". That is the dead end this screen exists to close, reached
+   * through the one branch whose entire purpose is to send somebody back.
+   */
+  it("keeps the retry reachable after a blocked request, which its own answer tells you to use", async () => {
+    FACTS = [CLOUD_HELD];
     const el = await render(null);
     await act(async () => { organizeButton(el)!.click(); });
     await act(async () => { confirmButton(el)!.click(); });
-    expect(el.textContent).toContain("takes over on its next pass");
-    expect(el.textContent, "the retired restart instruction reached the engine that reads on a tick")
-      .not.toContain("Quit and reopen");
+    expect(el.textContent).toContain("then ask again and reopen ohmail");
+    expect(organizeButton(el),
+      "the answer said to ask again and the button it meant was gone")
+      .not.toBeNull();
+  });
+
+  /**
+   * THE TRANSITION THE INSTRUCTION SENDS SOMEBODY TO MAKE — and the case that was missing.
+   *
+   * The blocked answer says "stop it organizing there, then ask again". Doing that turns the row's
+   * `organizerState` from `held` to `stopped`, at which point the request could finally succeed —
+   * and a guard written against the row's CURRENT blocked-ness took the button away at exactly
+   * that moment, because the spent-request marker was still set. The earlier case could not see
+   * it: it asserted the button on the blocked row and never re-rendered with the stopped one.
+   */
+  it("keeps the retry across the very transition its answer tells you to make", async () => {
+    FACTS = [CLOUD_HELD];
+    const el = await render(null);
+    await act(async () => { organizeButton(el)!.click(); });
+    await act(async () => { confirmButton(el)!.click(); });
+    expect(organizeButton(el), "the retry was gone while the holder was still there").not.toBeNull();
+
+    // The user goes and stops it organizing there; the reader cycle refreshes the same row.
+    FACTS = [{ ...CLOUD_HELD, organizerState: "stopped" }];
+    await act(async () => { root!.render(await paneNode(null)); });
+    expect(organizeButton(el),
+      "the button vanished at the moment the retry would have worked, which is what the answer " +
+        "sent somebody away to bring about")
+      .not.toBeNull();
+  });
+
+  /**
+   * AND THE REVERSE TRANSITION, which the previous fix regressed.
+   *
+   * A holder that was quiet when the request went in can resume before this install is promoted.
+   * The lease then refuses the authorization and the running loop clears it — so the request no
+   * longer exists, while the marker recorded at press time still said "beatable" and went on
+   * suppressing the button for the life of the pane.
+   */
+  it("keeps the retry when a once-beatable request becomes blocked", async () => {
+    FACTS = [CLOUD_STOPPED];
+    const el = await render(null);
+    await act(async () => { organizeButton(el)!.click(); });
+    await act(async () => { confirmButton(el)!.click(); });
+    expect(organizeButton(el), "a request that can still succeed should spend its button").toBeNull();
+
+    // The holder wakes up again before this install is promoted.
+    FACTS = [{ ...CLOUD_STOPPED, organizerState: "held" }];
+    await act(async () => { root!.render(await paneNode(null)); });
+    expect(organizeButton(el),
+      "the lease refused the request and cleared it, and the pane kept suppressing the retry")
+      .not.toBeNull();
+  });
+
+  it("…and a request that CAN succeed still spends its button", async () => {
+    // The negative control: a beatable holder's request is one-shot, so the button goes and the
+    // acknowledgement stands in its place until the role confirms it.
+    const el = await render(null);
+    await act(async () => { organizeButton(el)!.click(); });
+    await act(async () => { confirmButton(el)!.click(); });
+    expect(organizeButton(el), "a spent one-shot request still offered its button").toBeNull();
   });
 
   it("is NOT offered on a TOMBSTONE — the handler refuses that row and so does the pane", async () => {
