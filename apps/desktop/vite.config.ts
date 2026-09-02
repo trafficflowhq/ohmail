@@ -81,7 +81,7 @@ if (HOST_CLIENT && process.env.OHMAIL_LOCAL_ENGINE === "1") {
  * this array — adding a `useTranslations` to a view without adding its namespace
  * here fails the suite rather than the app.
  */
-export const SHELL_MESSAGE_NAMESPACES = [
+const BASE_MESSAGE_NAMESPACES = [
   // `body` holds the two sentences a reading surface says when the message text is being
   // fetched or could not be. The desktop compiles them and can never render
   // them (its `FixturesAdapter` serves no bodies, so `hydrateBody` short-circuits and no
@@ -227,15 +227,49 @@ export const SHELL_MESSAGE_NAMESPACES = [
   // here worse than the usual raw key: it would render `update.upToDate` on the one control that
   // tells somebody whether their mail client is current.
   "update",
-  // `aiProvider` is the model form (`src/AiProviderForm.tsx`) — the provider choice, the key
-  // field, the twelve verdicts and the model pickers, shared by Settings → Desktop and by the
-  // first-run flow's provider step. A DESKTOP-ONLY namespace: the browser client has no local
-  // model to configure. Genuinely reachable in the engine-bearing binary on the standalone door,
-  // and the verdicts are the worst place in the product for a raw key — they are the only thing
-  // that ever explains why a model is not answering.
-  "aiProvider",
-  "onboarding",
 ] as const;
+
+/**
+ * NAMESPACES THE WINDOW CARRIES AND THE SERVED CLIENT MUST NOT — a privacy boundary, not a
+ * size optimisation.
+ *
+ * `scan-artifact.mjs` refuses a served host client that carries the local-model surface, and
+ * `aiProvider` IS that surface in copy: `choiceOllama`, `choiceAnthropicWhy`,
+ * `verdictUnreachableOllama` and their German twins name `api.anthropic.com`, `api.openai.com`
+ * and Ollama. The list above already called this "A DESKTOP-ONLY namespace: the browser client
+ * has no local model to configure" — the comment was right and the mechanism never enforced it,
+ * because one flat array fed both artifacts.
+ *
+ * ── WHY THE COPY AND NOT THE COMPONENT, WHICH IS WHERE THIS WAS FIRST LOOKED FOR ───────────
+ *
+ * The served bundle does NOT contain `AiProviderForm`, `providerProbe`, `modelList` or `apiKey`
+ * — measured at zero occurrences in `dist-host` before this was written. The import boundary was
+ * already clean; only the message catalogue crossed it, because `shellMessagesOnly()` filters by
+ * namespace and both builds asked for the same namespaces. So this is fixed where the leak is,
+ * and no component seam is moved to chase a leak that was never in one.
+ *
+ * `onboarding` is here for the same reason and was found the same way. Its cloud and self-host
+ * FACT screens name the vendor whose key an operator has set ("the operator has set an Anthropic
+ * key on this server"), which trips the same marker — and the served client never runs the flow
+ * at all: `src/host-client/HostGate.tsx` mounts `AppShell` with no `firstRun` host, and no
+ * host-client source reads the namespace. It was dead payload that happened to be incriminating.
+ *
+ * The phone the host door serves pairs with an install; it does not configure that install's
+ * model and does not set it up, so nothing on that door reads these keys and nothing renders a
+ * raw one.
+ */
+export const WINDOW_ONLY_NAMESPACES = ["aiProvider", "onboarding"] as const;
+
+/**
+ * What THIS build carries. The window gets the window-only namespaces; the served client does
+ * not. Everything else is common, and the union is what `desktop-messages.test.ts` compares
+ * against the namespaces the sources actually read — so a namespace dropped from both lists is
+ * still a raw key in front of a user, and still caught.
+ */
+export const SHELL_MESSAGE_NAMESPACES = [
+  ...BASE_MESSAGE_NAMESPACES,
+  ...(HOST_CLIENT ? [] : WINDOW_ONLY_NAMESPACES),
+] as readonly string[];
 
 /**
  * NAMESPACES SHIPPED AS A SUBSET — the named keys, and nothing else in them.

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
-import { SHELL_MESSAGE_KEYS, SHELL_MESSAGE_NAMESPACES } from "../vite.config.js";
+import { SHELL_MESSAGE_KEYS, SHELL_MESSAGE_NAMESPACES, WINDOW_ONLY_NAMESPACES } from "../vite.config.js";
 
 /**
  * The desktop binary must not contain the marketing site's copy.
@@ -251,6 +251,49 @@ describe("desktop message filter", () => {
     // renamed namespace, and the wholesale check cannot tell the two apart.
     for (const [ns, keys] of Object.entries(SHELL_MESSAGE_KEYS)) {
       for (const key of keys) expect(all, `${ns}.${key}`).toHaveProperty(`${ns}.${key}`);
+    }
+  });
+
+  /**
+   * ── THE SERVED CLIENT MAY NOT CARRY THE LOCAL-MODEL SURFACE ──────────────────────────────
+   *
+   * `scan-artifact.mjs` enforces this on the built artifact and is the real gate; this case
+   * enforces it on the CATALOGUE, which is where the leak actually lived and which fails in
+   * seconds instead of after a platform build.
+   *
+   * The leak was copy, not code. The served bundle contains no provider component — the desktop
+   * host passes it in, and `src/host-client/HostGate.tsx` mounts `AppShell` with no `firstRun`
+   * host at all — but `shellMessagesOnly()` filters by NAMESPACE and both artifacts asked for the
+   * same namespaces, so `aiProvider`'s `choiceOllama` / `choiceAnthropicWhy` and `onboarding`'s
+   * self-host fact screens ("the operator has set an Anthropic key on this server") shipped to a
+   * phone that can never use them.
+   *
+   * Asserted against BOTH catalogues, because the German twins carry the same vendor names and a
+   * check on English alone would have passed the day the leak was in `de.json` only.
+   */
+  it("no window-only namespace reaches the served client's catalogue", () => {
+    const hostClientNamespaces = SHELL_MESSAGE_NAMESPACES
+      .filter((ns) => !(WINDOW_ONLY_NAMESPACES as readonly string[]).includes(ns));
+    // The split is real: the window list is strictly larger, or this guard is measuring nothing.
+    expect(WINDOW_ONLY_NAMESPACES.length).toBeGreaterThan(0);
+    expect(hostClientNamespaces.length).toBeLessThan(SHELL_MESSAGE_NAMESPACES.length);
+
+    // The markers `scan-artifact.mjs` refuses, in its own words.
+    const MARKERS = ["local/ai", "anthropic", "ollama", "Set up a model"];
+    for (const file of ["apps/webapp/messages/en.json", "apps/webapp/messages/de.json"]) {
+      const all = JSON.parse(read(file)) as Record<string, unknown>;
+      const served = JSON.stringify({
+        ...Object.fromEntries(hostClientNamespaces.map((ns) => [ns, all[ns]])),
+        ...Object.fromEntries(Object.entries(SHELL_MESSAGE_KEYS).map(([ns, keys]) => [
+          ns,
+          Object.fromEntries(
+            keys.map((k) => [k, (all[ns] as Record<string, unknown> | undefined)?.[k]]),
+          ),
+        ])),
+      }).toLowerCase();
+      for (const m of MARKERS) {
+        expect(served.includes(m.toLowerCase()), `${file} serves the marker "${m}"`).toBe(false);
+      }
     }
   });
 
