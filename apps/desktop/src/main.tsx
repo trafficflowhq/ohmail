@@ -22,6 +22,7 @@ import { ThemeProvider, ToastHost } from "@ohmail/ui";
 
 import { enableDesktopAttachments } from "../../webapp/app/shell/open-attachment";
 import { enableExternalLinks, interceptLinkClicks } from "../../webapp/app/shell/open-external";
+import { stampColumns } from "../../webapp/app/shell/column-store";
 import { DesktopLocale } from "./DesktopLocale.js";
 import "../../webapp/app/app.css";
 // After app.css for the webapp door's reason: the Zero layout ladder (data-layout="zero",
@@ -130,6 +131,12 @@ try {
   try { layout = localStorage.getItem("ohmail.layout"); } catch { /* blocked */ }
   if (layout === "zero") document.documentElement.dataset.layout = "zero";
 }
+/* …and the THREE COLUMNS' widths, from the same store and for the same reason. This window's
+   localStorage is the app's own data directory, which is where the face pin above already
+   survives a relaunch — so a rail somebody widened is the width the next launch opens at,
+   without a round trip to the sidecar (window chrome is not a mailbox fact). Before
+   `createRoot`, so the first frame is already the right shape. */
+stampColumns();
 
 const root = document.getElementById("root");
 if (!root) throw new Error("ohmail Desktop: #root is missing from index.html");

@@ -49,15 +49,35 @@ body.reading .shell {
     opacity: 0;
   }
 }
+/* THE RAIL'S TRACK, AND THE TWO PROPERTIES THE THREE COLUMNS NOW HANG ON.
+
+   `--rail-w` and `--split-user` are written on `:root` ONLY when somebody has dragged a
+   separator — by the pre-paint boot script from `ohmail.ui.columns` and live by
+   `ColumnHandles.tsx` (both through `shell/column-store.ts`, which is where the numbers and
+   the storage contract are argued). A shell nobody has dragged resolves `var(--rail-w, 224px)`
+   and `var(--split-user, var(--split))` to exactly what stood here before the feature existed,
+   so the default geometry is byte-identical rather than merely equivalent.
+
+   The CLAMP lives in CSS and not in the drag, deliberately: shrink the window and the rail
+   re-clamps with no JavaScript running at all, widen it again and the stored width comes back,
+   because nothing overwrote it. `--rail-track` is declared here rather than inlined so that
+   `.col-handle-rail`, which must sit exactly where this track ends, reads the same expression
+   (`shell/column-handles.css`) instead of restating three numbers that could drift. */
 .deck {
+  --rail-track: clamp(200px, var(--rail-w, 224px), 360px);
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 224px 1fr;
+  grid-template-columns: var(--rail-track) 1fr;
   /* the tile gap and the viewport-edge gap are tokens (--gap-tile/--gap-edge): paper's
      16px, ohmarchy's Hyprland gaps (10px). OHMARCHY-TOKENS.md "New slots". */
   gap: 0 var(--gap-tile);
   padding: var(--gap-edge);
+  /* the positioning context for the rail's separator, which stands in the deck's own gap.
+     Nothing else inside the deck positions against an ancestor: the stage is already
+     `relative` and owns everything under it, and the rail's one absolute descendant
+     (`.rail-sync .rs-track i`) has its own relative parent. */
+  position: relative;
 }
 .deck > .rail {
   min-height: 0;
@@ -106,8 +126,19 @@ body.reading .shell {
 }
 .view.split {
   display: grid;
-  grid-template-columns: var(--split);
-  column-gap: 16px;
+  /* `--split-user` is the dragged track list; absent it falls through to the token, so a
+     never-dragged split is the shipped geometry to the byte. See `.deck` above. */
+  grid-template-columns: var(--split-user, var(--split));
+  /* Was a literal 16px. The token is the same 16 under paper and Hyprland's 10 under the
+     ohmarchy face, where this seam was the one 16px gap left in a 10px system — and it is
+     also the width the separator standing in it is drawn at, so the two cannot disagree. */
+  column-gap: var(--gap-tile);
+}
+/* The positioning context for the list's separator, which is portalled into whichever split
+   view's list column is mounted (`ColumnHandles.tsx` — the left edge of that column is a
+   resolved grid track, which no `calc()` can name from outside). */
+.list-col {
+  position: relative;
 }
 .view.col {
   flex-direction: column;
@@ -3908,7 +3939,19 @@ textarea.c-input:read-only {
 }
 .boot-sk-window {
   display: grid;
-  grid-template-columns: 224px minmax(320px, 400px) 1fr;
+  /* THE READER'S OWN COLUMN WIDTHS, when they have chosen any. The paragraph above says these
+     numbers are restated rather than shared so the silhouette does not inherit a future change
+     to the real ones — which is still the rule, and is about DESIGN changes. A width somebody
+     dragged is a different kind of fact: a skeleton drawn at 224/400 in front of a shell that
+     is about to stand at 304/560 is exactly the visible re-layout this geometry exists to
+     prevent, so it reads the same two properties the shell does (`shell/column-store.ts`),
+     with the shipped defaults as the fall-through. `--split-user`'s viewer floor is measured
+     against this element rather than against `.view.split`, which is a few hundred pixels
+     wider; the two disagree only in the last inch of a very narrow window, and being one
+     column-clamp out for one frame is well inside "close enough that nothing jumps". */
+  grid-template-columns:
+    clamp(200px, var(--rail-w, 224px), 360px)
+    var(--split-user, minmax(320px, 400px) 1fr);
   gap: 0 var(--gap-tile); /* mirrors .deck — the skeleton must sit exactly where the shell will */
   /* NO own height or width: in the gate this sits absolutely at `inset:16px`
      (`.gate-boot > .boot-sk`), where the inset IS the box — an explicit dimension beside two

@@ -2461,6 +2461,10 @@
     "deleteConfirm": "Confirm the delete",
     "panelClose": "Close the open row"
   },
+  "columns": {
+    "railHandle": "Sidebar width",
+    "listHandle": "List width"
+  },
   "viewError": {
     "title": "This view didn't load.",
     "body": "Something went wrong drawing this screen. Your mail is untouched.",

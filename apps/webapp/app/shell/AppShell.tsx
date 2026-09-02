@@ -143,6 +143,7 @@ import { createSeenBatcher } from "./seen-batch";
 import { readColumnHidden, readColumnHiddenFor, watchZeroPushTier, zeroPushTier } from "./narrow";
 import { ZoneCursor, currentZone, setRailSummon } from "./zone-nav";
 import "./zone-cursor.css";
+import { ColumnHandles } from "./ColumnHandles";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { SyncBar } from "./SyncBar";
 import { MailStateProvider, useMailState, type FreshnessProbe, type MailboxProbe } from "./MailStateProvider";
@@ -6177,6 +6178,14 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
             ariaLabel={t("rail.ariaMain")}
           />
 
+          {/* THE TWO COLUMN SEPARATORS. Rendered BETWEEN the rail and the stage because that
+              is where they belong in the tab order — rail, the seam that resizes it, then the
+              mail. They are out of flow (`position: absolute` in `column-handles.css`), so the
+              deck's two-track grid is untouched by a third child; the list's own handle is
+              portalled from here into whichever split view's list column is standing, because
+              that column's left edge is a resolved grid track no `calc()` can name. See
+              `ColumnHandles.tsx`. */}
+          <ColumnHandles />
 
           <main className="stage" onClickCapture={onStageClickCapture}>
             {/* SETTINGS FOUND ON A MAILBOX — floated over whichever view (or the seed review)

@@ -220,8 +220,19 @@
        desktop gutters would be — named in the close-out). ═══════════════ */
 @media (min-width: 722px) and (max-width: 900px) {
   :root[data-layout="zero"] .view.split {
-    grid-template-columns: var(--split);
+    /* the same fall-through app.css states: a dragged list width, else the token. Without
+       `--split-user` here a reader who resized the list at a wide width would see it snap
+       back to 400px at the ribbon tier and back again on the next widen. */
+    grid-template-columns: var(--split-user, var(--split));
     column-gap: var(--gap-tile);
+  }
+  /* …and the separator that drags it. `column-handles.css` hides both handles below 901
+     because that is CLASSIC's answer — the split has collapsed to one column there. Zero
+     keeps the split alive from 722, so the seam exists and so does the handle standing in
+     it. The RAIL handle stays hidden: at this tier the rail is a docked 52px ribbon whose
+     width is the ladder's, not the reader's. */
+  :root[data-layout="zero"] .col-handle-list {
+    display: block;
   }
   :root[data-layout="zero"] .view-ohbox .read-col,
   :root[data-layout="zero"] .view-history .read-col,

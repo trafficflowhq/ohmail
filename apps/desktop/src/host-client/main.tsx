@@ -28,6 +28,7 @@ import "../../../webapp/app/app.css";
 // too, so the Zero ladder must reach the hosted door's shell as well.
 import "../../../webapp/app/zero-layout.css";
 import { DesktopLocale } from "../DesktopLocale.js";
+import { stampColumns } from "../../../webapp/app/shell/column-store";
 import { BearerManager } from "./bearer.js";
 import { HostGate } from "./HostGate.js";
 
@@ -59,6 +60,11 @@ try {
   try { layout = localStorage.getItem("ohmail.layout"); } catch { /* blocked */ }
   if (layout === "zero") document.documentElement.dataset.layout = "zero";
 }
+/* …and the THREE COLUMNS' widths — the window entry's contract, third axis. This page runs on
+   a phone or a tablet, where the two separators are off screen below 901px and this is a stamp
+   with nothing to stamp; a tablet held wide gets the same shell the window does, and the store
+   is that browser's own, which is the right scope for a fact about a screen. */
+stampColumns();
 
 const root = document.getElementById("root");
 if (!root) throw new Error("ohmail host client: #root is missing from index.html");

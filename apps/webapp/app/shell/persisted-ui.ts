@@ -194,6 +194,21 @@ export const UI_KEYS = {
   foldersOpened: "ohmail.ui.rail.foldersOpened",
   /** Ids the reader chose to view in their ORIGINAL (light) rendering, despite a dark theme. */
   mailOriginal: "ohmail.ui.mail.original",
+  /**
+   * THE THREE COLUMNS' WIDTHS — `{"v":1,"rail":<px>,"list":<px>}`, a field absent meaning the
+   * default and the key removed when both are.
+   *
+   * Named here so everything this app stores stays greppable from one prefix, but read and
+   * written by `column-store.ts` rather than by any hook above: the two widths are ONE record
+   * (a reset of one must not rewrite the other), they are stamped on `<html>` before first
+   * paint by a script that has no React at all, and a drag writes at 60 Hz and persists once —
+   * none of which is what a post-mount `useState` hook is for.
+   *
+   * PER MACHINE, and it SURVIVES SIGN-OUT with the rail's disclosures and the face pin: a
+   * column width is a fact about the screen and there is no mail in a number of pixels
+   * (`test/sign-out-clears-durable-stores.test.ts` is where that decision is recorded).
+   */
+  columns: "ohmail.ui.columns",
 } as const;
 
 /**

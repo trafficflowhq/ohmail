@@ -1,0 +1,94 @@
+/* ═══ THE COLUMN SEPARATORS — the gap itself, in the compositor's idiom ══════════════════
+
+   A tiling compositor has no grip: the gap between two windows is where you drag, the cursor
+   says so, and the border is what lights. So each handle is an invisible strip exactly one
+   tile gap wide, and its one visible part is a centre line whose width is the ring product —
+   `--focus-w × --teach`, floored at a hairline — so paper draws 1px and the ohmarchy face
+   draws its own 2px border weight. It appears on hover in `--hair` and turns to the focus
+   accent while the handle is dragged or holds keyboard focus.
+
+   TOKENS ONLY, and no face is named anywhere in this file: paper is quieter than ohmarchy
+   here because `--teach` is 0 there and 1 here, which is the one switch the whole teaching
+   contract runs on — not because a second rule was written for it. `ColumnHandles.tsx` holds
+   the behaviour and `column-store.ts` the numbers; this file holds nothing but appearance.
+
+   WHERE THE HANDLES ARE: the rail's rides the deck's own gap, which begins exactly at
+   `--gap-edge + --rail-track` (that track is declared on `.deck` in app.css, so the width and
+   the handle over it can never drift apart). The list's rides the split's gap, reaching out of
+   the list column by exactly the gap it sits in. ════════════════════════════════════════ */
+.col-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: var(--gap-tile);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  appearance: none;
+  cursor: col-resize;
+  /* the pointer events are the whole interaction, so the browser's own touch panning and
+     text selection must not take the gesture first */
+  touch-action: none;
+  user-select: none;
+  z-index: 2;
+}
+.col-handle::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: max(1px, calc(var(--focus-w) * var(--teach)));
+  transform: translateX(-50%);
+  background: var(--hair);
+  opacity: 0;
+  transition:
+    opacity 0.15s var(--swift),
+    background 0.15s var(--swift);
+}
+.col-handle:hover::before {
+  opacity: 1;
+}
+/* The line IS the focus indication — a ring around a one-gap-wide strip would sit on top of
+   the two tiles it separates and read as a border on the wrong thing. */
+.col-handle:focus-visible {
+  outline: none;
+}
+.col-handle:focus-visible::before,
+.col-handle.dragging::before {
+  opacity: 1;
+  background: var(--focus, var(--accent));
+}
+.col-handle-rail {
+  left: calc(var(--gap-edge) + var(--rail-track));
+}
+.col-handle-list {
+  right: calc(-1 * var(--gap-tile));
+}
+/* While a drag is live nothing under the pointer may claim it: a mail body's iframe would
+   swallow the pointer the moment the cursor crossed into the reading column, and a selection
+   started in the list would follow the drag as a highlight nobody asked for. */
+.deck.col-resizing,
+.deck.col-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+.deck.col-resizing iframe {
+  pointer-events: none;
+}
+/* ── WHERE THERE IS NO GAP THERE IS NO HANDLE ────────────────────────────────────────────
+   Below the wide breakpoint the rail is a drawer (classic) or a docked ribbon (zero) with a
+   width neither the reader nor this file chooses, and the split has collapsed to one column.
+   `display: none` is also what keeps them out of the tab order — a focusable separator for a
+   seam that is not on screen would be a stop on the keyboard walk that does nothing.
+
+   The list handle's rule is the ≤900 one BY DEFAULT because that is classic's answer; the
+   Zero ladder keeps the split alive from 722 and re-shows the handle there, in its own
+   stylesheet, where every layout-conditional rule in this app lives. */
+@media (max-width: 900px) {
+  .col-handle-rail,
+  .col-handle-list {
+    display: none;
+  }
+}

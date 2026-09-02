@@ -2461,6 +2461,10 @@
     "deleteConfirm": "Löschen bestätigen",
     "panelClose": "Offene Zeile schließen"
   },
+  "columns": {
+    "railHandle": "Breite der Seitenleiste",
+    "listHandle": "Breite der Liste"
+  },
   "viewError": {
     "title": "Diese Ansicht wurde nicht geladen.",
     "body": "Beim Zeichnen dieses Bildschirms ist etwas schiefgegangen. An deiner Post wurde nichts verändert.",
