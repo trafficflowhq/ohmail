@@ -602,8 +602,22 @@ export const SEND_FAILED_SENTENCE =
  * operation (15 s to connect, 25 s of inactivity). The gap this closes is that a send is a
  * SEQUENCE of those: a cold IMAP dial + LOGIN + LIST, then a full SMTP session, then a second
  * LIST, then an APPEND of the whole message. Every one of them can sit just under its own
- * deadline without any of them tripping, so the sequence has no ceiling at all, and the press
- * that started it has nothing to wait on but the platform's own kill.
+ * deadline without any of them tripping, so the sequence had no ceiling at all, and the press
+ * that started it had nothing to wait on but the platform's own kill.
+ *
+ * ── WHAT IT COVERS, STATED EXACTLY, BECAUSE "THE WHOLE ATTEMPT" WAS TOO STRONG ─────────────
+ *
+ * The clock starts once the RESERVATION HAS COMMITTED and covers everything after it: assembly,
+ * the dial, the submission, the finalize, the projection — every step that touches a network or
+ * can hang. It does NOT cover `reserve` itself, and that is a real residual rather than an
+ * oversight to gloss: `reserve` takes `FOR UPDATE` on the draft row and its `recordChange` takes
+ * the account's seq lock, and a lock wait does not throw. It is left outside because a breach
+ * there would have no reservation to finalize and no key to answer under, so bailing would risk
+ * a transaction that commits afterwards — a reservation nobody told the client about. The state
+ * that resolves is a same-key retry, which is what `resumeExisting` is for; a ceiling that
+ * manufactured a second unresolvable state to bound a lock wait would be the worse trade.
+ * `totalMs` on the phase line DOES include the reservation, so the number an operator reads is
+ * the whole request even though the clock is not.
  *
  * The number is chosen against what the sequence actually costs, not guessed. A send opens a
  * FRESH adapter every time, so every press pays a full cold dial; on some providers that dial is
@@ -880,6 +894,11 @@ export class SendService {
         // else is a diagnostic and gets the standing sentence instead.
         await this.finalizeFailed(ctx, sendId, draftId,
           err instanceof ServiceError ? err.message : SEND_FAILED_SENTENCE);
+        // The line is owed here too. This arm is the ONE class of failure the pre-SMTP window
+        // exists for, and it was the one attempt that settled without saying what it cost —
+        // "one line per settled attempt" was false for exactly the case somebody investigating
+        // a broken send would look for first.
+        this.logPhases(deps, ctx, draftId, "failed", phases, started);
         throw err;
       }
       // `tDial` is still `tWindow` when the ceiling fired inside ASSEMBLY, so a breach there is
@@ -901,7 +920,13 @@ export class SendService {
         );
         await this.finalizeFailed(ctx, sendId, draftId, SEND_TIMEOUT_SENTENCE);
         this.logPhases(deps, ctx, draftId, "failed", phases, started);
-        throw new ServiceError("send_timeout", 504, SEND_TIMEOUT_SENTENCE, undefined, true);
+        // NOT retryable, and the line above is why: `finalizeFailed` has just committed this
+        // reservation as `failed`, so the key is SPENT and a retry under it can only ever be
+        // answered 409 `failed`. Marking it retryable put the client in `queued` — "Not sent yet,
+        // ohmail is still trying" — over a non-delivery the server had already recorded and
+        // explained, and threw away `SEND_TIMEOUT_SENTENCE`, which exists to be read. Terminal
+        // here means the sentence renders and Send is the retry, which is the truth.
+        throw new ServiceError("send_timeout", 504, SEND_TIMEOUT_SENTENCE, undefined, false);
       }
       adapter = opened.value;
 
@@ -1005,8 +1030,13 @@ export class SendService {
     deps: SendDeps, ctx: ServiceContext, draftId: string,
     status: SendResult["status"], phases: SendPhaseTimings, started: number,
   ): void {
-    phases.totalMs = Date.now() - started;
-    (deps.log ?? defaultLog).info("send_phases", { draftId, accountId: ctx.accountId, status, ...phases });
+    // SNAPSHOT, because two abandoned closures still hold a reference to `phases` and go on
+    // writing to it after the ceiling has answered. Spreading into a fresh object at read time is
+    // what keeps a logged line a statement about the moment it was made; today the object is read
+    // exactly once so nothing is wrong, and that is a property of the call sites rather than of
+    // this function.
+    const settled = { ...phases, totalMs: Date.now() - started };
+    (deps.log ?? defaultLog).info("send_phases", { draftId, accountId: ctx.accountId, status, ...settled });
   }
 
   /**

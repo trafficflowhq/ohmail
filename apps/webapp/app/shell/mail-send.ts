@@ -129,8 +129,11 @@ export interface SendState {
    *
    * `true` — THE SERVER ACCEPTED IT. The reservation is committed under this key and the
    * submission is still being handed to the mail server (the send route's own `queued`, past its
-   * attempt ceiling). So "Accepted. ohmail sends it on its next pass." is a true statement, and
-   * the surface may close on it: the draft row carries the outcome from here.
+   * attempt ceiling). What that licenses is one thing only: NOT telling the reader their request
+   * may have failed to arrive, because a committed reservation proves it did. It does NOT
+   * license closing the surface, and it does NOT license "ohmail sends it on its next pass" —
+   * no pass claims an interactive row (`claimDue` requires a `send_key` this send has never
+   * had). See `absorb` and `SendStatus` for both corrections.
    *
    * ABSENT — the request may never have arrived. A transport rejection, a replay hold, an
    * offline press: the intent is in the durable outbox and the retry driver is trying. The only
@@ -561,6 +564,23 @@ export function useMailSend(
    * delivered it.
    */
   const locked = useRef(new Set<string>());
+  /**
+   * LANES THE SERVER HAS ACCEPTED — and it is STICKY, which a review had to point out.
+   *
+   * The 202 is said ONCE, by the request that reserved the send. Every retry after it presents
+   * the same key against a live reservation and is answered `in_flight` (409), whose result maps
+   * to a plain `queued` with no `accepted` flag — so `setPhase` overwrote the accepted state five
+   * seconds after the press and the line went from "the product has this" to "this may not have
+   * arrived". That is the collapse the two flavours exist to prevent, running BACKWARDS: the
+   * request provably did arrive, because there is a committed reservation, and the surface was
+   * saying it might not have. It fired on every accepted send and then persisted, because every
+   * later retry is `in_flight` too.
+   *
+   * A committed reservation is a fact that cannot become untrue, so the flag is remembered per
+   * lane rather than re-derived from each answer. Cleared only on a terminal outcome, beside the
+   * lock — the two have the same lifetime for the same reason.
+   */
+  const accepted = useRef(new Set<string>());
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const attempt = useRef(0);
   const settledRef = useRef(onSettled);
@@ -701,8 +721,12 @@ export function useMailSend(
 
   const absorb = useCallback(
     (key: string, m: MailSend, res: MutationResult) => {
-      const next = phaseFor(res);
+      let next = phaseFor(res);
       if (res.status === "queued") {
+        // Remember the server's 202 the one time it is said, and re-apply it to every later
+        // `in_flight` answer for this lane — see {@link accepted}.
+        if (next.accepted === true) accepted.current.add(key);
+        else if (accepted.current.has(key)) next = { ...next, accepted: true };
         queued.current.set(res.key, key);
         inFlight.current.set(res.key, m);
         // STILL LOCKED: the intent is out there under this key and a second press would
@@ -713,6 +737,9 @@ export function useMailSend(
         queued.current.delete(res.key);
         inFlight.current.delete(res.key);
         locked.current.delete(key);
+        // Terminal: the reservation this named is settled, so the fact it was accepted is spent
+        // with it. Cleared beside the lock because the two have the same lifetime.
+        accepted.current.delete(key);
         // TERMINAL — `confirmed`, `failed` or `unverified`. The key is spent: whatever it named
         // on the server is now that key's permanent answer, and the next press is a NEW send that
         // must get a new key. Resuming a spent one would replay the old outcome for ever, which
@@ -729,29 +756,35 @@ export function useMailSend(
       else setPhase(key, next);
 
       /**
-       * THE SERVER HAS IT — hand the surface back, on the same beat a delivery gets.
+       * ── AN ACCEPTED-PENDING SEND DOES NOT CLOSE THE SURFACE, AND THE FIRST VERSION DID ──────
        *
-       * Only for `accepted`, i.e. the send route's own 202: the reservation is committed under
-       * this key, so the draft row is now the record of what happens next and the editor has
-       * nothing left to hold. A transport-queued send is NOT this — the request may never have
-       * arrived — and its surface stays open under "Not sent yet".
+       * It ran `settledRef.current(key, m)` on the beat, reasoning that the server holds a
+       * committed reservation so the editor has nothing left to hold. Both halves were wrong and
+       * a review caught them.
        *
-       * What is deliberately NOT done here is everything `settle` does beyond closing. The lane
-       * stays LOCKED and its durable key stays claimed, because the intent is still out there and
-       * a second press would be a second delivery; the triage debt is NOT discharged, because a
-       * reply that has not landed has answered nothing; and the toast says accepted rather than
-       * sent. The scratch IS cleared — the server's row carries the message from here, and a
-       * local copy that outlived it would come back as a phantom draft beside it.
+       * FIRST, that callback is not "close the surface". `AppShell.onSendSettled` says in three
+       * places that it fires on a CONFIRMATION and on nothing else, and its body acts on it: it
+       * marks the answered message READ and spends its resurfaced pin, steps the Reply Run past
+       * the item, drops a drafted alternative as moot, and discards the stranded row a recovery
+       * compose was seeded from. Every one of those states "this was answered" about a message
+       * that may never have left. The comment that used to stand here claimed the triage debt was
+       * not discharged; that was true of `settle`'s own discharge and false of the shell's, which
+       * is the whole defect — reasoning about the function I wrote instead of the one I called.
+       *
+       * SECOND, the premise "the draft row carries it from here" does not hold for an INTERACTIVE
+       * send. Nothing server-side picks that row up: `claimDue` requires `send_at` AND `send_key`
+       * to be non-null and a manual send has neither, so no pass ever looks at it — and the
+       * recovery arm that does claim a row runs verify-by-Sent, which never re-submits. The only
+       * thing that resolves an interactive accepted-pending send is the retry driver in THIS
+       * hook, which lives exactly as long as this surface's session. Closing the surface would
+       * hand the message to a resolver that does not exist.
+       *
+       * So both queued flavours keep their surface, and the difference between them stays where
+       * it belongs: in the sentence. The lane stays locked and its durable key stays claimed,
+       * because the intent is out there under it and a second press would be a second delivery.
        */
-      if (res.status === "queued" && next.accepted === true) {
-        beat(key, () => {
-          clearLaneScratch(key, m, owner.current);
-          settledRef.current(key, m);
-          toast(t(key === COMPOSE_SEND_KEY ? "compose.statusAccepted" : "reply.statusAccepted"));
-        });
-      }
     },
-    [settle, setPhase, beat, toast, t],
+    [settle, setPhase],
   );
 
   const flush = useCallback(async (): Promise<void> => {

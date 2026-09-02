@@ -70,16 +70,26 @@ export function SendStatus({
          * TWO QUEUED STATES, TWO SENTENCES, AND THE DIFFERENCE IS WHO HAS THE MESSAGE.
          *
          * `accepted` is the send route's own answer: it reserved the send under this key and
-         * stopped waiting for the submission at its attempt ceiling, so the server HAS it and
-         * "Accepted. ohmail sends it on its next pass." is true. Without it the request may
-         * never have arrived at all — a transport rejection, an offline press — and the only
-         * honest line is that it has not gone yet and we are still trying.
+         * stopped waiting for the submission at its attempt ceiling. The server HAS it, the
+         * submission is still in flight, and this hook's retry driver is what will report the
+         * outcome — so from the reader's side this is the SAME condition as a long send, and it
+         * says so. Without the flag the request may never have arrived at all — a transport
+         * rejection, an offline press — and the only honest line is that it has not gone yet.
          *
-         * Branching on the flag rather than on the phase is the whole point: saying "Accepted"
-         * about a request nobody received is exactly the false claim this component exists to
-         * prevent, and it is one careless `else` away.
+         * ── WHY NOT `statusAccepted` ─────────────────────────────────────────────────────────
+         *
+         * That string says "ohmail sends it on its next pass", and for an INTERACTIVE send there
+         * is no such pass. Both of `claimDue`'s arms require `drafts.send_key` to be non-null
+         * (and a `send_at` to compare), which a manual send has never had; and the arm that does
+         * claim a row runs verify-by-Sent, which never re-submits. The sentence is true of a
+         * SCHEDULED send and of nothing this state can produce, so it is not said here. The key
+         * stays in the catalogue for the surface that can honestly use it.
+         *
+         * Branching on the flag rather than on the phase is still the point: telling a reader
+         * their request may not have arrived when a committed reservation says it did is the same
+         * false claim in the other direction, and it is one careless `else` away.
          */
-        ? { tone: "pending", text: t(send.accepted === true ? "statusAccepted" : "statusQueued") }
+        ? { tone: "pending", text: t(send.accepted === true ? "statusSendingLong" : "statusQueued") }
         : send.phase === "unverified"
           ? { tone: "warn", text: t("statusUnverified") }
           : send.phase === "failed"
