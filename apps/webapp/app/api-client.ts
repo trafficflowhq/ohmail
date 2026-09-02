@@ -439,6 +439,26 @@ export interface MailboxDTO {
    * time a countless poll lands. Read it with `typeof === "number"`; never `?? 0`.
    */
   messageCount?: number;
+  /**
+   * HOW MUCH MAIL THE SERVER SAYS IS IN THERE — the first pull's denominator (mail 0083).
+   *
+   * Σ `mailbox_folders.server_exists` over the folders some cycle has opened. Unlike
+   * {@link messageCount} it rides EVERY response, including the shell's 30 s poll, because the
+   * server takes the sum over folder rows it was already reading — there is no aggregate to opt
+   * out of.
+   *
+   * Three rules for a reader, and all three are the difference between a true number and a
+   * confident wrong one:
+   *
+   *  · `typeof === "number"`, never `?? 0`. ABSENT is "no folder of this mailbox carries a
+   *    count yet" (a first cycle that has not landed) or an API older than the field; `0` would
+   *    be the claim that the mail server holds nothing.
+   *  · It GROWS as the first cycle walks the folder tree, so it is a floor that moves and not a
+   *    fixed total. A remaining count derived from it can rise.
+   *  · It can be SMALLER than {@link messageCount} — the mirror holds mail from folders whose
+   *    count no cycle has recorded — so `remaining` is clamped at zero and shows nothing there.
+   */
+  serverMessageCount?: number;
 }
 
 export interface SubscriptionStatus {
@@ -866,6 +886,37 @@ export const mailboxes = {
    * and has to re-authenticate, which is the correct outcome and not an error to paper over.
    */
   create: (b: CreateMailboxBody) => api<MailboxDTO>("/mailboxes", { method: "POST", body: b }),
+
+  /**
+   * TEST A CONNECTION WITHOUT CREATING ANYTHING — `POST /mailboxes/probe`.
+   *
+   * `connection`-classed and `stepUp`-gated with {@link create}, because the body carries a
+   * mailbox password; it has no `:id` because the whole point is that no row exists yet. It
+   * writes nothing at all — no mailbox, no credential, no folder.
+   *
+   * ── THE FAILURE SHAPE IS `create`'s, BY CONSTRUCTION ────────────────────────────────────
+   *
+   * The server throws the SAME `mailbox_probe_failed` refusal with the same seven-member
+   * `details.reason` taxonomy, so `probeReasonOf` classifies both and every surface that renders
+   * a connect failure renders a test failure with no new copy. Only SUCCESS is new: nothing in
+   * this product could previously produce one.
+   *
+   * ── AND SUCCESS CARRIES A FOLDER COUNT, WHICH IS THE CHECKABLE PART ────────────────────
+   *
+   * A greeting and an accepted LOGIN prove the host, the port, the TLS mode and the password.
+   * They do not prove the account can READ anything, and "Connected" is a claim nobody can check.
+   * The LIST runs inside the connection that proved the password — a second dial would be a
+   * second login, outside the admission slot and charged again by providers that rate-limit auth.
+   * `folders` is `null` where no count was taken; a renderer shows a verdict with no number
+   * rather than "0 folders".
+   */
+  probe: (b: {
+    address: string;
+    imap: { host: string; port?: number; secure?: boolean; user?: string; pass: string };
+  }) =>
+    api<{ ok: true; host: string; user: string; folders: number | null }>(
+      "/mailboxes/probe", { method: "POST", body: b },
+    ),
 
   /**
    * Change a connected mailbox's settings — the reconnect/rotate path.

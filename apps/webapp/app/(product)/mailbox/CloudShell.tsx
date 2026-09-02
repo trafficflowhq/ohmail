@@ -16,6 +16,7 @@ import { SecuritySection } from "./SecuritySection";
 import { AccountSection } from "./AccountSection";
 import { MailboxSection } from "./MailboxSection";
 import { beginOAuthReturn } from "./oauth-return";
+import { useCloudFirstRun } from "./useCloudFirstRun";
 
 /**
  * THE MICROSOFT CONSENT RETURN, AT MODULE SCOPE — before the router, before the first render.
@@ -76,6 +77,20 @@ export function CloudShell({ demo }: { demo: boolean }) {
    * header carries the measured leak this closed.
    */
   const devicePairing = useDevicePairing(demo);
+
+  /**
+   * THE FIRST-RUN FLOW'S DOOR — the same seam as the panes below, one layer up.
+   *
+   * `AppShell` renders the setup stage and may not call `POST /mailboxes/probe`, `POST
+   * /mailboxes`, `POST /mailboxes/:id/organize` or `PATCH /consent/settings` itself, for the
+   * reason every prop on this component exists. `undefined` on the demo, which withholds the
+   * stage structurally rather than rendering one whose buttons refuse.
+   *
+   * The PAIRING panel rides along wherever this server pairs — the same `features.pairing` gate
+   * the Devices pane is built on, so the last step of setup exists exactly where the surface it
+   * links to does.
+   */
+  const firstRun = useCloudFirstRun(demo, devicePairing ? <DevicesSection /> : undefined);
 
   const resolveOwner = useCallback(async (): Promise<string | null> => {
     try {
@@ -177,6 +192,8 @@ export function CloudShell({ demo }: { demo: boolean }) {
            `GET /billing/subscription`, which `app/shell` may not call — and a FUNCTION because
            the shell binds the one thing the node cannot know: where "start a plan" lands. */
         aiCredits={({ onStartPlan }) => <AiCreditNotice onStartPlan={onStartPlan} />}
+        /* THE FIRST-RUN STAGE'S CALLS. Withheld on the demo — see `useCloudFirstRun`. */
+        {...(firstRun ? { firstRun } : {})}
       />
     </AccountLocale>
   );

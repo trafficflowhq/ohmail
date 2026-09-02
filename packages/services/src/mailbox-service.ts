@@ -2528,6 +2528,32 @@ export class MailboxService {
       hasSyncCursor: f.highestmodseq != null,
       updatedAt: f.updatedAt.toISOString(),
     }));
+    /* ── THE FIRST PULL'S DENOMINATOR (see `MailboxDTO.serverMessageCount`) ────────────────
+     *
+     * Σ `server_exists` over the rows just read. Mail 0083 added the column and every cycle
+     * that opens a folder writes it; until this line NOTHING read it back, which is the
+     * built-tested-unreachable shape the onboarding rulings name — a number written on a
+     * heartbeat that no surface could ever show.
+     *
+     * NO `?? 0` ANYWHERE IN HERE, in either direction. A row whose `server_exists` is NULL is a
+     * folder no cycle has opened under a build that writes the column, and treating that as a
+     * zero would understate the total; a mailbox where EVERY row is NULL has no answer at all,
+     * and `seen` is what keeps that case ABSENT rather than shipping a `0` that reads as "the
+     * server holds no mail". The accumulator starts at 0 and only rows that actually carry a
+     * number reach it, so the two cases stay apart.
+     *
+     * It is a sum over the folders that have been OPENED, so it grows as the first cycle walks
+     * the tree — stated on the DTO field, because a client that treats it as a fixed total will
+     * draw a progress bar that loses ground.
+     */
+    let serverExistsSum = 0;
+    let serverExistsSeen = false;
+    for (const f of fRows) {
+      if (typeof f.serverExists === "number") {
+        serverExistsSum += f.serverExists;
+        serverExistsSeen = true;
+      }
+    }
     // ── OUR OWN FILINGS THIS MAILBOX HAS NOT APPLIED YET (see `MailboxDTO.pendingMoves`) ──
     //
     // A COUNT and never the rows: this DTO is read on the mailbox panel and by the shell strip,
@@ -2662,6 +2688,11 @@ export class MailboxService {
          a key whose presence says the opposite of what it means, and `packages/api` hands these
          objects to a local host as well as to a serializer. */
       ...(messageCount === undefined ? {} : { messageCount }),
+      /* SPREAD, on the line above's rule and for the sharper of the two reasons it gives: here
+         ABSENT means "no folder of this mailbox has been counted", and a `0` in its place is the
+         sentence "your mail server holds nothing". That is the one number on this DTO whose
+         wrong value is a claim about somebody's mailbox rather than about this build. */
+      ...(serverExistsSeen ? { serverMessageCount: serverExistsSum } : {}),
       folders,
       createdAt: m.createdAt.toISOString(),
     };

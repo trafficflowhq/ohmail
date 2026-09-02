@@ -2200,6 +2200,7 @@
     "decideAfter": "Then the Screener proper: every other waiting sender, the same three verbs.",
     "doneTitle": "What ohmail did",
     "doneScreened": "{count, plural, one {1 sender} other {# senders}} screened",
+    "doneScreenedWhy": "Each decision is a rule under Settings → Rules.",
     "doneHistory": "{count, number} messages listed under History",
     "doneHistoryWhy": "Older than the window. Still in the Inbox — nothing there moved.",
     "doneFolders": "Folders created in your mailbox",

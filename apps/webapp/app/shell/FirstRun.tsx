@@ -1,0 +1,918 @@
+"use client";
+
+/**
+ * THE FIRST-RUN STAGE — the screens a person meets between installing ohmail and taking their
+ * first Screener decision.
+ *
+ * ── WHAT MAKES THIS ONE COMPONENT AND NOT ELEVEN ROUTES ───────────────────────────────────
+ *
+ * It is a DIALOG over the app, at `#/first-run`, and the app is behind it the whole time. That
+ * is not decoration: "Open ohmail meanwhile" on the pull screen has to leave the flow without
+ * ending it, and a person who wanders into Settings and comes back has to find the same run
+ * where they left it. A stack of routes would have to reconstruct that; an overlay over a live
+ * shell already is it.
+ *
+ * ── THE STEP IS DERIVED. THERE IS NO COUNTER, AND {@link at} IS NOT ONE ───────────────────
+ *
+ * `deriveOnboardingStep` (`onboarding.ts`) answers "where does this run RESUME" from the facts
+ * the product actually stored, and it is the authority here. {@link at} is a CURSOR INSIDE ONE
+ * RUN — what "Back" and "Continue" move — and it exists because three screens are not resume
+ * targets and cannot be: `welcome` is shown once at the top of a run with nothing behind it,
+ * `window` shares one write with `consent` (so there is no truth-condition between them to
+ * resume on), and `pair` is offered after the flow is otherwise finished.
+ *
+ * **Every write clears the cursor**, which is what "re-derive after every write" means here
+ * concretely: the derivation, not this component, decides what comes next the moment anything
+ * is stored. A cursor that survived a write would be a step counter with extra steps.
+ *
+ * ── THE FOOT IS THE SAME ON EVERY SCREEN, AND THAT IS THE PROMISE ─────────────────────────
+ *
+ * Cancel and Start over are on every screen that has a foot; Back is there wherever a step has
+ * one before it. Both destructive verbs confirm IN PLACE — a second dialog stacked over a
+ * dialog is how a person loses track of which one Escape closes, and there is exactly one
+ * Escape binding here (`overlay` scope, so it beats every view binding underneath).
+ */
+
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
+import { useLocale, useTranslations } from "next-intl";
+import {
+  Button, DecisionBar, Kbd,
+  SettingsActions, SettingsBanner, SettingsChoice, SettingsField, SettingsRow, SettingsVerdict,
+} from "@ohmail/ui";
+import type { DecisionDestination, DecisionScope } from "@ohmail/ui";
+import { useKeyBindings } from "./keymap";
+import { PROVIDERS, hostsFor, providerById, providerLabel, type ProviderPreset } from "./providers";
+import {
+  deriveOnboardingStep, onboardingPath,
+  type OnboardingFacts, type OnboardingStep,
+} from "./onboarding";
+import type { FirstRunHost, FirstRunMailboxInput, FirstRunProbeOk } from "./first-run-host";
+import { pullEtaMs, pullRate, pullRemaining, pullSampleStep, type PullSample } from "./pull-rate";
+import "./first-run.css";
+
+/**
+ * THE RAIL — seven groups over eleven screens, because the rail names PHASES and several
+ * screens are two halves of one phase (welcome/mailbox/elsewhere are all "get the mailbox in";
+ * ai/provider are one question and its answer; summary/pair are both "done").
+ *
+ * Ordered, and the order is `onboardingPath`'s: a rail whose order disagreed with the path's
+ * would light a dot the Back button walks away from.
+ */
+const RAIL: Array<{ id: string; steps: OnboardingStep[] }> = [
+  { id: "mailbox", steps: ["welcome", "mailbox", "elsewhere"] },
+  { id: "organize", steps: ["consent"] },
+  { id: "history", steps: ["window"] },
+  { id: "ai", steps: ["ai", "provider"] },
+  { id: "pull", steps: ["pull"] },
+  { id: "decide", steps: ["decide"] },
+  { id: "done", steps: ["summary", "pair"] },
+];
+
+/** The five destinations the guided decision offers, with the keycap each one wears. */
+const DECIDE_LEGEND: Array<{ key: string; copy: "decideOhbox" | "decideReads" | "decideReceipts" | "decideScreened" | "decideSpam" }> = [
+  { key: "o", copy: "decideOhbox" },
+  { key: "r", copy: "decideReads" },
+  { key: "c", copy: "decideReceipts" },
+  { key: "n", copy: "decideScreened" },
+  { key: "x", copy: "decideSpam" },
+];
+
+/** The history-depth options. `365` is the default and wears the word for it. */
+const WINDOWS = ["90", "180", "365", "all"] as const;
+type WindowChoice = (typeof WINDOWS)[number];
+
+/** The one sender the guided decision is about, and what a decision on it does. */
+export interface FirstRunDecideSubject {
+  name: string;
+  address: string;
+  /** How many of their messages are waiting. */
+  held: number;
+  /** The "first contact N days ago" line, already formatted by the host. */
+  since: ReactNode;
+  onDecide: (dest: DecisionDestination, opts: { markRead: boolean; scope: DecisionScope }) => void;
+}
+
+export interface FirstRunProps {
+  host: FirstRunHost;
+  facts: OnboardingFacts;
+  /**
+   * RE-READ THE FACTS. Called after every write, and the reason the stage needs no local copy
+   * of anything it just stored: the next render's step comes from the same place the first
+   * one's did.
+   */
+  onRefresh: () => void;
+  /** Leave the stage — the caller returns the route to the app. */
+  onLeave: () => void;
+  /**
+   * THE PULL SCREEN'S NUMBERS, all from the client's own mirror except the last.
+   *
+   * `screened`/`history` are what the two counters say; `mirrorCount` is the numerator the rate
+   * sampler folds. The DENOMINATOR is on the facts (`serverMessageCount`), because only the
+   * server can say how much is out there.
+   */
+  pull: { screened: number; history: number; mirrorCount: number };
+  /** How much mail the server says is in the mailbox — see `MailboxDTO.serverMessageCount`. */
+  serverMessageCount?: number;
+  /** The guided decision's sender, or `null` when the queue is empty (the step is skipped). */
+  decide: FirstRunDecideSubject | null;
+  /** `true` while the run resumed after the connection dropped — the pull's own notice. */
+  resumed?: boolean;
+  /**
+   * THE MAILBOX'S ID — a separate prop rather than a field on {@link OnboardingFacts}.
+   *
+   * The derivation is a pure function over TRUTH-CONDITIONS and an id is not one of them: it
+   * decides nothing, and putting it there would invite an arm that branches on which mailbox
+   * this is. The STAGE needs it, because `organize` and `forgetMailbox` address a row.
+   */
+  mailboxId: string | null;
+  /**
+   * HOW THE HOLDER'S "since" INSTANT IS SAID IN WORDS — the host formats it, as everywhere.
+   *
+   * A `string` and not a `ReactNode`, unlike {@link FirstRunDecideSubject.since}: this one is
+   * INTERPOLATED INTO A SENTENCE (`mailboxes.readerSince*`), and a message catalogue takes
+   * values, not elements. The decision card's line is a whole line of its own and may be a node.
+   */
+  organizedSince?: string;
+  /** When the holder was last seen, in words, for the stopped banner. Interpolated likewise. */
+  organizerLastSeen?: string;
+}
+
+/**
+ * WHICH SCREEN IS ON, or `null` when the flow must not be open at all.
+ *
+ * Exported for the tests, which drive this table directly rather than through a render: the
+ * cursor/derivation interaction is the part with rows, and rows are what a table test is for.
+ */
+export function firstRunStep(
+  facts: OnboardingFacts, at: OnboardingStep | null,
+): OnboardingStep | null {
+  const derived = deriveOnboardingStep(facts);
+  // THE DERIVATION CLOSES THE FLOW AND THE CURSOR MAY NOT REOPEN IT. `null` means the
+  // completion stamp is set — cancelled or finished — and a cursor left over from the press
+  // that stamped it would keep the stage on screen after the person asked to leave.
+  if (derived === null) return null;
+  if (at !== null) return at;
+  // THE ONE PLACE THE OPENING SCREEN IS NOT THE DERIVED ONE. A run with no mailbox behind it
+  // has nothing to resume, so it starts at the welcome; a run that resumes onto `mailbox`
+  // because the mailbox was REMOVED has a history and does not need the greeting again.
+  return facts.mailbox === null && derived === "mailbox" ? "welcome" : derived;
+}
+
+export function FirstRun({
+  host, facts, onRefresh, onLeave, pull, serverMessageCount, decide, resumed,
+  mailboxId, organizedSince, organizerLastSeen,
+}: FirstRunProps) {
+  const t = useTranslations("onboarding");
+  const tm = useTranslations("mailboxes");
+  const tp = useTranslations("providerPicker");
+  const locale = useLocale();
+  const ids = useId();
+
+  /** The cursor inside this run — never a step counter. See the header. */
+  const [at, setAt] = useState<OnboardingStep | null>(null);
+  /** Which destructive verb is asking, if either is. One at a time, in the foot. */
+  const [confirm, setConfirm] = useState<null | "cancel" | "restart">(null);
+  const [busy, setBusy] = useState(false);
+  /** A write that failed, in the server's own words. Cleared by the next attempt. */
+  const [problem, setProblem] = useState<string | null>(null);
+
+  const step = firstRunStep(facts, at);
+  const path = useMemo(() => onboardingPath(facts), [facts]);
+
+  /**
+   * EVERY WRITE GOES THROUGH HERE, and every write clears the cursor.
+   *
+   * The `finally` is what makes the clear unconditional, and that is deliberate even for a
+   * FAILED write: a refusal may still have changed something (a claim the worker took while
+   * the request was in flight), and the derivation is the only thing entitled to say where the
+   * flow stands afterwards. Re-deriving after a failure costs a render; NOT re-deriving after
+   * one leaves the person on a screen whose question the facts have already answered.
+   */
+  const run = useCallback(async (write: () => Promise<void>, keepCursor?: OnboardingStep) => {
+    setBusy(true);
+    setProblem(null);
+    try {
+      await write();
+      setAt(keepCursor ?? null);
+    } catch (err) {
+      setProblem(host.probeMessage(err) ?? String((err as { message?: string })?.message ?? err));
+      setAt(null);
+    } finally {
+      setBusy(false);
+      onRefresh();
+    }
+  }, [host, onRefresh]);
+
+  /** Move inside the run — the Back and Continue verbs, and nothing else. */
+  const goTo = useCallback((next: OnboardingStep) => {
+    setConfirm(null);
+    setProblem(null);
+    setAt(next);
+  }, []);
+  const forward = useCallback(() => {
+    if (step === null) return;
+    const i = path.indexOf(step);
+    const next = i >= 0 ? path[i + 1] : undefined;
+    if (next) goTo(next);
+  }, [goTo, path, step]);
+  const backStep = step === null ? undefined : path[path.indexOf(step) - 1];
+
+  /**
+   * LEAVING STAMPS COMPLETION — cancel and finish alike, because the truth-condition that
+   * closes the flow is one condition and both of these are it. A cancel that stamped nothing
+   * would re-open this stage at the next boot on whatever screen it was abandoned at.
+   */
+  const leave = useCallback(() => {
+    void run(async () => { await host.complete(); }).then(onLeave);
+  }, [host, onLeave, run]);
+
+  /**
+   * THE ONE ESCAPE BINDING, at `overlay` scope.
+   *
+   * `overlay` beats every `view` binding underneath (`keymap.tsx` argues why that rank exists),
+   * so Escape here is not competing with the Ohbox's selection-clearing Escape. It ASKS rather
+   * than acts: this flow's cancel writes a stamp, and a keystroke that silently ends setup is
+   * the kind of thing a person does not know they did.
+   *
+   * `inInput` because the mailbox step is a form — a field you cannot leave is a trap, which is
+   * the rule the registry states for exactly this key.
+   */
+  useKeyBindings(
+    useMemo(() => [{
+      chord: "Escape",
+      group: "app" as const,
+      label: t("cancel"),
+      inInput: true,
+      run: () => setConfirm((c) => (c === "cancel" ? null : "cancel")),
+    }], [t]),
+    "overlay",
+  );
+
+  /* ── THE MAILBOX FORM ──────────────────────────────────────────────────────────────── */
+
+  const [providerId, setProviderId] = useState<string>(PROVIDERS[0]!.id);
+  const [address, setAddress] = useState("");
+  const [pass, setPass] = useState("");
+  const [imapHost, setImapHost] = useState(PROVIDERS[0]!.imap.host);
+  const [imapPort, setImapPort] = useState(String(PROVIDERS[0]!.imap.port));
+  const [smtpHost, setSmtpHost] = useState(PROVIDERS[0]!.smtp.host);
+  const [smtpPort, setSmtpPort] = useState(String(PROVIDERS[0]!.smtp.port));
+  const [verdict, setVerdict] = useState<null | { ok: FirstRunProbeOk } | { reason: string | null; message: string | null }>(null);
+  const [testing, setTesting] = useState(false);
+  const preset = providerById(providerId);
+
+  /**
+   * A PRESET CHANGE REWRITES THE HOSTS THROUGH `hostsFor`, WHICH TAKES THE PREVIOUS CHOICE.
+   *
+   * Not tidiness — `providers.ts` records the credential leak this closes: without the previous
+   * choice, moving from Gmail to the generic entry KEPT `imap.gmail.com` in a field the person
+   * never typed, and their own server's password was then dialled at Gmail. The rule is one
+   * function and this surface uses it rather than restating it.
+   */
+  const chooseProvider = useCallback((next: string) => {
+    const p = providerById(next);
+    const previous = providerById(providerId);
+    const hosts = hostsFor(p, { imapHost, smtpHost }, previous);
+    setProviderId(next);
+    setImapHost(hosts.imapHost);
+    setSmtpHost(hosts.smtpHost);
+    if (!p.manual) {
+      setImapPort(String(p.imap.port));
+      setSmtpPort(String(p.smtp.port));
+    }
+    // THE VERDICT IS ABOUT A CONFIGURATION, NOT ABOUT A FORM. Changing the provider changes
+    // which server would be dialled, so a green tick left standing would authorise "Connect and
+    // continue" on evidence gathered against a different host entirely.
+    setVerdict(null);
+  }, [imapHost, providerId, smtpHost]);
+
+  const mailboxInput = useCallback((): FirstRunMailboxInput => {
+    const port = Number(imapPort);
+    const sPort = Number(smtpPort);
+    return {
+      address: address.trim(),
+      provider: preset.id,
+      imap: {
+        host: imapHost.trim(),
+        ...(Number.isInteger(port) && port > 0 ? { port } : {}),
+        secure: preset.manual ? port === 993 : preset.imap.secure,
+        pass,
+      },
+      ...(smtpHost.trim() ? {
+        smtp: {
+          host: smtpHost.trim(),
+          ...(Number.isInteger(sPort) && sPort > 0 ? { port: sPort } : {}),
+          secure: preset.manual ? sPort === 465 : preset.smtp.secure,
+          pass,
+        },
+      } : {}),
+    };
+  }, [address, imapHost, imapPort, pass, preset, smtpHost, smtpPort]);
+
+  const test = useCallback(async () => {
+    setTesting(true);
+    setVerdict(null);
+    try {
+      setVerdict({ ok: await host.probe(mailboxInput()) });
+    } catch (err) {
+      setVerdict({ reason: host.probeReason(err), message: host.probeMessage(err) });
+    } finally {
+      setTesting(false);
+    }
+  }, [host, mailboxInput]);
+
+  /**
+   * "Connect and continue" IS DISABLED UNTIL A TEST HAS PASSED, and the gate reads the VERDICT
+   * rather than the fields.
+   *
+   * A form that looks complete is not evidence that the mail server accepts it, and the whole
+   * point of the test button is to make the difference visible before somebody's password is
+   * stored. `verdict` is cleared by any provider change (above), so the gate cannot be
+   * satisfied by a pass against a host that is no longer in the form.
+   */
+  const tested = verdict !== null && "ok" in verdict;
+
+  /* ── THE WINDOW AND THE AI ANSWER ──────────────────────────────────────────────────── */
+
+  const [win, setWin] = useState<WindowChoice>("365");
+  const [ai, setAi] = useState<"yes" | "no">("no");
+  const [scope, setScope] = useState<DecisionScope>("sender");
+
+  /* ── THE ELSEWHERE CHOICE ──────────────────────────────────────────────────────────── */
+
+  /**
+   * `here` is the DEFAULT, and that is a considered direction rather than a coin toss: this
+   * screen is reached from a first run, where the person is setting ohmail up to organize their
+   * mail. Defaulting to "just read it" would make the ordinary intent the one that needs a
+   * click, and neither option is destructive — a reader can claim later from Settings, and a
+   * claim can be handed back.
+   */
+  const [elsewhereChoice, setElsewhereChoice] = useState<"here" | "read">("here");
+  /** A claim has been authorized in this run — the "on its next pass" verdict, not a success. */
+  const [claimed, setClaimed] = useState(false);
+
+  /* ── THE PULL'S RATE ───────────────────────────────────────────────────────────────── */
+
+  const [samples, setSamples] = useState<PullSample[]>([]);
+  const mirrorCount = pull.mirrorCount;
+  /**
+   * Sampled on every render in which the count MOVED, not on a timer of its own. The mirror's
+   * size only changes when a drain lands, and a timer would fill the window with duplicate
+   * observations that make the span look longer than the evidence in it.
+   */
+  const lastSampled = useRef<number | null>(null);
+  useEffect(() => {
+    if (lastSampled.current === mirrorCount) return;
+    lastSampled.current = mirrorCount;
+    setSamples((prev) => pullSampleStep(prev, mirrorCount, Date.now()));
+  }, [mirrorCount]);
+
+  const rate = pullRate(samples);
+  const remaining = pullRemaining(serverMessageCount, mirrorCount);
+  const etaMs = pullEtaMs(remaining, rate);
+
+  if (step === null) return null;
+
+  const num = (n: number) => new Intl.NumberFormat(locale).format(n);
+  /**
+   * "4 minutes" / "4 Minuten" — the locale's own unit formatting, never a hand-built string.
+   * Hours above ninety minutes, because "about 143 minutes" is not how anybody says it.
+   */
+  const durationWords = (ms: number): string => {
+    const minutes = Math.max(1, Math.round(ms / 60_000));
+    const useHours = minutes >= 90;
+    const value = useHours ? Math.max(1, Math.round(minutes / 60)) : minutes;
+    return new Intl.NumberFormat(locale, {
+      style: "unit", unit: useHours ? "hour" : "minute", unitDisplay: "long",
+    }).format(value);
+  };
+
+  const railAt = RAIL.findIndex((r) => r.steps.includes(step));
+  const railLabel = (id: string) => t(`rail_${id}` as "rail_mailbox");
+
+  const foot = (opts: { primary?: ReactNode; back?: boolean; cancel?: boolean } = {}) => (
+    <div className="ob-foot">
+      {opts.cancel === false ? null : (
+        <button type="button" className="join-alt" disabled={busy}
+          onClick={() => setConfirm("cancel")}>
+          {t("cancel")} <Kbd>esc</Kbd>
+        </button>
+      )}
+      <button type="button" className="join-alt" disabled={busy}
+        onClick={() => (mailboxId ? setConfirm("restart") : goTo("welcome"))}>
+        {t("restart")}
+      </button>
+      <span className="ob-spacer" />
+      {opts.back && backStep ? (
+        <Button variant="ghost" onClick={() => goTo(backStep)} disabled={busy}>{t("back")}</Button>
+      ) : null}
+      {opts.primary}
+    </div>
+  );
+
+  /** The primary verb of a step whose Enter submits its form. */
+  const next = (label: string, extra: { disabled?: boolean } = {}) => (
+    <Button variant="primary" type="submit" kbdHint="↵" disabled={busy || extra.disabled}>
+      {label}
+    </Button>
+  );
+
+  /**
+   * A STEP'S BODY IS A FORM so ↵ submits it — the keyboard-first law applied to a flow whose
+   * every screen has exactly one forward verb. `onSubmit` is the same closure the primary
+   * button runs, so the two cannot drift.
+   */
+  const screen = (submit: () => void, body: ReactNode) => (
+    <form onSubmit={(e) => { e.preventDefault(); if (!busy) submit(); }}>{body}</form>
+  );
+
+  return (
+    <div className="ob-stage">
+      <div className="login-card ob-card set-pane" role="dialog" aria-modal="true"
+        aria-labelledby={`${ids}-title`}>
+        <span className="wordmark"><b><em>oh</em>mail</b></span>
+
+        {step === "welcome" ? null : (
+          <>
+            <ol className="join-rail" aria-label={t("rail_mailbox")}>
+              {RAIL.map((r, i) => (
+                <li key={r.id} data-state={i < railAt ? "done" : i === railAt ? "now" : "todo"}>
+                  <span className="join-rail-dot" aria-hidden="true" />
+                  <span className="join-rail-label">{railLabel(r.id)}</span>
+                </li>
+              ))}
+            </ol>
+            {/* NARROW: the labels go and the step is NAMED once. See `first-run.css`. */}
+            <p className="ob-step" aria-hidden="true">
+              {`${railAt + 1} / ${RAIL.length} · ${railLabel(RAIL[railAt]?.id ?? "mailbox")}`}
+            </p>
+          </>
+        )}
+
+        {step === "welcome" ? screen(forward, (
+          <>
+            <h1 id={`${ids}-title`}>
+              {host.door === "cloud" ? t("welcomeCloudTitle") : t("welcomeTitle")}
+            </h1>
+            <p className="sub">{t("welcomeLead")}</p>
+            <SettingsActions>{next(t("welcomeStart"))}</SettingsActions>
+          </>
+        )) : null}
+
+        {step === "mailbox" ? screen(
+          () => { if (tested) void run(async () => { await host.connect(mailboxInput()); }); },
+          (
+            <>
+              <h1 id={`${ids}-title`}>{t("mailboxTitle")}</h1>
+              <p className="sub">{t("mailboxLead")}</p>
+              {/* EVERY PRESET, not a shortened list. The picker is the only way to reach a
+                  provider's hosts without typing them, and a truncated one silently tells
+                  somebody their provider is unsupported when it is in the table. */}
+              <SettingsChoice
+                name={`${ids}-provider`} ariaLabel={tp("label")} value={providerId}
+                onChange={chooseProvider} disabled={busy}
+                options={PROVIDERS.map((p: ProviderPreset) => ({
+                  id: p.id,
+                  label: providerLabel(p, tp),
+                  description: p.manual ? tp("otherSub") : `${p.imap.host} · ${p.smtp.host}`,
+                }))}
+              />
+              <div className="set-fields">
+                <SettingsField htmlFor={`${ids}-address`} label={t("address")}>
+                  <input id={`${ids}-address`} type="email" autoComplete="email" value={address}
+                    onChange={(e) => { setAddress(e.target.value); setVerdict(null); }} />
+                </SettingsField>
+                <SettingsField htmlFor={`${ids}-pass`} label={t("password")}
+                  hint={host.door === "local" ? t("passwordHint") : t("passwordHintCloud")}>
+                  <input id={`${ids}-pass`} type="password" autoComplete="off" value={pass}
+                    onChange={(e) => { setPass(e.target.value); setVerdict(null); }} />
+                </SettingsField>
+              </div>
+              {preset.manual ? (
+                <div className="set-fields">
+                  <SettingsField htmlFor={`${ids}-imap`} label={t("imapHost")}>
+                    <input id={`${ids}-imap`} className="set-mono" value={imapHost}
+                      onChange={(e) => { setImapHost(e.target.value); setVerdict(null); }} />
+                  </SettingsField>
+                  <SettingsField htmlFor={`${ids}-imap-port`} label={t("imapPort")}>
+                    <input id={`${ids}-imap-port`} className="set-mono" inputMode="numeric"
+                      value={imapPort}
+                      onChange={(e) => { setImapPort(e.target.value); setVerdict(null); }} />
+                  </SettingsField>
+                  <SettingsField htmlFor={`${ids}-smtp`} label={t("smtpHost")}>
+                    <input id={`${ids}-smtp`} className="set-mono" value={smtpHost}
+                      onChange={(e) => setSmtpHost(e.target.value)} />
+                  </SettingsField>
+                  <SettingsField htmlFor={`${ids}-smtp-port`} label={t("smtpPort")}>
+                    <input id={`${ids}-smtp-port`} className="set-mono" inputMode="numeric"
+                      value={smtpPort} onChange={(e) => setSmtpPort(e.target.value)} />
+                  </SettingsField>
+                </div>
+              ) : null}
+              <SettingsActions>
+                {/* NOT a submit: this button asks the mail server a question and the form's ↵
+                    belongs to the step's forward verb. */}
+                <Button type="button" onClick={() => void test()} disabled={testing || busy}>
+                  {verdict === null ? t("test") : t("testAgain")}
+                </Button>
+              </SettingsActions>
+              {testing ? (
+                <SettingsVerdict state="wait" headline={t("testing", { host: imapHost.trim() })} />
+              ) : null}
+              {!testing && verdict !== null && "ok" in verdict ? (
+                <SettingsVerdict
+                  state="ok"
+                  headline={t("probeOk", {
+                    host: verdict.ok.host, user: verdict.ok.user, count: verdict.ok.folders ?? 0,
+                  })}
+                  detail={t("probeOkDetail")}
+                />
+              ) : null}
+              {/* THE FAILURE SENTENCES ARE THE CONNECT FORM'S OWN (`mailboxes.probe_*`), not a
+                  second set written for this screen. The endpoint throws the same refusal
+                  `POST /mailboxes` does, so one vocabulary covers both surfaces; an unknown
+                  reason falls back to the SERVER's sentence, which is true on a newer API this
+                  build has no copy for. */}
+              {!testing && verdict !== null && "reason" in verdict ? (
+                <SettingsVerdict
+                  state="bad"
+                  headline={verdict.reason
+                    ? tm(`probe_${verdict.reason}` as "probe_auth")
+                    : verdict.message ?? tm("probe_unknown")}
+                />
+              ) : null}
+              {problem ? <SettingsVerdict state="bad" headline={problem} /> : null}
+              {foot({
+                back: true,
+                primary: next(busy ? t("connecting") : t("connect"), { disabled: !tested }),
+              })}
+            </>
+          ),
+        ) : null}
+
+        {step === "elsewhere" ? screen(
+          () => {
+            /* ── "JUST READ IT HERE" WRITES NOTHING ABOUT ORGANIZING ──────────────────────
+             *
+             * It stamps completion and leaves. That is the whole action: this install is
+             * already a reader (which is what put this screen on screen), and a reader is a
+             * mail client — it reads, searches, marks read and sends. There is no "become a
+             * reader" call, because nothing has to change for it to be one. */
+            if (elsewhereChoice === "read") { leave(); return; }
+            /* ── "ORGANIZE HERE INSTEAD" — AND WHY IT USUALLY CALLS NOTHING EITHER ────────
+             *
+             * The claim, the consent and the window ride ONE request
+             * (`POST /mailboxes/:id/organize`), and the consent screen and the window screen
+             * are the two halves of composing it. Reaching this screen means the derivation's
+             * row 3 fired, which is gated on `!consented` — so in a first run the answer here
+             * is forward navigation, and the window's press is what claims.
+             *
+             * The one exception is the RE-ENTRY path: a mailbox this account already consented
+             * to, that another install has since taken, reached from the Settings banner. There
+             * is nothing left to ask, so the claim goes at once and the verdict says what
+             * actually happened — asked for, decided by the worker on its next pass. Never
+             * "done": this authorizes ONE attempt and does not win anything. */
+            if (!facts.mailbox?.organizeConsentedAt) { forward(); return; }
+            if (!mailboxId) return;
+            void run(async () => {
+              await host.organize(mailboxId, {});
+              setClaimed(true);
+            }, "elsewhere");
+          },
+          (
+            <>
+              <h1 id={`${ids}-title`}>{t("elsewhereTitle")}</h1>
+              <p className="sub">{t("elsewhereLead")}</p>
+              <SettingsBanner
+                label={holderName(facts) === null
+                  ? tm("readerLabelLegacy")
+                  : tm("readerLabel", { name: holderName(facts)! })}
+                description={facts.mailbox?.organizerState === "stopped"
+                  ? tm("readerStopped", {
+                    name: holderName(facts) ?? tm("readerHolderUnknown"),
+                    when: organizerLastSeen ?? "",
+                  })
+                  : holderName(facts) === null
+                    ? tm("readerSinceUnknown", { since: organizedSince ?? "" })
+                    : facts.mailbox?.organizedBy?.kind === "cloud"
+                      ? tm("readerSinceCloud", { since: organizedSince ?? "" })
+                      : tm("readerSinceLocal", {
+                        since: organizedSince ?? "", name: holderName(facts)!,
+                      })}
+              />
+              <SettingsChoice
+                name={`${ids}-elsewhere`} ariaLabel={t("elsewhereTitle")} value={elsewhereChoice}
+                onChange={setElsewhereChoice} disabled={busy}
+                options={[
+                  {
+                    id: "here" as const, label: t("elsewhereChoiceHere"),
+                    description: t("elsewhereChoiceHereWhy", {
+                      name: holderName(facts) ?? tm("readerHolderUnknown"),
+                    }),
+                  },
+                  {
+                    id: "read" as const, label: t("elsewhereChoiceRead"),
+                    description: t("elsewhereChoiceReadWhy", {
+                      name: holderName(facts) ?? tm("readerHolderUnknown"),
+                    }),
+                  },
+                ]}
+              />
+              {claimed ? <SettingsVerdict state="wait" headline={t("elsewhereQueued")} /> : null}
+              {problem ? <SettingsVerdict state="bad" headline={problem} /> : null}
+              {foot({ back: true, primary: next(t("continue")) })}
+            </>
+          ),
+        ) : null}
+
+        {step === "consent" ? screen(forward, (
+          <>
+            <h1 id={`${ids}-title`}>{t("consentTitle")}</h1>
+            {/* THE CONSENT STATEMENT, and the two sentences under it are not decoration. The
+                first names every folder in `DESTINATIONS` — a draft that named four of six was
+                false by omission, and a test pins the set. The second says History is a VIEW:
+                mail older than the window stays physically in the Inbox, so "filed to History"
+                would be a claim about a move that does not happen. */}
+            <p className="ob-consent">{t("consentBody")}</p>
+            <p className="ob-consent">{t("consentHistory")}</p>
+            <p className="set-note-inline" style={{ paddingTop: 10 }}>{t("consentNothingYet")}</p>
+            {foot({ back: true, primary: next(t("continue")) })}
+          </>
+        )) : null}
+
+        {step === "window" ? screen(
+          () => {
+            if (!mailboxId) return;
+            void run(async () => {
+              await host.organize(mailboxId, {
+                screening: win === "all"
+                  ? { scope: "all_time" }
+                  : { dormancyDays: Number(win), scope: "window" },
+              });
+            });
+          },
+          (
+            <>
+              <h1 id={`${ids}-title`}>{t("windowTitle")}</h1>
+              <p className="sub">{t("windowLead")}</p>
+              <SettingsChoice
+                name={`${ids}-window`} ariaLabel={t("windowTitle")} value={win}
+                onChange={setWin} disabled={busy}
+                options={[
+                  { id: "90" as const, label: t("win90") },
+                  { id: "180" as const, label: t("win180") },
+                  { id: "365" as const, label: `${t("win365")} · ${t("winDefault")}` },
+                  { id: "all" as const, label: t("winAll"), description: t("winAllWhy") },
+                ]}
+              />
+              {/* "You can widen this later" — pinned to what widening actually does: senders
+                  past the old cutoff become undecided in the Screener queue and only a decision
+                  moves their mail. No backlog re-route pass exists and the sentence must not
+                  imply one. */}
+              <p className="set-note-inline">{t("windowLater")}</p>
+              <p className="ob-consent ob-window-recap">{firstSentence(t("consentBody"))}</p>
+              {problem ? <SettingsVerdict state="bad" headline={problem} /> : null}
+              {foot({ back: true, primary: next(busy ? t("agreeing") : t("agree")) })}
+            </>
+          ),
+        ) : null}
+
+        {step === "ai" ? screen(
+          () => {
+            const on = ai === "yes";
+            if (!host.setAiEnabled) { forward(); return; }
+            /* ── THE ONE PLACE A CURSOR IS KEPT PAST A WRITE, AND WHY ────────────────────
+             *
+             * "Yes" needs no help: it MOVES the posture — `on-unconfigured` on the standalone
+             * door, `on` on Cloud — and the derivation then names the provider step or the pull
+             * correctly by itself.
+             *
+             * "No" is the problem, and it is a real gap in what the doors can store rather than
+             * a shortcut taken here. `OnboardingAi` distinguishes "answered no" from "never
+             * asked" precisely because they need opposite behaviour; Cloud's storage cannot —
+             * `accounts.ai_enabled` is a boolean that rests false — so a re-derive after a "no"
+             * hands back `unset`, and the person is returned to the question they just answered,
+             * every time, for ever. Walking the cursor past it is what makes "no" a complete
+             * answer on that door.
+             *
+             * The cost is stated rather than hidden: a run RESUMED later on Cloud asks the AI
+             * question again. That is the safe direction and the one the posture's own union
+             * documents — the danger is silently skipping somebody who was never asked, not
+             * asking somebody twice.
+             *
+             * `undefined` once the import is finished, because "pull" would then be a completed
+             * progress bar and the derivation has a better answer (the guided decision, or the
+             * summary).
+             */
+            const keep = on || facts.mailbox?.initialImportCompletedAt !== null
+              ? undefined
+              : ("pull" as const);
+            void run(async () => { await host.setAiEnabled!(on); }, keep);
+          },
+          (
+            <>
+              <h1 id={`${ids}-title`}>{t("aiTitle")}</h1>
+              <p className="sub">{t("aiLead")}</p>
+              {/* THE CONSEQUENCE IS DOOR-AWARE because "yes" means a different thing on each:
+                  the standalone asks for a model on the next screen, Cloud spends the plan's
+                  credits, self-host runs on the operator's key and asks nothing. */}
+              <SettingsChoice
+                name={`${ids}-ai`} ariaLabel={t("aiTitle")} value={ai} onChange={setAi}
+                disabled={busy}
+                options={[
+                  { id: "no" as const, label: t("aiNo"), description: t("aiNoWhy") },
+                  {
+                    id: "yes" as const,
+                    label: host.door === "cloud" ? t("aiYesCloud")
+                      : host.door === "selfhost" ? t("aiYesSelfhost") : t("aiYes"),
+                    description: host.door === "cloud" ? t("aiYesCloudWhy")
+                      : host.door === "selfhost" ? t("aiYesSelfhostWhy") : t("aiYesWhy"),
+                  },
+                ]}
+              />
+              {problem ? <SettingsVerdict state="bad" headline={problem} /> : null}
+              {foot({ back: true, primary: next(t("continue")) })}
+            </>
+          ),
+        ) : null}
+
+        {step === "provider" ? screen(forward, (
+          <>
+            {host.door === "local" ? (
+              <>
+                <h1 id={`${ids}-title`}>{t("aiTitle")}</h1>
+                {/* THE DESKTOP'S OWN FORM, INJECTED. One write path to the install's model file,
+                    shared with Settings → AI; `apps/webapp` never imports it and a pin says so. */}
+                {host.providerForm}
+              </>
+            ) : host.door === "cloud" ? (
+              <>
+                <h1 id={`${ids}-title`}>{t("providerCloudTitle")}</h1>
+                <p className="ob-consent">{t("providerCloudBody")}</p>
+              </>
+            ) : (
+              <>
+                <h1 id={`${ids}-title`}>{t("providerSelfhostTitle")}</h1>
+                <p className="ob-consent">
+                  {host.selfhostAi ? t("providerSelfhostOn") : t("providerSelfhostOff")}
+                </p>
+              </>
+            )}
+            {foot({ back: true, primary: next(t("continue")) })}
+          </>
+        )) : null}
+
+        {step === "pull" ? screen(onLeave, (
+          <>
+            <h1 id={`${ids}-title`}>{t("pullTitle")}</h1>
+            <p className="sub">{t("pullLead")}</p>
+            <div className="ob-counters">
+              <div className="ob-counter"><b>{num(pull.screened)}</b><span>{t("screened")}</span></div>
+              <div className="ob-counter"><b>{num(pull.history)}</b><span>{t("history")}</span></div>
+              {/* THE THIRD COUNTER EXISTS ONLY WHEN THE SERVER HAS SAID. `serverMessageCount` is
+                  absent until a cycle has counted a folder, and a "0 still to read" over a
+                  running pull is a confident wrong answer. */}
+              {remaining !== null ? (
+                <div className="ob-counter"><b>{num(remaining)}</b><span>{t("remaining")}</span></div>
+              ) : null}
+            </div>
+            {remaining !== null ? (
+              <div className="ob-track" role="progressbar" aria-valuemin={0}
+                aria-valuemax={mirrorCount + remaining} aria-valuenow={mirrorCount}>
+                <i style={{ width: `${Math.round((mirrorCount / (mirrorCount + remaining)) * 100)}%` }} />
+              </div>
+            ) : null}
+            {/* "about", and NEVER before two minutes of samples. The gate is in `pull-rate.ts`;
+                until it opens the line says the flow is still working the number out, which is
+                true and is not a number. */}
+            <p className="ob-eta" role="status">
+              {etaMs !== null && rate !== null
+                ? t("eta", { eta: durationWords(etaMs), rate: Math.round(rate) })
+                : t("etaSoon")}
+            </p>
+            {resumed ? <SettingsVerdict state="wait" headline={t("pullResumed")} /> : null}
+            {foot({
+              primary: (
+                <Button variant="ghost" type="submit" disabled={busy}>{t("pullLeave")}</Button>
+              ),
+            })}
+          </>
+        )) : null}
+
+        {step === "decide" && decide ? (
+          <>
+            <h1 id={`${ids}-title`}>{t("decideTitle")}</h1>
+            <p className="sub">{t("decideLead")}</p>
+            <div className="ob-sender">
+              <div className="who">
+                <span className="av" aria-hidden="true">{decide.name.slice(0, 1).toUpperCase()}</span>
+                <div><b>{decide.name}</b> <span>{decide.address}</span></div>
+              </div>
+              <div className="held">{decide.since}</div>
+              {/* THE REAL BAR, and `keyboard` is ON here unlike in the Screener. There the five
+                  keys are a VIEW-scope registry layer so the shell can tell `c` (Receipts) from
+                  `c` (Compose); inside this dialog there is no view under it to arbitrate with,
+                  and the bar's own listener is the only thing bound. */}
+              <DecisionBar
+                scope={scope} onScopeChange={setScope} ruleTarget={decide.address} keyboard
+                onDecide={(dest, opts) => {
+                  decide.onDecide(dest, { markRead: opts.markRead, scope });
+                  // FORWARD, NOT RE-DERIVED. The queue may still hold senders — it usually does
+                  // — and the derivation would answer "decide" again. The guided step is one
+                  // decision by construction; the rest of the queue is the Screener's.
+                  goTo("summary");
+                }}
+              />
+            </div>
+            <ul className="ob-verbs">
+              {DECIDE_LEGEND.map((v) => (
+                <li key={v.key}><Kbd>{v.key}</Kbd> {t(v.copy)}</li>
+              ))}
+            </ul>
+            <p className="set-note-inline">{t("decideAfter")}</p>
+            {foot({})}
+          </>
+        ) : null}
+
+        {step === "summary" ? screen(leave, (
+          <>
+            <h1 id={`${ids}-title`}>{t("doneTitle")}</h1>
+            <div className="ob-done">
+              <SettingsRow label={t("doneScreened", { count: pull.screened })}
+                description={t("doneScreenedWhy")} />
+              <SettingsRow label={t("doneHistory", { count: pull.history })}
+                description={t("doneHistoryWhy")} />
+              <SettingsRow label={t("doneFolders")} description={t("doneWhere")} />
+            </div>
+            <p className="set-note-inline">{t("doneSettings")}</p>
+            {foot({ cancel: false, primary: next(t("doneOpen")) })}
+          </>
+        )) : null}
+
+        {step === "pair" ? screen(onLeave, (
+          <>
+            <h1 id={`${ids}-title`}>{t("pairTitle")}</h1>
+            <p className="sub">{t("pairLead")}</p>
+            <div className="ob-qr">{host.pairNode}</div>
+            {/* IT STAMPS NOTHING. The summary's "Open ohmail" is what finishes the flow; this
+                screen is offered after it and skipping it must not look like abandoning setup. */}
+            {foot({ cancel: false, primary: (
+              <Button variant="ghost" type="submit">{t("pairLater")}</Button>
+            ) })}
+          </>
+        )) : null}
+
+        {confirm === "cancel" ? (
+          <div className="ob-confirm">
+            <p>{t("cancelWhat")}</p>
+            <SettingsActions>
+              <Button variant="primary" onClick={leave} disabled={busy}>{t("cancelConfirm")}</Button>
+              <Button variant="ghost" onClick={() => setConfirm(null)}>{t("back")}</Button>
+            </SettingsActions>
+          </div>
+        ) : null}
+
+        {confirm === "restart" ? (
+          <div className="ob-confirm">
+            <p>{t("restartWhat")}</p>
+            <SettingsActions>
+              <Button variant="primary" onClick={() => goTo("mailbox")} disabled={busy}>
+                {t("restartKeep")}
+              </Button>
+              {host.forgetMailbox && mailboxId ? (
+                <Button variant="ghost" disabled={busy}
+                  onClick={() => void run(async () => { await host.forgetMailbox!(mailboxId); })
+                    .then(() => goTo("welcome"))}>
+                  {t("restartForget")}
+                </Button>
+              ) : null}
+              <Button variant="ghost" onClick={() => setConfirm(null)}>{t("back")}</Button>
+            </SettingsActions>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/** The first sentence of the consent statement, re-shown under the window choice. */
+function firstSentence(s: string): string {
+  const at = s.indexOf(". ");
+  return at < 0 ? s : `${s.slice(0, at)}.`;
+}
+
+/**
+ * WHO ORGANIZES THIS MAILBOX, by name, or `null` when nobody is NAMED.
+ *
+ * `null` is not the same as "nobody organizes it" — the mailbox has a holder (that is what put
+ * the elsewhere screen on screen), and this build simply has no name for them: a claim written
+ * by a version that recorded none, or a row from a server that does not send the field. The
+ * copy has a legacy label for exactly that, and inventing "another install" as the NAME would
+ * put quotation marks around a phrase and read as a machine called "another install".
+ */
+function holderName(facts: OnboardingFacts): string | null {
+  const by = facts.mailbox?.organizedBy;
+  if (!by) return null;
+  return by.name && by.name.trim() ? by.name : null;
+}

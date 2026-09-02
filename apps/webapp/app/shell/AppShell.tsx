@@ -91,6 +91,9 @@ import { dispatchMarkAll, dispatchMarkAllRead } from "./read-all";
 import { useMessageAttachments } from "./attachments";
 import { useRemoteImages } from "./remote-images";
 import { useConsentState, type ConsentTransport } from "./consent-state";
+import { FirstRun, type FirstRunDecideSubject } from "./FirstRun";
+import type { FirstRunHost } from "./first-run-host";
+import type { OnboardingFacts } from "./onboarding";
 import { readBootCache, writeBootCache } from "./boot-cache";
 import { readOwner } from "./owner-cookie";
 import { useAppLocale } from "./LocaleContext";
@@ -664,6 +667,7 @@ export function AppShell({
   junkWire,
   suggestWire,
   aiCredits,
+  firstRun,
   mailtoDraft,
   onMailtoDraftSeeded,
   onUnread,
@@ -985,6 +989,16 @@ export function AppShell({
    */
   aiCredits?: (ctx: { onStartPlan: () => void }) => ReactNode;
   /**
+   * THE FIRST-RUN STAGE'S DOOR — the calls setup makes, from the surface that can make them.
+   *
+   * Absent ⇒ THE STAGE DOES NOT EXIST on this surface, structurally, and `#/first-run` renders
+   * the Ohbox behind it and nothing else. That is the honest state for the demo (a fixture world
+   * with no mailbox to connect and no account to stamp) and for any host that has not wired the
+   * calls yet — the alternative, a dialog whose buttons refuse, is the built-tested-unreachable
+   * shape this whole wave is written against.
+   */
+  firstRun?: FirstRunHost;
+  /**
    * A COMPOSE THE HOST WAS HANDED FROM OUTSIDE — the desktop's mailto seam, and nobody else's.
    *
    * When the operating system delivers a `mailto:` click to the desktop shell, the parsed
@@ -1047,6 +1061,7 @@ export function AppShell({
             junkWire={junkWire}
             suggestWire={suggestWire}
             aiCredits={aiCredits}
+            firstRun={firstRun}
             mailtoDraft={mailtoDraft}
             onMailtoDraftSeeded={onMailtoDraftSeeded}
             onUnread={onUnread}
@@ -1093,7 +1108,7 @@ function MailStateHost({ probe, freshnessProbe, children }: { probe?: MailboxPro
   );
 }
 
-function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, billingSection, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, screeningSection, screenerSuggest, awayTransport, profileImportTransport, consentTransport, olderBodyWire, junkWire, suggestWire, aiCredits, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
+function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, billingSection, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, screeningSection, screenerSuggest, awayTransport, profileImportTransport, consentTransport, olderBodyWire, junkWire, suggestWire, aiCredits, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
   /** The pull settle watch's read — the same probe `MailStateHost` above provides the strip. */
   mailboxFacts?: MailboxProbe;
   /** The host's surface declaration for the attach ceiling — see `AppShell`'s prop of this name. */
@@ -1122,6 +1137,8 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
   junkWire?: JunkWire;
   suggestWire?: SuggestWire;
   aiCredits?: (ctx: { onStartPlan: () => void }) => ReactNode;
+  /** The first-run stage's door — see the outer prop of the same name. */
+  firstRun?: FirstRunHost;
   mailtoDraft?: ComposePrefill | null;
   onMailtoDraftSeeded?: () => void;
   onUnread?: (unread: number) => void;
@@ -1146,7 +1163,7 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
    * It is still derived exactly once, up here, from the one binding, which is the rule the
    * mail-state ladder established. A prop is how a derivation reaches a component that must be mountable alone.
    */
-  const { mailboxes: facts, state: mailState } = useMailState();
+  const { mailboxes: facts, state: mailState, refresh: refreshFacts } = useMailState();
   /**
    * THE MIRROR AS IT IS. Where each message physically sits on the server.
    *
@@ -1578,6 +1595,15 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
     () => (consentView?.history ?? []).map((m) => ({ ...m, physicalFolder: m.folder })),
     [consentView],
   );
+  /**
+   * EVERY MESSAGE IN THE MIRROR — the first pull's numerator, and the same number
+   * `MailStateHost` folds into the growth reducer one level up.
+   *
+   * Read again here rather than lifted out of `useMailState`, because that context publishes the
+   * count it was CONSTRUCTED with and this component is inside it; the two are the same
+   * expression over the same reader at the same version, so they cannot disagree.
+   */
+  const mirroredCount = useMemo(() => reader.list("message").length, [reader, version]);
   const tags = useMemo(() => reader.list<TagDTO>("tag"), [reader, version]);
   /**
    * THE MAILBOX'S OWN FOLDERS — `folder` entities off `/sync` (FOLDERS-SPEC.md §4), present in
@@ -1732,6 +1758,71 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
    * calling it every render is free.
    */
   const autoOptIn = suggestions.autoOptIn(screener.unsuggestedSenders);
+  /* ── THE FIRST-RUN FLOW'S FACTS, GATHERED FROM THE FOUR PLACES THEY LIVE ──────────────────
+   *
+   * `deriveOnboardingStep` is a pure function over truth-conditions and this is where the four
+   * sources meet: the polled `GET /mailboxes` row, `GET /consent`, the door's own AI posture,
+   * and the Screener queue. It is composed unconditionally — it is three field reads and a
+   * length — and consumed only where the stage renders.
+   *
+   * THE MAILBOX IS `facts[0]`, and that is a decision rather than an oversight. The flow is
+   * about getting ONE mailbox organized; an account with several has been through it, and the
+   * re-run from Settings arrives pre-filled from whatever the account already stored. Reading
+   * the first row keeps "no mailbox" (`null`) distinguishable from "we cannot see" — `facts`
+   * itself is null then, and the guard at the mount site refuses to render over it rather than
+   * treating "cannot see" as "none connected".
+   */
+  const firstRunMailbox = facts === null ? null : facts[0] ?? null;
+  const onboardingFacts: OnboardingFacts | null = useMemo(() => {
+    if (!firstRun || facts === null) return null;
+    return {
+      door: firstRun.door,
+      mailbox: firstRunMailbox === null ? null : {
+        organizerRole: firstRunMailbox.organizerRole,
+        organizedBy: firstRunMailbox.organizedBy,
+        organizerState: firstRunMailbox.organizerState,
+        // FORWARDED UNTOUCHED, both of them. `mailbox-facts.ts` states the rule and the two
+        // measured failures behind it: absent and null are different answers on these fields,
+        // and a `?? null` at this seam is what destroyed the distinction the last two times.
+        organizeConsentedAt: firstRunMailbox.organizeConsentedAt,
+        initialImportCompletedAt: firstRunMailbox.initialImportCompletedAt,
+      },
+      account: { onboardingCompletedAt: consent.onboardingCompletedAt },
+      ai: firstRun.ai,
+      queuedSenders: screener.waitingCount,
+    };
+  }, [firstRun, facts, firstRunMailbox, consent.onboardingCompletedAt, screener.waitingCount]);
+  /**
+   * THE ONE SENDER THE GUIDED DECISION IS ABOUT — the head of the real queue, decided through
+   * the real `ScreenerState`.
+   *
+   * Not a fabricated card. The whole point of step 8 is that the first decision a person makes
+   * in the flow IS a decision: it writes the same mutation, mints the same rule and moves the
+   * same mail as one taken in the Screener a minute later. A mock here would teach a gesture
+   * that does something else in the product.
+   *
+   * `null` when the queue is empty — which the derivation reads as "skip this step silently",
+   * because a guided "take your first decision" over nothing is a dead end.
+   */
+  const firstRunDecide: FirstRunDecideSubject | null = useMemo(() => {
+    const row = screener.waiting[0];
+    if (!row || "pinned" in row) return null;
+    return {
+      name: row.from.name ?? row.from.address,
+      address: row.from.address,
+      held: row.held.length,
+      /* THE SCREENER'S OWN CAPTION, not a second sentence written for this card. `heldCaption`
+         carries the first-contact time and `heldCaptionAll` does not, which is exactly the split
+         `ScreenerView` makes over the same rows — one held message has no "first contact" to
+         distinguish from its own arrival. */
+      since: row.held.length > 1
+        ? t("screener.heldCaption", { count: row.held.length, time: row.held[0]?.time ?? "" })
+        : t("screener.heldCaptionAll", { count: row.held.length }),
+      onDecide: (dest, opts) =>
+        screener.decide(row, dest, { read: opts.markRead, scope: opts.scope }),
+    };
+  }, [screener, t]);
+
   /**
    * THE LIVE JUNK WINDOW (FOLDERS-SPEC.md §16.2) — the Screener's third segment, flag-on.
    *
@@ -7017,7 +7108,52 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
         />
       ) : null}
 
-      {/* The `?` sheet — generated from the registry above, never hand-written. */}
+      {/* ── THE FIRST-RUN STAGE ────────────────────────────────────────────────────────────
+          Over the app, at `#/first-run`, and gated on FOUR things rather than on the route
+          alone:
+
+           · `firstRun` — a door that can actually make the calls. Absent on the demo.
+           · `route.firstRun` — the person asked for it, or an entry point sent them. The stage
+             never opens itself; a dialog that appears over somebody's mail unbidden is the
+             thing every entry point is written to avoid.
+           · `onboardingFacts` — `GET /mailboxes` has answered. Null is "we cannot see", and
+             the flow's second row reads a null mailbox as "none connected", which over an
+             unreachable API would open setup on an account with five mailboxes.
+           · `consent.known` — `GET /consent` has answered. `onboardingCompletedAt` RESTS null,
+             and null means "never been through setup", so rendering before the wire replies
+             would put a setup dialog over a finished account on every cold boot.
+
+          The last two are the same rule twice: this overlay's resting inputs both read as
+          "nothing has happened yet", so it may only be drawn on answers, never on defaults. */}
+      {firstRun && route.firstRun && onboardingFacts && consent.known ? (
+        <FirstRun
+          host={firstRun}
+          facts={onboardingFacts}
+          mailboxId={firstRunMailbox?.id ?? null}
+          serverMessageCount={firstRunMailbox?.serverMessageCount}
+          /* The counters. `screened` is what the mirror holds MINUS what History lists —
+             everything that has been through the screening partition — and `history` is that
+             list's own length. Both are derived from the SAME presented reader the views
+             render, so the numbers on this screen and the numbers in the rail cannot
+             disagree. Clamped at zero: `history` is a projection over the mirror and a race
+             between the two reads must not print a negative. */
+          pull={{
+            screened: Math.max(0, mirroredCount - history.length),
+            history: history.length,
+            mirrorCount: mirroredCount,
+          }}
+          decide={firstRunDecide}
+          /* RE-READ `GET /mailboxes` — the route every write in this flow changes (the create,
+             the claim, the consent stamp). The account's consent row re-reads itself: every
+             consent-settings write appends a `settings` change row, the wake channel rings, and
+             the stamp `useConsentState` watches moves on the next drain. So the two halves
+             refresh by different mechanisms and neither is polled harder for this screen. */
+          onRefresh={refreshFacts}
+          onLeave={() => go("ohbox")}
+        />
+      ) : null}
+
+            {/* The `?` sheet — generated from the registry above, never hand-written. */}
       <ShortcutSheet open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
 
       {/* THE (i) PANEL IS GONE, AND ITS CONTENT IS NOT.

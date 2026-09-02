@@ -333,6 +333,24 @@ export interface ConsentState {
    * cannot leave it behind.
    */
   cloudClient: boolean;
+  /**
+   * WHEN THE FIRST-RUN FLOW WAS LAST LEFT — finished OR cancelled, because both stamp it — or
+   * `null` for "this account has never been through setup".
+   *
+   * The one truth-condition in `deriveOnboardingStep` that is about the FLOW rather than about a
+   * mailbox, and the arm that runs before every other one: without it, an account that cancelled
+   * on the consent screen re-opens setup on that same screen at every boot, for ever.
+   *
+   * ── RESTING NULL IS THE DANGEROUS DIRECTION HERE, AND {@link known} IS THE GUARD ──────────
+   *
+   * Every other field on this object has a resting value that is safe to act on. This one does
+   * not: `null` reads as "setup has never been done", so a failed `GET /consent`, an API too old
+   * to carry the field, and the first render of every session would each be grounds to put a
+   * setup dialog over somebody's mail. That is why the stage is gated on {@link known} at the
+   * mount site and not on this field alone — this field says WHERE a run stands, `known` says
+   * whether anybody has answered at all, and only the pair is a licence to render.
+   */
+  onboardingCompletedAt: string | null;
 }
 
 const RESTING: ConsentState = {
@@ -386,6 +404,10 @@ const RESTING: ConsentState = {
   known: false,
   standalone: false,
   cloudClient: false,
+  // NEVER BEEN THROUGH SETUP, at rest. Not a safe position — see
+  // {@link ConsentState.onboardingCompletedAt}: it is the value that would OPEN a setup dialog,
+  // which is why the mount site gates on `known` as well and never on this alone.
+  onboardingCompletedAt: null,
 };
 
 /** The `boot-cache.ts` scope this hook owns. Exported for the sign-out test and nothing else. */
@@ -681,6 +703,11 @@ export function useConsentState(
             ? wire.themeFace
             : null,
           themeFaceKnown: true,
+          // Absent and null are ONE answer: an API from before mail 0083 cannot say, and a
+          // server that read the row and found no stamp says the same thing about the account —
+          // nobody has finished or cancelled setup. Both leave the flow eligible to open, which
+          // is only reachable at all once `known` is true one line above.
+          onboardingCompletedAt: wire.onboardingCompletedAt ?? null,
           known: true,
           // Both of these are DERIVED on the way out (see the return) and are written here only
           // because the state object carries them. Nothing may read them off `state`.

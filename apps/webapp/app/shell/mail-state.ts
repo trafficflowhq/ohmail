@@ -304,6 +304,22 @@ export interface MailboxFacts {
    */
   pendingMoves?: number;
   /**
+   * HOW MUCH MAIL THE SERVER SAYS IS IN THIS MAILBOX — the first pull's denominator (mail 0083),
+   * Σ `mailbox_folders.server_exists` over the folders a cycle has opened.
+   *
+   * `deriveMailState` must never read it, and does not. The strip's ladder is about whether mail
+   * is ARRIVING; this is about how much is still to come, which is a question only the first-run
+   * flow's pull screen asks. It is here for {@link MailboxFacts.smtpMaxSizeBytes}'s reason — this
+   * is the narrowed shape `GET /mailboxes` arrives as, and the flow reads its facts from it.
+   *
+   * OPTIONAL, `typeof === "number"`, never `?? 0`, on {@link pendingMoves}' rule with a louder
+   * consequence: absent is "no folder carries a count yet", and a `0` in its place is the claim
+   * that the person's mail server holds nothing. It also GROWS while the first cycle walks the
+   * folder tree and may sit BELOW the mirror's own count, so every consumer clamps the remainder
+   * at zero and renders nothing there.
+   */
+  serverMessageCount?: number;
+  /**
    * THE BIGGEST MESSAGE THIS MAILBOX'S SUBMISSION SERVER SAID IT WILL ACCEPT, in bytes — the
    * server's own `SIZE` announcement, recorded when the mailbox was connected.
    *

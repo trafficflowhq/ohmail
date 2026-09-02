@@ -48,7 +48,18 @@ export interface ServerHello {
   // deliberately unmounted). The value itself has been on the wire since Phase 3.
   flavor: "managed" | "selfhost" | "local" | "desktop-host";
   needsSetup: boolean;
-  features: { staging: boolean; pairing: boolean };
+  /**
+   * `ai` is the OPERATOR's key, not the account's switch: the server answers
+   * `anthropicApiKey !== null`, so on a self-host deployment it is the difference between "the
+   * operator has set a key and suggestions run" and "rules do all the filing". The first-run
+   * flow's provider step reads it to pick which of those two sentences is true; without it that
+   * step would have to guess, and both guesses are a claim about somebody else's server.
+   *
+   * The key has always been on the wire (`packages/api/src/routes/hello.ts` freezes the set as
+   * `{ sse, staging, ai, pairing }`); this interface simply did not name it, because until now
+   * nothing in the browser asked.
+   */
+  features: { staging: boolean; ai: boolean; pairing: boolean };
 }
 
 /**

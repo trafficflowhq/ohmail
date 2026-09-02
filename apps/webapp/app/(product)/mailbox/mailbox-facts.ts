@@ -83,6 +83,12 @@ export function toMailboxFacts(m: MailboxDTO): MailboxFacts {
     // turn "this build cannot tell" into "nothing is outstanding" — the wrong answer in
     // precisely the case the field was added for.
     pendingMoves: m.pendingMoves,
+    // How much mail the SERVER says is in there (mail 0083) — the first pull's denominator.
+    // FORWARDED UNTOUCHED, on the same rule as the line above and with the sharpest version of
+    // its consequence: a `?? 0` here would turn "no folder of this mailbox has been counted
+    // yet" — which is the state of every mailbox for the first minute of its life — into the
+    // sentence "your mail server holds nothing", printed underneath a pull that is running.
+    serverMessageCount: m.serverMessageCount,
     // What this mailbox's submission server said it will accept. FORWARDED UNTOUCHED, on
     // the same rule as the two lines above: the field is optional, an older API omits it, and a
     // `?? null` here would erase the difference between "this API cannot say" and "the server

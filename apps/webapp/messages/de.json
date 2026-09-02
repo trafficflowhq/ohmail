@@ -2200,6 +2200,7 @@
     "decideAfter": "Dann der eigentliche Screener: jeder andere wartende Absender, dieselben drei Verben.",
     "doneTitle": "Was ohmail gemacht hat",
     "doneScreened": "{count, plural, one {1 Absender} other {# Absender}} sortiert",
+    "doneScreenedWhy": "Jede Entscheidung ist eine Regel unter Einstellungen → Regeln.",
     "doneHistory": "{count, number} Nachrichten unter Historie gelistet",
     "doneHistoryWhy": "Älter als das Fenster. Weiter im Posteingang — dort wurde nichts verschoben.",
     "doneFolders": "In deinem Postfach angelegte Ordner",

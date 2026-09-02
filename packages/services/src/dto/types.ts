@@ -692,6 +692,62 @@ export interface MailboxDTO {
    * is not filtered on.
    */
   messageCount?: number;
+  /**
+   * HOW MUCH MAIL THE SERVER SAYS IS IN THERE — the first pull's DENOMINATOR.
+   *
+   * ── WHY IT EXISTS AT ALL ────────────────────────────────────────────────────────────────
+   *
+   * {@link messageCount} is the numerator: how much of the mailbox this install has mirrored.
+   * Until this field there was no denominator anywhere in the product. `mailbox_folders` held
+   * cursors only and the IMAP adapter read `EXISTS` off every SELECT and threw it away, so the
+   * import strip could say how much had arrived and never how much was coming — and the one
+   * "how long" number the product ever showed was a literal somebody guessed. Mail 0083 added
+   * `mailbox_folders.server_exists`, written by every cycle that opens a folder. This is that
+   * column, summed, reaching a client for the first time.
+   *
+   * Remaining is `serverMessageCount − messageCount`, and the rate is the CLIENT's own rolling
+   * `MirrorGrowth` — never a literal, and never a rate derived here, because the server does not
+   * know how fast this particular client is draining its feed.
+   *
+   * ── UNCONDITIONAL, UNLIKE {@link messageCount}, AND THE DIFFERENCE IS WHAT IT COSTS ──────
+   *
+   * That field is opt-in because it is an aggregate over the account's whole `messages` table
+   * and this route is polled. This one costs NOTHING extra: the projection already reads this
+   * mailbox's `mailbox_folders` rows to build {@link folders}, so the sum is taken over rows
+   * that are in hand. Putting it behind `?counts=1` would have added a flag with no saving
+   * behind it, and would have kept the number off the one read that matters — the shell's own
+   * 30 s poll, which is what carries the first pull's counters while the flow is on screen.
+   *
+   * ── IT IS A SUM OVER THE FOLDERS THAT HAVE BEEN OPENED, WHICH IS WHY IT CAN GO UP ───────
+   *
+   * A row exists in `mailbox_folders` only for a folder some cycle has opened, and
+   * `server_exists` is NULL on a row no cycle has opened under a build that writes it. So early
+   * in a first pull the sum covers INBOX and little else, and it GROWS as the cycle reaches the
+   * rest of the tree. That is honest — every message it counts really is on the server — but it
+   * means a caller must treat this as a floor that moves, not as a fixed total: a progress bar
+   * driven by it can lose ground, and a remaining count can arrive at a number LARGER than the
+   * one before it.
+   *
+   * It can also be smaller than {@link messageCount}, which is the same fact from the other
+   * side: the mirror holds mail from folders whose `server_exists` no cycle has recorded yet.
+   * **A caller therefore clamps `remaining` at zero and shows nothing at zero** — a negative
+   * "still to read", or a "0 left" over a pull that is still running, are both worse than
+   * silence.
+   *
+   * ── ABSENT, AND WHY THERE IS NO `null` AND NO `0` FLOOR ─────────────────────────────────
+   *
+   * Absent covers both "no number" cases and they are one answer to the only question a caller
+   * asks: no folder row carries a count yet — every row's `server_exists` is NULL, which is
+   * exactly the state of a mailbox whose first cycle has not landed, and of every mailbox on an
+   * install that has not yet run a build that writes the column — or the API predates this
+   * field. Both render as NOTHING.
+   *
+   * A `0` floor would be the claim that the server holds no mail, which is a different and much
+   * louder sentence. That is the opposite of {@link messageCount}'s `?? 0` and it is the same
+   * rule applied to a different question: an empty MIRROR has an answer and it is zero, an
+   * *uncounted* server does not have an answer at all.
+   */
+  serverMessageCount?: number;
   folders?: MailboxFolderSummary[];
   createdAt: ISODateTime;
   // NOTE: intentionally NO credential field — creds are envelope-encrypted at rest
