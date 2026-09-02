@@ -839,6 +839,44 @@ function mailboxRow(world: LocalWorld, m: MailboxDTO, now: Date) {
     syncBlockedReason: m.syncBlockedReason ?? null,
     syncBlockedSince: asDate(m.syncBlockedSince),
     disabledReason: m.disabledReason ?? null,
+    /* ── MAIL 0083'S SIX FACTS, WHICH THIS PROJECTION USED TO DROP ────────────────────────────
+     *
+     * `MailboxDTO` carries all of them and this copied `disabledReason` and stopped, so the
+     * mirrored row asserted the DEFAULT `organizer_role = 'organizer'` about a mailbox the DTO it
+     * was built from may say Cloud only READS. `?? null` on each for the rule stated above: this
+     * object IS the `onConflictDoUpdate` set, so a key left out makes a value cleared on Cloud
+     * persist locally.
+     *
+     * ── WHAT A MIRRORED ROLE MEANS LOCALLY, WHICH IS THE DECISION THIS NEEDED ────────────────
+     *
+     * It means nothing for WRITES, and that is what makes mirroring it safe rather than a way to
+     * disable this install's own doors. A Cloud-mode engine serves no mutation at all: every write
+     * is forwarded to Cloud with the bearer (`cloud-engine.ts`), and the hosted API applies its own
+     * `assertOrganizerRole` to the forwarded call, against the HOSTED row. That is not read off a
+     * comment — `cloud-engine-census.test.ts` fails the moment this module graph reaches any of the
+     * three modules an organizer is built from.
+     *
+     * So these columns feed the READ surfaces, which is exactly where they were missing: a
+     * Cloud-connected desktop's mailbox pane reads `GET /mailboxes` from this mirror, and with the
+     * facts dropped it could not say who organizes the mailbox — the reader banner had no source,
+     * on the one door where somebody else genuinely holds it.
+     *
+     * ── AND THE DOOR SWITCH, WHICH IS THE CASE WORTH STATING ─────────────────────────────────
+     *
+     * An install that switches from this door to the standalone one reuses these rows
+     * (`ensureLocalWorld` finds the existing mailbox by address). Mirroring the role makes
+     * `standDownMemory` answer truthfully there instead of reading silence. It was already safe
+     * without this — `organize_consented_at` was equally unmirrored, so it arrived NULL and
+     * `mayOrganize` refuses on `!consented && !takeoverAuthorized` — but that safety rested on a
+     * column being ABSENT, which is the kind of guarantee that evaporates the day somebody fills
+     * it in. Now the role says so directly.
+     */
+    organizerRole: m.organizerRole ?? "organizer",
+    organizedByKind: m.organizedBy?.kind ?? null,
+    organizedByName: m.organizedBy?.name ?? null,
+    organizedSince: asDate(m.organizedBy?.since ?? null),
+    organizerState: m.organizerState ?? null,
+    organizeConsentedAt: asDate(m.organizeConsentedAt),
     smtpMaxSizeBytes: m.smtpMaxSizeBytes ?? null,
     // NOT decoration: `compose-from.ts` orders the From options by `createdAt` ascending and calls
     // the first sendable one the default sender. A mirror that stamped its own clock here would
