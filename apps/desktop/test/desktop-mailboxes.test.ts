@@ -160,6 +160,17 @@ function buttonSaying(el: HTMLElement, label: string): HTMLButtonElement | null 
 
 const openButton = (el: HTMLElement) => buttonSaying(el, "Open ohmail.app");
 
+/**
+ * A button by its EXACT label. "Remove" and "Remove mailbox" are two different controls one
+ * press apart, and `buttonSaying`'s `includes` cannot tell them apart — it would answer the
+ * row's verb for both and the confirmation's assertions would pass without the panel existing.
+ */
+function buttonExactly(el: HTMLElement, label: string): HTMLButtonElement | null {
+  return (
+    [...el.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === label) ?? null
+  );
+}
+
 beforeEach(() => {
   FACTS = [MAILBOX];
   MIRRORED = 0;
@@ -282,6 +293,18 @@ describe("the desktop mailbox pane on the hosted door", () => {
     expect(el.textContent ?? "").toContain("Disconnected");
   });
 
+  it("offers NO Remove — a hosted mailbox is removed in the account's own ceremony", async () => {
+    /* The hosted door's removal is `DELETE /mailboxes/:id`, which is step-up gated: the account
+       wants a second factor asserted within the last few minutes before it will destroy a stored
+       credential. A desktop install's session carries exactly one such assertion, stamped when
+       its link code was claimed, and nothing rotates it forward. A button here would work for the
+       first five minutes of an install's life and answer 403 for ever afterwards. The browser is
+       where that ceremony can be run, and the hand-off row above is the way there. */
+    const el = await render("cloud");
+    expect(buttonExactly(el, "Remove")).toBeNull();
+    expect(el.querySelector(".mbx-remove-list")).toBeNull();
+  });
+
   it("says nothing at all until the engine has answered", async () => {
     // `null` is "we could not ask", never "there are none" — the distinction the probe is written
     // to preserve. Neither the empty-state sentence nor the hand-off may appear here.
@@ -321,6 +344,115 @@ describe("the desktop mailbox pane on the standalone door", () => {
     FACTS = [];
     const text = (await render("local")).textContent ?? "";
     expect(text).toContain("Desktop settings pane");
+  });
+
+  /* ══ REMOVE — THE DOOR OUT, WHICH THIS PANE DID NOT HAVE ═════════════════════════════════
+   *
+   * WHAT WAS WALKED, on the released 0.13.6: the standalone mailbox row offered "Reading only"
+   * and "Sync now" and nothing else. `DELETE /local/mailboxes/:id` had been served since the
+   * removal was made to mean removal — release the organizer claim, wipe this machine's mirror,
+   * stop the timer, close the login — and no client called it. The pane's own footnote said "you
+   * can remove it and nothing is lost from the mailbox itself", and a release note described a
+   * remove-then-re-add walk nobody standing at this door could perform. The walk could not be
+   * performed at all, so the mirror-wipe fix shipped unproven from a user's chair.
+   *
+   * The mutations these cases were watched against:
+   *  · drop the `!cloud` guard around the Remove button   → the hosted case reds (a desktop
+   *    install offering a removal the account will answer 403 to, for the life of the install);
+   *  · point the DELETE at the shared `/mailboxes/:id`    → the route case reds, and that is the
+   *    step-up trap the whole `/local/*` family exists for;
+   *  · render the confirmation's fifth line as the hosted `removeCopyStays` → the copy case reds
+   *    with "stays in your account" on a machine that has no account;
+   *  · remove the confirmation and wire the row's button straight to the DELETE → the ceremony
+   *    case reds, having destroyed a stored password on one press.
+   */
+  it("OFFERS REMOVE, and it opens a confirmation rather than removing anything", async () => {
+    const el = await render("local");
+    const verb = buttonExactly(el, "Remove");
+    expect(verb, "the standalone door still has no way to remove a mailbox").not.toBeNull();
+
+    // THE PRESS IS NOT THE REMOVAL. On the hosted door the destructive press is two screens away
+    // behind the account's second factor; here there is no factor to ask for, so the statement of
+    // consequences IS the ceremony.
+    await act(async () => { verb!.click(); });
+    expect(bridged, "the row's verb removed the mailbox with nothing confirmed").toEqual([]);
+
+    const panel = el.querySelector('[role="alertdialog"]');
+    expect(panel, "the confirmation is not an alertdialog").not.toBeNull();
+    expect(panel!.textContent ?? "").toContain("Remove someone@example.test?");
+  });
+
+  it("STATES FIVE CONSEQUENCES, and the fifth is this door's and not the account's", async () => {
+    const el = await render("local");
+    await act(async () => { buttonExactly(el, "Remove")!.click(); });
+    const items = [...el.querySelectorAll(".mbx-remove-list li")].map((li) => li.textContent ?? "");
+    expect(items).toHaveLength(5);
+
+    // The four that are true on both doors.
+    expect(items[0]).toContain("ohmail stops organizing this mailbox.");
+    expect(items[1]).toContain("Your mail is untouched.");
+    expect(items[2]).toContain("password ohmail stored for this mailbox is deleted");
+    expect(items[3]).toContain("Scheduled sends");
+
+    /* AND THE ONE THAT DIFFERS. On the hosted door the copy already synced STAYS, because erasure
+       there is account-scoped and there is no per-mailbox purge. On THIS door the route wipes the
+       local mirror in the same request — that is the wipe the doubling fix added — so the hosted
+       sentence would be false here, pointing the wrong way. */
+    expect(items[4]).toContain("This computer's copy of the mail is deleted");
+    expect(el.textContent ?? "", "the hosted sentence is on a machine with no account")
+      .not.toContain("stays in your account");
+  });
+
+  it("CONFIRM goes to the LOCAL route, and re-reads the shared facts", async () => {
+    bridgeReply = () => new Response(null, { status: 200 });
+    const el = await render("local");
+    await act(async () => { buttonExactly(el, "Remove")!.click(); });
+    await act(async () => {
+      buttonExactly(el, "Remove mailbox")!.click();
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+    });
+
+    /* `/local/mailboxes/:id`, NEVER the shared `DELETE /mailboxes/:id`. That one is `stepUp:
+       true`, and on this door the launch session's second-factor stamp is written once at boot —
+       so it answers 403 from five minutes after launch for the life of the process, which is
+       every machine that has been open longer than a coffee. */
+    expect(bridged).toEqual([{ url: "/local/mailboxes/mbx-1", method: "DELETE" }]);
+    expect(refreshed, "the pane went on showing a mailbox it had just removed").toBeGreaterThan(0);
+    expect(el.querySelector('[role="alertdialog"]'), "the panel stayed open on success").toBeNull();
+  });
+
+  it("a REFUSED removal says the engine's sentence and leaves the panel open", async () => {
+    // Dropping somebody back to a list that still shows the mailbox says nothing about whether
+    // the removal happened — the browser pane's rule, one surface over.
+    bridgeReply = () => new Response(
+      JSON.stringify({ error: { message: "this install is offline, so writes are paused" } }),
+      { status: 503, headers: { "content-type": "application/json" } },
+    );
+    const el = await render("local");
+    await act(async () => { buttonExactly(el, "Remove")!.click(); });
+    await act(async () => {
+      buttonExactly(el, "Remove mailbox")!.click();
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+    });
+    expect(el.textContent ?? "").toContain("this install is offline, so writes are paused");
+    expect(el.querySelector('[role="alertdialog"]'), "the confirmation vanished on a refusal")
+      .not.toBeNull();
+  });
+
+  it("KEEP IT closes the confirmation and removes nothing", async () => {
+    const el = await render("local");
+    await act(async () => { buttonExactly(el, "Remove")!.click(); });
+    await act(async () => { buttonExactly(el, "Keep it")!.click(); });
+    expect(el.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(bridged).toEqual([]);
+  });
+
+  it("a DISCONNECTED row offers no Remove — there is nothing left to remove", async () => {
+    // Same rule as the resync withheld one line over: the row is already a tombstone, and the
+    // service refuses a `disabled` row anyway.
+    FACTS = [{ ...MAILBOX, status: "disabled", disabledReason: null }];
+    const el = await render("local");
+    expect(buttonExactly(el, "Remove")).toBeNull();
   });
 
   it("an install that has not chosen a door yet is treated as standalone, not hosted", async () => {

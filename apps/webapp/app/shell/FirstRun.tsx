@@ -163,9 +163,38 @@ export interface FirstRunProps {
  * cursor/derivation interaction is the part with rows, and rows are what a table test is for.
  */
 export function firstRunStep(
-  facts: OnboardingFacts, at: OnboardingStep | null, rerun = false,
+  facts: OnboardingFacts, at: OnboardingStep | null, rerun = false, claimAnswered = false,
 ): OnboardingStep | null {
   const derived = deriveOnboardingStep(facts);
+  /* ── THE CLAIM QUESTION IS NOT SKIPPABLE, AND THE CURSOR USED TO SKIP IT SILENTLY ────────
+   *
+   * MEASURED on the released 0.13.6, on a fresh standalone connect to a mailbox ohmail Cloud
+   * holds the lease on: the flow opened on the consent statement (correct at that instant — the
+   * pre-consent PEEK had not landed yet, so no holder was named), the person pressed Continue,
+   * and from that press onward `at` was non-null. The peek then landed, the derivation started
+   * answering "elsewhere", and the arm below returned the cursor instead — so the one screen
+   * built for this situation never rendered. The person agreed, the install stood down to
+   * reader on its next pass, and the summary reported the organizing it had just been refused.
+   *
+   * The cursor is a navigation aid, not evidence. It may carry a run through screens the
+   * derivation cannot name; it may not carry a run PAST a question nobody answered. So while
+   * the facts say somebody else holds this mailbox and the claim question has not been
+   * answered in this run, the question wins over the cursor.
+   *
+   * `claimAnswered` is what makes that a guard rather than a loop — and the loop is the failure
+   * mode this codebase keeps producing, so it is spelled out: "Organize here instead" moves the
+   * cursor to `consent`, the consent stamp is not written until the window screen's press two
+   * screens later, and the derivation therefore still answers "elsewhere" for that whole
+   * stretch. Without the flag the person would be thrown back to the choice they just made, on
+   * every render, for ever.
+   *
+   * The three cursors exempted are the ones at or BEFORE this screen in the path
+   * (`onboardingPath`: welcome → mailbox → elsewhere). Back has to work.
+   */
+  if (derived === "elsewhere" && !claimAnswered
+      && at !== "welcome" && at !== "mailbox" && at !== "elsewhere") {
+    return "elsewhere";
+  }
   /* ── A RE-RUN IS AN INTENT, AND IT OUTRANKS THE COMPLETION STAMP ─────────────────────────
    *
    * `rerun` comes from the ROUTE (`#/first-run/again`), which is the only place it can come
@@ -245,8 +274,24 @@ export function FirstRun({
   const [busy, setBusy] = useState(false);
   /** A write that failed, in the server's own words. Cleared by the next attempt. */
   const [problem, setProblem] = useState<string | null>(null);
+  /**
+   * WHICH MAILBOX'S CLAIM QUESTION HAS BEEN ANSWERED IN THIS RUN — the flag `firstRunStep`'s
+   * guard reads, and the thing that keeps that guard from becoming a loop.
+   *
+   * KEYED BY MAILBOX, on `consented`'s rule and for the same measured reason: "Start over →
+   * forget this mailbox" and a reconnect inside one mount would otherwise carry an answer given
+   * about one mailbox onto a NEW row whose holder nobody has been told about — which is exactly
+   * the state the guard exists for.
+   *
+   * Deliberately NOT persisted. A run abandoned on the consent screen and resumed tomorrow gets
+   * the question again: the safe direction, and the same trade the AI posture's union
+   * documents — being asked twice costs a screen, not being asked costs a mailbox.
+   */
+  const [claimAnsweredFor, setClaimAnsweredFor] = useState<string | null>(null);
 
-  const step = firstRunStep(facts, at, rerun === true);
+  const step = firstRunStep(
+    facts, at, rerun === true, mailboxId !== null && claimAnsweredFor === mailboxId,
+  );
   const path = useMemo(() => onboardingPath(facts), [facts]);
 
   /**
@@ -526,6 +571,17 @@ export function FirstRun({
   const remaining = pullRemaining(serverMessageCount, mirrorCount);
   const etaMs = pullEtaMs(remaining, rate);
 
+  /** Whether the claim choice on the elsewhere screen would be declined. See the function. */
+  const claimRefusedHere = claimRefusedOnThisDoor(facts);
+  /**
+   * IS THIS INSTALL THE ORGANIZER — the one fact the summary is allowed to report work on.
+   *
+   * `!== "reader"` and not `=== "organizer"`, on {@link OnboardingMailbox.organizerRole}'s own
+   * rule: absent is a host too old to say, and every install was an organizer before the column
+   * existed. Only an explicit `reader` withholds the work summary.
+   */
+  const organizing = facts.mailbox?.organizerRole !== "reader";
+
   if (step === null) return null;
 
   const num = (n: number) => new Intl.NumberFormat(locale).format(n);
@@ -754,6 +810,14 @@ export function FirstRun({
 
         {step === "elsewhere" ? screen(
           () => {
+            /* ── THE QUESTION HAS NOW BEEN ANSWERED, WHICHEVER WAY ───────────────────────
+             *
+             * Recorded BEFORE either branch, because both are answers: `firstRunStep`'s guard
+             * holds this screen against the cursor for as long as the facts say somebody else
+             * organizes the mailbox, and without this flag "Organize here instead" would move
+             * the cursor to `consent` and be thrown straight back here — the consent stamp
+             * that ends the situation is two screens away. See the guard's own note. */
+            if (mailboxId) setClaimAnsweredFor(mailboxId);
             /* ── "JUST READ IT HERE" WRITES NOTHING ABOUT ORGANIZING ──────────────────────
              *
              * It stamps completion and leaves. That is the whole action: this install is
@@ -831,6 +895,28 @@ export function FirstRun({
                   running install is honoured on the next poll with no relaunch. The premise the
                   branch stood on is gone, and the branch goes with it rather than surviving as a
                   vaguer sentence on one door — which would understate what that door does. */}
+              {/* ── AND WHERE THE LEASE WILL REFUSE, THE SCREEN SAYS SO BEFORE THE PRESS ───
+                  `decideLease` ranks kinds cloud > local > unknown, and a STANDALONE install is
+                  `local`: rule 5 gives it no path over a live Cloud (or over a live kind this
+                  build cannot rank) whatever was authorized — the honest action is to stop the
+                  organizer there first. Without this the choice promised a takeover that the
+                  very next pass refuses: agree, stand down on that pass, and read a summary
+                  claiming the organizing.
+
+                  The sentence is `mailboxes.organizeHereWhatBlocked`, the SAME one Settings →
+                  Mailboxes prints for the same state — one vocabulary for one refusal, so the
+                  two surfaces cannot drift into describing it differently.
+
+                  Withheld on the other two doors rather than made vaguer: a Cloud claim outranks
+                  a local holder, so there the promise the choice makes is true. */}
+              {elsewhereChoice === "here" && claimRefusedHere ? (
+                <SettingsVerdict
+                  state="off"
+                  headline={tm("organizeHereWhatBlocked", {
+                    name: holderName(facts) ?? tm("readerHolderUnknown"),
+                  })}
+                />
+              ) : null}
               {claimed ? <SettingsVerdict state="wait" headline={t("elsewhereQueued")} /> : null}
               {problem ? <SettingsVerdict state="bad" headline={problem} /> : null}
               {foot({ back: true, primary: next(t("continue")) })}
@@ -1073,15 +1159,61 @@ export function FirstRun({
           </>
         ) : null}
 
+        {/* ── THE SUMMARY REPORTS WHAT **THIS INSTALL** DID, AND IT USED TO REPORT THE MAILBOX ──
+         *
+         * An install that has stood down to READER organizes nothing, and this screen used to
+         * end its setup run by reporting a screening count and a list of folders anyway. Every
+         * number on it was true about the MAILBOX and false about the run that printed it: the
+         * folders and the screening belong to whichever install holds the lease. Settings →
+         * Mailboxes said the true thing at the same moment on the same machine, which is how the
+         * contradiction shows up.
+         *
+         * The two shapes are not two wordings of one screen. An organizer reports work; a reader
+         * reports a relationship — what it does (read, search, mark read, send), who organizes
+         * the mailbox and since when, and where the claim lives if they want it here. There is no
+         * count on the reader's half at all, because a count is a claim about work.
+         *
+         * `organizing` is `organizerRole !== "reader"`, so a host too old to say the role gets
+         * the organizer summary — the pre-0083 world, where every install was one.
+         */}
         {step === "summary" ? screen(leave, (
           <>
-            <h1 id={`${ids}-title`}>{t("doneTitle")}</h1>
+            <h1 id={`${ids}-title`}>{organizing ? t("doneTitle") : t("doneReaderTitle")}</h1>
             <div className="ob-done">
-              <SettingsRow label={t("doneScreened", { count: pull.screened })}
-                description={t("doneScreenedWhy")} />
-              <SettingsRow label={t("doneHistory", { count: pull.history })}
-                description={t("doneHistoryWhy")} />
-              <SettingsRow label={t("doneFolders")} description={t("doneWhere")} />
+              {organizing ? (
+                <>
+                  {/* THE COUNTS ARE MESSAGES, AND THE LABEL SAID SENDERS. `pull.screened` is the
+                      mirror's size minus what History lists — a count of MESSAGES that went
+                      through the screening partition — and it was rendered under "{n} senders
+                      screened", which is a smaller number on any real mailbox. The value was
+                      right and the noun was not. */}
+                  <SettingsRow label={t("doneScreened", { count: pull.screened })}
+                    description={t("doneScreenedWhy")} />
+                  <SettingsRow label={t("doneHistory", { count: pull.history })}
+                    description={t("doneHistoryWhy")} />
+                  <SettingsRow label={t("doneFolders")} description={t("doneWhere")} />
+                </>
+              ) : (
+                <>
+                  <SettingsRow label={t("doneReaderReads")} description={t("doneReaderReadsWhy")} />
+                  {/* WHO ORGANIZES IT AND SINCE WHEN — the same four columns and the same three
+                      sentences the elsewhere screen and Settings → Mailboxes render, so the three
+                      surfaces cannot describe one state differently. */}
+                  <SettingsRow
+                    label={holderName(facts) === null
+                      ? tm("readerLabelLegacy")
+                      : tm("readerLabel", { name: holderName(facts)! })}
+                    description={holderName(facts) === null
+                      ? tm("readerSinceUnknown", { since: organizedSince ?? "" })
+                      : facts.mailbox?.organizedBy?.kind === "cloud"
+                        ? tm("readerSinceCloud", { since: organizedSince ?? "" })
+                        : tm("readerSinceLocal", {
+                          since: organizedSince ?? "", name: holderName(facts)!,
+                        })}
+                  />
+                  <SettingsRow label={t("doneReaderClaim")} description={t("doneReaderClaimWhy")} />
+                </>
+              )}
             </div>
             <p className="set-note-inline">{t("doneSettings")}</p>
             {/* ── THE PAIR OFFER IS A SECOND VERB HERE, AND IT HAS TO BE ────────────────────
@@ -1206,4 +1338,29 @@ function holderName(facts: OnboardingFacts): string | null {
   const by = facts.mailbox?.organizedBy;
   if (!by) return null;
   return by.name && by.name.trim() ? by.name : null;
+}
+
+/**
+ * WOULD "ORGANIZE HERE INSTEAD" BE REFUSED BY THE LEASE, on the facts this screen can see?
+ *
+ * `decideLease` (`organizer-lease.ts`) ranks kinds cloud > local > unknown, and rule 5 refuses a
+ * takeover of a LIVE holder that outranks us "even with authorization" — §4 gives a standalone
+ * install no path over a live Cloud on purpose. So on the `local` door the claim choice promises
+ * something the very next pass declines. The measured cost of not saying so was the confusion
+ * this screen exists to prevent: agree, stand down on the next pass, and read a summary
+ * reporting the organizing that was refused.
+ *
+ * `organizerState !== "stopped"` and not `=== "held"`, on the desktop pane's rule verbatim: the
+ * column is `null` when this install has not LOOKED, which is not evidence the holder went away.
+ * Treating unknown as beatable promises a takeover against a claim that may be perfectly fresh;
+ * the cost of the cautious direction is a sentence pointing at an action that also works.
+ *
+ * Exported because it is the branch this screen's honesty rests on and it has rows.
+ */
+export function claimRefusedOnThisDoor(facts: OnboardingFacts): boolean {
+  if (facts.door !== "local") return false;
+  const mb = facts.mailbox;
+  if (!mb || mb.organizerState === "stopped") return false;
+  const kind = mb.organizedBy?.kind;
+  return kind === "cloud" || kind === "unknown";
 }

@@ -7202,8 +7202,26 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
           rerun={route.firstRunRerun}
           /* WHAT THE ACCOUNT ALREADY STORED, so a re-run shows the state it is about to change.
              `dormancyDays` is always a number on this object; `screeningScope` rests `window`,
-             which is what every build did before the mode existed. */
-          screening={{ dormancyDays: consent.dormancyDays, scope: consent.screeningScope }}
+             which is what every build did before the mode existed.
+
+             ── AND ONLY WHERE SOMETHING IS ACTUALLY STORED, WHICH THIS PASSED UNCONDITIONALLY ──
+
+             `FirstRunProps.screening` is documented "Absent on a first run, where there is
+             nothing stored to show", and this handed it the RESTING values on every run. Those
+             rest at `DEFAULT_DORMANCY_DAYS` (60), `initialWindow` snaps a stored 60 to the
+             nearest offered rung, and 60 is nearer 90 than 365 — so a fresh first run showed
+             "90 days" pre-selected while the row beside it read "One year · usual". Measured on
+             the released 0.13.6, on a fresh HOME: nobody had chosen 60, and the control was
+             reporting a product default as the person's own answer.
+
+             `screeningBaselineAt` is the truth-condition for "an answer exists": it is written
+             by the consent transaction and by the first screener decision, and by nothing else,
+             and it rests null (the one consent field deliberately NOT filled in with a plausible
+             value — see `ConsentState.screeningBaselineAt`). Withheld, `initialWindow` answers
+             365, which is the number the flow stores. */
+          {...(consent.screeningBaselineAt
+            ? { screening: { dormancyDays: consent.dormancyDays, scope: consent.screeningScope } }
+            : {})}
           /* RE-READ `GET /mailboxes` — the route every write in this flow changes (the create,
              the claim, the consent stamp). The account's consent row re-reads itself: every
              consent-settings write appends a `settings` change row, the wake channel rings, and

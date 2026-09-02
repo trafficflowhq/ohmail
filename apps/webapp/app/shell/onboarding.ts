@@ -108,9 +108,20 @@ export interface OnboardingMailbox {
    * Absent reads as `organizer` — every install was one before the column existed, so a host
    * that cannot say has not demoted anybody. The dangerous default is the other one: it would
    * put the "somebody else organizes this" screen over a mailbox this install organizes.
+   *
+   * READ BY THE SCREENS, NOT BY THE DERIVATION. It selects the summary's two shapes — a reader
+   * reports what it reads, an organizer reports what it filed — and it deliberately does not
+   * select the `elsewhere` step, which turns on {@link organizedBy} instead. See row 3.
    */
   organizerRole?: "organizer" | "reader";
-  /** Who holds it, when somebody else does. `null`/absent ⇒ nobody is named. */
+  /**
+   * Who holds it, when somebody else does. `null`/absent ⇒ nobody is named.
+   *
+   * THE PEEK'S ANSWER, and therefore the one fact that is available BEFORE anybody consents:
+   * both doors fill these columns from the APPEND-less lease read rather than from a claim, so
+   * a mailbox this install has looked at and not touched still says who organizes it. That is
+   * why row 3 turns on this and not on {@link organizerRole}.
+   */
   organizedBy?: { kind: string | null; name: string | null; since: string | null } | null;
   /** Whether that holder is still renewing. Read by the SCREEN, not by this derivation. */
   organizerState?: "held" | "stopped" | null;
@@ -166,7 +177,7 @@ export interface OnboardingFacts {
  *
  *  1. completed          → null       the flow has been left; never re-opens by itself
  *  2. no mailbox         → "mailbox"  nothing to organize; the door's first real question
- *  3. reader + a holder  → "elsewhere" somebody else organizes it — the choice, never a dead end
+ *  3. a holder is named → "elsewhere" somebody else organizes it — the choice, never a dead end
  *     + no consent
  *  4. no consent         → "consent"  the re-arrangement statement, then the window
  *  5. AI unset           → "ai"       an unanswered question, ahead of the progress bar
@@ -189,8 +200,6 @@ export function deriveOnboardingStep(facts: OnboardingFacts): OnboardingStep | n
   if (facts.mailbox === null) return "mailbox";
 
   const mb = facts.mailbox;
-  // ABSENT ⇒ `organizer`. See {@link OnboardingMailbox.organizerRole} for why this direction.
-  const isReader = mb.organizerRole === "reader";
   const consented = Boolean(mb.organizeConsentedAt);
   // A HOLDER IS NAMED — not merely "the object exists". `organizedBy` is null as a whole when
   // nobody is named (the DTO guarantees that rather than an object of three nulls), and a reader
@@ -204,7 +213,23 @@ export function deriveOnboardingStep(facts: OnboardingFacts): OnboardingStep | n
   // claim is what this screen is for. Gated on `!consented` so a mailbox this account HAS
   // consented to, and that another install later took, is not asked for consent a second time —
   // its banner and its "Organize here instead" button live in Settings, not in first-run setup.
-  if (isReader && heldByOther && !consented) return "elsewhere";
+  //
+  // ── THE HOLDER IS THE CONDITION. THE ROLE IS NOT, AND ASKING FOR BOTH SKIPPED THIS SCREEN ──
+  //
+  // This arm read `isReader && heldByOther && !consented`, and the extra clause bought nothing
+  // while it could take the screen away. The four holder columns are written by a PEEK — the
+  // APPEND-less lease read (`notePreConsentHolder` on the standalone door,
+  // `refreshReaderHolder` on the hosted one) — and the ROLE is written by a different event
+  // entirely: the stand-down. So on a pre-consent mailbox the two do not move together, and a
+  // build that has looked and seen a live foreign claim must act on what it saw rather than
+  // wait for a demotion that only happens after somebody has already agreed.
+  //
+  // `!consented` carries the whole of the old clause's meaning anyway: a mailbox nobody has
+  // agreed to is by construction not one this install organizes, whatever `organizer_role`
+  // says. The dangerous direction here is the one that was measured — a fresh standalone
+  // connect to a mailbox ohmail Cloud holds walked past this screen, agreed, and stood down to
+  // reader on its next pass, having been shown a consent statement instead of the choice.
+  if (heldByOther && !consented) return "elsewhere";
 
   // ROW 4 — NO CONSENT. The re-arrangement statement and, on its heels, the window: they are two
   // screens and ONE write (`POST /mailboxes/:id/organize` carries consent, baseline, window and
@@ -254,8 +279,18 @@ export function onboardingPath(facts: OnboardingFacts): OnboardingStep[] {
   const mb = facts.mailbox;
   // The elsewhere screen is in the PATH only when it is actually the situation. Walking somebody
   // through "somebody else organizes this" when nobody does would be a screen with no content.
-  if (mb && mb.organizerRole === "reader"
-      && Boolean(mb.organizedBy && (mb.organizedBy.kind || mb.organizedBy.name))) {
+  //
+  // THE HOLDER IS THE CONDITION, and the ROLE is not — row 3's note carries the argument, and it
+  // applies here for the sharper reason: the path decides where `forward()` goes, so a path that
+  // omitted the screen the derivation resumes on would make Continue walk away from the screen
+  // the facts had just selected.
+  //
+  // Deliberately NOT gated on `!consented`, unlike row 3. The two answer different questions:
+  // row 3 says where a run RESUMES (and a mailbox already consented to must not be asked for
+  // consent again), while this says what the walk CONTAINS — and the re-entry path, a consented
+  // mailbox another install has since taken, is walked through this screen from the Settings
+  // banner. The screen has an arm for exactly that state and it is reachable only through here.
+  if (mb && Boolean(mb.organizedBy && (mb.organizedBy.kind || mb.organizedBy.name))) {
     out.push("elsewhere");
   }
   out.push("consent", "window", "ai");
