@@ -22,3 +22,42 @@
 .btn.primary:disabled:hover{background:var(--tint2)}
 .btn kbd{background:transparent;border-color:var(--hair-soft)}
 .btn.primary kbd{border-color:oklch(1 0 0/.32);color:inherit}
+
+/* ═══ THE SEND VERB'S OWN STATES — `data-send="sending|sent|queued"` on a primary button ═══════
+ *
+ * The composer's Send (and Send later's confirm) and the reply's Send carry the lane's phase
+ * on the button itself. Reported: pressing Send sometimes showed nothing for seconds and could
+ * look stuck — the only in-flight rendering was the DISABLED look (the flat `--tint2` above),
+ * which is drawn to say "you cannot press this yet", the opposite of "this is working".
+ *
+ *   sending  the accent fill stays; the label is the verb's progressive form; a 2px band of
+ *            on-accent light passes along the button's foot, left to right, over and over.
+ *            Directional, inside the control's own shape, no spinner. `cursor: progress`.
+ *   sent     the band completes to the full width once and rests; the label settles on the
+ *            past tense. The surface closes after the beat (the shell's settle).
+ *   queued   the fill stays, no band — resting, locked; the label names the state and the
+ *            status line under the row says what happens next.
+ *
+ * Nothing here is a face: the band is `--on-accent` on `--accent`, the rhythm is one
+ * keyframe, and under paper the capsule clips the band to its arc while under ohmarchy the
+ * square button shows it as a line. `prefers-reduced-motion`: base.css runs every animation
+ * once in .01ms — the band lands at rest, and the state is carried by the label alone.
+ * The lock stays native `disabled` (the machine refuses a second press; `mail-send.ts`), so
+ * these rules only re-dress the disabled control while the lane is live — a `disabled`
+ * button WITHOUT `data-send` keeps the flat look above. */
+.btn.primary[data-send]{position:relative;overflow:hidden}
+.btn.primary[data-send="sending"]:disabled,
+.btn.primary[data-send="sent"]:disabled,
+.btn.primary[data-send="queued"]:disabled,
+.btn.primary[data-send="sending"]:disabled:hover,
+.btn.primary[data-send="sent"]:disabled:hover,
+.btn.primary[data-send="queued"]:disabled:hover{background:var(--accent);color:var(--on-accent);box-shadow:var(--lift-0);cursor:progress}
+.btn.primary[data-send="queued"]:disabled,
+.btn.primary[data-send="queued"]:disabled:hover{cursor:default}
+.btn.primary[data-send="sending"]::after,
+.btn.primary[data-send="sent"]::after{content:"";position:absolute;left:0;bottom:0;height:2px;width:36%;
+  background:var(--on-accent);opacity:.6;pointer-events:none}
+.btn.primary[data-send="sending"]::after{animation:send-pass 1.4s linear infinite}
+.btn.primary[data-send="sent"]::after{width:100%;transform-origin:left;animation:send-done .32s var(--swift) both}
+@keyframes send-pass{from{transform:translateX(-100%)}to{transform:translateX(278%)}}
+@keyframes send-done{from{transform:scaleX(0)}to{transform:none}}
