@@ -18,9 +18,27 @@ Signed installers — a real Apple Developer ID and an Authenticode certificate.
 
 ## [0.13.5] — 2026-09-02
 
-Losing a mailbox to another install no longer stops this one. Beside that: the
-window frame is handed to tiling Wayland compositors, a mailbox can be removed,
-Test connection answers, and the settings panes are one system.
+Setting ohmail up is a guided flow now. Beside that: an install that has handed
+the organizing role to another one keeps reading the mailbox instead of
+freezing, the window frame is handed to tiling Wayland compositors, a mailbox
+can be removed, Test connection answers, and the settings panes are one system.
+
+### Setting up is a guided flow, not a settings pane
+
+A first run now walks from "I installed ohmail" to a mailbox that is being
+organized, one screen at a time: connect a mailbox and test it, agree to the
+re-arrangement in the words of what actually happens, choose how far back to
+screen, answer the AI question, watch the first pull with a real count of what
+is left, and take a first Screener decision.
+
+It is cancellable and restartable at any point, it resumes where you left off
+across restarts — by looking at the state of your mailbox rather than by
+counting screens — and it can be run again later from Settings.
+
+The consent screen names the folders your mail will be arranged into and says
+plainly that they are ordinary IMAP folders every other mail client can still
+see, that History is a view rather than a place things are moved to, and that
+nothing moves until you agree.
 
 ### An install that no longer organizes a mailbox keeps reading it
 
