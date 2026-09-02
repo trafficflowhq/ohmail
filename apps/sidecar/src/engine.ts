@@ -1118,14 +1118,44 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     const smtpProbeOpts: SmtpProbeOptions = config.adapterFactory
       ? { dial: async (): Promise<void> => undefined }
       : {};
-    const openLocalSend: OpenSendAdapter = async (mailboxId: string): Promise<SendAdapter> =>
-      config.adapterFactory
-        /* The empty third argument is the shared function's OWN timeouts option, which this door
-           does not set — the desktop dials the user's own server with the adapter's defaults. It
-           is passed positionally so the factory lands in the fourth slot the signature gives it. */
+    const openLocalSend: OpenSendAdapter = async (mailboxId: string): Promise<SendAdapter> => {
+      /* ── THE BOOT CONTRACT REACHES THE SEND PATH, AND IT HAS TO ─────────────────────────────
+       *
+       * The INCOMING comparison gates the launch: a credential proved against one server is not
+       * offered to another, so a mailbox in that state dials nothing and the person is told which
+       * settings to settle. A SEND is a dial like any other, and it runs on its own fresh
+       * connection built straight from the credential rows — so without this it would go on
+       * offering the password while the launch that owns that mailbox was refusing to, which is
+       * the same secret reaching a server nobody settled on, through the one door that does not
+       * consult the gate.
+       *
+       * It used to hold by construction: the deleted local sender resolved the credential through
+       * the same `resolveLogin` the launch used, and inherited the refusal. The shared adapter
+       * reads the rows directly and knows nothing about what this process was configured for, so
+       * the check is made here — at the seam that knows both.
+       *
+       * ONLY THE INCOMING ARM. The outgoing one is gone with the design that produced it: there is
+       * no process-wide submission host any more, so a credential cannot disagree with one. And
+       * only for a mailbox this install is actually RUNNING — a send for a row with no runtime
+       * has no configuration to be measured against, and refusing it would be inventing a
+       * disagreement out of an absence. */
+      const rt = runtimes.get(mailboxId);
+      if (rt && (await rt.credentialState()) === "foreign-host") {
+        throw new ServiceError(
+          "upstream_unavailable", 502,
+          "the stored mailbox password was proved against a different incoming (IMAP) server " +
+            "than this install is now configured for, so it was not offered and nothing was " +
+            "sent. Finishing or undoing the change of server resolves it.",
+        );
+      }
+      return config.adapterFactory
+        /* The empty third argument is the shared function's OWN timeouts option, which this
+           door does not set — the desktop dials the user's own server with the adapter's
+           defaults. Passed positionally so the factory lands in the fourth slot. */
         ? makeSendAdapter(depsFor(), mailboxId, {},
             (cfg: ImapConfig) => config.adapterFactory!(cfg) as unknown as ImapAdapter)
         : makeSendAdapter(depsFor(), mailboxId);
+    };
 
     const depsFor = (): ApiDeps => ({
       db,
@@ -1770,7 +1800,22 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         .limit(1))[0];
       const dialMeta = (dialRow?.meta ?? null) as
         (CredMetaAuth & { host?: string; port?: number; secure?: boolean; insecureConsent?: boolean }) | null;
-      const mbImap: SidecarImapConfig = isSeed && !dialMeta?.host
+      /* ── THE SEED DIALS WHAT IT WAS CONFIGURED FOR, AND THAT IS THE BOOT CONTRACT ────────
+       *
+       * This read `isSeed && !dialMeta?.host`, so a seed whose credential recorded a host dialled
+       * THE CREDENTIAL'S host and ignored the configuration. It looks like the multi-mailbox rule
+       * applied evenly, and it silently disables the incoming boot contract: the comparison below
+       * is `credentialIsForeign(row.meta, mbImap.host)`, and with both sides taken from the same
+       * row it compares the credential against ITSELF and can never disagree. A launch pointed at
+       * a new server would go on dialling the old one for ever, with the password, and say
+       * nothing — while the whole point of that contract is to dial NOTHING and tell the person,
+       * because a half-finished change of server is exactly when a secret must not be offered.
+       *
+       * So the SEED's dial is the configuration the shell set — what the person chose — and the
+       * comparison stays a real comparison. Mailboxes #2..N have no configured server to disagree
+       * with: their row is the only statement of where they live, so the same predicate compares
+       * a host against itself and correctly never withholds. One rule, two honest answers. */
+      const mbImap: SidecarImapConfig = isSeed
         ? config.imap
         : {
             host: dialMeta?.host ?? "",
