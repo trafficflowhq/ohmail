@@ -379,7 +379,19 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
    * failure: the sentence it needs is a durable instruction ("quit and reopen ohmail"), and a
    * line that moves when some other row fails would take it away mid-read.
    */
-  const [reclaimed, setReclaimed] = useState<ReadonlyMap<string, TakeoverOutcome>>(() => new Map());
+  /**
+   * WHAT WAS ASKED FOR, AND WHETHER IT COULD HAVE WORKED — the second half is why this is a record
+   * rather than a bare outcome.
+   *
+   * The entry exists to stop a one-shot being pressed twice. A request made while the mailbox was
+   * BLOCKED is not a one-shot at all: it achieves nothing, the running loop clears the stamp, and
+   * the answer it produced tells somebody to stop the other organizer and ask again. So a blocked
+   * entry must never consume the button — not while the holder is still there, and above all not
+   * at the moment it stops, which is exactly when the retry becomes the thing that works.
+   */
+  const [reclaimed, setReclaimed] = useState<ReadonlyMap<string, { outcome: TakeoverOutcome; blocked: boolean }>>(
+    () => new Map(),
+  );
   /** Mailboxes whose takeover request is in flight, so the button debounces. */
   const [reclaiming, setReclaiming] = useState<ReadonlySet<string>>(() => new Set());
   /* Resting, or asked whether you meant it. One value rather than two booleans, for the reason
@@ -447,7 +459,7 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
    * simply is not served there. The pane's `cloud` test is the same one the header uses for every
    * other asymmetry between the two doors.
    */
-  const reclaim = (id: string): void => {
+  const reclaim = (id: string, blockedAtPress: boolean): void => {
     setProblem(null);
     setReclaiming((q) => new Set(q).add(id));
     void (async () => {
@@ -459,7 +471,8 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
         });
         if (!res.ok) throw new Error(await reasonOf(res));
         const body = (await res.json()) as { outcome?: unknown };
-        setReclaimed((m) => new Map(m).set(id, takeoverOutcome(body.outcome)));
+        setReclaimed((m) =>
+          new Map(m).set(id, { outcome: takeoverOutcome(body.outcome), blocked: blockedAtPress }));
         // The row's own state moved (`disabled` → `connected` with the stamp), so the pane must
         // re-read rather than keep rendering the stand-down it was showing.
         refresh();
@@ -672,8 +685,15 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
               The order the answer gives IS the reliable one, which is why it is worth keeping
               reachable: the stamp is cleared by the STAND-DOWN write (`engine.ts:2038`), and once
               the other holder has gone quiet the lease returns available rather than standing this
-              install down — so nothing clears it and the relaunch spends it. */
-          {...(claim === "rest" && (!reclaimed.has(claimTarget.id) || claimWouldBeRefused(claimTarget))
+              install down — so nothing clears it and the relaunch spends it.
+
+              THE TEST IS ON THE ENTRY, NOT ON THE ROW'S CURRENT STATE, and that distinction is the
+              whole fix. Gating on "is it blocked NOW" put the button back while the holder was
+              still there and took it away again the moment the holder stopped — which is precisely
+              when the retry becomes the thing that works, and precisely what the answer had sent
+              somebody away to do. A blocked request never consumed a one-shot in the first place;
+              a beatable one did. */
+          {...(claim === "rest" && (reclaimed.get(claimTarget.id)?.blocked ?? true)
             ? {
                 action: (
                   <Button variant="primary" onClick={() => setClaim("confirm")}>
@@ -722,7 +742,7 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
             disabled={reclaiming.has(claimTarget.id)}
             onClick={() => {
               setClaim("rest");
-              reclaim(claimTarget.id);
+              reclaim(claimTarget.id, claimWouldBeRefused(claimTarget));
             }}
           >
             {t("organizeHereConfirm")}
@@ -801,7 +821,7 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
               dropped the moment the role confirms it worked. `off` rather than `ok`: this window
               has not been told the mailbox moved, and a tick would say it had. */}
           {reclaimed.has(shown.id) ? (
-            reclaimed.get(shown.id) === "authorized" ? (
+            reclaimed.get(shown.id)!.outcome === "authorized" ? (
               /* ── THE LEGACY ROW COULD NOT REACH THE ANSWER AT ALL ─────────────────────────
                  The gate below tests `organizerRole === "reader"`, and the mapper coerces a legacy
                  row's ABSENT role to `organizer` — so on precisely the rows the legacy arm exists
@@ -842,7 +862,7 @@ export function DesktopMailboxes({ door }: { door?: string | null }) {
                 <SettingsVerdict state="off" headline={t("organizeHereQueued")} />
               ) : null
             ) : (
-              <SettingsNote>{t(`desktopOrganizeHere_${reclaimed.get(shown.id)!}`)}</SettingsNote>
+              <SettingsNote>{t(`desktopOrganizeHere_${reclaimed.get(shown.id)!.outcome}`)}</SettingsNote>
             )
           ) : null}
           {superseded > 0 ? <SettingsNote>{t("superseded")}</SettingsNote> : null}

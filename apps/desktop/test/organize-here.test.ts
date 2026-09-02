@@ -565,6 +565,31 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
       .not.toBeNull();
   });
 
+  /**
+   * THE TRANSITION THE INSTRUCTION SENDS SOMEBODY TO MAKE — and the case that was missing.
+   *
+   * The blocked answer says "stop it organizing there, then ask again". Doing that turns the row's
+   * `organizerState` from `held` to `stopped`, at which point the request could finally succeed —
+   * and a guard written against the row's CURRENT blocked-ness took the button away at exactly
+   * that moment, because the spent-request marker was still set. The earlier case could not see
+   * it: it asserted the button on the blocked row and never re-rendered with the stopped one.
+   */
+  it("keeps the retry across the very transition its answer tells you to make", async () => {
+    FACTS = [CLOUD_HELD];
+    const el = await render(null);
+    await act(async () => { organizeButton(el)!.click(); });
+    await act(async () => { confirmButton(el)!.click(); });
+    expect(organizeButton(el), "the retry was gone while the holder was still there").not.toBeNull();
+
+    // The user goes and stops it organizing there; the reader cycle refreshes the same row.
+    FACTS = [{ ...CLOUD_HELD, organizerState: "stopped" }];
+    await act(async () => { root!.render(await paneNode(null)); });
+    expect(organizeButton(el),
+      "the button vanished at the moment the retry would have worked, which is what the answer " +
+        "sent somebody away to bring about")
+      .not.toBeNull();
+  });
+
   it("…and a request that CAN succeed still spends its button", async () => {
     // The negative control: a beatable holder's request is one-shot, so the button goes and the
     // acknowledgement stands in its place until the role confirms it.
