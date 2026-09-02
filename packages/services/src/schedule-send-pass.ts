@@ -114,6 +114,32 @@ export interface ScheduledSendPassDeps {
    * the handle through costs one parameter and removes the failure class.
    */
   accountEligible?: (accountId: string, db: Db) => Promise<boolean>;
+  /**
+   * WHICH MAILBOXES THIS PASS MAY CLAIM FOR — absent means ALL of them, which is the hosted
+   * clock's shape and the one every existing caller keeps.
+   *
+   * The scan below is store-wide by design: one host runs one pass and every due appointment in
+   * reach is its business. That stops being true on the standalone desktop the moment an install
+   * holds more than one mailbox, because the mailboxes do not share a ROLE. A machine can be the
+   * organizer of one and a mere reader of another at the same time, and a reader must not send an
+   * appointment: its own were closed when it was demoted, and one that survived that close — the
+   * close is best-effort and says so — would otherwise be delivered from an install the mailbox's
+   * real organizer knows nothing about, at a time nobody re-chose.
+   *
+   * Gating the whole pass on "every mailbox here organizes" was the alternative and it is worse
+   * in a way that is easy to miss: it would withhold the ORGANIZER's own appointments too,
+   * because one unrelated mailbox in the same install had been taken over. The filter is what
+   * lets each runtime claim exactly its own.
+   *
+   * ── AN EMPTY ARRAY MEANS NONE, AND IS NOT THE SAME AS ABSENT ─────────────────────────────
+   *
+   * This is the "absent config selects the dangerous branch" shape, so the two are separated
+   * deliberately rather than collapsed by a truthiness test: `undefined` is "no filter — claim
+   * anything", and `[]` is "this caller has no mailboxes to claim for", which must claim
+   * NOTHING. Folding them would make a desktop install with no organizer runtime behave like the
+   * hosted clock and send every appointment in the store.
+   */
+  mailboxIds?: readonly string[];
   log?: Logger;
   now?: () => Date;
   /** Test seams. */
@@ -156,7 +182,7 @@ export async function runScheduledSendPass(
   const sends = deps.sends ?? sendService;
   const result: ScheduledSendPassResult = { claimed: 0, sent: 0, unverified: 0, failed: 0, deferred: 0 };
 
-  const rows = await claimDue(db, now(), batch, deps.accountEligible, log);
+  const rows = await claimDue(db, now(), batch, deps.accountEligible, log, deps.mailboxIds);
   result.claimed = rows.length;
 
   for (const row of rows) {
@@ -317,7 +343,12 @@ async function claimDue(
   db: Db, now: Date, batch: number,
   accountEligible: ((accountId: string, db: Db) => Promise<boolean>) | undefined,
   log: Logger,
+  mailboxIds: readonly string[] | undefined,
 ): Promise<ClaimedRow[]> {
+  /* NONE MEANS NONE, decided before a transaction is opened. See the field's own note: an empty
+     list is a caller saying it has no mailboxes to claim for, and `inArray(col, [])` is not a
+     reliable way to say that across drivers. */
+  if (mailboxIds !== undefined && mailboxIds.length === 0) return [];
   return (db as unknown as Tx).transaction(async (tx) => {
     // One eligibility read per distinct account this claim touches, memoised for both arms —
     // and run ON THIS TRANSACTION's handle, never a captured outer one (the deadlock rule on
@@ -357,6 +388,10 @@ async function claimDue(
         }).from(drafts)
           .where(and(
             base(),
+            /* THE MAILBOX NARROWING, in the scan rather than in either arm's `base()`, so the
+               due arm and the stale-recovery arm cannot drift apart about it. A recovered
+               'sending' row belongs to exactly the same mailbox its appointment did. */
+            ...(mailboxIds === undefined ? [] : [inArray(drafts.mailboxId, [...mailboxIds])]),
             // The keyset bound's params are serialized EXPLICITLY (ISO text + casts): a raw
             // `Date` in a sql`` fragment bypasses drizzle's column mapping, and postgres-js
             // refuses it — PGlite tolerated it, which is exactly the class of green the
