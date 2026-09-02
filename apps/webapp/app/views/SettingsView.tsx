@@ -26,7 +26,7 @@
  * STANDALONE install still passes nothing, which is the invariant that was always the point:
  * no account, no pane, structurally rather than by remembering.
  */
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import {
   DEFAULT_CHANNELS,
@@ -64,7 +64,7 @@ import {
   readChannels,
   subscriptionWanted,
   writeChannels,
-  writeNotifyState,
+  applyWakeIntent,
   type NotificationHost,
   type PushSyncOutcome,
 } from "../shell/notification-settings";
@@ -812,6 +812,29 @@ export function SettingsView({
    * expected.
    */
   const [delivery, setDelivery] = useState<PushSyncOutcome | null>(null);
+  /**
+   * THE DELIVERY SENTENCE, SET FROM THE OUTCOME AND ONLY WHEN IT CHANGES WHAT IS ON SCREEN.
+   *
+   * Two properties, both load-bearing.
+   *
+   * It CLEARS. The old form set state only for the three outcomes that carry a sentence, so a
+   * pane that once said "not registered" went on saying it after the next reconcile succeeded —
+   * a stale complaint about a browser that had since been registered. The stored value is now
+   * whatever the note derives from, `null` included, so a recovery erases the line.
+   *
+   * It does not write when nothing would change. An unconditional `setState` in a mount effect
+   * makes every test that renders this view without `act` print a React warning, and a suite that
+   * prints warnings is one where a real one is not noticed. The ref is what lets that comparison
+   * happen without putting `delivery` in the effect's deps and re-running the reconcile on its
+   * own result.
+   */
+  const deliveryRef = useRef<PushSyncOutcome | null>(null);
+  const showDelivery = useCallback((o: PushSyncOutcome | null) => {
+    const next = noteFor(o) === null ? null : o;
+    if (next === deliveryRef.current) return;
+    deliveryRef.current = next;
+    setDelivery(next);
+  }, []);
   const noteFor = (o: PushSyncOutcome | null): string | null =>
     o === "no_server_key" ? t("notifyNoServerKey")
       : o === "row_remains" ? t("notifyRowRemains")
@@ -831,9 +854,14 @@ export function SettingsView({
        · the WORDS the service worker may draw, in this user's language, because that worker
          never reads the push payload and so has no other source for them. */
     const wanted = subscriptionWanted(next, at);
-    void writeNotifyState(wanted, "ohmail", t("notifyClosedBody"));
-    void notificationHost.syncSubscription?.(wanted).then((o) => { setDelivery(o); });
-  }, [notificationHost, t]);
+    /* ONE act, shared with the shell's boot path (`applyWakeIntent`), and NOT the two
+       fire-and-forget writes this used to be. The ordering is the whole of it: OFF writes the
+       worker's permission away first and unconditionally, ON writes it LAST and only for a row
+       the server named for THIS session. See `notification-settings.ts` for why an intent is not
+       enough — the short version is that a previous user's registration can still be live on a
+       shared browser, and `wanted` says nothing about whose it is. */
+    void applyWakeIntent(notificationHost, wanted, t("notifyClosedBody")).then(showDelivery);
+  }, [notificationHost, showDelivery, t]);
 
   /**
    * ── RECONCILE ON MOUNT, BECAUSE THE STORED INTENT IS ALREADY "ON" ────────────────────────
@@ -856,10 +884,8 @@ export function SettingsView({
   useEffect(() => {
     let alive = true;
     const wanted = subscriptionWanted(notifyChannels, notifyPermission);
-    void writeNotifyState(wanted, "ohmail", t("notifyClosedBody"));
-    void notificationHost.syncSubscription?.(wanted).then((o) => {
-      if (!alive) return;
-      if (o === "no_server_key" || o === "row_remains" || o === "not_registered") setDelivery(o);
+    void applyWakeIntent(notificationHost, wanted, t("notifyClosedBody")).then((o) => {
+      if (alive) showDelivery(o);
     });
     return () => { alive = false; };
     // Mount and host only. Re-running on every `notifyChannels` change would duplicate the write

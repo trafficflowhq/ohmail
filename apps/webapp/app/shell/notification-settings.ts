@@ -231,7 +231,7 @@ export const NOTIFY_STATE_URL = "/__ohmail_notify_state";
  * written rather than the entry being deleted, so a worker that reads a stale cache sees an
  * explicit "do not draw" instead of a miss it has to interpret.
  */
-export function writeNotifyState(
+export function writeNotifyStateUnchecked(
   enabled: boolean, title: string, body: string,
 ): Promise<void> {
   /* THROUGH THE SAME QUEUE AS THE SUBSCRIPTION, and that is the point rather than tidiness.
@@ -241,6 +241,28 @@ export function writeNotifyState(
      on screen to explain it. One queue makes call order the order they are applied in — and puts
      them in order relative to the subscription changes they accompany. */
   return serialize(() => writeNotifyStateNow(enabled, title, body));
+}
+
+/**
+ * TELL THE WORKER TO DRAW NOTHING. The only writer a surface outside this module should reach for
+ * to change the flag, and it cannot express the other direction.
+ *
+ * ── WHY THE ARMING WRITER IS NOT SIMPLY EXPORTED UNDER THE OBVIOUS NAME ───────────────────
+ *
+ * Arming has a precondition — a row the SERVER named for THIS session — and the precondition
+ * lives in {@link applyWakeIntent}, not in the writer. When the ungated writer was called
+ * `writeNotifyState`, it was the natural import, and BOTH doors that arm this browser reached for
+ * it and armed on an INTENT instead: the shell's boot path, and the settings pane, each writing
+ * `enabled: wanted` before anything had answered. On a shared browser that re-arms the worker for
+ * the previous reader's still-live registration.
+ *
+ * Renaming is the cheap half of stopping that recurring: `writeNotifyStateUnchecked` is still
+ * exported (its own behaviour is under test in `web-push-subscription.test.ts`, and this module
+ * uses it), but it no longer reads like the thing to call. The census in
+ * `sign-in-reconciles-wake.test.ts` is the half that actually holds.
+ */
+export function disarmNotifyState(title: string, body: string): Promise<void> {
+  return writeNotifyStateUnchecked(false, title, body);
 }
 
 async function writeNotifyStateNow(
@@ -650,7 +672,7 @@ const WAKE_BUDGET_MS = 4_000;
 async function revokeWakeRegistrationNow(): Promise<PushSyncOutcome | null> {
   // The words go first and unconditionally: it is the one half that needs neither the network nor
   // a live subscription, so a browser that fails everything below still refuses to draw.
-  try { await writeNotifyState(false, "", ""); } catch { /* no Cache API, or storage refused */ }
+  try { await disarmNotifyState("", ""); } catch { /* no Cache API, or storage refused */ }
   try {
     return (await browserNotificationHost.syncSubscription?.(false)) ?? null;
   } catch {
@@ -774,20 +796,40 @@ export function updateNotifyWords(title: string, body: string): Promise<void> {
  * Never throws, for the reason the revoke does not: callers' tests mock `../api-client`, and a
  * missing export must not throw out of a boot effect and take the rest of the shell with it.
  */
-export async function reconcileWakeRegistration(body: string): Promise<PushSyncOutcome | null> {
+/**
+ * APPLY A WAKE INTENT TO THIS BROWSER — the one place either door goes through.
+ *
+ * `host` so the settings pane can pass its injected one (and the desktop its own); `wanted` given
+ * rather than derived, because the PRESS knows the intent before storage settles while the BOOT
+ * has to read it. Everything after that point is identical, and it is identical ON PURPOSE: the
+ * boot path and the Settings door had the same privacy defect, and a second copy of this ordering
+ * is how one of them gets fixed and the other does not — which is exactly what happened once.
+ *
+ * Bounded by {@link WAKE_BUDGET_MS}. Never throws.
+ */
+export async function applyWakeIntent(
+  host: NotificationHost, wanted: boolean, body: string,
+): Promise<PushSyncOutcome | null> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const budget = new Promise<PushSyncOutcome>((resolve) => {
     timer = setTimeout(() => resolve("not_registered"), WAKE_BUDGET_MS);
   });
   try {
-    return await Promise.race([reconcileWakeRegistrationNow(body), budget]);
+    return await Promise.race([applyWakeIntentNow(host, wanted, body), budget]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
 }
 
+/** The BOOT door: the same act, over the stored intent and the browser's own host. */
+export async function reconcileWakeRegistration(body: string): Promise<PushSyncOutcome | null> {
+  return applyWakeIntent(
+    browserNotificationHost, subscriptionWanted(readChannels(), browserPermission()), body,
+  );
+}
+
 /**
- * The reconcile itself. Never throws; see {@link reconcileWakeRegistration} for the bound.
+ * The act itself. Never throws; see {@link applyWakeIntent} for the bound.
  *
  * THE TWO DIRECTIONS ARE ORDERED DIFFERENTLY, and that asymmetry is the whole of the privacy
  * argument. OFF is written first and unconditionally — it needs neither the network nor a
@@ -795,16 +837,17 @@ export async function reconcileWakeRegistration(body: string): Promise<PushSyncO
  * browser holds a row the server acknowledged, because the residue a failed sign-out delete
  * leaves behind belongs to the PREVIOUS user and is still being dialled. See the body.
  */
-async function reconcileWakeRegistrationNow(body: string): Promise<PushSyncOutcome | null> {
-  const wanted = subscriptionWanted(readChannels(), browserPermission());
+async function applyWakeIntentNow(
+  host: NotificationHost, wanted: boolean, body: string,
+): Promise<PushSyncOutcome | null> {
 
   /* OFF IS WRITTEN FIRST AND UNCONDITIONALLY. It needs neither the network nor a subscription,
      and it is the safe direction: a worker told not to draw cannot leak whatever the sender still
      has. This half is unchanged. */
   if (!wanted) {
-    try { await writeNotifyState(false, "ohmail", body); } catch { /* no Cache API, or refused */ }
+    try { await disarmNotifyState("ohmail", body); } catch { /* no Cache API, or refused */ }
     try {
-      return (await browserNotificationHost.syncSubscription?.(false)) ?? null;
+      return (await host.syncSubscription?.(false)) ?? null;
     } catch {
       return "row_remains";
     }
@@ -854,7 +897,7 @@ async function reconcileWakeRegistrationNow(body: string): Promise<PushSyncOutco
    */
   let outcome: PushSyncOutcome | null;
   try {
-    outcome = (await browserNotificationHost.syncSubscription?.(true, { forceAnnounce: true })) ?? null;
+    outcome = (await host.syncSubscription?.(true, { forceAnnounce: true })) ?? null;
   } catch {
     /* The host's own guard threw before its try block could catch — a mocked `../api-client`
        with no `apiConfigured`, or a platform without one. Reported as the state that is true
