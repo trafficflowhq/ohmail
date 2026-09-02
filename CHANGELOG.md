@@ -70,6 +70,13 @@ address again shows each message once. In 0.13.6 the removal itself was already
 correct — there was no control that reached it, and the note for that release
 described a flow you could not get to.
 
+One rough edge is still there, and it is better said than found: removing a
+mailbox does not yet clear the address from this install's own door settings, so
+the next launch lists that address again as a mailbox waiting for a password.
+Nothing is connected and nothing is fetched — there is no stored password, so
+no server is contacted and no mail is copied or organized — but the entry
+reappears, and clearing it properly is the next release's work.
+
 ### Send says what it is doing, and cannot hang
 
 Pressing Send could sit for several seconds with nothing on screen to say the
