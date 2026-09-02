@@ -1,5 +1,6 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import {
+  assertOrganizerRole,
   awayResponders, contacts, mailboxes, notifyRules, rules, tags,
   latestProfileFoundMarker, profileImportResolutionExists, recordProfileImportResolution,
   recordChanges,
@@ -439,6 +440,23 @@ export class ProfileImportService {
     ctx: ServiceContext, mailboxId: string, body: { fingerprint?: unknown }, opts: { read: ProfileReader },
   ): Promise<ProfileImportApplied> {
     await this.assertMailbox(ctx, mailboxId);
+    /* -- ONLY AN ORGANIZER IMPORTS A TRAVELLING PROFILE (mail 0083) -------------------------
+     *
+     * The import writes the account's rules, screener entries, notify rules, away responder and
+     * tag names out of a document another install left in `ohmail/_meta`. Every one of those is
+     * configuration this install would then act on — and a reader acts on none of it, so an
+     * import here would rewrite the account's screening on the strength of a handover that did
+     * not happen to this side.
+     *
+     * It is also the mirror image of the hold: the hold exists so an INCOMING organizer does not
+     * re-screen what it is inheriting. An install that is not the incoming organizer has nothing
+     * to inherit, and its cycle never arms the hold (`engine.ts`, `index.ts` — both skip
+     * `armHoldFromFolder` for a reader), so this door is the one place a reader could still have
+     * reached the document.
+     *
+     * PER MAILBOX, because the document belongs to one mailbox's `_meta` folder.
+     */
+    await assertOrganizerRole(asTx(ctx), ctx.accountId, mailboxId);
     const fingerprint = body.fingerprint;
     if (typeof fingerprint !== "string" || fingerprint.length === 0) {
       throw new ServiceError("validation_failed", 400, "fingerprint is required");

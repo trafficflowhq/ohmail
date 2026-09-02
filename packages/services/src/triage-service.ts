@@ -1,5 +1,5 @@
 import { and, asc, eq, gt, sql } from "drizzle-orm";
-import { messages, messageStates, folderState, claimIdempotencyKey, recordChange, type Tx } from "@trafficflow/db";
+import { assertOrganizerRole, messages, messageStates, folderState, claimIdempotencyKey, recordChange, type Tx } from "@trafficflow/db";
 import type { Db, ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { materializeMessage, materializeMessageState } from "./dto/materialize.js";
@@ -83,12 +83,31 @@ export class TriageService {
       // re-homing (a park committing under a stale clear left the clear reading `none` — a
       // review caught it; the state row cannot carry the lock because a first park has no row
       // to lock yet). `date` rides the same select for the re-homing below.
-      const [msg] = await tx.select({ id: messages.id, date: messages.date })
+      const [msg] = await tx.select({
+        id: messages.id, date: messages.date,
+        // Mail 0083 — the mailbox this message belongs to, so the role can be asked about the
+        // right row. It rides the select that was already being made and already holds the lock;
+        // a second query would be a second snapshot.
+        mailboxId: messages.mailboxId,
+      })
         .from(messages)
         .where(and(eq(messages.id, messageId), eq(messages.accountId, ctx.accountId)))
         .limit(1)
         .for("update");
       if (!msg) throw new ServiceError("not_found", 404, "message not found");
+      /* -- A READER DOES NOT TRIAGE (mail 0083) --------------------------------------------
+       *
+       * Triage is not a label: `bubbled_up` and the pile transitions re-home mail, and the passes
+       * that act on them (`bubbleUpPass`, the re-homing below, the retro passes that follow) run
+       * on the organizer's authority against the organizer's store. A reader recording a state
+       * would be writing an intent nothing on this install will ever carry out, on a mailbox
+       * another install is actively arranging.
+       *
+       * PER MAILBOX, not per account. An account may hold several mailboxes with different roles
+       * — one organized here, one organized on somebody's laptop — and the question this door
+       * asks is about the message in front of it.
+       */
+      await assertOrganizerRole(tx as unknown as Tx, ctx.accountId, msg.mailboxId);
 
       // The state being LEFT — read before the upsert overwrites it (serialized by the message
       // row lock above). Only the `none` transition consumes it (the re-homing below).

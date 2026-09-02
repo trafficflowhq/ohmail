@@ -1,5 +1,5 @@
 import { and, asc, eq } from "drizzle-orm";
-import { rules, recordChange, claimIdempotencyKey, type Tx } from "@trafficflow/db";
+import { assertAccountOrganizes, rules, recordChange, claimIdempotencyKey, type Tx } from "@trafficflow/db";
 import type { Destination } from "@trafficflow/core/mail";
 import type { Db, ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
@@ -142,6 +142,20 @@ export class RulesService {
     const bodyContains = this.validBodyContains(body.bodyContains, kind);
 
     return asTx(ctx).transaction(async (tx) => {
+      /* -- A READER'S ACCOUNT WRITES NO RULES (mail 0083) ---------------------------------
+       *
+       * A rule is not a note: `evaluateRules` is the router, `rule-retro.ts` re-files the backlog
+       * a new rule covers, and both run on the organizer's authority inside the organizer's own
+       * cycle. A rule written where nothing organizes is an instruction that is never carried
+       * out — and worse than inert, because the person is told their mail will be filed that way.
+       *
+       * ACCOUNT-SCOPED, not per-mailbox: rules apply to the account and travel in the profile
+       * document, so the question is whether this install organizes ANYTHING. On a one-mailbox
+       * standalone that collapses to "all refused", which is the honest answer for a door whose
+       * effect would be nil.
+       */
+      await assertAccountOrganizes(tx as unknown as Tx, ctx.accountId);
+
       const [row] = await tx.insert(rules).values({
         accountId: ctx.accountId,
         kind, match, destination, priority,
@@ -249,6 +263,20 @@ export class RulesService {
     const applyRetro = this.validApplyRetro(patch.applyRetro);
 
     return asTx(ctx).transaction(async (tx) => {
+      /* -- A READER'S ACCOUNT WRITES NO RULES (mail 0083) ---------------------------------
+       *
+       * A rule is not a note: `evaluateRules` is the router, `rule-retro.ts` re-files the backlog
+       * a new rule covers, and both run on the organizer's authority inside the organizer's own
+       * cycle. A rule written where nothing organizes is an instruction that is never carried
+       * out — and worse than inert, because the person is told their mail will be filed that way.
+       *
+       * ACCOUNT-SCOPED, not per-mailbox: rules apply to the account and travel in the profile
+       * document, so the question is whether this install organizes ANYTHING. On a one-mailbox
+       * standalone that collapses to "all refused", which is the honest answer for a door whose
+       * effect would be nil.
+       */
+      await assertAccountOrganizes(tx as unknown as Tx, ctx.accountId);
+
       // Read the CURRENT destination before the write, inside the transaction, so "did the
       // destination change" is answered against the row this update is about to replace rather
       // than against a value the caller supplied. A PATCH that sets the destination it already
@@ -360,6 +388,19 @@ export class RulesService {
     opts: { idempotency?: RuleIdempotency | null } = {},
   ): Promise<{ seq: number }> {
     const seq = await asTx(ctx).transaction(async (tx) => {
+      /* -- A READER'S ACCOUNT WRITES NO RULES (mail 0083) ---------------------------------
+       *
+       * A rule is not a note: `evaluateRules` is the router, `rule-retro.ts` re-files the backlog
+       * a new rule covers, and both run on the organizer's authority inside the organizer's own
+       * cycle. A rule written where nothing organizes is an instruction that is never carried
+       * out — and worse than inert, because the person is told their mail will be filed that way.
+       *
+       * ACCOUNT-SCOPED, not per-mailbox: rules apply to the account and travel in the profile
+       * document, so the question is whether this install organizes ANYTHING. On a one-mailbox
+       * standalone that collapses to "all refused", which is the honest answer for a door whose
+       * effect would be nil.
+       */
+      await assertAccountOrganizes(tx as unknown as Tx, ctx.accountId);
       const deleted = await tx.delete(rules)
         .where(and(eq(rules.id, id), eq(rules.accountId, ctx.accountId)))
         .returning({ id: rules.id });

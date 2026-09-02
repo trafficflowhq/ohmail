@@ -14,6 +14,7 @@ import {
   screenerSuggestionsBySender,
   SCREENER_SUGGESTION_PROVENANCE,
   AI_ACTION_WEIGHTS,
+  assertAccountOrganizes,
   type Tx,
 } from "@trafficflow/db";
 // Values from the root barrel's pure leaf, the GATE as a type only — see `drafting-service.ts`.
@@ -815,6 +816,19 @@ export class ScreenerReadService {
       // First statement so the lock chain stays accounts → contacts/settings → sequence row;
       // `erasure-fence.ts` carries the argument.
       await fenceErasedAccount(tx, ctx.accountId);
+      /* -- A READER DOES NOT SCREEN (mail 0083) --------------------------------------------
+       *
+       * The Screener is the organizing act, not a view of it: a decision writes a RULE, re-routes
+       * every message the sender has in the mirror, and hands screened-out senders to the
+       * unsubscribe path. Every one of those is executed by the organizer against the organizer's
+       * store, so a decision taken where nothing organizes is a promise nobody keeps — and the
+       * queue would go on offering the same senders for ever, because nothing moves them out.
+       *
+       * ACCOUNT-SCOPED, on the same argument as the rules door: a screener decision IS a rule,
+       * rules belong to the account, and they travel in the profile document. Inside the
+       * transaction and after the erasure fence, so the lock chain is unchanged.
+       */
+      await assertAccountOrganizes(tx as unknown as Tx, ctx.accountId);
       if (decision === "yes") {
         await tx.insert(contacts).values({ accountId: ctx.accountId, address })
           .onConflictDoNothing({ target: [contacts.accountId, contacts.address] });
@@ -1462,6 +1476,18 @@ export class ScreenerService extends ScreenerReadService {
     const pref = await getScreeningPreference(ctx);
     const ohboxPolicy = resolveOhboxPolicy(pref.ohboxPolicy);
     const ohboxBar = pref.ohboxBar ?? undefined;
+
+    /* -- A READER BUYS NO SUGGESTIONS (mail 0083) ------------------------------------------
+     *
+     * Refused BEFORE the model is called and before a credit can be debited, which is the whole
+     * placement argument: a suggestion is bought so a person can act on it in the Screener, and
+     * `decide` — the only thing that acts on it — is refused for a reader one door over. Buying
+     * an answer to a question this install may not answer would spend somebody's money on
+     * nothing, and it is a real charge rather than a hypothetical: `tryDebit` runs per sender.
+     *
+     * Account-scoped, matching `decide`, because it is the same decision one step earlier.
+     */
+    await assertAccountOrganizes(asTx(ctx) as unknown as Tx, ctx.accountId);
 
     // ONE query for the whole set, and the representative per sender chosen by the SAME rule
     // `list` presents — otherwise the page prices one message and the purchase buys another.

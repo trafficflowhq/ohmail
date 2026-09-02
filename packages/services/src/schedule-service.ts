@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
-import { drafts, mailboxes, recordChange, type Tx } from "@trafficflow/db";
+import { assertOrganizerRole, drafts, mailboxes, recordChange, type Tx } from "@trafficflow/db";
 import type { EmailAddress } from "@trafficflow/core/mail";
 import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
@@ -100,6 +100,25 @@ export class ScheduleService {
           "This mailbox is disconnected and cannot send. Reconnect it, or pick another sender.",
         );
       }
+      /* -- A READER MAKES NO APPOINTMENTS (mail 0083) -------------------------------------
+       *
+       * An appointment is a promise to do something LATER, and the pass that keeps it lives
+       * behind the organizer gate. A reader's promise therefore cannot be kept — which is not a
+       * new hazard, it is the one `closeStoodDownAppointments` exists to clean up after, and this
+       * is the same defect closed one step earlier: refusing to MINT one a demotion would have to
+       * cancel.
+       *
+       * SENDING NOW is untouched and stays untouched: a reader may send, because a send is an
+       * APPEND to Sent that completes inside the request. `SendService` needs no role check at
+       * all — its refusal is on `disabled`, and a reader is `connected` — and that asymmetry is
+       * the whole distinction between doing something and promising to.
+       *
+       * INSIDE the transaction that takes the draft lock, so the check and the write see one
+       * snapshot. Placed AFTER the `disabled` refusal because a disconnected mailbox has a better
+       * sentence than a reader one: "reconnect it" is actionable, "another install organizes it"
+       * would be true and useless about a mailbox with no credentials.
+       */
+      await assertOrganizerRole(tx as unknown as Tx, ctx.accountId, d.mailboxId);
 
       await tx.update(drafts).set({
         status: "scheduled",

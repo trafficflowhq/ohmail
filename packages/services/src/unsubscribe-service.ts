@@ -1,5 +1,6 @@
 import { and, eq, gte, inArray, isNull } from "drizzle-orm";
 import {
+  assertOrganizerRole,
   accountSettings, messages, messageBodies, folderState, unsubscribeRecords, type Tx,
 } from "@trafficflow/db";
 import {
@@ -425,6 +426,24 @@ export class UnsubscribeService {
     ctx: ServiceContext, messageId: string, mode: "manual" | "automatic",
   ): Promise<UnsubscribeResult> {
     const row = await this.load(ctx, messageId);
+
+    /* -- A READER SENDS NO UNSUBSCRIBE (mail 0083) -----------------------------------------
+     *
+     * An RFC 8058 one-click POST is an IRREVERSIBLE outbound request made in the mailbox owner's
+     * name to a third party, and it is made on behalf of an ORGANIZING decision: the automatic
+     * arm fires on a screen-out, and the manual arm is a person acting on mail this install is
+     * arranging. On a mailbox another install organizes, the decision that justifies it is not
+     * ours to have taken.
+     *
+     * BOTH ARMS, deliberately — this is the shared body and the check is here rather than on
+     * `unsubscribe()` alone. The automatic arm is already unreachable for a reader (its trigger
+     * is `decide`, which is refused), so the manual one is the arm this actually closes; putting
+     * the check in the shared body is what keeps a third entry point from being added past it.
+     *
+     * PER MAILBOX: `row.mailboxId` is already loaded and is used one line below for the trust
+     * set, so this costs one indexed read on a row this request has already touched.
+     */
+    await assertOrganizerRole(asTx(ctx), ctx.accountId, row.mailboxId);
 
     // Per-mailbox trust, resolved for the mailbox that HOLDS this message — see
     // {@link UnsubscribeDeps.trustedAuthservIdsFor}. Held rather than inlined because its SIZE is

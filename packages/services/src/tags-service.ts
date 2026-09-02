@@ -1,5 +1,5 @@
 import { and, asc, eq, sql } from "drizzle-orm";
-import { tags, messages, messageTags, recordChange, type Tx } from "@trafficflow/db";
+import { assertOrganizerRole, assertAccountOrganizes, tags, messages, messageTags, recordChange, type Tx } from "@trafficflow/db";
 import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { materializeTag } from "./dto/materialize.js";
@@ -153,6 +153,12 @@ export class TagsService {
     const now = ctx.now();
 
     const { id, seq } = await asTx(ctx).transaction(async (tx) => {
+      // A READER'S ACCOUNT DEFINES NO TAGS (mail 0083). Account-scoped, not per-mailbox: a tag
+      // name belongs to the account and is carried in the travelling profile, so the question is
+      // whether this install organizes ANYTHING. On a one-mailbox standalone that collapses to
+      // "all refused", which is correct — a definition this install will never apply is a
+      // settings screen that accepts an edit and silently does nothing.
+      await assertAccountOrganizes(tx as unknown as Tx, ctx.accountId);
       const inserted = await tx.insert(tags)
         .values({ accountId: ctx.accountId, name, hue, createdAt: now, updatedAt: now })
         .onConflictDoNothing()
@@ -177,6 +183,12 @@ export class TagsService {
     if (body?.hue !== undefined) patch.hue = this.validHue(body.hue);
 
     const seq = await asTx(ctx).transaction(async (tx) => {
+      // A READER'S ACCOUNT DEFINES NO TAGS (mail 0083). Account-scoped, not per-mailbox: a tag
+      // name belongs to the account and is carried in the travelling profile, so the question is
+      // whether this install organizes ANYTHING. On a one-mailbox standalone that collapses to
+      // "all refused", which is correct — a definition this install will never apply is a
+      // settings screen that accepts an edit and silently does nothing.
+      await assertAccountOrganizes(tx as unknown as Tx, ctx.accountId);
       const updated = await tx.update(tags).set(patch)
         .where(and(eq(tags.id, id), eq(tags.accountId, ctx.accountId)))
         .returning({ id: tags.id })
@@ -209,6 +221,12 @@ export class TagsService {
    */
   async remove(ctx: ServiceContext, id: string): Promise<{ seq: number | null }> {
     const seq = await asTx(ctx).transaction(async (tx) => {
+      // A READER'S ACCOUNT DEFINES NO TAGS (mail 0083). Account-scoped, not per-mailbox: a tag
+      // name belongs to the account and is carried in the travelling profile, so the question is
+      // whether this install organizes ANYTHING. On a one-mailbox standalone that collapses to
+      // "all refused", which is correct — a definition this install will never apply is a
+      // settings screen that accepts an edit and silently does nothing.
+      await assertAccountOrganizes(tx as unknown as Tx, ctx.accountId);
       // Lock the parent FIRST. `FOR UPDATE` and not a plain select: the lock, not the read, is
       // what a concurrent assign blocks on.
       const locked = await tx.select({ id: tags.id }).from(tags)
@@ -264,9 +282,21 @@ export class TagsService {
       // Both rows must belong to the caller. Checked here rather than trusted from the URL:
       // `message_tags` is the one table that references two account-scoped parents, and a
       // cross-account id must be a 404 rather than a row nobody can see but that exists.
-      const [msg] = await tx.select({ id: messages.id }).from(messages)
+      const [msg] = await tx.select({ id: messages.id, mailboxId: messages.mailboxId }).from(messages)
         .where(and(eq(messages.id, messageId), eq(messages.accountId, ctx.accountId))).limit(1);
       if (!msg) throw new ServiceError("not_found", 404, "message not found");
+      /* -- A READER DOES NOT ASSIGN TAGS (mail 0083) ---------------------------------------
+       *
+       * A tag looks like a label and is not only a label: `message_tags` is read by the rules
+       * path and by the retro passes, so an assignment on a mailbox this install does not
+       * organize is an input to filing that this install will never perform and the organizer
+       * will never see (the travelling profile carries tag NAMES and no per-message state).
+       *
+       * The tag DEFINITIONS — create, rename, delete — are account configuration and are gated
+       * differently, on whether the account organizes anything at all. Naming a colour is not a
+       * statement about one mailbox; putting that colour on one message is.
+       */
+      await assertOrganizerRole(tx as unknown as Tx, ctx.accountId, msg.mailboxId);
 
       let resolved = tagId;
       let tagSeq: bigint | null = null;

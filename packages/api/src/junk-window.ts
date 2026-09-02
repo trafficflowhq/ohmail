@@ -1,5 +1,6 @@
 import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import {
+  assertOrganizerRole,
   contacts, folderState, junkSweepCandidateWhere, mailboxes, messageBodies, messages, recordChange,
   rules as rulesTbl, type Tx,
 } from "@trafficflow/db";
@@ -786,6 +787,15 @@ export async function rescueJunk(
   // then failed. Every refusal on this path belongs above the first write.
   requireImapUint32(args.uid, "uid");
   requireRealEpoch(args.uidValidity);
+  /* -- A READER RESCUES NOTHING FROM JUNK (mail 0083) --------------------------------------
+   *
+   * "Not junk" is a MOVE out of the provider's Junk folder back to INBOX, plus (on the second
+   * verb) a rule change — both organizing acts against a mailbox this install may not be
+   * arranging. It sits with the other refusals ABOVE THE FIRST WRITE, which is this function's
+   * own stated discipline: `allowSender` below commits a rule change, and a refusal after it
+   * would leave somebody's screening altered by a request that then failed.
+   */
+  await assertOrganizerRole(deps.db as unknown as Tx, accountId, args.mailboxId);
   await requireFolders(deps, accountId);
   const [box] = await junkMailboxesOf(deps, accountId, args.mailboxId);
   if (!box || box.junkFolder === null) {
@@ -1046,6 +1056,22 @@ export async function requestJunkSweep(deps: ApiDeps, ctx: ServiceContext): Prom
   const targets = preview.mailboxes.filter((m) => m.hasJunkFolder && m.candidates > 0).map((m) => m.id);
   if (targets.length === 0) {
     throw new ServiceError("nothing_to_sweep", 409, "there is nothing left in ohmail/Quarantine to move");
+  }
+  /* -- A READER PRESSES NO SWEEP (mail 0083) ------------------------------------------------
+   *
+   * The sweep is a bulk MOVE — the whole `ohmail/Quarantine` pile into the provider's native
+   * Junk — executed by the organizer inside its serial cycle. Stamping the command on a mailbox
+   * this install does not organize would either do nothing (this install's worker never reaches
+   * it) or, worse, be picked up after a later promotion and move a pile somebody has since
+   * rearranged.
+   *
+   * PER MAILBOX, and every target, because the press covers a SET: an account with one organized
+   * and one read mailbox may sweep the first, and the refusal must name the second rather than
+   * refusing the whole press. Filtering silently would be the other failure — a button that
+   * reports success for mailboxes it skipped.
+   */
+  for (const id of targets) {
+    await assertOrganizerRole(deps.db as unknown as Tx, accountId, id);
   }
   await deps.db.update(mailboxes)
     .set({ junkSweepRequestedAt: ctx.now(), syncRequestedAt: ctx.now() })

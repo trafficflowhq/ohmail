@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import {
+  assertOrganizerRole,
   mailboxes, messages, folderState, messageBodies, messageStates, claimIdempotencyKey, recordChange,
   upsertDesiredSeen, type LedgerTx, type Tx,
 } from "@trafficflow/db";
@@ -852,9 +853,28 @@ export class MessageService {
     const folder = this.validFolder(body.folder);
 
     return asTx(ctx).transaction(async (tx) => {
-      const [msg] = await tx.select({ id: messages.id, nativeLocator: messages.nativeLocator }).from(messages)
+      const [msg] = await tx.select({
+        id: messages.id, nativeLocator: messages.nativeLocator,
+        // Mail 0083 — which mailbox this message is in, so the role is asked about the right row.
+        mailboxId: messages.mailboxId,
+      }).from(messages)
         .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId))).limit(1);
       if (!msg) throw new ServiceError("not_found", 404, "message not found");
+      /* -- A READER MOVES NOTHING (mail 0083) ----------------------------------------------
+       *
+       * The most direct case of the whole rule: this door writes `folder_state.desired_folder`
+       * with `last_set_by='us'`, and the reconciler turns that into a physical IMAP move. On a
+       * mailbox another install organizes, that is two organizers moving one person's mail —
+       * exactly what the lease exists to prevent, reached through a button rather than through a
+       * sync loop.
+       *
+       * The refusal is here and not only in `reconcileFolders`' skip, because the two protect
+       * different things: the skip stops a reader EXECUTING an intent, this stops one being
+       * RECORDED. Without it a demotion would leave a queue of desired moves that fire the
+       * instant the install is ever promoted — mail moved by a decision taken when this install
+       * had no right to take it.
+       */
+      await assertOrganizerRole(tx as unknown as Tx, ctx.accountId, msg.mailboxId);
 
       // Write DESIRED state only. observedFolder is the worker's truth — read
       // and PRESERVE it (never overwrite on conflict); the worker flips it when the
@@ -932,6 +952,21 @@ export class MessageService {
       }).from(messages)
         .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId))).limit(1);
       if (!msg) throw new ServiceError("not_found", 404, "message not found");
+
+      /* -- A READER DELETES NOTHING (mail 0083, v1) -----------------------------------------
+       *
+       * A delete is a move to Trash plus a tombstone, so the argument above applies unchanged.
+       * It is on the refused list even though the reader's one IMAP verb argument might have
+       * admitted a `\Deleted` flag: keeping the reader's write surface to `setFlags` alone is
+       * what makes it auditable in one sentence, and a delete against mail another install is
+       * arranging is the least reversible thing this product does. Named as a follow-up rather
+       * than a permanent rule.
+       *
+       * Placed before the Trash lookup so a reader is refused for the reason that is true rather
+       * than for a missing Trash folder — a true sentence about the wrong thing is the failure
+       * mode the probe refusals were rewritten to end.
+       */
+      await assertOrganizerRole(tx as unknown as Tx, ctx.accountId, msg.mailboxId);
 
       const hasCopy = (msg.nativeLocator as NativeLocator | null) !== null;
       let trash: string | null = null;

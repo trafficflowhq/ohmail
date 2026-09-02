@@ -1,5 +1,6 @@
 import { and, asc, eq, inArray, isNotNull, ne, sql } from "drizzle-orm";
 import {
+  assertOrganizerRole,
   mailboxes, mailboxCredentials, mailboxFolders, folderState, messages, accountSettings,
   isMailboxDisabledReason, isMailboxSyncBlockReason,
   isOrganizerRole, isOrganizerKind, isOrganizerState,
@@ -1691,6 +1692,18 @@ export class MailboxService {
    */
   async requestResync(ctx: ServiceContext, id: string): Promise<void> {
     await this.ownedRow(ctx, id); // 404 if not owned
+    /* -- A READER DOES NOT RE-SYNC A MAILBOX IT DOES NOT ORGANIZE (mail 0083) --------------
+     *
+     * This nulls every folder's `highestmodseq` and delta token, which makes the next cycle walk
+     * the mailbox from scratch. On an ORGANIZER that is a repair; on a reader it is a full
+     * re-read of somebody else's mailbox — every folder, every UID — with no decision at the end
+     * of it, paid for in the customer's provider rate limits and in ours.
+     *
+     * It is also the one door on this list whose damage is not to the mail: a reader can re-read
+     * its own mirror by other means, and the honest answer to "the mirror looks wrong" on a
+     * reader is that the ORGANIZER owns the repair.
+     */
+    await assertOrganizerRole(asTx(ctx), ctx.accountId, id);
     await asTx(ctx).update(mailboxFolders)
       .set({ highestmodseq: null, deltaToken: null, updatedAt: ctx.now() })
       .where(eq(mailboxFolders.mailboxId, id));
