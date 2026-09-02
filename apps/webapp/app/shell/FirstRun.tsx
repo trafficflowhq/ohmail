@@ -137,6 +137,11 @@ export interface FirstRunProps {
   /** When the holder was last seen, in words, for the stopped banner. Interpolated likewise. */
   organizerLastSeen?: string;
   /**
+   * THE CONNECTED MAILBOX'S ADDRESS, for the one screen that has to say WHICH mailbox this run is
+   * about. Absent before one exists, which is exactly when that screen is a form instead.
+   */
+  mailboxAddress?: string;
+  /**
    * IS THIS A RE-RUN from Settings — `#/first-run/again`. See {@link firstRunStep}.
    */
   rerun?: boolean;
@@ -192,11 +197,13 @@ export function firstRunStep(
 
 export function FirstRun({
   host, facts, onRefresh, onLeave, pull, serverMessageCount, decide, resumed,
-  mailboxId, organizedSince, organizerLastSeen, rerun, screening,
+  mailboxId, organizedSince, organizerLastSeen, rerun, screening, mailboxAddress,
 }: FirstRunProps) {
   const t = useTranslations("onboarding");
   const tm = useTranslations("mailboxes");
   const tp = useTranslations("providerPicker");
+  /** The connect funnel's namespace, for the one sentence this flow shares with it. */
+  const tj = useTranslations("join");
   const locale = useLocale();
   const ids = useId();
 
@@ -568,6 +575,30 @@ export function FirstRun({
             <>
               <h1 id={`${ids}-title`}>{t("mailboxTitle")}</h1>
               <p className="sub">{t("mailboxLead")}</p>
+              {/* ── ONCE A MAILBOX EXISTS THIS SCREEN IS A STATEMENT, NOT A FORM ───────────────
+                  Back from the consent screen lands here on a run whose mailbox is connected, and
+                  a connect form there is a form whose every control is a lie: the fields describe
+                  a mailbox that has been stored, "Test connection" would prove a login nobody is
+                  about to use, and the primary — whatever the verdict says — can only navigate.
+                  A person who tested, got a green tick and pressed on would have watched a
+                  successful test authorise nothing at all.
+
+                  So the form is withheld and the screen says which mailbox this run is about. The
+                  way to connect a DIFFERENT one is "Start over", which is on this foot and which
+                  offers to forget this one. */}
+              {facts.mailbox !== null ? (
+                <>
+                  <SettingsBanner
+                    /* THE SENTENCE, not the bare address — the connect funnel's own line, already
+                       written and already translated. The heading above still reads "Add a
+                       mailbox", which is the step's name rather than this state's, so the block
+                       has to say for itself what it is reporting. */
+                    label={tj("mailboxConnected", { address: mailboxAddress ?? "" })}
+                    description={t("probeOkDetail")}
+                  />
+                  {foot({ back: true, primary: next(t("continue")) })}
+                </>
+              ) : (<>
               {/* EVERY PRESET, not a shortened list. The picker is the only way to reach a
                   provider's hosts without typing them, and a truncated one silently tells
                   somebody their provider is unsupported when it is in the table. */}
@@ -650,6 +681,7 @@ export function FirstRun({
                 back: true,
                 primary: next(busy ? t("connecting") : t("connect"), { disabled: !tested }),
               })}
+              </>)}
             </>
           ),
         ) : null}

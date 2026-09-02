@@ -7130,6 +7130,10 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
           host={firstRun}
           facts={onboardingFacts}
           mailboxId={firstRunMailbox?.id ?? null}
+          /* WHICH mailbox this run is about, for the one screen that has to name it — the
+             mailbox step once a mailbox exists, where the form is withheld and a statement
+             stands in its place. */
+          {...(firstRunMailbox?.address ? { mailboxAddress: firstRunMailbox.address } : {})}
           serverMessageCount={firstRunMailbox?.serverMessageCount}
           /* The counters. `screened` is what the mirror holds MINUS what History lists —
              everything that has been through the screening partition — and `history` is that
