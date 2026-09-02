@@ -39,7 +39,8 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 
-/** The pill's own horizontal padding — what `.msg-actions > .abar` takes out of the container. */
+/** Fallback for the pill's horizontal padding when the computed style is unreadable — the
+ *  live value is read off the pill itself in `measure()`. */
 export const PILL_PADDING_PX = 12;
 
 /** The row's gap between groups, when the computed style cannot be read (jsdom). */
@@ -125,11 +126,19 @@ export function useBarDensity(): {
     const rect = container.getBoundingClientRect();
     if (rect.width <= 0) return; // not laid out; keep the fallback
     const style = getComputedStyle(container);
+    /* The pill's own padding is READ, exactly as the container's is — a constant here would
+       skew every admission silently the day `.msg-actions > .abar { padding }` changes. The
+       row's parent IS the pill; the fallback covers an unparseable read only. */
+    const abar = row.parentElement;
+    const abarStyle = abar ? getComputedStyle(abar) : null;
+    const pillPad = abarStyle
+      ? (parseFloat(abarStyle.paddingLeft) || 0) + (parseFloat(abarStyle.paddingRight) || 0)
+      : PILL_PADDING_PX;
     const avail =
       rect.width -
       (parseFloat(style.paddingLeft) || 0) -
       (parseFloat(style.paddingRight) || 0) -
-      PILL_PADDING_PX;
+      pillPad;
     const gap = parseFloat(getComputedStyle(row).columnGap) || FALLBACK_GAP_PX;
     let base = 0;
     const groups: MeasuredGroup[] = [];
@@ -146,45 +155,56 @@ export function useBarDensity(): {
     setAdmit((prev) => (prev === next ? prev : next));
   }, []);
 
+  /**
+   * OBSERVE FROM THE REF CALLBACK, NOT FROM A MOUNT EFFECT. The measure row is not mounted for
+   * the life of the bar: the panel branches (Move, the delete confirm, the resurface chooser)
+   * early-return without it, and a mount-keyed effect kept observing the DETACHED row — so
+   * after one panel cycle, a label-width change that arrived through re-render alone (the read
+   * slot flipping to a wider verb, a locale switch) no longer re-measured, and a stale
+   * `data-admit` computed against the narrower row could admit more than fits. The ref
+   * callback fires on every mount and unmount of the row, so the observer — and a fresh
+   * measurement — follow it through every panel cycle.
+   */
+  const onResize = useCallback(() => {
+    if (frameRef.current) return;
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = 0;
+      measure();
+    });
+  }, [measure]);
+
   const measureRef = useCallback(
     (el: HTMLDivElement | null) => {
+      const prev = rowRef.current;
+      if (prev && roRef.current) roRef.current.unobserve(prev);
       rowRef.current = el;
-      if (el) {
-        // The copy is furniture: invisible to the tree and to the pointer, and inert to focus.
-        // (`inert` is set imperatively — the React version here has no prop for it.)
-        el.setAttribute("aria-hidden", "true");
-        (el as HTMLElement & { inert: boolean }).inert = true;
-      }
+      if (!el) return;
+      // The copy is furniture: invisible to the tree and to the pointer, and inert to focus.
+      // (`inert` is set imperatively — the React version here has no prop for it.)
+      el.setAttribute("aria-hidden", "true");
+      (el as HTMLElement & { inert: boolean }).inert = true;
+      if (typeof ResizeObserver === "undefined") return;
+      roRef.current ??= new ResizeObserver(onResize);
+      roRef.current.observe(el);
+      const container = el.closest(".msg-actions");
+      if (container) roRef.current.observe(container); // observing twice de-duplicates
+      // Ref callbacks run after the commit's DOM insertion — the row is laid out enough to
+      // read, and the first measurement must not wait for a resize that may never come.
+      measure();
     },
-    [],
+    [measure, onResize],
   );
 
-  useEffect(() => {
-    if (!armed) return; // no ResizeObserver (jsdom, SSR): rungs govern for good
-    const row = rowRef.current;
-    const container = row?.closest(".msg-actions");
-    if (!row || !container) return;
-    const onResize = () => {
-      if (frameRef.current) return;
-      frameRef.current = requestAnimationFrame(() => {
-        frameRef.current = 0;
-        measure();
-      });
-    };
-    const ro = new ResizeObserver(onResize);
-    ro.observe(container);
-    // Label changes re-run through the row's own size; the locale flip re-renders the buttons
-    // and the observer sees the row resize. The container observation covers the window.
-    ro.observe(row);
-    roRef.current = ro;
-    measure();
-    return () => {
-      ro.disconnect();
+  /** Teardown with the BAR, not with the row — the row's own cycles are handled above. */
+  useEffect(
+    () => () => {
+      roRef.current?.disconnect();
       roRef.current = null;
       if (frameRef.current) cancelAnimationFrame(frameRef.current);
       frameRef.current = 0;
-    };
-  }, [armed, measure]);
+    },
+    [],
+  );
 
   return { measureRef, admit, armed };
 }

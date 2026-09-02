@@ -385,7 +385,7 @@ export function ReadsView({
   const jump = (id: string) => {
     seenMark(id);
     onCur(id);
-    stream.ensure(all.findIndex((m) => m.id === id));
+    stream.ensure(pileIndexOf(id));
     setPendingScroll({ id, open: false });
   };
 
@@ -402,6 +402,10 @@ export function ReadsView({
    */
   const jumpRefs = useRef({ onCur, onJumped });
   jumpRefs.current = { onCur, onJumped };
+  /* The jump effect is [jumpTo]-keyed and reads its collaborators through refs; the pile
+     index joins them for the same reason (a fresh Map identity per delta must not re-arm it). */
+  const pileIndexOfRef = useRef(pileIndexOf);
+  pileIndexOfRef.current = pileIndexOf;
   useEffect(() => {
     if (!jumpTo) return;
     /**
@@ -430,7 +434,7 @@ export function ReadsView({
         return;
       }
       jumpRefs.current.onCur(jumpTo);
-      stream.ensure(allRef.current.findIndex((m) => m.id === jumpTo));
+      stream.ensure(pileIndexOfRef.current(jumpTo));
       // A NEW request to show this message outranks an EARLIER close of it — see `closedRef`.
       if (closedRef.current === jumpTo) closedRef.current = null;
       setPendingScroll({ id: jumpTo, open: true });
@@ -512,7 +516,8 @@ export function ReadsView({
   // j/k step cards; ↵ toggles the current card's clamp. Declared into the registry so
   // the `?` sheet knows they exist and so the shell's global map yields to them here.
   const order = streamIds;
-  const at = current ? order.indexOf(current) : -1;
+  // O(1) off the pile index — indexOf walked the whole pile on every render.
+  const at = current ? pileIndexOf(current) : -1;
   /* ↓/↑ are j/k — one pair of closures under four keycaps, registered into the zone model
      below so the arrows yield to the rail when focus is there (`zone-nav.tsx`). */
   const stepDown = {

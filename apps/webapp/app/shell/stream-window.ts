@@ -139,7 +139,17 @@ export function useStreamWindow({
     const el = getRoot();
     if (!el) return;
     for (const c of el.querySelectorAll<HTMLElement>(".scast[data-sid]")) {
-      const h = c.offsetHeight;
+      /**
+       * The OUTER height — box plus vertical margins. `.scast` carries a 20px bottom margin
+       * (stream.css), and `offsetHeight` alone understated every unmounted card by it, so a
+       * window commit that shed two dozen cards into the top spacer shrank the content above
+       * the viewport by ~480px in one commit. Chromium's scroll anchoring papered over that;
+       * WebKit (the desktop's webview) has none, and the stream visibly jumped under the
+       * reader on every shed. Margins are read per card — cheap, the walk is window-bounded.
+       */
+      const cs = getComputedStyle(c);
+      const h =
+        c.offsetHeight + (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0);
       if (h > 0) heights.current.set(c.dataset.sid!, h);
     }
     // A render-scope closure; the element is stable for the mounted stream's life.
