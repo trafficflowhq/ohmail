@@ -84,7 +84,7 @@ import {
 import { hostsFor, providerById, providerLabel, type ProviderPreset } from "../../shell/providers";
 import { ProviderPicker } from "../../shell/ProviderPicker";
 import { AGO_COPY, agoStamp } from "../../shell/format";
-import { isSyncBlockReason, showInboundQuiet, standDownToken } from "../../shell/mail-state";
+import { isSyncBlockReason, readerStandDown, showInboundQuiet } from "../../shell/mail-state";
 import { useMailState } from "../../shell/MailStateProvider";
 import { displayAddress } from "../../shell/idn";
 
@@ -1934,7 +1934,13 @@ export function MailboxSection() {
            be handed one. `standDownToken` maps an unrecognised member onto the `:unknown`
            sentence rather than onto silence — the server narrows it too, and this is the half
            that survives a client older than the server. */
-        const standDown = m.status === "disabled" ? standDownToken(m.disabledReason ?? null) : null;
+        /* SINCE mail 0083 THE ROLE IS THE RECORD, and this asked `status === 'disabled'` — which
+           nothing writes any more. A demoted install is `connected` with `organizer_role =
+           'reader'` and no reason, so this row went silent AND lost its way back: the organizer
+           check and the claim button hang off this same branch. `readerStandDown` keeps the
+           legacy arm and adds the role one; its header carries the `holder OR consent` rule and
+           why a freshly connected reader is deliberately not a stand-down. */
+        const standDown = readerStandDown(m);
         return (
           <div className="mbx-row" key={m.id}>
             <div className="mbx-main">

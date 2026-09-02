@@ -168,6 +168,68 @@ export function standDownToken(wire: string | null): StandDownReason | null {
 }
 
 /**
+ * IS THIS INSTALL STOOD DOWN FROM ORGANIZING THIS MAILBOX — and if so, in whose favour?
+ *
+ * ── WHY THIS EXISTS, AND WHY IT IS NOT `status === 'disabled'` ────────────────────────────────
+ *
+ * The pane asked `status === 'disabled' && disabledReason`, which was the whole of a stand-down
+ * until mail 0083 moved it onto the ROLE. Since then a demoted install is `connected` with
+ * `organizer_role = 'reader'` and NO reason, so that predicate matches nothing this build writes:
+ * a 0083-era reader got no explanation on its row and — worse — no way back, because the check
+ * and the claim button hang off the same branch. `legacyStandDown` was added to the facts for
+ * exactly this and had no consumer.
+ *
+ * ── THE RULE IS THE SERVER'S, MIRRORED RATHER THAN REINVENTED ─────────────────────────────────
+ *
+ * `standDownMemory` (`packages/db/src/organizer-role.ts`) answers the same question on the other
+ * side, and the correction that matters here is that a role of `reader` is ALSO the pre-consent
+ * state, so the role alone would report a freshly connected mailbox as taken back from an
+ * organizer it never had. The test is **a named holder OR a consent stamp**. A reader with neither is an ordinary mailbox
+ * nobody has agreed to organize yet, which is the consent screen's business and not this one's.
+ *
+ * `status === 'disabled'` is asked FIRST, because a tombstone keeps whatever role it had.
+ *
+ * ── AND WHY THE SYNC RAIL DOES NOT CALL THIS ──────────────────────────────────────────────────
+ *
+ * Ruled 2026-09-02: it does not, and must not. The rail reports SYNC HEALTH, and a reader's
+ * mirror is growing — it reads, searches, marks read and sends. `blocked` there would be a false
+ * sentence about a mailbox that is working. The fact that somebody else organizes it belongs to
+ * the mailbox pane's own row, which is what this serves, and to the phone's banner
+ * (`apps/mobile/src/state/live.ts#phoneOrganizer`), which is the same call one client over.
+ * `deriveMailState`'s `disabled`+reason arm stays as the LEGACY path it now is.
+ */
+export function readerStandDown(m: {
+  status?: string;
+  disabledReason?: string | null;
+  organizerRole?: "organizer" | "reader";
+  organizedBy?: { kind: string | null; name: string | null; since: string | null } | null;
+  organizeConsentedAt?: string | null;
+}): StandDownReason | null {
+  // THE LEGACY WIRE FIRST, unchanged: `disabled` with a reason is what an engine older than the
+  // role column reports, and it is still the only thing those rows can say.
+  if (m.status === "disabled") return standDownToken(m.disabledReason ?? null);
+  if (m.organizerRole !== "reader") return null;
+  // A HOLDER IS NAMED — not merely "the object exists". The DTO guarantees `organizedBy` is null
+  // as a whole when nobody is named, and testing `kind || name` rather than the object is what
+  // keeps a host that starts sending `{null,null,null}` from putting a stand-down on every row.
+  const holder = Boolean(m.organizedBy && (m.organizedBy.kind || m.organizedBy.name));
+  /* ABSENT COUNTS AS "NOT CONSENTED" HERE, and that is the SAFE direction rather than the
+     literal one. `MailboxFacts.organizeConsentedAt` has three states and absent means "this
+     build cannot tell" — but the only host that can reach this line is one sending
+     `organizerRole` and not the consent stamp, and on such a host a holder-less reader is
+     equally likely to be a mailbox nobody has agreed to organize yet. Claiming a stand-down
+     there would put "somebody else organizes this" over a fresh connect AND hang a claim button
+     on a row whose next screen is the consent statement, which is the defect the holder-or-consent
+     test above exists to prevent.
+     Losing an explanation costs a sentence; inventing one costs a false claim. */
+  const consented = m.organizeConsentedAt !== null && m.organizeConsentedAt !== undefined;
+  if (!holder && !consented) return null;
+  return standDownToken(
+    m.organizedBy?.kind ? `organized_elsewhere:${m.organizedBy.kind}` : "organized_elsewhere:unknown",
+  );
+}
+
+/**
  * ONE mailbox, as the shared shell is allowed to know it.
  *
  * Structural and shell-owned, NOT `MailboxDTO`. The Cloud client's API layer is not part of the
