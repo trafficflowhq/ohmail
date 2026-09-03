@@ -7,8 +7,21 @@ export interface SearchBoxProps {
   value: string;
   onChange: (value: string) => void;
   onSubmit?: (value: string) => void;
-  placeholder?: string;
-  ariaLabel?: string;
+  /**
+   * THE WORDS, FROM THE HOST — neither of these defaults any more, and the reason is the same
+   * one that emptied `CommandPalette`'s defaults.
+   *
+   * They used to read `placeholder = "Search everything — typos welcome"` and
+   * `ariaLabel = "Search"`. A composite in this package has no catalogue to read, so a default
+   * here is an English string that renders in every locale — and an optional prop puts no
+   * obligation on any call site to notice. The pill is the widest thing on the search view;
+   * `search.placeholder` and `search.aria` were sitting in both catalogues, translated, with
+   * nothing wired to them.
+   *
+   * Required, so a new call site cannot render this in English by omission.
+   */
+  placeholder: string;
+  ariaLabel: string;
   /** Trailing keycap; defaults to ↵. */
   kbdHint?: string | null;
   autoFocus?: boolean;
@@ -20,8 +33,8 @@ export function SearchBox({
   value,
   onChange,
   onSubmit,
-  placeholder = "Search everything — typos welcome",
-  ariaLabel = "Search",
+  placeholder,
+  ariaLabel,
   kbdHint = "↵",
   autoFocus,
   className,
