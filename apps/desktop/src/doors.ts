@@ -330,10 +330,18 @@ export function profileImportDoorFor(
  * one function, the responder's new arm would have opened four panes onto an account that does not
  * exist.
  *
- *  · STANDALONE. There is no account, so there is nothing here to administer: no consent row to
- *    store a window or a spending watermark in, no ledger to price against, no subscription and no
- *    second factor. Every one of those surfaces is withheld structurally rather than offered dead,
- *    and expanding that door is not what this gate is for.
+ *  · STANDALONE. There is no HOSTED account, so there is nothing here to administer: no ledger to
+ *    price against, no watermark for the automatic suggestion pass, no subscription and no second
+ *    factor. Every one of those surfaces is withheld structurally rather than offered dead, and
+ *    expanding that door is not what this gate is for.
+ *
+ *    THIS BULLET USED TO SAY "no consent row to store a window or a spending watermark in", and
+ *    the first half of that died when `consentRoutes` were mounted on `localRoutes`: a standalone
+ *    install has `account_settings`, stores its own screening window there, and is handed a
+ *    consent transport by `DesktopGate` for exactly that reason. The clause that survives is the
+ *    AI one — a ledger and a watermark are hosted facts. Left uncorrected it made this file
+ *    contradict `local-consent.ts`, which retires the same premise in full, and a reader checking
+ *    whether that door can store a window would have got opposite answers from two files.
  *  · HOSTED, SIGNED IN. The account is real and the engine forwards these routes to it with the
  *    bearer, so what is read and written is the account's own row — identical to a browser tab with
  *    one hop more.
