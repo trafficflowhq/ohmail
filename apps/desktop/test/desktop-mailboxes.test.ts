@@ -839,6 +839,38 @@ describe("the desktop mailbox pane on the standalone door", () => {
     expect(published.map((p) => p.state)).toEqual(["not_configured"]);
   });
 
+  it("SAYS SENDING IS NOT SET UP, and says receiving works in the same breath", async () => {
+    /* An outgoing server is not a reason to stop receiving: the local door stores the incoming
+       credential when only the submission dial is refused. Nothing else on the row would show
+       that — every other line is about receiving, and receiving is fine — so the state would be
+       invisible until somebody tried to send. */
+    FACTS = [{ ...MAILBOX, sendingUnsettledReason: "auth" }];
+    const el = await render("local");
+    const text = el.textContent ?? "";
+    expect(text).toContain("Receiving works.");
+    expect(text).toContain("Sending is not set up");
+    expect(text, "the reason was not rendered from the taxonomy")
+      .toContain("the outgoing server refused that password");
+  });
+
+  it("renders an UNKNOWN code from the taxonomy rather than printing it raw", async () => {
+    // A server's own words are not this pane's to print, and a code this build has no wording for
+    // is a deploy skew rather than a sentence.
+    FACTS = [{ ...MAILBOX, sendingUnsettledReason: "something-new" }];
+    const el = await render("local");
+    const text = el.textContent ?? "";
+    expect(text).toContain("Sending is not set up");
+    expect(text).not.toContain("something-new");
+  });
+
+  it("says NOTHING about sending when it is set up", async () => {
+    // The positive control: `null` is "settled", and it is what every mailbox connected before
+    // this existed reports.
+    FACTS = [{ ...MAILBOX, sendingUnsettledReason: null }];
+    const el = await render("local");
+    expect(el.textContent ?? "").not.toContain("Sending is not set up");
+  });
+
   it("says NOTHING about organizing a mailbox nobody has agreed to yet", async () => {
     /* ── REVIEW FINDING ─────────────────────────────────────────────────────────────────────
      *

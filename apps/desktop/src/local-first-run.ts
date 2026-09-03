@@ -128,6 +128,12 @@ export function addMailboxBody(input: FirstRunMailboxInput): Record<string, unkn
       ...(input.imap.secure === undefined ? {} : { secure: input.imap.secure }),
       user,
       pass: input.imap.pass,
+      /* SENDING IS SETTLED BY A SUCCESSFUL CREATE. The engine's add route retries without the
+         submission block when that dial is refused, writing the probe's reason into this key —
+         so the create that DOES prove it has to say so positively, or a mailbox re-added after a
+         blocked port would carry the old refusal. Absent where no outgoing server is named:
+         nothing was tried, so there is nothing to settle. */
+      ...(input.smtp?.host ? { smtpUnsettled: "" } : {}),
     },
     ...(input.smtp?.host
       ? {

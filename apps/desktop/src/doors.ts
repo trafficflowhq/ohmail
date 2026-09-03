@@ -710,7 +710,15 @@ async function sealLocalPassword(
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        imap: { ...imap, pass: password, smtpHost },
+        /* `smtpUnsettled: ""` SETTLES IT, and it is stated on every seal that carries a submission
+           block. The engine's local route retries without that block when the submission dial is
+           refused, writing the probe's reason into this key instead — so a repair has to say
+           positively that the server is settled, or a mailbox would carry its first refusal for
+           ever. `undefined` leaves whatever is stored alone, which is the wrong default here.
+
+           WITH NO OUTGOING SERVER NAMED there is nothing to settle and nothing to refuse: the
+           block is absent, the probe never runs, and the key is left as it is. */
+        imap: { ...imap, pass: password, smtpHost, ...(smtp ? { smtpUnsettled: "" } : {}) },
         // The same password on both blocks: one form, one secret, two servers the person named.
         ...(smtp ? { smtp: { ...smtp, pass: password } } : {}),
       }),

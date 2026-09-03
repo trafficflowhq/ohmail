@@ -12,6 +12,11 @@ interface CredMeta extends CredMetaAuth {
   insecureConsent?: boolean;
   /** For oauth2: the SMTP coordinates, since an oauth mailbox stores NO separate smtp row. */
   smtp?: { host?: string; port?: number; secure?: boolean };
+  /**
+   * WHY THE SUBMISSION SERVER IS NOT SETTLED — the probe's own reason, or absent/`""` when it is.
+   * Written by the door that stored this credential; see the refusal below for what it costs.
+   */
+  smtpUnsettled?: string;
 }
 
 /**
@@ -88,6 +93,32 @@ export async function makeSendAdapter(
       smtpMeta = (smtpRow.meta ?? {}) as CredMeta;
       smtpPass = await deps.keyProvider.decrypt(smtpRow.secretEnc, smtpRow.keyVersion);
     } else {
+      /**
+       * ── NO `smtp` ROW: THE GUESS, AND THE ONE CASE WHERE GUESSING IS DISHONEST ─────────────
+       *
+       * `imap host:587` with the imap secret is the single-credential generic-IMAP convention and
+       * it is right for most providers — a mailbox that never had a submission server named for it
+       * has nothing better to go on, and a send that fails at the server is an honest failure.
+       *
+       * IT IS NOT RIGHT WHEN THE SUBMISSION SERVER WAS TRIED AND REFUSED. The local door stores the
+       * incoming credential and marks the outgoing half unsettled precisely so that a working
+       * mailbox is not held hostage to a blocked port — and in that state this fallback would dial
+       * a server somebody has already been told does not work, with a password it has already
+       * refused, and report whatever came back as a fresh failure. The person is owed the sentence
+       * they were given at connect, not a second opinion from a guess.
+       *
+       * So the absence of a row is read together with the marker: no marker, guess as before; a
+       * marker, refuse with its reason. `upstream_unavailable` is the class the send path already
+       * uses for "this mailbox cannot reach its server", and 502 keeps it out of the retry ladder
+       * a 5xx-with-retry would put it on — nothing about this improves by being tried again.
+       */
+      if (imapMeta.smtpUnsettled) {
+        throw new ServiceError(
+          "smtp_not_settled", 502,
+          "Sending is not set up for this mailbox: its outgoing (SMTP) server has not been "
+            + "settled. Receiving works. Set the outgoing server in Settings → Mailboxes.",
+        );
+      }
       smtpMeta = { host: imapMeta.host, port: 587, secure: false, user: imapMeta.user };
       smtpPass = imapSecret;
     }

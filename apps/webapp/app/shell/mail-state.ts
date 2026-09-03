@@ -438,6 +438,20 @@ export interface MailboxFacts {
    */
   smtpMaxSizeBytes?: number | null;
   /**
+   * WHY SENDING IS NOT SET UP for this mailbox — the probe's own reason, or `null`/absent when it
+   * is set up.
+   *
+   * An outgoing server is not a reason to stop receiving: the local door stores the incoming
+   * credential when only the submission dial is refused, records the reason here, and the send
+   * path refuses with it rather than guessing. Every surface that mentions it reads THIS field, so
+   * the pane, the setup summary and the send refusal cannot say three different things.
+   *
+   * `null` is "settled" and is what every mailbox connected before this existed reports. It is not
+   * a promise that a send will succeed — a server can start refusing tomorrow — only that the
+   * submission server was proved when the password was stored.
+   */
+  sendingUnsettledReason?: string | null;
+  /**
    * HOW MANY MESSAGES THE ACCOUNT HOLDS FOR THIS MAILBOX — the SERVER's count, not this
    * device's.
    *

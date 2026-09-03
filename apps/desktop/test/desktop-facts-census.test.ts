@@ -87,6 +87,10 @@ describe("the desktop mailbox-facts seam", () => {
       pendingMoves: 4,
       serverMessageCount: 4242,
       smtpMaxSizeBytes: 26_214_400,
+      /* Why sending is not set up — the local door records it when only the SUBMISSION dial is
+         refused, so a mailbox can be receiving perfectly with no way to send. A member of the
+         probe taxonomy, so the value here is one a real engine answers with. */
+      sendingUnsettledReason: "auth",
       hostedMessageCount: 4200,
       inboundQuietSince: "2026-08-20T00:00:00.000Z",
       inboundQuietDismissedAt: null,

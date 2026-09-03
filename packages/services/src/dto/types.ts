@@ -662,6 +662,31 @@ export interface MailboxDTO {
    */
   smtpMaxSizeBytes?: number | null;
   /**
+   * WHY SENDING IS NOT SET UP for this mailbox — a reason code, or `null` when it is.
+   *
+   * ── AN OUTGOING SERVER IS NOT A REASON TO STOP RECEIVING ──────────────────────────────────
+   *
+   * The standalone door proves both transports before it stores anything, and a refused
+   * submission dial used to abort the whole write — so a mailbox whose incoming server worked
+   * could not be connected at all because its outgoing one was blocked, guessed wrong by a preset,
+   * or wanted a different login. The connect succeeds now: the incoming credential is stored, no
+   * `smtp` row is written (an unproven submission credential is exactly what the service refuses
+   * to store), and this carries the probe's own reason so every surface can say the same sentence.
+   *
+   * THE VALUES ARE THE PROBE TAXONOMY — `auth` · `connect` · `tls` · `timeout` · `unknown` — the
+   * same set the connect form already renders, so no surface needs a second vocabulary.
+   *
+   * `null` MEANS SENDING IS SETTLED, and it is what every mailbox connected before this existed
+   * reports: absent marker, nothing to say. It is NOT a promise that a send will succeed — a
+   * server can start refusing tomorrow — it is a statement that the submission server was proved
+   * when the password was stored.
+   *
+   * WHAT READS IT: the send path refuses with it rather than guessing at `imap host:587`; the
+   * desktop's mailbox pane and the setup flow's summary state it in one sentence; and the repair
+   * is a normal credential patch, which re-probes and settles it.
+   */
+  sendingUnsettledReason?: string | null;
+  /**
    * HOW MUCH MAIL IS IN THIS MAILBOX — and the only OPT-IN field on this DTO.
    *
    * ── WHY IT IS OPTIONAL WHEN EVERY OTHER NUMBER HERE IS NOT ──────────────────────────

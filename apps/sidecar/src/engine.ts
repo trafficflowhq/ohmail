@@ -236,6 +236,15 @@ export interface SidecarConfig {
   /** Injected for tests; production dials a real server. */
   adapterFactory?: (cfg: ImapConfig) => MailboxAdapter;
   /**
+   * THE SUBMISSION DIAL, for compositions that must be able to REFUSE one.
+   *
+   * `adapterFactory`'s presence already routes the smtp probe through a double that always
+   * succeeds — the right default for a composition that must not open sockets. This is the seam
+   * for the opposite case: proving that a refused submission server leaves the INCOMING credential
+   * stored and the mailbox connected. Absent in production, where both legs dial for real.
+   */
+  smtpDial?: SmtpProbeOptions["dial"];
+  /**
    * TEST SEAM for the one-click unsubscribe POST — with `fetchImpl` below, one of the exactly
    * TWO ways this process reaches a network that is not the mailbox, and both exist so a test
    * can count what left the machine rather than read the code and believe it. Production passes
@@ -1116,9 +1125,17 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      *
      * PRODUCTION IS UNAFFECTED: with no factory this is `{}` and the probe dials for real.
      */
-    const smtpProbeOpts: SmtpProbeOptions = config.adapterFactory
-      ? { dial: async (): Promise<void> => undefined }
-      : {};
+    const smtpProbeOpts: SmtpProbeOptions = config.smtpDial
+      /* THE SUBMISSION DIAL, INJECTED — the same argument `adapterFactory` carries, and it exists
+         because the default double CANNOT REFUSE. `{ dial: async () => undefined }` resolves an
+         empty proof for every host, which is the right stand-in for a composition that must not
+         open sockets and useless for the one behaviour that matters here: what this door does when
+         a submission server says no. A test that cannot produce a refusal cannot hold the line
+         that an incoming credential survives one. Production passes neither and dials for real. */
+      ? { dial: config.smtpDial }
+      : config.adapterFactory
+        ? { dial: async (): Promise<void> => undefined }
+        : {};
     const openLocalSend: OpenSendAdapter = async (mailboxId: string): Promise<SendAdapter> => {
       /* ── THE BOOT CONTRACT REACHES THE SEND PATH, AND IT HAS TO ─────────────────────────────
        *
@@ -1762,6 +1779,70 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        removes the install completely, and the mailbox keeps its folders, its filing and every
        message, because the organization was never stored here — it is where the messages
        physically sit on the user's own server. */
+
+    /**
+     * ── AN OUTGOING SERVER IS NOT A REASON TO STOP RECEIVING ───────────────────────────────────
+     *
+     * This door proves BOTH transports before it stores anything, and `MailboxService` refuses the
+     * whole write when either dial is refused — one transaction, both credentials, all or nothing.
+     * That is right on the hosted door, where the connect form is a considered act on an account
+     * that already exists. On THIS door it reads the send-host contract backwards: a mailbox whose
+     * incoming server works could not be connected at all because its outgoing one was blocked by
+     * a network, guessed wrong by a provider preset, or wanted a different login than the incoming
+     * one — and the flow's "Test connection" only ever proved IMAP, so the refusal arrived after a
+     * green tick, about a server the test never touched.
+     *
+     * So a refusal whose TRANSPORT is `smtp` is not fatal here. The same call is made again with
+     * the submission block dropped and the incoming block carrying `smtpUnsettled` — the probe's
+     * own reason — so:
+     *
+     *   · the incoming credential is stored and the mailbox connects, syncs and organizes;
+     *   · NO `smtp` row is written, because an unproven submission credential is exactly what this
+     *     service refuses to store, and writing one "just this once" is how it comes back;
+     *   · the send path reads the marker and refuses with that reason instead of falling back to a
+     *     guess at `imap host:587` — a dial the person has already been told does not work;
+     *   · every surface says one sentence, because they all read one field;
+     *   · and the repair is an ordinary credential patch: it carries a submission block again, the
+     *     probe runs again, and a success writes `smtpUnsettled: ""`, which settles it.
+     *
+     * ONLY THE `smtp` TRANSPORT. An IMAP refusal is still fatal and must be — that is the password
+     * the person is being asked for, and storing one nothing has logged in with is the defect this
+     * whole probe seam exists to prevent.
+     */
+    const SMTP_ONLY_RETRY = "the submission server was refused; the mailbox keeps its incoming "
+      + "credential and sending is recorded as unsettled";
+
+    /** The refusal's own reason when it is an SMTP probe refusal, else `null`. */
+    const smtpRefusalReason = (err: unknown): string | null => {
+      const e = err as { code?: string; details?: { reason?: unknown; transport?: unknown } };
+      if (e?.code !== "mailbox_probe_failed") return null;
+      if (e.details?.transport !== "smtp") return null;
+      return typeof e.details.reason === "string" && e.details.reason !== ""
+        ? e.details.reason
+        : "unknown";
+    };
+
+    /**
+     * Run a credential write; on an SMTP-only refusal, run it again without the submission block.
+     *
+     * The body is rebuilt rather than mutated: `create` and `update` both read it more than once
+     * and a caller's object is not this function's to change.
+     */
+    const keepingIncoming = async <T>(
+      body: Record<string, unknown>,
+      run: (b: Record<string, unknown>) => Promise<T>,
+    ): Promise<T> => {
+      try {
+        return await run(body);
+      } catch (err) {
+        const reason = smtpRefusalReason(err);
+        if (reason === null) throw err;
+        log("local_mailbox_smtp_unsettled", { verdict: reason, reason: SMTP_ONLY_RETRY });
+        const imap = (body.imap ?? {}) as Record<string, unknown>;
+        const { smtp: _dropped, ...rest } = body;
+        return await run({ ...rest, imap: { ...imap, smtpUnsettled: reason } });
+      }
+    };
 
     /**
      * IS THIS ROW THE MAILBOX THE SETTINGS FILE DESCRIBES — the seed, by ADDRESS.
@@ -4200,11 +4281,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                   eq(mailboxCredentials.transport, "imap"),
                 ));
 
-              const dto = await deps.services!.mailbox.create(
+              const dto = await keepingIncoming(body, (b) => deps.services!.mailbox.create(
                 ctx,
-                body as never,
+                b as never,
                 { probe: makeImapProbe(deps, probeOpts), smtpProbe: makeSmtpProbe(deps, smtpProbeOpts) },
-              );
+              ));
 
               const [proven] = await db
                 .select({ meta: mailboxCredentials.meta })
@@ -4381,15 +4462,15 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             try {
               const deps = depsFor();
               const body = (await req.json()) as Record<string, unknown>;
-              const dto = await deps.services!.mailbox.update(
+              const dto = await keepingIncoming(body, (b) => deps.services!.mailbox.update(
                 {
                   db, accountId: core.accountId, userId: core.userId,
                   now, requestId: "", sessionId: core.sessionId ?? null,
                 },
                 mailboxId,
-                body as never,
+                b as never,
                 { probe: makeImapProbe(deps, probeOpts), smtpProbe: makeSmtpProbe(deps, smtpProbeOpts) },
-              );
+              ));
               /* ── AND THE RUNNING MAILBOX IS RE-POINTED, NOT LEFT FOR THE NEXT LAUNCH ─────
                *
                * "A password entered AFTER the process is up takes effect on the next launch" was

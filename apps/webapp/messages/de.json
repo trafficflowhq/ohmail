@@ -2140,7 +2140,13 @@
     "desktopAddWhy": "Dieser Computer kann mehr als eines öffnen. Die Einrichtung fragt nach Server und Passwort, testet beides und fragt, wie weit zurück gescreent wird — es bewegt sich nichts, bis du zustimmst.",
     "desktopAddAction": "Postfach hinzufügen",
     "desktopRoleOrganizer": "Auf diesem Computer organisiert",
-    "removeLastDoor": "Dies ist das einzige Postfach auf diesem Computer, deshalb kehrt ohmail danach zu seiner Einrichtung zurück."
+    "removeLastDoor": "Dies ist das einzige Postfach auf diesem Computer, deshalb kehrt ohmail danach zu seiner Einrichtung zurück.",
+    "sendingUnsettled": "Empfangen funktioniert. Senden ist nicht eingerichtet: {reason} — korrigiere den Postausgangsserver in den Einstellungen.",
+    "sendingUnsettledReason_auth": "der Postausgangsserver hat dieses Passwort abgelehnt",
+    "sendingUnsettledReason_connect": "der Postausgangsserver war nicht erreichbar",
+    "sendingUnsettledReason_tls": "das Zertifikat des Postausgangsservers passte nicht",
+    "sendingUnsettledReason_timeout": "der Postausgangsserver hat nicht rechtzeitig geantwortet",
+    "sendingUnsettledReason_unknown": "der Postausgangsserver hat die Verbindung abgelehnt"
   },
   "onboarding": {
     "rail_mailbox": "Postfach",

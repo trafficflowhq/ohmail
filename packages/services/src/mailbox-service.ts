@@ -229,6 +229,31 @@ export interface TransportInput {
    * submission server the password was never saved for.
    */
   smtpHost?: string;
+  /**
+   * WHY THE SUBMISSION SERVER IS NOT SETTLED — a reason code, or `""` to say it now is.
+   *
+   * ── AN OUTGOING SERVER IS NOT A REASON TO STOP RECEIVING ──────────────────────────────────
+   *
+   * The standalone door proves both transports before it stores anything, and a refused
+   * submission dial used to abort the whole write: the IMAP credential the person had just proved
+   * was never stored, so a mailbox whose incoming server works perfectly could not be connected
+   * because its outgoing one was blocked, guessed wrong by a preset, or wanted a different login.
+   * That is the send-host contract read backwards.
+   *
+   * So the incoming credential is stored and the outgoing half is recorded as UNSETTLED, with the
+   * probe's own reason. Nothing is written to the `smtp` transport — an unproven submission
+   * credential is exactly what this service refuses to store — and the send path reads this key to
+   * refuse honestly instead of guessing at `imap host:587`.
+   *
+   * `""` SETTLES IT, and that spelling is deliberate: `undefined` leaves whatever is stored alone
+   * (every unrestated key does), so a repair has to say so positively or a mailbox would carry its
+   * first refusal for ever. A caller that proves the submission server writes `""` in the same
+   * patch that writes the `smtp` row.
+   *
+   * INCOMING TRANSPORT ONLY, on {@link smtpHost}'s rule: the outgoing row, when there is one,
+   * records its own state by existing.
+   */
+  smtpUnsettled?: string;
 }
 
 export interface CreateMailboxBody {
@@ -244,7 +269,14 @@ export interface CreateMailboxBody {
    * probe has proved offers no TLS at all; it is honored only after the probe re-proves that in
    * the same call, never on the client's word. See {@link MailboxProbeVerdict}.
    */
-  imap: { host: string; port?: number; secure?: boolean; user: string; pass: string; allowInsecure?: boolean };
+  imap: {
+    host: string; port?: number; secure?: boolean; user: string; pass: string;
+    allowInsecure?: boolean;
+    /** See {@link TransportInput.smtpHost} — the pair witness, carried onto the meta. */
+    smtpHost?: string;
+    /** See {@link TransportInput.smtpUnsettled} — why sending is not set up, or `""`. */
+    smtpUnsettled?: string;
+  };
   /** `port`/`secure` optional for the same reason as the IMAP block: absence asks the probe's ladder. */
   smtp?: { host: string; port?: number; secure?: boolean; user?: string; pass?: string };
 }
@@ -818,6 +850,12 @@ function mergedTransportMeta(
    * the same as leaving the key out.
    */
   if (transport === "imap" && patch?.smtpHost !== undefined) merged.smtpHost = patch.smtpHost;
+  /* THE UNSETTLED MARKER, on the line above's rule and inside this function for its reason: a
+     repair states `""` and that statement has to be visible to `update`'s compare-and-set, or two
+     patches that agree about settling the server would be refused as a conflict they are not. */
+  if (transport === "imap" && patch?.smtpUnsettled !== undefined) {
+    merged.smtpUnsettled = patch.smtpUnsettled;
+  }
   if (proven) {
     merged.port = proven.port;
     merged.secure = proven.secure;
@@ -1301,6 +1339,20 @@ export class MailboxService {
         // what every dialler reads back as `ImapConfig.allowInsecure`, so its absence on a secure
         // mailbox is as load-bearing as its presence on a consented one.
         if (provenImap?.insecure) meta.insecureConsent = true;
+        /* ── THE TWO WITNESSES `metaOf` DOES NOT CARRY ─────────────────────────────────────
+         *
+         * `metaOf` is PER TRANSPORT and both of these are statements about the pair, so they are
+         * applied here exactly as `mergedTransportMeta` applies them on the update path — and they
+         * have to be, because a CREATE is the only way a mailbox added through a door ever gets
+         * them. Without this the add route's unsettled marker was written into a body that reached
+         * a meta builder which drops it, and the DTO reported `null`: a mailbox whose submission
+         * server had just been refused claiming sending was fine.
+         *
+         * Both are `!== undefined` rather than truthy: `""` is a positive statement on each — "no
+         * outgoing server was authorized" and "the outgoing server is settled" — and a falsy test
+         * would silently discard it. */
+        if (body.imap.smtpHost !== undefined) meta.smtpHost = body.imap.smtpHost;
+        if (body.imap.smtpUnsettled !== undefined) meta.smtpUnsettled = body.imap.smtpUnsettled;
         await this.upsertCredOn(tx, ctx, kp, row!.id, "imap", body.imap.pass, meta);
       }
       if (body.smtp) {
@@ -2591,6 +2643,34 @@ export class MailboxService {
   ): Promise<MailboxDTO> {
     const fRows = await ctx.db.select().from(mailboxFolders)
       .where(eq(mailboxFolders.mailboxId, m.id)).orderBy(asc(mailboxFolders.folder));
+    /**
+     * IS SENDING SET UP — off the INCOMING credential's meta, where the unsettled marker lives.
+     *
+     * An unproven submission credential is never stored, so there is no `smtp` row to ask; the
+     * marker rides the imap row beside `smtpHost`, which is already the field that records which
+     * submission server that password was saved for.
+     *
+     * ONE INDEXED POINT-READ per mailbox — `(mailbox_id, transport)` is the key — rather than a
+     * column on `mailboxes`. The fact belongs to the credential: it is a statement about a dial
+     * that was tried, and it has to be rewritten by the same patch that stores a proven `smtp`
+     * row or the two could disagree. A mailbox with no credential at all reports `null`, which is
+     * the same answer as "settled" and the right one: nothing is unsettled about a mailbox that
+     * has not been given a password yet.
+     */
+    const [imapCred] = await ctx.db.select({ meta: mailboxCredentials.meta })
+      .from(mailboxCredentials)
+      .where(and(
+        eq(mailboxCredentials.mailboxId, m.id),
+        eq(mailboxCredentials.transport, "imap"),
+      ))
+      .limit(1);
+    const unsettledRaw = (imapCred?.meta as { smtpUnsettled?: unknown } | null | undefined)
+      ?.smtpUnsettled;
+    /* `""` IS SETTLED, not unsettled-with-no-reason. That spelling is what a repair writes, and
+       reading it as a truthy marker would leave a fixed mailbox reporting a problem for ever. */
+    const sendingUnsettled = typeof unsettledRaw === "string" && unsettledRaw !== ""
+      ? unsettledRaw
+      : null;
     const folders: MailboxFolderSummary[] = fRows.map((f) => ({
       folder: f.folder,
       hasSyncCursor: f.highestmodseq != null,
@@ -2749,6 +2829,12 @@ export class MailboxService {
       // announcement, or never probed — and the client resolves that to the product constant, the
       // same strict fallback `effectiveAttachmentCap` applies on the send itself.
       smtpMaxSizeBytes: m.smtpMaxSizeBytes ?? null,
+      /* WHETHER SENDING IS SET UP — read off the incoming credential's own meta, because that is
+         where the unsettled marker lives (an unproven submission credential is never stored, so
+         there is no `smtp` row to carry it). `null` is "sending is settled", which is what every
+         mailbox connected before this existed reports and what a mailbox with a proven submission
+         server reports after a repair. */
+      sendingUnsettledReason: sendingUnsettled,
       /* SPREAD, not `messageCount: messageCount`. The key must be genuinely ABSENT when nobody
          asked, because absent and `0` are different answers here and a client tells them apart
          with a `typeof` guard. `JSON.stringify` would drop an explicitly-undefined property on

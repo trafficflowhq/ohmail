@@ -469,6 +469,11 @@ describe("reconfiguring a mailbox that is already connected", () => {
         imap: {
           host: NEW_HOST, port: 993, secure: true, user: ADDRESS, pass: NEW_PASS,
           smtpHost: NEW_HOST,
+          /* `""` SETTLES SENDING, and every seal carrying a submission block says it. The engine's
+             local route retries WITHOUT that block when the submission dial is refused, writing
+             the probe's reason into this key instead — so a repair has to state positively that
+             the server is settled, or a mailbox would carry its first refusal for ever. */
+          smtpUnsettled: "",
         },
         /* AND THE OUTGOING BLOCK, which the witness above cannot stand in for. `smtpHost` says
            which server the password was saved for; this is the server the mailbox SUBMITS

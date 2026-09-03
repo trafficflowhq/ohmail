@@ -2140,7 +2140,13 @@
     "desktopAddWhy": "This computer can open more than one. Setup asks for the server and the password, tests them, and asks how far back to screen — nothing moves until you agree.",
     "desktopAddAction": "Add mailbox",
     "desktopRoleOrganizer": "Organized on this computer",
-    "removeLastDoor": "This is the only mailbox on this computer, so ohmail returns to its setup screen afterwards."
+    "removeLastDoor": "This is the only mailbox on this computer, so ohmail returns to its setup screen afterwards.",
+    "sendingUnsettled": "Receiving works. Sending is not set up: {reason} — fix the outgoing server in Settings.",
+    "sendingUnsettledReason_auth": "the outgoing server refused that password",
+    "sendingUnsettledReason_connect": "the outgoing server could not be reached",
+    "sendingUnsettledReason_tls": "the outgoing server's certificate did not match",
+    "sendingUnsettledReason_timeout": "the outgoing server did not answer in time",
+    "sendingUnsettledReason_unknown": "the outgoing server refused the connection"
   },
   "onboarding": {
     "rail_mailbox": "Mailbox",

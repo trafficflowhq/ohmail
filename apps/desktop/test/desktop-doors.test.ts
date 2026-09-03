@@ -274,6 +274,10 @@ describe("the local door", () => {
         user: "mila@example.com",
         pass: "app-password-1234",
         smtpHost: "smtp.fastmail.com",
+        /* `""` SETTLES SENDING — see the reconfigure case's body. A seal that carries a submission
+           block is claiming the server was proved, and the engine's retry path writes the probe's
+           reason here when it was not. */
+        smtpUnsettled: "",
       },
       smtp: {
         host: "smtp.fastmail.com",
