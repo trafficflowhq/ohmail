@@ -295,10 +295,13 @@ export {
 // a body, a credential or a Stripe payload. See the header of `admin-service.ts`.
 export * from "./admin-dto.js";
 export {
-  adminAccounts, adminAccountDetail, adminBilling, adminFunnel, adminWorker, adminWorkerInstances,
+  adminAccounts, adminAccountDetail, adminAccountLedgerDay,
+  adminBilling, adminFunnel, adminWorker, adminWorkerInstances,
   adminAlerts, adminActions, adminAttentionRank,
   ADMIN_LIST_LIMIT, ADMIN_DEFAULT_PAGE_SIZE, ADMIN_MAX_PAGE_SIZE, ADMIN_OPTIONS_LIMIT,
   ADMIN_ROSTER_LIMIT, ADMIN_SUBSCRIPTION_ORDER,
+  ADMIN_LEDGER_DAY_LIMIT, ADMIN_USAGE_DAYS,
+  ADMIN_USAGE_EXPECTED_EVERY_SECONDS, ADMIN_TOTALS_EXPECTED_EVERY_SECONDS,
   ADMIN_WRITES_UNAVAILABLE, ADMIN_ACTIONS_PRECONDITION,
   // The branded, content-blind handle every one of those reads takes. Exported so
   // `packages/api` can type `ApiDeps.adminDb` with it and make `deps.db` a compile error.

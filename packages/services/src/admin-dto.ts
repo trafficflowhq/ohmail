@@ -61,6 +61,33 @@ export type AdminSubscriptionStatus =
 export type AdminLedgerReason =
   | "invoice_grant" | "refund" | "adjustment_credit" | "trial_grant" | "period_expiry"
   | "debit_classify" | "debit_draft" | "debit_propose" | "debit_workflow" | "adjustment_debit";
+/** The two places a credit can be spent, and they never sum — separate money, separate expiries. */
+export type CreditPool = "ledger" | "setup";
+
+/**
+ * HOW OLD A PANEL'S NUMBERS ARE, AND HOW OLD THEY ARE ALLOWED TO BE.
+ *
+ * The console already stamps every page with the API's `now`, which answers "when was this read
+ * served". It cannot answer "when was this number COMPUTED", and for a panel backed by a
+ * scheduled aggregate those are different questions with different answers: a page served this
+ * second can be rendering a roll-up from three hours ago, and every existing freshness signal
+ * reports it as fresh, correctly, because the READ was.
+ *
+ * So an aggregate-backed panel carries its own pair. `computedAt` is the producer's clock;
+ * `expectedEverySeconds` is the cadence that producer runs at, which is what turns an age into a
+ * verdict — three hours old is healthy for a nightly figure and an incident for an hourly one,
+ * and no threshold that does not know the cadence can tell those apart.
+ *
+ * `computedAt: null` means the aggregate has NEVER been computed. That is a distinct state from
+ * "computed a long time ago" and the console must be able to say so: on a freshly migrated
+ * deployment it is the true and expected answer for one cadence, and a zero rendered in its place
+ * would be a number nobody measured.
+ */
+export interface PanelFreshness {
+  computedAt: string | null;
+  expectedEverySeconds: number;
+}
+
 export type AdminAccountFilter = "all" | "attention" | "suspended" | "past_due" | "no_subscription";
 export type AdminActionId = "suspend_account" | "resume_account" | "resync_mailbox" | "retry_send";
 
@@ -250,8 +277,23 @@ export interface AccountDetail {
     periodEnd: string | null;
     cancelAtPeriodEnd: boolean;
     graceUntil: string | null;
+    /**
+     * The account's screening-only setup pool, or `null` when it holds none.
+     *
+     * `kind` is `'account'` for a pool granted under the one-per-account rule and `'mailbox'` for
+     * the historical per-mailbox pools; the console shows it because "this account has three
+     * old-style pools" and "this account has one" are different support answers and the size
+     * alone cannot distinguish them. `granted`/`remaining` are the account's TOTAL across its
+     * live pools, and `expiresAt` the furthest horizon — the same composition `setupPoolOf`
+     * makes for the customer's own settings row, so staff and customer read one number.
+     */
+    setupCredits: SetupPoolView | null;
   };
-  ledger: LedgerEntry[];
+  /**
+   * Credit usage — day-grained aggregates plus the raw non-debit events, replacing the raw
+   * fifty-row ledger read this field used to be. See {@link AccountUsage}.
+   */
+  usage: AccountUsage;
   audit: AuditEntry[];
   /**
    * The account's SECURITY events — `auth_events` rows whose event names an incident rather
@@ -269,6 +311,68 @@ export interface SecurityEvent {
   id: string;
   event: "refresh_reuse_revoked";
   at: string;
+}
+
+/** The setup pool as the console shows it — a size, a remainder, a horizon. No mailbox id. */
+export interface SetupPoolView {
+  kind: "mailbox" | "account";
+  granted: number;
+  remaining: number;
+  expiresAt: string | null;
+}
+
+/**
+ * ONE DAY OF ONE ACCOUNT'S CREDIT MOVEMENT, in one pool, for one reason.
+ *
+ * `credits` carries the ledger's own sign convention (+ grant, − debit), so a day's rows sum to
+ * that day's net movement and a range sums to the range's. `rows` is the population behind it,
+ * carried separately because "12 credits" and "12 credits over 12 messages" are different
+ * operator facts and one cannot be recovered from the other.
+ */
+export interface UsageDay {
+  day: string;
+  pool: CreditPool;
+  reason: AdminLedgerReason;
+  credits: number;
+  rows: number;
+}
+
+/**
+ * WHAT REPLACED THE RAW LEDGER READ ON THE ACCOUNT PAGE.
+ *
+ * The page used to render the newest fifty `credit_ledger` rows. On any account that has been
+ * screening, forty-nine of those are `debit_classify` and the five rows an operator came to see —
+ * the invoice grant, the expiry, the adjustment somebody made — are off the bottom. So the two
+ * halves are separated by what they are FOR:
+ *
+ *  · `daily` is the metered spend, aggregated: thirty days of it, ready to draw as bars, read
+ *    from `credit_usage_daily` and never from the ledger.
+ *  · `events` is the STATEMENT: the non-debit rows — grants, expiries, adjustments, refunds —
+ *    each of which is a distinct economic decision an operator reads one at a time. Capped, and
+ *    served by a partial index over exactly that predicate.
+ *
+ * Neither carries a debit's `source`, which is a digest of a Message-ID and therefore a
+ * confirmation oracle; the daily rows have no source column at all, and the events are read
+ * through the same redacting view every other ledger read on this connection is.
+ *
+ * The per-day raw rows are NOT here. They are one press away — `GET /admin/accounts/:id/ledger`
+ * with a `day` — because a page that fetches every day's rows in case somebody expands one is
+ * the read this whole change exists to stop making.
+ */
+export interface AccountUsage {
+  daily: UsageDay[];
+  events: LedgerEntry[];
+  freshness: PanelFreshness;
+}
+
+/** The drill-down: one account, one day, the raw rows, capped. */
+export interface LedgerDay {
+  now: string;
+  accountId: string;
+  day: string;
+  entries: LedgerEntry[];
+  /** True when the cap cut the day short — the console must say so rather than imply completeness. */
+  capped: boolean;
 }
 
 /* ── billing ───────────────────────────────────────────────────────────────────────────── */
@@ -382,6 +486,14 @@ export interface CreditLiability {
   /**
    * The part of `outstanding` held by accounts that have NEVER had an `invoice_grant` row.
    * Granted, never sold — future token cost with no revenue behind it.
+   *
+   * **`-1` means the roll-up has never run, and this is the ONE lifetime figure that needs the
+   * sentinel.** Every other one is a sum, so an empty aggregate makes it zero — visibly nothing.
+   * This one is computed by INVERTING the set of ever-invoiced accounts, so an empty aggregate
+   * makes it the WHOLE liability: before the first roll-up on a deployment, a board that rendered
+   * it plainly would report every outstanding credit as having no revenue behind it, in red,
+   * against the one invariant this figure exists to police — maximally alarming, and measuring
+   * nothing. Negative renders as "not computed yet" and grades as `idle`.
    */
   outstandingNeverInvoiced: number;
   /** Accounts holding a non-zero balance. */
@@ -412,15 +524,25 @@ export interface CreditLiability {
   /** Lifetime Σ |`adjustment_debit`|. Credits taken back by staff. */
   clawedBackLifetime: number;
   /**
-   * Accounts whose OWN ledger sum disagrees with their OWN balance — the per-account form of
-   * the reconciliation identity, counted on the same snapshot as the lifetime figures.
+   * Accounts whose OWN ledger disagrees with their OWN balance. Zero is the only healthy value.
    *
    * The console cannot derive this from the figures above: both sides of the identity are sums
    * across every account, so +500 of drift on one account and −500 on another cancel and the
-   * global check reads "balanced" over two corrupted rows. This is the count the
-   * netting hides — the sum-vs-balance arm of `findCreditDivergence`, restated over the columns
-   * the staff role holds (its `balance_after` arm needs a column that is not granted). Zero is
-   * the only healthy value.
+   * global check reads "balanced" over two corrupted rows. This is the count the netting hides.
+   *
+   * MEASURED BY THE ROLL-UP, not by this read, and that is a strengthening rather than a
+   * convenience. This function used to recompute it from a whole-ledger `GROUP BY account_id` —
+   * correct, and an uncapped scan of the money trail on every console load. The nightly pass runs
+   * `findCreditDivergence` instead, which is ONE statement and therefore internally consistent,
+   * and which asks BOTH arms of the question: the sum-vs-balance arm this read could express, and
+   * the `balance_after` arm it could not (that column is granted, but comparing it needs the
+   * ledger's newest row per account, which is the scan being removed). So the number is now
+   * strictly better informed and up to a day old — which is why it arrives with
+   * {@link BillingSnapshot.freshness} beside it rather than on its own.
+   *
+   * `-1` means no roll-up has ever run, and it is deliberately not `0`: zero is the healthy
+   * answer, and rendering "no divergence" from "nobody has looked" is precisely the reassurance
+   * this figure exists to refuse.
    */
   divergentAccounts: number;
 }
@@ -446,7 +568,23 @@ export interface BillingSnapshot {
   }>;
   revenue: BillingRevenue;
   liability: CreditLiability;
+  /**
+   * The deployment-wide STATEMENT: the newest non-debit ledger rows — grants, expiries,
+   * adjustments, refunds. Capped, and served by the partial index over exactly that predicate.
+   *
+   * Metered debits are deliberately absent. They were the overwhelming majority of what this list
+   * used to show, they are the same three shapes over and over, and they are now counted in
+   * `credit_usage_daily` where a count is what anybody wanted. What is left is every row that
+   * represents a decision rather than a meter reading.
+   */
   ledger: LedgerEntry[];
+  /**
+   * How old the aggregate-backed figures on this snapshot are — `liability`'s lifetime sums and
+   * `divergentAccounts`, all of which the roll-up produces. `accountCount`,
+   * `subscriptionStates`, `revenue`, `ledger` and `failedEvents` are live reads and are as fresh
+   * as the page's own `now`.
+   */
+  freshness: PanelFreshness;
   adjustableAccounts: Array<{ id: string; name: string; balance: number }>;
   failedEvents: FailedBillingEvent[];
 }
@@ -518,7 +656,29 @@ export interface StaleSend {
 export interface WorkerSnapshot {
   now: string;
   instances: WorkerInstanceHealth[];
+  /**
+   * The mailbox roster, CAPPED — the first `ADMIN_ROSTER_LIMIT` by address. Beyond that cap this
+   * list is a sample and must be labelled as one; {@link WorkerSnapshot.rosterCounts} is what a
+   * count is read from.
+   */
   roster: Array<MailboxHealth & { accountName: string }>;
+  /**
+   * THE MAILBOX POPULATION, from `count(*) filter (…)` — not from {@link WorkerSnapshot.roster}.
+   *
+   * The console's customer-facing verdict counted mailboxes in error and mailboxes blocked by
+   * filtering the roster array. That array is capped at 200, so on a deployment with 201
+   * mailboxes the 201st cannot contribute to a fault count however broken it is — a verdict that
+   * gets QUIETER as the deployment grows, which is the exact opposite of what it is for. The
+   * counts come from SQL and cover every row; the roster stays capped and says so.
+   *
+   * `blocked` counts mailboxes that are CONNECTED and carry a `syncBlockedSince` — our
+   * infrastructure declining to sync a mailbox the provider is perfectly happy with. It gates on
+   * the TIMESTAMP and never on `syncBlockedReason`, because the service narrows that reason to
+   * this build's closed set and a block this build cannot name would otherwise count as healthy.
+   * `inError` counts every mailbox whose status is not `connected`. The two are disjoint by
+   * construction, and neither is a subset of the other.
+   */
+  rosterCounts: { total: number; inError: number; blocked: number };
   crons: CronPass[];
   pendingMoves: { total: number; mailboxes: number; oldestSeconds: number | null };
   staleSends: StaleSend[];

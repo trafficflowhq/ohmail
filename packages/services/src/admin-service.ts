@@ -8,6 +8,12 @@ import {
   billingSubscriptions,
   creditBalances,
   creditLedger,
+  // The roll-up's three tables (cloud 0028). Every spend figure on this console is read from
+  // them; `credit_ledger` is still read for the STATEMENT rows and for nothing else.
+  creditUsageDaily,
+  creditUsageTotals,
+  creditRollupRuns,
+  setupGrants,
   invites,
   waitlist,
   workerHeartbeats,
@@ -21,10 +27,11 @@ import {
 } from "@trafficflow/db/cloud";
 import type { Db } from "./context.js";
 import type {
-  AccountDetail, AccountPage, AccountQuery, AccountSummary, ActionCatalog, ActionSpec,
+  AccountDetail, AccountPage, AccountQuery, AccountSummary, AccountUsage, ActionCatalog, ActionSpec,
   AdminLedgerReason, AdminPlan, AdminSubscriptionStatus, AlertSummary, AuditEntry,
   BillingRevenue, BillingSnapshot, CreditLiability, FunnelSnapshot, FunnelStage,
-  LedgerEntry, MailboxHealth, SecurityEvent, StaleSend, WorkerInstanceHealth, WorkerSnapshot,
+  LedgerDay, LedgerEntry, MailboxHealth, SecurityEvent, SetupPoolView, StaleSend, UsageDay,
+  WorkerInstanceHealth, WorkerSnapshot,
 } from "./admin-dto.js";
 
 /**
@@ -128,6 +135,22 @@ import type {
  * number on screen is never a guess; the paging is honest, just not cheap. When the roster
  * outgrows this, the fix is a view or a summary table — not a `LIMIT` here, which would make
  * `matched` a lie.
+ *
+ * THE LEDGER HALF OF THAT PARAGRAPH IS NO LONGER TRUE, and this is what replaced it. Three
+ * UNCAPPED aggregates over `credit_ledger` ran on every Billing load, and the account page read
+ * the newest fifty raw rows. `credit_ledger` is append-only and never pruned — for four separate
+ * reasons the roll-up's own header sets out — so those reads grew with the deployment's whole
+ * history. They now read `credit_usage_daily` (hourly) and `credit_usage_totals` (nightly),
+ * written by a worker-side pass, and every panel backed by them carries
+ * `{ computedAt, expectedEverySeconds }` — its OWN producer's clock and its OWN cadence, because
+ * the two are on different ones and a single stamp would have to be wrong about one of them.
+ * `credit_ledger` is still read directly for the STATEMENT rows — the non-debit reasons, over a
+ * partial index built for exactly that predicate — and for nothing else.
+ *
+ * A LIST BEING CAPPED IS NOT A LICENCE TO COUNT OVER IT. `WorkerSnapshot.rosterCounts` exists
+ * because the console's fault verdict counted mailboxes by filtering a 200-row roster, so a
+ * deployment's 201st broken mailbox could not make the verdict worse. Counts come from
+ * `count(*) filter (…)`; lists stay capped and say which cap they hit.
  */
 
 /**
@@ -764,6 +787,64 @@ async function accountNames(db: AdminDb, ids: string[]): Promise<Map<string, str
 }
 
 /**
+ * THE STATEMENT REASONS — every ledger reason that is NOT a metered debit.
+ *
+ * Grants (invoice, trial, staff adjustment), the renewal expiry, a staff clawback and a refund.
+ * Each is one economic decision an operator reads on its own, which is what makes them worth
+ * rendering raw; the four `debit_*` reasons are meter readings and are counted in
+ * `credit_usage_daily` instead.
+ *
+ * This list and `credit_ledger_events_idx`'s partial predicate are the same set, and they have to
+ * stay the same set: a reason added here and not to the index costs a partial-index scan, and a
+ * reason added to the index and not here is a row nobody sees. `admin-usage.pg.test.ts` compares
+ * them against the migration's text.
+ */
+const LEDGER_EVENT_REASONS = [
+  "invoice_grant", "trial_grant", "period_expiry",
+  "adjustment_credit", "adjustment_debit", "refund",
+] as const satisfies readonly AdminLedgerReason[];
+
+/**
+ * THE UUID SHAPE, and it is a real one.
+ *
+ * This used to be `/^[0-9a-fA-F-]{36}$/`, which admits 36 hyphens and 36 hex digits with no
+ * hyphens at all — neither is a uuid, both reach `eq(…accountId, …)`, and Postgres answers
+ * SQLSTATE 22P02 into the route's catch-all. The comment at each call site claimed a 404 rather
+ * than a 500; this is what makes that true.
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** How many raw rows one day's drill-down may return. A day, not a lifetime. */
+export const ADMIN_LEDGER_DAY_LIMIT = 200;
+
+/** Days of usage the account page shows. A month, which is the billing period's own unit. */
+export const ADMIN_USAGE_DAYS = 30;
+
+/**
+ * The roll-up's HOURLY cadence, restated in seconds for {@link PanelFreshness}.
+ *
+ * Copied as a number rather than imported from `@trafficflow/db/cloud`'s pass constants on
+ * purpose: what a console panel needs is the cadence a reader should JUDGE the number against,
+ * and the hourly arm is the one that keeps the daily rows current. The nightly arm widens the
+ * window and adds the totals; it does not make an hourly figure any less late.
+ */
+export const ADMIN_USAGE_EXPECTED_EVERY_SECONDS = 60 * 60;
+
+/**
+ * The roll-up's NIGHTLY cadence, in seconds — what the Billing board's lifetime figures are on.
+ *
+ * A DIFFERENT number from the one above, and the difference is the point. `credit_usage_totals`
+ * and the divergence count are written only by the wide nightly arm, so judging them against the
+ * hourly cadence would report an incident every morning on a deployment doing exactly what it was
+ * built to do — and a signal that cries wolf daily is a signal nobody reads.
+ *
+ * It is also why the two panels carry separate stamps rather than one: the account page's daily
+ * bars really are refreshed hourly, and flattening both to one cadence would have to be wrong
+ * about one of them.
+ */
+export const ADMIN_TOTALS_EXPECTED_EVERY_SECONDS = 24 * 60 * 60;
+
+/**
  * The ledger — and the SECOND query in this module whose unqualified relation name
  * is doing work.
  *
@@ -778,7 +859,11 @@ async function accountNames(db: AdminDb, ids: string[]): Promise<Map<string, str
  * The role-level test seeds one row per `ledgerSources` namespace from a known Message-ID and
  * asserts that its digest appears in NOTHING the staff role can select.
  */
-async function loadLedger(db: AdminDb, accountId: string | null): Promise<LedgerEntry[]> {
+async function loadLedger(
+  db: AdminDb,
+  accountId: string | null,
+  opts?: { events?: boolean; day?: string; limit?: number },
+): Promise<LedgerEntry[]> {
   const base = db
     .select({
       id: creditLedger.id,
@@ -792,10 +877,29 @@ async function loadLedger(db: AdminDb, accountId: string | null): Promise<Ledger
       createdAt: creditLedger.createdAt,
     })
     .from(creditLedger);
-  const rows = accountId === null
-    ? await base.orderBy(desc(creditLedger.id)).limit(ADMIN_LIST_LIMIT)
-    : await base.where(eq(creditLedger.accountId, accountId))
-      .orderBy(desc(creditLedger.id)).limit(ADMIN_LIST_LIMIT);
+  const filters = [
+    ...(accountId === null ? [] : [eq(creditLedger.accountId, accountId)]),
+    // THE STATEMENT PREDICATE — the complement of the four metered `debit_*` reasons, matching
+    // `credit_ledger_events_idx`'s partial predicate EXACTLY. If the two ever diverge the query
+    // still answers correctly and stops using the index, which is a silent performance loss;
+    // they are written as one list in the migration and one list here, and the pg test asserts
+    // the planner uses the index for this read.
+    ...(opts?.events === true ? [inArray(creditLedger.reason, LEDGER_EVENT_REASONS as unknown as string[])] : []),
+    // The drill-down's day window, half-open, on `created_at` — the same boundary the roll-up
+    // aggregates by, so a day expanded here holds exactly the rows the bar above it counted.
+    //
+    // The offset is written into the literal (`+00`) rather than left to a `date` cast, because a
+    // bare `'2026-09-03'::timestamptz` is midnight in the SESSION's time zone. On a database
+    // configured anywhere but UTC that silently shifts every day boundary by the offset, so a
+    // drill-down would show a day's rows the bar above it did not count — and nothing would fail.
+    ...(opts?.day === undefined ? [] : [
+      sql`${creditLedger.createdAt} >= (${opts.day} || ' 00:00:00+00')::timestamptz`,
+      sql`${creditLedger.createdAt} < (${opts.day} || ' 00:00:00+00')::timestamptz + interval '1 day'`,
+    ]),
+  ];
+  const rows = await (filters.length === 0 ? base : base.where(and(...filters)))
+    .orderBy(desc(creditLedger.id))
+    .limit(opts?.limit ?? ADMIN_LIST_LIMIT);
   const names = await accountNames(db, rows.map((r) => r.accountId));
   return rows.map((row) => ({
     id: String(row.id),
@@ -825,6 +929,210 @@ async function loadLedger(db: AdminDb, accountId: string | null): Promise<Ledger
     // and how a value comes back.
     meta: {},
   }));
+}
+
+/**
+ * WHEN THE AGGREGATES WERE LAST COMPUTED — the newest `credit_rollup_runs` row's clock.
+ *
+ * The newest COMPLETED run, and the `error is null` in the predicate is the whole point: a pass
+ * that failed still writes a row (so that "it stopped running" and "it is failing" are
+ * distinguishable), and reading that row's `ran_at` as a freshness stamp would report the
+ * aggregates as current at the exact moment the thing that produces them broke. That is
+ * `billing_reconciliation_runs`' rule for its own staleness read, and it is here for the same
+ * reason it is there.
+ *
+ * `divergentAccounts` comes off the newest run that MEASURED it — a different row from the
+ * freshness one, because the hourly arm does not measure divergence and would otherwise reset the
+ * figure to "unknown" fifty-nine minutes out of every sixty.
+ */
+async function loadRollupState(db: AdminDb): Promise<RollupState> {
+  // ── THE DAILY STAMP — the newest COMPLETED run ─────────────────────────────────────────
+  //
+  // `error is null` is the load-bearing half. A pass that FAILED still writes a row, so that "it
+  // stopped running" and "it is failing" stay distinguishable; reading that row's `ran_at` as a
+  // freshness stamp would report the aggregates as current at the exact moment the thing that
+  // produces them broke. `billing_reconciliation_runs` follows the same rule for the same reason.
+  const [fresh] = await db
+    .select({ ranAt: creditRollupRuns.ranAt })
+    .from(creditRollupRuns)
+    .where(sql`${creditRollupRuns.error} is null`)
+    .orderBy(desc(creditRollupRuns.ranAt))
+    .limit(1);
+
+  // ── THE TOTALS STAMP — READ OFF THE TOTALS THEMSELVES, not off a run row ───────────────
+  //
+  // This is the distinction that matters, and reading it off `credit_rollup_runs` was wrong:
+  // `credit_usage_totals` is written ONLY by the nightly arm, and an HOURLY pass writes a
+  // perfectly successful run row without touching it. A stamp taken from the newest completed run
+  // would therefore say "computed four minutes ago" over totals a week old — which is precisely
+  // the failure the per-panel stamp was added to prevent, reintroduced by the stamp itself.
+  //
+  // `max(computed_at)` off the table cannot lie about it: the pass sets that column to its own
+  // clock on every row it writes, so the newest value IS the moment the totals were last
+  // produced, whatever the run ledger says. `null` — no rows — means they never have been.
+  const [totalsRow] = await db
+    .select({ at: sql<string | null>`max(${creditUsageTotals.computedAt})` })
+    .from(creditUsageTotals);
+  const totalsComputedAt = totalsRow?.at ? asDate(totalsRow.at).toISOString() : null;
+
+  const [measured] = await db
+    .select({ divergent: creditRollupRuns.divergentAccounts })
+    .from(creditRollupRuns)
+    .where(sql`${creditRollupRuns.error} is null and ${creditRollupRuns.divergentAccounts} is not null`)
+    .orderBy(desc(creditRollupRuns.ranAt))
+    .limit(1);
+
+  return {
+    computedAt: fresh ? asDate(fresh.ranAt).toISOString() : null,
+    totalsComputedAt,
+    // −1 and not 0: "no roll-up has ever measured this" must not render as "no divergence".
+    divergentAccounts: measured?.divergent == null ? -1 : int(measured.divergent),
+  };
+}
+
+interface RollupState {
+  /** Newest completed run of EITHER arm — what the hourly daily rows are as fresh as. */
+  computedAt: string | null;
+  /** When `credit_usage_totals` was last written. NIGHTLY, and a different clock entirely. */
+  totalsComputedAt: string | null;
+  /** `findCreditDivergence`'s count from the newest run that measured it; `-1` ⇒ never. */
+  divergentAccounts: number;
+}
+
+/**
+ * ONE ACCOUNT'S CREDIT USAGE — thirty days of aggregate, plus the statement.
+ *
+ * This replaced a read of the newest fifty raw ledger rows, which was two things at once and bad
+ * at both. On an account that has been screening, forty-nine of those fifty are `debit_classify`
+ * and the rows an operator opened the page for — the invoice grant, the renewal expiry, the
+ * adjustment somebody made last week — are off the bottom of the list. Splitting the read by what
+ * each half is FOR fixes both: the meter readings become a shape you can look at, and the
+ * decisions become a list short enough to read.
+ *
+ * Both halves are bounded reads on indexes built for them:
+ * `credit_usage_daily_account_day_idx` and the partial `credit_ledger_events_idx`.
+ */
+async function loadUsage(db: AdminDb, accountId: string, now: Date): Promise<AccountUsage> {
+  // Half-open from midnight UTC of the oldest day shown, so the boundary day is whole. Computed
+  // from the reader's `now` rather than from `current_date`, so the page and its own stamp agree
+  // about which day is "today".
+  const floor = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  floor.setUTCDate(floor.getUTCDate() - (ADMIN_USAGE_DAYS - 1));
+  const floorKey = floor.toISOString().slice(0, 10);
+
+  const dailyRows = await db
+    .select({
+      day: creditUsageDaily.day,
+      pool: creditUsageDaily.pool,
+      reason: creditUsageDaily.reason,
+      credits: creditUsageDaily.credits,
+      rows: creditUsageDaily.rows,
+    })
+    .from(creditUsageDaily)
+    .where(and(
+      eq(creditUsageDaily.accountId, accountId),
+      sql`${creditUsageDaily.day} >= ${floorKey}::date`,
+    ))
+    .orderBy(desc(creditUsageDaily.day));
+
+  const events = await loadLedger(db, accountId, { events: true });
+  const state = await loadRollupState(db);
+
+  return {
+    daily: dailyRows.map((r) => ({
+      // `date` comes back as a string on one driver and a Date on the other. Normalize to the
+      // key the drill-down takes, so the console can hand a bar's own day straight back.
+      day: typeof r.day === "string" ? r.day.slice(0, 10) : asDate(r.day).toISOString().slice(0, 10),
+      pool: r.pool as UsageDay["pool"],
+      reason: r.reason as AdminLedgerReason,
+      credits: int(r.credits),
+      rows: int(r.rows),
+    })),
+    events,
+    freshness: {
+      computedAt: state.computedAt,
+      expectedEverySeconds: ADMIN_USAGE_EXPECTED_EVERY_SECONDS,
+    },
+  };
+}
+
+/**
+ * THE ACCOUNT'S SETUP POOL, as the console shows it.
+ *
+ * LIVE grants only — unexpired, with something left — which is the same predicate
+ * `setupPoolOf` uses for the customer's own settings row. Staff and customer read one number, so
+ * a support conversation cannot be two people looking at two different figures.
+ *
+ * `granted` and `remaining` are summed across those live grants because an account carrying
+ * pre-0028 per-mailbox pools legitimately has several, and `expiresAt` is the FURTHEST horizon —
+ * "usable until", the sentence a single row can honestly say about a set. `kind` reports
+ * `'account'` when any live pool is one, because the presence of the new-style pool is the fact a
+ * support answer turns on.
+ *
+ * `mailbox_id` is not read and is not readable: the blind role holds no grant on it.
+ */
+async function loadSetupPool(
+  db: AdminDb, accountId: string, now: Date,
+): Promise<SetupPoolView | null> {
+  const rows = await db
+    .select({
+      kind: setupGrants.kind,
+      granted: setupGrants.granted,
+      remaining: setupGrants.remaining,
+      expiresAt: setupGrants.expiresAt,
+    })
+    .from(setupGrants)
+    .where(and(
+      eq(setupGrants.accountId, accountId),
+      sql`${setupGrants.expiresAt} > ${now.toISOString()}::timestamptz`,
+      sql`${setupGrants.remaining} > 0`,
+    ));
+  if (rows.length === 0) return null;
+  return {
+    kind: rows.some((r) => r.kind === "account") ? "account" : "mailbox",
+    granted: rows.reduce((n, r) => n + int(r.granted), 0),
+    remaining: rows.reduce((n, r) => n + int(r.remaining), 0),
+    expiresAt: new Date(Math.max(...rows.map((r) => asDate(r.expiresAt).getTime()))).toISOString(),
+  };
+}
+
+/**
+ * THE DRILL-DOWN — one account, one day, the raw rows, ON PRESS.
+ *
+ * Separate from {@link loadUsage} because of when it runs, not because of what it reads: the
+ * account page shows thirty days of aggregate and this answers "what were those twelve
+ * classifications" for ONE of them, when somebody asks. Fetching every day's rows in case a
+ * reader expands one is exactly the read the aggregates were built to stop making.
+ *
+ * Capped at {@link ADMIN_LEDGER_DAY_LIMIT}, and the cap is REPORTED rather than silently
+ * applied — a truncated day rendered as a complete one is a list that lies by being short.
+ */
+export async function adminAccountLedgerDay(
+  db: AdminDb, now: Date, accountId: string, day: string,
+): Promise<LedgerDay | null> {
+  // Both inputs come off the URL. A malformed id is a 404 rather than a Postgres
+  // `invalid input syntax for type uuid` 500, and a malformed day likewise — the day is
+  // concatenated into a timestamptz cast, so this shape check IS the parameter's validation.
+  if (!UUID_RE.test(accountId)) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+  // AND THE CALENDAR HAS TO AGREE, not just the shape. `2026-13-45` matches the pattern; built
+  // through `Date.UTC` it rolls forward into a different month, so the round-trip is what refuses
+  // it. Without this the value reaching the database is a well-shaped string naming no day, and
+  // Postgres decides what to do with it rather than this function.
+  const [y, m, d] = day.split("-").map(Number) as [number, number, number];
+  const parsed = new Date(Date.UTC(y, m - 1, d));
+  if (Number.isNaN(parsed.getTime())) return null;
+  if (parsed.toISOString().slice(0, 10) !== day) return null;
+
+  // One row over the cap, so "there were more" is measured rather than inferred from a full page.
+  const rows = await loadLedger(db, accountId, { day, limit: ADMIN_LEDGER_DAY_LIMIT + 1 });
+  return {
+    now: now.toISOString(),
+    accountId,
+    day,
+    entries: rows.slice(0, ADMIN_LEDGER_DAY_LIMIT),
+    capped: rows.length > ADMIN_LEDGER_DAY_LIMIT,
+  };
 }
 
 /**
@@ -916,7 +1224,7 @@ async function loadSecurityEvents(db: AdminDb, accountId: string): Promise<Secur
 export async function adminAccountDetail(db: AdminDb, now: Date, id: string): Promise<AccountDetail | null> {
   // A malformed id must be a 404, not a Postgres `invalid input syntax for type uuid` 500 —
   // the path segment is whatever the caller typed.
-  if (!/^[0-9a-fA-F-]{36}$/.test(id)) return null;
+  if (!UUID_RE.test(id)) return null;
   const roster = await loadRoster(db, now);
   const account = roster.find((a) => a.id === id);
   if (!account) return null;
@@ -925,7 +1233,8 @@ export async function adminAccountDetail(db: AdminDb, now: Date, id: string): Pr
   // Sequential — the max:1 blind pool deadlocks on parallel reads when one opens a
   // transaction (see adminWorker above). Same rule for every admin read group.
   const mailboxList = await loadMailboxes(db, now, [id]);
-  const ledger = await loadLedger(db, id);
+  const usage = await loadUsage(db, id, now);
+  const setupCredits = await loadSetupPool(db, id, now);
   const audit = await loadAudit(db, id);
   const securityEvents = await loadSecurityEvents(db, id);
 
@@ -942,8 +1251,9 @@ export async function adminAccountDetail(db: AdminDb, now: Date, id: string): Pr
       periodEnd: sub ? iso(sub.currentPeriodEnd) : null,
       cancelAtPeriodEnd: sub ? Boolean(sub.cancelAtPeriodEnd) : false,
       graceUntil: sub ? iso(sub.graceUntil) : null,
+      setupCredits,
     },
-    ledger,
+    usage,
     audit,
     securityEvents,
   };
@@ -1045,23 +1355,40 @@ export async function adminBilling(db: AdminDb, now: Date): Promise<BillingSnaps
   }
 
   /**
-   * THE LEDGER/BALANCE READS, ON ONE SNAPSHOT — because the console SUBTRACTS them.
+   * THE LEDGER READS, ON ONE SNAPSHOT — and there are two of them now, not three.
    *
-   * `reconcileLiability` compares the balance total against the sum of the ledger flows and, when
-   * they differ, says so in the language of corruption. Read as three separate autocommit
-   * statements they are three snapshots, and every credit movement that commits between two of
-   * them shows up as drift in a perfectly healthy database. It is not a rare interleaving either:
-   * one trial grant landing between the balance read and the flow read invents exactly the
-   * bounty's worth of drift, and the one-transaction-per-account backfill is a deterministic
-   * source of them. Worse in the other direction, a real +500 divergence plus one 500-credit
-   * commit between the reads computes to zero, so the console reports agreement while the
-   * divergence stands.
+   * ── WHAT THIS USED TO BE, AND WHY IT COULD NOT STAY ───────────────────────────────────────
    *
-   * REPEATABLE READ is what makes the comparison well-defined: one snapshot for all three
-   * statements, so the verdict describes a state the database was actually in. READ ONLY says so
-   * to the server and to the reader. This is not a lock and blocks nobody — writers carry on and
-   * the console reports the instant it began, which is the honest thing for a reconciliation to
-   * report.
+   * Three UNCAPPED aggregates over `credit_ledger`, on every console load: the lifetime flows
+   * grouped by reason, the same ledger grouped by account, and a distinct scan for accounts that
+   * ever had an invoice. Each was correct. Together they were a full pass over a table that is
+   * append-only, never pruned, and grows with every metered action — so the cost of opening the
+   * Billing page grew with the age of the deployment and nothing about the page said so.
+   *
+   * They read `credit_usage_totals` now, which the roll-up aggregates from `credit_ledger` WHOLE,
+   * once a night, on the worker. Not from `credit_usage_daily`: that table holds only the days
+   * some pass recomputed — two or three — so totals summed from it would be the WINDOW's totals
+   * wearing the word "lifetime", and this function compares them against `outstanding`, a live
+   * sum over the account's whole history. The board would report a permanent drift of the
+   * deployment's entire lifetime on a database with nothing wrong with it.
+   *
+   * The cost is a whole-table `GROUP BY` — a real one, and a NIGHTLY one, beside the divergence
+   * pass that already walks the same table in the same run. What this change removed was that
+   * scan running on every console page load, which is a different thing entirely.
+   *
+   * ── THE SNAPSHOT ARGUMENT, RESTATED HONESTLY BECAUSE IT CHANGED ───────────────────────────
+   *
+   * The transaction used to make the reconciliation identity well-defined: balances and flows
+   * from ONE snapshot, so a credit movement committing between two statements could not appear as
+   * drift. That is no longer what is happening — the totals are an aggregate computed at some
+   * earlier moment, and no isolation level can put them in the same instant as a live balance
+   * read. Pretending otherwise by keeping the transaction and saying nothing would be the worse
+   * outcome: a comparison that LOOKS synchronised and is not.
+   *
+   * So the per-account divergence count moved to where it can still be one statement —
+   * `findCreditDivergence`, run by the roll-up — and it arrives here with a `computedAt` beside
+   * it. What is left in this transaction is the two reads the console still SUBTRACTS from each
+   * other, and they are consistent with each other exactly as before.
    *
    * Still SEQUENTIAL inside, for the reason the header gives: the blind pool is `max: 1`.
    */
@@ -1071,39 +1398,21 @@ export async function adminBilling(db: AdminDb, now: Date): Promise<BillingSnaps
       .from(creditBalances);
 
     /**
-     * The lifetime flow, one aggregate, UNCAPPED. `loadLedger` below is capped at
-     * `ADMIN_LIST_LIMIT` because it renders a statement; this must cover every row or the
-     * reconciliation identity the console checks would fail on the 201st ledger entry and look
-     * like a defect. Two columns, both granted.
+     * The lifetime flows, from the roll-up's totals rather than from the ledger.
+     *
+     * `pool = 'ledger'` because these figures reconcile against `credit_balances`, and the setup
+     * pool has no balance row — it is separate money with its own remainder and its own expiry.
+     * Summing the two would put credits into a liability figure that `credit_balances` has never
+     * heard of, and the console's reconciliation would report drift on a healthy database.
      */
     const flowRows = await tx
       .select({
-        reason: creditLedger.reason,
-        total: sql<number>`coalesce(sum(${creditLedger.delta}), 0)::int`,
+        reason: creditUsageTotals.reason,
+        total: sql<number>`coalesce(sum(${creditUsageTotals.credits}), 0)::int`,
       })
-      .from(creditLedger)
-      .groupBy(creditLedger.reason);
-
-    /**
-     * THE SAME LEDGER, GROUPED BY ACCOUNT — because the reason-grouped sum above NETS.
-     *
-     * The console checks `Σ flows === Σ balances`, and both sides of that identity are sums over
-     * every account: +500 of corruption on one account and −500 on another cancel on BOTH
-     * sides, and the strip reports "balanced" over two broken rows. The per-account
-     * sums are what the netting cannot reach; compared against `balanceRows` in memory below,
-     * they count the accounts whose own ledger and balance disagree.
-     *
-     * Inside THIS transaction on purpose: compared against a balance read from a different
-     * snapshot, every credit movement between the two reads would be a phantom divergence.
-     * Two granted columns (`account_id`, `delta`); the set is bounded by the account count.
-     */
-    const accountFlowRows = await tx
-      .select({
-        accountId: creditLedger.accountId,
-        total: sql<number>`coalesce(sum(${creditLedger.delta}), 0)::int`,
-      })
-      .from(creditLedger)
-      .groupBy(creditLedger.accountId);
+      .from(creditUsageTotals)
+      .where(eq(creditUsageTotals.pool, "ledger"))
+      .groupBy(creditUsageTotals.reason);
 
     /**
      * Accounts that have NEVER had an `invoice_grant` row. With no rollover — every renewal
@@ -1111,16 +1420,24 @@ export async function adminBilling(db: AdminDb, now: Date): Promise<BillingSnaps
      * can only be holding credits somebody gave it, so the balances of these accounts are
      * EXACTLY the granted-never-sold liability rather than an apportionment.
      *
-     * A distinct scan over the ledger rather than a correlated subquery per account: one pass,
-     * and the set is bounded by the account count, not by the ledger's length.
+     * One row per (account, reason) in the totals table, so this is a bounded read of the
+     * accounts that HAVE been invoiced rather than a distinct scan of every ledger row.
      */
     const invoicedRows = await tx
-      .selectDistinct({ accountId: creditLedger.accountId })
-      .from(creditLedger)
-      .where(eq(creditLedger.reason, "invoice_grant"));
+      .select({ accountId: creditUsageTotals.accountId })
+      .from(creditUsageTotals)
+      .where(and(
+        eq(creditUsageTotals.pool, "ledger"),
+        eq(creditUsageTotals.reason, "invoice_grant"),
+      ));
 
-    return { balanceRows, flowRows, accountFlowRows, invoicedRows };
+    return { balanceRows, flowRows, invoicedRows };
   }, { isolationLevel: "repeatable read", accessMode: "read only" });
+
+  // Outside the transaction deliberately: these are the roll-up's OWN stamps, and putting them
+  // in the snapshot would suggest they share its instant. They do not, which is the whole reason
+  // they travel as freshness rather than as figures.
+  const rollup = await loadRollupState(db);
 
   const balances = new Map(snapshot.balanceRows.map((r) => [r.accountId, int(r.balance)]));
   const flow = new Map<string, number>(snapshot.flowRows.map((r) => [r.reason, int(r.total)]));
@@ -1129,18 +1446,11 @@ export async function adminBilling(db: AdminDb, now: Date): Promise<BillingSnaps
   const everInvoiced = new Set(snapshot.invoicedRows.map((r) => r.accountId));
 
   /**
-   * The per-account comparison, both directions of absence included: a missing
-   * `credit_balances` row is a balance of zero (the table's own semantic), and a balance row
-   * with no ledger rows must be explained by a ledger summing to zero — so the union of the two
-   * key sets is walked, exactly as `findCreditDivergence`'s FULL OUTER JOIN would. An absence
-   * on either side of a non-zero figure IS the divergence, and iterating only one side is how
-   * a ledger-only orphan (paid credits `balanceOf` reads as 0) would go uncounted.
+   * The per-account divergence, as the roll-up measured it. See the DTO field: this is now
+   * BOTH arms of `findCreditDivergence` (sum-vs-balance and `balance_after`-vs-balance) rather
+   * than the one arm this function could express, and `-1` means no pass has ever measured it.
    */
-  const ledgerByAccount = new Map(snapshot.accountFlowRows.map((r) => [r.accountId, int(r.total)]));
-  let divergentAccounts = 0;
-  for (const accountId of new Set([...balances.keys(), ...ledgerByAccount.keys()])) {
-    if ((balances.get(accountId) ?? 0) !== (ledgerByAccount.get(accountId) ?? 0)) divergentAccounts += 1;
-  }
+  const divergentAccounts = rollup.divergentAccounts;
 
   let outstanding = 0;
   let outstandingNeverInvoiced = 0;
@@ -1153,9 +1463,35 @@ export async function adminBilling(db: AdminDb, now: Date): Promise<BillingSnaps
     }
   }
 
+  /**
+   * THE ONE FIGURE WHOSE MEANING INVERTS WHEN THE AGGREGATE IS ABSENT, rather than merely
+   * shrinking — which is why it gets the `-1` treatment and its neighbours do not.
+   *
+   * `outstandingNeverInvoiced` is computed by INVERTING `everInvoiced`: a balance counts toward it
+   * when the account is NOT in the invoiced set. Every other lifetime figure is a sum, so an empty
+   * `credit_usage_totals` makes it zero — visibly, obviously nothing. This one goes the other way:
+   * an empty set means nobody has ever been invoiced, so the WHOLE liability is reported as
+   * granted-never-sold. Before the worker's first roll-up the board would therefore say every
+   * credit outstanding has no revenue behind it, in red, against the one invariant this figure
+   * exists to police — a maximally alarming number that measured nothing.
+   *
+   * `-1` on the same terms as `divergentAccounts`: a value the console's `?? 0` fallback cannot
+   * manufacture, so "not measured" and "none" stay distinguishable, and `grantedLiabilitySeverity`
+   * reads a negative share as `idle` rather than grading it.
+   */
+  //
+  // KEYED TO THE TOTALS AND NOT TO A RUN ROW, which is where the first draft of this guard was
+  // wrong in a way that defeated it entirely. `everInvoiced` comes from `credit_usage_totals`,
+  // written only by the NIGHTLY arm — so a guard reading "has any pass completed" is satisfied by
+  // the first HOURLY pass, which writes no totals at all. On a deployment that migrated at 10:00
+  // the 11:00 hourly run would flip the guard on over an empty invoiced set, and the board would
+  // paint the whole liability red as granted-never-sold until 03:00 the next morning: the exact
+  // alarm this guard exists to prevent, fired by the guard being satisfied.
+  const neverInvoicedMeasured = rollup.totalsComputedAt !== null;
+
   const liability: CreditLiability = {
     outstanding,
-    outstandingNeverInvoiced,
+    outstandingNeverInvoiced: neverInvoicedMeasured ? outstandingNeverInvoiced : -1,
     accountsWithBalance,
     // A MISSING `credit_balances` row is semantically a balance of zero (see the schema note on
     // the table), so this counts accounts, not rows — an account that never had a ledger
@@ -1185,7 +1521,17 @@ export async function adminBilling(db: AdminDb, now: Date): Promise<BillingSnaps
     subscriptionStates,
     revenue,
     liability,
-    ledger: await loadLedger(db, null),
+    // THE STATEMENT, not the meter. Non-debit rows only — see `LEDGER_EVENT_REASONS` — because
+    // the metered debits that used to fill this list are counted in `credit_usage_daily` now,
+    // and what a reader wants from a deployment-wide ledger list is the decisions.
+    ledger: await loadLedger(db, null, { events: true }),
+    // THE TOTALS' OWN STAMP, ON THE TOTALS' OWN CADENCE. Not the newest completed run and not
+    // the hourly number: every figure this covers is written by the nightly arm alone, so a
+    // stamp taken from an hourly pass would read "fresh" over week-old lifetime sums.
+    freshness: {
+      computedAt: rollup.totalsComputedAt,
+      expectedEverySeconds: ADMIN_TOTALS_EXPECTED_EVERY_SECONDS,
+    },
     adjustableAccounts: accountRows
       .slice(0, ADMIN_OPTIONS_LIMIT)
       .map((a) => ({ id: a.id, name: a.name, balance: balances.get(a.id) ?? 0 }))
@@ -1408,6 +1754,31 @@ export async function adminWorker(db: AdminDb, now: Date): Promise<WorkerSnapsho
   const roster = await loadMailboxes(db, now, null);
   const names = await accountNames(db, roster.map((m) => m.accountId));
 
+  /**
+   * THE POPULATION, FROM SQL — because the roster above is capped at `ADMIN_ROSTER_LIMIT`.
+   *
+   * The console's customer-facing verdict counted faults by filtering that capped array. On a
+   * deployment with more than 200 mailboxes the 201st cannot contribute to a fault count however
+   * broken it is, so the verdict gets QUIETER as the deployment grows — the exact inversion of
+   * what it is for, and invisible from any test whose fixture is smaller than the cap.
+   *
+   * `blocked` gates on the TIMESTAMP and never on `sync_blocked_reason`. The service narrows that
+   * reason to this build's closed set, so a block this build cannot name still has a `since`, and
+   * gating on the reason would read that row as a healthy mailbox — a defect this projection has
+   * shipped once already, and the same rule the console's own `mailboxBlocked` helper carries.
+   * Written in SQL here, so the two spellings of one predicate have to agree.
+   *
+   * Three `count(*) filter (…)` over one scan of a table bounded by the mailbox population, not
+   * by the message volume — the same shape as every other count on this console.
+   */
+  const [counts] = await db
+    .select({
+      total: sql<number>`count(*)::int`,
+      inError: sql<number>`count(*) filter (where ${mailboxes.status} <> 'connected')::int`,
+      blocked: sql<number>`count(*) filter (where ${mailboxes.status} = 'connected' and ${mailboxes.syncBlockedSince} is not null)::int`,
+    })
+    .from(mailboxes);
+
   const stuck = await listStuckSends(
     db,
     new Date(now.getTime() - DEFAULT_ALERT_THRESHOLDS.stuckSendMs),
@@ -1419,6 +1790,11 @@ export async function adminWorker(db: AdminDb, now: Date): Promise<WorkerSnapsho
     now: now.toISOString(),
     instances,
     roster: roster.map((m) => ({ ...m, accountName: names.get(m.accountId) ?? "" })),
+    rosterCounts: {
+      total: int(counts?.total),
+      inError: int(counts?.inError),
+      blocked: int(counts?.blocked),
+    },
     // EMPTY IS THE HONEST ANSWER, AND THE SENTENCE EXPLAINING IT NAMES ONLY WHAT RUNS.
     //
     // What the worker's `cycle()` actually runs on a timer, per poll interval: folder

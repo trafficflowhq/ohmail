@@ -188,6 +188,28 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // migration is an `alert_pass_failed` loop from both drivers. Deploy order: migration →
   // API + worker.
   ["alert_state", "claimed_until"],
+  // cloud 0028_credit_rollup_and_account_setup_grant — FOUR markers, because the migration makes
+  // four independent changes and a database can genuinely hold some without the others (a
+  // hand-run repair, a restore, a journal replayed part-way through an interrupted DDL).
+  //
+  // The three aggregate tables are the admin console's whole read path for credit spend, and
+  // each fails DIFFERENTLY: without `credit_usage_daily` the account page's usage panel 42P01s;
+  // without `credit_usage_totals` the Billing board's three headline figures do; without
+  // `credit_rollup_runs` both render and NOBODY CAN TELL HOW OLD THEY ARE, which is the quietest
+  // of the three and the reason it gets its own marker rather than riding one of the others.
+  //
+  // `setup_grants.kind` is the fourth, and it is the loud one: `grantSetupCredits` writes it on
+  // every first connection, so an API deployed ahead of the migration 42703s inside the
+  // mailbox-create transaction — a customer who cannot connect a mailbox at all. Probing it here
+  // turns that into a refused deploy. Deploy order: migration → API → worker.
+  //
+  // The columns are the ones a QUERY actually reads, the rule `credit_ledger.source` and
+  // `invites.code_hash` set: `computed_at` is what every freshness stamp selects, `ran_at` is
+  // what the staleness read orders by, and `kind` is what the grant writes.
+  ["credit_usage_daily", "computed_at"],
+  ["credit_usage_totals", "computed_at"],
+  ["credit_rollup_runs", "ran_at"],
+  ["setup_grants", "kind"],
 ] as const;
 
 /**
@@ -246,6 +268,18 @@ export const CLOUD_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker
  */
 export const CLOUD_INDEX_MARKERS: ReadonlyArray<string> = [
   "credit_ledger_one_trial_grant_idx",   // cloud 0013_ledger_integrity
+  // cloud 0028_credit_rollup_and_account_setup_grant — the partial unique index that makes "one
+  // setup pool per account, EVER" a fact about the table. Its absence is SILENT in exactly the
+  // way this marker class exists for: the granting helper's own any-row read still refuses a
+  // second grant on the path it controls, every suite is green, and the only evidence is a second
+  // pool landing on an account whose two first connections raced. That is the trial bounty's
+  // `credit_ledger_one_trial_grant_idx` argument, verbatim, one table over.
+  "setup_grants_account_once_uq",
+  // Same migration — the index without which the hourly roll-up sequentially scans the whole
+  // money trail. A database missing it computes the RIGHT numbers and does it by reading every
+  // ledger row that has ever existed, once an hour, for ever: no query is wrong and nothing
+  // fails, which is precisely why a name probe is the only thing that can see it.
+  "credit_ledger_created_at_idx",
   // cloud 0023_billing_reconciliation — the newest-run read both reconciliation alert rules
   // make (`ORDER BY ran_at DESC LIMIT 1`, twice a pass, every alert pass). The table itself is
   // probed by column below; the index rides the same journal entry, and a database that took
@@ -390,10 +424,18 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * entries carry the loudness argument (the alert pass's claim names both columns, so
  * too-early code is an `alert_pass_failed` loop — the pager breaking).
  *
+ * `0028_credit_rollup_and_account_setup_grant` is the loudest entry in this list and takes the
+ * most markers: FOUR columns above (three new tables plus `setup_grants.kind`) and TWO indexes in
+ * {@link CLOUD_INDEX_MARKERS}. The split is deliberate — the columns catch the deploy that would
+ * 42P01/42703 a customer's mailbox connect, and the indexes catch the two changes that are
+ * completely SILENT when absent: a partial unique index nothing queries by name, and a
+ * `created_at` index whose absence turns an hourly aggregate into an hourly full scan of the
+ * money trail while computing exactly the right answer.
+ *
  * The tag moves for its own reason: what this constant asserts is "the markers were reconciled
  * against the newest entry", and a stale tag beside an unchanged list is the state the assertion
  * exists to refuse — it cannot tell "nothing needed adding" from "nobody looked". */
-export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0027_oauth_device_ceremonies";
+export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0028_credit_rollup_and_account_setup_grant";
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
 export const SCHEMA_MARKER_JOURNAL_TAG =

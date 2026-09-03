@@ -1,6 +1,6 @@
 import { silentLogger, type Logger } from "@trafficflow/core";
 import {
-  adminAccountDetail, adminAccounts, adminActions, adminAlerts, adminWorker,
+  adminAccountDetail, adminAccountLedgerDay, adminAccounts, adminActions, adminAlerts, adminWorker,
   adminWorkerInstances, adminBilling, adminFunnel,
   type AccountQuery, type AdminDb, type ApiHealth, type OverviewSnapshot,
 } from "@trafficflow/services";
@@ -19,10 +19,10 @@ import type { ApiDeps } from "../deps.js";
 import type { Handler, Route, RouteParams } from "../router.js";
 
 /**
- * `GET /admin/*` — the six READS behind the staff console.
+ * `GET /admin/*` — the eight READS behind the staff console.
  *
  * The console rendered real screens driven entirely by fixtures before these endpoints
- * existed. Every number on it was invented. These six endpoints are what make it
+ * existed. Every number on it was invented. These eight endpoints are what make it
  * show production instead, and they are the whole read surface: there is no write route here,
  * on purpose. See `packages/services/src/admin-service.ts` for the queries and for what they
  * may never select.
@@ -58,7 +58,7 @@ import type { Handler, Route, RouteParams } from "../router.js";
  *
  * **The reads were secret-only at first, and closing that is the point of the second
  * credential:** the gate secret is a shared, non-revocable bearer — a former
- * operator, a screenshot, a synced browser profile all keep it — and these six responses carry
+ * operator, a screenshot, a synced browser profile all keep it — and these eight responses carry
  * customer PII (login emails, billing emails, account names, mailbox addresses). Requiring the
  * per-person second factor on reads bounds who can pull the roster to people who can pass TOTP
  * today, and makes a read attributable to a person rather than to a shared secret.
@@ -129,14 +129,14 @@ import type { Handler, Route, RouteParams } from "../router.js";
  *     **What that does NOT cover, stated rather than implied:** nothing in this process stops a
  *     callback from writing `import { makePooledDb }` and reading the pooled URL out of the
  *     environment for itself. That is somebody deliberately opening a second connection — not
- *     the "seventh endpoint someone forgot to keep narrow" path the content-blind rule is about,
+ *     the "next endpoint someone forgot to keep narrow" path the content-blind rule is about,
  *     which is the
  *     one this contract closes. The escalation for the other one is a separate admin deployment
  *     whose environment simply has no runtime URL to read; that is recorded future work, and it
  *     is deliberately not built yet.
  *  3. The DTOs in `packages/services/src/admin-dto.ts` cannot NAME such a field, and
  *     `test/admin-routes.test.ts` seeds real mail with distinctive markers and fails if one appears
- *     in any of the six responses. This is the half that still depends on review: a new DTO
+ *     in any of the eight responses. This is the half that still depends on review: a new DTO
  *     field is one edit away, and only the marker scan would catch it.
  *
  * `ctx.apiHealth()` is the ONE deliberate exception, and it is a CAPABILITY rather than a
@@ -145,8 +145,8 @@ import type { Handler, Route, RouteParams } from "../router.js";
  * marker counts, which cannot express an application row. The probe behind it reads
  * `information_schema` and `pg_catalog` on the RUNTIME connection, because the console's claim
  * is that it renders what a probe of the user-serving host would see. It is a function and not
- * a pre-computed field because five of the six reads never look at it, and pre-computing would
- * run a database round trip on all six.
+ * a pre-computed field because most of the reads never look at it, and pre-computing would
+ * run a database round trip on all of them.
  *
  * ══ 4. NO ERROR ENVELOPE ABOVE THIS FILE ══════════════════════════════════════════════════
  *
@@ -239,7 +239,7 @@ async function apiHealthFor(req: Request, deps: ApiDeps): Promise<ApiHealth> {
 }
 
 /**
- * EVERYTHING A STAFF READ IS GIVEN. There is no seventh field and no `deps`.
+ * EVERYTHING A STAFF READ IS GIVEN. There is no extra field and no `deps`.
  *
  * The point is not that the shape is small — it is that `ApiDeps` is ABSENT, so the runtime
  * `Db` a staff route must never issue SQL on is not a value the callback can name, capture,
@@ -391,11 +391,11 @@ export const STAFF_SESSION_HEADER = "x-staff-session";
 
 /**
  * The gate, the STAFF SESSION, the BLIND HANDLE, the try/catch and the `no-store` JSON,
- * applied identically to all six.
+ * applied identically to all eight.
  *
  * Writing it once is what makes "every admin read is authorized the same way, on the same
- * connection" checkable by reading one function instead of six handlers — and what stops the
- * seventh endpoint somebody adds from being the one that forgot.
+ * connection" checkable by reading one function instead of eight handlers — and what stops the
+ * next endpoint somebody adds from being the one that forgot.
  *
  * ── THE TWO REFUSALS, WHICH ARE NOT THE SAME FACT ─────────────────────────────────────────
  *
@@ -415,7 +415,7 @@ export const STAFF_SESSION_HEADER = "x-staff-session";
  *
  * This function is where `deps` stops. It reads what a staff route legitimately needs out of
  * it, builds a {@link StaffContext}, and passes THAT — so "no admin read issues route-local
- * SQL on the runtime connection" is a property of one wrapper's scope instead of six handlers'
+ * SQL on the runtime connection" is a property of one wrapper's scope instead of eight handlers'
  * discipline. The health capability is a closure over `deps` built here for the same reason.
  */
 function adminRoute(name: string, read: StaffRead): Handler {
@@ -488,11 +488,11 @@ function adminRoute(name: string, read: StaffRead): Handler {
   };
 }
 
-/** All six are GET, all six are `public + anonymous + raw`. There is no seventh. */
+/** All eight are GET, all eight are `public + anonymous + raw`. There is no ninth. */
 const OPTIONS = { public: true, anonymous: true, raw: true } as const;
 
 /**
- * All six are `unauthenticated`: their authority is a shared secret compared in
+ * All eight are `unauthenticated`: their authority is a shared secret compared in
  * constant time (`secret-auth.ts`), never a user session, and ANONYMOUS_PIPELINE resolves
  * no session at all, so there is no account whose verification state could be judged.
  * `test/spend-gate.test.ts` asserts that pairing in both directions — an `anonymous` route must
@@ -528,6 +528,29 @@ export const adminRoutes: Route[] = [
     // null rather than from an error path it would otherwise need twice.
     handler: adminRoute("accounts/:id", (_req, ctx, params) =>
       adminAccountDetail(ctx.db, ctx.now(), params.id ?? "")),
+  },
+  {
+    /**
+     * THE LEDGER DRILL-DOWN — one account, one day, the raw rows, ON PRESS.
+     *
+     * A route of its own rather than a widening of `/admin/accounts/:id`, because the whole point
+     * is WHEN it runs. The account page shows thirty days of aggregate; this answers "what were
+     * those twelve classifications" for one of those days, only when a reader asks. Folding it
+     * into the detail read would fetch every day's rows on every page load, which is precisely
+     * the read the aggregates were built to stop making.
+     *
+     * `null` for a malformed id or day — rendered as "no such account" by the console, exactly as
+     * `/admin/accounts/:id` is, rather than as an error path the console would need twice.
+     */
+    method: "GET",
+    pattern: "/admin/accounts/:id/ledger",
+    cost: COST,
+    options: OPTIONS,
+    handler: adminRoute("accounts/:id/ledger", (req, ctx, params) =>
+      adminAccountLedgerDay(
+        ctx.db, ctx.now(), params.id ?? "",
+        new URL(req.url).searchParams.get("day") ?? "",
+      )),
   },
   {
     method: "GET",
