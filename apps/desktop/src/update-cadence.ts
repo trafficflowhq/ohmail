@@ -243,11 +243,13 @@ export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => vo
    * which is exactly the outcome it exists to prevent.
    *
    * CLEARED ONLY BY `idle`, and it is worth being exact about how little that is rather than
-   * describing a recovery this does not perform. `idle` is reachable from one place — a check
-   * that COMPLETED and found nothing to install — so it means the release this window kept
-   * failing on is no longer being offered: withdrawn, or refused by the version guard, or already
-   * installed by some other means. While the release is still there no report can be `idle`, so
-   * inside one window a refusal that persists is permanent, on every platform.
+   * describing a recovery this does not perform. Once the flow has left `idle` the only way back
+   * is a check that COMPLETED and found nothing to install, so `idle` means the release this
+   * window kept failing on is no longer being offered: withdrawn, or refused by the version
+   * guard. Not "installed some other way" — the guard compares the feed against the version of
+   * the RUNNING binary, so a copy installed beside this one leaves the same release strictly
+   * newer and the check still ends at `ready`. While the release is still offered no report can
+   * be `idle`, so inside one window a refusal that persists is permanent, on every platform.
    *
    * That is deliberate, and the alternative was measured against the same states rather than
    * hoped about. `failed` is the only other candidate and it is ambiguous: a check that could not

@@ -385,10 +385,11 @@ describe("the cadence, running", () => {
 
   it("…AND IT LETS GO ONCE A CYCLE HAS ENDED SOMEWHERE ELSE", async () => {
     /* THE ONE THING THAT ENDS THE EPISODE: the release this window kept failing on stops being
-       offered. Withdrawn, refused by the version guard, or installed by some other means — all
-       three end a check at `idle`, which is reachable from nowhere else. A latch that did not
-       clear even there would leave a window refusing to look for releases it had never had any
-       trouble with. What does NOT end it is a failed check; the case below says why. */
+       offered. Withdrawn, or refused by the version guard — both end a check at `idle`, and once
+       the flow has left `idle` a completed check finding nothing is the only way back to it. A
+       latch that did not clear even there would leave a window refusing to look for releases it
+       had never had any trouble with. What does NOT end it is a failed check; the case below
+       says why. */
     vi.useFakeTimers();
     const clock = { at: START };
     let now = report({ state: "failed", lastResult: "offered", offered: null });
@@ -452,12 +453,17 @@ describe("the cadence, running", () => {
     expect(src.match(/const note = \(report: UpdateReport\): void =>/g)).toHaveLength(1);
     expect(src.match(/installWasRefused = true;/g), "the latch is set in one place")
       .toHaveLength(1);
-    /* …and both feeders go through it — counted without keying on indentation, which would let a
-       third feeder at any other depth match neither pattern and leave the claim false while the
-       assertion passed. A whole LINE, though: this file is comment-dense, and a bare substring
-       count would fail on the next comment that mentions the call, pointing at a defect that is
-       not there. */
-    expect(src.match(/^\s*note\(report\);$/gm), "the poll and the subscription, and no third")
+    /* …and both feeders go through it. COUNTED OVER THE CODE, with the comments stripped first,
+       which is the only shape that holds both ends. Keying on indentation, or on a whole
+       statement line, narrows the match until a third feeder spelled any other way — an arrow
+       body, a `void`, a trailing comment — matches nothing and leaves the assertion green while
+       its own message is false; the subscription this pins is ALREADY an arrow callback, so that
+       is the likeliest next spelling rather than a contrived one. Counting bare occurrences over
+       the raw file has the opposite fault: this file is comment-dense, and the next note that
+       mentions the call would fail the guard over a defect that is not there. Strip the prose,
+       then count broadly. */
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    expect(code.match(/\bnote\(report\)/g), "the poll and the subscription, and no third")
       .toHaveLength(2);
   });
 
