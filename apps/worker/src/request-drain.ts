@@ -189,7 +189,14 @@ export async function applyMetaRequestsUnguarded(
   log: (event: string, detail: Record<string, unknown>) => void,
 ): Promise<ApplyMetaRequestsResult> {
   if (!hasRequestIo(rt.adapter)) return EMPTY_RESULT;
-  const io = rt.adapter.requestIo();
+  let io: RequestIo;
+  try {
+    io = rt.adapter.requestIo();
+  } catch {
+    // See `driveOutstandingRequests`' own note: a retired adapter is a cycle that raced a
+    // reconnect, not a drain fault, and it must not page as one.
+    return EMPTY_RESULT;
+  }
 
   let raw: Awaited<ReturnType<RequestIo["listRequests"]>>;
   try {
@@ -408,8 +415,48 @@ export async function driveOutstandingRequests(
   now: Date,
   log: (event: string, detail: Record<string, unknown>) => void,
 ): Promise<DriveOutstandingRequestsResult> {
+  // ── THE WRITE HALF IS GATED TOO, AND THE REASON IS NOT SYMMETRY ──────────────────────────────
+  //
+  // The reader is supposed to be unable to reach this: `ScreenerService.requestAsReader` refuses
+  // unless the holder's stored capability set names `requests`, and no build advertises it. But
+  // that column is not a fact this install established — `refreshReaderHolder` copies it out of
+  // the `X-Ohmail-Capabilities` header of whatever claim a peek found in the folder, and a claim
+  // is a message any process with APPEND rights can write. So the value standing between a reader
+  // and "append my unsigned decisions to the mailbox every cycle" is one an attacker supplies.
+  //
+  // The gate that does not depend on that is this one. It is the same flag the drain reads,
+  // because it is the same missing thing: until a request can be SIGNED, this install does not
+  // put one in a mailbox either. Same door/room shape as `applyMetaRequests` above, and the host
+  // census holds it the same way.
+  if (!REQUEST_AUTHENTICITY_IMPLEMENTED) return EMPTY_DRIVE_RESULT;
+  return driveOutstandingRequestsUnguarded(db, rt, self, now, log);
+}
+
+/**
+ * THE READER'S CYCLE ITSELF — appends what is `pending`, observes what the organizer took.
+ *
+ * **UNGUARDED, AND NO HOST MAY CALL IT WHILE THE GATE IS SHUT**, on
+ * {@link applyMetaRequestsUnguarded}'s reasoning exactly: this one WRITES into a mailbox, and
+ * what it writes cannot yet be signed.
+ */
+export async function driveOutstandingRequestsUnguarded(
+  db: WorkerDb,
+  rt: { mailboxId: string; accountId: string; adapter: MailboxAdapter },
+  self: { installId: string; kind: OrganizerKind },
+  now: Date,
+  log: (event: string, detail: Record<string, unknown>) => void,
+): Promise<DriveOutstandingRequestsResult> {
   if (!hasRequestIo(rt.adapter)) return EMPTY_DRIVE_RESULT;
-  const io = rt.adapter.requestIo();
+  let io: RequestIo;
+  try {
+    io = rt.adapter.requestIo();
+  } catch {
+    // A retired adapter — the cycle raced a reconnect or a shutdown. `requestIo()` throws on one
+    // by design (`ImapAdapter.requestIo`'s own `assertUsable`), and outside this try that throw
+    // reaches the host as an ERROR-level drive failure. It is not one: nothing was owed and
+    // nothing was lost, and the next cycle has a live connection.
+    return EMPTY_DRIVE_RESULT;
+  }
 
   const pending = await db.transaction((tx) => listPendingRequests(tx, rt.mailboxId));
   let sentCount = 0;
@@ -452,13 +499,13 @@ export async function driveOutstandingRequests(
   }
 
   let presentIds: Set<string>;
+  let unreadablePresent = 0;
   try {
     const raw = await io.listRequests();
+    const parsed = raw.map((m) => parseRequest(m.raw, m.ref)).filter((r) => r !== null);
+    unreadablePresent = parsed.filter((r) => isMalformedRequest(r!)).length;
     presentIds = new Set(
-      raw
-        .map((m) => parseRequest(m.raw, m.ref))
-        .filter((r): r is RequestRecord => r !== null && !isMalformedRequest(r))
-        .map((r) => r.requestId),
+      parsed.filter((r): r is RequestRecord => !isMalformedRequest(r!)).map((r) => r.requestId),
     );
   } catch (err) {
     // Could not look — leave every `sent` row exactly as it is. "I could not look" and "the
@@ -471,7 +518,23 @@ export async function driveOutstandingRequests(
     return { sent: sentCount, applied: 0, expired: 0 };
   }
 
-  const goneNow = sent.filter((r) => !presentIds.has(r.id)).map((r) => r.id);
+  // ── ABSENCE IS THE ONLY EVIDENCE THIS FUNCTION HAS, SO IT MUST BE ABSENCE ────────────────────
+  //
+  // A record whose id could not be READ is present in the folder and missing from `presentIds`,
+  // which is the same shape as a record the organizer took — and the two mean opposite things.
+  // Marking on that would tell the person their decision was applied while the organizer is in
+  // fact about to refuse it as malformed. So a cycle that saw ANY unreadable record marks nothing
+  // applied and says so; the next cycle, over a folder the organizer has since refused and
+  // expunged, decides on a clean read. Same rule as the catch above, for the same reason.
+  const goneNow = unreadablePresent > 0
+    ? []
+    : sent.filter((r) => !presentIds.has(r.id)).map((r) => r.id);
+  if (unreadablePresent > 0) {
+    log("outstanding_requests_unreadable_present", {
+      mailboxId: rt.mailboxId, accountId: rt.accountId, count: unreadablePresent,
+      reason: "a record in the folder could not be read, so absence proves nothing this cycle",
+    });
+  }
   if (goneNow.length > 0) {
     await db.transaction((tx) => markRequestsApplied(tx, goneNow, now));
   }
