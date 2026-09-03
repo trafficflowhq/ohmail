@@ -21,16 +21,24 @@
  *    instead, and says on screen that it did (`domainMatchedFrom`). Still derived, still nothing
  *    stored, still overridable by the selector beside it — it changes which default applies, not
  *    what a default is. It declines wherever a second reading exists.
+ *  · A RECIPIENT THAT IS ONE OF THE ACCOUNT'S OWN ADDRESSES IS NOT EVIDENCE OF AN IDENTITY, so
+ *    the rule above reads past it. Writing to yourself — a note, a reminder, a forward into your
+ *    own second mailbox — leaves the sender exactly where it was, and a set holding both your own
+ *    addresses and strangers' is decided by the strangers alone.
  *  · A reply keeps the mailbox the message arrived in (`Engine.enrich` → `parent.mailboxId`)
  *    and now SAYS so. If that mailbox can no longer send, the default is substituted and the
  *    substitution is stated on screen — never silently, and never by refusing the reply. Nothing
  *    about a reply's recipients moves its sender: that rule is the compose surface's alone.
- *  · A FORWARD is a compose for this purpose, and the code says so rather than the prose: it
- *    seeds the ordinary form with `EMPTY_COMPOSE` (`AppShell.forwardMessage`), so it carries no
- *    pick, no recipients and no inherited mailbox — `forwardOf` rides the send request only. The
- *    user addresses it themselves, which is exactly the act the rule above reads. A DRAFT reopened
- *    from the drafts list is the other way round: `openDraft` seeds `fromMailboxId` from the row,
- *    which is a pick, so nothing is re-derived over it.
+ *  · A FORWARD is a REPLY for this purpose. It used to be a compose — it seeded the ordinary form
+ *    with `EMPTY_COMPOSE` — but Forward is the thread's inline dock now (`AppShell.openForward`,
+ *    `replyMode: "forward"`), so it resolves through {@link resolveReplyFrom} beside the reply it
+ *    shares an editor with and keeps the mailbox the original arrived in. Its recipients are the
+ *    user's own, and they move nothing: forwarding a message to your own second address answers
+ *    from the mailbox that received it, which is what a forward's sender has always been.
+ *  · A DRAFT reopened from the drafts list is a pick: `openDraft` seeds `fromMailboxId` from the
+ *    row, so nothing is re-derived over it. The contact popover's Write is the other way round —
+ *    `writeTo` seeds `EMPTY_COMPOSE` with a recipient and no pick, so it is an ordinary addressed
+ *    compose and the rule above reads it as one.
  *  · The value is a mailbox **id**, never an address. Aliases are a later slice and the day one
  *    mailbox carries three addresses an address-keyed selector has no answer; an id keeps its
  *    meaning through that change.
@@ -221,6 +229,41 @@ function resting(options: readonly FromOption[], chosen: FromOption | null): Res
 }
 
 /**
+ * An address folded to the one form this module compares addresses in: trimmed and lowercased,
+ * whole.
+ *
+ * The same normalisation the server's own "is this us?" rule applies (`awayNormalizeAddress`),
+ * written out again rather than imported because `app/shell/**` depends on no server package and
+ * acquiring one for a `toLowerCase` would be the wrong trade. It is a single function here for
+ * the reason it is a single function there: three places in this file ask whether an address
+ * belongs to the account, and three inline folds are three chances for one of them to drift.
+ *
+ * Folding the LOCAL PART as well as the domain departs from the RFC, which permits a provider to
+ * tell `Dana@` from `dana@`. The two readings cost different things: folding too much can only
+ * decline an auto-switch that would have been made, while folding too little moves the sender of
+ * a message the user addressed to themselves — which is the case this rule exists to leave alone.
+ */
+function foldAddress(address: string): string {
+  return address.trim().toLowerCase();
+}
+
+/**
+ * EVERY ADDRESS THE ACCOUNT ITSELF HOLDS, folded — including the ones it cannot send from.
+ *
+ * The options ARE the account's mailboxes. `optionsFromFacts` maps `GET /mailboxes` whole and a
+ * disabled mailbox arrives carrying `sendable: false` rather than being dropped, so `sendable` is
+ * deliberately not consulted: an address you can no longer send from is still yours, and a
+ * message to it is still a message to yourself. That is the same set, and the same reason, as the
+ * away responder's own-address suppression, which counts disabled and errored mailboxes too.
+ *
+ * There are no aliases in it because the product has none — a mailbox holds one address today.
+ * When it holds several, this is the one place they join and nothing else in the rule moves.
+ */
+function ownAddressSet(options: readonly FromOption[]): Set<string> {
+  return new Set(options.map((o) => foldAddress(o.address)));
+}
+
+/**
  * The domain of an address, case-folded — in the WIRE FORM it is stored in, always.
  *
  * `lastIndexOf`, not `indexOf`: an address that reached here has already been through
@@ -276,14 +319,34 @@ function domainOf(address: string): string | null {
  * presentation, and its documented fallback (a label that refuses to decode is shown raw) would
  * make two identical domains stop matching each other.
  *
+ * ── AND YOUR OWN ADDRESSES ARE NOT RECIPIENTS FOR THIS PURPOSE ──────────────────────────
+ *
+ * A recipient that IS one of the account's own addresses is read past entirely. The rule above
+ * reads the To line as evidence of which identity the message belongs to, and mail you send to
+ * yourself carries no such evidence: writing a note to your own second address named your own
+ * domain, so the sender moved to the address you were writing TO — a switch made on the strength
+ * of the user's own mailbox, announced as though a correspondent had asked for it.
+ *
+ * The filter is per RECIPIENT rather than a gate over the whole line, and that is what makes the
+ * mixed set behave: your own address beside a stranger's leaves exactly the stranger to decide,
+ * which is the same answer the line would have given without you on it. A line holding nothing
+ * but your own addresses leaves no recipient at all, and no recipients has always meant no match
+ * — so the self-addressed case needs no clause of its own here, and an empty To line and a To
+ * line addressed only to yourself resolve through one path.
+ *
+ * The set is every mailbox on the account, DISABLED ONES INCLUDED ({@link ownAddressSet}) —
+ * unlike the match below, which may only propose a mailbox the server would accept.
+ *
  * @param recipients the addresses typed on the To line, in order, already parsed.
  */
 export function domainMatchedFrom(
   options: readonly FromOption[],
   recipients: readonly string[],
 ): FromOption | null {
+  const mine = ownAddressSet(options);
   let hit: FromOption | null = null;
   for (const recipient of recipients) {
+    if (mine.has(foldAddress(recipient))) continue;
     const domain = domainOf(recipient);
     if (domain === null) continue;
     for (const option of options) {
@@ -309,11 +372,16 @@ export function domainMatchedFrom(
  *
  * `recipientLine` is the To field verbatim. Addressed to a domain the account itself sends from,
  * the default is replaced by that address and `domainMatched` says so
- * ({@link domainMatchedFrom} holds the whole rule, including every case where it declines).
+ * ({@link domainMatchedFrom} holds the whole rule, including every case where it declines — the
+ * account's OWN addresses among them, so a compose addressed to yourself alone keeps the sender
+ * the From line was already showing and says nothing).
  *
  * The gate is `picked === null` — the FIELD's state, not whether the id it holds still resolves.
  * A user who chose an address has already taken the decision this would take for them, and a pick
  * that has gone stale falls back to the plain derivation exactly as it did before this existed.
+ * Nothing downstream of this gate revisits it: a pick made before the recipients were typed and a
+ * pick made after them are the same field, so once an address has been chosen no later edit to
+ * the To line moves the sender again.
  *
  * ── IT IS A DERIVED DEFAULT AND NOTHING ELSE ────────────────────────────────────────────
  *
@@ -437,10 +505,10 @@ export function replyRecipients(
   parent: { from: EmailAddress; to: readonly EmailAddress[] },
   ownAddresses: readonly string[],
 ): EmailAddress[] | null {
-  const mine = new Set(ownAddresses.map((a) => a.trim().toLowerCase()));
+  const mine = new Set(ownAddresses.map(foldAddress));
   if (mine.size === 0) return null;
-  if (!mine.has(parent.from.address.trim().toLowerCase())) return null;
-  const others = parent.to.filter((r) => !mine.has(r.address.trim().toLowerCase()));
+  if (!mine.has(foldAddress(parent.from.address))) return null;
+  const others = parent.to.filter((r) => !mine.has(foldAddress(r.address)));
   return others.length > 0 ? [...others] : [parent.from];
 }
 
@@ -491,7 +559,7 @@ export function replyAllRecipients(
   parent: { from: EmailAddress; to: readonly EmailAddress[]; cc?: readonly EmailAddress[] },
   ownAddresses: readonly string[],
 ): ReplyAllRecipients | null {
-  const fold = (a: string): string => a.trim().toLowerCase();
+  const fold = foldAddress;
   const mine = new Set(ownAddresses.map(fold));
   const sender = fold(parent.from.address);
   const cc = parent.cc ?? [];
