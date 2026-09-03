@@ -94,6 +94,49 @@ saved for, never from the current settings — and when the two disagree, nothin
 written and sending waits until you enter the password again, because the record
 names a server and not a port.
 
+Adding one: Settings → Mailboxes has an **Add mailbox** button. It walks the same
+guided setup a first run does, minus the parts that belong to the computer rather
+than to a mailbox — no welcome, no AI question, no phone pairing, because those
+were answered when this copy of ohmail was set up. What it does ask is the server
+and password, with a real connection test; who organizes the mailbox already, if
+somebody does; and how far back to screen.
+
+Every mailbox in the list says what this computer does with it — organizes it, or
+only reads it and who organizes it instead — and each row carries its own controls:
+sync it now, run its setup again, remove it. Taking a mailbox back from another
+install is offered on every mailbox that is only being read, not just the first one
+in the list.
+
+Removing the last mailbox now returns ohmail to its setup screen and stays that
+way. Before, the mailbox came back in the list after a restart with no password and
+nothing being fetched — the removal was real, but the app was still configured to
+open a mailbox it no longer had. Removing the mailbox this computer was started
+with no longer stops the one that stays, either: each mailbox reaches the server
+its own saved password names, so no mailbox inherits a removed one's server.
+
+Testing a connection while adding a mailbox works however long the app has been
+open. It used to be checked against a stamp made when the app started, which was
+fine on the setup screen and not fine anywhere else — after a few minutes it
+refused with a message about two-factor authentication, on an app that has no
+second factor.
+
+A mailbox now connects when its incoming server works, even if sending is not set
+up yet. A refused outgoing server used to refuse the whole thing, so a mailbox that
+could receive perfectly well could not be connected at all because the outgoing
+server was blocked, wanted a different login, or was guessed wrong by a provider
+preset. The mailbox connects and syncs; the list says that sending is not set up
+and why; a send from it is refused with the same reason rather than quietly trying
+a server that has already said no; and correcting the outgoing server in Settings
+checks it again and clears the notice. A refused incoming server still stops the
+connection, because that is the password you are being asked for.
+
+Two things a connect will not do any more. It will not save a password onto a
+different mailbox than the one you typed — it checks which mailbox it is actually
+opening first and refuses if they disagree, whether you are connecting for the
+first time or changing a password later. And the password it saves records both
+servers, incoming and outgoing, so a mailbox added later sends through its own
+server rather than the first mailbox's.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
