@@ -2540,6 +2540,26 @@ export function formatRequest(r: RequestInput): string {
  * exactly, including the duplicate-header refusal: a record that announces itself twice and
  * disagrees with itself is evidence of a request that cannot be trusted, not an absent one.
  */
+/**
+ * Does this message CLAIM to be a request record? A header test, and deliberately nothing more.
+ *
+ * `ohmail/_meta` is shared with the lease's claims and the portable profile, so a caller that
+ * counts messages is not counting requests. This is the negative {@link makeRequestIo}'s
+ * `listRequests` uses to keep that promise; {@link parseRequest} — which re-reads the same header
+ * and returns `null` for anything that is not a request — stays the authority on whether one is
+ * WELL FORMED. A record this returns `true` for can still be malformed, and must still be parsed.
+ */
+export function isRequestRecord(raw: string): boolean {
+  const headerBlock = raw.split(/\r?\n\r?\n/, 1)[0] ?? "";
+  for (const line of headerBlock.replace(/\r?\n[ \t]+/g, " ").split(/\r?\n/)) {
+    const at = line.indexOf(":");
+    if (at <= 0) continue;
+    if (line.slice(0, at).trim().toLowerCase() !== RH.request.toLowerCase()) continue;
+    return line.slice(at + 1).trim() === "1";
+  }
+  return false;
+}
+
 export function parseRequest(raw: string, ref?: unknown): RequestMessageRecord | null {
   const headerBlock = raw.split(/\r?\n\r?\n/, 1)[0] ?? "";
   const headers = new Map<string, string>();
@@ -2694,7 +2714,23 @@ export function makeRequestIo(client: LeaseImapClient, toServerPath: (canonical:
           if (count === 0) return out;
           for await (const m of client.fetch("1:*", { uid: true, headers: true }, { uid: false })) {
             if (!m.headers) continue;
-            out.push({ ref: m.uid, raw: m.headers.toString("utf8") });
+            const raw = m.headers.toString("utf8");
+            // ── THE FOLDER IS SHARED, SO THE FILTER IS NOT AN OPTIMISATION ────────────────────
+            //
+            // `ohmail/_meta` holds three kinds of record: the organizer's own CLAIM (always at
+            // least one, for the whole of a tenure), the portable profile, and these requests.
+            // `listClaims` fetches the same `1:*` and lets `parseClaim` sort them out, which is
+            // right for a reader whose next step is a parse. It is NOT right here, because a
+            // caller counts what this returns before parsing any of it — the drain's own
+            // suppression line reports `raw.length` as "records waiting", and without this test
+            // that number is one-or-more on every organized mailbox for ever, on a channel where
+            // no request has ever been written. A permanent count is not a signal.
+            //
+            // `parseRequest` remains the authority on what a request IS and re-reads the same
+            // header; this is the cheap negative, and it is exactly the sentence this method's
+            // own interface doc already promised.
+            if (!isRequestRecord(raw)) continue;
+            out.push({ ref: m.uid, raw });
           }
           return out;
         } finally {
@@ -2721,6 +2757,17 @@ export function makeRequestIo(client: LeaseImapClient, toServerPath: (canonical:
 
     async removeRequests(refs: readonly unknown[]): Promise<void> {
       const uids = refs.filter((r): r is number => typeof r === "number");
+      // A ref this cannot address is NOT a no-op to report as done. The caller reads a clean
+      // resolve as "expunged" and counts the record handled; the record is still in the folder,
+      // so the next cycle refuses it again, and the cycle after that, for ever — a permanent log
+      // line from a drain whose every counter says it is working. Refusing loudly is the only
+      // answer that reaches anyone.
+      if (uids.length !== refs.length) {
+        throw new RequestUnavailableError(
+          `${refs.length - uids.length} request record(s) in ${META_FOLDER} have no addressable ref`,
+          { op: "remove_requests" },
+        );
+      }
       if (uids.length === 0) return;
       try {
         const lock = await client.getMailboxLock(await meta.path());
