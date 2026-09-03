@@ -32,7 +32,15 @@
  * all (`offline-guard.ts` seals `fetch` inside the page). A build watch there would be a request
  * that cannot be made, for a build that does not update that way.
  */
-import { announceUpdate, askDue, readAskMemory, rememberAsk, writeAskMemory } from "./app-update";
+import {
+  announceUpdate,
+  askDue,
+  offerKey,
+  readAskMemory,
+  rememberAsk,
+  writeAskMemory,
+  type UpdateOffer,
+} from "./app-update";
 
 /** Where the origin answers which build it is serving. */
 export const BUILD_PATH = "/version";
@@ -113,12 +121,21 @@ export function startBuildWatch(options: BuildWatchOptions): () => void {
       /* A NEWER BUILD, AND THE RESTRAINT THAT DECIDES WHETHER TO SAY SO. Once per day per
          build: a person who has already been told about this one and carried on working is
          not told again by the same tab today. Recorded on the SPEAKING rather than on a
-         dismissal, because the promise is about how often the app talks. */
+         dismissal, because the promise is about how often the app talks.
+
+         THE OFFER CARRIES THE BUILD, and the key is derived from the offer rather than spelled
+         beside it. `offerKey` is the one keying rule for the once-a-day restraint and the
+         desktop path already goes through it; an offer with no build on it keys as the bare
+         word "reload", so the two would silently key differently the moment anything else — a
+         dismissal, a shared "was this asked?" helper — read the offer instead of this line.
+         Nothing renders the value: the browser's sentence names no build, because a digest is
+         not a thing to show somebody. */
+      const offer: UpdateOffer = { kind: "reload", version: served, act: reload };
       const memory = readAskMemory();
-      const key = `reload:${served}`;
+      const key = offerKey(offer);
       if (!askDue(memory, key, now())) return;
       writeAskMemory(rememberAsk(memory, key, now()));
-      announceUpdate({ kind: "reload", act: reload });
+      announceUpdate(offer);
     } catch {
       /* Offline, a refused request, or an answer that is not JSON. A build watch that cannot
          reach the origin has nothing to report, and reporting the failure would be noise about

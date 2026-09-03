@@ -27,9 +27,11 @@ restarted the app. A quiet line above your mail now says it is ready — at most
 day, never twice about the same release, and never while you are writing a message. You
 can put it away.
 
-On Linux, if you installed ohmail from your distribution's packages, the app cannot
-replace its own files and never could; the install failed and told you to try again. It
-now says what is actually true and points at your package manager instead.
+On Linux, an install that ohmail cannot carry out itself used to fail and tell you to
+try again — advice that cannot work when the files belong to your distribution's
+packages. It now says that it could not replace its own files, and points at the package
+manager for the case where that is why. It also stops re-downloading the release every
+day on an install that can never take it.
 
 Settings → About still shows the version you are on, when it last checked, and a "Check
 now" button. It is where the daily answer shows up.

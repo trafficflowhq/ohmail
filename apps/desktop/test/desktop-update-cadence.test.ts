@@ -7,6 +7,7 @@ import {
   UPDATE_PERIOD_MS,
 } from "../../webapp/app/shell/app-update.js";
 import {
+  cannotSelfInstall,
   checkDue,
   CHECK_EVERY_MS,
   offerOf,
@@ -97,9 +98,9 @@ describe("when a periodic check is due", () => {
     // daily" and would also be a rule nobody wrote: the promise is one check a day, and the
     // cheapest way to break it is an interval that is nearly right.
     const r = report({ lastCheckedAt: START });
-    expect(checkDue(r, START + 23 * HOUR, START)).toBe(false);
-    expect(checkDue(r, START + CHECK_EVERY_MS - 1, START)).toBe(false);
-    expect(checkDue(r, START + CHECK_EVERY_MS, START)).toBe(true);
+    expect(checkDue(r, START + 23 * HOUR, START, false)).toBe(false);
+    expect(checkDue(r, START + CHECK_EVERY_MS - 1, START, false)).toBe(false);
+    expect(checkDue(r, START + CHECK_EVERY_MS, START, false)).toBe(true);
   });
 
   it("SURVIVES A SUSPENDED MACHINE, because it compares instants and never counts firings", () => {
@@ -107,7 +108,7 @@ describe("when a periodic check is due", () => {
     // between: every monotonic clock the platforms offer stops with the machine. A cadence
     // built on elapsed ticks would answer "not yet" here and wait another whole day — a person
     // who closes the lid every evening checked every three or four days.
-    expect(checkDue(report({ lastCheckedAt: START }), START + 40 * HOUR, START)).toBe(true);
+    expect(checkDue(report({ lastCheckedAt: START }), START + 40 * HOUR, START, false)).toBe(true);
   });
 
   it("NEVER PRESSES WHERE A PRESS WOULD INSTALL, or where one is already running", () => {
@@ -115,18 +116,42 @@ describe("when a periodic check is due", () => {
     // verified payload" in one — so a cadence that pressed on a schedule without asking would
     // be an updater that installs by itself, which is the one thing this flow refuses to be.
     const waiting = report({ state: "ready", offered: NEXT, canCheck: false, canInstall: true });
-    expect(checkDue(waiting, START + 10 * CHECK_EVERY_MS, START)).toBe(false);
+    expect(checkDue(waiting, START + 10 * CHECK_EVERY_MS, START, false)).toBe(false);
 
     const running = report({ state: "checking", canCheck: false });
-    expect(checkDue(running, START + 10 * CHECK_EVERY_MS, START)).toBe(false);
+    expect(checkDue(running, START + 10 * CHECK_EVERY_MS, START, false)).toBe(false);
+  });
+
+  it("STOPS ENTIRELY WHERE CHECKING AGAIN IS KNOWN TO BE FUTILE", () => {
+    // The state the strip calls "ohmail could not replace its own files". `canCheck` is TRUE
+    // there — a refused install leaves the flow somewhere a press would check from — so the
+    // period alone would send this install round the whole loop every twenty-four hours: fetch
+    // the release again, verify it, raise the shell's own "ready to install" dialog (which is
+    // not gated on anybody having asked for the check), fail the install again, repeat for the
+    // life of the install. That is the nag the strip exists to replace, made DAILY on exactly
+    // the machines it names, and it is why the predicate is shared with `offerOf` rather than
+    // written twice.
+    const refused = report({ state: "failed", lastResult: "offered", offered: null });
+    expect(cannotSelfInstall(refused, true)).toBe(true);
+    expect(checkDue(refused, START + 10 * CHECK_EVERY_MS, START, true)).toBe(false);
+
+    // Everywhere else the same pair is a refusal that may not repeat — a file held open, a
+    // half-written temporary directory — and giving up on checking would be the wrong lesson.
+    expect(cannotSelfInstall(refused, false)).toBe(false);
+    expect(checkDue(refused, START + CHECK_EVERY_MS, START, false)).toBe(true);
+
+    // And a check that could not reach the feed is not that state at all, on any platform.
+    const offline = report({ state: "failed", lastResult: "failed" });
+    expect(cannotSelfInstall(offline, true)).toBe(false);
+    expect(checkDue(offline, START + CHECK_EVERY_MS, START, true)).toBe(true);
   });
 
   it("counts from when this window opened when the shell reports no check at all", () => {
     // An older shell, or one whose launch check has not finished. Counting from the moment the
     // window opened is the honest reading of "it has not been checked since then".
     const never = report({ lastCheckedAt: null });
-    expect(checkDue(never, START + 23 * HOUR, START)).toBe(false);
-    expect(checkDue(never, START + CHECK_EVERY_MS, START)).toBe(true);
+    expect(checkDue(never, START + 23 * HOUR, START, false)).toBe(false);
+    expect(checkDue(never, START + CHECK_EVERY_MS, START, false)).toBe(true);
   });
 });
 
@@ -261,6 +286,58 @@ describe("the cadence, running", () => {
     await vi.advanceTimersByTimeAsync(POLL_EVERY_MS);
     expect(currentUpdateOffer()?.version).toBe(NEXT);
     third();
+  });
+
+  it("A PACKAGE-MANAGED INSTALL IS TOLD ONCE AND THEN LEFT ALONE — no daily re-download", async () => {
+    vi.useFakeTimers();
+    const clock = { at: START };
+    const s = shell(() => report({ state: "failed", lastResult: "offered", offered: null }));
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: true });
+
+    await run(clock, POLL_EVERY_MS);
+    expect(currentUpdateOffer()?.kind, "the strip says it once").toBe("package");
+
+    // A week of it. Every press here would be a whole release fetched again and a native
+    // install dialog raised over somebody's mail, for an install that cannot take it.
+    await run(clock, 7 * CHECK_EVERY_MS);
+    expect(s.presses).toEqual([]);
+    stop();
+  });
+
+  it("A REJECTED PRESS IS RETRIED ON THE NEXT POLL, not postponed for a day", async () => {
+    // An older shell, or a grant that dropped the command. Stamping the press before it landed
+    // would spend the whole period on an attempt that never reached the shell — a day of not
+    // checking, on precisely the build where the command is unreliable. The retry costs one
+    // refused call per poll and reaches no network: a command the shell refuses is answered by
+    // the shell.
+    vi.useFakeTimers();
+    const clock = { at: START };
+    let refuse = true;
+    let tried = 0;
+    const stop = startUpdateCadence({
+      now: () => clock.at,
+      linux: false,
+      read: async () => report({ lastCheckedAt: null }),
+      press: async () => {
+        tried += 1;
+        if (refuse) throw new Error("no such command");
+      },
+      listen: async () => () => {},
+    });
+
+    await run(clock, CHECK_EVERY_MS);
+    expect(tried, "one refused attempt, at the first tick a period after arming").toBe(1);
+
+    await run(clock, POLL_EVERY_MS);
+    expect(tried, "and again on the very next poll, not tomorrow").toBe(2);
+
+    // Once one lands, the period applies again.
+    refuse = false;
+    await run(clock, POLL_EVERY_MS);
+    expect(tried).toBe(3);
+    await run(clock, 23 * HOUR);
+    expect(tried, "a press that landed spends the day").toBe(3);
+    stop();
   });
 
   it("withdraws a standing strip once there is nothing to install", async () => {

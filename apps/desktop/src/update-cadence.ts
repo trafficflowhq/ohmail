@@ -75,12 +75,51 @@ export const CHECK_EVERY_MS = UPDATE_PERIOD_MS;
 export const POLL_EVERY_MS = 15 * 60 * 1000;
 
 /**
+ * Has this install established that it cannot replace its own files?
+ *
+ * ── HOW A FAILED INSTALL IS TOLD APART FROM A FAILED CHECK, WHICH SHARE ONE STATE ──────────
+ *
+ * The shell reports a stage and, separately, what the last completed CHECK found, and the pair
+ * separates them exactly. Every path that ends a check writes the check's result: a check that
+ * could not reach the feed writes `failed`, and so does a download that died after the offer.
+ * An install that failed writes nothing — it was not a check — so the last result still reads
+ * `offered` from the successful check that produced the payload. `failed` beside `offered` is
+ * therefore the one combination that can only mean the install itself refused.
+ *
+ * Linux only, and that is the whole reason it is worth a name. This app updates itself by
+ * replacing the single executable file it runs from. Installed from a distribution's packages
+ * instead, those files belong to the package manager, the replacement is not this app's business
+ * and it will not succeed on the next attempt either. Everywhere else a refused install can be
+ * something transient — a file held open, a half-written temporary directory — and trying again
+ * tomorrow is the right answer rather than a resignation.
+ *
+ * ONE PREDICATE FOR TWO DECISIONS, deliberately: what the window SAYS about this state and
+ * whether the cadence keeps CHECKING in it are the same judgement, and a version of this that
+ * said "your package manager has it" while quietly re-downloading the release every night would
+ * be the exact nag the strip exists to replace.
+ */
+export function cannotSelfInstall(report: UpdateReport, linux: boolean): boolean {
+  return linux && report.state === "failed" && report.lastResult === "offered";
+}
+
+/**
  * Is a periodic check due?
  *
  * `canCheck` is the shell's own `Flow::press` answer, carried over rather than re-derived, so
  * this cannot start a check the menu item has disabled — and, more importantly, cannot press in
  * the one state where a press INSTALLS. A payload waiting to be installed is not a state to
  * re-check from; the shell would only fetch an identical copy of what it already holds.
+ *
+ * ── AND IT STOPS WHERE CHECKING AGAIN IS KNOWN TO BE FUTILE ────────────────────────────────
+ *
+ * `canCheck` alone is not enough, and the gap it leaves is worse than the one this file closed.
+ * A refused install leaves the flow in a state a press WOULD check from, and the release is
+ * still newer, so a bare daily cadence on a package-managed Linux install would: fetch the whole
+ * release again, verify it, raise the shell's own "ready to install" dialog — which is not gated
+ * on anybody having asked — fail the install again, and repeat every twenty-four hours for the
+ * life of the install. Before a cadence existed that sequence cost one run per launch. Making it
+ * daily, on precisely the machines whose strip says the app cannot do this, is not a smaller
+ * version of the same behaviour; it is the feature working against the people it names.
  *
  * `floor` is the earliest instant a periodic check may be counted from, and it carries two
  * facts the report cannot: when this window opened, and when this cadence last pressed.
@@ -98,8 +137,13 @@ export const POLL_EVERY_MS = 15 * 60 * 1000;
  *
  * So the instant compared is the LATER of what the shell recorded and what this cadence did.
  */
-export function checkDue(report: UpdateReport, now: number, floor: number): boolean {
-  if (!report.canCheck) return false;
+export function checkDue(
+  report: UpdateReport,
+  now: number,
+  floor: number,
+  linux: boolean,
+): boolean {
+  if (!report.canCheck || cannotSelfInstall(report, linux)) return false;
   return periodElapsed(Math.max(report.lastCheckedAt ?? floor, floor), now, CHECK_EVERY_MS);
 }
 
@@ -107,29 +151,22 @@ export function checkDue(report: UpdateReport, now: number, floor: number): bool
  * What, if anything, the window should say about this report.
  *
  *  · A verified payload waiting to be installed is the ask: one press restarts into it.
- *  · A FAILED INSTALL on Linux is the other case, and it is a different sentence rather than a
- *    louder one. This app updates itself by replacing the single executable file it runs from,
- *    which is what an AppImage is; installed from a distribution's packages instead, those
- *    files belong to the package manager and the app has no business rewriting them — so the
- *    install cannot succeed and never will, and "try again in a moment" is advice that cannot
- *    work. The remedy is real and it is somewhere else.
+ *  · An install this app could not perform is the other case, and it is a different sentence
+ *    rather than a louder one — [`cannotSelfInstall`] carries which state that is and why it is
+ *    Linux's alone. "Try again in a moment" is advice that cannot work there.
  *
- * ── HOW A FAILED INSTALL IS TOLD APART FROM A FAILED CHECK, WHICH SHARE ONE STATE ──────────
- *
- * The shell reports a stage and, separately, what the last completed CHECK found, and the pair
- * separates them exactly. Every path that ends a check writes the check's result: a check that
- * could not reach the feed writes `failed`, and so does a download that died after the offer.
- * An install that failed writes nothing — it was not a check — so the last result still reads
- * `offered` from the successful check that produced the payload. `failed` beside `offered` is
- * therefore the one combination that can only mean the install itself refused.
+ * THE SENTENCE HEDGES ITS PROVENANCE ON PURPOSE. What this state establishes is that the
+ * replacement failed, not HOW the copy was installed: an AppImage on a read-only mount, or under
+ * a directory its user cannot write, reaches it too. So the copy says the app could not replace
+ * its own files and names the package manager as a condition rather than as a diagnosis. A
+ * sentence that asserted "this copy came from your package manager" would be false for that
+ * person and would send them somewhere the release is not.
  */
 export function offerOf(report: UpdateReport, linux: boolean): UpdateOffer | null {
   if (report.state === "ready" && report.canInstall) {
     return { kind: "restart", version: report.offered ?? report.version, act: () => void updatePress() };
   }
-  if (linux && report.state === "failed" && report.lastResult === "offered") {
-    return { kind: "package" };
-  }
+  if (cannotSelfInstall(report, linux)) return { kind: "package" };
   return null;
 }
 
@@ -198,13 +235,18 @@ export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => vo
     const report = await read();
     if (stopped || report === null) return;
     say(report);
-    if (checkDue(report, now(), Math.max(armedAt, pressedAt ?? armedAt))) {
-      pressedAt = now();
+    if (checkDue(report, now(), Math.max(armedAt, pressedAt ?? armedAt), linux)) {
       try {
         await press();
+        /* STAMPED ONLY WHERE THE PRESS LANDED, and the order is the point. Stamping first would
+           hold a REJECTED press off for a full period — an older shell or a grant that dropped
+           the command would cost a whole day of not checking, on exactly the build where the
+           command is unreliable. A rejected press is retried on the next poll instead, which is
+           bounded by the poll interval and reaches no network at all: a command the shell
+           refuses is answered by the shell. */
+        pressedAt = now();
       } catch {
-        /* An older shell, or a grant that dropped the command. The next tick asks again; a
-           press that did not land must never take a mail client down. */
+        /* A press that did not land must never take a mail client down. */
       }
     }
   };

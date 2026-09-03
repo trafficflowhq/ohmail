@@ -2888,7 +2888,7 @@
     "barReloadAction": "Neu laden",
     "barRestart": "ohmail {version} ist bereit zur Installation.",
     "barRestartAction": "Jetzt neu starten",
-    "barPackage": "Es gibt ein neueres ohmail. Diese Kopie kommt von deiner Paketverwaltung — aktualisiere sie dort.",
+    "barPackage": "Es gibt ein neueres ohmail, und ohmail konnte seine eigenen Dateien nicht ersetzen. Wenn du es über die Pakete deiner Distribution installiert hast, aktualisiere es dort.",
     "barLater": "Später"
   },
   "desktopScreener": {
