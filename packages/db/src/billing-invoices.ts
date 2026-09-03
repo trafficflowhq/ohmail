@@ -32,8 +32,8 @@ import type { Tx } from "./change-log.js";
  *
  * `<=` rather than `<` on equal timestamps follows `billing_subscriptions`' choice verbatim:
  * `event.created` has one-second resolution, so two genuinely different deliveries can tie, and
- * the later ARRIVAL wins a tie. The one exception is the terminal reversal states, which the
- * statement protects separately — see below.
+ * the later ARRIVAL wins a tie. The terminal reversal states are the one case this fence does
+ * NOT decide — see {@link recordInvoiceReversal}'s own header for why that write is unfenced.
  *
  * ## WHAT THE UPSERT NEVER TOUCHES, and this is the load-bearing half
  *
@@ -204,8 +204,24 @@ export interface InvoiceReversalWrite {
  * every retry Stripe makes. `GREATEST` guards the one remaining order problem: two partial
  * refunds delivered out of order would otherwise let the smaller running total win.
  *
- * @returns `true` when a row was updated; `false` when the mirror holds no such invoice or the
- * fence refused a stale delivery.
+ * ## NOT FENCED ON `stripe_event_ts`, and this is a correction rather than the original design
+ *
+ * A reversal is a TERMINAL, CUMULATIVE fact — the status only ever moves toward `refunded` or
+ * `disputed`, and the amount only ever moves up (via `GREATEST`) — so unlike the paid/failed
+ * upsert it has nothing a stale delivery could revert. Gating it on the same fence as that
+ * upsert therefore protected nothing and broke a real case: the RECONCILE pass stamps a healed
+ * row with its own `observedAt` — the moment it looked, which can be hours or days ahead of any
+ * Stripe event clock that invoice will ever carry — so a genuine `charge.refunded` webhook,
+ * delivered late (Stripe retries for up to three days) with an `event.created` from BEFORE that
+ * heal, would lose the fence permanently: `attributed` reads `false`, the alert fires, and the
+ * refund cents are never written. The suspension still applies (this function's caller suspends
+ * regardless of `attributed`), so nothing retries and the money is lost from the board for good.
+ *
+ * The row is matched by id alone. `stripeEventTs` still only moves FORWARD — `GREATEST` again —
+ * so this write can never regress the fence the paid/failed upsert reads; it simply stops being
+ * gated by a clock a reversal has no reason to respect.
+ *
+ * @returns `true` when a row was updated; `false` when the mirror holds no such invoice at all.
  */
 export async function recordInvoiceReversal(
   tx: Tx, w: InvoiceReversalWrite,
@@ -215,16 +231,12 @@ export async function recordInvoiceReversal(
     .set({
       amountRefundedCents: sql`greatest(${billingInvoices.amountRefundedCents}, ${w.amountRefundedCents})`,
       status: w.status,
-      stripeEventTs: w.stripeEventTs,
+      // FORWARD ONLY. This is what stops the reversal write from ever regressing the fence the
+      // paid/failed upsert reads — never a gate on whether THIS write applies (see the header).
+      stripeEventTs: sql`greatest(${billingInvoices.stripeEventTs}, ${w.stripeEventTs.toISOString()}::timestamptz)`,
       updatedAt: sql`now()`,
     })
-    .where(and(
-      eq(billingInvoices.stripeInvoiceId, w.stripeInvoiceId),
-      // The same fence as every other write on this table. A re-ordered reversal must not drag
-      // the row's stamp backwards, because that stamp is what the reconcile pass compares
-      // against — a backdated row would be re-healed and lose its reversal.
-      sql`${billingInvoices.stripeEventTs} <= ${w.stripeEventTs.toISOString()}::timestamptz`,
-    ))
+    .where(eq(billingInvoices.stripeInvoiceId, w.stripeInvoiceId))
     .returning({ id: billingInvoices.stripeInvoiceId });
   return updated.length > 0;
 }

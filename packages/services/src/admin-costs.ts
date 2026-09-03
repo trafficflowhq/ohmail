@@ -113,6 +113,17 @@ export async function adminCosts(db: Db, now: Date): Promise<AdminCostSnapshot> 
   const infraCents = measured.length === 0
     ? null
     : measured.reduce((sum, p) => sum + (p.cents ?? 0), 0);
+  // FLAT vs USAGE-TO-DATE, for the projection below and for no other figure on this snapshot.
+  // A `manual` row exists precisely for vendors billed a fixed amount for the month — Railway
+  // and Resend have no adapter at all, and an operator typing a Vercel seat fee on day 3 is
+  // typing the WHOLE month's charge, not three days of it. Pro-rating it the way a usage-to-date
+  // API reading is pro-rated would multiply a flat fee by (days-in-month ÷ days-elapsed): a $20
+  // flat charge entered on day 3 of 30 would project as ~$200. `api` and `stale` readings ARE
+  // usage-to-date (a `stale` row is simply an old one of those) and scale correctly.
+  const flatCents = measured
+    .filter((p) => p.source === "manual")
+    .reduce((sum, p) => sum + (p.cents ?? 0), 0);
+  const scalableInfraCents = (infraCents ?? 0) - flatCents;
 
   // ── 2. AI, by model and by host ─────────────────────────────────────────────────────────
   const modelRows = await tx.execute(sql`
@@ -177,7 +188,17 @@ export async function adminCosts(db: Db, now: Date): Promise<AdminCostSnapshot> 
              end as family,
              sum(abs(credits))::numeric as credits
         from credit_usage_daily
-       where pool = 'ledger'
+       -- BOTH POOLS, deliberately. The numerator (fam.cost_micro) is the whole day's model spend
+       -- regardless of which pool paid for it, and credit-rollup.ts writes a setup/debit_classify
+       -- row for classification the Screener's setup pool drew -- screening-only, so
+       -- debit_classify is the only reason that can carry that pool. A ledger-only filter here
+       -- would exclude setup-funded classify credits from the DENOMINATOR while the numerator
+       -- still included the cost those calls produced, so on any day with setup-pool spend every
+       -- ledger-paying account would absorb a share of cost that setup credits actually paid for
+       -- -- overstating their apportioned cost by exactly the setup pool's fraction of that day's
+       -- classify volume. NO BACKTICKS in this comment on purpose: it lives inside a sql-tagged
+       -- template literal, and a literal backtick here would close the JS string early.
+       where pool in ('ledger', 'setup')
          and reason in ('debit_classify', 'debit_draft', 'debit_propose', 'debit_workflow')
          and day >= ${isoDay(start)}::date and day < ${isoDay(end)}::date
        group by 1, 2, 3
@@ -255,16 +276,18 @@ export async function adminCosts(db: Db, now: Date): Promise<AdminCostSnapshot> 
 
   // ── 5. the projection, and the day count it rests on ────────────────────────────────────
   //
-  // MTD ÷ elapsed × the month's length. Elapsed counts the CURRENT day as one, so the first hours
-  // of a month do not divide by zero and do not multiply a single morning's spend by thirty-one.
-  // It is still the noisiest figure on the board on day one, which is why `projectionBasisDays`
-  // travels with it — the console can say what it is extrapolating from.
+  // FLAT + (SCALABLE ÷ elapsed × the month's length). Elapsed counts the CURRENT day as one, so
+  // the first hours of a month do not divide by zero and do not multiply a single morning's
+  // usage-to-date spend by thirty-one. Only the scalable half is pro-rated — see `flatCents`
+  // above for why a manual flat-fee entry must not be, and `monthToDateCents` is still the
+  // simple, unscaled total: the split exists for the projection only.
   const daysInMonth = Math.round((end.getTime() - start.getTime()) / 86_400_000);
   const elapsedDays = Math.max(1, now.getUTCDate());
   const monthToDate = (infraCents ?? 0) + aiCents;
+  const scalableMonthToDate = scalableInfraCents + aiCents;
   const projectedCents = infraCents === null && aiCents === 0
     ? null
-    : Math.round((monthToDate / elapsedDays) * daysInMonth);
+    : flatCents + Math.round((scalableMonthToDate / elapsedDays) * daysInMonth);
 
   return {
     now: now.toISOString(),

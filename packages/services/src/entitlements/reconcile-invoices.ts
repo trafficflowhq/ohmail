@@ -1,4 +1,4 @@
-import { and, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import {
   billingCustomers, billingInvoices, billingReconciliationRuns, upsertBillingInvoice,
 } from "@trafficflow/db/cloud";
@@ -61,7 +61,13 @@ import type { InvoiceReconcilePageDTO, InvoiceStateDTO } from "./entitlement-eve
  *
  * If the bound stops the listing early, `truncated` is recorded and the ABSENCE check
  * (`invoice_missing_in_stripe`) is skipped for that pass — an unread page is not evidence of
- * absence, exactly as in the subscription pass.
+ * absence, exactly as in the subscription pass. **The absence check is ALSO skipped on every
+ * WINDOWED pass, whether or not it truncated — the same argument, generalized.** A 35-day
+ * listing is a partial view of Stripe's invoices for the same reason a page-capped one is: rows
+ * outside the window are simply never read, and reporting them "missing" would be reporting an
+ * absence from a page the pass never asked for. The check runs only on a `windowDays: null`
+ * backfill, where the listing is (bound-permitting) the whole history and "not listed" is
+ * therefore real evidence. See §5 below for the two SEPARATE mirror reads this produces.
  */
 
 /** Divergence classes — a CLOSED vocabulary; these strings reach staff-readable rows. */
@@ -244,23 +250,42 @@ export async function reconcileBillingInvoices(
     flagged, divergences, pages, truncated,
   });
 
-  // A SPENT BUDGET SKIPS STRAIGHT TO THE RECORD, on the subscription pass's argument: past the
-  // deadline every further await is a chance for the platform to kill the invocation before the
-  // run row is written, recreating the silent end the budget exists to remove.
+  // A SPENT BUDGET SKIPS STRAIGHT TO A **FAILURE** RECORD, and that is a correction rather than
+  // the original design.
+  //
+  // This branch is reachable with `observed` non-empty: the loop's own per-iteration check can
+  // pass, and then the SINGLE plane call that follows it can itself stall past the deadline, so
+  // by the time it returns and the page's invoices are pushed, the budget is already spent. The
+  // loop exits normally (a full page, or `nextCursor: null`) and lands here with real invoices
+  // listed and ZERO of them compared against the mirror. The original code recorded that as a
+  // completed pass — `invoicesUpserted: 0`, no `error`, `truncated: true` but included in
+  // {@link lastInvoiceReconcileAt}'s reads — which is a stronger claim than the pass earned: it
+  // read some of Stripe's state and reconciled none of it, and reporting that as "ran cleanly,
+  // nothing to fix" would refresh the freshness stamp over invoices nobody actually checked.
+  //
+  // Recording it as a FAILURE (excluded from the staleness read by its `error IS NULL` filter,
+  // same as {@link recordInvoiceReconcileFailure}'s every other caller) is what makes the console
+  // see a reconciler that stopped rather than one that quietly verified nothing.
   if (outOfTime()) {
-    const spent = report(0);
-    spent.truncated = true;
-    if (opts.record !== false) await recordInvoiceReconcileRun(tx, spent);
-    return spent;
+    if (opts.record !== false) {
+      await recordInvoiceReconcileFailure(db, "deadline_exceeded_before_reconcile", observedAt);
+    }
+    return { observedAt, invoicesListed: observed.length, invoicesUpserted: 0,
+      flagged: {}, divergences: [], pages, truncated: true };
   }
 
-  // ── 2. the mirror's side of the same window ────────────────────────────────────────────
+  // ── 2. the mirror's side FOR COMPARISON — bounded to exactly the invoices Stripe listed ──
   //
-  // Read whole rather than one row per observation: the pass compares up to two thousand
-  // invoices, and two thousand indexed point reads on a `max: 1` pool is the shape this repo
-  // moved the console's ledger reads away from. The predicate is the same window the listing
-  // used, so the two sides are populations of the same size.
-  const mirrorRows = await tx
+  // `inArray` on the observed ids, not a window predicate. The earlier version filtered by
+  // `created_at >= windowStart` on the theory that "the two sides are populations of the same
+  // size" — false: `created_at` is when OUR row was inserted, not when Stripe created the
+  // invoice, so a full-history BACKFILL writes every historical invoice with today's
+  // `created_at`, and the next WINDOWED pass then reads all of them as "in window" while
+  // Stripe's own 35-day listing (bounded by the invoice's real `created`) does not mention a
+  // single one — flagging every backfilled invoice `invoice_missing_in_stripe`, every night, on
+  // a mirror that is entirely correct. Keying on the ids the LISTING actually returned removes
+  // the mismatched clock entirely: this read can only ever ask about invoices Stripe just named.
+  const mirrorRows = observed.length === 0 ? [] : await tx
     .select({
       stripeInvoiceId: billingInvoices.stripeInvoiceId,
       accountId: billingInvoices.accountId,
@@ -268,7 +293,7 @@ export async function reconcileBillingInvoices(
       amountPaidCents: billingInvoices.amountPaidCents,
     })
     .from(billingInvoices)
-    .where(windowStart === null ? sql`true` : gte(billingInvoices.createdAt, windowStart));
+    .where(inArray(billingInvoices.stripeInvoiceId, observed.map((i) => i.id)));
   const mirror = new Map(mirrorRows.map((r) => [r.stripeInvoiceId, r]));
 
   // ── 3. account resolution, in ONE query rather than per invoice ────────────────────────
@@ -289,8 +314,24 @@ export async function reconcileBillingInvoices(
   const accountOfCustomer = new Map(links.map((l) => [l.stripeCustomerId, l.accountId]));
 
   // ── 4. compare, and heal what can be healed ────────────────────────────────────────────
+  //
+  // THE DEADLINE IS CHECKED INSIDE THIS LOOP, not only around the listing. The earlier version
+  // enforced the budget while paging and then ran every comparison and every `upsertBillingInvoice`
+  // await — up to two thousand of them, on a `max: 1` pool — with no further check, so the first
+  // pass over a genuinely large divergence (an outage's aftermath, exactly when this pass
+  // matters) could be killed by the platform's 60 s ceiling mid-loop: no run row, no failure row,
+  // no log — the platform-kills-before-the-record failure the whole budget exists to prevent, one
+  // level down from where it was guarded.
   let upserted = 0;
+  let timedOutMidLoop = false;
   for (const inv of observed) {
+    if (outOfTime()) {
+      // Partial progress is real progress: whatever was upserted or flagged before the deadline
+      // stands, `truncated` says the pass did not finish, and the absence check below is skipped
+      // by that same flag — an interrupted comparison is not evidence anything is missing.
+      timedOutMidLoop = true;
+      break;
+    }
     const status = mirrorStatusOf(inv.status);
     if (status === null) continue;              // draft/open — a bill, not a figure. See above.
 
@@ -340,14 +381,30 @@ export async function reconcileBillingInvoices(
     note(code, inv.id, accountId, wrote ? "emitted" : "flagged");
   }
 
+  if (timedOutMidLoop) truncated = true;
+
   // ── 5. the mirror's side: rows Stripe did not list ─────────────────────────────────────
   //
-  // Only meaningful when the listing was COMPLETE. Never healed — there is no truth to copy —
-  // and never deleted: an invoice row is a financial record, and a reconciler that removed one
-  // because a listing did not mention it would be the money trail deleting itself on a schedule.
-  if (!truncated) {
+  // Meaningful only when the LISTING was complete AND unbounded. `truncated` covers the paging
+  // and mid-loop deadlines; `windowStart === null` covers the windowed pass, on the header's
+  // generalized argument — a 35-day listing is a partial view for the same reason a page-capped
+  // one is, and reporting a row outside it "missing" would be reporting an absence from a page
+  // the pass never asked for.
+  //
+  // A SEPARATE, WHOLE-TABLE READ — not `mirrorRows` from §2, which is scoped to exactly the ids
+  // Stripe listed and can never contain a row Stripe DIDN'T list, the population this check needs.
+  // Bounded acceptably here for the reason `mirrorRows` no longer is: this branch runs only on an
+  // unbounded backfill (`windowDays: null`), the same infrequent, operator-invoked pass the
+  // subscription reconciler's own full `status: "all"` listing already accepts the cost of.
+  // Never healed — there is no truth to copy — and never deleted: an invoice row is a financial
+  // record, and a reconciler that removed one because a listing did not mention it would be the
+  // money trail deleting itself on a schedule.
+  if (!truncated && windowStart === null) {
     const listed = new Set(observed.map((i) => i.id));
-    for (const row of mirrorRows) {
+    const allMirrorRows = await tx
+      .select({ stripeInvoiceId: billingInvoices.stripeInvoiceId, accountId: billingInvoices.accountId })
+      .from(billingInvoices);
+    for (const row of allMirrorRows) {
       if (!listed.has(row.stripeInvoiceId)) {
         note("invoice_missing_in_stripe", row.stripeInvoiceId, row.accountId, "flagged");
       }

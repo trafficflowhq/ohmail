@@ -133,9 +133,10 @@ export function makeAiUsageRecorder(
 
   /**
    * The upsert. ADDITIVE on every counter, so a bucket written twice is impossible to distinguish
-   * from two separate calls — which is what makes flushing safe under a crash: the buffer is
-   * cleared only after the write settles, so a failed flush retries the same numbers next time
-   * and a succeeded-then-crashed flush loses nothing.
+   * from two separate calls — which is what makes a SUCCEEDED-then-crashed flush safe (the next
+   * pass's numbers add rather than overwrite). A FAILED write is the opposite case and is handled
+   * by the caller, not by retrying: see {@link drain}, which drops the buckets and counts them
+   * rather than holding them for a second attempt.
    */
   const write = async (buckets: Bucket[]): Promise<void> => {
     if (buckets.length === 0) return;
@@ -168,14 +169,20 @@ export function makeAiUsageRecorder(
   const drain = async (): Promise<void> => {
     if (pending.size === 0) return;
     const buckets = [...pending.values()];
-    // CLEARED BEFORE THE AWAIT, and restored on failure. Clearing after would let a call
-    // arriving mid-flush be written twice (it would join a bucket already in flight); clearing
-    // before and losing it on failure would under-report. Restoring re-merges instead.
+    // CLEARED BEFORE THE AWAIT, and NOT restored on failure. Clearing after would let a call
+    // arriving mid-flush join a bucket already in flight and be written twice; clearing before
+    // means a failure loses exactly these buckets, which is the trade this module makes
+    // deliberately — see {@link AiUsageRecorder.dropped}. A retry-on-failure design would need to
+    // re-merge a failed bucket back into `pending` without racing calls that arrived during the
+    // failed write, which is more state than the honest alternative: count the loss and move on.
     pending.clear();
     lastFlushAt = now().getTime();
     try {
       await write(buckets);
     } catch {
+      // DROPPED, not retried. `dropped` is the reader's signal that the table under-reports by
+      // this many calls — a silent retry queue would hide exactly the failure this field exists
+      // to surface.
       dropped += buckets.reduce((sum, b) => sum + b.calls, 0);
     }
   };
@@ -204,7 +211,7 @@ export function makeAiUsageRecorder(
 }
 
 /**
- * THE SIGNAL: a day on which credits were SPENT and no model usage was recorded.
+ * THE SIGNAL: a day on which credits were SPENT and the HOST that spent them recorded nothing.
  *
  * ## Why it exists, in one sentence
  *
@@ -215,41 +222,82 @@ export function makeAiUsageRecorder(
  * most. A cost table nobody notices is empty is worse than no cost table, because a margin gets
  * computed from it.
  *
- * ## What it compares, and why THIS pair
+ * ## WHY THIS IS HOST-AWARE, AND NOT A WHOLE-TABLE EMPTINESS CHECK
  *
- * Debits are the one independent witness that a model call happened. Every `debit_*` row in
- * `credit_ledger` is written at a gate that immediately precedes a provider call, by a
- * completely separate code path, on a table this recorder never touches. So "the ledger says we
- * spent and the cost table says we made no calls" is a statement about the RECORDER rather than
- * about the product, which is exactly the failure to detect.
+ * The founding case is exactly the failure a table-wide check cannot see: the WORKER recorded
+ * nothing while the API HOST recorded normally. A check that only asks "does any row exist for
+ * this day" answers `false` — healthy — the moment any one host's calls happen to be logged,
+ * which is the state production was actually in. `host` is in `ai_usage_daily`'s primary key
+ * for exactly this reason, and a signal that does not read it is not exercising the reason the
+ * column exists.
  *
- * A day with no debits and no usage is healthy (a quiet day), and a day with usage and no debits
- * is legitimate too — the self-host tier is unmetered by design, and a failed call costs tokens
- * and refunds its credit. Only the one direction is a fault.
+ * ## What it compares, and the mapping it uses
  *
- * @returns `true` when the day had metered debits and no usage row at all.
+ * Debits are the one independent witness that a model call happened, written at a gate that
+ * immediately precedes a provider call, on a table this recorder never touches. Three of the
+ * four metered reasons localize to a host with certainty and one does not:
+ *
+ *  · `debit_propose` and `debit_workflow` are WORKER-EXCLUSIVE — the proposal cron and workflow
+ *    steps run nowhere else. Either one, with no `worker` usage row that day, is unrecorded.
+ *  · `debit_draft` runs on the API host or the self-host server, never the worker — the drafting
+ *    route is `packages/api`/`apps/server` composition only. With no `api` AND no `server` usage
+ *    row that day, it is unrecorded (reported against `api`, the multi-tenant default; a
+ *    self-host operator reading this signal should also check their own `server` row).
+ *  · `debit_classify` is DELIBERATELY NOT localized. The routing pipeline classifies on the
+ *    worker, the Screener's priced suggest classifies on the API host, and the self-host server
+ *    classifies too — the same reason can legitimately come from any of the three, and pinning
+ *    it to one would produce a false alarm on a day the OTHER two hosts happened to be quiet. It
+ *    still counts toward the "some debit happened" gate below, so a day with classify debits and
+ *    NO usage anywhere is still caught by the total-silence case.
+ *
+ * A day with no debits and no usage is healthy (a quiet day). A day with usage and no debits is
+ * legitimate too — the self-host tier is unmetered by design, and a failed call costs tokens and
+ * refunds its credit. Only the localized direction is a fault.
+ *
+ * @returns `unrecorded: true` when a host-localizable reason was debited and that host's row is
+ * absent, or every host's row is absent while any reason was debited at all. `missingHosts`
+ * names which — empty when `unrecorded` is `false`.
  */
 export async function aiUsageUnrecorded(
   db: Tx, opts: { day: Date },
-): Promise<boolean> {
+): Promise<{ unrecorded: boolean; missingHosts: AiUsageHost[] }> {
   const start = new Date(Date.UTC(
     opts.day.getUTCFullYear(), opts.day.getUTCMonth(), opts.day.getUTCDate(),
   ));
   const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+  const NONE: { unrecorded: false; missingHosts: [] } = { unrecorded: false, missingHosts: [] };
 
-  const debits = await db
-    .select({ n: sql<number>`count(*)::int` })
+  const debitRows = await db
+    .select({ reason: creditLedger.reason, n: sql<number>`count(*)::int` })
     .from(creditLedger)
     .where(and(
       gte(creditLedger.createdAt, start),
       lt(creditLedger.createdAt, end),
       sql`${creditLedger.reason} in ('debit_classify','debit_draft','debit_propose','debit_workflow')`,
-    ));
-  if (Number(debits[0]?.n ?? 0) === 0) return false;
+    ))
+    .groupBy(creditLedger.reason);
+  const byReason = new Map(debitRows.map((r) => [r.reason, Number(r.n)]));
+  const anyDebits = [...byReason.values()].some((n) => n > 0);
+  if (!anyDebits) return NONE;
 
-  const usage = await db
-    .select({ n: sql<number>`count(*)::int` })
+  const usageRows = await db
+    .select({ host: aiUsageDaily.host })
     .from(aiUsageDaily)
-    .where(eq(aiUsageDaily.day, dayOf(start)));
-  return Number(usage[0]?.n ?? 0) === 0;
+    .where(eq(aiUsageDaily.day, dayOf(start)))
+    .groupBy(aiUsageDaily.host);
+  const present = new Set(usageRows.map((r) => r.host));
+
+  // TOTAL SILENCE. A reason debited today and NOTHING recorded anywhere — the ambiguous
+  // `debit_classify` alone reaches only this branch, because no single host can be named.
+  if (present.size === 0) {
+    return { unrecorded: true, missingHosts: ["api", "worker", "server"] };
+  }
+
+  const missing: AiUsageHost[] = [];
+  const workerExclusive = (byReason.get("debit_propose") ?? 0) + (byReason.get("debit_workflow") ?? 0);
+  if (workerExclusive > 0 && !present.has("worker")) missing.push("worker");
+  const draftDebits = byReason.get("debit_draft") ?? 0;
+  if (draftDebits > 0 && !present.has("api") && !present.has("server")) missing.push("api");
+
+  return { unrecorded: missing.length > 0, missingHosts: missing };
 }

@@ -207,11 +207,18 @@ function parseVercel(body: unknown, window: { start: Date; end: Date }): Platfor
     const price = num(cell.price);
     const quantity = num(cell.quantity ?? cell.total);
     if (price === null) continue;
+    const costCents = dollarsToCents(price);
+    // A NEGATIVE line — a discount or a credit note in the vendor's own response — is SKIPPED
+    // rather than written. The migration's `cost_cents >= 0` CHECK would refuse it anyway; the
+    // guard is here so a discount line does not cost this provider its WHOLE month's write (the
+    // insert loop's own try/catch is the belt, this is the suspenders). Skipping under-reports by
+    // the credited amount rather than crashing, which is the direction this module always errs.
+    if (costCents < 0) continue;
     rows.push({
       provider: "vercel", metric,
       periodStart: window.start, periodEnd: window.end,
       value: quantity, unit: typeof cell.unit === "string" ? cell.unit : null,
-      costCents: dollarsToCents(price), currency: "usd",
+      costCents, currency: "usd",
     });
   }
   // AN EMPTY PARSE IS A FAILURE, not a zero bill. The one thing this module may never do is
@@ -232,6 +239,8 @@ function parseSupabase(body: unknown, window: { start: Date; end: Date }): Platf
       : typeof entry.name === "string" ? entry.name : null;
     const cents = num(entry.cost_cents) ?? (num(entry.cost) !== null ? dollarsToCents(num(entry.cost)!) : null);
     if (metric === null || cents === null) continue;
+    // See `parseVercel`'s identical guard: a credit line is skipped, never written negative.
+    if (cents < 0) continue;
     rows.push({
       provider: "supabase", metric,
       periodStart: window.start, periodEnd: window.end,
@@ -278,7 +287,12 @@ function parseAnthropic(body: unknown, window: { start: Date; end: Date }): Plat
     rows: [{
       provider: "anthropic", metric: "tokens",
       periodStart: window.start, periodEnd: window.end,
-      value: null, unit: null, costCents: cents, currency,
+      // FLOORED AT ZERO, unlike the per-line skip in `parseVercel`/`parseSupabase`. This total is
+      // a SUM across every result in the window, so a credit note legitimately reduces it — that
+      // is real, and dropping the entry would overstate the bill by the credited amount. The
+      // migration's `cost_cents >= 0` CHECK still has to be satisfied, so a window whose credits
+      // outweigh its usage reports as zero rather than failing the whole provider for one period.
+      value: null, unit: null, costCents: Math.max(0, cents), currency,
     }],
   };
 }
@@ -351,33 +365,49 @@ export async function runPlatformCostPass(
       continue;
     }
 
-    for (const row of result.rows) {
-      await tx.insert(platformCosts).values({
-        provider: row.provider,
-        metric: row.metric,
-        periodStart: row.periodStart,
-        periodEnd: row.periodEnd,
-        value: row.value === null ? null : String(row.value),
-        unit: row.unit,
-        costCents: row.costCents,
-        currency: row.currency,
-        source: "api",
-        fetchedAt: at,
-      }).onConflictDoUpdate({
-        target: [
-          platformCosts.provider, platformCosts.metric,
-          platformCosts.periodStart, platformCosts.periodEnd, platformCosts.source,
-        ],
-        set: {
-          value: sql`excluded.value`,
-          unit: sql`excluded.unit`,
-          costCents: sql`excluded.cost_cents`,
-          currency: sql`excluded.currency`,
-          fetchedAt: sql`excluded.fetched_at`,
-        },
+    // THE WRITE IS ITS OWN TRY/CATCH, and it is what keeps this loop's outer promise: "one
+    // vendor's outage must not cost the board the other two". A row can reach here with a shape
+    // the parser accepted but the database refuses — the `cost_cents >= 0` CHECK is the reachable
+    // case, since `parseVercel`/`parseSupabase` accept any finite line amount and a discount or
+    // credit line in a vendor's response is a negative one — and before this guard existed, that
+    // one bad row aborted the WHOLE PASS: the insert threw, nothing caught it, and every provider
+    // later in this loop was never asked, while any providers already written this run stayed
+    // committed. A write failure is recorded exactly like a parse failure: nothing for THIS
+    // provider, the previous row stands, and the loop continues.
+    try {
+      for (const row of result.rows) {
+        await tx.insert(platformCosts).values({
+          provider: row.provider,
+          metric: row.metric,
+          periodStart: row.periodStart,
+          periodEnd: row.periodEnd,
+          value: row.value === null ? null : String(row.value),
+          unit: row.unit,
+          costCents: row.costCents,
+          currency: row.currency,
+          source: "api",
+          fetchedAt: at,
+        }).onConflictDoUpdate({
+          target: [
+            platformCosts.provider, platformCosts.metric,
+            platformCosts.periodStart, platformCosts.periodEnd, platformCosts.source,
+          ],
+          set: {
+            value: sql`excluded.value`,
+            unit: sql`excluded.unit`,
+            costCents: sql`excluded.cost_cents`,
+            currency: sql`excluded.currency`,
+            fetchedAt: sql`excluded.fetched_at`,
+          },
+        });
+      }
+      report.providers.push({ provider, outcome: "written", rows: result.rows.length });
+    } catch (err) {
+      report.providers.push({
+        provider, outcome: "failed", rows: 0,
+        code: `write:${String((err as Error)?.name ?? "unknown")}`,
       });
     }
-    report.providers.push({ provider, outcome: "written", rows: result.rows.length });
   }
   return report;
 }
