@@ -677,12 +677,16 @@ export class HttpAdapter implements EngineAdapter {
     if (opts.sort !== undefined && opts.sort !== "relevance") q.set("sort", opts.sort);
     const res = await this.request("GET", `/search?${q.toString()}`);
     if (!res.ok) throw await this.rejectionOf(res);
-    const wire = (await res.json()) as { items?: EngineMessage[]; total?: number };
+    const wire = (await res.json()) as { items?: EngineMessage[]; total?: number; tier?: string };
     // Forward-compatible (§8): `facets` is deliberately unread — its folder keys are raw IMAP
     // paths, and the client keys its own facets by view id.
     return {
       items: Array.isArray(wire.items) ? wire.items : [],
       total: typeof wire.total === "number" ? wire.total : (wire.items?.length ?? 0),
+      // `similar` only when the server says so, and every other reading — absent, unknown
+      // string, a deploy that predates the field — is `exact`. Read `ServerSearchWire.tier`
+      // for why the unknown case takes that side rather than the cautious-looking one.
+      tier: wire.tier === "similar" ? "similar" : "exact",
     };
   }
 

@@ -1,4 +1,5 @@
 import { sql, type SQL } from "drizzle-orm";
+import { showSimilar, type SearchTier } from "@trafficflow/core/search-rank";
 import type { ServiceContext, Db } from "./context.js";
 import { materializeMessages } from "./dto/materialize.js";
 import { clampLimit } from "./pagination.js";
@@ -7,29 +8,39 @@ import type { MessageDTO } from "./dto/types.js";
 
 /**
  * Hybrid search (lexical + fuzzy), the user's top HEY pain point
- * ("search is not fast/optimal/smart"). ONE fused SQL ranking over TWO
- * arms:
+ * ("search is not fast/optimal/smart"). TWO SQL arms, and — this is the part that changed —
+ * they are TIERS rather than contributors to one score:
  *   • lexical — `websearch_to_tsquery('english', q)` against the DB-generated
  *     `subject_tsv` (subject+from) and `body_tsv` (redacted body), ranked by
- *     `ts_rank`. Core Postgres, present in PGlite too.
+ *     `ts_rank`. Core Postgres, present in PGlite too. This is THE answer.
  *   • fuzzy   — pg_trgm `word_similarity(q, subject|from_address)` so a TYPO
  *     ("invoce" → "Invoice") still surfaces the right message a pure tsvector
- *     match MISSES. When pg_trgm is absent (PGlite), this arm DEGRADES to an
- *     ILIKE-contains so the service still works offline.
- * The arms are fused by Reciprocal-Rank Fusion in SQL — per-arm `row_number()`
- * over a bounded top-N window, fused score `sum(1/(k+rank))` — leaving room for a
- * third SEMANTIC (pgvector) arm to slot in later (deferred: needs an
- * EU-resident embedding source + a pgvector-capable image).
+ *     match MISSES. It runs ONLY when the lexical arm found nothing. When pg_trgm is
+ *     absent (PGlite), it DEGRADES to an ILIKE-contains so the service still works offline.
+ *
+ * ── WHY THE RANK FUSION IS GONE ──────────────────────────────────────────────────────────
+ *
+ * The two arms used to be fused by Reciprocal-Rank Fusion — per-arm `row_number()` over a
+ * bounded top-N window, fused score `sum(1/(k+rank))`. RRF fuses arms that are both trying to
+ * answer the question; typo tolerance is not that. It is a GUESS about what the reader meant,
+ * and RRF ranks by POSITION, so a guess at the top of the fuzzy arm scored `1/(60+1)` and beat
+ * a real lexical match at rank five, `1/(60+5)`. Measured against real Postgres on a seeded
+ * corpus: the query `graphite` put five messages about a mountain ridge ("Grat", trigram
+ * similarity 0.33, no lexical match at all) into a five-answer result, one of them ABOVE the
+ * message whose body says `graphite` — and `total` said ten, so the count on screen was a claim
+ * about the noise.
+ *
+ * The tier rule that replaces it lives in `@trafficflow/core/search-rank`, shared with the
+ * client engine's local index, because two doors answering one search in two different orders
+ * is the same defect wearing different clothes. A third SEMANTIC (pgvector) arm, if it ever
+ * lands, is a fusion candidate WITH the lexical arm — it is an attempt at the question — and
+ * would not change where typo tolerance sits.
  *
  * Sensitivity: search runs ONLY over subject / from_address / the STORED
  * `message_bodies.text` (already redacted when sensitive) — it never re-derives a
  * secret and joins no raw-secret source. Everything is accountId-scoped.
  */
 
-/** RRF constant (standard k=60): dampens the contribution of lower-ranked hits. */
-const RRF_K = 60;
-/** Per-arm candidate window — RRF fuses BOUNDED candidate lists. */
-const ARM_LIMIT = 100;
 /** pg_trgm word-similarity floor for the fuzzy arm (Postgres default is 0.3). */
 const FUZZY_THRESHOLD = 0.3;
 /** How many senders the sender facet returns. */
@@ -136,7 +147,21 @@ export interface Facets {
 export interface SearchResult {
   items: MessageDTO[];
   facets: Facets;
+  /**
+   * How many messages match — COUNTED OVER THE TIER THAT IS BEING RETURNED, never over both
+   * arms. It used to count `lexical or fuzzy`, so a query with five real answers reported ten
+   * and the number under the box described rows the reader could not see the point of.
+   */
   total: number;
+  /**
+   * WHICH TIER THIS ANSWER IS. `exact` when the lexical arm matched; `similar` when it did not
+   * and these rows are typo-tolerant guesses. Never a mixture — see the class header.
+   *
+   * A caller that renders `similar` rows without saying so is making the claim this field
+   * exists to remove, which is why it is on the result and not left to be inferred from an
+   * empty-looking list.
+   */
+  tier: SearchTier;
 }
 
 /** Normalize the driver-specific `execute` shape: postgres-js returns an array,
@@ -157,6 +182,7 @@ function emptyResult(): SearchResult {
       date: { today: 0, last7: 0, last30: 0, older: 0 },
     },
     total: 0,
+    tier: "exact",
   };
 }
 
@@ -254,38 +280,41 @@ export class SearchService {
       : sql`coalesce(extract(epoch from m.date), 0)`;   // no relevance signal offline → recency
     const lexRank = sql`greatest(ts_rank(m.subject_tsv, ${tsq}), ts_rank(coalesce(b.body_tsv, to_tsvector('')), ${tsq}))`;
 
-    // ── ONE fused ranking query ─────────────────────────────────────
-    // Each arm produces a BOUNDED top-N candidate list; per-arm row_number() feeds
-    // RRF (sum of 1/(k+rank)); a message ranked by BOTH arms accumulates both terms.
-    const matchPred = sql`(${lexPred} or ${fuzzPred})`;
-    const fusion = sql`
-      with lex as (
-        select m.id, ${lexRank} as rank
-        ${this.from}
-        where ${where} and ${lexPred}
-        order by rank desc
-        limit ${ARM_LIMIT}
-      ),
-      fuz as (
-        select m.id, ${fuzzRank} as rank
-        ${this.from}
-        where ${where} and ${fuzzPred}
-        order by rank desc
-        limit ${ARM_LIMIT}
-      ),
-      ranked as (
-        select id, row_number() over (order by rank desc) as rn from lex
-        union all
-        select id, row_number() over (order by rank desc) as rn from fuz
-      ),
-      fused as (
-        select id, sum(1.0 / (${RRF_K} + rn)) as score
-        from ranked group by id
-      )
-      select f.id
-      from fused f
-      join messages m on m.id = f.id
-      order by f.score desc, m.date desc nulls last
+    /**
+     * ── THE TIER IS DECIDED BEFORE A SINGLE ROW IS RANKED ──────────────────────────────────
+     *
+     * The lexical arm is counted first, and that count IS `total` whenever it is non-zero — so
+     * in the common case (a query with an answer) this costs nothing: `total` was always going
+     * to be counted, and it is now counted over one predicate instead of two. The fuzzy arm's
+     * count is paid only on a query the corpus does not literally answer, which is the case a
+     * reader is already waiting on a guess for.
+     *
+     * `showSimilar` rather than `=== 0` so the floor exists in exactly one place; the argument
+     * for its value is in `@trafficflow/core/search-rank`, measured on both doors.
+     */
+    const lexTotal = await this.count(ctx, where, lexPred);
+    const tier: SearchTier = showSimilar(lexTotal) ? "similar" : "exact";
+    const matchPred = tier === "exact" ? lexPred : fuzzPred;
+    const rank = tier === "exact" ? lexRank : fuzzRank;
+    const total = tier === "exact" ? lexTotal : await this.count(ctx, where, fuzzPred);
+
+    /**
+     * THE RELEVANCE QUERY — one arm, the tier's own, over the tier's own predicate.
+     *
+     * No candidate window. The RRF version bounded each arm at 100 rows before fusing, which
+     * meant the final `limit` was applied to a SELECTION rather than to the match set — and the
+     * row it silently dropped was the one outside the window. With one arm the `order by`
+     * decides which `limit` rows come back, which is what a relevance ranking is.
+     *
+     * The key sequence is `SQL_RANK_ORDER`'s and it is the client comparator's: relevance, then
+     * recency as a TIE-BREAK, then id so two rows that tie on both never swap between calls.
+     * `nulls last` is the SQL spelling of "an undated message has no place on a timeline".
+     */
+    const ranked = sql`
+      select m.id
+      ${this.from}
+      where ${where} and ${matchPred}
+      order by ${rank} desc, m.date desc nulls last, m.id desc
       limit ${limit}`;
 
     /**
@@ -299,12 +328,20 @@ export class SearchService {
      * the relevance window. On a corpus larger than the window it is invisibly wrong, which is
      * the worst kind.
      *
-     * So a non-relevance sort runs its own arm over the SAME predicates (`where` + `matchPred`,
-     * the identical match set facets and total are counted over) with no candidate window at
-     * all — the sort key decides which `limit` rows come back. `search-sort.r12.test.ts` plants
-     * a low-relevance newest match and watches this exact difference.
+     * The relevance query no longer HAS a candidate window (the fusion it came from is gone —
+     * see the class header), so the two shapes are closer than they were. The distinction still
+     * stands, and the file keeps it: a non-relevance sort runs over the SAME predicates
+     * (`where` + `matchPred`, the identical match set facets and total are counted over) with a
+     * different order key, and the sort key decides which `limit` rows come back.
+     * `search-sort.r12.test.ts` plants a low-relevance newest match and watches this.
+     *
+     * **`matchPred` IS THE TIER'S PREDICATE, and passing it here is load-bearing.** Ordering by
+     * date over `lexical or fuzzy` would re-admit every typo guess the tier rule just excluded,
+     * and put the newest of them at the top — the reader would pick "Newest first" and watch
+     * the noise come back. One predicate, decided once, used by the hits, the facets and the
+     * total alike.
      */
-    const hitQuery = sort === "relevance" ? fusion : this.orderedArm(where, matchPred, sort, limit);
+    const hitQuery = sort === "relevance" ? ranked : this.orderedArm(where, matchPred, sort, limit);
     const hitRows = rowsOf<{ id: string }>(await ctx.db.execute(hitQuery));
 
     /**
@@ -333,8 +370,7 @@ export class SearchService {
     }
 
     const facets = await this.facets(ctx, where, matchPred);
-    const total = await this.total(ctx, where, matchPred);
-    return { items, facets, total };
+    return { items, facets, total, tier };
   }
 
   // ── the user-chosen orders ────────────────────────────────────────────────
@@ -390,7 +426,13 @@ export class SearchService {
 
   // ── facets & total over the SAME candidate set (filters + text match) ──────
 
-  private async total(ctx: ServiceContext, where: SQL, matchPred: SQL): Promise<number> {
+  /**
+   * How many rows a predicate matches. Called twice for different jobs and it is worth naming
+   * both: once to DECIDE the tier (over the lexical predicate, before anything is ranked), and
+   * once — the same call, the same number — as the `total` the caller renders. In the exact tier
+   * those are one query, not two.
+   */
+  private async count(ctx: ServiceContext, where: SQL, matchPred: SQL): Promise<number> {
     const r = await ctx.db.execute(sql`select count(*)::int as n ${this.from} where ${where} and ${matchPred}`);
     return rowsOf<{ n: number }>(r)[0]?.n ?? 0;
   }

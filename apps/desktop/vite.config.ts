@@ -715,6 +715,17 @@ export default defineConfig({
          every platform job while the engine bundle went green beside them. A browser-safe leaf
          like the three above — one regex, zero imports. */
       { find: "@trafficflow/core/reply-subject", replacement: r("../../packages/core/src/reply-subject.ts") },
+      /* The search ranking rule — the FIFTH such specifier, reaching this bundle through
+         `packages/client-engine/src/search.ts`, which is the local index this shell searches on
+         every keystroke. It holds which tier an answer is, when the typo-tolerant tier may be
+         shown at all, and the relevance/recency/identity key sequence that orders it — shared
+         with `packages/services`' SQL search so the desktop and the hosted archive cannot order
+         one question two ways. Listed here for `ics`'s exact reason, restated once more because
+         the failure is invisible in this tree: the workspace link and core's own exports map
+         resolve it HERE, and in the published tree `search-rank.ts` is a lone file with no
+         package.json beside it, so Rollup would die at `vite build` on every platform job. A
+         browser-safe leaf like the four above — zero imports. */
+      { find: "@trafficflow/core/search-rank", replacement: r("../../packages/core/src/search-rank.ts") },
     ],
   },
 

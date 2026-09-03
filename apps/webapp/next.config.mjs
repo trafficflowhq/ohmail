@@ -643,9 +643,11 @@ assertPublicFlavorNotOverridden(process.env[PUBLIC_FLAVOR_VAR], selfhost);
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // @trafficflow/core is here for its dependency-free SOURCE subpaths and nothing else — today
-  // `@trafficflow/core/ics` (read directly by this app) and `@trafficflow/core/reply-subject`
-  // (reached through `@ohmail/client-engine`'s `mutations.ts`, which is transpiled beside it).
-  // Both resolve through core's own exports map; neither needs a webpack alias, because unlike the
+  // `@trafficflow/core/ics` (read directly by this app), `@trafficflow/core/reply-subject`
+  // (reached through `@ohmail/client-engine`'s `mutations.ts`, which is transpiled beside it)
+  // and `@trafficflow/core/search-rank` (read directly by `app/views/SearchView.tsx`, which
+  // applies the same tier rule to the MERGED list that each door applies to its own half).
+  // All resolve through core's own exports map; none needs a webpack alias, because unlike the
   // desktop's published mirror this tree always has the workspace link.
   //
   // The barrel and every other subpath stay node-only (mailparser, node:crypto) and must never be

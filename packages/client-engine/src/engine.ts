@@ -16,6 +16,10 @@ import { MemoryMirrorStore, type EntityReader, type MirrorStore } from "./store.
 import {
   drainPageLimit, mirrorFreshness, mirrorStale, STALE_RESUME_MS, type MirrorFreshness,
 } from "@trafficflow/core/drain-policy";
+// The search tier vocabulary, shared with the hosted service — a dependency-free core subpath
+// like the two above. The archive's answer names its tier on the wire, and the local index
+// decides its own by the same rule, so the merged list can put both under one heading.
+import type { SearchTier } from "@trafficflow/core/search-rank";
 import {
   CursorExpiredError,
   FOLDER_OF_VIEW,
@@ -200,6 +204,18 @@ export interface ServerSearchWire {
   items: EngineMessage[];
   /** Matches for the query across the WHOLE corpus, which is more than `items.length`. */
   total: number;
+  /**
+   * WHICH TIER THE ARCHIVE'S ANSWER IS — `exact` when its lexical arm matched, `similar` when
+   * these rows are typo-tolerant guesses because nothing matched literally. The rule and its
+   * floor are `@trafficflow/core/search-rank`'s, applied identically by the local index.
+   *
+   * Optional on the wire, and ABSENT MEANS `exact`. That is not a shrug: every server before
+   * this field existed returned its lexical answer (fused with a fuzzy arm, but intending an
+   * answer, not a guess), and a client that read the absence as `similar` would file a real
+   * result under a "Similar" heading. The unknown case takes the reading that does not
+   * mislabel a hit — and a client and a server ship in the same wave, so the window is short.
+   */
+  tier?: SearchTier;
 }
 
 /**
@@ -431,7 +447,7 @@ function messageTime(m: EngineMessage): number {
  */
 export type ServerSearchOutcome =
   | { state: "unavailable" }
-  | { state: "ready"; items: EngineMessage[]; total: number }
+  | { state: "ready"; items: EngineMessage[]; total: number; tier: SearchTier }
   | { state: "failed"; error: string };
 
 /**
@@ -3935,7 +3951,7 @@ export class OhmailEngine {
     const fn = this.serverSearchFn;
     if (fn === null) return { state: "unavailable" };
     const q = query.trim();
-    if (q === "") return { state: "ready", items: [], total: 0 };
+    if (q === "") return { state: "ready", items: [], total: 0, tier: "exact" };
 
     /**
      * THE SORT IS PART OF THE KEY, and omitting it would be a defect rather than a missed
@@ -3959,6 +3975,10 @@ export class OhmailEngine {
           state: "ready",
           items: Array.isArray(wire.items) ? wire.items : [],
           total: typeof wire.total === "number" ? wire.total : (wire.items?.length ?? 0),
+          // Absent ⇒ `exact`, and anything the wire says that is not one of the two tiers is
+          // treated the same way. See {@link ServerSearchWire.tier}: the unknown case must not
+          // file a real hit under a "Similar" heading.
+          tier: wire.tier === "similar" ? "similar" : "exact",
         };
       })
       .catch((err: unknown): ServerSearchOutcome => ({

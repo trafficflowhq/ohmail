@@ -873,6 +873,8 @@
     "resultsHead": "{count, plural, one {1 result} other {# results}}",
     "resultsMeta": " · {ms} ms on this device",
     "fuzzyNote": "fuzzy match — “{term}”",
+    "similarHead": "Similar",
+    "similarHint": "Nothing matched exactly, so these are the closest words.",
     "emptyTitle": "Nothing on this device.",
     "toastServer": "Searching the whole archive…",
     "facetFrom": "From",

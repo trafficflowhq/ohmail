@@ -91,7 +91,15 @@
          It is imported by `packages/client-engine/src/mutations.ts` and moved out of that file
          because the away responder composes replies too, from `packages/services`, which may not
          import the browser engine. */
-      "@trafficflow/core/reply-subject": ["../../packages/core/src/reply-subject.ts"]
+      "@trafficflow/core/reply-subject": ["../../packages/core/src/reply-subject.ts"],
+      /* The search ranking rule — the FIFTH admitted leaf, and it arrived with this line for the
+         reason the fourth did: the guard holds this map and `vite.config.ts`'s alias table to
+         each other, so a subpath added to core's exports and forgotten here is a red test rather
+         than a release CI that dies at `tsc --noEmit` on all three platforms.
+         It is imported by `packages/client-engine/src/search.ts` — the local index — and by
+         `packages/services/src/search-service.ts`, which is the whole point: the desktop's own
+         search and the hosted archive apply ONE tier rule and one ordering. */
+      "@trafficflow/core/search-rank": ["../../packages/core/src/search-rank.ts"]
     }
   },
   "include": ["src", "vite.config.ts"]

@@ -873,6 +873,8 @@
     "resultsHead": "{count, plural, one {1 Treffer} other {# Treffer}}",
     "resultsMeta": " · {ms} ms auf diesem Gerät",
     "fuzzyNote": "ungefährer Treffer — „{term}“",
+    "similarHead": "Ähnlich",
+    "similarHint": "Nichts stimmte genau überein — das sind die nächstliegenden Wörter.",
     "emptyTitle": "Nichts auf diesem Gerät.",
     "toastServer": "Das gesamte Archiv wird durchsucht …",
     "facetFrom": "Von",

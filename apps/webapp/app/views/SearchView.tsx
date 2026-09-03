@@ -4,7 +4,8 @@
  * SEARCH — TWO PASSES, AND IT SAYS WHICH ONE IT IS ON.
  *
  *  1. **This device, instantly.** `engine.search()` is synchronous over the mirror: lexical +
- *     prefix + trigram fuzzy ("invoce" finds the invoice). It answers on every keystroke with
+ *     prefix, with trigram fuzzy as a SEPARATE tier ("invoce" finds the invoice, under a
+ *     heading that says these are guesses). It answers on every keystroke with
  *     no round trip, and that is not negotiable — it is the whole reason the local index
  *     exists.
  *  2. **The whole archive, a moment later.** `engine.searchServer()` runs `GET /search` — the
@@ -29,6 +30,18 @@
  * A client with no archive behind it — `?demo=1`, and the desktop tier, whose master is the
  * IMAP mailbox — gets its own sentence rather than a hidden failure. `serverSearchAvailable()`
  * is false there and nothing is requested, which is what keeps the demo at zero network.
+ *
+ * ── AND WHY THE GUESSES ARE IN THEIR OWN SECTION ─────────────────────────────────────────
+ *
+ * The two arms used to be one score, so a trigram guess weighted by the subject field could
+ * outrank a literal match found in a body. Measured on the demo corpus: `graphite` put "Fotos
+ * vom Grat" above the message that actually says the word, and `invoce` returned twenty rows
+ * for a query with one answer — nineteen of them reached through the two-letter word `in`.
+ *
+ * The rule that replaced it is `@trafficflow/core/search-rank`'s, and each door applies it to
+ * its own half: matches first, guesses only when there are no matches, never interleaved. This
+ * view applies it once more to the MERGED list, which is the composition neither door can do —
+ * see the merge below for why the obvious version of that is worse than no rule at all.
  */
 import { useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
@@ -42,6 +55,7 @@ import {
   type SearchHit as EngineSearchHit,
   type ServerSearchSort,
 } from "@ohmail/client-engine";
+import { showSimilar } from "@trafficflow/core/search-rank";
 import { Facets, SearchBox, SearchHit, type FacetGroup } from "@ohmail/ui";
 import { displayTime, metaLine, PLACE_LABEL, placeLabel, senderName } from "../shell/format";
 import { displayAddress } from "../shell/idn";
@@ -66,7 +80,8 @@ type ServerOutcome = Awaited<ReturnType<OhmailEngine["searchServer"]>>;
 /** What the archive pass is doing FOR THE QUERY CURRENTLY IN THE BOX. */
 type Archive =
   | { state: "searching" }
-  | { state: "ready"; items: EngineMessage[]; total: number }
+  /** `tier` says whether these rows are matches or typo-tolerant guesses — see the merge below. */
+  | { state: "ready"; items: EngineMessage[]; total: number; tier: "exact" | "similar" }
   | { state: "failed"; error: string }
   | { state: "unavailable" };
 
@@ -277,7 +292,7 @@ export function SearchView({
           q: trimmed,
           outcome:
             outcome.state === "ready"
-              ? { state: "ready", items: outcome.items, total: outcome.total }
+              ? { state: "ready", items: outcome.items, total: outcome.total, tier: outcome.tier }
               : outcome.state === "failed"
                 ? { state: "failed", error: outcome.error }
                 : { state: "unavailable" },
@@ -314,20 +329,41 @@ export function SearchView({
     return rank;
   }, [current]);
 
-  // ── merge: local first, archive-only appended ─────────────────────────────
-  const mergedRaw: MergedHit[] = useMemo(() => {
-    // Relevance floor over the engine's recall: a hit must carry at least
-    // one exact/prefix match, or a fuzzy match against a term long enough
-    // to mean something ("invoce" → "invoice" stays; "in" noise goes).
-    // It applies to the LOCAL arm only — the server ranked its own arm by RRF and did not
-    // hand back per-token matches to floor against.
-    const out: MergedHit[] = (result?.items ?? [])
-      .filter((hit) => hit.matches.some((x) => !x.fuzzy || x.term.length >= 4))
-      .map((hit) => ({ hit, archiveOnly: false }));
-    const seen = new Set(out.map((m) => m.hit.message.id));
+  /**
+   * ═══ MERGE: TWO DOORS, TWO TIERS, AND THE RULE APPLIED TO THE JOIN ═══════════════════════
+   *
+   * Each door decides its OWN tier: the local index knows whether its exact arm found anything
+   * on this device, and the archive knows whether its lexical arm found anything in the corpus.
+   * Neither knows about the other, so the composition has to happen here — and getting it wrong
+   * in the obvious way would be worse than not tiering at all.
+   *
+   * The obvious way: render each door's similar rows whenever that door had no exact ones. On a
+   * device holding a thin mirror that is a near-certainty — the local index returns guesses,
+   * the archive returns three real matches, and the screen shows both, with the guesses first
+   * because the local pass answers first. The reader sees exactly the interleaving the tier
+   * rule exists to remove.
+   *
+   * So the two exact halves are merged, the two similar halves are merged, and `showSimilar` is
+   * asked ONCE about the merged exact count. One rule, one answer, at the level the reader is
+   * actually looking at.
+   *
+   * ── THE NOISE FLOOR THAT USED TO BE HERE IS GONE, AND THAT IS NOT A REMOVAL ─────────────
+   *
+   * This memo used to filter the local hits: keep a row only if it carried a non-fuzzy match or
+   * a fuzzy one against a term of four characters or more. That was the right rule in the wrong
+   * place — it applied to the LOCAL arm only, so the archive's half was never floored, and a
+   * view is not where a ranking decides what counts as a match. It is now
+   * `MIN_FUZZY_TERM_LEN` in `@trafficflow/core/search-rank`, applied inside the index where
+   * the arm runs, which is what lets both doors be held to it.
+   */
+  const { exactRaw, similarRaw } = useMemo(() => {
+    const reader = current?.state === "ready" ? engine.read() : null;
+    const exact: MergedHit[] = (result?.items ?? []).map((hit) => ({ hit, archiveOnly: false }));
+    const similar: MergedHit[] = (result?.similar ?? []).map((hit) => ({ hit, archiveOnly: false }));
+    const seen = new Set([...exact, ...similar].map((m) => m.hit.message.id));
 
-    if (current?.state === "ready") {
-      const reader = engine.read();
+    if (current?.state === "ready" && reader) {
+      const into = current.tier === "similar" ? similar : exact;
       for (const item of current.items) {
         if (seen.has(item.id)) continue;
         seen.add(item.id);
@@ -336,28 +372,43 @@ export function SearchView({
         // did. The wire item is the fallback for a row the mirror does not hold — which on a
         // Cloud account means a bootstrap still draining, since `/sync` mirrors every message.
         const mine = reader.get<EngineMessage>("message", item.id);
-        out.push({
+        into.push({
           hit: { message: mine ?? item, score: 0, matches: [] },
           archiveOnly: mine === undefined,
         });
       }
     }
-    return out;
+    return { exactRaw: exact, similarRaw: similar };
   }, [result, current, engine]);
 
   /**
-   * The list as it is READ — merged, then put in the chosen order. `relevance` passes the merged
-   * array through untouched, so the pre-existing behaviour is the identity case rather than a
-   * re-derivation of it.
+   * IS THERE A SIMILAR SECTION AT ALL — decided on the UNFILTERED exact count, deliberately.
+   *
+   * Asking after the facet filter would mean clicking "From · Anna" on a list of real matches
+   * could empty the exact half and make a block of typo guesses appear underneath, which is a
+   * narrowing gesture producing MORE rows. The facet narrows what is shown; it does not change
+   * what the corpus answered.
+   */
+  const similarOn = showSimilar(exactRaw.length) && similarRaw.length > 0;
+
+  /**
+   * The lists as they are READ — each tier merged, then put in the chosen order. `relevance`
+   * passes them through untouched, so the pre-existing behaviour is the identity case rather
+   * than a re-derivation of it. Ordered SEPARATELY: a sort reorders within a tier and can never
+   * lift a similar row past an exact one, which is the invariant the whole change is about.
    */
   const merged: MergedHit[] = useMemo(
-    () => orderMerged(mergedRaw, sort, mailboxRank),
-    [mergedRaw, sort, mailboxRank],
+    () => orderMerged(exactRaw, sort, mailboxRank),
+    [exactRaw, sort, mailboxRank],
+  );
+  const mergedSimilar: MergedHit[] = useMemo(
+    () => (similarOn ? orderMerged(similarRaw, sort, mailboxRank) : []),
+    [similarRaw, similarOn, sort, mailboxRank],
   );
 
-  const items = useMemo(() => {
-    if (!filter) return merged;
-    return merged.filter(({ hit: { message: m } }) => {
+  const applyFilter = (list: MergedHit[]) => {
+    if (!filter) return list;
+    return list.filter(({ hit: { message: m } }) => {
       // Must match how the facets below are keyed, leaf fallback included.
       if (filter.group === "folder")
         return (VIEW_OF_FOLDER[m.folder] ?? folderLeaf(m.folder)) === filter.label;
@@ -369,22 +420,31 @@ export function SearchView({
       if (filter.group === "refine") return m.hasAttachments;
       return true;
     });
-  }, [merged, filter]);
+  };
+
+  const items = useMemo(() => applyFilter(merged), [merged, filter]);
+  const similarItems = useMemo(() => applyFilter(mergedSimilar), [mergedSimilar, filter]);
 
   /**
-   * Facets are counted over the MERGED set, not over `result.facets`.
+   * Facets are counted over what is ON SCREEN, not over `result.facets`.
    *
    * The engine's facets describe the local arm alone. Once the archive lands, rendering them
    * beside a longer list would put "From · Anna · 3" above seven visible Anna results — a
    * smaller, quieter version of exactly the claim this change exists to remove. Counted from
-   * `merged` (before the facet filter, so clicking one does not zero the others).
+   * the merged tiers (before the facet filter, so clicking one does not zero the others), and
+   * the similar half is counted only when it is being rendered — a facet count that includes
+   * rows nobody can see is the same defect one level down.
    */
+  const facetSource = useMemo(
+    () => (similarOn ? [...merged, ...mergedSimilar] : merged),
+    [merged, mergedSimilar, similarOn],
+  );
   const facetGroups: FacetGroup[] = useMemo(() => {
     if (!result) return [];
     const senders = new Map<string, number>();
     const folders = new Map<string, number>();
     let attachments = 0;
-    for (const { hit: { message: m } } of merged) {
+    for (const { hit: { message: m } } of facetSource) {
       const who = m.from.name ?? displayAddress(m.from.address);
       senders.set(who, (senders.get(who) ?? 0) + 1);
       // View id where a view exists, else the folder's LEAF — never the raw namespaced path,
@@ -419,7 +479,7 @@ export function SearchView({
       });
     }
     return groups;
-  }, [result, merged, t]);
+  }, [result, facetSource, t]);
 
   const onFacet = (groupTitle: string, label: string) => {
     const group =
@@ -438,7 +498,8 @@ export function SearchView({
     );
   };
 
-  const isEgg = trimmed.toLowerCase() === "blanc" && items.length === 0;
+  const isEgg =
+    trimmed.toLowerCase() === "blanc" && items.length === 0 && similarItems.length === 0;
 
   /**
    * ═══ THE KEYBOARD PATH THAT DID NOT EXIST ════════════════════════════════════════════
@@ -465,7 +526,20 @@ export function SearchView({
    * are the ones the box's own focus makes available (`inInput`), and after ↵ opens a hit
    * the pile's own `j`/`k` take over from where the message actually lives.
    */
-  const shown = items.slice(0, SHOWN);
+  /**
+   * THE ROWS, AS ONE SEQUENCE — matches, then the guesses under their heading.
+   *
+   * The cursor is an index into what is RENDERED, so the two sections have to be one array or
+   * ↓ would stop at the heading. `shownExact` takes the cap first and the similar rows take
+   * what is left of it: under today's floor the two are mutually exclusive and `SHOWN - 0` is
+   * `SHOWN`, but the arithmetic does not assume that, so a moved floor cannot make this list
+   * longer than the cap it advertises.
+   */
+  const shownExact = items.slice(0, SHOWN);
+  const shownSimilar = similarItems.slice(0, Math.max(0, SHOWN - shownExact.length));
+  const shown = [...shownExact, ...shownSimilar];
+  /** How many rows the two tiers hold in total — what the count under the box is about. */
+  const found = items.length + similarItems.length;
   const [at, setAt] = useState(0);
   // Reset on the ORDER too, not only on the query. The cursor is an index into the rendered
   // rows; reordering them under a held index leaves it pointing at a different message than the
@@ -677,7 +751,7 @@ export function SearchView({
               <b>{t("eggTitle")}</b>
               {t("eggHint")}
             </div>
-          ) : items.length === 0 ? (
+          ) : shown.length === 0 ? (
             /* "Nothing here" is a claim too, and its size depends on which pass has answered.
                The scope line is rendered INSIDE the empty state for that reason: an empty
                result while the archive is still running must not read as an empty corpus. */
@@ -689,12 +763,12 @@ export function SearchView({
           ) : (
             <>
               <div className="results-head num">
-                <b>{t("resultsHead", { count: items.length })}</b>
+                <b>{t("resultsHead", { count: found })}</b>
                 {t("resultsMeta", { ms: tookMs })}
                 {/* The list is capped at 12 rows and always was. That was quiet when only the
                     local arm fed it; with the archive merged in the gap between the count and
                     the rows widens, so it is stated. */}
-                {items.length > SHOWN ? <> · {t("resultsShown", { shown: SHOWN })}</> : null}
+                {found > SHOWN ? <> · {t("resultsShown", { shown: SHOWN })}</> : null}
                 {filter ? <> · {t("filtered")}</> : null}
               </div>
               {/* `.results-head` again rather than a new class: `app/app.css` and
@@ -708,7 +782,7 @@ export function SearchView({
                     to filter. The cursor is a wrapper class plus `aria-current`, which is
                     what a screen reader can act on without moving focus off the input. */}
                 <div>
-                  {shown.map(({ hit, archiveOnly }, i) => (
+                  {shownExact.map(({ hit, archiveOnly }, i) => (
                     <div
                       key={hit.message.id}
                       className={i === cursor ? "hit-w cur" : "hit-w"}
@@ -718,6 +792,42 @@ export function SearchView({
                       <Hit hit={hit} now={now} onOpen={onOpen} archiveOnly={archiveOnly} placeOf={placeOf} />
                     </div>
                   ))}
+                  {/*
+                    THE SIMILAR SECTION — typo-tolerant guesses, under a heading that says so.
+
+                    It exists because the alternative to showing these rows is not showing them,
+                    and a misspelt query would then answer "nothing" while the message the reader
+                    is looking for sits one letter away. What the heading buys is that the reader
+                    is never asked to work out which rows are which: an unlabelled guess mixed
+                    into matches is a wrong answer wearing a right answer's clothes.
+
+                    Rendered only when `similarOn` — merged exact count at the floor — so under
+                    today's rule this block and the rows above it are never both on screen.
+                    `data-similar` is what the ranking table asserts against; `.results-head`
+                    takes the existing 12px/--ink2 treatment rather than inventing a class in a
+                    stylesheet another slice owns.
+                  */}
+                  {shownSimilar.length > 0 ? (
+                    <>
+                      <div className="results-head" data-similar="head">
+                        <b>{t("similarHead")}</b> {t("similarHint")}
+                      </div>
+                      {shownSimilar.map(({ hit, archiveOnly }, i) => {
+                        const rowAt = shownExact.length + i;
+                        return (
+                          <div
+                            key={hit.message.id}
+                            className={rowAt === cursor ? "hit-w cur" : "hit-w"}
+                            data-hit={hit.message.id}
+                            data-similar="hit"
+                            {...(rowAt === cursor ? { "aria-current": "true" as const } : {})}
+                          >
+                            <Hit hit={hit} now={now} onOpen={onOpen} archiveOnly={archiveOnly} placeOf={placeOf} />
+                          </div>
+                        );
+                      })}
+                    </>
+                  ) : null}
                 </div>
                 <Facets groups={facetGroups} onPick={onFacet} />
               </div>
