@@ -290,7 +290,17 @@ describe("Settings → this install", () => {
       .not.toContain("did not come back");
   });
 
-  it("names the OTHER door when the install came in by it", async () => {
+  /**
+   * THE SIGNED-OUT ARM IS DEFENSIVE AND THIS CASE PINS ITS WORDS, not its reachability.
+   *
+   * `DesktopGate` returns the door chooser on a pre-auth engine and the expiry notice on a dead
+   * session, both before it renders `AppShell` — so this pane never sees `session: "out"` on the
+   * cloud door today. The case is still worth having: it is what stops the arm being reworded, or
+   * deleted and later reintroduced from a second source of truth, which is the shape that told a
+   * signed-in person they were signed out. The census's own "a cloud door whose session is gone
+   * draws no settings nav" case is the counterpart, and states the reachability.
+   */
+  it("has words for a session that is gone, wherever the gate lets that be seen", async () => {
     await mount({ ...SERVING, mode: "cloud", credentialState: "ready" }, () => {}, "out");
     const text = hostEl.textContent ?? "";
     expect(text).toContain("ohmail Cloud");

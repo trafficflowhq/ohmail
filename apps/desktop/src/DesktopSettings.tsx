@@ -88,6 +88,17 @@ function credentialLine(
 ): { label: string; value: string; description: string } {
   const cloud = status.mode === "cloud";
   const label = cloud ? "Account session" : "Mailbox password";
+  /* ── THE TWO NON-LIVE ARMS ARE DEFENSIVE, AND SAYING SO IS THE POINT ──────────────────────
+   *
+   * Neither is reachable from `DesktopGate` today: the gate returns the door chooser on a pre-auth
+   * engine and the expiry notice on a dead session, both BEFORE it renders `AppShell` — and this
+   * pane is `AppShell`'s `desktopSection`. So on the cloud door `session` is always `live` here.
+   *
+   * They stay, worded, for one reason: the condition that makes them unreachable is three
+   * components away and is not this file's to keep. What must never come back is the previous
+   * shape, where the pane derived the sentence from a field that COULD disagree with the window
+   * around it and did — telling a signed-in person they were signed out. An arm that agrees with
+   * the gate is safe whether or not the gate ever selects it; a second source of truth is not. */
   if (cloud) {
     return session === "live"
       ? {

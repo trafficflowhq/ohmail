@@ -136,10 +136,15 @@ const CLOUD_CONSENT: ConsentTransport = {
      and no folder verbs either. So a self-host web client draws the same pane that cannot store,
      and this constant says otherwise. It is declared here rather than guessed because the honest
      answer is the SERVER's to give: `/hello`'s `features` is where `pairing` already lives for
-     exactly this reason ("an older server never grows a dead entry"), and `folders` belongs
-     beside it. Until it does, this constant is exact for the managed deployment and one release
-     ahead of the truth for a self-hosted one. The desktop's two doors are already answered
-     truthfully, because the transport there is built by something that knows its own door. */
+     exactly this reason ("an older server never grows a dead entry"), and `folders` belongs beside
+     it. Until it does, this constant is exact for the managed deployment and one release ahead of
+     the truth for a self-hosted one.
+
+     THAT IS TWO OF THE THREE SURFACES THIS AFFECTS, and the third is a desktop install: the app's
+     self-host door is `{ mode: "cloud", cloudUrl: <their origin> }`, so it takes the desktop's
+     hosted wire and inherits the same wrong answer. Only the STANDALONE door is settled by a wire
+     that knows its own table. One `features.folders` word closes all three; a per-surface probe
+     would close them one at a time and then be deleted. See `apps/desktop/src/local-consent.ts`. */
   foldersStorable: true,
   state: () => consentApi.state(),
   setAutoSuggest: (enabled) => consentApi.setAutoSuggest(enabled),

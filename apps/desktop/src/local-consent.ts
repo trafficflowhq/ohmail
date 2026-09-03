@@ -111,10 +111,25 @@ async function patch<T>(body: Record<string, unknown>): Promise<T> {
  * hook keep a stable wire identity across renders.
  */
 export const consentOverBridge: ConsentTransport = {
-  /* THE HOSTED DOOR REACHES THE HOSTED TABLE, which is the one that mounts `foldersRoutes`. The
-     engine serves no folder route of its own and does not try to: `/folders*` is not in
-     `cloud-read.ts`, so every one of the four verbs falls through to the write-through proxy and
-     is answered by the account. See the standalone twin below for the other half. */
+  /* THE MANAGED TABLE MOUNTS `foldersRoutes`, and the engine serves no folder route of its own:
+     `/folders*` is not in `cloud-read.ts`, so all four verbs fall through to the write-through
+     proxy and are answered by the account. True of an install connected to the managed service.
+
+     ── AND THIS CONSTANT CANNOT SEE THE THIRD DOOR ─────────────────────────────────────────
+     `mode` has two values and the app has THREE doors: `configureSelfHostDoor` opens a server the
+     person runs themselves as `{ mode: "cloud", cloudUrl: <their origin> }`, so a self-hosted
+     install takes this wire — and `selfHostRoutes` spreads `localRoutes` whole, inheriting
+     `withoutFoldersFlag`. There, exactly as on the standalone door, the flag reads off whatever is
+     stored and the write is dropped, so the pane draws a switch that snaps back.
+
+     It is NOT fixed by a `flavor` probe here, and that is a decision rather than an omission. The
+     engine can answer which server it is configured for (`POST /cloud/probe` returns that server's
+     own greeting), so a second mechanism could be built — and the honest signal is a `/hello`
+     feature word beside `pairing`, which the browser needs anyway for a self-hosted TAB and which
+     would delete the probe again the day it lands. One mechanism, at the server, for all three
+     surfaces. Until then this door is unchanged from before this file gained the field: the pane
+     is drawn on a self-hosted install and does not store, which is pre-existing rather than
+     introduced here, and it is recorded as such in the settings census. */
   foldersStorable: true,
   state: async () => jsonOf<ConsentStateWire>(await bridgeFetch(CONSENT_PATH)),
   setAutoSuggest: (enabled) => patch<{ autoSuggestAt: string | null }>({ autoSuggest: enabled }),
