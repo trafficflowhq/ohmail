@@ -242,6 +242,41 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
     "id", "ran_at", "mode", "stripe_subscriptions", "mirror_rows", "emitted", "apply_failed",
     "flagged", "pages", "truncated", "error",
   ],
+  // ── THE CREDIT ROLL-UP (cloud 0028) — the console's read path for spend ─────────────────
+  //
+  // Usage data in the isolation rule's own words: an account id, a DAY, a closed pool word, a
+  // closed reason vocabulary, a signed integer and a count. Nothing here is derived from what any
+  // message says — which is exactly the property `credit_ledger.source` fails and why THAT column
+  // is un-granted while these are granted whole.
+  //
+  // These three tables are why the Billing board and the account page can stop scanning
+  // `credit_ledger` on every read. The ledger is not pruned to make that possible; the reads move
+  // here instead, and the money trail stays whole.
+  "public.credit_usage_daily": [
+    "day", "account_id", "pool", "reason", "credits", "rows", "computed_at",
+  ],
+  "public.credit_usage_totals": [
+    "account_id", "pool", "reason", "credits", "rows", "computed_at",
+  ],
+  // The run ledger, on `billing_reconciliation_runs`'s exact terms: counts, a scrubbed class:code
+  // error and the timestamps the freshness stamp and the staleness rule read. `divergent_accounts`
+  // is a COUNT — the accounts themselves are deliberately not stored, the same decision
+  // `billing_reconciliation_runs.divergences` records for its own detail.
+  "public.credit_rollup_runs": [
+    "id", "ran_at", "days_recomputed", "rows_written", "divergent_accounts",
+    "pruned_setup_spends", "error",
+  ],
+  // ── THE SETUP POOL (cloud 0021, re-keyed by 0028) ───────────────────────────────────────
+  //
+  // The account page states what screening pool an account holds and when it expires, which is a
+  // support question about an entitlement and squarely inside "staff see billing and usage".
+  // `mailbox_id` is ABSENT: on an account-kind row it names which mailbox's connection triggered
+  // the grant, and the console has no question that needs it — a mailbox id joins to the mailbox
+  // roster, and this table's whole content here is a size, a remainder and a date. `id` is absent
+  // for the same reason: nothing joins to it on a staff surface.
+  "public.setup_grants": [
+    "account_id", "kind", "granted", "remaining", "expires_at", "created_at",
+  ],
   // ── FUNNEL TOP — invite/waitlist DATES ONLY, so the admin console can see the signup funnel
   //    on an invite-only beta (task: admin funnel). Both tables were fully un-granted before,
   //    and the ONLY reason they are named now is that their whole point — how many invites are

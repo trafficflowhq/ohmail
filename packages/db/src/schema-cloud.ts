@@ -19,7 +19,7 @@
  * beside the journal partition it mirrors.
  */
 
-import { pgTable, uuid, text, timestamp, bigint, bigserial, boolean, jsonb, integer, real, unique, uniqueIndex, index, primaryKey, check } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, timestamp, date, bigint, bigserial, boolean, jsonb, integer, real, unique, uniqueIndex, index, primaryKey, check } from "drizzle-orm/pg-core";
 import { sql, desc } from "drizzle-orm";
 import { accounts, sessions, users } from "./schema-mail.js";
 
@@ -328,7 +328,119 @@ export const creditLedger = pgTable("credit_ledger", {
 }, (t) => ({
   uqSource: uniqueIndex("credit_ledger_source_uq").on(t.accountId, t.source),
   ixAccountIdDesc: index("credit_ledger_account_id_desc_idx").on(t.accountId, desc(t.id)),
+  // Cloud 0028 — the roll-up's whole predicate. `created_at` and NOT `id`, because a
+  // `bigserial` is not commit-ordered ACROSS accounts: a transaction can take a lower id and
+  // commit later, so a watermark over `id` skips the late committer for ever. The roll-up
+  // recomputes whole days from `created_at` instead, and this is what stops that being a
+  // sequential scan of the whole money trail once an hour.
+  ixCreatedAt: index("credit_ledger_created_at_idx").on(t.createdAt),
+  // Cloud 0028 — the PARTIAL index behind the console's account statement, which now renders
+  // only the NON-DEBIT rows raw (the metered debits are read from `credit_usage_daily`). The
+  // predicate is declared in the migration; drizzle's `.where()` is mirrored here so a reader of
+  // the schema sees that this index does not serve an unqualified `ORDER BY id DESC`.
+  ixEvents: index("credit_ledger_events_idx").on(desc(t.id)).where(
+    sql`${t.reason} in ('invoice_grant','trial_grant','period_expiry','adjustment_credit','adjustment_debit','refund')`,
+  ),
 }));
+
+/**
+ * THE READ PATH FOR CREDIT SPEND (cloud 0028) — one row per day, account, pool and reason.
+ *
+ * ## Why aggregate rather than prune
+ *
+ * The Billing board's three whole-ledger scans and the account page's statement were reads over
+ * `credit_ledger`, which grows without bound because it is never pruned and MUST NOT BE: the
+ * append-only trigger refuses a delete, the deferred coupling triggers make the newest row and
+ * `credit_balances` one fact, `debitCredits` reads the dedup row before it checks sufficiency,
+ * and `refundCredits` reads the origin debit. Shortening the trail does not make the reads
+ * cheaper; it makes the money wrong. So the reads move here and the trail stays whole.
+ *
+ * ## Idempotent by RECOMPUTATION, not by a watermark
+ *
+ * The pass rewrites whole days from `created_at`. A watermark over `id` would be cheaper and
+ * would be wrong: `bigserial` hands out ids before commit, so a transaction holding id 100 can
+ * commit after the one holding 101, and a watermark parked at 101 never sees 100 again. Within
+ * ONE account id order is commit order (every ledger write holds that account's balance row
+ * lock), but the roll-up reads across accounts, where that guarantee does not hold. Recomputing
+ * converges because the source is append-only: a day recomputed twice can only gain rows.
+ *
+ * `credits` keeps the ledger's sign convention (+ grant, − debit) so days sum. `pool` separates
+ * `credit_ledger` from `setup_grant_spends`, which are separate money with separate expiries.
+ * `computed_at` is the PASS's clock, so a console panel's freshness stamp names when the number
+ * was computed rather than when a row happened to be touched.
+ */
+export const creditUsageDaily = pgTable("credit_usage_daily", {
+  day: date("day").notNull(),
+  accountId: uuid("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
+  pool: text("pool").notNull(),                                   // 'ledger' | 'setup' (CHECK)
+  reason: text("reason").notNull(),
+  credits: integer("credits").notNull(),                          // signed, the ledger's convention
+  rows: integer("rows").notNull(),
+  computedAt: timestamp("computed_at", { withTimezone: true }).notNull(),
+}, (t) => ({
+  pk: primaryKey({ name: "credit_usage_daily_pk", columns: [t.day, t.accountId, t.pool, t.reason] }),
+  ixAccountDay: index("credit_usage_daily_account_day_idx").on(t.accountId, desc(t.day)),
+  ckPool: check("credit_usage_daily_pool_check", sql`${t.pool} in ('ledger','setup')`),
+  ckRows: check("credit_usage_daily_rows_check", sql`${t.rows} >= 0`),
+}));
+
+/**
+ * LIFETIME TOTALS (cloud 0028) — each pool from the source that is COMPLETE for it.
+ *
+ * `ledger` is aggregated from `credit_ledger` WHOLE. Not from {@link creditUsageDaily}: that
+ * table holds only the days some pass recomputed, so totals summed from it would be the recompute
+ * WINDOW's totals wearing the word "lifetime" — and the Billing board compares them against a
+ * live `sum(balance)` over the account's entire history. It would report a permanent drift of the
+ * deployment's whole lifetime on a healthy database, and the only fix would be a back-fill step
+ * somebody has to remember to run.
+ *
+ * `setup` is the mirror image and does come from {@link creditUsageDaily}: `setup_grant_spends` IS
+ * swept, so aggregating it directly would give a lifetime that SHRINKS as retention bites. The
+ * daily rows survive the sweep by design, so they are the only complete record once a draw row is
+ * gone.
+ *
+ * Written by the NIGHTLY arm only — a whole-table `GROUP BY` is a nightly cost — while
+ * {@link creditUsageDaily} is refreshed hourly. The two cadences are real and the console states
+ * each panel's own, rather than flattening them into one number that would be wrong about one.
+ */
+export const creditUsageTotals = pgTable("credit_usage_totals", {
+  accountId: uuid("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
+  pool: text("pool").notNull(),
+  reason: text("reason").notNull(),
+  credits: integer("credits").notNull(),
+  rows: integer("rows").notNull(),
+  computedAt: timestamp("computed_at", { withTimezone: true }).notNull(),
+}, (t) => ({
+  pk: primaryKey({ name: "credit_usage_totals_pk", columns: [t.accountId, t.pool, t.reason] }),
+  ckPool: check("credit_usage_totals_pool_check", sql`${t.pool} in ('ledger','setup')`),
+  ckRows: check("credit_usage_totals_rows_check", sql`${t.rows} >= 0`),
+}));
+
+/**
+ * ONE ROW PER ROLL-UP PASS (cloud 0028) — `billing_reconciliation_runs`'s shape and its argument.
+ *
+ * Both facts an operator needs are about ABSENCE: when the aggregates were last computed, and
+ * whether the pass has stopped happening. Neither is answerable by a log line from a process that
+ * has stopped writing log lines, and a board rendering a stale aggregate with no way to tell is
+ * the whole failure a freshness stamp exists for.
+ *
+ * `error` is class:code SCRUBBED, never message text — the rule `billing_events.error` and
+ * `billing_reconciliation_runs.error` already follow, and for the same reason: the blind staff
+ * role reads this column, and a driver's message can carry a parameter value.
+ */
+export const creditRollupRuns = pgTable("credit_rollup_runs", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  ranAt: timestamp("ran_at", { withTimezone: true }).defaultNow().notNull(),
+  /** Whole days recomputed — 2 hourly, 3 nightly, N for a back-fill. */
+  daysRecomputed: integer("days_recomputed").notNull(),
+  rowsWritten: integer("rows_written").notNull(),
+  /** `findCreditDivergence`'s count. NULL ⇒ this run did not measure it (the hourly pass does not). */
+  divergentAccounts: integer("divergent_accounts"),
+  /** `setup_grant_spends` rows the retention sweep removed. NULL ⇒ this run did not sweep. */
+  prunedSetupSpends: integer("pruned_setup_spends"),
+  /** class:code, scrubbed — null on a completed pass. */
+  error: text("error"),
+}, (t) => ({ ixRanAt: index("credit_rollup_runs_ran_at_idx").on(t.ranAt) }));
 
 /**
  * WHO IS DOING THIS PIECE OF PAID WORK RIGHT NOW (migration 0016).
@@ -1045,8 +1157,8 @@ export const invites = pgTable("invites", {
 }));
 
 /**
- * SETUP GRANTS (cloud 0021) — the screening-only, expiring credit pool granted once per
- * connected mailbox (see `SETUP_GRANT_CREDITS_PER_MAILBOX`), SEPARATE from the main ledger.
+ * SETUP GRANTS (cloud 0021, re-keyed by cloud 0028) — the screening-only, expiring credit pool
+ * granted ONCE PER ACCOUNT at its first connection, SEPARATE from the main ledger.
  *
  * Separate because two of its three properties are not expressible on the one main balance:
  * "screening-only" needs the spender to know which pool it draws, and "expires in 90 days"
@@ -1060,20 +1172,38 @@ export const invites = pgTable("invites", {
  * `UNIQUE (mailbox_id)` is "one grant per mailbox, ever" as a table fact — the trial bounty's
  * pattern. No FK on the mailbox, deliberately: the grant must survive a disconnect precisely so
  * a reconnect cannot re-arm it.
+ *
+ * ## `kind` and the partial unique index (cloud 0028)
+ *
+ * `kind` is `'mailbox'` for every row minted before 0028 and `'account'` for every row minted
+ * after it, and the partial unique index `setup_grants_account_once_uq` makes "at most one
+ * account-kind row per account, EVER" a fact about the table. PARTIAL because the historical
+ * per-mailbox rows are several per account, legitimately, and must not be disturbed.
+ *
+ * The index is the serialization that matters, not the lock above it. Two first connections
+ * arriving on two connections both read "no grant here" and both insert; the account's allowance
+ * lock serializes them on THIS code path, and the index refuses the second one down ANY path.
+ * `mailbox_id` is still NOT NULL on an account-kind row — it carries the mailbox whose connection
+ * triggered the grant, which is the operator-useful half of "when did this pool appear".
  */
 export const setupGrants = pgTable("setup_grants", {
   id: uuid("id").defaultRandom().primaryKey(),
   accountId: uuid("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
   mailboxId: uuid("mailbox_id").notNull(),
+  /** 'mailbox' (pre-0028, one pool per connected mailbox) | 'account' (one pool per account). */
+  kind: text("kind").notNull().default("mailbox"),
   granted: integer("granted").notNull(),
   remaining: integer("remaining").notNull(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
   uqMailbox: unique("setup_grants_mailbox_uq").on(t.mailboxId),
+  uqAccountOnce: uniqueIndex("setup_grants_account_once_uq").on(t.accountId)
+    .where(sql`${t.kind} = 'account'`),
   ixAccountExpiry: index("setup_grants_account_expiry_idx").on(t.accountId, t.expiresAt),
   ckBounds: check("setup_grants_remaining_bounds", sql`${t.remaining} >= 0 AND ${t.remaining} <= ${t.granted}`),
   ckPositive: check("setup_grants_granted_positive", sql`${t.granted} > 0`),
+  ckKind: check("setup_grants_kind_check", sql`${t.kind} in ('mailbox','account')`),
 }));
 
 /**
@@ -1102,7 +1232,7 @@ export const setupGrantSpends = pgTable("setup_grant_spends", {
  * install passes THIS one and nothing else — see `apps/sidecar/src/db.ts`.
  */
 export const cloudSchema = {
-  credentials, webauthnCredentials, webauthnChallenges, totpSecrets, recoveryCodes, loginTokens, oauthAuthCodes, authEvents, authThrottle, pushSubscriptions, billingCustomers, billingSubscriptions, billingReconciliationRuns, creditBalances, creditLedger, billingEvents, workerHeartbeats, alertState, waitlist, staffUsers, staffSessions, accountSuspensions,
+  credentials, webauthnCredentials, webauthnChallenges, totpSecrets, recoveryCodes, loginTokens, oauthAuthCodes, authEvents, authThrottle, pushSubscriptions, billingCustomers, billingSubscriptions, billingReconciliationRuns, creditBalances, creditLedger, creditUsageDaily, creditUsageTotals, creditRollupRuns, billingEvents, workerHeartbeats, alertState, waitlist, staffUsers, staffSessions, accountSuspensions,
   mailboxOauthCeremonies, mailboxOauthDeviceCeremonies,
   oauthProviderConfig, attachmentStaging, invites, aiAttemptClaims,
   setupGrants, setupGrantSpends,

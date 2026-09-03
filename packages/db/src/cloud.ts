@@ -202,11 +202,21 @@ export {
 } from "./storage-cloud.js";
 
 export {
-  // The screening-only, expiring, once-per-mailbox setup pool (cloud 0021) and the gate wrapper
-  // the two Screener arms install over their spend gates. See `setup-grant.ts`.
-  SETUP_GRANT_CREDITS_PER_MAILBOX, SETUP_GRANT_TTL_DAYS,
+  // The screening-only, expiring, once-per-ACCOUNT setup pool (cloud 0021, re-keyed by 0028) and
+  // the gate wrapper the two Screener arms install over their spend gates. See `setup-grant.ts`.
+  SETUP_GRANT_TTL_DAYS,
   grantSetupCredits, setupPoolOf, withSetupPool,
 } from "./setup-grant.js";
+
+export {
+  // The day-grained credit aggregates the admin console reads instead of scanning the ledger
+  // (cloud 0028), and the retention sweep for the setup pool's draw record. `credit_ledger`
+  // itself is never pruned — see the module header for the four mechanisms that depend on it.
+  runCreditRollupPass, isNightlyRollupSlot,
+  CREDIT_ROLLUP_HOURLY_DAYS, CREDIT_ROLLUP_NIGHTLY_DAYS, CREDIT_ROLLUP_NIGHTLY_HOUR_UTC,
+  SETUP_SPEND_RETENTION_DAYS,
+  type CreditRollupOptions, type CreditRollupReport,
+} from "./credit-rollup.js";
 
 export {
   makeAiCreditGate, aiRefusalReason, classifyLedgerSource, screenerLedgerSource,

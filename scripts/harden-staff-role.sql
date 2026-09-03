@@ -832,6 +832,52 @@ GRANT SELECT (id, ran_at, mode, stripe_subscriptions, mirror_rows, emitted, appl
   flagged, pages, truncated, error)
   ON public.billing_reconciliation_runs TO ohmail_admin;
 
+-- ── 9c-bis. The credit ROLL-UP (cloud 0028) — the console's read path for spend. ──────────
+--
+-- Three tables and the reason they exist: the Billing board ran three UNCAPPED aggregates over
+-- `credit_ledger` on every read, and the account page rendered fifty raw rows. The ledger is
+-- append-only and never pruned, so those reads stop being affordable while the trail keeps
+-- growing — the answer is to move the READS here, never to shorten the trail.
+--
+-- Every column is grantable by the isolation rule's own words. An account id, a DAY, a closed
+-- pool word ('ledger' | 'setup'), a closed reason vocabulary, a signed integer and a count:
+-- billing and usage data, nothing derived from what any message says. That is precisely the
+-- property `credit_ledger.source` fails — it is a digest of a Message-ID, a confirmation oracle —
+-- which is why that column stays un-granted while these tables are granted whole.
+--
+-- Granted rather than left out because the console's spend panels ARE these tables now: without
+-- the grant the account page and the Billing board both 42501 → 503, which is risk 1 in the
+-- ruling ("grants widened in code but the harden script not re-run in production").
+REVOKE ALL ON public.credit_usage_daily FROM ohmail_admin;
+GRANT SELECT (day, account_id, pool, reason, credits, rows, computed_at)
+  ON public.credit_usage_daily TO ohmail_admin;
+
+REVOKE ALL ON public.credit_usage_totals FROM ohmail_admin;
+GRANT SELECT (account_id, pool, reason, credits, rows, computed_at)
+  ON public.credit_usage_totals TO ohmail_admin;
+
+-- The run ledger, on `billing_reconciliation_runs`'s exact terms: counts, a class:code-scrubbed
+-- error, and the `ran_at` a freshness stamp and a staleness rule both read. `divergent_accounts`
+-- is a COUNT and the accounts themselves are never stored — the same decision
+-- `billing_reconciliation_runs.divergences` records for its own operator detail.
+REVOKE ALL ON public.credit_rollup_runs FROM ohmail_admin;
+GRANT SELECT (id, ran_at, days_recomputed, rows_written, divergent_accounts,
+  pruned_setup_spends, error)
+  ON public.credit_rollup_runs TO ohmail_admin;
+
+-- ── 9c-ter. The SETUP POOL (cloud 0021, re-keyed by 0028). ────────────────────────────────
+--
+-- The account page states the screening pool an account holds and when it expires — a support
+-- question about an entitlement, squarely inside "staff see billing and usage data".
+--
+-- `mailbox_id` is NOT granted, and neither is `id`. On an account-kind row `mailbox_id` names
+-- which mailbox's connection triggered the grant, and the console has no question that needs it;
+-- it is a join key to the mailbox roster and nothing more. Narrower is free here, so narrower it
+-- is: this table's whole content on a staff surface is a size, a remainder and two dates.
+REVOKE ALL ON public.setup_grants FROM ohmail_admin;
+GRANT SELECT (account_id, kind, granted, remaining, expires_at, created_at)
+  ON public.setup_grants TO ohmail_admin;
+
 -- ── 9d. Funnel top — invite/waitlist DATES ONLY, never an address. ────────────────────────
 --
 -- On an invite-only beta the TOP of the signup funnel — how many invites are outstanding, how
@@ -942,6 +988,13 @@ GRANT DELETE ON public.alert_state TO ohmail_admin;
 --                       grants only their DATE columns for the funnel counts, never `email` or
 --                       `code_hash`
 --   workflows, workflow_runs, workflow_proposals   `steps`/`trigger` quote mail
+--   setup_grant_spends  the setup pool's DRAW record, and `source` on it is
+--                       `classify:screener:<message uuid>` — the same confirmation oracle that
+--                       keeps `credit_ledger.source` un-granted, one table over. The pool's
+--                       account-level facts (size, remainder, expiry) are granted on
+--                       `setup_grants` in §9c-ter, which is every question the console asks; the
+--                       per-draw rows are read by the roll-up on the RUNTIME connection, never
+--                       by the console
 --   public.audit_log    reachable ONLY through admin.audit_log, above
 --   credentials, webauthn_credentials, webauthn_challenges, totp_secrets,
 --   recovery_codes, refresh_tokens, login_tokens, oauth_auth_codes,

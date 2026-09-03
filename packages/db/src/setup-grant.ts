@@ -3,13 +3,13 @@ import { setupGrants, setupGrantSpends, creditLedger } from "./schema.js";
 import { aiActionCost } from "./ledger-source.js";
 import { aiRefusalReason } from "./ai-gate.js";
 import { AI_CLAIM_TTL_MS, claimAiAttempt, releaseAiAttempt } from "./ai-claim.js";
-import { effectiveSubscriptionOf, entitlementsFor } from "./billing.js";
+import { effectiveSubscriptionOf } from "./billing.js";
 import type { AiCreditGate, AiSpendOutcome } from "./ai-gate-port.js";
 import type { LedgerTx, Tx } from "./change-log.js";
 
 /**
- * THE SETUP GRANT — a screening-only, expiring credit pool granted once per connected mailbox,
- * SEPARATE from the main credit ledger.
+ * THE SETUP GRANT — a screening-only, expiring credit pool granted ONCE PER ACCOUNT at its first
+ * connection, SEPARATE from the main credit ledger.
  *
  * ## What it is for
  *
@@ -17,10 +17,27 @@ import type { LedgerTx, Tx } from "./change-log.js";
  * hundreds or thousands of senders, and screening that backlog is the product's first
  * demonstration of itself. The monthly allowance is sized for a RUNNING mailbox, not for that
  * one-time hill: making the customer spend a month's credits on day one means their first month
- * is rules-only from day two. So each connected mailbox brings a one-time
- * {@link SETUP_GRANT_CREDITS_PER_MAILBOX}-credit pool for Screener suggestions alone, alive for
- * {@link SETUP_GRANT_TTL_DAYS} days — long enough for a slow first-contact drain, short enough
- * that it cannot become a standing discount.
+ * is rules-only from day two. So an account's first connection brings a one-time pool for
+ * Screener suggestions alone, sized at ONE MONTH of that subscription's own allowance
+ * (`billing_subscriptions.monthly_credits`) and alive for {@link SETUP_GRANT_TTL_DAYS} days —
+ * long enough for a slow first-contact drain, short enough that it cannot become a standing
+ * discount.
+ *
+ * ## Why the key is the ACCOUNT and the size is `monthly_credits`
+ *
+ * The pool used to be minted per connected MAILBOX at a flat 1 500 credits, with a lifetime
+ * ceiling of `mailboxLimit` grants per account. Both halves of that were wrong in the same
+ * direction: they sized an acquisition cost by a number the customer chooses (how many mailboxes
+ * they connect) rather than by the plan they bought, and they made "once, ever" an arithmetic
+ * the granting code performed against a limit that MOVES — so a plan change silently moved a
+ * lifetime bound, in either direction.
+ *
+ * One pool per account fixes both. The size comes off the row that was actually sold, so a plan
+ * whose month is 4 000 credits gets a 4 000-credit setup pool and a plan whose month is 1 000
+ * gets 1 000 — the grant scales with the revenue behind it by construction rather than by a
+ * constant somebody would have to remember to re-tune. "Once, ever" becomes
+ * `setup_grants_account_once_uq`, a partial unique index, which is a fact about the table rather
+ * than a count the code takes.
  *
  * ## Why a second pool and not a `setup_grant` row on the main ledger
  *
@@ -42,66 +59,80 @@ import type { LedgerTx, Tx } from "./change-log.js";
  * `(account_id, source)`) so a crash-retried suggestion is a free retry here exactly as it is on
  * the main ledger.
  *
- * ## The bound this adds to "no API cost without revenue behind it", stated
+ * ## The bound this puts under "no API cost without revenue behind it", stated
  *
  * The pool is prepaid in kind rather than in cash: it exists only on accounts that hold a
- * subscription row (mailbox creation is gated on one), it is granted once per mailbox EVER
- * (`UNIQUE (mailbox_id)`), and mailbox creation is itself capped by the plan's limit. So the
- * ceiling one account can hold is `mailboxLimit × SETUP_GRANT_CREDITS_PER_MAILBOX` of
- * weight-1 screening actions, expiring in 90 days — for a trial account, on top of the trial's
- * own 500. That ceiling is a deliberate acquisition cost on the same argument as the trial
- * bounty, ratified with the 2026-08-21 card.
+ * subscription row (mailbox creation is gated on one), and it is granted at most once per
+ * account for the life of the account, as a table fact. So the ceiling of managed-AI cost an
+ * account can incur before any money arrives is the trial bounty plus one month of the plan it
+ * signed up for — on the largest plan, 500 + 4 000 = 4 500 weight-1 screening actions, expiring
+ * in 90 days. The old per-mailbox rule's ceiling on that same plan was 500 + 10 × 1 500 = 15 500,
+ * so this is a strict TIGHTENING of the unpaid bound and not a new exposure.
+ *
+ * The grant is made regardless of `trialing`, deliberately: an evaluation that cannot see the
+ * Screener work is not an evaluation, which is the same argument that admitted the trial bounty.
  */
-export const SETUP_GRANT_CREDITS_PER_MAILBOX = 1_500;
 
-/** How long a mailbox's setup pool lives. Days, applied at grant time from the caller's clock. */
+/** How long an account's setup pool lives. Days, applied at grant time from the caller's clock. */
 export const SETUP_GRANT_TTL_DAYS = 90;
 
 const SETUP_GRANT_TTL_MS = SETUP_GRANT_TTL_DAYS * 24 * 60 * 60 * 1000;
 
 /**
- * Grant a mailbox its setup pool. Called from the hosted mailbox-create transaction, AFTER the
- * allowance gate and the insert — same transaction, so a refused create grants nothing.
+ * Grant an account its setup pool at its first connection. Called from the hosted mailbox-create
+ * transaction, AFTER the allowance gate and the insert — same transaction, so a refused create
+ * grants nothing.
  *
- * Idempotent at the table (`ON CONFLICT DO NOTHING` on `setup_grants_mailbox_uq`): a replayed
- * create, a reconnect or a re-enable cannot re-arm a mailbox's grant. Returns whether a grant
- * was written — callers today ignore it; tests read it.
+ * Refuses when the account holds ANY `setup_grants` row, of either kind. That is wider than the
+ * partial unique index and deliberately so: an account carrying pre-0028 per-mailbox rows has
+ * already been given its acquisition pool (possibly several), and handing it a fresh
+ * account-kind pool on its next connect would be a second grant wearing a new key. The index
+ * alone would permit exactly that.
+ *
+ * Returns whether a grant was written — callers today ignore it; tests read it.
  */
 export async function grantSetupCredits(
   tx: Tx, accountId: string, mailboxId: string, now: Date,
 ): Promise<boolean> {
-  // THE LIFETIME CEILING, enforced and not merely advertised (review finding). "Once per
-  // mailbox, ever" bounds one UUID — and a disconnect is a soft-disable, so reconnecting the
-  // same address mints a NEW row with a new UUID and would mint a new pool with it,
-  // indefinitely, while the enabled count never crossed the limit. So the account's TOTAL
-  // number of grants is capped at its CURRENT mailbox limit (base + purchased add-ons — the
-  // same composition every other limit read makes): exactly the `mailboxLimit × 1 500` ceiling
-  // this file's header states. An upgrade or a mailbox add-on raises the cap —
-  // revenue arrived — and a downgrade lowers it for FUTURE grants only.
-  //
-  // No race with itself: every caller sits inside the mailbox-create transaction, which opens
-  // by taking the account's allowance lock, so two concurrent creates read this count
-  // serially.
-  const sub = await effectiveSubscriptionOf(tx, accountId);
-  const limit = sub
-    ? entitlementsFor({ sub, balance: 0, suspended: false, now }).mailboxLimit
-    : 0;
+  // ONCE PER ACCOUNT, EVER — and the read below is the fast, wide half of it, not the
+  // enforcement. Enforcement is `setup_grants_account_once_uq`, the partial unique index, which
+  // is why the insert can carry `ON CONFLICT DO NOTHING` and mean it: two first connections
+  // arriving on two connections both read "no grant here" here and both attempt the insert; one
+  // lands, the other is a reported `false`. The account's allowance lock serializes them on this
+  // code path, but a lock is a property of the path and the index is a property of the table.
   const held = await tx
     .select({ n: sql`count(*)::int` })
     .from(setupGrants)
     .where(eq(setupGrants.accountId, accountId));
-  if (Number((held[0] as { n: number } | undefined)?.n ?? 0) >= limit) return false;
+  if (Number((held[0] as { n: number } | undefined)?.n ?? 0) > 0) return false;
+
+  // The size is the subscription's OWN sold-at month, never `PLAN_LIMITS`: the same rule every
+  // other allowance read follows, so a later price change cannot retro-size a pool that was
+  // already granted, and a grandfathered deal gets the month it actually bought. BASE only —
+  // `sub.monthlyCredits` rather than a composed entitlement — because the add-ons that ride a
+  // subscription are storage and mailboxes, neither of which is a credit allowance, and reading
+  // a composed value here would silently start tracking any credit add-on a later card adds.
+  //
+  // No subscription ⇒ no pool. Mailbox creation is gated on one, so this is unreachable from the
+  // hosted create path; it is written as a refusal rather than a default because a default here
+  // would be a pool granted to an account with no revenue behind it at all.
+  const sub = await effectiveSubscriptionOf(tx, accountId);
+  const amount = sub ? Number(sub.monthlyCredits) : 0;
+  if (!Number.isFinite(amount) || amount <= 0) return false;
 
   const rows = await tx
     .insert(setupGrants)
     .values({
       accountId,
       mailboxId,
-      granted: SETUP_GRANT_CREDITS_PER_MAILBOX,
-      remaining: SETUP_GRANT_CREDITS_PER_MAILBOX,
+      kind: "account",
+      granted: amount,
+      remaining: amount,
       expiresAt: new Date(now.getTime() + SETUP_GRANT_TTL_MS),
     })
-    .onConflictDoNothing({ target: setupGrants.mailboxId })
+    // The ACCOUNT index is the target, not `mailbox_id`: the race this must survive is two first
+    // connections, which carry two different mailbox ids and one account.
+    .onConflictDoNothing()
     .returning({ id: setupGrants.id });
   return rows.length > 0;
 }
@@ -176,9 +207,8 @@ export async function setupPoolOf(
  *       defect `ai-claim.ts` was written to close, whose own opening states it: *"N concurrent
  *       requests bought N model calls for one credit."* The wrapper reinstated it for exactly the
  *       accounts most exposed to it, because the pool is drawn BEFORE the main balance and so
- *       covers every newly connected mailbox for its first
- *       {@link SETUP_GRANT_CREDITS_PER_MAILBOX} screenings — the backlog drain this grant exists
- *       to fund is the heaviest Screener use the product ever sees.
+ *       covers a newly connected account for its whole first month of screenings — the backlog
+ *       drain this grant exists to fund is the heaviest Screener use the product ever sees.
  *
  *     The whole point of this pool is that it is BOUNDED — a fixed number of screening credits
  *     per mailbox, expiring, and capped for the life of the account. A bound expressed as a
