@@ -13,6 +13,46 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### More than one mailbox
+
+A desktop install can hold several mailboxes. Until now it served exactly one, and
+nearly everything about it was written in that shape: one connection, one
+organizing claim, one poll timer, one outgoing server taken from the settings the
+app was started with.
+
+Each mailbox now gets its own — its own connection, its own claim in its own
+mailbox, its own poll timer, and its own saved password and servers. What stays
+shared is what belongs to the install rather than to a mailbox: the local
+database, the encryption key, the AI settings and the screening window.
+
+Every mailbox reaches the server its own saved password names. The settings the
+app starts with describe the FIRST mailbox, and only until that mailbox's password
+records the server a connection actually proved.
+
+Adding one: connect, and the password is checked against that mailbox's own server
+before anything is saved. It is refused if the login opens a mailbox this machine
+already has, even under a different address or an alias — what decides whether two
+entries are the same mailbox is the server and username that answered, not the
+name typed into the form.
+
+Removing one takes only its own. Its claim is released from its own mailbox rather
+than left to go stale, its mail comes off this machine, its connection closes, and
+the mailboxes beside it keep running untouched. Leaving is still per mailbox and
+still immediate.
+
+Changing a mailbox's password takes effect straight away rather than at the next
+launch. Signing out of the local door now forgets every mailbox's password, not
+just the first one's.
+
+Existing installs upgrade in place. The database, the account, the mailbox entry,
+the saved password and the claim already in your mailbox are all exactly as they
+were. Two small repairs run once: the saved password gains a record of which
+server it was proved against, if it did not have one, and a matching entry for the
+outgoing server. Which outgoing server that names comes from what the password was
+saved for, never from the current settings — and when the two disagree, nothing is
+written and sending waits until you enter the password again, because the record
+names a server and not a port.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
