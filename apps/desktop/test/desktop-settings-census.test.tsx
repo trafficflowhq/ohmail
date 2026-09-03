@@ -6,7 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 
 import { DesktopGate } from "../src/DesktopGate.js";
-import { desktopPaneLabel } from "../src/DesktopSettings.js";
+import { DESKTOP_PANE_LABEL } from "../src/DesktopSettings.js";
 import messages from "../../webapp/messages/en.json";
 import { PANE_IDS, type PaneId } from "../../webapp/app/shell/routing";
 import type { EngineStatus } from "../src/bridge-fetch.js";
@@ -536,7 +536,7 @@ afterEach(async () => {
  */
 const CATALOGUE = messages.settings as unknown as Record<string, unknown>;
 const label = (pane: PaneId): string => {
-  if (pane === "desktop") return desktopPaneLabel();
+  if (pane === "desktop") return DESKTOP_PANE_LABEL;
   if (pane === "folders") return (CATALOGUE.folders as { nav: string }).nav;
   if (pane === "signatures") return (CATALOGUE.signatures as { nav: string }).nav;
   return CATALOGUE[pane] as string;
