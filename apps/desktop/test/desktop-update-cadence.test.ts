@@ -97,6 +97,45 @@ async function run(clock: { at: number }, by: number): Promise<void> {
   }
 }
 
+/**
+ * THE MODULE'S OWN CODE, with its prose removed — the input every source assertion below reads.
+ *
+ * ── WHY THE SOURCE AT ALL ────────────────────────────────────────────────────────────────────
+ *
+ * Two of the things this file pins cannot be seen from outside the module: which of two opaque
+ * command names the schedule invokes, and whether a rule is written once or twice. Both are
+ * decisions about the shape of the code, so the code is what is read.
+ *
+ * ── WHY THE PROSE COMES OUT ──────────────────────────────────────────────────────────────────
+ *
+ * This is the most comment-dense module in the app and its notes name the very identifiers these
+ * assertions count. Counting over the raw text fails on the next paragraph that mentions one —
+ * a red over a defect that is not there, which is how a guard ends up switched off.
+ *
+ * ONE PASS WITH AN ALTERNATION, not two passes in some order. Stripping block comments first
+ * leaves a line comment containing an unpaired block opener able to start a block that closes at
+ * the next terminator; stripping line comments first breaks every doc comment whose terminator
+ * shares a line with a `//` — the prevailing style for a one-line note carrying a URL, present in
+ * two dozen files here. Both orders therefore delete real code, which BOTH hides an added call and fails the
+ * count over nothing. Alternating leaves whichever opener comes first to consume its own body.
+ *
+ * ── AND WHAT IT STILL CANNOT DO ──────────────────────────────────────────────────────────────
+ *
+ * It is a stripper, not a lexer: a `//` inside a string or a regex literal is removed with the
+ * rest of that line, so a call written after one on the same line is invisible to the counts.
+ * The guard raises the floor; it is not a proof, and saying so here is cheaper than a claim that
+ * would be wrong.
+ *
+ * Resolved from the run's own directory rather than from `import.meta.url`, because this file
+ * runs under jsdom where that is not a file URL. The suite runs from the repository root, and the
+ * length assertion is what makes a wrong root fail loudly instead of matching nothing and passing.
+ */
+function cadenceSource(): { src: string; code: string } {
+  const src = readFileSync(resolve(process.cwd(), "apps/desktop/src/update-cadence.ts"), "utf8");
+  expect(src.length, "the module under assertion was not found").toBeGreaterThan(2000);
+  return { src, code: src.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "") };
+}
+
 describe("when a periodic check is due", () => {
   it("IS A FULL DAY, NOT ALMOST ONE — 23 hours after the last check is not due", () => {
     // Both ends, deliberately. A rule that fired at twenty-three hours would satisfy "checks
@@ -180,18 +219,18 @@ describe("which request the schedule makes", () => {
        button; wrong once a day forever. Routing this cadence through the press would put a modal
        over a person's mail every twenty-four hours for as long as the app stayed open and
        current, which is the nag the whole file exists to replace. */
-    /* Resolved from the run's own directory rather than from `import.meta.url`: this file runs
-       under jsdom, where that is not a file URL. The suite is run from the repository root
-       (`vitest run <path>`), and the length assertion below is what makes a wrong root fail
-       loudly instead of matching nothing and passing. */
-    const src = readFileSync(resolve(process.cwd(), "apps/desktop/src/update-cadence.ts"), "utf8");
-    expect(src.length, "the module under assertion was not found").toBeGreaterThan(2000);
-    expect(src).toMatch(/options\.poll \?\? updatePoll/);
-    expect(src, "the timer must not make the request a person makes")
+    /* Read over the CODE, not the file: a negative assertion satisfied by a comment is a guard
+       that passes after the code stopped doing the thing — a note quoting the old seam beside a
+       new one that presses would keep both of these green while the timer pressed. */
+    const { code } = cadenceSource();
+    expect(code).toMatch(/options\.poll \?\? updatePoll/);
+    expect(code, "the timer must not make the request a person makes")
       .not.toMatch(/options\.poll \?\? updatePress/);
     /* `updatePress` is still imported and still used — it is what the STRIP's button calls, and
        that press IS a person asking. The distinction is which of the two the timer takes. */
-    expect(src).toMatch(/act: \(\) => void updatePress\(\)/);
+    expect(code).toMatch(/act: \(\) => void updatePress\(\)/);
+    expect(code.match(/\bupdatePress\s*\(/g), "one press, and it is the strip's button")
+      .toHaveLength(1);
   });
 });
 
@@ -447,21 +486,14 @@ describe("the cadence, running", () => {
        A source assertion, like the one for which request the schedule makes, and for the same
        reason: nothing rendered can tell "the listener updated the latch" from "the next tick
        did". */
-    const src = readFileSync(resolve(process.cwd(), "apps/desktop/src/update-cadence.ts"), "utf8");
-    expect(src.length, "the module under assertion was not found").toBeGreaterThan(2000);
+    const { code } = cadenceSource();
 
-    /* EVERY ONE OF THESE READS THE CODE, NOT THE FILE. This module is comment-dense and its own
-       notes discuss the latch by name, so a count over the raw text fails on the next paragraph
-       that mentions it — a red over a defect that is not there, which is how a guard gets
-       switched off. Line comments are stripped BEFORE block comments, and the order matters: a
-       `//` line containing an unpaired block opener would otherwise start a block the stripper
-       closes at the next terminator, swallowing the real code between them — which both hides
-       a third feeder and fails the count over nothing. */
-    const code = src.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
-
-    // Exactly one place decides what a report means for the latch…
+    /* Exactly one place decides what a report means for the latch — and the WRITE is matched, not
+       one spelling of it. `installWasRefused ||= true` and a write folded into an expression are
+       both second writers that an exact-literal match would miss while reporting that there was
+       only one. */
     expect(code.match(/const note = \(report: UpdateReport\): void =>/g)).toHaveLength(1);
-    expect(code.match(/installWasRefused = true;/g), "the latch is set in one place")
+    expect(code.match(/installWasRefused\s*(?:\|\|)?=\s*true/g), "the latch is set in one place")
       .toHaveLength(1);
 
     /* …and both feeders go through it. COUNTED ON THE CALL AND NOT ON ITS ARGUMENT: keying on
@@ -469,7 +501,7 @@ describe("the cadence, running", () => {
        until a third feeder spelled any other way matches nothing and leaves this green while its
        own message is false. A renamed callback parameter is the likeliest of those, because the
        subscription this pins is already an arrow callback; the whitespace is tolerated for the
-       same reason the indentation is. The declaration does not match: it is `const note = (`. */
+       same reason the indentation is. The declaration does not match, being `const note = (`. */
     expect(code.match(/\bnote\s*\(/g), "the poll and the subscription, and no third")
       .toHaveLength(2);
   });
