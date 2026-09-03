@@ -1,0 +1,49 @@
+-- THE FIFTH HOLDER COLUMN — WHAT THE HOLDER OFFERS A READER (0.14.1, symmetric takeover).
+--
+-- ══ WHAT THIS IS FOR ═══════════════════════════════════════════════════════════════════════
+--
+-- One additive column on `mailboxes`. `organized_by_kind` / `organized_by_name` / `organized_since`
+-- / `organizer_state` (0083, 0088) are WHO holds a mailbox and WHEN they took it, refreshed every
+-- reader cycle from a `peekLease` read; this is WHAT that holder can do for a reader, from the
+-- same read — `X-Ohmail-Capabilities` off the winning claim (`organizer-lease.ts`'s
+-- `OrganizerClaim.capabilities`), comma-joined and lowercased the way the wire format already is.
+--
+-- It exists because the API tier has no live IMAP connection to ask the mailbox directly.
+-- `POST /screener/:id` on a READER row has to answer, from a row read alone, whether this
+-- mailbox's holder is a build that DRAINS decision requests at all (`CAPABILITY_REQUESTS =
+-- "requests"`) — an install that never calls `applyMetaRequests` would otherwise accept a
+-- `pending` request that sits in the mailbox for ever, with the person told nothing beyond
+-- "waiting for <holder>" that never resolves. The offer is therefore gated on this column
+-- AND `organizer_state = 'held'` (0083): a stale or absent capability answers `409
+-- organized_elsewhere` with a reason naming which of the two is missing, rather than accepting a
+-- request the holder will never take.
+--
+-- NO CHECK. `organized_by_name` is the precedent this follows exactly: free text closes no set,
+-- capabilities are a set the reader side has never heard the FULL vocabulary of (a later build may
+-- advertise a member this one does not recognise — `organizer-lease.ts#parseClaim` KEEPS an
+-- unrecognised member rather than dropping it, for the same reason), and a CHECK behind this
+-- column would make the row un-writable the day capability three ships until every database is
+-- migrated first. The bound is at the single write site instead — see `capabilitiesColumn`
+-- (`organizer-role.ts`), which lower-cases, trims, drops empty members and NULLs an empty result,
+-- mirroring `organizedByName`'s `ORGANIZED_BY_NAME_MAX` cap in spirit if not in a literal length
+-- (a capability set is a handful of short known tokens, not free text a person typed).
+--
+-- ══ COMPATIBILITY ══════════════════════════════════════════════════════════════════════════
+--
+-- Purely additive: one nullable column. No drop, no rename, no type change. An API or worker one
+-- deploy older ignores it and keeps working — `MailboxService` and the write sites below all
+-- select/write whole rows, which still have every column they knew.
+--
+-- Deploy order is migration → API → worker, 0083's exact reason: the API selects whole rows (so it
+-- 42703s against an un-migrated database) and the worker is the process that starts writing the
+-- new column. The desktop engine self-migrates at launch and needs no ordering.
+--
+-- ROLLBACK: drop the column. Nothing outside this feature reads it; its absence makes every
+-- request offer answer `409 organized_elsewhere` with `reason: "organizer_outdated"`, which is the
+-- fail-safe direction (a request never queues for a holder this reader cannot confirm will drain
+-- it) rather than a fault.
+--
+-- Idempotent (`IF NOT EXISTS`); no breakpoint marker needed — a single statement, nothing to
+-- split. `when` after 0088, because a desktop engine replays this journal at every launch.
+
+ALTER TABLE "mailboxes" ADD COLUMN IF NOT EXISTS "organized_by_capabilities" text;

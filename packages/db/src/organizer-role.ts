@@ -4,12 +4,30 @@ import { isMailboxDisabledReason, type MailboxDisabledReason } from "./mailbox-e
 import type { Tx } from "./change-log.js";
 
 /**
+ * THE ONE CAPABILITY THERE IS TODAY — a SEPARATE LITERAL from
+ * `organizer-lease.ts`'s `CAPABILITY_REQUESTS`, and that duplication is a dependency-direction
+ * fact rather than an oversight.
+ *
+ * `@trafficflow/core` DEPENDS ON `@trafficflow/db` (`packages/core/package.json`), never the
+ * reverse — `packages/db/package.json` names no `@trafficflow/core` dependency, and every
+ * apparent mention of it in this package's own comments is prose, not an import (checked before
+ * writing this one). So `organizer-role.ts` cannot import the string FROM `organizer-lease.ts`
+ * without inverting that edge, and `organizer-lease.ts` cannot be made to import it FROM here
+ * without adding a `@trafficflow/db` dependency to a module whose own header prides itself on
+ * needing nothing but `imap-types.ts`. Two literals, one spelling, held equal by
+ * `organizer-role-capability.test.ts` rather than by the type system — the same trade
+ * `flag-intent.ts` and `screener-suggestion.ts` already make for the tables they duplicate no
+ * further than a name.
+ */
+export const CAPABILITY_REQUESTS = "requests";
+
+/**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  THE ORGANIZING ROLE, AND THE ONE REFUSAL EVERY WRITE DOOR SHARES (mail 0083)
+ *  THE ORGANIZING ROLE, AND THE ONE REFUSAL EVERY WRITE DOOR SHARES 
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
  * Exactly one active organizer per mailbox is the invariant the product rests on. What changed
- * with mail 0083 is what the LOSER does: it used to stop entirely (`status='disabled'` plus an
+ * with the mailbox-removal design is what the LOSER does: it used to stop entirely (`status='disabled'` plus an
  * `organized_elsewhere:*` reason, off the roster, frozen mirror). It is now A READER — another
  * mail client on the same mailbox.
  *
@@ -21,10 +39,20 @@ import type { Tx } from "./change-log.js";
  * contends with the organizer: `\Seen` is per-message state the IMAP server itself arbitrates,
  * and a send appends to Sent.
  *
- * MAY NOT: screener decide/suggest, rules, move, delete (v1), triage, tags-assign, schedule,
- * unsubscribe, junk sweep/rescue, resync, profile publish. Every one of those either MOVES mail,
- * changes the organizer's own store in a way the organizer would then fight, or mints an
- * appointment a demotion would have to cancel.
+ * **AS OF MAIL 0088/0089 (0.14.1): screener SUGGEST too — local compute against this
+ * door's own provider or this account's own credits, writing nothing an organizer would contend
+ * with — and screener DECIDE, not as a direct write but as a REQUEST**: the reader's decision is
+ * appended to `ohmail/_meta` and applied by the organizer on its own next pass
+ * (`readRequestEligibility`, `apps/worker/src/request-drain.ts`). Superseded here rather than
+ * silently: `organizer-role-census.test.ts` no longer lists `screener-service.ts` among the
+ * refusal sites, and this refusal ({@link assertOrganizerRole} / {@link assertAccountOrganizes})
+ * stays the one a DIRECT write goes through — `ScreenerService.decide`'s organizer branch calls
+ * `readRequestEligibility` instead, the per-mailbox read the request path also needs.
+ *
+ * MAY NOT: rules, move, delete (v1), triage, tags-assign, schedule, unsubscribe, junk
+ * sweep/rescue, resync, profile publish. Every one of those either MOVES mail, changes the
+ * organizer's own store in a way the organizer would then fight, or mints an appointment a
+ * demotion would have to cancel.
  *
  * **Delete is on the refused list even though it is not a folder move, and that is a v1
  * decision rather than an oversight**: one IMAP write verb (`setFlags`) keeps the reader's
@@ -103,12 +131,39 @@ export function organizerDisplayName(raw: string | null | undefined): string | n
 }
 
 /**
+ * `mailboxes.organized_by_capabilities` (0.14.1), THE SINGLE WRITE SITE.
+ *
+ * Mirrors `X-Ohmail-Capabilities`'s own wire shape (`organizer-lease.ts#formatClaim`): trimmed,
+ * lowercased, empty members dropped, comma-joined — and an EMPTY result is NULL, never the empty
+ * string, on {@link ClaimInput.capabilities}'s own reasoning one field over: a value that means
+ * "nothing" has to be absent, because a reader one release older cannot tell an empty value from
+ * one it does not understand.
+ */
+export function capabilitiesColumn(caps: readonly string[] | null | undefined): string | null {
+  if (!caps || caps.length === 0) return null;
+  const joined = caps.map((c) => c.trim().toLowerCase()).filter((c) => c !== "").join(",");
+  return joined === "" ? null : joined;
+}
+
+/**
+ * Does the holder's stored capability set include `capability`? Reads the column
+ * {@link capabilitiesColumn} writes — a comma-joined, lowercased set, or NULL for "we have not
+ * looked" / "the holder advertises nothing", which both answer `false` here, on purpose: absence
+ * is the fail-safe reading everywhere this column is consulted (see its own schema comment).
+ */
+export function hasCapability(column: string | null | undefined, capability: string): boolean {
+  if (!column) return false;
+  const want = capability.trim().toLowerCase();
+  return column.split(",").map((c) => c.trim().toLowerCase()).includes(want);
+}
+
+/**
  * WHAT A ROW REMEMBERS ABOUT HAVING STOOD DOWN — the memory the mailbox itself cannot hold.
  *
  * ── WHY THIS IS A FUNCTION AND NOT A COLUMN READ ──────────────────────────────────────────
  *
  * Five call sites across two tiers ask one question — *"has this install been told to stop
- * organizing this mailbox, and by whom?"* — and until mail 0083 the answer was one column:
+ * organizing this mailbox, and by whom?"* — and until the mailbox-removal design the answer was one column:
  * `status = 'disabled'` with an `organized_elsewhere:*` reason. 0083 moved the fact to
  * `organizer_role` and left `disabled_reason` with no writer at all, so every one of those reads
  * silently began answering NULL: the desktop's launch catch-up for orphaned appointments stopped
@@ -131,7 +186,7 @@ export function organizerDisplayName(raw: string | null | undefined): string | n
  * TOMBSTONE the user asked for).
  *
  * The second arm is the live one, and it asks THREE questions because `reader` carries THREE
- * states — a mailbox nobody has consented to organize is a reader, and since mail 0088 so is one
+ * states — a mailbox nobody has consented to organize is a reader, and since 0.14.1 so is one
  * whose owner deliberately released it. See the two guards in the body: the first is an absence
  * (no holder, no consent) and the second is a MARKER, because the release's own shape turned out
  * not to be distinguishable by absence at all.
@@ -142,7 +197,7 @@ export function organizerDisplayName(raw: string | null | undefined): string | n
  * recomposing the string here is reading back what that migration wrote rather than inventing a
  * value.
  *
- * **The line that used to end this paragraph was retired by mail 0088.** It read: *"`'unknown'`
+ * **The line that used to end this paragraph was retired by 0.14.1.** It read: *"`'unknown'`
  * for a reader whose first cycle has not looked yet: the row says somebody else organizes this
  * mailbox and does not yet say who, and the stand-down memory must survive that gap or a relaunch
  * inside it auto-resumes."* It is kept here rather than deleted because the hazard it names was
@@ -195,7 +250,7 @@ export function standDownMemory(row: {
    * with neither is untouched.
    */
   if (row.organizedByKind === null && row.organizeConsentedAt === null) return null;
-  /* -- AND A RELEASED MAILBOX NEVER STOOD DOWN EITHER (mail 0088) -----------------------------
+  /* -- AND A RELEASED MAILBOX NEVER STOOD DOWN EITHER (0.14.1) -----------------------------
    *
    * The THIRD state a `reader` row can be in, and it did not exist when the two arms above were
    * written: the person pressed "stop organizing here", this install expunged its own claim, and
@@ -225,7 +280,7 @@ export function standDownMemory(row: {
    * away would stop closing them — the appointment goes on saying "Sends Tue 14:50" for a time
    * that has passed, for ever, which is the orphan `closeStoodDownAppointments` exists for.
    *
-   * So the release writes a MARKER only the release writes (`organizer_released_at`, mail 0088)
+   * So the release writes a MARKER only the release writes (`organizer_released_at`, 0.14.1)
    * and this arm keys on it. Every promotion clears it, so it describes the current state.
    *
    * ── AND WHAT MAKES IT SAFE, WHICH IS NOT THIS FUNCTION ─────────────────────────────────────
@@ -286,18 +341,37 @@ export interface OrganizedBy {
  * takes the mailbox back, and a `retryable: false` would be a claim about permanence that a
  * claim-back falsifies in one cycle.
  */
+/**
+ * WHY A REQUEST WAS NOT OFFERED (0.14.1) — the finer-grained reason
+ * `readRequestEligibility` names beside `OrganizedElsewhereError`'s ordinary `by`.
+ *
+ *  · `organizer_outdated` — a holder EXISTS and is `held`, but its claim does not advertise
+ *    {@link CAPABILITY_REQUESTS}: a build that will never call `applyMetaRequests`. Offering a
+ *    request to it would queue a decision nobody is ever going to take.
+ *  · `no_organizer` — there is no live holder to offer one to at all: nobody has ever organized
+ *    this mailbox, or the last one stopped and nothing has claimed it since.
+ */
+export type RequestRefusalReason = "organizer_outdated" | "no_organizer";
+
 export class OrganizedElsewhereError extends Error {
   readonly code = "organized_elsewhere";
   readonly httpStatus = 409;
-  readonly details: { by: OrganizedBy };
-  constructor(readonly mailboxId: string, by: OrganizedBy) {
+  readonly details: { by: OrganizedBy; reason?: RequestRefusalReason };
+  /**
+   * `reason` is OPTIONAL and additive: every existing call site (the per-mailbox write refusal,
+   * the account-scoped configuration refusal) passes none, and the client's existing copy for
+   * "another install organizes this mailbox" is unchanged by its absence. It exists for the ONE
+   * new caller that needs a finer answer than "somebody else organizes this" — a reader asking
+   * whether its decision may become a request at all.
+   */
+  constructor(readonly mailboxId: string, by: OrganizedBy, reason?: RequestRefusalReason) {
     super(
       "another install is organizing this mailbox, so this one is a reader: it mirrors the "
       + "mailbox and can mark mail read and send, but it does not move, file or delete mail. "
       + "Choose to organize here instead if you want this install to take it over.",
     );
     this.name = "OrganizedElsewhereError";
-    this.details = { by };
+    this.details = reason === undefined ? { by } : { by, reason };
   }
 }
 
@@ -486,4 +560,66 @@ export async function assertAccountOrganizes(tx: Tx, accountId: string): Promise
     name: held?.name ?? null,
     since: held?.since ? held.since.toISOString() : null,
   });
+}
+
+/**
+ * WHETHER A READER'S DECISION MAY BECOME A REQUEST, FOR ONE MAILBOX (0.14.1).
+ *
+ * A PLAIN read, deliberately — never `FOR SHARE` — because this answers a question about the
+ * MAILBOX's holder, not about a write this transaction is about to make; the write door's own
+ * `assertOrganizerRole` still takes its lock where a write follows. This is consulted by
+ * `ScreenerService.decide`'s reader branch, at the API tier, which has no live IMAP connection —
+ * the row is the only place it can ask "will the holder ever take this decision".
+ *
+ * `capable` is TRUE only when the row's role is `organizer` for THIS install (the direct-write
+ * case needs no request at all) OR the holder's own claim advertises {@link CAPABILITY_REQUESTS}
+ * AND `organizer_state = 'held'` — a `stopped` holder is not coming back to drain anything, and an
+ * absent capability means either "we have not looked" or "that build never calls
+ * `applyMetaRequests`" (the rule that only the organizer moves mail, "a 0.14 organizer never
+ * drains requests"), and both read the same to a person: do not queue a decision nobody will ever
+ * take. `status <> 'disabled'` for the SAME reason `assertAccountOrganizes` checks it above: a
+ * tombstoned mailbox keeps whatever `organizer_role` it had at removal (the mailbox-removal design — a removal
+ * retires the mailbox, it does not demote it), so without this a decision against a mailbox that
+ * no longer exists in any live sense would still read `capable: true` off the stale role column.
+ */
+export interface RequestEligibility {
+  role: OrganizerRole;
+  state: OrganizerState | null;
+  /** `organizer_role = 'organizer'`, OR (holder advertises `requests` AND `organizer_state = 'held'`). */
+  capable: boolean;
+  by: OrganizedBy;
+}
+
+export async function readRequestEligibility(
+  tx: Tx, accountId: string, mailboxId: string,
+): Promise<RequestEligibility | null> {
+  const [row] = await tx.select({
+    role: mailboxes.organizerRole,
+    state: mailboxes.organizerState,
+    capabilities: mailboxes.organizedByCapabilities,
+    kind: mailboxes.organizedByKind,
+    name: mailboxes.organizedByName,
+    since: mailboxes.organizedSince,
+    status: mailboxes.status,
+  })
+    .from(mailboxes)
+    .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId)))
+    .limit(1);
+  if (!row) return null;
+
+  const role: OrganizerRole = isOrganizerRole(row.role) ? row.role : "reader";
+  const state: OrganizerState | null = isOrganizerState(row.state) ? row.state : null;
+  const capable = row.status !== "disabled"
+    && (role === "organizer" || (state === "held" && hasCapability(row.capabilities, CAPABILITY_REQUESTS)));
+
+  return {
+    role,
+    state,
+    capable,
+    by: {
+      kind: isOrganizerKind(row.kind) ? row.kind : null,
+      name: row.name ?? null,
+      since: row.since ? row.since.toISOString() : null,
+    },
+  };
 }

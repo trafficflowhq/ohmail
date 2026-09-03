@@ -184,6 +184,21 @@ export const mailboxes = pgTable("mailboxes", {
    */
   organizerState: text("organizer_state"),
   /**
+   * ── Mail 0089 — WHAT THE HOLDER OFFERS A READER ──────────────────────────────────────────
+   *
+   * `X-Ohmail-Capabilities` off the holder's own claim, comma-joined and lowercased (see
+   * {@link capabilitiesColumn}, `organizer-role.ts`) — the fifth holder column, refreshed at the
+   * same three write sites as {@link organizerState} and for the same reason: the API tier has no
+   * live IMAP connection, so whether a reader's decision may become a REQUEST rather than a
+   * refusal has to be answerable from this row alone.
+   *
+   * NULL means "we have not looked" OR "the holder advertises nothing" — the same two-fact
+   * conflation {@link organizerState}'s own NULL already carries, and it is safe for the same
+   * reason: both read as "do not offer a request", which is the fail-safe direction. NO CHECK —
+   * see the migration header for why a closed set is wrong here.
+   */
+  organizedByCapabilities: text("organized_by_capabilities"),
+  /**
    * WHEN A HUMAN ASKED THIS INSTALL TO ORGANIZE THIS MAILBOX — the consent event, per mailbox.
    *
    * NULL means nobody has. That is the state `POST /mailboxes` now creates and the state a fresh
@@ -197,7 +212,7 @@ export const mailboxes = pgTable("mailboxes", {
    * `COALESCE(., now())` on write: consent is the FIRST time, and re-running onboarding must not
    * move the record of when the person agreed.
    *
-   * Backfilled by mail 0083 to `created_at` for every connected row, because connecting a
+   * Backfilled by the mailbox-removal design to `created_at` for every connected row, because connecting a
    * mailbox WAS the consent under the old copy — a record of something that happened, which is
    * the line 0027 drew when it refused to invent a `takeover_authorized_at`.
    */
@@ -610,7 +625,7 @@ export const mailboxes = pgTable("mailboxes", {
     "mailboxes_sync_blocked_reason_closed",
     sql`${t.syncBlockedReason} is null or ${t.syncBlockedReason} in ('lease_unreadable', 'awaiting_credentials', 'at_capacity')`,
   ),
-  // THE THIRD AND FOURTH CLOSED SETS (mail 0083). `organizerRole` has no `is null` arm because
+  // THE THIRD AND FOURTH CLOSED SETS . `organizerRole` has no `is null` arm because
   // the column is NOT NULL — the set really is two members, and spelling a third state that
   // cannot exist would invite a reader to handle it. Members are `ORGANIZER_ROLES` and
   // `ORGANIZER_KINDS` (organizer-role.ts); a real-Postgres test reconciles each against its
@@ -624,7 +639,7 @@ export const mailboxes = pgTable("mailboxes", {
     "mailboxes_organized_by_kind_closed",
     sql`${t.organizedByKind} is null or ${t.organizedByKind} in ('cloud', 'local', 'unknown')`,
   ),
-  // THE FIFTH (mail 0083). `organizerState` is the lease's occupancy as a reader cycle last saw
+  // THE FIFTH . `organizerState` is the lease's occupancy as a reader cycle last saw
   // it; NULL is "we have not looked", which is every row until its first cycle.
   ckOrganizerState: check(
     "mailboxes_organizer_state_closed",
@@ -660,7 +675,7 @@ export const mailboxFolders = pgTable("mailbox_folders", {
   highestmodseq: bigint("highestmodseq", { mode: "bigint" }),
   deltaToken: text("delta_token"),
   /**
-   * THE FOLDER'S `EXISTS`, AS THE SELECT REPORTED IT (mail 0083) — the first pull's denominator.
+   * THE FOLDER'S `EXISTS`, AS THE SELECT REPORTED IT  — the first pull's denominator.
    *
    * No truthful total existed anywhere. This table held cursors only, and the adapter read
    * `mb.exists` off every SELECT and discarded it — so the import progress strip had a numerator
@@ -2075,7 +2090,7 @@ export const awaySenderState = pgTable("away_sender_state", {
 }));
 
 /**
- * A DECISION MADE WHERE THE MAILBOX IS READ, WAITING FOR THE INSTALL THAT ORGANIZES IT (mail 0088).
+ * A DECISION MADE WHERE THE MAILBOX IS READ, WAITING FOR THE INSTALL THAT ORGANIZES IT (0.14.1).
  *
  * ── WHY THE ROW IS NOT THE RECORD ──────────────────────────────────────────────────────────
  *
@@ -2651,7 +2666,7 @@ export const accountSettings = pgTable("account_settings", {
    */
   foldersEnabledAt: timestamp("folders_enabled_at", { withTimezone: true }),
   /**
-   * WHEN THIS ACCOUNT FINISHED SCREENING ITS BACKLOG (mail 0056) — the instant the dormancy
+   * WHEN THIS ACCOUNT FINISHED SCREENING ITS BACKLOG  — the instant the dormancy
    * window is measured back from, instead of from `now()`.
    *
    * The cutline reads `(screeningBaselineAt ?? now()) - dormancyDays`. With a baseline the cutoff
@@ -2791,7 +2806,7 @@ export const accountSettings = pgTable("account_settings", {
    */
   themeFace: text("theme_face"),
   /**
-   * WHEN THIS ACCOUNT FINISHED (OR CANCELLED) THE FIRST-RUN FLOW — mail 0083.
+   * WHEN THIS ACCOUNT FINISHED (OR CANCELLED) THE FIRST-RUN FLOW — the mailbox-removal design.
    *
    * Onboarding state is DERIVED from truth-conditions and never from a step counter: the current
    * step is the first UNMET of consent → screening baseline → import complete → AI answered →

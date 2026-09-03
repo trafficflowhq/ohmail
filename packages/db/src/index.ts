@@ -44,13 +44,51 @@ export { junkSweepCandidateWhere, JUNK_SWEEP_SOURCE_PILE } from "./junk-sweep.js
 // runtime). Reaches `schema-mail.js` alone, so the closure rule above holds.
 export { upsertDesiredSeen } from "./flag-intent.js";
 
+// The ONE spelling of "record a learning signal, bump the graduation counter" — same argument as
+// the line above, moved for 0.14.1 (0.14.1): the organizer's request drain applies a
+// reader's screener decision, which records a learning signal, and the worker may not import
+// `@trafficflow/services` at runtime. `LearningService.recordOn` is now a thin wrapper over this.
+export {
+  recordLearningSignal, patternKeyFor, GRADUATION_THRESHOLD, DEMOTION_THRESHOLD,
+  type LearningKind, type LearningLabel, type LearningSignalInput,
+} from "./learning-signal.js";
+
+// The erasure fence's READ primitive — same argument again, one level down: the drain's applied
+// decision stamps `account_settings.screening_baseline_at`, an `account_settings` writer, and
+// every such writer fences first. `packages/services/src/erasure-fence.ts#fenceErasedAccount` now
+// calls this and converts the answer to a `ServiceError`.
+export { readAccountErasedAt } from "./erasure-fence.js";
+
+// THE SCREENER DECISION'S APPLY — the reason for all three exports above it, and the biggest
+// single move: `ScreenerService.applyDecision`'s whole transactional core, reachable by the
+// organizer's request drain (0.14.1). See the module's own header for what stayed in
+// `packages/services` and why (the physical IMAP move, the unsubscribe courtesy, the HTTP
+// idempotency replay — none of them belong at this layer, and the DECIDE INPUT VALIDATION stays in
+// services too, because it needs `@trafficflow/core`'s `effectForDestination`).
+export {
+  SCREENER_FOLDER, DECIDABLE_FOLDERS, admitsDestination, domainOf,
+  heldRowById, heldRowsForSender, heldRowsForDomain,
+  applyScreenerDecision, AccountErasedError, validateRequestPayload,
+  type AppliedScreenerRow, type ApplyScreenerDecisionInput, type ApplyScreenerDecisionResult,
+  type ValidatedRequestPayload,
+} from "./screener-apply.js";
+
+// `organizer_requests` — the reader's own bookkeeping. See the module's own header for why it is
+// here: the worker's reader cycle writes these rows every poll and may not import services.
+export {
+  REQUEST_STATES, insertOrganizerRequest, listPendingRequests, listSentRequests,
+  listOutstandingForAccount, markRequestsSent, markRequestsApplied,
+  markRequestsExpired, listStaleSentRequests,
+  type RequestState, type OrganizerRequestRow, type OutstandingMatch,
+} from "./organizer-requests.js";
+
 // The ONE spelling of "a stand-down closes the appointments it can no longer keep" — same
 // argument as the line above, four call sites (the sidecar's lease gate and its launch catch-up,
 // the worker's gate, the reconcile cron), and the worker may not import services at runtime.
 // Reaches `schema-mail.js`, `change-log.js` and `mailbox-errors.js` alone.
 export {
   closeStoodDownAppointments, STAND_DOWN_SEND_SENTENCES,
-  // The RELEASE's sentence (mail 0088). The same close with the same precondition — a release
+  // The RELEASE's sentence (0.14.1). The same close with the same precondition — a release
   // leaves a reader — and a different sentence, because a release hands the mailbox to nobody
   // while keeping everything: "schedule it again where the mailbox is organized now" would name a
   // place that does not exist. Passed as `StandDownSendsInput.sentence`; see that field for why it
@@ -65,7 +103,7 @@ export {
   type StandDownSendsInput, type StandDownSendsResult, type RemovedMailboxSendsInput,
 } from "./stand-down-sends.js";
 
-// The ONE spelling of "somebody else organizes this mailbox" (mail 0083) — the same argument as
+// The ONE spelling of "somebody else organizes this mailbox"  — the same argument as
 // the two lines above: the worker may not import services at runtime, the sidecar's gate and the
 // hosted gate both write the holder columns, and eleven service write doors share one refusal.
 // Reaches `schema-mail.js`, `change-log.js` and `mailbox-errors.js` alone — the third for
@@ -84,13 +122,16 @@ export {
   assertOrganizerRole, assertAccountOrganizes, readOrganizerRole, organizerDisplayName,
   OrganizedElsewhereError, MailboxNotFoundError,
   // The ONE spelling of "this row remembers standing down, and to whom". Three desktop readers
-  // asked it of `disabled_reason`, which mail 0083 left with no writer, so all three answered
+  // asked it of `disabled_reason`, which the mailbox-removal design left with no writer, so all three answered
   // NULL and nothing failed. See the function.
   standDownMemory,
   ORGANIZER_ROLES, ORGANIZER_KINDS, ORGANIZER_STATES, ORGANIZED_BY_NAME_MAX,
   isOrganizerRole, isOrganizerKind, isOrganizerState,
+  // Mail 0088/0089, 0.14.1 — the fifth holder column and whether a reader's decision may become a
+  // request at all.
+  CAPABILITY_REQUESTS, capabilitiesColumn, hasCapability, readRequestEligibility,
   type OrganizerRole, type OrganizerKind, type OrganizerState,
-  type OrganizedBy, type OrganizerRoleRow,
+  type OrganizedBy, type OrganizerRoleRow, type RequestEligibility, type RequestRefusalReason,
 } from "./organizer-role.js";
 
 export {
