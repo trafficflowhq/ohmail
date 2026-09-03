@@ -427,8 +427,13 @@ export function domainMatchedFrom(
  * draft's sender is a decision already taken and re-deriving over it would move the sender of a
  * message somebody left half-written — but it also means a draft SAVED BEFORE the own-address
  * rule existed carries the sender the old rule matched, and reopening it keeps that sender rather
- * than correcting it. Bounded to drafts already on the server, and not repairable from here: the
- * row records which mailbox, never whether anybody chose it.
+ * than correcting it. Bounded to the drafts autosaved between the recipient rule landing and this
+ * one, and DELIBERATELY not corrected — not merely unreachable from here. A repair is expressible:
+ * `openDraft` could decline to seed `fromMailboxId` when the row's mailbox is one whose address
+ * stands on that row's own To line, which is the old rule's signature. It is not done because the
+ * row records WHICH mailbox and never whether anybody chose it, so that repair would equally throw
+ * away the pick of a user who chose that address on purpose. Leaving a stale sender on an old
+ * draft is the smaller of the two, and the only one the user can see and change.
  *
  * ── IT IS A DERIVED DEFAULT AND NOTHING ELSE ────────────────────────────────────────────
  *
