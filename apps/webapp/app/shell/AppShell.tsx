@@ -6978,9 +6978,9 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
                    the SAME `useConsentState` the rail group and the folder views above are gated
                    on, or a flipped switch would leave this tab's rail where it was. Gated on
                    `consent.known` for the two rows' flash argument (a switch drawn before the
-                   server answered shows OFF to an account that turned it ON). Absent on the demo
-                   on the demo. Present on the desktop's hosted door, where `known` becomes true
-                   through its transport.
+                   server answered shows OFF to an account that turned it ON). Absent on the demo.
+                   Present on the desktop's hosted door, where `known` becomes true through its
+                   transport.
 
                    AND GATED ON `foldersStorable` AS WELL, which is the clause the comment here
                    used to make as a claim about the standalone door — *"absent on a standalone
@@ -6990,9 +6990,17 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
                    NOT serve is a single folder verb, so `packages/api`'s `withoutFoldersFlag`
                    forces the flag off on the read and drops it silently on the write. The pane
                    drew anyway: a master switch that flipped, stored nothing and snapped back, over
-                   a per-mailbox list that governed nothing. The capability is the transport's to
-                   declare because only the thing that built the wire knows which route table is
-                   behind it — see {@link ConsentTransport.foldersStorable}. */
+                   a per-mailbox list that governed nothing.
+
+                   THE CAPABILITY IS DECLARED BY THE TRANSPORT, and that is where it can be
+                   declared TRUTHFULLY on exactly one of the four wires — the standalone door's.
+                   The sentence here used to end "because only the thing that built the wire knows
+                   which route table is behind it", which is a claim about all of them and is false
+                   of three: the browser's constant cannot interrogate its server, and the
+                   desktop's hosted wire serves BOTH the managed door and the self-host one, which
+                   is the same `{ mode: "cloud" }` pointed at a different table. See
+                   {@link ConsentTransport.foldersStorable} for what each wire can honestly say and
+                   for the `/hello` word that would settle all four at the server. */
                 foldersSection={demo || !consent.known || !consent.foldersStorable ? undefined : (
                   <FoldersRow
                     on={consent.foldersEnabled}
