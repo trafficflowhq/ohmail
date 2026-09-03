@@ -897,9 +897,12 @@ export function DesktopGate() {
            the engine has no junk routes of its own — Junk is never mirrored — so every ask falls
            through to the write-through proxy and is answered by the hosted account. On the
            STANDALONE door the engine serves them itself (its organizer knows the mailbox's native
-           \Junk), but the segment stays withheld there by the flag in front of it: "Use folders"
-           has no consent row on that door (§17), and the shell gates the control on the flag.
-           `local-junk.ts` carries the argument. */
+           \Junk), but the segment stays withheld there by the flag in front of it: that door
+           cannot STORE "Use folders" (§17), and the shell gates the control on the flag. The
+           mechanism is worth spelling out because the obvious phrasing — "no consent row" — is
+           false twenty lines above this one: the row exists and is served, and
+           `withoutFoldersFlag` strips this one FIELD out of it because the engine mounts no
+           folder verb. `local-junk.ts` carries the argument. */
         {...{ junkWire: junkOverBridge }}
         /* SETTINGS → SUBSCRIPTION, SECURITY AND ACCOUNT — the three panes the web client has on a
            hosted account and this window did not, so its Settings nav was simply shorter with

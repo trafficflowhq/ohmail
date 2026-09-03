@@ -20,7 +20,12 @@
  * organizer resolves the mailbox's native \Junk at connect (`findSpecialFolders`), so the routes
  * ARE served here, from this machine. What withholds the segment there today is not this wire but
  * the flag in front of it: the window exists only behind "Use folders", and the standalone door
- * has no consent row to hold that flag (the pane's standing condition, FOLDERS-SPEC.md §17). The
+ * cannot STORE that flag (the pane's standing condition, FOLDERS-SPEC.md §17). Not "has no consent
+ * row" — that is the phrasing this line carried and it is false: `consentRoutes` are mounted on
+ * `localRoutes`, so the row exists and is served, and the standalone door reads and writes its own
+ * screening window through it. What is missing is the one FIELD: this engine mounts no folder verb,
+ * so `withoutFoldersFlag` forces the flag off on the read and drops it on the write, and the
+ * transport declares that as `foldersStorable: false` (`local-consent.ts`). The
  * wire is handed in on both doors regardless — `olderBodyOverBridge`'s transport-not-a-control
  * rule — so the day the standalone door grows a folders pane, the segment follows the switch with
  * no desktop change at all.

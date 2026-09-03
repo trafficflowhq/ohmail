@@ -994,8 +994,13 @@ export function AppShell({
    * the sweep offer are `junk-window.ts`'s; only the bytes' route is injected. On the desktop's
    * hosted door the engine forwards these routes to the account (Junk is never mirrored, so the
    * mirror has nothing to answer them from); on its standalone door the flag in front of the
-   * segment has no consent row to live in (§17), so the control stays withheld by the same gate
-   * that withholds it in a browser with the flag off.
+   * segment cannot be STORED (§17), so the control stays withheld by the same gate that withholds
+   * it in a browser with the flag off.
+   *
+   * "Cannot be stored" and not "has no consent row to live in", which is what this line said: the
+   * row exists on that door and is served — `consentRoutes` are on `localRoutes` — and the
+   * standalone install keeps its own screening window in it. One FIELD is missing, because that
+   * engine mounts no folder verb; see {@link ConsentTransport.foldersStorable}.
    */
   junkWire?: JunkWire;
   /**
