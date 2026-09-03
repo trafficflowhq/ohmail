@@ -13,6 +13,34 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Search puts matches first, and keeps the near-misses out of the way
+
+Search has always tolerated typos: ask for "invoce" and it finds the invoice. It did that
+by mixing the near-misses in with the real matches and ranking the whole lot together —
+and because a word in a subject line counts for more than a word in a body, a guess in a
+subject could outrank the word you actually typed. Searching for "graphite" put a message
+titled "Fotos vom Grat" above the one whose text says graphite. Asking for a common word
+returned a page of messages that merely resembled it: "invoce" gave twenty results, and
+nineteen of them had reached the list through the two-letter word "in".
+
+Matches now come first, on their own. Near-misses appear only when nothing matched — under
+a "Similar" heading that says so, so a guess is never mistaken for an answer. Typo
+tolerance is unchanged in the case it exists for: a misspelt word matches nothing exactly,
+so the guesses are exactly what you get.
+
+Three other things changed with it:
+
+- **Multi-word searches prefer the phrase.** "glaze evening" ranks a message that says
+  those words together above one that happens to contain both somewhere.
+- **Recency breaks ties; it does not decide them.** Two equally good matches come back
+  newest first. A better match still beats a newer one — that is what "Newest first" is
+  for, and it is a choice you make.
+- **The result count counts what is on screen.** It used to include the near-misses even
+  where they were not the answer.
+
+The same rule applies wherever your mail is searched — the index on your own machine and
+the one behind a hosted account — and both are held to it by the same code.
+
 ### The Screener's controls, in one shape
 
 The row above the waiting list — Apply, Suggest…, Mark all spam — is now one row of
