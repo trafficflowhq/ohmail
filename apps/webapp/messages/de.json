@@ -1225,7 +1225,7 @@
     "webBudget": "KI-Budget übrig",
     "webBudgetSub": "Wird zu Beginn jeder Abrechnungsperiode aufgefüllt.",
     "webSetupCredits": "Screening-Guthaben",
-    "webSetupCreditsSub": "Vom Verbinden von Postfächern — wird für Screener-Vorschläge vor dem Budget deines Tarifs verbraucht. Nutzbar bis {when}.",
+    "webSetupCreditsSub": "Einmalig, bei deiner ersten Verbindung — wird für Screener-Vorschläge vor dem Budget deines Tarifs verbraucht. Nutzbar bis {when}.",
     "webStorage": "Speicher",
     "webStorageSub": "Nachrichteninhalte, die dein Konto speichert, damit die Web-App und deine anderen Geräte sie lesen können. Anhänge zählen nie mit, und dein Postfach auf deinem eigenen Server auch nicht.",
     "webStorageOf": "{used} von {cap}",

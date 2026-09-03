@@ -1225,7 +1225,7 @@
     "webBudget": "AI budget left",
     "webBudgetSub": "Refilled at the start of each billing period.",
     "webSetupCredits": "Screening credits",
-    "webSetupCreditsSub": "From connecting mailboxes — spent on Screener suggestions before your plan's budget. Usable until {when}.",
+    "webSetupCreditsSub": "One-time, at your first connection — spent on Screener suggestions before your plan's budget. Usable until {when}.",
     "webStorage": "Storage",
     "webStorageSub": "Message content your account stores so the web app and your other devices can read it. Attachments never count, and neither does your mailbox on your own server.",
     "webStorageOf": "{used} of {cap}",
