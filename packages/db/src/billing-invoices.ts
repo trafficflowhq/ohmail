@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, sql, type SQL } from "drizzle-orm";
 import { billingInvoices } from "./schema-cloud.js";
 import type { Tx } from "./change-log.js";
 
@@ -52,6 +52,28 @@ import type { Tx } from "./change-log.js";
  * `charge.dispute.funds_withdrawn` delivery, which is the only evidence that exists.
  */
 
+/**
+ * A nullable timestamp, emitted so the PARAMETER'S TYPE NEVER VARIES for one query text.
+ *
+ * ## The failure this closes, found by the pg suite and invisible to PGlite
+ *
+ * This upsert runs with `paid_at` as a Date from the `invoice.paid` arm and as `null` from the
+ * dunning arm — same statement, same connection, two JS types in one position. postgres.js
+ * PREPARES a statement per query text and pins the parameter types it inferred on first use, so
+ * the second shape arrives at a descriptor built for the first and the driver throws
+ * `ERR_INVALID_ARG_TYPE` — from inside the transaction that grants a paid month's credits.
+ *
+ * The hosted API handle happens to set `prepare: false`, so production is not in this state
+ * today; the WORKER's handles do not, and neither does a plain `postgres()` client. A money
+ * primitive that is only safe on one of the three handles this repository builds is a primitive
+ * waiting for its second caller, so the fix is here rather than in a connection option.
+ *
+ * Two SHAPES, each internally stable: a null emits the literal, a value emits one bound text
+ * parameter with an explicit cast. Two query texts, two cache entries, no drift in either.
+ */
+const ts = (d: Date | null): SQL =>
+  d === null ? sql`null::timestamptz` : sql`${d.toISOString()}::timestamptz`;
+
 /** The mirror's six-word status vocabulary — the migration's CHECK, in the type system. */
 export type BillingInvoiceStatus =
   | "paid" | "payment_failed" | "void" | "uncollectible" | "refunded" | "disputed";
@@ -101,9 +123,11 @@ export async function upsertBillingInvoice(tx: Tx, w: BillingInvoiceWrite): Prom
       amountPaidCents: w.amountPaidCents,
       plan: w.plan,
       billingInterval: w.billingInterval,
-      periodStart: w.periodStart,
-      periodEnd: w.periodEnd,
-      paidAt: w.paidAt,
+      // See {@link ts}: the nullable stamps are emitted as casts so one query text never carries
+      // two parameter types.
+      periodStart: ts(w.periodStart),
+      periodEnd: ts(w.periodEnd),
+      paidAt: ts(w.paidAt),
       stripeEventTs: w.stripeEventTs,
       source: w.source,
     })

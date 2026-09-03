@@ -589,6 +589,36 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
    * default.
    */
   /**
+   * The invoice's DESCRIPTIVE fields, coerced rather than trusted — and the asymmetry with
+   * `monthlyCreditsFor` is the point of writing this out.
+   *
+   * That function refuses an invoice it cannot read, because guessing there is a wrong number of
+   * credits. These four fill columns beside `amount_paid_cents`, and refusing here would mean a
+   * genuinely PAID invoice fails its apply — parking a real payment as `failed` for three days,
+   * and leaving the customer without the month they bought — because a label was the wrong type.
+   *
+   * The shape is checked rather than assumed for the terminal-noop arm's reason: this DTO crossed
+   * an HTTP boundary whose client validates only "an object with an event", so a version-skewed
+   * or truncated delivery can present a v3 envelope with v2 contents. Passing `undefined` into
+   * `fromUnix` would make that a driver error inside a money transaction.
+   */
+  const invoiceFacts = (inv: InvoiceDTO): {
+    currency: string; periodStart: Date | null; periodEnd: Date | null; paidAt: Date | null;
+  } => {
+    const at = (v: unknown): Date | null =>
+      typeof v === "number" && Number.isFinite(v) ? fromUnix(v) : null;
+    return {
+      // An EMPTY currency is the honest answer to "the delivery did not say", and it is what the
+      // plane itself sends for an invoice Stripe returned without one. Defaulting to a currency
+      // would put a denomination on money nobody named.
+      currency: typeof inv.currency === "string" ? inv.currency : "",
+      periodStart: at(inv.periodStart),
+      periodEnd: at(inv.periodEnd),
+      paidAt: at(inv.paidAt),
+    };
+  };
+
+  /**
    * WHAT PLAN AND CADENCE THIS INVOICE WAS FOR, for the mirror row — a projection, never a
    * decision, and NEVER a refusal.
    *
@@ -783,12 +813,9 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
       stripeCustomerId: inv.customerId,
       billingReason: reason,
       status: "paid",
-      currency: inv.currency,
       amountPaidCents: amountPaid,
       ...planOfInvoice(inv),
-      periodStart: inv.periodStart === null ? null : fromUnix(inv.periodStart),
-      periodEnd: inv.periodEnd === null ? null : fromUnix(inv.periodEnd),
-      paidAt: inv.paidAt === null ? null : fromUnix(inv.paidAt),
+      ...invoiceFacts(inv),
       stripeEventTs: eventTs,
       source: "webhook",
     });
@@ -1214,11 +1241,11 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
             stripeCustomerId: event.invoice.customerId,
             billingReason: event.invoice.billingReason,
             status: "payment_failed",
-            currency: event.invoice.currency,
             amountPaidCents: 0,
             ...planOfInvoice(event.invoice),
-            periodStart: event.invoice.periodStart === null ? null : fromUnix(event.invoice.periodStart),
-            periodEnd: event.invoice.periodEnd === null ? null : fromUnix(event.invoice.periodEnd),
+            ...invoiceFacts(event.invoice),
+            // NOT paid, whatever the payload's transition says: this arm exists because the money
+            // did not arrive, and a `paid_at` on it would be the one field contradicting the row.
             paidAt: null,
             stripeEventTs: eventTs,
             source: "webhook",
@@ -1227,6 +1254,21 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
 
         const subId = event.invoice.subscriptionId;
         if (!subId) return;                    // not a subscription invoice — nothing to mark
+        // ── THE TWO TIMESTAMPS BELOW ARE CAST TEXT, NOT BOUND DATES ──────────────────────
+        //
+        // A `Date` bound into a `sql` fragment has no type Postgres can infer — inside a `CASE`
+        // arm and beside a column comparison there is nothing to infer it FROM — so the Parse
+        // describes the parameter as text, and postgres.js then tries to serialize a Date object
+        // as a string and throws `ERR_INVALID_ARG_TYPE` from inside the apply transaction.
+        //
+        // The hosted API handle happens to set `prepare: false`, which skips that describe and
+        // lets the driver infer from the JS value, so production has been on the safe side of a
+        // coin toss: the WORKER's handles do not set it, and neither does a plain client. This
+        // arm had never run against a real server until the invoice mirror's pg suite ran it, and
+        // it failed on the first try. An explicit `::timestamptz` cast makes the statement mean
+        // the same thing on every handle.
+        const graceIso = graceFrom(event.created).toISOString();
+        const eventTsIso = eventTs.toISOString();
         const marked = await tx
           .update(billingSubscriptions)
           .set({
@@ -1235,7 +1277,7 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
               when ${billingSubscriptions.status} = 'past_due'
                and ${billingSubscriptions.graceUntil} is not null
               then ${billingSubscriptions.graceUntil}
-              else ${graceFrom(event.created)}
+              else ${graceIso}::timestamptz
             end`,
             stripeEventTs: eventTs,
             updatedAt: sql`now()`,
@@ -1244,7 +1286,7 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
             eq(billingSubscriptions.stripeSubscriptionId, subId),
             // The same fence as the mirror: a re-ordered dunning event must not drag a
             // recovered subscription back to past_due.
-            sql`${billingSubscriptions.stripeEventTs} <= ${eventTs}`,
+            sql`${billingSubscriptions.stripeEventTs} <= ${eventTsIso}::timestamptz`,
           ))
           .returning({ id: billingSubscriptions.id });
 
