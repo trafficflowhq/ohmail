@@ -448,22 +448,29 @@ describe("the cadence, running", () => {
        reason: nothing rendered can tell "the listener updated the latch" from "the next tick
        did". */
     const src = readFileSync(resolve(process.cwd(), "apps/desktop/src/update-cadence.ts"), "utf8");
-    expect(src.length).toBeGreaterThan(2000);
+    expect(src.length, "the module under assertion was not found").toBeGreaterThan(2000);
+
+    /* EVERY ONE OF THESE READS THE CODE, NOT THE FILE. This module is comment-dense and its own
+       notes discuss the latch by name, so a count over the raw text fails on the next paragraph
+       that mentions it — a red over a defect that is not there, which is how a guard gets
+       switched off. Line comments are stripped BEFORE block comments, and the order matters: a
+       `//` line containing an unpaired block opener would otherwise start a block the stripper
+       closes at the next terminator, swallowing the real code between them — which both hides
+       a third feeder and fails the count over nothing. */
+    const code = src.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+
     // Exactly one place decides what a report means for the latch…
-    expect(src.match(/const note = \(report: UpdateReport\): void =>/g)).toHaveLength(1);
-    expect(src.match(/installWasRefused = true;/g), "the latch is set in one place")
+    expect(code.match(/const note = \(report: UpdateReport\): void =>/g)).toHaveLength(1);
+    expect(code.match(/installWasRefused = true;/g), "the latch is set in one place")
       .toHaveLength(1);
-    /* …and both feeders go through it. COUNTED OVER THE CODE, with the comments stripped first,
-       which is the only shape that holds both ends. Keying on indentation, or on a whole
-       statement line, narrows the match until a third feeder spelled any other way — an arrow
-       body, a `void`, a trailing comment — matches nothing and leaves the assertion green while
-       its own message is false; the subscription this pins is ALREADY an arrow callback, so that
-       is the likeliest next spelling rather than a contrived one. Counting bare occurrences over
-       the raw file has the opposite fault: this file is comment-dense, and the next note that
-       mentions the call would fail the guard over a defect that is not there. Strip the prose,
-       then count broadly. */
-    const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
-    expect(code.match(/\bnote\(report\)/g), "the poll and the subscription, and no third")
+
+    /* …and both feeders go through it. COUNTED ON THE CALL AND NOT ON ITS ARGUMENT: keying on
+       the parameter's name — or on indentation, or on a whole statement line — narrows the match
+       until a third feeder spelled any other way matches nothing and leaves this green while its
+       own message is false. A renamed callback parameter is the likeliest of those, because the
+       subscription this pins is already an arrow callback; the whitespace is tolerated for the
+       same reason the indentation is. The declaration does not match: it is `const note = (`. */
+    expect(code.match(/\bnote\s*\(/g), "the poll and the subscription, and no third")
       .toHaveLength(2);
   });
 
