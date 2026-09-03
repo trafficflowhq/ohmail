@@ -900,7 +900,12 @@ export function DesktopGate() {
            \Junk), but the segment stays withheld there by the flag in front of it: that door
            cannot STORE "Use folders" (§17), and the shell gates the control on the flag. The
            mechanism is worth spelling out because the obvious phrasing — "no consent row" — is
-           false twenty lines above this one: the row exists and is served, and
+           contradicted by the `consentTransport` spread earlier in this same prop list, which
+           hands the standalone door a wire for that row. No line count: three different numbers
+           described this one gap across a comment, a commit message and a public message, in a
+           comment whose whole subject is comments that have drifted from what they describe. A
+           reference that cannot go stale is the name of the thing, not the distance to it. The
+           row exists and is served, and
            `withoutFoldersFlag` strips this one FIELD out of it because the engine mounts no
            folder verb. `local-junk.ts` carries the argument. */
         {...{ junkWire: junkOverBridge }}
