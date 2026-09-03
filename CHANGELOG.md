@@ -13,6 +13,47 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### The away responder replies in the thread, at a rate you choose — and works offline of Cloud
+
+The away responder had a subject line of its own, so a reply arrived as a new message
+about a subject its recipient had never seen. It is a reply now: "Re:" plus what they
+wrote, threaded onto their message, so it lands in the conversation they started.
+
+How often one person may be answered is a setting — every message, once until you change
+the text, at most once a day, or at most once a week. Existing responders keep answering
+at most once a day, which is the new default.
+
+"Once until you change the text" means the text. Turning the responder off and on again,
+or opening settings and pressing Save without editing anything, used to start a fresh
+round in which everybody was answered again; it no longer does. The other half of the
+same problem is fixed too: correcting a typo in the middle of a trip used to permanently
+silence everyone who had written before the correction — they received neither the old
+message nor the new one. They are answered now, with what you actually wrote.
+
+**A standalone install answers its own mail for the first time.** The setting was hidden
+there because nothing in the app could send the reply. That is no longer true, and the
+pane says what the app can honestly promise: replies are sent while ohmail is open on
+this computer. Mail that arrives overnight is answered when you next open it. An install
+that reads a mailbox without organizing it answers nobody, so two installs can never both
+reply to the same person.
+
+The list of senders who never get an automatic reply gained the ones you have turned
+away, and separated them from the strangers still waiting in the Screener — those are
+answered only if you have chosen to answer everyone. A message from a mailing list, from
+an address that accepts no reply, from a security-related sender, or from one of your own
+addresses is still never answered, and every reply carries the header that stops somebody
+else's responder answering it back. A message whose text has not been downloaded yet is
+left alone until it has been, rather than treated as carrying no markers at all.
+
+### A send that stalled on this computer is settled on the next pass
+
+If a send was interrupted between your mail server accepting it and the app writing that
+down, the draft could sit at "Sending…" indefinitely on a standalone install. It is
+settled on the next pass now — usually without opening a connection, because the copy in
+your own mailbox is enough to confirm it went. This already worked on ohmail Cloud and on
+a self-hosted server.
+
+
 ### More than one mailbox
 
 A desktop install can hold several mailboxes. Until now it served exactly one, and
