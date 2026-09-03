@@ -240,6 +240,33 @@ export {
   runAwayResponderPass, AWAY_SENDS_PER_RUN, AWAY_BATCH, AWAY_ACCOUNTS_PER_RUN, AWAY_THROTTLES,
   type AwayThrottle, type AwayResponderPassDeps, type AwayResponderPassResult,
 } from "./away-responder-pass.js";
+/**
+ * THE SEND RECONCILER, ON THE MAIL BARREL — and its absence here is why the standalone door had
+ * no reconciler at all.
+ *
+ * The slice that added it shipped the pass, the hosted route and the self-host tick, and left the
+ * sidecar hook for a
+ * file another lane held. It could not have been written: `runSendReconcilePass` was exported from
+ * `./index.js` only, and the sidecar imports THIS barrel — so the hook would not have compiled,
+ * and the desktop engine bundle measured byte-identical before and after that slice because
+ * nothing in it could reach the pass.
+ *
+ * That is the same shape the away responder was found in ("the worker's package publishes four
+ * subpaths and the responder is not among them"), and it is worth naming twice: a pass is only as
+ * reachable as the entry point its host actually imports, and a barrel omission fails SILENTLY —
+ * no error, no red test, just a door that quietly does less than the others.
+ *
+ * Mail-half by the same test as the two passes above: it names no cloud table (its eligibility
+ * gate is injected), it reads and writes only the mail schema, and its adapter is handed in. The
+ * standalone door needs it more than either, because there a stranded reservation has NO other
+ * resolver — no cron, no clock, nothing but the drain.
+ */
+export {
+  runSendReconcilePass, SEND_RECONCILE_BATCH, SEND_RECONCILE_CALL_CEILING_MS,
+  SEND_RECONCILE_CLOSE_CEILING_MS, SEND_RECONCILE_NET_TIMEOUTS,
+  SEND_RECONCILE_DIAL_DEADLINE_MS, SEND_RECONCILE_GIVE_UP_MS, SEND_RECONCILE_SCAN_FACTOR,
+  type SendReconcilePassDeps, type SendReconcilePassResult,
+} from "./send-reconcile-pass.js";
 export {
   SendService, sendService, SEND_STALE_AFTER_MS,
   SEND_ATTEMPT_CEILING_MS, SEND_TIMEOUT_SENTENCE,

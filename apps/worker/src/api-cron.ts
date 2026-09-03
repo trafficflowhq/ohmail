@@ -172,6 +172,9 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
     // budget from.
     timeoutMs: 60 * 1000,
     // A tenth of the cadence — the sender's reason, one target over.
+    jitterMs: 6 * 1000,
+  },
+  {
     // THE AWAY RESPONDER'S SENDER (mail 0087) — and its being here at all is the fix.
     //
     // The pass used to run INSIDE this worker, on the cycle tail. It could not work: this platform

@@ -24,7 +24,8 @@ import {
 } from "@trafficflow/db";
 import {
   attachmentsService, awayResponderService, contactsService, draftingService, draftsService,
-  kbService, runAwayResponderPass, runScheduledSendPass, scheduleService, tagsService,
+  kbService, runAwayResponderPass, runScheduledSendPass, runSendReconcilePass,
+  scheduleService, tagsService,
   makeApprovalService, makeAuthConfig, makeMailboxService, makePrivacyService,
   makeScreenerService, makeUnsubscribeService, messageService, nodeHostResolver,
   nodeOneClickPost, notifyRulesService, resolveSession,
@@ -2934,6 +2935,72 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       };
 
       /**
+       * SETTLE A SEND THIS INSTALL STARTED AND NEVER FINISHED.
+       *
+       * The same ONE implementation the hosted API host and the self-host clock run. On those two
+       * a stranded `pending` reservation is drained by a cron and a timer; on THIS door there was
+       * nothing at all — the pass shipped with its route and its tick and no standalone hook, so a
+       * send interrupted by a quit or a crash stayed `pending` for ever and its draft went on
+       * saying "Sending…" with no process anywhere that would ever look at it again.
+       *
+       * It could not simply be added, either, which is worth recording because it is the second
+       * time this exact shape has cost a door a feature: `runSendReconcilePass` was exported from
+       * `@trafficflow/services` only, and this file imports the MAIL entry point, so the hook
+       * would not have compiled. A pass is only as reachable as the entry point its host actually
+       * imports, and a barrel omission fails SILENTLY — no error, no red test, just a door quietly
+       * doing less than the others. The mail-barrel export lands with this hook.
+       *
+       * ── AND IT IS DELIBERATELY *NOT* GATED ON ORGANIZING ────────────────────────────────────
+       *
+       * It sits between two hooks that ARE gated, so the difference has to be stated here or it
+       * reads as an oversight and gets "fixed". The two above SEND: an appointment and an away
+       * reply are mail leaving this mailbox, and a reader must not do that on behalf of an
+       * organizer it cannot see. This one RESOLVES — the subject is THIS INSTALL'S OWN
+       * reservation, written by a send this very process started, and the work is a READ (a Sent
+       * folder probe, or a single indexed lookup in this account's own mirror) plus a
+       * compare-and-swap on a row nobody else owns.
+       *
+       * Gating it would strand exactly the person it exists for: somebody whose install was
+       * demoted to reader between pressing send and the process dying would keep a draft that says
+       * "Sending…" for ever, because the organizer's install has no reservation of theirs to find.
+       * `send-reconcile-drain.test.ts` holds that as a case rather than as a sentence.
+       *
+       * No account filter is passed, and none is available on the pass's own options: it scans the
+       * store, exactly as the scheduled sender does. That is the right shape on this door for a
+       * reason the hosted host does not have — a standalone store holds ONE account, so store-wide
+       * IS this install's own reservations.
+       *
+       * The adapter it is handed cannot send: the pass wraps whatever factory it gets so that
+       * `send` throws. That is a structural proof rather than a promise made here — this hook could
+       * not deliver a second copy of an already-sent message even if its logic were wrong.
+       */
+      const reconcileStrandedSends = async (): Promise<void> => {
+        try {
+          const r = await runSendReconcilePass(db as never, {
+            openSendAdapter: openLocalSend,
+            /* NO account filter, and none is available: the pass is store-wide by design, exactly
+               like the scheduled sender it settles for. That is correct on this door for a reason
+               the hosted host does not have — a standalone store holds ONE account, so store-wide
+               IS this install's own reservations. */
+            now,
+          });
+          if (r.claimed > 0) {
+            log("send_reconcile_pass", {
+              claimed: r.claimed, sent: r.sent, unverified: r.unverified,
+              deferred: r.deferred, resolvedElsewhere: r.resolvedElsewhere, gaveUp: r.gaveUp,
+            });
+          }
+        } catch (err) {
+          log("send_reconcile_pass_failed", {
+            err,
+            reason: "no stranded reservation was resolved this drain; every row stays exactly as " +
+              "it was and the next drain looks again — the pass never sends, so a failure here " +
+              "cannot have delivered anything",
+          });
+        }
+      };
+
+      /**
        * The drain itself. Never called from outside this closure, and — since mail 0083 — reached
        * by a READER as well as by an organizer; `organizer.organizing` is what separates them, both
        * for the passes below and for the `role` every cycle runs under.
@@ -2986,6 +3053,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // has just arrived — and it must not wait out a hundred-cycle backlog drain. Its own SMTP
         // dial fails independently of the inbound cycles, and the pass contains its own faults.
         if (organizer.organizing) await answerAway();
+        /* AND THE RECONCILER — UNGATED, unlike the two lines above it. See its own note: those two
+           SEND on the mailbox's behalf and a reader must not; this one settles a reservation THIS
+           install wrote, by reading. Gating it would leave a demoted install saying "Sending…" for
+           ever, since no other install holds that reservation. After the sender, because the
+           sender is the only thing on this door that creates one. */
+        await reconcileStrandedSends();
         let cycles = 0;
         /** Did a cycle report an empty backlog, or did the loop simply run out of cycles? */
         let drained = false;

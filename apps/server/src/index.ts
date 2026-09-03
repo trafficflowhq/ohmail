@@ -198,6 +198,8 @@ async function main(): Promise<void> {
            * never projects a sent copy and never assembles a body.
            */
           await reconcileStrandedSends();
+
+          /**
            * THE AWAY RESPONDER, ON THE SAME TICK (mail 0087) — one always-on process, one clock.
            *
            * On this host the two passes share a tick rather than each arming their own, which is

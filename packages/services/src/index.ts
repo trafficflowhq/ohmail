@@ -216,6 +216,7 @@ export {
   SEND_RECONCILE_DIAL_DEADLINE_MS, SEND_RECONCILE_GIVE_UP_MS, SEND_RECONCILE_SCAN_FACTOR,
   type SendReconcilePassDeps, type SendReconcilePassResult,
 } from "./send-reconcile-pass.js";
+export {
   runAwayResponderPass, AWAY_SENDS_PER_RUN, AWAY_BATCH, AWAY_ACCOUNTS_PER_RUN, AWAY_THROTTLES,
   type AwayThrottle, type AwayResponderPassDeps, type AwayResponderPassResult,
 } from "./away-responder-pass.js";

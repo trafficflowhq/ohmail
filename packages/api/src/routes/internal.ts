@@ -7,12 +7,12 @@ import { sql } from "drizzle-orm";
 import { silentLogger, type Logger } from "@trafficflow/core";
 import type { Tx } from "@trafficflow/db";
 import {
+  runAwayResponderPass,
   reapStaleWebSessions, reconcileBillingMirror, recordReconcileFailure,
   runScheduledSendPass, runSendReconcilePass, SEND_RECONCILE_NET_TIMEOUTS,
   TransientDialRefusal, type AdminDb,
 } from "@trafficflow/services";
 import type { SendAdapter } from "@trafficflow/core/mail";
-import { runAwayResponderPass, runScheduledSendPass } from "@trafficflow/services";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
 import { makeSendAdapter } from "../send-adapter.js";
 import { MAX_IMAP_PER_MAILBOX } from "../attachments-adapter.js";
@@ -202,6 +202,14 @@ export const SCHEDULED_SEND_CRON_PATH = "/internal/sends/scheduled/run";
 export const SEND_RECONCILE_CRON_PATH = "/internal/sends/reconcile/run";
 
 /**
+ * The away responder's clock. A SEPARATE route from the scheduled sender's, not a second pass
+ * folded into it: that invocation already budgets its own sends against this platform's 60-second
+ * ceiling, and a slow away run sharing it would eat the appointment clock's margin. Two routes,
+ * two cron entries, two independent deadlines.
+ */
+export const AWAY_RESPONDER_CRON_PATH = "/internal/away/run";
+
+/**
  * `makeSendAdapter` UNDER THE PER-MAILBOX IMAP ADMISSION COUNTER — the reconciling pass's dial.
  *
  * The attachment path's `openImapUnderCap` shape, reduced to the half this caller needs: acquire
@@ -311,12 +319,6 @@ async function admittedSendAdapter(deps: ApiDeps, mailboxId: string): Promise<Se
     } : {}),
   };
 }
- * The away responder's clock. A SEPARATE route from the scheduled sender's, not a second pass
- * folded into it: that invocation already budgets its own sends against this platform's 60-second
- * ceiling, and a slow away run sharing it would eat the appointment clock's margin. Two routes,
- * two cron entries, two independent deadlines.
- */
-export const AWAY_RESPONDER_CRON_PATH = "/internal/away/run";
 
 /** class + code, never message text — the same scrubbing rule as `billing_events.error`. */
 function scrubError(err: unknown): string {
@@ -968,6 +970,43 @@ export const internalRoutes: Route[] = [
     options: { public: true, anonymous: true, raw: true },
     handler: async (req, deps) => {
       const log = (deps.logger ?? silentLogger).child({ route: SEND_RECONCILE_CRON_PATH });
+      const cfg = deps.alerts;
+      if (!cfg || cfg.secret.trim().length === 0) {
+        return json(404, { error: { code: "not_found" } });
+      }
+      const cron = cfg.cronSecret?.trim();
+      const authorized = presentsSecret(req, cfg.secret)
+        || (cron !== undefined && cron.length > 0 && presentsSecret(req, cron));
+      if (!authorized) {
+        log.warn("send_reconcile_unauthorized", {});
+        return json(401, { error: { code: "unauthorized" } });
+      }
+      try {
+        const result = await runSendReconcilePass(deps.db, {
+          openSendAdapter: deps.services?.sendAdapter
+            ?? ((mailboxId: string) => admittedSendAdapter(deps, mailboxId)),
+          // THE SUSPENSION GATE, injected here for `runScheduledSendPass`'s reason (the fact is
+          // the cloud half's and the pass ships in the desktop engine bundle) and read on the
+          // HANDED handle for its deadlock reason. It gates the DIAL rather than the claim here
+          // — see `SendReconcilePassDeps.accountEligible` for why excluding the rows would
+          // starve every account behind a parked one.
+          accountEligible: async (accountId, handle) =>
+            !(await isSuspended(handle as unknown as Tx, accountId)),
+          log,
+          now: deps.now,
+        });
+        if (result.claimed > 0) log.info("send_reconcile_pass", { ...result });
+        return json(200, { now: deps.now().toISOString(), ...result });
+      } catch (err) {
+        // `raw` means no error envelope above this handler; it must never throw. Per-row faults
+        // are already absorbed inside the pass — this catches only the claim itself.
+        log.error("send_reconcile_pass_failed", { err });
+        return json(503, { error: { code: "send_reconcile_pass_failed" } });
+      }
+    },
+  },
+  {
+    /**
      * `GET /internal/away/run` — THE AWAY RESPONDER'S SENDER (mail 0087).
      *
      * The scheduled sender's shape verbatim, and it is on THIS host for the same measured reason
@@ -1001,18 +1040,6 @@ export const internalRoutes: Route[] = [
       const authorized = presentsSecret(req, cfg.secret)
         || (cron !== undefined && cron.length > 0 && presentsSecret(req, cron));
       if (!authorized) {
-        log.warn("send_reconcile_unauthorized", {});
-        return json(401, { error: { code: "unauthorized" } });
-      }
-      try {
-        const result = await runSendReconcilePass(deps.db, {
-          openSendAdapter: deps.services?.sendAdapter
-            ?? ((mailboxId: string) => admittedSendAdapter(deps, mailboxId)),
-          // THE SUSPENSION GATE, injected here for `runScheduledSendPass`'s reason (the fact is
-          // the cloud half's and the pass ships in the desktop engine bundle) and read on the
-          // HANDED handle for its deadlock reason. It gates the DIAL rather than the claim here
-          // — see `SendReconcilePassDeps.accountEligible` for why excluding the rows would
-          // starve every account behind a parked one.
         log.warn("away_responder_unauthorized", {});
         return json(401, { error: { code: "unauthorized" } });
       }
@@ -1036,13 +1063,6 @@ export const internalRoutes: Route[] = [
           log,
           now: deps.now,
         });
-        if (result.claimed > 0) log.info("send_reconcile_pass", { ...result });
-        return json(200, { now: deps.now().toISOString(), ...result });
-      } catch (err) {
-        // `raw` means no error envelope above this handler; it must never throw. Per-row faults
-        // are already absorbed inside the pass — this catches only the claim itself.
-        log.error("send_reconcile_pass_failed", { err });
-        return json(503, { error: { code: "send_reconcile_pass_failed" } });
         if (result.examined > 0 || result.sent > 0) log.info("away_responder_pass", { ...result });
         return json(200, { now: deps.now().toISOString(), ...result });
       } catch (err) {
