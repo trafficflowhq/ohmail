@@ -24,6 +24,10 @@ import { WINDOW_ONLY_NAMESPACES } from "../vite.config";
 
 const APP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (rel: string) => fs.readFileSync(path.join(APP, rel), "utf8");
+/** One namespace out of the English catalogue — for assertions on copy the window now reads. */
+const catalogue = (ns: string): Record<string, string> =>
+  (JSON.parse(fs.readFileSync(path.join(APP, "../webapp/messages/en.json"), "utf8")) as
+    Record<string, Record<string, string>>)[ns]!;
 const readJson = (rel: string) => JSON.parse(read(rel)) as Record<string, never>;
 
 /**
@@ -2101,8 +2105,15 @@ describe("the UI bundle's build config", () => {
     // ordinary pre-auth engine also answers and which is not "you were signed out".
     expect(gate).toMatch(/health\.sessionExpired === true/);
     expect(gate).not.toMatch(/health\.signedIn === false\) setHostedSessionGone/);
-    expect(gate).toMatch(/signed out of your hosted account/);
-    expect(gate).toMatch(/actionLabel="Sign in"/);
+    /* THE SENTENCE MOVED INTO THE CATALOGUE, so this follows it rather than being dropped:
+       the gate must name the right two keys, and those keys must still say the thing. Asserting
+       only the key would let the sentence be rewritten into something that does not explain the
+       stand-still; asserting only the text would go green on a key nothing reads. */
+    expect(gate).toMatch(/reason=\{DOOR_COPY\.gateSessionGone\}/);
+    expect(gate).toMatch(/actionLabel=\{DOOR_COPY\.signIn\}/);
+    const door = catalogue("desktopDoor");
+    expect(door.gateSessionGone).toMatch(/signed out of your hosted account/);
+    expect(door.signIn).toBe("Sign in");
     // The way back is the IN-PLACE cloud sign-in, not a door re-pick that reconfigures the
     // engine over the mirror it already has.
     expect(gate).toMatch(/start="cloud"\s+cloudAction="signIn"/);
@@ -2318,8 +2329,11 @@ describe("the UI bundle's build config", () => {
     // second, so collapsing the first into it would say that to somebody whose mailbox works.
     expect(mailboxes).toMatch(/throw new Error/);
 
-    // The pane names a THING, like every other entry beside it in that list.
-    expect(read("src/DesktopSettings.tsx")).toMatch(/DESKTOP_PANE_LABEL = "Desktop"/);
+    // The pane names a THING, like every other entry beside it in that list. The word is a
+    // catalogue read now (the nav label is translated with the rest of the window), so the
+    // assertion is on the key the pane resolves and on what that key says.
+    expect(read("src/DesktopSettings.tsx")).toMatch(/return DOOR_COPY\.paneLabel;/);
+    expect(catalogue("desktopDoor").paneLabel).toBe("Desktop");
     // …and the copy that sends somebody to it says the same word. A pointer at a pane that no
     // longer has that name is a wrong instruction, not a stale comment.
     expect(read("src/local-suggest.tsx")).toMatch(/Settings, Desktop/);

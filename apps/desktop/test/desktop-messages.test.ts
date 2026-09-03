@@ -197,6 +197,82 @@ function namespacesUsed(): Set<string> {
   return found;
 }
 
+/**
+ * ── WHICH ARTIFACT ACTUALLY READS A NAMESPACE, from the import graph rather than from a claim ──
+ *
+ * The two lists in `vite.config.ts` divide the catalogue between the window and the served host
+ * client, and until this walk existed the division was an argument in a comment. It is a fact
+ * about the import graph: a namespace is READABLE on a door only if some file reachable from that
+ * door's entry point reads it.
+ *
+ * Deliberately a text walk over relative specifiers, not a bundler: the two entries and everything
+ * they pull are this repository's own sources, the desktop config's aliases point at those same
+ * files, and a resolver that followed packages would drag `node_modules` in for no gain. A
+ * specifier it cannot resolve is one it does not follow, which is the SAFE direction here — it can
+ * only make a graph smaller, and every case below asserts a namespace is ABSENT from the host
+ * graph, so an under-resolved walk cannot manufacture a pass it would otherwise fail. The size
+ * floors below are what keeps that honest.
+ */
+const ENTRY_WINDOW = "apps/desktop/src/main.tsx";
+const ENTRY_HOST = "apps/desktop/src/host-client/main.tsx";
+
+function importGraph(entryRel: string): string[] {
+  const seen = new Set<string>();
+  const queue = [path.join(REPO, entryRel)];
+  const tryFile = (base: string): string | null => {
+    const candidates = [
+      base.replace(/\.js$/, ".ts"),
+      base.replace(/\.js$/, ".tsx"),
+      base,
+      ...[".ts", ".tsx"].map((e) => base + e),
+      ...[".ts", ".tsx"].map((e) => path.join(base, `index${e}`)),
+    ];
+    for (const c of candidates) {
+      if (fs.existsSync(c) && fs.statSync(c).isFile()) return c;
+    }
+    return null;
+  };
+  while (queue.length > 0) {
+    const file = queue.pop()!;
+    if (seen.has(file)) continue;
+    seen.add(file);
+    let src: string;
+    try {
+      src = fs.readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    for (const m of src.matchAll(/(?:from|import)\s*\(?\s*["']([^"']+)["']/g)) {
+      const spec = m[1]!;
+      if (!spec.startsWith(".")) continue;
+      const next = tryFile(path.resolve(path.dirname(file), spec));
+      if (next !== null) queue.push(next);
+    }
+  }
+  return [...seen].map((f) => path.relative(REPO, f));
+}
+
+/** Namespaces read by a set of files, by the same three call shapes {@link namespacesUsed} counts. */
+function namespacesIn(files: string[]): Map<string, string[]> {
+  const found = new Map<string, string[]>();
+  const add = (ns: string, file: string): void => {
+    const at = found.get(ns) ?? [];
+    if (!at.includes(file)) at.push(file);
+    found.set(ns, at);
+  };
+  for (const rel of files) {
+    const src = read(rel);
+    for (const m of src.matchAll(/useTranslations\(\s*"([A-Za-z0-9_]+)"/g)) add(m[1]!, rel);
+    for (const m of src.matchAll(/\b(?:liveCopy|activeTranslator)\(\s*"([A-Za-z0-9_]+)"/g)) {
+      add(m[1]!, rel);
+    }
+    if (/useTranslations\(\s*\)/.test(src)) {
+      for (const m of src.matchAll(/\bt\(\s*"([A-Za-z0-9_]+)\.[A-Za-z0-9_.]+"/g)) add(m[1]!, rel);
+    }
+  }
+  return found;
+}
+
 describe("desktop message filter", () => {
   /**
    * The scan looked at something. Every other case here compares one derived set against
@@ -295,6 +371,65 @@ describe("desktop message filter", () => {
         expect(served.includes(m.toLowerCase()), `${file} serves the marker "${m}"`).toBe(false);
       }
     }
+  });
+
+  /**
+   * ── `desktopDoor` IS THE STANDALONE WINDOW'S OWN CHROME, AND THE GRAPH SAYS SO ────────────
+   *
+   * The namespace holds the door chooser, the gate's apology, the boot line, Settings → Desktop,
+   * Settings → About and the mailto ask — 153 keys that were English literals in a German install
+   * until the window was translated.
+   *
+   * Two assertions, and each catches a different mistake:
+   *
+   *  1. NOT ONE FILE the served host client can reach reads it. That is what makes it window-only
+   *     rather than a preference, and it goes red the day a served-door surface starts reading the
+   *     namespace — at which point the entry belongs on the base list instead, and shipping it as
+   *     window-only would render raw keys on a phone.
+   *  2. It is ON the window-only list and NOT on the base one. Red the other way: moving it to the
+   *     base list would put a desktop app's "Sign out of this mailbox?" into the bundle served over
+   *     somebody's tailnet — payload nothing there can render, which is the rule `desktopScreener`
+   *     established and `onboarding` before it.
+   *
+   * The window half needs no case of its own: `SHELL_MESSAGE_NAMESPACES is exactly what the
+   * sources read` already fails if the namespace is on neither list, which is the shape that broke
+   * the first build after `columns` landed — the filter drops the namespace, the code keeps
+   * reading it, and `useTranslations` throws `MISSING_MESSAGE` on the window's first render.
+   */
+  it("`desktopDoor` is the window's own, and the served client's graph never reads it", () => {
+    const windowFiles = importGraph(ENTRY_WINDOW);
+    const hostFiles = importGraph(ENTRY_HOST);
+    // The walk found a real graph. Both floors are far below the measured sizes (208 and 165):
+    // they catch a resolver that stopped following, not a refactor.
+    expect(windowFiles.length).toBeGreaterThan(100);
+    expect(hostFiles.length).toBeGreaterThan(100);
+    expect(hostFiles).toContain("apps/desktop/src/host-client/HostGate.tsx");
+
+    /* EXACTLY ONE READER, and that is the design rather than an accident: `door-copy.ts` holds
+       the whole namespace as one `liveCopy` table and every pane imports `DOOR_COPY` from it.
+       Asserted as an equality so a second reader — a pane calling `useTranslations("desktopDoor")`
+       for one label — is caught: it would be a second place the namespace's keys are named, and
+       `desktop-door-copy.test.ts`'s key-set equality could not see it. */
+    const readsInWindow = namespacesIn(windowFiles).get("desktopDoor") ?? [];
+    expect(readsInWindow).toEqual(["apps/desktop/src/door-copy.ts"]);
+    /* …and the panes that render those words are genuinely in this graph and not the other. */
+    for (const pane of ["DoorChooser", "DesktopSettings", "DesktopAbout", "GateNotice"]) {
+      expect(windowFiles, pane).toContain(`apps/desktop/src/${pane}.tsx`);
+      expect(hostFiles, pane).not.toContain(`apps/desktop/src/${pane}.tsx`);
+    }
+
+    const readsInHost = namespacesIn(hostFiles).get("desktopDoor") ?? [];
+    expect(
+      readsInHost,
+      "a served-door source reads `desktopDoor`, so it is no longer window-only — move it to "
+        + "BASE_MESSAGE_NAMESPACES or those surfaces render raw keys on the phone",
+    ).toEqual([]);
+
+    expect(WINDOW_ONLY_NAMESPACES as readonly string[]).toContain("desktopDoor");
+    const base = SHELL_MESSAGE_NAMESPACES
+      .filter((ns) => !(WINDOW_ONLY_NAMESPACES as readonly string[]).includes(ns));
+    expect(base, "desktopDoor is on the base list — the served client would carry it").not
+      .toContain("desktopDoor");
   });
 
   it("the marketing namespaces are excluded", () => {

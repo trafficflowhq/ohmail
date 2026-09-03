@@ -7,7 +7,7 @@ import { NextIntlClientProvider } from "next-intl";
 import messages from "../../webapp/messages/en.json";
 import de from "../../webapp/messages/de.json";
 import { DesktopAutoSuggest, autoSuggestCopyKey } from "../src/DesktopAutoSuggest.js";
-import { DESKTOP_PANE_LABEL } from "../src/DesktopSettings.js";
+import { desktopPaneLabel } from "../src/DesktopSettings.js";
 
 /**
  * "SUGGEST FOR NEW SENDERS AUTOMATICALLY" — the row, mounted, on every state the engine can be in.
@@ -193,7 +193,7 @@ describe("the automatic-suggestion row on the standalone door", () => {
    * AND IT POINTS AT A PANE THE NAV ACTUALLY DRAWS.
    *
    * The actionable half of that sentence said "under This install" — the pane's OLD heading. It is
-   * `DESKTOP_PANE_LABEL` now ("Desktop"), which `DesktopGate` hands straight to the Settings nav,
+   * `desktopPaneLabel()` now ("Desktop"), which `DesktopGate` hands straight to the Settings nav,
    * so the instruction named a heading no window had drawn since the rename. Pinned against the
    * constant and not against a second literal, because a second literal is exactly what drifted.
    */
@@ -206,7 +206,7 @@ describe("the automatic-suggestion row on the standalone door", () => {
     const key = autoSuggestCopyKey({ on: false, since: null, modelReady: false });
     expect(key).toBe("autoSuggestNoModel");
     const said = messages.desktopScreener[key];
-    expect(said).toContain(`under ${DESKTOP_PANE_LABEL}`);
+    expect(said).toContain(`under ${desktopPaneLabel()}`);
     expect(said).not.toContain("under This install");
   });
 
