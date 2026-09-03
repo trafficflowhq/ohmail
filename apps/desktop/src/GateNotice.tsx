@@ -16,10 +16,12 @@
 import type { ReactNode } from "react";
 import { Button } from "@ohmail/ui";
 
+import { DOOR_COPY } from "./door-copy.js";
+
 export interface GateNoticeProps {
   /** What went wrong, as one sentence. The only thing the three callers disagree about. */
   reason: string;
-  /** The label on the single action, e.g. "Try again" or "Reload". */
+  /** The label on the single action — `desktopDoor.gateTryAgain` or `…reload`. */
   actionLabel: string;
   onAction: () => void;
   /** Anything the caller wants under the action — used for nothing today. */
@@ -31,16 +33,13 @@ export function GateNotice({ reason, actionLabel, onAction, children }: GateNoti
     <div className="gate">
       <div className="gate-card">
         <span className="wordmark"><b>ohmail</b><em>.</em></span>
-        <h1>ohmail cannot open your mailbox</h1>
+        <h1>{DOOR_COPY.gateCannotOpen}</h1>
         <p>{reason}</p>
         <div className="gate-actions">
           <Button onClick={onAction}>{actionLabel}</Button>
         </div>
         {children}
-        <p className="gate-foot">
-          Your mail is untouched. It is on your own server, or in your hosted account, and this
-          app has not changed either.
-        </p>
+        <p className="gate-foot">{DOOR_COPY.gateFoot}</p>
       </div>
     </div>
   );

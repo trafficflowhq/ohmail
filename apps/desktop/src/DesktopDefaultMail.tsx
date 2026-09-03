@@ -22,6 +22,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, SettingsRow } from "@ohmail/ui";
 
 import { usePersistedFlag } from "../../webapp/app/shell/persisted-ui.js";
+import { DOOR_COPY } from "./door-copy.js";
 import {
   defaultMailStatus,
   requestDefaultMail,
@@ -48,29 +49,28 @@ export function afterRequestSentence(how: DefaultMailHow | null, state: DefaultM
       // Launch Services is documented as SETTING the handler; macOS interposes its own
       // confirmation for some scheme changes and not for others, so this sentence promises
       // neither — the re-read below announces the outcome either way.
-      return "macOS is applying the change — confirm its dialog if one appears.";
+      return DOOR_COPY.mailtoAfterDialog;
     case "settings-opened":
-      return "Windows Settings is open — choose ohmail under Default apps.";
+      return DOOR_COPY.mailtoAfterSettings;
     case "set":
-      return state === "default"
-        ? "Mail links on this computer open in ohmail now."
-        : "The change was sent to your desktop, and it has not taken effect yet.";
+      return state === "default" ? DOOR_COPY.mailtoAfterSet : DOOR_COPY.mailtoAfterPending;
     default:
-      return "The request was sent.";
+      return DOOR_COPY.mailtoAfterSent;
   }
 }
 
 /** The row's right-hand value, from the detected state. Plain words, no vocabulary leaks. */
 export function stateValue(state: DefaultMailState | null): string {
   switch (state) {
+    /* The brand, which is the same word in every language and is deliberately NOT a key. */
     case "default":
       return "ohmail";
     case "not-default":
-      return "Another app";
+      return DOOR_COPY.mailtoStateOther;
     case "unknown":
-      return "Not known";
+      return DOOR_COPY.mailtoStateUnknown;
     default:
-      return "Checking…";
+      return DOOR_COPY.mailtoStateChecking;
   }
 }
 
@@ -118,7 +118,7 @@ export function useDefaultMail(active: boolean): {
       void read().then((fresh) => {
         if (!alive.current) return;
         setWatching(fresh === "default" ? 0 : watching - 1);
-        if (fresh === "default") setNote("Mail links on this computer open in ohmail now.");
+        if (fresh === "default") setNote(DOOR_COPY.mailtoAfterSet);
       });
     }, REREAD_MS);
     return () => clearTimeout(timer);
@@ -156,17 +156,13 @@ export function DefaultMailRow() {
   return (
     <>
       <SettingsRow
-        label="Default mail app"
-        description={
-          isDefault
-            ? "Email links on this computer open a new message in ohmail."
-            : "Which app opens email links (mailto) on this computer."
-        }
+        label={DOOR_COPY.mailtoLabel}
+        description={isDefault ? DOOR_COPY.mailtoIsDefaultWhy : DOOR_COPY.mailtoWhy}
         value={stateValue(mail.state)}
         control={
           isDefault ? undefined : (
             <Button onClick={() => void mail.request()} disabled={mail.busy}>
-              {mail.busy ? "Asking…" : "Make default"}
+              {mail.busy ? DOOR_COPY.mailtoAsking : DOOR_COPY.mailtoMakeDefault}
             </Button>
           )
         }
@@ -216,7 +212,7 @@ export function DefaultMailAsk() {
   return (
     <div
       role="dialog"
-      aria-label="Default mail app"
+      aria-label={DOOR_COPY.mailtoLabel}
       style={{
         position: "fixed",
         insetInline: 0,
@@ -234,28 +230,25 @@ export function DefaultMailAsk() {
     >
       {phase === "ask" ? (
         <>
-          <p style={{ margin: 0, fontWeight: 600 }}>Open email links with ohmail?</p>
-          <p style={{ margin: "6px 0 12px", opacity: 0.8 }}>
-            Clicking an email address anywhere on this computer would start a new message here.
-            You can change this later in Settings.
-          </p>
+          <p style={{ margin: 0, fontWeight: 600 }}>{DOOR_COPY.mailtoAskTitle}</p>
+          <p style={{ margin: "6px 0 12px", opacity: 0.8 }}>{DOOR_COPY.mailtoAskBody}</p>
           <span className="set-tag-acts">
             <Button variant="primary" onClick={() => void decide()}>
-              Make default
+              {DOOR_COPY.mailtoMakeDefault}
             </Button>
             <Button variant="ghost" onClick={() => setAsked(true)}>
-              Not now
+              {DOOR_COPY.mailtoNotNow}
             </Button>
           </span>
         </>
       ) : (
         <>
           <p style={{ margin: 0, fontWeight: 600 }}>
-            {mail.problem ?? mail.note ?? "Asking the system…"}
+            {mail.problem ?? mail.note ?? DOOR_COPY.mailtoAskingSystem}
           </p>
           <span className="set-tag-acts" style={{ marginTop: 12, display: "inline-flex" }}>
             <Button variant="ghost" onClick={() => setPhase("ask")}>
-              Done
+              {DOOR_COPY.mailtoDone}
             </Button>
           </span>
         </>

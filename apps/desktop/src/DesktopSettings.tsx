@@ -27,9 +27,9 @@ import { Button, SettingsNote, SettingsRow, SettingsSection, SettingsSubhead } f
 
 import { engineLogout, type EngineStatus } from "./bridge-fetch.js";
 import type { HostedSession } from "./doors.js";
+import { DOOR_COPY, machineWord } from "./door-copy.js";
 import { DesktopAiSettings } from "./DesktopAiSettings.js";
 import type { LocalAiStatus } from "./local-ai.js";
-import { MACHINE_WORD } from "./platform.js";
 
 /* WHAT THIS INSTALL DOES WITH THE MAILBOX BELOW — "organizes" or "reads". One rule, two
    panes and one confirmation bullet; see `install-role.ts` for the measured defect and
@@ -45,13 +45,16 @@ import { mailboxRowWhy } from "./install-role.js";
  * "Desktop", not "This install". Every other entry in that list names a THING — Mailboxes, Tags,
  * Rules, Screener — and this one named a relationship, which reads as jargon beside them and gives
  * no clue that it is where the app itself is configured.
+ *
+ * A FUNCTION, not a constant, and that is the whole of what the translation changed here: the
+ * word comes from the catalogue, which the host sets during ITS render, and a module-level
+ * constant would be evaluated at import time — long before any provider exists — and then never
+ * again. `desktopScreener.autoSuggestNoModel` names this pane inside a sentence, so a frozen
+ * English word here would be an English word in the middle of a German one.
  */
-export const DESKTOP_PANE_LABEL = "Desktop";
-
-const DOOR_NAME: Record<string, string> = {
-  local: `On this ${MACHINE_WORD}`,
-  cloud: "ohmail Cloud",
-};
+export function desktopPaneLabel(): string {
+  return DOOR_COPY.paneLabel;
+}
 
 /**
  * What this install says about its credential, in words rather than in the engine's vocabulary.
@@ -87,7 +90,7 @@ function credentialLine(
   session: HostedSession,
 ): { label: string; value: string; description: string } {
   const cloud = status.mode === "cloud";
-  const label = cloud ? "Account session" : "Mailbox password";
+  const label = cloud ? DOOR_COPY.credCloudLabel : DOOR_COPY.localPassword;
   /* ── THE TWO NON-LIVE ARMS ARE DEFENSIVE, AND SAYING SO IS THE POINT ──────────────────────
    *
    * Neither is reachable from `DesktopGate` today: the gate returns the door chooser on a pre-auth
@@ -101,22 +104,13 @@ function credentialLine(
    * the gate is safe whether or not the gate ever selects it; a second source of truth is not. */
   if (cloud) {
     return session === "live"
-      ? {
-          label,
-          value: "Signed in",
-          description: "This install holds a session for your hosted account.",
-        }
+      ? { label, value: DOOR_COPY.credCloudLiveValue, description: DOOR_COPY.credCloudLiveWhy }
       : session === "out"
-        ? {
-            label,
-            value: "Signed out",
-            description:
-              "There is no session for this account on this machine. Sign in again below.",
-          }
+        ? { label, value: DOOR_COPY.credCloudOutValue, description: DOOR_COPY.credCloudOutWhy }
         : {
             label,
-            value: "Checking",
-            description: "The mail engine has not answered about this account's session yet.",
+            value: DOOR_COPY.credCloudCheckingValue,
+            description: DOOR_COPY.credCloudCheckingWhy,
           };
   }
   /* EVERY ARM BELOW IS THE STANDALONE DOOR'S — the cloud door returned above. The two that used
@@ -126,23 +120,20 @@ function credentialLine(
     case "ready":
       return {
         label,
-        value: "Stored",
-        description: `Sealed under a key in this ${MACHINE_WORD}'s keychain, and working.`,
+        value: DOOR_COPY.credReadyValue,
+        description: DOOR_COPY.credReadyWhy(machineWord()),
       };
     case "absent":
       return {
         label,
-        value: "Not stored",
-        description:
-          `No mailbox password is stored on this ${MACHINE_WORD}, so nothing is being synced yet.`,
+        value: DOOR_COPY.credAbsentValue,
+        description: DOOR_COPY.credAbsentWhy(machineWord()),
       };
     case "unreadable":
       return {
         label,
-        value: "Needs re-entering",
-        description:
-          "Something is stored, and this install's key does not open it. Entering it again " +
-          "seals it afresh; no mail is affected.",
+        value: DOOR_COPY.credUnreadableValue,
+        description: DOOR_COPY.credUnreadableWhy,
       };
     /* THE BOOT CONTRACT, in words. What disagrees is which server the password was proved against
        and which one this install is set to use, so the engine withheld it rather than offer one
@@ -161,22 +152,9 @@ function credentialLine(
        this install is currently configured for, which is the one that was withheld from. A
        reassurance about credential handling that is broader than the code is worse than none. */
     case "foreign-host":
-      return {
-        label,
-        value: "Server changed",
-        description:
-          "The stored password was set up for a different mail server than this install is now " +
-          "using, so it has not been sent to the server it is set to. Open the mailbox settings, " +
-          "confirm the server you want and enter its password; no mail is affected.",
-      };
+      return { label, value: DOOR_COPY.credForeignValue, description: DOOR_COPY.credForeignWhy };
     default:
-      return {
-        label,
-        value: "Unknown",
-        description:
-          "The mail engine did not say, which happens when it is newer than this window. " +
-          "Nothing is wrong.",
-      };
+      return { label, value: DOOR_COPY.credUnknownValue, description: DOOR_COPY.credUnknownWhy };
   }
 }
 
@@ -194,17 +172,17 @@ function engineWhy(status: EngineStatus): string {
   switch (status.state) {
     case "starting":
     case "restarting":
-      return "The process that opens your mailbox is coming up. Nothing is being synced until it does.";
+      return DOOR_COPY.engineWhyStarting;
     case "stopped":
-      return "The process that opens your mailbox is not running, so nothing is being synced.";
+      return DOOR_COPY.engineWhyStopped;
     case "failed":
-      return "The process that opens your mailbox stopped and did not come back.";
+      return DOOR_COPY.engineWhyFailed;
     case "no_key":
-      return `This ${MACHINE_WORD}'s keystore would not answer, so the stored password cannot be opened.`;
+      return DOOR_COPY.engineWhyNoKey(machineWord());
     case "not_configured":
-      return "No mailbox has been chosen on this install yet.";
+      return DOOR_COPY.doorNoneWhy;
     default:
-      return "The mail engine did not say what it is doing, which happens when it is newer than this window.";
+      return DOOR_COPY.engineWhyUnknown;
   }
 }
 
@@ -212,21 +190,24 @@ function engineWhy(status: EngineStatus): string {
 function engineLine(status: EngineStatus): string {
   switch (status.state) {
     case "serving":
-      return "Running";
+      return DOOR_COPY.engineRunning;
     case "starting":
-      return "Starting…";
+      return DOOR_COPY.engineStarting;
     case "restarting":
-      return "Restarting…";
+      return DOOR_COPY.engineRestarting;
     case "stopped":
-      return "Stopped";
+      return DOOR_COPY.engineStopped;
     case "failed":
-      return status.reason ?? "Stopped and did not come back";
+      return status.reason ?? DOOR_COPY.engineFailed;
+    /* THE MACHINE'S OWN WORD, where this line alone said "computer" whatever the build was — one
+       row under a sentence that resolved it correctly, so a Windows install read "This PC's
+       keystore would not answer, so …" beside "This computer's keystore would not answer". */
     case "no_key":
-      return status.reason ?? "This computer's keystore would not answer";
+      return status.reason ?? DOOR_COPY.engineNoKey(machineWord());
     case "not_configured":
-      return "No mailbox chosen";
+      return DOOR_COPY.engineNotConfigured;
     default:
-      return "Not in this build";
+      return DOOR_COPY.engineUnknown;
   }
 }
 
@@ -264,7 +245,14 @@ export function DesktopSettings({
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
 
-  const door = status.mode ? (DOOR_NAME[status.mode] ?? status.mode) : "Not chosen";
+  /* What this install's door is called. Built in the render for the reason `DesktopAbout`'s is:
+     both halves are catalogue reads, and a module constant would freeze the locale that was set
+     when this file was first imported. */
+  const doorName: Record<string, string> = {
+    local: DOOR_COPY.doorLocalName(machineWord()),
+    cloud: DOOR_COPY.doorCloudName,
+  };
+  const door = status.mode ? (doorName[status.mode] ?? status.mode) : DOOR_COPY.doorNotChosen;
   const credential = credentialLine(status, session);
   /* "organizes" or "reads" — see `install-role.ts`. This pane said the first on an install that
      did the second, beside a Mailboxes pane saying the truth on the same machine. */
@@ -287,11 +275,15 @@ export function DesktopSettings({
   return (
     <SettingsSection>
       <SettingsRow
-        label="Mailbox"
+        label={DOOR_COPY.mailboxLabel}
         description={mailboxRowWhy(readOnly)}
         value={status.address ?? "—"}
       />
-      <SettingsRow label="Connected through" description={doorDescription(status.mode)} value={door} />
+      <SettingsRow
+        label={DOOR_COPY.installConnectedThrough}
+        description={doorDescription(status.mode)}
+        value={door}
+      />
       <SettingsRow
         label={credential.label}
         description={credential.description}
@@ -300,18 +292,22 @@ export function DesktopSettings({
       {/* Only when it is NOT serving — see `engineWhy`. A row that says "Running" on every healthy
           install is a row nobody reads, including on the day it stops saying it. */}
       {status.state === "serving" ? null : (
-        <SettingsRow label="Mail engine" description={engineWhy(status)} value={engineLine(status)} />
+        <SettingsRow
+          label={DOOR_COPY.engineLabel}
+          description={engineWhy(status)}
+          value={engineLine(status)}
+        />
       )}
 
-      <SettingsSubhead>Changing this install</SettingsSubhead>
+      <SettingsSubhead>{DOOR_COPY.installChangingHead}</SettingsSubhead>
 
       {problem ? <p className="join-error">{problem}</p> : null}
 
       {status.mode === "cloud" && session === "out" ? (
         <SettingsRow
-          label="Sign in again"
-          description="Your hosted session has gone. Signing in happens in the mail engine on this machine."
-          control={<Button onClick={onSignIn}>Sign in</Button>}
+          label={DOOR_COPY.installSignInAgain}
+          description={DOOR_COPY.installSignInAgainWhy}
+          control={<Button onClick={onSignIn}>{DOOR_COPY.signIn}</Button>}
         />
       ) : null}
 
@@ -325,44 +321,39 @@ export function DesktopSettings({
           the install: which mailbox, which door, and how to change either. */}
 
       <SettingsRow
-        label="Switch mailbox"
-        description={
-          `Open a different mail server, or move between this ${MACHINE_WORD} and your hosted ` +
-          "account. The copy of your mail from this one is frozen where it is rather than " +
-          "deleted, so coming back does not cost a full re-sync."
+        label={DOOR_COPY.installSwitch}
+        description={DOOR_COPY.installSwitchWhy(machineWord())}
+        control={
+          <Button onClick={onSwitchDoor} disabled={busy}>{DOOR_COPY.installSwitchAction}</Button>
         }
-        control={<Button onClick={onSwitchDoor} disabled={busy}>Switch…</Button>}
       />
 
       {mode === "confirm" ? (
         <SettingsRow
-          label="Sign out of this mailbox?"
-          description={
-            `The copy of your mail already on this ${MACHINE_WORD} stays where it is. What is ` +
-            "cleared is the login — the stored password, or the session for your hosted account " +
-            "— and which door this install came in by. Nothing is removed from your mail server."
-          }
+          label={DOOR_COPY.installSignOutConfirm}
+          description={DOOR_COPY.installSignOutConfirmWhy(machineWord())}
           control={
             <span className="set-tag-acts">
               <Button variant="primary" className="danger" onClick={() => void signOut()} disabled={busy}>
-                {busy ? "Signing out…" : "Sign out"}
+                {busy ? DOOR_COPY.installSigningOut : DOOR_COPY.signOut}
               </Button>
-              <Button variant="ghost" onClick={() => setMode("rest")} disabled={busy}>Cancel</Button>
+              <Button variant="ghost" onClick={() => setMode("rest")} disabled={busy}>
+                {DOOR_COPY.cancel}
+              </Button>
             </span>
           }
         />
       ) : (
         <SettingsRow
-          label="Sign out"
-          description={`Clears the login and forgets which mailbox this is. Your mail stays on this ${MACHINE_WORD} and on your server.`}
-          control={<Button onClick={() => setMode("confirm")} disabled={busy}>Sign out</Button>}
+          label={DOOR_COPY.signOut}
+          description={DOOR_COPY.installSignOutWhy(machineWord())}
+          control={
+            <Button onClick={() => setMode("confirm")} disabled={busy}>{DOOR_COPY.signOut}</Button>
+          }
         />
       )}
 
-      <SettingsNote>
-        Your password never passes through the app's window or its settings file: it goes straight
-        to the mail engine, which seals it under a key held in this computer's keychain.
-      </SettingsNote>
+      <SettingsNote>{DOOR_COPY.installPasswordNote}</SettingsNote>
 
       {/* WHAT BELONGS IN THIS MAILBOX'S OHBOX HAS MOVED, to Settings → Screener, where the rest
           of the screening controls are and where somebody looking for it would look first. It was
@@ -378,11 +369,7 @@ export function DesktopSettings({
 }
 
 function doorDescription(mode: EngineStatus["mode"]): string {
-  if (mode === "cloud") {
-    return "A hosted ohmail account. The organizing happens on our servers and this app keeps a copy.";
-  }
-  if (mode === "local") {
-    return "Your own mail server, opened by this computer. Nothing about your mail is sent to us.";
-  }
-  return "No mailbox has been chosen on this install yet.";
+  if (mode === "cloud") return DOOR_COPY.doorCloudWhy;
+  if (mode === "local") return DOOR_COPY.doorLocalWhy;
+  return DOOR_COPY.doorNoneWhy;
 }

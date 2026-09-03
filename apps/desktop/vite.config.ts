@@ -293,8 +293,28 @@ const BASE_MESSAGE_NAMESPACES = [
  * the wrong one here — the whole namespace belongs to surfaces the served client never mounts
  * (`host-client/HostGate.tsx` mounts `AppShell` with no injected Settings sections), so it is
  * dead payload there exactly as `onboarding` was, and being dead is not a reason to ship it.
+ *
+ * ── AND `desktopDoor` IS THE FOURTH, ON THE SAME ARGUMENT AS THE THIRD ──────────────────────
+ *
+ * It is the standalone WINDOW's own chrome, in words: the door chooser and its three sign-in
+ * forms, the gate's apology, the boot line, Settings → Desktop, Settings → About, the mailto
+ * ask. 153 keys, every one of them an English literal until the window was translated.
+ *
+ * Window-only is a PROVEN fact here rather than a judgement, and the proof is a case:
+ * `test/desktop-messages.test.ts` walks the served client's import graph out of
+ * `src/host-client/main.tsx` and asserts that not one file in it reads the namespace. Measured
+ * at 165 files, and none of the eleven modules that read `desktopDoor` is among them — the
+ * served bundle mounts `HostGate` over `AppShell`, and every one of those surfaces belongs to
+ * the window's own entry point. So on that door the namespace is payload nothing can render.
+ *
+ * The BASE list is where it would have gone by default, and that is the mistake this line
+ * prevents: it would have put a phone's copy of a desktop app's "Sign out of this mailbox?"
+ * into the bundle served over somebody's tailnet. Dead, not incriminating — but the rule
+ * `desktopScreener` established is that being dead is not a reason to ship it.
  */
-export const WINDOW_ONLY_NAMESPACES = ["aiProvider", "onboarding", "desktopScreener"] as const;
+export const WINDOW_ONLY_NAMESPACES = [
+  "aiProvider", "onboarding", "desktopScreener", "desktopDoor",
+] as const;
 
 /**
  * What THIS build carries. The window gets the window-only namespaces; the served client does

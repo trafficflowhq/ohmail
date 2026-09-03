@@ -37,6 +37,7 @@
 
 import { Component, type ErrorInfo, type ReactNode } from "react";
 
+import { DOOR_COPY } from "./door-copy.js";
 import { GateNotice } from "./GateNotice.js";
 
 interface Props {
@@ -70,7 +71,7 @@ export class GateBoundary extends Component<Props, State> {
     return (
       <GateNotice
         reason={this.state.message}
-        actionLabel="Reload"
+        actionLabel={DOOR_COPY.reload}
         onAction={this.props.reload ?? (() => location.reload())}
       />
     );
@@ -80,5 +81,5 @@ export class GateBoundary extends Component<Props, State> {
 /** Whatever was thrown, as something a person can put in a message to somebody else. */
 export function errorSentence(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err);
-  return message || "Something went wrong and said nothing about what.";
+  return message || DOOR_COPY.errorUnknown;
 }

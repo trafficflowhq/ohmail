@@ -17,17 +17,22 @@
  * on this screen, because a window full of somebody else's invented correspondence is a worse
  * answer to "it did not work" than a sentence is.
  *
- * ── THE COPY IS IN THIS FILE ────────────────────────────────────────────────────────────────
+ * ── THE COPY IS IN THE CATALOGUE, UNDER A NAMESPACE OF THIS WINDOW'S OWN ────────────────────
  *
- * Deliberately, and it is the exception rather than the rule. The shared client reads its words
- * from the message catalogue because two products render it; these screens exist only inside this
- * app, in one language, and the vocabulary — "On this Mac" / "On this PC" / "On this computer",
- * "ohmail Cloud" — belongs to the desktop rather than to the catalogue's `settings` namespace.
- * The machine's own word comes from `platform.ts` (a fact about the build, one per platform this
- * ships to), never hardcoded: the Linux AppImage said "On this Mac" for a release before that
- * rule existed. The provider table it renders is the shared one, so the sentences that matter
- * most (what an app password is, and which providers actually work) are still written down
- * exactly once.
+ * This paragraph used to argue the opposite — that these screens exist only inside this app, in
+ * one language, so their words belonged in the file. The second half was the mistake: the app
+ * ships in two languages, and "one language" described the door rather than the product. A German
+ * install opened on an English door and then went on in German, which is the one impression a
+ * setup screen cannot afford to give.
+ *
+ * So the words are `desktopDoor` in `messages/{en,de}.json`, read through `DOOR_COPY`
+ * (`door-copy.ts`), and the vocabulary argument survives intact: `desktopDoor` is the window's
+ * own namespace, not a corner of `settings`, and the served host client never carries it. The
+ * machine's own word still comes from `platform.ts` — a fact about the build, one per platform
+ * this ships to — and is now translated as well, because "computer" is an ordinary noun and only
+ * two of the three are proper ones. The provider table this renders is the shared one, so the
+ * sentences that matter most (what an app password is, and which providers actually work) are
+ * still written down exactly once.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -53,12 +58,8 @@ import {
   selfHostBase,
   signInToSelfHost,
 } from "./self-host.js";
+import { DOOR_COPY, machineWord } from "./door-copy.js";
 import { offLinkCode, onLinkCode, openWeb } from "./native.js";
-import { MACHINE_WORD } from "./platform.js";
-
-/** What the app says when the platform would not spawn a browser. Same sentence Settings uses. */
-const NO_BROWSER =
-  `This ${MACHINE_WORD} would not open a browser. The page is at ohmail.app/link-desktop.`;
 
 /**
  * Which card is on screen. `doors` is where a fresh install starts.
@@ -189,7 +190,7 @@ export function DoorChooser({
          against a mirror that already belongs to the account being signed in to. */
       const started = await beginBrowserSignIn(address, cloudAction === "signIn" && !mustSwitch);
       if (!started.challenge) {
-        setProblem(started.problem ?? "The browser sign-in could not be started.");
+        setProblem(started.problem ?? DOOR_COPY.browserSignInFailed);
         return;
       }
       /* SET BEFORE THE BROWSER IS OPENED, and it stays set even if opening fails: by this point the
@@ -199,7 +200,7 @@ export function DoorChooser({
       try {
         await openWeb("link-desktop", started.challenge);
       } catch {
-        setProblem(NO_BROWSER);
+        setProblem(DOOR_COPY.noBrowser(machineWord()));
       }
     } finally {
       setBusy(false);
@@ -334,38 +335,30 @@ export function DoorChooser({
 function Doors({ onPick, onCancel }: { onPick: (step: Step) => void; onCancel?: () => void }) {
   return (
     <>
-      <h1>Which mailbox is this?</h1>
-      <div className="door-grid" role="group" aria-label="Which machine does the organizing">
+      <h1>{DOOR_COPY.chooserTitle}</h1>
+      <div className="door-grid" role="group" aria-label={DOOR_COPY.chooserGroupAria}>
         {/* Focused on mount so a keyboard reaches the choice without tabbing through the chrome
             above it. Native buttons: Tab moves between the three, Enter and Space open one, and
             nothing here claims a chord the shared keymap has spoken for. */}
         <button type="button" className="door-tile" autoFocus onClick={() => onPick("local")}>
-          <span className="door-name">On this {MACHINE_WORD}</span>
-          <span className="door-say">
-            Your own IMAP mailbox, organized right here. Nothing is sent anywhere.
-          </span>
+          <span className="door-name">{DOOR_COPY.doorLocalName(machineWord())}</span>
+          <span className="door-say">{DOOR_COPY.doorLocalSay}</span>
         </button>
         <button type="button" className="door-tile" onClick={() => onPick("server")}>
-          <span className="door-name">Your own server</span>
+          <span className="door-name">{DOOR_COPY.doorServerName}</span>
           <span className="door-say">
-            <em>Self-hosted ohmail Cloud.</em> A server you run does the organizing; this app keeps
-            a copy.
+            <em>{DOOR_COPY.doorServerLead}</em> {DOOR_COPY.doorServerSay}
           </span>
         </button>
         <button type="button" className="door-tile" onClick={() => onPick("cloud")}>
-          <span className="door-name">ohmail Cloud</span>
-          <span className="door-say">
-            Our hosted service does the organizing; this app keeps a copy.
-          </span>
+          <span className="door-name">{DOOR_COPY.doorCloudName}</span>
+          <span className="door-say">{DOOR_COPY.doorCloudSay}</span>
         </button>
       </div>
-      <p className="door-travel">
-        Move between these anytime. Your rules and settings live in your own mailbox and travel
-        with you — the mailbox is always the master.
-      </p>
+      <p className="door-travel">{DOOR_COPY.doorsTravel}</p>
       {onCancel ? (
         <div className="join-actions">
-          <Button variant="ghost" onClick={onCancel}>Cancel</Button>
+          <Button variant="ghost" onClick={onCancel}>{DOOR_COPY.cancel}</Button>
         </div>
       ) : null}
     </>
@@ -406,11 +399,8 @@ function LocalDoor({
         onSubmit(fields);
       }}
     >
-      <h1>Your own mailbox</h1>
-      <p>
-        This computer connects to your mail server directly. Your password is stored on this{" "}
-        {MACHINE_WORD}, encrypted under a key held in the keychain, and is never sent to us.
-      </p>
+      <h1>{DOOR_COPY.localTitle}</h1>
+      <p>{DOOR_COPY.localLead(machineWord())}</p>
 
       {problem ? <p className="join-error">{problem}</p> : null}
 
@@ -433,7 +423,7 @@ function LocalDoor({
         }}
       />
 
-      <label className="join-label" htmlFor="door-address">Mailbox address</label>
+      <label className="join-label" htmlFor="door-address">{DOOR_COPY.localAddress}</label>
       <input
         id="door-address"
         className="join-input"
@@ -444,7 +434,7 @@ function LocalDoor({
         onChange={(e) => set("address", e.target.value)}
       />
 
-      <label className="join-label" htmlFor="door-password">Mailbox password</label>
+      <label className="join-label" htmlFor="door-password">{DOOR_COPY.localPassword}</label>
       <input
         id="door-password"
         className="join-input"
@@ -453,14 +443,11 @@ function LocalDoor({
         value={fields.password}
         onChange={(e) => set("password", e.target.value)}
       />
-      <p className="join-hint">
-        For most providers this is an app password rather than the password you sign in with —
-        the note above your provider says which.
-      </p>
+      <p className="join-hint">{DOOR_COPY.localPasswordHint}</p>
 
       {manual ? (
         <>
-          <label className="join-label" htmlFor="door-imap-host">Incoming server (IMAP)</label>
+          <label className="join-label" htmlFor="door-imap-host">{DOOR_COPY.localImapHost}</label>
           <input
             id="door-imap-host"
             className="join-input"
@@ -468,7 +455,7 @@ function LocalDoor({
             value={fields.imapHost}
             onChange={(e) => set("imapHost", e.target.value)}
           />
-          <label className="join-label" htmlFor="door-imap-port">IMAP port</label>
+          <label className="join-label" htmlFor="door-imap-port">{DOOR_COPY.localImapPort}</label>
           <input
             id="door-imap-port"
             className="join-input join-code"
@@ -476,7 +463,7 @@ function LocalDoor({
             value={fields.imapPort}
             onChange={(e) => set("imapPort", e.target.value)}
           />
-          <label className="join-label" htmlFor="door-smtp-host">Outgoing server (SMTP)</label>
+          <label className="join-label" htmlFor="door-smtp-host">{DOOR_COPY.localSmtpHost}</label>
           <input
             id="door-smtp-host"
             className="join-input"
@@ -484,7 +471,7 @@ function LocalDoor({
             value={fields.smtpHost}
             onChange={(e) => set("smtpHost", e.target.value)}
           />
-          <label className="join-label" htmlFor="door-smtp-port">SMTP port</label>
+          <label className="join-label" htmlFor="door-smtp-port">{DOOR_COPY.localSmtpPort}</label>
           <input
             id="door-smtp-port"
             className="join-input join-code"
@@ -492,7 +479,7 @@ function LocalDoor({
             value={fields.smtpPort}
             onChange={(e) => set("smtpPort", e.target.value)}
           />
-          <label className="join-label" htmlFor="door-user">Username, if it is not the address</label>
+          <label className="join-label" htmlFor="door-user">{DOOR_COPY.localUser}</label>
           <input
             id="door-user"
             className="join-input"
@@ -506,11 +493,15 @@ function LocalDoor({
 
       <div className="join-actions">
         <Button variant="primary" type="submit" disabled={busy}>
-          {busy ? "Opening your mailbox…" : "Open this mailbox"}
+          {busy ? DOOR_COPY.localOpening : DOOR_COPY.localOpen}
         </Button>
-        <Button variant="ghost" type="button" onClick={onBack} disabled={busy}>Back</Button>
+        <Button variant="ghost" type="button" onClick={onBack} disabled={busy}>
+          {DOOR_COPY.back}
+        </Button>
         {onCancel ? (
-          <Button variant="ghost" type="button" onClick={onCancel} disabled={busy}>Cancel</Button>
+          <Button variant="ghost" type="button" onClick={onCancel} disabled={busy}>
+            {DOOR_COPY.cancel}
+          </Button>
         ) : null}
       </div>
     </form>
@@ -569,18 +560,16 @@ function ServerDoor({
         else onSubmit(address, password, totp);
       }}
     >
-      <h1>Your own server</h1>
+      <h1>{DOOR_COPY.doorServerName}</h1>
       <p>
         {reached === null
-          ? "Give the address you open ohmail at in a browser. This app will check that your " +
-            "server is there before it asks for anything else."
-          : `Signing in happens in the mail engine on this ${MACHINE_WORD} — the password and the ` +
-            "code go straight there and are not kept anywhere else."}
+          ? DOOR_COPY.serverAskLead
+          : DOOR_COPY.serverSignInLead(machineWord())}
       </p>
 
       {problem ? <p className="join-error">{problem}</p> : null}
 
-      <label className="join-label" htmlFor="server-origin">Your server's address</label>
+      <label className="join-label" htmlFor="server-origin">{DOOR_COPY.serverOrigin}</label>
       {/* `type="text"` WITH `inputMode="url"`, and the pair is deliberate — this was `type="url"`
           and that was wrong twice over. A url-typed field is constraint-validated by the browser,
           which BLOCKS the submit and shows its own bubble ("Please enter a URL") in place of the
@@ -595,7 +584,7 @@ function ServerDoor({
         inputMode="url"
         spellCheck={false}
         autoComplete="off"
-        placeholder="https://ohmail.example.com"
+        placeholder={DOOR_COPY.serverOriginPlaceholder}
         /* LOCKED once the server has answered. The engine is now configured for this address and
            the sign-in below goes to it; a field that could still be edited would let somebody type
            one server, prove it, then sign in believing they had reached another. Changing it is
@@ -607,7 +596,7 @@ function ServerDoor({
 
       {reached === null ? (
         <>
-          <label className="join-label" htmlFor="server-address">Your ohmail address on that server</label>
+          <label className="join-label" htmlFor="server-address">{DOOR_COPY.serverAddress}</label>
           {/* Text, not `type="email"`, for the reason the address field above is text: this door's
               own refusals are the ones worth reading, and a constraint-validated field preempts
               them with a bubble. `inputMode` and `autoComplete` carry the keyboard and the
@@ -627,18 +616,18 @@ function ServerDoor({
               person who has already read what to do recognises the refusal instead of
               debugging it. The path is `cloud-origin.ts`'s constant, so the hint and the
               engine's own sentence cannot name two different files. */}
+          {/* TWO KEYS AROUND ONE CONSTANT. The file name is rendered as code and is not a word,
+              so it is not a placeholder in a sentence — the sentence is split around it, and each
+              half is translated on its own. */}
           <p className="join-hint">
-            If your server issues its own certificates, put its root certificate in a file named{" "}
-            <code>{OPERATOR_CA_FILE}</code> in this app's data folder first. ohmail verifies
-            certificates and has no way to skip that.
+            {DOOR_COPY.serverCaHintBefore}{" "}
+            <code>{OPERATOR_CA_FILE}</code> {DOOR_COPY.serverCaHintAfter}
           </p>
         </>
       ) : (
         <>
-          <p className="join-hint">
-            Reached {reached}. Signing in as {address}.
-          </p>
-          <label className="join-label" htmlFor="server-password">Password</label>
+          <p className="join-hint">{DOOR_COPY.serverReached(reached, address)}</p>
+          <label className="join-label" htmlFor="server-password">{DOOR_COPY.password}</label>
           <input
             id="server-password"
             className="join-input"
@@ -647,7 +636,7 @@ function ServerDoor({
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
-          <label className="join-label" htmlFor="server-totp">Code from your authenticator app</label>
+          <label className="join-label" htmlFor="server-totp">{DOOR_COPY.totpLabel}</label>
           <input
             id="server-totp"
             className="join-input join-code"
@@ -663,12 +652,16 @@ function ServerDoor({
       <div className="join-actions">
         <Button variant="primary" type="submit" disabled={busy}>
           {busy
-            ? reached === null ? "Checking your server…" : "Signing in…"
-            : reached === null ? "Continue" : "Sign in"}
+            ? reached === null ? DOOR_COPY.serverChecking : DOOR_COPY.signingIn
+            : reached === null ? DOOR_COPY.serverContinue : DOOR_COPY.signIn}
         </Button>
-        <Button variant="ghost" type="button" onClick={onBack} disabled={busy}>Back</Button>
+        <Button variant="ghost" type="button" onClick={onBack} disabled={busy}>
+          {DOOR_COPY.back}
+        </Button>
         {onCancel ? (
-          <Button variant="ghost" type="button" onClick={onCancel} disabled={busy}>Cancel</Button>
+          <Button variant="ghost" type="button" onClick={onCancel} disabled={busy}>
+            {DOOR_COPY.cancel}
+          </Button>
         ) : null}
       </div>
     </form>
@@ -782,20 +775,12 @@ function CloudDoor({
         else onSubmit(address, password, totp);
       }}
     >
-      <h1>Sign in to ohmail Cloud</h1>
-      <p>
-        {signInOnly
-          ? `The copy of your mail on this ${MACHINE_WORD} is where you left it. Signing in ` +
-            "happens in the mail engine on this machine — the password and the code go straight " +
-            "there and are not kept anywhere else."
-          : "Your account is organized on our servers and this app keeps a copy. Signing in " +
-            "happens in the mail engine on this machine — the password and the code go straight " +
-            "there and are not kept anywhere else."}
-      </p>
+      <h1>{DOOR_COPY.cloudTitle}</h1>
+      <p>{signInOnly ? DOOR_COPY.cloudLeadSignIn(machineWord()) : DOOR_COPY.cloudLead}</p>
 
       {problem ? <p className="join-error">{problem}</p> : null}
 
-      <label className="join-label" htmlFor="cloud-address">Your ohmail address</label>
+      <label className="join-label" htmlFor="cloud-address">{DOOR_COPY.cloudAddress}</label>
       <input
         id="cloud-address"
         className="join-input"
@@ -808,13 +793,10 @@ function CloudDoor({
 
       {viaBrowser ? (
         <>
-          <p className="join-hint">
-            Your browser opens ohmail.app. Sign in there if you are not already, then press
-            “Open ohmail” on that page and this app comes forward signed in.
-          </p>
+          <p className="join-hint">{DOOR_COPY.cloudBrowserHint}</p>
           <div className="join-actions">
             <Button type="button" onClick={() => onOpenBrowser(address)} disabled={busy}>
-              Open ohmail.app
+              {DOOR_COPY.cloudOpenBrowser}
             </Button>
           </div>
 
@@ -822,7 +804,7 @@ function CloudDoor({
               missing or claimed by something that does nothing visible, and the page shows the
               code beside the button for exactly this. Nothing about typing it in has changed. */}
           <label className="join-label" htmlFor="cloud-handoff">
-            Or type the code the page shows
+            {DOOR_COPY.cloudHandoffLabel}
           </label>
           <input
             id="cloud-handoff"
@@ -834,13 +816,11 @@ function CloudDoor({
             value={handoff}
             onChange={(e) => setHandoff(e.target.value)}
           />
-          <p className="join-hint">
-            The code works once and lasts a couple of minutes.
-          </p>
+          <p className="join-hint">{DOOR_COPY.cloudHandoffHint}</p>
         </>
       ) : (
         <>
-          <label className="join-label" htmlFor="cloud-password">Password</label>
+          <label className="join-label" htmlFor="cloud-password">{DOOR_COPY.password}</label>
           <input
             id="cloud-password"
             className="join-input"
@@ -850,7 +830,7 @@ function CloudDoor({
             onChange={(e) => setPassword(e.target.value)}
           />
 
-          <label className="join-label" htmlFor="cloud-totp">Code from your authenticator app</label>
+          <label className="join-label" htmlFor="cloud-totp">{DOOR_COPY.totpLabel}</label>
           <input
             id="cloud-totp"
             className="join-input join-code"
@@ -865,7 +845,7 @@ function CloudDoor({
 
       <div className="join-actions">
         <Button variant="primary" type="submit" disabled={busy}>
-          {busy ? "Signing in…" : "Sign in"}
+          {busy ? DOOR_COPY.signingIn : DOOR_COPY.signIn}
         </Button>
         {/* The switch CLEARS the fields of the form being left. Otherwise a password typed and
             then abandoned sits in this component's state for as long as the window is open, and
@@ -881,11 +861,15 @@ function CloudDoor({
             setViaBrowser((v) => !v);
           }}
         >
-          {viaBrowser ? "Use my password instead" : "Sign in with browser"}
+          {viaBrowser ? DOOR_COPY.cloudUsePassword : DOOR_COPY.cloudUseBrowser}
         </Button>
-        <Button variant="ghost" type="button" onClick={onBack} disabled={busy}>Back</Button>
+        <Button variant="ghost" type="button" onClick={onBack} disabled={busy}>
+          {DOOR_COPY.back}
+        </Button>
         {onCancel ? (
-          <Button variant="ghost" type="button" onClick={onCancel} disabled={busy}>Cancel</Button>
+          <Button variant="ghost" type="button" onClick={onCancel} disabled={busy}>
+            {DOOR_COPY.cancel}
+          </Button>
         ) : null}
       </div>
     </form>

@@ -25,17 +25,19 @@
  * provider and a host too old to send the role both answer — the safe direction, because the
  * dangerous default would put "reads" on a pane belonging to the organizer.
  *
- * ── ENGLISH IN PLACE, AND THAT IS DELIBERATE ────────────────────────────────────────────────
+ * ── AND IT IS NOW SAID IN THE READER'S LANGUAGE ─────────────────────────────────────────────
  *
- * Every sentence on those two panes is an English literal today; the whole install surface is
- * untranslated. Moving one row into a catalogue while its neighbours stay literal buys a German
- * reader nothing and hides the real gap. This fixes what the row SAYS. What language it says it
- * in is a separate and much larger piece of work, and it is filed as its own row rather than
- * half-done here.
+ * This paragraph used to argue for leaving the three sentences as English literals: the whole
+ * install surface around them was English, and translating one row while its neighbours stayed
+ * literal would have hidden the real gap rather than closing it. That gap is closed. Both panes
+ * read `desktopDoor` now, and so does this module — through `DOOR_COPY`, the non-hook route,
+ * because there is no React here and the table test below drives the function directly.
  */
+import { DOOR_COPY } from "./door-copy.js";
+
 export function mailboxRowWhy(readOnly: { name: string | null } | null): string {
-  if (readOnly === null) return "The mailbox this copy of ohmail organizes.";
+  if (readOnly === null) return DOOR_COPY.mailboxWhyOrganizes;
   return readOnly.name
-    ? `The mailbox this copy of ohmail reads. ${readOnly.name} organizes it.`
-    : "The mailbox this copy of ohmail reads. Another ohmail organizer organizes it.";
+    ? DOOR_COPY.mailboxWhyReadsNamed(readOnly.name)
+    : DOOR_COPY.mailboxWhyReads;
 }

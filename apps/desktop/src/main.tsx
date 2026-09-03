@@ -33,6 +33,7 @@ import { bridgeAvailable, connectLocalEngine } from "./bridge-fetch.js";
 import { startOmarchyFeed } from "./omarchy.js";
 import { startUpdateCadence } from "./update-cadence.js";
 import { DesktopGate } from "./DesktopGate.js";
+import { DOOR_COPY } from "./door-copy.js";
 import { errorSentence, GateBoundary } from "./GateBoundary.js";
 import { GateNotice } from "./GateNotice.js";
 import { installOfflineGuard } from "./offline-guard.js";
@@ -63,7 +64,13 @@ installOfflineGuard();
    there is no shell to check against; that is not a boot failure, it is the
    environment, and the gate already draws the honest not-connected surface for
    it. So the check simply does not run there, `readShell`'s own rule. */
-async function waitForBoot(): Promise<string | null> {
+/* THE THROWN VALUE, not a sentence — and the difference is a language, not a style.
+   `errorSentence` and the notice's button both read the message catalogue, and the catalogue is
+   set by `DesktopLocale` DURING ITS RENDER. This function resolves off a promise chain that is
+   not ordered against React's first flush, so composing the words here would read the register
+   before the provider had filled it and put an English "Reload" in a German window. The words
+   are composed inside {@link BootFailure}, which is a child of the provider by construction. */
+async function waitForBoot(): Promise<unknown> {
   if (!bridgeAvailable()) return null;
   try {
     const status = await connectLocalEngine();
@@ -71,8 +78,21 @@ async function waitForBoot(): Promise<string | null> {
     return null;
   } catch (err: unknown) {
     console.warn(`ohmail: no local engine — ${String(err)}`);
-    return errorSentence(err);
+    /* Never `null`: that is this function's word for "the boot was fine", and a throw with a
+       falsy value is still a failed boot. */
+    return err ?? new Error("");
   }
+}
+
+/** The boot check's failure, worded where the catalogue is reachable. See {@link waitForBoot}. */
+function BootFailure({ error }: { error: unknown }) {
+  return (
+    <GateNotice
+      reason={errorSentence(error)}
+      actionLabel={DOOR_COPY.reload}
+      onAction={() => location.reload()}
+    />
+  );
 }
 
 /* ── LINKS GO TO THE USER'S OWN BROWSER, AND THIS IS WHERE THAT IS SWITCHED ON ──────────────
@@ -167,7 +187,7 @@ if (!root) throw new Error("ohmail Desktop: #root is missing from index.html");
  */
 const reactRoot = createRoot(root);
 
-const paint = (bootFailure: string | null): void =>
+const paint = (bootFailure: unknown): void =>
   reactRoot.render(
     <StrictMode>
       {/* THE LANGUAGE, wired by hand for the reason every provider here is: there is no Next.
@@ -184,11 +204,7 @@ const paint = (bootFailure: string | null): void =>
                 of it. */}
             <GateBoundary>
               {bootFailure !== null ? (
-                <GateNotice
-                  reason={bootFailure}
-                  actionLabel="Reload"
-                  onAction={() => location.reload()}
-                />
+                <BootFailure error={bootFailure} />
               ) : (
                 <DesktopGate />
               )}

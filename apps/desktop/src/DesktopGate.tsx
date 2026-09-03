@@ -67,7 +67,8 @@ import { DesktopMailboxes, readMailboxFacts, readMirrorFreshness } from "./Deskt
 import { desktopNotificationHost } from "./notify-host.js";
 import { DesktopScreening } from "./DesktopScreening.js";
 import { GateNotice } from "./GateNotice.js";
-import { DESKTOP_PANE_LABEL, DesktopSettings } from "./DesktopSettings.js";
+import { DOOR_COPY } from "./door-copy.js";
+import { desktopPaneLabel, DesktopSettings } from "./DesktopSettings.js";
 import { DesktopBilling } from "./DesktopBilling.js";
 import { DesktopWebSection } from "./DesktopWebSection.js";
 import {
@@ -475,7 +476,7 @@ export function DesktopGate() {
     return (
       <div className="gate gate-boot">
         <BootSkeleton active rail />
-        <BootStatus sentence="Opening…" />
+        <BootStatus sentence={DOOR_COPY.gateOpening} />
       </div>
     );
   }
@@ -483,7 +484,13 @@ export function DesktopGate() {
   if (gate.kind === "notice") {
     /* The same card the boot check and the error boundary draw — one apology, three ways of
        reaching it, differing only in the sentence and the button. See `GateNotice.tsx`. */
-    return <GateNotice reason={gate.reason} actionLabel="Try again" onAction={() => void refresh()} />;
+    return (
+      <GateNotice
+        reason={gate.reason}
+        actionLabel={DOOR_COPY.gateTryAgain}
+        onAction={() => void refresh()}
+      />
+    );
   }
 
   if (gate.kind === "choose") {
@@ -573,11 +580,8 @@ export function DesktopGate() {
     }
     return (
       <GateNotice
-        reason={
-          "You were signed out of your hosted account, so this install stopped receiving " +
-          "new mail. What was already here is kept; sign in again to reconnect."
-        }
-        actionLabel="Sign in"
+        reason={DOOR_COPY.gateSessionGone}
+        actionLabel={DOOR_COPY.signIn}
         onAction={() => setSignInAfterExpiry(true)}
       />
     );
@@ -734,7 +738,7 @@ export function DesktopGate() {
         desktopSection={
           status
             ? {
-                label: DESKTOP_PANE_LABEL,
+                label: desktopPaneLabel(),
                 node: (
                   <DesktopSettings
                     status={status}
@@ -1103,10 +1107,7 @@ function useUnreadSink(): (unread: number) => void {
     if (spec === undefined) return;
 
     const fresh = spec.count;
-    void postOsNotice(
-      "ohmail",
-      fresh === 1 ? "One new message for you." : `${fresh} new messages for you.`,
-    ).catch(() => {
+    void postOsNotice("ohmail", DOOR_COPY.notifyNewMail(fresh)).catch(() => {
       /* Notifications are off for ohmail, or this platform has none. Not a reason to fail. */
     });
   }, []);

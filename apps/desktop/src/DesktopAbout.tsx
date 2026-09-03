@@ -18,6 +18,7 @@
 import { SettingsNote, SettingsRow, SettingsSection, SettingsSubhead } from "@ohmail/ui";
 
 import type { EngineStatus } from "./bridge-fetch.js";
+import { DOOR_COPY } from "./door-copy.js";
 import { DesktopUpdate } from "./DesktopUpdate.js";
 
 /* WHAT THIS INSTALL DOES WITH THE MAILBOX BELOW — "organizes" or "reads". One rule, two
@@ -28,29 +29,31 @@ import { useMailboxFacts } from "../../webapp/app/shell/MailStateProvider";
 import { screenerReadOnly } from "../../webapp/app/shell/mail-state";
 import { mailboxRowWhy } from "./install-role.js";
 
-/** What the two doors are called on screen. The same words the Desktop pane uses. */
-const DOOR: Record<string, string> = {
-  local: "Your own mail server",
-  cloud: "An ohmail Cloud account",
-};
-
 export function DesktopAbout({ status }: { status: EngineStatus }) {
   const readOnly = screenerReadOnly(useMailboxFacts());
+  /* What the two doors are called on screen — the same words the Desktop pane uses. Resolved
+     inside the render rather than held as a module constant, because both halves are catalogue
+     reads now and a constant would freeze whichever locale happened to be set when this module
+     was first imported. */
+  const door: Record<string, string> = {
+    local: DOOR_COPY.aboutDoorLocalValue,
+    cloud: DOOR_COPY.aboutDoorCloudValue,
+  };
   return (
     <SettingsSection>
       <SettingsRow
-        label="ohmail for desktop"
-        description="The build running in this window."
+        label={DOOR_COPY.aboutAppLabel}
+        description={DOOR_COPY.aboutAppWhy}
         value={__OHMAIL_VERSION__}
       />
       <SettingsRow
-        label="Published by"
-        description="The company that writes and signs this app."
+        label={DOOR_COPY.aboutPublisher}
+        description={DOOR_COPY.aboutPublisherWhy}
         value="TrafficFlow GmbH"
       />
       <SettingsRow
-        label="Licence"
-        description="Free software. The source of this app is published, and you may build it yourself."
+        label={DOOR_COPY.aboutLicence}
+        description={DOOR_COPY.aboutLicenceWhy}
         value="AGPL-3.0"
       />
 
@@ -62,34 +65,29 @@ export function DesktopAbout({ status }: { status: EngineStatus }) {
           where the shell answers nothing. */}
       <DesktopUpdate />
 
-      <SettingsSubhead>This install</SettingsSubhead>
+      <SettingsSubhead>{DOOR_COPY.aboutInstallHead}</SettingsSubhead>
 
       <SettingsRow
-        label="Mailbox"
+        label={DOOR_COPY.mailboxLabel}
         description={mailboxRowWhy(readOnly)}
         value={status.address ?? "—"}
       />
       <SettingsRow
-        label="Opened through"
+        label={DOOR_COPY.aboutOpenedThrough}
         description={
           status.mode === "cloud"
-            ? "A hosted account. The organizing happens on our servers and this app keeps a copy."
+            ? DOOR_COPY.aboutDoorCloudWhy
             : status.mode === "local"
-              ? "This computer opens your mailbox directly. Nothing about your mail is sent to us."
-              : "No mailbox has been chosen on this install yet."
+              ? DOOR_COPY.aboutDoorLocalWhy
+              : DOOR_COPY.doorNoneWhy
         }
-        value={status.mode ? (DOOR[status.mode] ?? status.mode) : "Not chosen"}
+        value={status.mode ? (door[status.mode] ?? status.mode) : DOOR_COPY.doorNotChosen}
       />
 
       {/* THE CLAIM THE WHOLE PRODUCT RESTS ON, said where somebody looks for it. It is true on
           both doors and it is the reason leaving is cheap: the copy on this machine can be
           deleted without losing anything, because it was never the master. */}
-      <SettingsNote>
-        Your mail lives in your mailbox, on your own server. ohmail files it into folders there,
-        where every other mail app you own can see them, and keeps a copy on this computer so the
-        app is fast and works offline. Stop using ohmail and your mail is exactly where you left
-        it.
-      </SettingsNote>
+      <SettingsNote>{DOOR_COPY.aboutMailNote}</SettingsNote>
       {/* THE SUBPROCESSOR LIST IS ABOUT THE HOSTED SERVICE, so it is named on the door that uses
           one and not on the other. On the local door this computer opens the mail server itself
           and nothing about the mail reaches us — so there is no company in that path for the list
@@ -98,9 +96,7 @@ export function DesktopAbout({ status }: { status: EngineStatus }) {
           and the source stay on both doors: the first governs the app itself, the second is what
           lets anyone check either claim. */}
       <SettingsNote>
-        {status.mode === "cloud"
-          ? "Privacy and the list of companies we rely on: ohmail.app/privacy and ohmail.app/subprocessors. Source: github.com/trafficflowhq/ohmail."
-          : "Privacy: ohmail.app/privacy. Source: github.com/trafficflowhq/ohmail."}
+        {status.mode === "cloud" ? DOOR_COPY.aboutLinksCloud : DOOR_COPY.aboutLinksLocal}
       </SettingsNote>
     </SettingsSection>
   );

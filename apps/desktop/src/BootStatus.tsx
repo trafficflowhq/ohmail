@@ -28,26 +28,29 @@
 import type * as React from "react";
 import { Spinner } from "@ohmail/ui";
 
+import { DOOR_COPY } from "./door-copy.js";
+
 /** One sentence per phase the engine announces. Exported so a test can drive the whole table. */
 export function bootSentence(phase: string | null | undefined): string {
   switch (phase) {
     case "creating_store":
-      return "Setting up your local mail store…";
+      return DOOR_COPY.bootCreatingStore;
     case "opening_store":
-      return "Opening your local mail store…";
+      return DOOR_COPY.bootOpeningStore;
     case "replaying_wal":
-      return "Replaying recent changes…";
+      return DOOR_COPY.bootReplayingWal;
     case "migrating":
-      return "Updating your local mail store…";
+      return DOOR_COPY.bootMigrating;
     case "compacting_store":
       // The one phase measured in minutes rather than seconds: a once-per-install rewrite of a
       // body table that had grown mostly dead space (see `reclaimBodyBloat`). The sentence says
       // work is being saved, because it is — every later launch and read is what gets faster.
-      return "Compacting your local mail store — one-time maintenance…";
+      return DOOR_COPY.bootCompacting;
     default:
       // No phase yet, an engine that predates the narration, or a phase this build does not
-      // know. The sentence that is true in all three.
-      return "Opening your mailbox…";
+      // know. The sentence that is true in all three — and the same one the local door's submit
+      // button says while it opens a mailbox, which is why it is one key and not two.
+      return DOOR_COPY.localOpening;
   }
 }
 

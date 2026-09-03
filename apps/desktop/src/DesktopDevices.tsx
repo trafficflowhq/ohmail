@@ -76,6 +76,7 @@ import { Button, SettingsRow, SettingsSection, SettingsSubhead, Switch, useToast
 import { isPairPin, pairLink } from "@ohmail/client-engine";
 
 import { bridgeFetch } from "./bridge-fetch.js";
+import { DOOR_COPY } from "./door-copy.js";
 import { QrCode } from "../../webapp/app/shell/QrCode.js";
 import {
   armHostMode,
@@ -224,12 +225,14 @@ async function refusalText(res: Response): Promise<string> {
   } catch {
     /* not JSON */
   }
-  return res.statusText ? `${res.status} ${res.statusText}` : `The request was refused (${res.status}).`;
+  return res.statusText
+    ? `${res.status} ${res.statusText}`
+    : DOOR_COPY.errorRefused(String(res.status));
 }
 
 function sentence(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err);
-  return message || "Something went wrong and said nothing about what.";
+  return message || DOOR_COPY.errorUnknown;
 }
 
 type Busy =
