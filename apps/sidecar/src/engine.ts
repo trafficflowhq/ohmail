@@ -3762,17 +3762,58 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            * why neither performs a physical IMAP move of its own — `drain()`'s own `runSyncCycle`
            * call, right after this, reconciles the `folder_state` rows either one writes.
            */
+          //
+          // ── WHY THE DRAIN'S LOG IS TRANSLATED HERE AND NOT FORWARDED ────────────────────
+          //
+          // `(event, detail) => log(event, { ...detail })` is the obvious wiring and this door
+          // may not use it. `log-census.test.ts` requires every call site in this package to
+          // carry a LITERAL event name and a readable field set, because this is the published
+          // desktop payload: a forwarded name is a name nobody can enumerate, and a spread
+          // detail is a field set nobody can audit for what it might carry. The census caught
+          // exactly that here. So the drain's outcomes are translated into three literal lines
+          // with explicit fields, and anything else it reports is counted under a fourth rather
+          // than echoed verbatim.
+          const noteRequestEvent = (event: string, detail: Record<string, unknown>): void => {
+            if (event === "organizer_requests_suppressed") {
+              log("organizer_requests_suppressed", {
+                mailboxId: mb.id, count: typeof detail.count === "number" ? detail.count : null,
+              });
+              return;
+            }
+            if (event === "organizer_requests_drained") {
+              log("organizer_requests_drained", {
+                mailboxId: mb.id,
+                applied: typeof detail.applied === "number" ? detail.applied : null,
+                refused: typeof detail.refused === "number" ? detail.refused : null,
+                deferred: typeof detail.deferred === "number" ? detail.deferred : null,
+              });
+              return;
+            }
+            if (event === "outstanding_requests_driven") {
+              log("outstanding_requests_driven", {
+                mailboxId: mb.id,
+                sent: typeof detail.sent === "number" ? detail.sent : null,
+                applied: typeof detail.applied === "number" ? detail.applied : null,
+                expired: typeof detail.expired === "number" ? detail.expired : null,
+              });
+              return;
+            }
+            // The refusals and the transient IO failures. The NAME rides as a value under
+            // `outcome`, never as the event, so the roster this package publishes stays the set
+            // written above and the field is one the logger already keeps.
+            log("organizer_requests_note", { mailboxId: mb.id, outcome: event });
+          };
           try {
             if (organizing) {
               await applyMetaRequests(
                 db, { mailboxId: mb.id, accountId: world.accountId, adapter }, now(),
-                (event, detail) => log(event, { mailboxId: mb.id, ...detail }),
+                noteRequestEvent,
               );
             } else {
               await driveOutstandingRequests(
                 db, { mailboxId: mb.id, accountId: world.accountId, adapter },
                 { installId, kind: "local" }, now(),
-                (event, detail) => log(event, { mailboxId: mb.id, ...detail }),
+                noteRequestEvent,
               );
             }
           } catch (err) {

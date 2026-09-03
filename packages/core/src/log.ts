@@ -46,7 +46,7 @@
  *   · The field vocabulary is small and closed: 79 names across every call site in
  *     `packages/**` and `apps/**` when that extraction was made (86 logger calls, 82 with a
  *     literal fields object, ZERO with a computed one). Enumerable means allowlistable — and it
- *     has stayed enumerable: {@link ALLOWED_FIELDS} holds 132 names today, grown one reviewed
+ *     has stayed enumerable: {@link ALLOWED_FIELDS} holds 220 names today, grown one reviewed
  *     diff at a time, which is the shape this design predicted rather than a drift away from it.
  *
  * The honest cost of an allowlist is that a field an operator needs at 3am can go missing. It
@@ -248,6 +248,15 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // ── counts and roster arithmetic (the worker's roster pass, kickstart, thread backfill) ──
   "accounts", "accountsAffected", "mailboxes", "maxMailboxes", "selected", "serving",
   "dropped", "unexplained", "examined", "resolved", "rerouted", "pruned", "count", "more",
+  // ── the organizer's request drain, added WITH its call sites (0.14.1) ──
+  //
+  // Three integers counting RECORDS a drain handled: how many decisions it applied, how many it
+  // refused as malformed or unhandled, how many outstanding ones aged out. Same class as
+  // `examined` / `pruned` / `dropped` above and kept for the same reason — a line that says a
+  // drain ran and strips the numbers says nothing about whether it did anything. None of the
+  // three can carry mail: each is produced by `apps/worker/src/request-drain.ts` as a counter it
+  // incremented itself, never read off a record.
+  "applied", "refused", "expired",
   "sample", "claims", "threadsCreated", "contactsImported", "sentRecipients", "truncated",
   "maxPages", "healthPort", "signal",
   // ── The desktop host door's loopback listener (`host_listening`), added WITH the call site ──
