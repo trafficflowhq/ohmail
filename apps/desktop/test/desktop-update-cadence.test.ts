@@ -206,11 +206,11 @@ function branchOn(
   root: ts.SourceFile,
   where: ts.Node,
   what: string,
-  is: (condition: ts.Expression, root: ts.SourceFile) => boolean,
+  is: (condition: ts.Expression) => boolean,
 ): ts.IfStatement {
   const found = nodesOf(root).filter(
     (n): n is ts.IfStatement =>
-      ts.isIfStatement(n) && contains(root, where, n) && is(n.expression, root),
+      ts.isIfStatement(n) && contains(root, where, n) && is(n.expression),
   );
   expect(found.map((n) => n.getText(root)), `one \`if\` testing ${what}`).toHaveLength(1);
   return found[0]!;
@@ -221,12 +221,10 @@ const callTo = (name: string) => (c: ts.Expression): boolean =>
   ts.isCallExpression(c) && ts.isIdentifier(c.expression) && c.expression.text === name;
 
 /** `… === "<text>"` or `"<text>" === …` — an equality against one string, either way round. */
-const comparedTo = (text: string) => (c: ts.Expression, root: ts.SourceFile): boolean => {
+const comparedTo = (text: string) => (c: ts.Expression): boolean => {
   if (!ts.isBinaryExpression(c)) return false;
   if (c.operatorToken.kind !== ts.SyntaxKind.EqualsEqualsEqualsToken) return false;
-  return [c.left, c.right].some(
-    (side) => ts.isStringLiteral(side) && side.text === text && Boolean(root),
-  );
+  return [c.left, c.right].some((side) => ts.isStringLiteral(side) && side.text === text);
 };
 
 /**
