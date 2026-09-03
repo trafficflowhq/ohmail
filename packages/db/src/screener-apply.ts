@@ -324,7 +324,7 @@ export interface ApplyScreenerDecisionInput {
   triggeringActionId: string;
   now: Date;
   /**
-   * Defaults `true`. The organizer's request drain never stamps `screening_baseline_at`, so it
+   * Defaults `true`. the request-authenticity rule.5: "The drain never stamps `screening_baseline_at`" — the drain
    * passes `false`. `screening_baseline_at` gates which of an account's ALREADY-HELD mail counts
    * as pre-existing versus newly screened (see this function's own comment on the `setWhere`
    * above); it is account-wide and, unlike the held-bag re-route (mailbox-scoped by `mailboxId`
