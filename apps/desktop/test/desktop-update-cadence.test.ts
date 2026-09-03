@@ -409,6 +409,31 @@ describe("the cadence, running", () => {
     stop();
   });
 
+  it("…and a FAILED check does not hand the allowance back, because it cannot be told apart", async () => {
+    /* THE ONE AMBIGUOUS REPORT, and the reason the clearing rule names `idle` alone. A check that
+       could not reach the feed and a DOWNLOAD that died inside a cycle heading straight back to
+       the same refused install both land on `failed` with `failed` as the last check's result;
+       the report carries nothing that separates them. Read as recovery, a package-managed copy on
+       flaky wifi gets a fresh retry — and so a fresh install dialog — every couple of days, for
+       ever. Read as "still refused", the cost falls on the rarer person whose install failed once
+       and whose retry then could not reach the feed, and it ends when they restart or press Check
+       now. The certain harm is the one worth refusing. */
+    vi.useFakeTimers();
+    const clock = { at: START };
+    let now = report({ state: "failed", lastResult: "offered", offered: null });
+    const s = shell(() => now);
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: true });
+
+    await run(clock, CHECK_EVERY_MS);
+    expect(s.polls, "the one retry").toHaveLength(1);
+
+    // The retry's own download died. Same stage, same last result as a feed nobody could reach.
+    now = report({ state: "failed", lastResult: "failed" });
+    await run(clock, 7 * CHECK_EVERY_MS);
+    expect(s.polls, "a week of it, and the allowance stays spent").toHaveLength(1);
+    stop();
+  });
+
   it("…and the subscription feeds the same observation the poll does", async () => {
     /* THE POLL IS A QUARTER-HOUR SAMPLE OF A STATE MACHINE THAT MOVES ON EVENTS. The failure
        dialog offers "Try again"; somebody presses it, and the flow leaves `failed` for `checking`
@@ -427,10 +452,11 @@ describe("the cadence, running", () => {
     expect(src.match(/const note = \(report: UpdateReport\): void =>/g)).toHaveLength(1);
     expect(src.match(/installWasRefused = true;/g), "the latch is set in one place")
       .toHaveLength(1);
-    // …and both feeders go through it.
-    expect(src.match(/^ {4}note\(report\);$/gm), "the poll and the subscription, and no third")
-      .toHaveLength(1);
-    expect(src.match(/^ {6}note\(report\);$/gm)).toHaveLength(1);
+    /* …and both feeders go through it — counted without keying on indentation, which would let a
+       third feeder at any other depth match neither pattern and leave the claim false while the
+       assertion passed. */
+    expect(src.match(/\bnote\(report\)/g), "the poll and the subscription, and no third")
+      .toHaveLength(2);
   });
 
   it("…and the bound is not Linux's alone — a daily dialog is a nag anywhere", async () => {

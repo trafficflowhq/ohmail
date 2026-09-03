@@ -242,26 +242,32 @@ export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => vo
    * — the release re-fetched and the install dialog re-raised every twenty-four hours for ever,
    * which is exactly the outcome it exists to prevent.
    *
-   * CLEARED ON A SETTLED REPORT, though, and that second half is as load-bearing as the first. A
-   * latch that only ever sets turns one transient failure — a disk that was full, a file that was
-   * held open — into a window that never checks again for as long as it stays open: the strip
-   * silent, "last checked" frozen, and nothing but Settings → Check now to escape, which is not
-   * something anybody knows they need. The refusal is over when a CYCLE has ended somewhere else:
-   * `idle` or `failed` without the offer beside it. The in-flight stages are deliberately not
-   * settled — they are what the retry produces, and treating them as recovery is the defect above.
+   * CLEARED WHEN A CHECK HAS ENDED WITH NOTHING TO INSTALL, though, and that second half is as
+   * load-bearing as the first. A latch that only ever sets turns one transient failure — a disk
+   * that was full, a file that was held open — into a window that never checks again for as long
+   * as it stays open: the strip silent, "last checked" frozen, and nothing but Settings → Check
+   * now to escape, which is not something anybody knows they need.
+   *
+   * `idle` IS THAT END AND `failed` IS NOT, which is a choice between two imperfect readings
+   * rather than an oversight. `idle` is only reachable from a completed check that found nothing
+   * to install, so it says the episode is over and says it unambiguously. `failed` is ambiguous:
+   * a check that could not reach the feed and a DOWNLOAD that died inside a cycle heading back to
+   * the same refused install both land there, both writing `failed` as the last check's result,
+   * and the report cannot tell them apart. Reading it as recovery would hand a package-managed
+   * copy on flaky wifi a fresh retry every couple of days — the nag this bound exists to prevent,
+   * at a slower rate. Reading it as "still refused" costs the rarer case: somebody whose install
+   * failed once AND whose retry then could not reach the feed keeps a window that does not check
+   * again until it is restarted or they press Check now. The certain harm is chosen over the
+   * unlikely one.
+   *
+   * The in-flight stages are deliberately not an end either — they are what the retry produces,
+   * and treating them as recovery is the defect above.
    */
   let installWasRefused = false;
   let checksSinceRefusal = 0;
   /** Consecutive requests the shell refused outright. */
   let refusedRequests = 0;
 
-  /**
-   * Decide what this report means for the strip.
-   *
-   * Silence is a decision here too: a report with nothing on offer WITHDRAWS a standing strip,
-   * because an offer that has been installed or has failed away is one nobody should still be
-   * looking at.
-   */
   /**
    * Take note of a report — the latch, and nothing else.
    *
@@ -277,14 +283,22 @@ export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => vo
       installWasRefused = true;
       return;
     }
-    // A SETTLED report ends the episode. `checking`, `downloading` and `ready` are what the retry
-    // itself produces and mean nothing about whether the install will refuse again.
-    if (report.state === "idle" || report.state === "failed") {
+    // A COMPLETED CHECK WITH NOTHING TO INSTALL ends the episode, and only that. `checking`,
+    // `downloading` and `ready` are what the retry itself produces; `failed` cannot be told from
+    // a download dying inside a cycle heading back to the same refusal. See the latch's own note.
+    if (report.state === "idle") {
       installWasRefused = false;
       checksSinceRefusal = 0;
     }
   };
 
+  /**
+   * Decide what this report means for the strip.
+   *
+   * Silence is a decision here too: a report with nothing on offer WITHDRAWS a standing strip,
+   * because an offer that has been installed or has failed away is one nobody should still be
+   * looking at.
+   */
   const say = (report: UpdateReport): void => {
     const offer = offerOf(report, linux);
     if (offer === null) {
