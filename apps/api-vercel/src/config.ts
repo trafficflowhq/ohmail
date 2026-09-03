@@ -10,7 +10,7 @@ import { DEFAULT_SSE, type SseConfig, type BuildIdentitySource } from "@trafficf
 // `transactionPoolerReason` is its mirror: the LISTEN URL must NOT be the transaction pooler.
 import { runtimeUrlReason, providerFamily, transactionPoolerReason } from "@trafficflow/db";
 import { msOAuthEnv, type MsOAuthBootstrap } from "@trafficflow/db/cloud";
-import { makeAuthConfig, type AuthConfig, type PlatformCostEnv } from "@trafficflow/services";
+import { makeAuthConfig, type AuthConfig } from "@trafficflow/services";
 
 /**
  * Deployment configuration for the serverless API host.
@@ -271,39 +271,6 @@ export interface HostConfig {
    * `packages/db`, which the WORKER also calls, so the two hosts cannot accept different sets.
    */
   msOAuth: MsOAuthBootstrap;
-  /**
-   * WHAT THE VENDORS CHARGE — the credentials the six-hourly platform-cost pass asks with.
-   *
-   * ALWAYS PRESENT and possibly all-empty, on {@link HostConfig.msOAuth}'s terms rather than
-   * {@link HostConfig.admin}'s: `null` here would make "no credential" and "this host does not
-   * do costs" the same value, and those are different states that the cost board is required to
-   * tell apart. A host that composes NO PORT AT ALL answers `200 {skipped}` on
-   * `/internal/platform-costs/run` and writes nothing — the desktop engine's shape. A host that
-   * composes a port with no credential ASKS, gets `unconfigured` from each adapter, and the
-   * board renders "not configured". This deployment is always the second one: it is the hosted
-   * API, the surface the console reads, so it always has an opinion about the bill even when
-   * that opinion is "nobody gave me a key".
-   *
-   * Read HERE and nowhere else, on {@link AdminConfig}'s rule: a route or a service reaching
-   * into `process.env` makes every test of it depend on the runner's ambient variables and makes
-   * a host unable to state what it is configured with.
-   */
-  platformCosts: PlatformCostEnv;
-  /**
-   * `CRON_SECRET` — the platform's own scheduler credential, held at the TOP LEVEL and not
-   * inside {@link alerts}.
-   *
-   * It lives here because the cost pass is a scheduled route that has nothing to do with
-   * alerting, and reading the credential off the alerting block made an unrelated optional
-   * feature decide whether costs were ever collected: with `TF_ALERT_SECRET` unset the pass
-   * answered 404 to every invocation, no vendor was ever asked, and the board went on calling a
-   * fully configured vendor "not configured". `alerts.cronSecret` is the same value and is kept
-   * for the alerting routes; this one is what a route may use without depending on that block.
-   *
-   * `null` when unset or shorter than 24 characters — same rule as everywhere else, because
-   * there is no rate limit behind the compare on a public URL.
-   */
-  cronSecret: string | null;
   /**
    * WHERE THIS DEPLOYMENT'S APP LIVES — the absolute origin the OAuth bounce redirects a browser to.
    *
@@ -1118,13 +1085,6 @@ export function loadHostConfig(env: NodeJS.ProcessEnv): HostConfig {
     // inside a route). `msOAuthEnv` accepts the canonical `MS_OAUTH_*` names and the `MICROSOFT_*`
     // aliases a live environment may hold, and it is the same function the worker calls.
     msOAuth: msOAuthEnv(env),
-    // The vendor cost credentials, resolved ONCE here like every other block. Always an object,
-    // possibly with every member absent — see the field's own note.
-    platformCosts: loadPlatformCostCredentials(env),
-    cronSecret: ((): string | null => {
-      const raw = env.CRON_SECRET?.trim();
-      return raw && raw.length >= 24 ? raw : null;
-    })(),
     // Validated by assertAppUrl (a redirect target). A value it REFUSES falls back to
     // `defaultOrigin(authConfig)` rather than failing boot: this is not a new reason for a host to
     // refuse to start, and the fallback is itself a boot-validated first-party origin.
@@ -1191,43 +1151,6 @@ export function loadAnthropicKey(env: NodeJS.ProcessEnv): string | null {
   const raw = (env.ANTHROPIC_API_KEY ?? "").trim();
   if (raw === "") return null;
   return assertAnthropicKey(raw);
-}
-
-/**
- * The vendor cost credentials, as the port reads them.
- *
- * ── IT NEVER REFUSES AND NEVER THROWS ────────────────────────────────────────────────────
- *
- * Unlike {@link loadAdminConfig} and {@link loadAlertsConfig}, there is nothing here to refuse.
- * A missing credential is not a misconfiguration — it is the state the cost board is designed to
- * render, and every adapter answers `unconfigured` for it without making a request. A partial
- * pair is not a misconfiguration either: the port requires `VERCEL_TOKEN` and `VERCEL_TEAM_ID`
- * TOGETHER and answers `unconfigured` when it has only one, because a token with no team asks
- * about whoever owns the token and returns a number belonging to somebody's personal account —
- * a wrong figure rather than a missing one, which is strictly the worse of the two. That rule
- * belongs to the port, where a self-hosted composition gets it too, so this function does not
- * restate it.
- *
- * `ANTHROPIC_ADMIN_API_KEY` is deliberately NOT {@link loadAnthropicKey}'s variable and is not
- * validated by `assertAnthropicKey`: it is an ADMIN-scoped organization key (`sk-ant-admin…`),
- * a different credential with a different blast radius from the inference key this product
- * spends on, and the two must never be substitutable for one another by accident.
- *
- * `SUPABASE_ACCESS_TOKEN` / `SUPABASE_PROJECT_REF` are NOT read here, and setting them changes
- * nothing: Supabase's Management API publishes no billing usage surface, so that provider is
- * manual-entry only. A variable a deployment can set that does nothing is worse than an absent
- * one — it reads as a feature somebody armed.
- */
-export function loadPlatformCostCredentials(env: NodeJS.ProcessEnv): PlatformCostEnv {
-  const value = (raw: string | undefined): string | undefined => {
-    const trimmed = raw?.trim();
-    return trimmed ? trimmed : undefined;
-  };
-  return {
-    VERCEL_TOKEN: value(env.VERCEL_TOKEN),
-    VERCEL_TEAM_ID: value(env.VERCEL_TEAM_ID),
-    ANTHROPIC_ADMIN_API_KEY: value(env.ANTHROPIC_ADMIN_API_KEY),
-  };
 }
 
 /**
