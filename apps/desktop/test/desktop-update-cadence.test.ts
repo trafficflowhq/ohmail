@@ -194,15 +194,40 @@ function contains(root: ts.SourceFile, outer: ts.Node, inner: ts.Node): boolean 
   return inner.getStart(root) >= outer.getStart(root) && inner.end <= outer.end;
 }
 
-/** The `if` inside `where` whose condition reads exactly `condition`. */
-function branchOn(root: ts.SourceFile, where: ts.Node, condition: string): ts.IfStatement {
+/**
+ * The one `if` inside `where` whose condition has the SHAPE `is` recognises.
+ *
+ * Structurally, not by the condition's source text: this file's own header records four ways a
+ * text match defeated these guards, and a condition pinned by spelling adds a fifth — a wrapped
+ * line or a comparison written the other way round turns the guard red over a defect that is not
+ * there, which the header names as how a guard ends up switched off.
+ */
+function branchOn(
+  root: ts.SourceFile,
+  where: ts.Node,
+  what: string,
+  is: (condition: ts.Expression, root: ts.SourceFile) => boolean,
+): ts.IfStatement {
   const found = nodesOf(root).filter(
     (n): n is ts.IfStatement =>
-      ts.isIfStatement(n) && contains(root, where, n) && n.expression.getText(root) === condition,
+      ts.isIfStatement(n) && contains(root, where, n) && is(n.expression, root),
   );
-  expect(found.map((n) => n.getText(root)), `one \`if (${condition})\``).toHaveLength(1);
+  expect(found.map((n) => n.getText(root)), `one \`if\` testing ${what}`).toHaveLength(1);
   return found[0]!;
 }
+
+/** `<name>(…)` — a call, whatever it is passed. */
+const callTo = (name: string) => (c: ts.Expression): boolean =>
+  ts.isCallExpression(c) && ts.isIdentifier(c.expression) && c.expression.text === name;
+
+/** `… === "<text>"` or `"<text>" === …` — an equality against one string, either way round. */
+const comparedTo = (text: string) => (c: ts.Expression, root: ts.SourceFile): boolean => {
+  if (!ts.isBinaryExpression(c)) return false;
+  if (c.operatorToken.kind !== ts.SyntaxKind.EqualsEqualsEqualsToken) return false;
+  return [c.left, c.right].some(
+    (side) => ts.isStringLiteral(side) && side.text === text && Boolean(root),
+  );
+};
 
 /**
  * The one node matching `pick`, and an assertion that there IS only one.
@@ -617,18 +642,60 @@ describe("the cadence, running", () => {
       ).toBe(true);
     }
 
-    const set = branchOn(module, note, "installRefused(report)");
-    const clear = branchOn(module, note, 'report.state === "idle"');
+    const set = branchOn(module, note, "a refused install", callTo("installRefused"));
+    const clear = branchOn(module, note, "a settled report", comparedTo("idle"));
     const under = (kind: ts.SyntaxKind, branch: ts.IfStatement) =>
       inside.filter((w) => w.value.kind === kind && contains(module, branch, w.at));
     expect(under(ts.SyntaxKind.TrueKeyword, set), "SET, under the refusal test").toHaveLength(1);
     expect(under(ts.SyntaxKind.FalseKeyword, clear), "CLEARED, under the settled test")
       .toHaveLength(1);
 
+    /* …AND THE ALLOWANCE IS RESET BESIDE THE CLEAR. It is one line below the write and its
+       absence is invisible to everything above: the latch clears, the count does not, and the
+       next refusal is given up on before it has had its retry. The behaviour is covered by
+       "A SECOND EPISODE GETS ITS OWN RETRY"; this pins the shape so the two cannot drift. */
+    expect(
+      writesTo(module, "checksSinceRefusal").filter(
+        (w) => w.value.kind === ts.SyntaxKind.NumericLiteral && contains(module, clear, w.at),
+      ),
+      "the allowance is reset where the latch is cleared",
+    ).toHaveLength(1);
+
     /* …and both feeders go through it. The CALL is counted, so the count is indifferent to how a
        third one might be written — spacing, a `void`, an arrow body, a renamed argument. The
        declaration is not a call and does not count. */
     expect(callsTo(module, "note"), "the poll and the subscription, and no third").toBe(2);
+  });
+
+  it("A SECOND EPISODE GETS ITS OWN RETRY — the allowance resets with the latch", async () => {
+    /* The allowance is a fact about ONE refusal, not about the window. Somebody whose install
+       refuses, whose retry is spent, and whose release is then withdrawn has had their episode
+       end; when a later release refuses in turn, that is a new problem and the promise of one
+       retry is owed again. Leaving the count behind when the latch clears would give the second
+       episode nothing — and it is one line below the clear, so nothing above notices its
+       absence. */
+    vi.useFakeTimers();
+    const clock = { at: START };
+    let now = report({ state: "failed", lastResult: "offered", offered: null });
+    const s = shell(() => now);
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: true });
+
+    await run(clock, CHECK_EVERY_MS);
+    expect(s.polls, "the first episode's retry").toHaveLength(1);
+    await run(clock, CHECK_EVERY_MS);
+    expect(s.polls, "…spent").toHaveLength(1);
+
+    // The release is withdrawn: a check completes with nothing to install, and the episode ends.
+    now = report({ state: "idle", lastResult: "upToDate", lastCheckedAt: clock.at });
+    await run(clock, POLL_EVERY_MS);
+
+    // A later release, and its install refuses too. A new episode, owed its own retry.
+    now = report({ state: "failed", lastResult: "offered", offered: null });
+    await run(clock, CHECK_EVERY_MS);
+    expect(s.polls, "the second episode's retry").toHaveLength(2);
+    await run(clock, 7 * CHECK_EVERY_MS);
+    expect(s.polls, "…and then it gives up too").toHaveLength(2);
+    stop();
   });
 
   it("…and the bound is not Linux's alone — a daily dialog is a nag anywhere", async () => {
