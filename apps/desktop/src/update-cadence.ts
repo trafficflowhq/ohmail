@@ -242,26 +242,30 @@ export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => vo
    * — the release re-fetched and the install dialog re-raised every twenty-four hours for ever,
    * which is exactly the outcome it exists to prevent.
    *
-   * CLEARED WHEN A CHECK HAS ENDED WITH NOTHING TO INSTALL, though, and that second half is as
-   * load-bearing as the first. A latch that only ever sets turns one transient failure — a disk
-   * that was full, a file that was held open — into a window that never checks again for as long
-   * as it stays open: the strip silent, "last checked" frozen, and nothing but Settings → Check
-   * now to escape, which is not something anybody knows they need.
+   * CLEARED ONLY BY `idle`, and it is worth being exact about how little that is rather than
+   * describing a recovery this does not perform. `idle` is reachable from one place — a check
+   * that COMPLETED and found nothing to install — so it means the release this window kept
+   * failing on is no longer being offered: withdrawn, or refused by the version guard, or already
+   * installed by some other means. While the release is still there no report can be `idle`, so
+   * inside one window a refusal that persists is permanent, on every platform.
    *
-   * `idle` IS THAT END AND `failed` IS NOT, which is a choice between two imperfect readings
-   * rather than an oversight. `idle` is only reachable from a completed check that found nothing
-   * to install, so it says the episode is over and says it unambiguously. `failed` is ambiguous:
-   * a check that could not reach the feed and a DOWNLOAD that died inside a cycle heading back to
-   * the same refused install both land there, both writing `failed` as the last check's result,
-   * and the report cannot tell them apart. Reading it as recovery would hand a package-managed
-   * copy on flaky wifi a fresh retry every couple of days — the nag this bound exists to prevent,
-   * at a slower rate. Reading it as "still refused" costs the rarer case: somebody whose install
-   * failed once AND whose retry then could not reach the feed keeps a window that does not check
-   * again until it is restarted or they press Check now. The certain harm is chosen over the
-   * unlikely one.
+   * That is deliberate, and the alternative was measured against the same states rather than
+   * hoped about. `failed` is the only other candidate and it is ambiguous: a check that could not
+   * reach the feed and a DOWNLOAD that died inside a cycle heading straight back to the same
+   * refused install both land there, both writing `failed` as the last check's result. Reading it
+   * as recovery hands a package-managed copy on flaky wifi a fresh retry — and so a fresh install
+   * dialog — every couple of days, for ever. That is the nag this bound exists to prevent, at a
+   * slower rate, and it is certain rather than possible.
    *
-   * The in-flight stages are deliberately not an end either — they are what the retry produces,
-   * and treating them as recovery is the defect above.
+   * WHERE THE RECOVERY ACTUALLY IS, since it is not here: the one retry's own cycle ends in
+   * `ready` and the shell raises its install dialog, so somebody who has since freed the disk or
+   * fixed the permission presses Restart and is done. If it refuses again, this window has said
+   * what it can and stops; the app's next launch checks as it always does. Settings → Check now
+   * still reaches the feed and still offers the install, and is unaffected by the latch — but it
+   * does not clear it either, because its cycle ends in `ready` and not in `idle`.
+   *
+   * The in-flight stages are not an end at all — they are what the retry produces, and treating
+   * them as recovery is the defect above.
    */
   let installWasRefused = false;
   let checksSinceRefusal = 0;

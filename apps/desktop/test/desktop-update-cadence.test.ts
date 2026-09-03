@@ -384,11 +384,11 @@ describe("the cadence, running", () => {
   });
 
   it("…AND IT LETS GO ONCE A CYCLE HAS ENDED SOMEWHERE ELSE", async () => {
-    /* A latch that only ever sets is the other failure, and it is the one that hurts the person
-       whose problem was temporary: a disk that was full, a file that was held open. Their retry
-       reaches the feed and the release turns out to be withdrawn, or the check simply cannot
-       reach it — either way the window is still open, still running, and would never check again
-       for as long as it stayed that way. */
+    /* THE ONE THING THAT ENDS THE EPISODE: the release this window kept failing on stops being
+       offered. Withdrawn, refused by the version guard, or installed by some other means — all
+       three end a check at `idle`, which is reachable from nowhere else. A latch that did not
+       clear even there would leave a window refusing to look for releases it had never had any
+       trouble with. What does NOT end it is a failed check; the case below says why. */
     vi.useFakeTimers();
     const clock = { at: START };
     let now = report({ state: "failed", lastResult: "offered", offered: null });
@@ -454,8 +454,10 @@ describe("the cadence, running", () => {
       .toHaveLength(1);
     /* …and both feeders go through it — counted without keying on indentation, which would let a
        third feeder at any other depth match neither pattern and leave the claim false while the
-       assertion passed. */
-    expect(src.match(/\bnote\(report\)/g), "the poll and the subscription, and no third")
+       assertion passed. A whole LINE, though: this file is comment-dense, and a bare substring
+       count would fail on the next comment that mentions the call, pointing at a defect that is
+       not there. */
+    expect(src.match(/^\s*note\(report\);$/gm), "the poll and the subscription, and no third")
       .toHaveLength(2);
   });
 
