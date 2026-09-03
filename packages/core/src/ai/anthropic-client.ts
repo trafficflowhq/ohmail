@@ -208,13 +208,24 @@ export interface AnthropicClientOptions {
   random?: () => number;
   /**
    * Called after EVERY metered call, success or failure. This is the margin-measurement hook: the
-   * hosts wire it to their structured logger, so one grep gives the token counts and estimated
-   * cost of every AI action the product has ever performed.
+   * hosts wire it to their structured logger AND to the cost table, so the token counts behind
+   * every AI action the product has ever performed are both greppable and joinable.
    *
    * Invoked through a try/catch — a reporter that throws must not become the outcome of a
    * model call that succeeded.
+   *
+   * **It may return a promise, and this client AWAITS it.** That widening exists for one host
+   * and one reason: the API runs serverless, so its process can be frozen the instant a response
+   * is written, and a reporter that started a durable write without being awaited is a write
+   * that may simply never land. Awaiting inside a call that has already spent seconds at a model
+   * provider costs nothing measurable and turns "usually recorded" into "recorded".
+   *
+   * A reporter that REJECTS is swallowed exactly like one that throws, and for the same reason:
+   * observability is never load-bearing. A long-lived host that would rather not wait returns
+   * `void` and flushes on its own clock — see `makeAiUsageRecorder`, which does both depending
+   * on the host it was built for.
    */
-  onUsage?: (report: AnthropicCallReport) => void;
+  onUsage?: (report: AnthropicCallReport) => void | Promise<void>;
   /** Convenience: when set and `onUsage` is not, usage is logged as `ai_call` at info level. */
   log?: Logger;
 }
@@ -279,11 +290,22 @@ export function makeAnthropicClient(opts: AnthropicClientOptions): AnthropicLike
   const report = opts.onUsage ?? ((r: AnthropicCallReport) => {
     // The default is not "nothing": an unmeasured cost is the failure mode #49 names. With no
     // logger either, we stay silent rather than writing to a stdout the host does not own.
+    //
+    // THIS DEFAULT IS THE FAILURE MODE, NOT THE MITIGATION, and it is worth saying so where it
+    // is written. A host that forgets to pass `onUsage` gets a deployment in which every metered
+    // call works, every credit is debited and nothing anywhere records what the tokens cost —
+    // and if it also passed no `log`, this line resolves to `undefined?.info(…)` and does
+    // literally nothing. That was the worker's state until cloud 0029: the arm that makes most
+    // of the product's model calls, silently unmeasured, beside a comment claiming otherwise.
+    // The guard against it is not here (a default cannot detect its own absence) but in the
+    // `ai_usage_unrecorded` rule, which compares the cost table against the credit ledger.
     log?.info("ai_call", { ...r });
   });
 
-  function emit(r: AnthropicCallReport): void {
-    try { report(r); } catch { /* a reporter that throws is not allowed to become the outcome */ }
+  async function emit(r: AnthropicCallReport): Promise<void> {
+    // AWAITED, and the try/catch covers both a synchronous throw and a rejected promise. See
+    // {@link AnthropicClientOptions.onUsage} for why the await is here at all.
+    try { await report(r); } catch { /* a reporter that fails is not allowed to become the outcome */ }
   }
 
   if (typeof doFetch !== "function") {
@@ -330,7 +352,7 @@ export function makeAnthropicClient(opts: AnthropicClientOptions): AnthropicLike
               const parsed = (await response.json()) as { content?: unknown; usage?: unknown; model?: unknown };
               const usage = readUsage(parsed.usage);
               const model = typeof parsed.model === "string" ? parsed.model : requestedModel;
-              emit({
+              await emit({
                 model, ok: true, status: response.status, latencyMs: now() - startedAt,
                 attempts: attempt, requestId: lastRequestId, ...usage,
                 costMicroUsd: estimateCostMicroUsd(model, usage),
@@ -368,7 +390,7 @@ export function makeAnthropicClient(opts: AnthropicClientOptions): AnthropicLike
           await sleep(Math.round(backoffMs * 2 ** (attempt - 1) * (0.75 + random() * 0.5)));
         }
 
-        emit({
+        await emit({
           model: requestedModel, ok: false, status: lastStatus, latencyMs: now() - startedAt,
           attempts: attempt, requestId: lastRequestId,
           inputTokens: null, outputTokens: null, cacheReadTokens: null,

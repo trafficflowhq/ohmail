@@ -1,0 +1,255 @@
+import { and, eq, gte, lt, sql } from "drizzle-orm";
+import { aiUsageDaily, creditLedger } from "./schema-cloud.js";
+import type { Tx } from "./change-log.js";
+
+/**
+ * WHAT THE TOKENS COST, WRITTEN DOWN — the recorder behind `ai_usage_daily` (cloud 0029).
+ *
+ * ## The state this replaces, measured rather than assumed
+ *
+ * `AnthropicCallReport` has carried the model, four token counts and an estimated cost after
+ * every metered call since the client was written, and the three composition roots printed it as
+ * an `ai_call` JSON line. A log drain is not a table: it cannot be joined against a customer's
+ * spend, it is retained for weeks rather than years, and — the part that made this urgent —
+ * **the WORKER was passing no logger at all**. `loadAiPorts(env)` is called from `loadConfig`
+ * with one argument, so the client's `log?.info("ai_call", …)` default resolved to `undefined?.`
+ * and did nothing. The worker is the metered arm for three of the four priced reasons
+ * (classification, the proposer, workflow steps), so the majority of the product's token cost
+ * was never written down anywhere at all, while a comment two files away said it was.
+ *
+ * ## The shape, and why it is two shapes
+ *
+ * One upsert per call on the API host; a time-bounded BUFFER everywhere else. That is not a
+ * micro-optimisation, it is the difference between the two runtimes:
+ *
+ *  · The **API host** is serverless. Its process can be frozen the instant a response is
+ *    written, so anything not durable by then may never be — a buffer there is a bucket with no
+ *    bottom. Its calls are also user-initiated and rare (a drafting request, a priced Screener
+ *    suggest), so one extra indexed upsert per call is invisible beside a 2–25 second model call.
+ *  · The **worker** classifies once per message, in a serial cycle. One upsert per call would be
+ *    a write per message forever, and the process is long-lived, so a buffer is both affordable
+ *    and safe: it flushes on its own clock and on shutdown.
+ *
+ * ## It NEVER throws, and it never delays a model call it cannot record
+ *
+ * The recorder is wired to `onUsage`, which the client already invokes inside a try/catch on the
+ * stated rule that "a reporter that throws is not allowed to become the outcome of a model call".
+ * This module holds itself to the stronger half of that: a database failure is swallowed HERE and
+ * counted, so the model call's result is never in doubt and the loss is visible in
+ * {@link AiUsageRecorder.dropped} rather than in silence.
+ */
+
+/** The three processes that can make a metered model call. `ai_usage_daily.host`'s CHECK. */
+export type AiUsageHost = "api" | "worker" | "server";
+
+/**
+ * The slice of `AnthropicCallReport` this module reads.
+ *
+ * Structurally narrower than the report on purpose: `packages/core`'s AI client may not import
+ * this file (it is desktop payload and knows nothing about a database), so the dependency runs
+ * one way only — a host composes the two. Declaring the narrow shape here is what lets that
+ * composition typecheck without either module naming the other.
+ */
+export interface AiUsageReport {
+  model: string;
+  ok: boolean;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheWriteTokens: number | null;
+  costMicroUsd: number | null;
+}
+
+export interface AiUsageRecorder {
+  /**
+   * Record one call. The `onUsage` sink itself.
+   *
+   * On the API host this RETURNS THE WRITE, and the client awaits it — see the module header for
+   * why a serverless process may not buffer. Everywhere else it returns nothing and the row is
+   * flushed later.
+   */
+  record(report: AiUsageReport): void | Promise<void>;
+  /** Write anything buffered. Idempotent, never throws, and safe to call on shutdown. */
+  flush(): Promise<void>;
+  /** Calls whose write FAILED. Non-zero means the cost table under-reports by that many calls. */
+  readonly dropped: number;
+}
+
+/** How long the worker holds a bucket before writing it. */
+export const AI_USAGE_BUFFER_MS = 30_000;
+
+/** `YYYY-MM-DD` in UTC — the `day` column's own convention, matching `credit_usage_daily`. */
+const dayOf = (at: Date): string => at.toISOString().slice(0, 10);
+
+interface Bucket {
+  day: string;
+  model: string;
+  calls: number;
+  okCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  costMicroUsd: number;
+}
+
+const n = (v: number | null | undefined): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+
+/**
+ * Build the recorder for one host.
+ *
+ * `host` is a LITERAL at each composition root and never derived from the environment: it is in
+ * the primary key, and three processes writing under one name would make "which arm stopped
+ * recording" — the only question worth asking when the figure looks wrong — unanswerable.
+ */
+export function makeAiUsageRecorder(
+  db: Tx,
+  host: AiUsageHost,
+  opts: { bufferMs?: number; now?: () => Date } = {},
+): AiUsageRecorder {
+  const now = opts.now ?? ((): Date => new Date());
+  const bufferMs = opts.bufferMs ?? (host === "api" ? 0 : AI_USAGE_BUFFER_MS);
+  const pending = new Map<string, Bucket>();
+  let lastFlushAt = now().getTime();
+  let dropped = 0;
+
+  const add = (report: AiUsageReport, at: Date): Bucket => {
+    const day = dayOf(at);
+    const key = `${day}${report.model}`;
+    const b = pending.get(key) ?? {
+      day, model: report.model, calls: 0, okCalls: 0,
+      inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costMicroUsd: 0,
+    };
+    b.calls += 1;
+    if (report.ok) b.okCalls += 1;
+    b.inputTokens += n(report.inputTokens);
+    b.outputTokens += n(report.outputTokens);
+    b.cacheReadTokens += n(report.cacheReadTokens);
+    b.cacheWriteTokens += n(report.cacheWriteTokens);
+    b.costMicroUsd += n(report.costMicroUsd);
+    pending.set(key, b);
+    return b;
+  };
+
+  /**
+   * The upsert. ADDITIVE on every counter, so a bucket written twice is impossible to distinguish
+   * from two separate calls — which is what makes flushing safe under a crash: the buffer is
+   * cleared only after the write settles, so a failed flush retries the same numbers next time
+   * and a succeeded-then-crashed flush loses nothing.
+   */
+  const write = async (buckets: Bucket[]): Promise<void> => {
+    if (buckets.length === 0) return;
+    await db.insert(aiUsageDaily).values(buckets.map((b) => ({
+      day: b.day,
+      host,
+      model: b.model,
+      calls: b.calls,
+      okCalls: b.okCalls,
+      inputTokens: b.inputTokens,
+      outputTokens: b.outputTokens,
+      cacheReadTokens: b.cacheReadTokens,
+      cacheWriteTokens: b.cacheWriteTokens,
+      costMicroUsd: b.costMicroUsd,
+    }))).onConflictDoUpdate({
+      target: [aiUsageDaily.day, aiUsageDaily.host, aiUsageDaily.model],
+      set: {
+        calls: sql`${aiUsageDaily.calls} + excluded.calls`,
+        okCalls: sql`${aiUsageDaily.okCalls} + excluded.ok_calls`,
+        inputTokens: sql`${aiUsageDaily.inputTokens} + excluded.input_tokens`,
+        outputTokens: sql`${aiUsageDaily.outputTokens} + excluded.output_tokens`,
+        cacheReadTokens: sql`${aiUsageDaily.cacheReadTokens} + excluded.cache_read_tokens`,
+        cacheWriteTokens: sql`${aiUsageDaily.cacheWriteTokens} + excluded.cache_write_tokens`,
+        costMicroUsd: sql`${aiUsageDaily.costMicroUsd} + excluded.cost_micro_usd`,
+        updatedAt: sql`now()`,
+      },
+    });
+  };
+
+  const drain = async (): Promise<void> => {
+    if (pending.size === 0) return;
+    const buckets = [...pending.values()];
+    // CLEARED BEFORE THE AWAIT, and restored on failure. Clearing after would let a call
+    // arriving mid-flush be written twice (it would join a bucket already in flight); clearing
+    // before and losing it on failure would under-report. Restoring re-merges instead.
+    pending.clear();
+    lastFlushAt = now().getTime();
+    try {
+      await write(buckets);
+    } catch {
+      dropped += buckets.reduce((sum, b) => sum + b.calls, 0);
+    }
+  };
+
+  return {
+    record(report) {
+      const at = now();
+      const bucket = add(report, at);
+      if (bufferMs === 0) {
+        // THE API HOST. The promise is returned so the client can await it: a serverless process
+        // may be frozen the moment its response is written, and a floating write is a write that
+        // may never land. One indexed upsert beside a 2–25 second model call is not a cost.
+        pending.delete(`${bucket.day}${bucket.model}`);
+        return write([bucket]).catch(() => { dropped += 1; });
+      }
+      // THE BUFFERED HOSTS. Flushed on the next call past the window rather than on a timer, so
+      // this module holds no handle a process has to remember to release; the caller's own
+      // shutdown calls `flush()` for the tail. A quiet deployment therefore holds at most one
+      // window's worth of rows until either another call or a shutdown lands them.
+      if (now().getTime() - lastFlushAt >= bufferMs) void drain();
+      return undefined;
+    },
+    flush: drain,
+    get dropped() { return dropped; },
+  };
+}
+
+/**
+ * THE SIGNAL: a day on which credits were SPENT and no model usage was recorded.
+ *
+ * ## Why it exists, in one sentence
+ *
+ * `onUsage` has a default — the client logs and moves on — so a composition root that simply
+ * forgets to wire the recorder produces a deployment where every metered action works, every
+ * test is green, every credit is debited, and `ai_usage_daily` is empty. That is not a
+ * hypothetical: it is the state the worker was in before this slice, for the arm that spends the
+ * most. A cost table nobody notices is empty is worse than no cost table, because a margin gets
+ * computed from it.
+ *
+ * ## What it compares, and why THIS pair
+ *
+ * Debits are the one independent witness that a model call happened. Every `debit_*` row in
+ * `credit_ledger` is written at a gate that immediately precedes a provider call, by a
+ * completely separate code path, on a table this recorder never touches. So "the ledger says we
+ * spent and the cost table says we made no calls" is a statement about the RECORDER rather than
+ * about the product, which is exactly the failure to detect.
+ *
+ * A day with no debits and no usage is healthy (a quiet day), and a day with usage and no debits
+ * is legitimate too — the self-host tier is unmetered by design, and a failed call costs tokens
+ * and refunds its credit. Only the one direction is a fault.
+ *
+ * @returns `true` when the day had metered debits and no usage row at all.
+ */
+export async function aiUsageUnrecorded(
+  db: Tx, opts: { day: Date },
+): Promise<boolean> {
+  const start = new Date(Date.UTC(
+    opts.day.getUTCFullYear(), opts.day.getUTCMonth(), opts.day.getUTCDate(),
+  ));
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+
+  const debits = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(creditLedger)
+    .where(and(
+      gte(creditLedger.createdAt, start),
+      lt(creditLedger.createdAt, end),
+      sql`${creditLedger.reason} in ('debit_classify','debit_draft','debit_propose','debit_workflow')`,
+    ));
+  if (Number(debits[0]?.n ?? 0) === 0) return false;
+
+  const usage = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(aiUsageDaily)
+    .where(eq(aiUsageDaily.day, dayOf(start)));
+  return Number(usage[0]?.n ?? 0) === 0;
+}

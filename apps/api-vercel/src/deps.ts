@@ -1,5 +1,5 @@
 import { noticeSinkFor, setNoticeSink, IDEMPOTENCY_TTL_MS, type Tx } from "@trafficflow/db";
-import { API_MAX_DURATION_MS, makePooledDb } from "@trafficflow/db/cloud";
+import { API_MAX_DURATION_MS, makeAiUsageRecorder, makePooledDb } from "@trafficflow/db/cloud";
 import {
   adminDbFor, attestStaffDbFault, makeAiCreditGate, resetAdminDbs, webhookAlertSink,
   telegramAlertSink,
@@ -136,6 +136,33 @@ function lazily<T>(bag: Record<string, unknown>, name: string, build: () => T): 
 
 function buildServices(cfg: HostConfig): ApiServices {
   const { authConfig, keyProvider } = cfg;
+  /**
+   * THE COST RECORDER, built once per configuration and shared by both AI clients below.
+   *
+   * `makePooledDb` memoises by URL, so this names the SAME connection `buildDeps` hands every
+   * request — a second pool for one process's bookkeeping would be the `max: 1` budget spent
+   * twice.
+   *
+   * `host: "api"` is a LITERAL, never derived from the environment: it is in the cost table's
+   * primary key, and three processes writing under one name would make "which arm stopped
+   * recording" — the only question worth asking when the figure looks wrong — unanswerable. On
+   * this host the recorder writes per call and returns the promise, which the client awaits: a
+   * serverless process can be frozen the instant its response is written, so a floating write is
+   * a write that may never land.
+   */
+  const aiUsage = makeAiUsageRecorder(
+    makePooledDb(cfg.databaseUrlPooled) as unknown as Tx, "api",
+  );
+  /**
+   * BOTH, not either. The log line is the per-call forensic record — it carries Anthropic's
+   * `request-id`, the only handle their support can act on — and the recorder is the arithmetic.
+   * Dropping the log for the table would lose the id; dropping the table for the log would leave
+   * the margin computable only by a human with a log drain and an afternoon.
+   */
+  const onUsage = (r: Parameters<typeof aiUsage.record>[0] & { latencyMs: number }): void | Promise<void> => {
+    console.log(JSON.stringify({ event: "ai_call", ...r }));
+    return aiUsage.record(r);
+  };
   // The stateless singletons: naming them is free, so they are plain properties.
   const bag: Record<string, unknown> = {
     sync: syncService,
@@ -360,7 +387,7 @@ function buildServices(cfg: HostConfig): ApiServices {
           apiKey: anthropicApiKey,
           timeoutMs: 10_000,
           maxRetries: 1,
-          onUsage: (r) => { console.log(JSON.stringify({ event: "ai_call", ...r })); },
+          onUsage,
         }),
       }),
     } : {}),
@@ -435,8 +462,10 @@ function buildServices(cfg: HostConfig): ApiServices {
   // Lazy, like every other constructed service: `makeAnthropicClient` builds a closure and a
   // retry policy that a `GET /health` cold start has no reason to pay for.
   //
-  // `onUsage` goes to `console.log` as one JSON line per metered call, so the token counts
-  // behind each metered action are on record. Vercel's log drain makes `ai_call` greppable.
+  // `onUsage` goes to BOTH the `console.log` line (Vercel's log drain makes `ai_call` greppable,
+  // and it carries Anthropic's `request-id`) and to `ai_usage_daily` through the recorder built
+  // at the top of this function. See the recorder's own note for why the write is awaited here
+  // and buffered on the worker.
   //
   // THE SCREENER'S CLASSIFIER IS DELIBERATELY NOT WIRED IN THIS BLOCK, and the reason is
   // written down so nobody "finishes the job" by adding one. The hazard this guarded against —
@@ -454,7 +483,7 @@ function buildServices(cfg: HostConfig): ApiServices {
       // context assembly that precedes it and for the draft write that follows.
       timeoutMs: 25_000,
       maxRetries: 1,
-      onUsage: (r) => { console.log(JSON.stringify({ event: "ai_call", ...r })); },
+      onUsage,
     })));
   }
 

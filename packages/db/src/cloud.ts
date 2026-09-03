@@ -209,6 +209,15 @@ export {
 } from "./setup-grant.js";
 
 export {
+  // WHAT THE TOKENS COST (cloud 0029) — the recorder behind `ai_usage_daily`, and the rule that
+  // catches a host which forgot to wire it. `onUsage` has a DEFAULT, so a composition root that
+  // simply omits the recorder produces a deployment where every credit is debited and the cost
+  // table stays empty — measured, not hypothetical: that was the worker's state.
+  makeAiUsageRecorder, aiUsageUnrecorded, AI_USAGE_BUFFER_MS,
+  type AiUsageHost, type AiUsageRecorder, type AiUsageReport,
+} from "./ai-usage.js";
+
+export {
   // The invoice mirror's two fenced writes (cloud 0029). ONE statement shared by the webhook
   // apply and the daily reconcile, because a fence written twice is a fence that will eventually
   // be written differently. See `billing-invoices.ts` for why the upsert never touches a

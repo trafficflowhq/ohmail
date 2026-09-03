@@ -36,6 +36,7 @@ import {
    * WITHOUT the trail being shortened. */
   runCreditRollupPass, isNightlyRollupSlot,
   CREDIT_ROLLUP_HOURLY_DAYS, CREDIT_ROLLUP_NIGHTLY_DAYS,
+  makeAiUsageRecorder,
   type AiCreditGate,
   type AlertSink,
   type AlertSinkHealth,
@@ -1246,6 +1247,25 @@ export async function startWorkerWithLock(
     // model call nor a debit. Holding a wrapper across the open transition would instead
     // charge every message and then fail it.
     //
+    // ── THE COST RECORDER, ATTACHED HERE BECAUSE HERE IS WHERE THE POOL EXISTS ───────────
+    //
+    // The model client was constructed while the CONFIGURATION was parsed (`loadAiPorts`), which
+    // is strictly before this function opened the pool from the URL that configuration produced.
+    // So `onUsage` had to be handed something before there was anything to record into, and
+    // `config.aiUsage` is that relay — this line is the other half of it.
+    //
+    // BUFFERED (30 s), not per call: this process classifies once per message in a serial cycle,
+    // so a write per call would be a write per message for ever. The buffer is safe here in a way
+    // it is not on the serverless host — nothing freezes this process between a call and its
+    // flush — and the tail is flushed on shutdown below.
+    //
+    // Absent when managed AI is not armed, in which case there is no client to report through
+    // either. The rules-only deployment records nothing and spends nothing, which agrees.
+    const aiUsageRecorder = config.aiUsage
+      ? makeAiUsageRecorder(db as unknown as Tx, "worker")
+      : null;
+    if (aiUsageRecorder) config.aiUsage!.attach((r) => { aiUsageRecorder.record(r); });
+
     // Absent classifier ⇒ no circuit and today's behaviour exactly (rules-only routing).
     const classifierCircuit: ClassifierCircuit | undefined = config.classifier
       ? makeClassifierCircuit(config.classifier, { log })
@@ -5713,6 +5733,12 @@ export async function startWorkerWithLock(
           // belt to that suspenders, and it also stops a beat racing `owned.close()`.
           clearTimers();
           await drain();                   // let the in-flight cycle/roster pass finish
+          // THE COST BUFFER'S TAIL, while the pool is still open. The recorder flushes on its own
+          // 30-second window as calls arrive, so what is left here is at most one window — and
+          // dropping it would make the last minutes of every deploy silently unmeasured, which
+          // on a fleet that redeploys often is a systematic under-count rather than a rounding
+          // error. It never throws (a failed flush is counted in `dropped`, not raised).
+          if (aiUsageRecorder) await aiUsageRecorder.flush();
           try {
             for (const rt of [...runtimes.values()]) await detach(rt, "worker stopping");
             // Hand the shard back BEFORE the pool closes: a clean shutdown that left its last

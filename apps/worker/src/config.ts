@@ -4,7 +4,7 @@ import {
   makeAnthropicClient, assertAnthropicKey, makeHaikuClassifier, makeSonnetDrafter, makeOpusProposer,
   callCeilingMs, msDeviceEnv,
   type KeyProvider, type ClassifierPort, type DraftPort, type WorkflowPort,
-  type KekEnvIdentity, type Logger,
+  type KekEnvIdentity, type Logger, type AnthropicCallReport,
 } from "@trafficflow/core";
 import { transactionPoolerReason, sessionUrlRejection } from "@trafficflow/db";
 import {
@@ -429,6 +429,20 @@ export interface WorkerConfig {
    *  so this is optional: absent ⇒ `unconfiguredProposer` proposes nothing (the cron
    *  runs cleanly, no suggestions). Tests inject a mock port. */
   proposer?: WorkflowPort;
+  /**
+   * THE LATE-BOUND USAGE SINK the three ports above report through.
+   *
+   * It exists because of an ORDERING this app cannot rearrange: the model client is constructed
+   * while the CONFIGURATION is parsed (`loadAiPorts`, from `loadConfig`), and the database pool
+   * is opened later, inside `startWorkerWithLock`, from a URL that configuration produced. So at
+   * the moment `onUsage` has to be handed to the client, there is nothing to record into.
+   *
+   * A relay closes that gap without a module-level global: `loadAiPorts` hands the client a
+   * dispatcher, the worker body attaches the real recorder once the pool exists, and everything
+   * reported in between goes to the logger only. Present whenever managed AI is armed; absent on
+   * a rules-only deployment, which has no client to report through either.
+   */
+  aiUsage?: AiUsageRelay;
 
   // ── Observability ───────────────────────────────────────────────────────────────────
   /**
@@ -1106,10 +1120,45 @@ export function classifyCallCeilingMs(env: NodeJS.ProcessEnv): number {
   return callCeilingMs({ timeoutMs: optInt(env, "TF_AI_TIMEOUT_MS", AI_CLASSIFY_TIMEOUT_MS_DEFAULT) });
 }
 
+/**
+ * THE USAGE RELAY — a one-slot dispatcher between the model client and a recorder that does not
+ * exist yet.
+ *
+ * Not a global and not a timer: it holds one nullable function and forwards to it. Before
+ * `attach`, every report goes to the logger and nowhere else, which is the honest behaviour for
+ * the window in question — a handful of calls at most, before the first sync cycle can run.
+ */
+export interface AiUsageRelay {
+  /** The `onUsage` handed to the client at construction. Never throws. */
+  readonly onUsage: (report: AnthropicCallReport) => void;
+  /** Install the real sink once the database pool exists. */
+  attach(sink: (report: AnthropicCallReport) => void): void;
+}
+
+function makeAiUsageRelay(log?: Logger): AiUsageRelay {
+  let sink: ((report: AnthropicCallReport) => void) | null = null;
+  return {
+    onUsage(report) {
+      // BOTH, and the log line first — it is the per-call forensic record (it carries the
+      // provider's `request-id`, the only handle their support can act on) and it must not
+      // depend on a recorder having been attached. The claim that this line existed on the
+      // worker was FALSE before cloud 0029: `loadAiPorts(env)` was called with one argument, so
+      // the client's `log?.info` default resolved to `undefined?.` and the arm that makes most
+      // of this product's model calls wrote its costs nowhere at all.
+      log?.info("ai_call", { ...report });
+      // A sink that throws is not allowed to become the outcome of a model call — the client
+      // guards this too, and a second guard here costs nothing and documents the rule at the
+      // one place a future sink will be added.
+      try { sink?.(report); } catch { /* observability is never load-bearing */ }
+    },
+    attach(next) { sink = next; },
+  };
+}
+
 export function loadAiPorts(
   env: NodeJS.ProcessEnv,
   log?: Logger,
-): Pick<WorkerConfig, "classifier" | "drafter" | "proposer"> {
+): Pick<WorkerConfig, "classifier" | "drafter" | "proposer" | "aiUsage"> {
   const raw = (env.ANTHROPIC_API_KEY ?? "").trim();
   if (raw === "") return {};
   // ── THE ARMING GUARD: managed AI does not come up against a FLAT debit schedule ────────────
@@ -1127,6 +1176,7 @@ export function loadAiPorts(
   // deployment somebody configured wrong must fail loudly, not sell an AI product whose
   // metering is quietly wrong. After the weighted schedule shipped this passes by construction.
   assertWeightedScheduleActive();
+  const aiUsage = makeAiUsageRelay(log);
   const client = makeAnthropicClient({
     apiKey: assertAnthropicKey(raw),
     baseUrl: env.ANTHROPIC_BASE_URL?.trim() || undefined,
@@ -1135,12 +1185,17 @@ export function loadAiPorts(
     // whole worker, not a per-request nicety. Two retries at 30 s bounds one classify at ~90 s
     // plus backoff, and the circuit opens after two of those.
     timeoutMs: optInt(env, "TF_AI_TIMEOUT_MS", AI_CLASSIFY_TIMEOUT_MS_DEFAULT),
-    log,
+    // `onUsage`, NOT `log`. The relay logs the same line the client's default would have — and
+    // then forwards to the cost recorder once one is attached. Passing `log` here instead would
+    // reinstate exactly the state cloud 0029 exists to end: a logger nobody handed in and a cost
+    // table nothing writes to.
+    onUsage: aiUsage.onUsage,
   });
   return {
     classifier: makeHaikuClassifier({ client }),
     drafter: makeSonnetDrafter(client),
     proposer: makeOpusProposer(client),
+    aiUsage,
   };
 }
 
