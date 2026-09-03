@@ -405,27 +405,28 @@ export interface FailedBillingEvent {
 }
 
 /**
- * MONEY. Every figure here is CENTS, and not one of them is cash received.
+ * MONEY. Every figure here is CENTS.
  *
- * ── WHY THERE IS NO REVENUE FIGURE ────────────────────────────────────────────────────────
- * The staff role cannot read an amount. `billing_events.payload` — the raw Stripe event, the
- * only place an `amount_paid` exists in this database — is deliberately UN-GRANTED
- * (`staff-grants.ts`, `public.billing_events`) because it carries the customer's name and
- * address. Nothing else in the schema stores a settled amount: `billing_subscriptions` holds a
- * `stripe_price_id` and an entitlement, never a sum.
+ * ── THE SETTLED-REVENUE FIGURE, AND WHERE IT COMES FROM (cloud 0029) ─────────────────────
+ * This interface used to say there could never be one: the staff role held no grant on any
+ * amount column, because the only `amount_paid` in the database lived inside
+ * `billing_events.payload` — the raw Stripe event, which also carries the customer's name and
+ * postal address. That is still true of `payload`. It stopped being the whole story the moment
+ * `billing_invoices` (cloud 0029) started PROMOTING the one integer the board needs — `stripe_
+ * invoice_id`, `account_id`, `status`, `amount_paid_cents`, `amount_refunded_cents`, a plan, a
+ * period, three timestamps — onto a table with no name, no address and no line item, granted to
+ * the staff role WHOLE for exactly that reason (`staff-grants.ts`). {@link CashRevenue} is what
+ * that table lets this DTO say that it could not before: cash actually received, not a list
+ * price applied to subscription state.
  *
- * So this interface reports what a blind role CAN establish — the price list applied to
- * subscription state, and a COUNT of applied invoice events — and the console says in as many
- * words that Stripe is the authority for cash. Adding a `settledRevenueCents` here would mean
- * granting a column that carries a customer's postal address to a console that must never see
- * one, which is a worse trade than sending an operator to the Stripe dashboard.
- *
- * ── AND WHY `contracted` IS NOT A SYNONYM FOR `earned` ────────────────────────────────────
+ * ── AND WHY `contracted` IS STILL NOT A SYNONYM FOR `earned` ─────────────────────────────
  * `contractedMrrCents` is `PLAN_LIMITS[plan].priceUsd × 100` summed over subscriptions in
  * `active`. It is the LIST price of what is contracted, before discount, coupon, proration,
  * tax, currency conversion and collection. A grandfathered deal reads at today's price here —
  * `billing_subscriptions` denormalises `mailbox_limit`/`monthly_credits` for exactly that
- * reason but carries no price, so the plan card is the only rate available.
+ * reason but carries no price, so the plan card is the only rate available. `cash.mtdCents` is
+ * the OTHER figure, actually collected, and the two are never summed into one number: one is a
+ * forecast off subscription state, the other is what Stripe actually moved.
  */
 export interface BillingRevenue {
   /** List price × plan, `active` subscriptions only. Cents. Contracted, not collected. */
@@ -447,6 +448,105 @@ export interface BillingRevenue {
   appliedInvoiceEvents: number;
   /** `invoice.payment_failed` events, any status. A COUNT. */
   failedPaymentEvents: number;
+  /** Cash actually received, from `billing_invoices`. See this interface's header. */
+  cash: CashRevenue;
+}
+
+/**
+ * CASH, FROM `billing_invoices` (cloud 0029) — what Stripe actually settled, mirrored.
+ *
+ * `paidInvoices` and `mtdCents` are bucketed by `paid_at`, never by `created_at`: a reconcile
+ * pass that heals a lost webhook writes the row with today's `created_at` and the invoice's
+ * real `paid_at`, and bucketing by the wrong column would move a February payment into whatever
+ * month happened to heal it. The read is bounded by `billing_invoices_paid_at_idx` because the
+ * month is in the statement's `WHERE` — a version that put it only in the aggregates' `FILTER`
+ * clauses made this same sentence false, since `status` carries no index and the planner then
+ * had to read every paid invoice ever written.
+ *
+ * `mtdCents` NETS refunds (`amount_paid_cents − amount_refunded_cents`) because a refunded
+ * invoice is still `status = 'paid'` — Stripe's invoice object cannot express a refund, only the
+ * charge can — so counting `amount_paid_cents` alone would report cash that came back out the
+ * same month as if it were still on hand.
+ */
+export interface CashRevenue {
+  /** `YYYY-MM` — the month `paidInvoices` and `mtdCents` are bucketed into, by `paid_at`. */
+  month: string;
+  /** `billing_invoices` rows, `status = 'paid'`, `paid_at` inside `month`. A count. */
+  paidInvoices: number;
+  /** Σ `amount_paid_cents` − Σ `amount_refunded_cents`, same predicate. Cents actually kept. */
+  mtdCents: number;
+  /** The same predicate, `paid_at` = today (UTC). What the Today page's count reads. */
+  paidToday: number;
+  /**
+   * ISO-4217, as Stripe reports it — the currency that SETTLED THE MOST this month, and the one
+   * `mtdCents` is denominated in. `"usd"` when the month holds no paid invoice at all.
+   *
+   * The figure is never summed ACROSS currencies: minor units of USD added to minor units of EUR
+   * are a number denominated in nothing, which `money()` would then print with a `$`. The read
+   * groups by currency and reports the largest; {@link CashRevenue.otherCurrencies} says how many
+   * it therefore left out.
+   */
+  currency: string;
+  /**
+   * How many OTHER currencies settled invoices this month that `mtdCents` does NOT include.
+   *
+   * The qualifier without which the figure reads as the whole month's cash — the same job
+   * `AdminCostSnapshot.unmeasuredProviders` does for an unmeasured vendor. `0` on any deployment
+   * selling in one currency, which is every deployment today; non-zero makes the omission
+   * visible rather than silently shrinking the number.
+   */
+  otherCurrencies: number;
+  /** The invoice mirror's own reconciliation health. See {@link InvoiceReconciliationView}. */
+  reconciliation: InvoiceReconciliationView;
+}
+
+/**
+ * THE INVOICE MIRROR'S RECONCILIATION HEALTH — the newest COMPLETED `mode = 'invoices'` pass on
+ * `billing_reconciliation_runs` (cloud 0029's daily heal, `reconcile-invoices.ts`).
+ *
+ * Distinct from the SUBSCRIPTION reconciler's alert (`billing_reconciliation_divergence`,
+ * `mode in ('dry-run','apply')`): the two modes are different populations on the same table, and
+ * reading the newest row of either without the mode filter reports one pass's verdict as the
+ * other's. This view is invoice-mode only.
+ *
+ * `flagged` carries every divergence code that pass recorded (`invoice_missing_in_mirror`,
+ * `invoice_missing_in_stripe`, `amount_mismatch` — see `reconcile-invoices.ts`), never the
+ * per-invoice `divergences` array, which is un-granted (it carries Stripe subscription and
+ * account ids the alert rule does not need and this panel does not either).
+ *
+ * ── `flagged` COUNTS HEALED ROWS TOO, AND THAT IS WHY {@link healed} EXISTS ───────────────
+ * **This comment used to say `flaggedTotal === 0` was the only healthy reading. It was wrong,
+ * and it was wrong in the direction that cries wolf.** `reconcile-invoices.ts` increments
+ * `flagged[code]` inside `note()` for EVERY divergence — including the ones it healed in the
+ * same breath (`note(code, id, accountId, wrote ? "emitted" : "flagged")`), which its own field
+ * doc says out loud: *"Closed code→count map over EVERY divergence, healed or not."* So one lost
+ * `invoice.paid` webhook, healed overnight by the pass exactly as designed, would have rendered
+ * a red "the invoice mirror disagrees with Stripe — money state needs a person" on a deployment
+ * where the machinery had just worked. A board that goes red when the self-heal succeeds is a
+ * board an operator learns to close.
+ *
+ * `healed` is `billing_reconciliation_runs.invoices_upserted` — the rows that pass actually
+ * wrote — and it is granted to the blind role already. `flaggedTotal − healed` is the count that
+ * NEEDS somebody: an invoice nobody could attribute to an account, a row the mirror holds and
+ * Stripe's listing did not, an amount the fence refused to overwrite. That is the split the
+ * subscription reconciler's own alert rule already makes (`emitted > 0` is a warning; unhealed
+ * flags are the page), and it is made here for the same reason.
+ */
+export interface InvoiceReconciliationView {
+  /** The newest completed pass's own clock, and the cadence it is expected at. */
+  freshness: PanelFreshness;
+  /** Divergence code → count, from that run's `flagged` column. Empty ⇒ nothing flagged. */
+  flagged: Record<string, number>;
+  /** Σ of `flagged`'s values — healed and unhealed together. See this interface's header. */
+  flaggedTotal: number;
+  /**
+   * How many of `flaggedTotal` that pass HEALED (`invoices_upserted`) — a lost webhook replayed
+   * from Stripe's own record. `flaggedTotal - healed` is what still needs a person, and only
+   * that remainder is a fault.
+   */
+  healed: number;
+  /** That run's own `truncated` — a bound stopped the pass early; `flagged` is a partial view. */
+  truncated: boolean;
 }
 
 /**

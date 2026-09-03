@@ -5,6 +5,10 @@ import {
   alertState,
   authEvents,
   billingEvents,
+  // The invoice mirror (cloud 0029) — cash actually received, and its own reconciliation
+  // pass's run ledger. Granted to the staff role WHOLE (`staff-grants.ts`); see `CashRevenue`.
+  billingInvoices,
+  billingReconciliationRuns,
   billingSubscriptions,
   creditBalances,
   creditLedger,
@@ -29,9 +33,9 @@ import type { Db } from "./context.js";
 import type {
   AccountDetail, AccountPage, AccountQuery, AccountSummary, AccountUsage, ActionCatalog, ActionSpec,
   AdminLedgerReason, AdminPlan, AdminSubscriptionStatus, AlertSummary, AuditEntry,
-  BillingRevenue, BillingSnapshot, CreditLiability, FunnelSnapshot, FunnelStage,
-  LedgerDay, LedgerEntry, MailboxHealth, SecurityEvent, SetupPoolView, StaleSend, UsageDay,
-  WorkerInstanceHealth, WorkerSnapshot,
+  BillingRevenue, BillingSnapshot, CashRevenue, CreditLiability, FunnelSnapshot, FunnelStage,
+  InvoiceReconciliationView, LedgerDay, LedgerEntry, MailboxHealth, SecurityEvent, SetupPoolView,
+  StaleSend, UsageDay, WorkerInstanceHealth, WorkerSnapshot,
 } from "./admin-dto.js";
 
 /**
@@ -845,6 +849,12 @@ export const ADMIN_USAGE_EXPECTED_EVERY_SECONDS = 60 * 60;
 export const ADMIN_TOTALS_EXPECTED_EVERY_SECONDS = 24 * 60 * 60;
 
 /**
+ * The invoice reconciliation's own cadence — `reconcile-invoices.ts`'s daily pass, in seconds.
+ * What {@link CashRevenue.reconciliation}'s freshness stamp is judged against.
+ */
+export const ADMIN_INVOICE_RECON_EXPECTED_EVERY_SECONDS = 24 * 60 * 60;
+
+/**
  * The ledger — and the SECOND query in this module whose unqualified relation name
  * is doing work.
  *
@@ -1279,20 +1289,135 @@ export async function adminAccountDetail(db: AdminDb, now: Date, id: string): Pr
  * and nothing but), and the console has a panel for each.
  *
  * ── WHAT THE BLIND ROLE CAN AND CANNOT ESTABLISH ──────────────────────────────────────────
- * There is no settled-revenue figure here and there cannot be one without widening the staff
- * grants. `billing_events.payload` is the only place this database holds an `amount_paid`, and
- * it is un-granted because the same blob carries the customer's name and postal address. Every
- * query below reads columns `ohmail_admin` already holds:
+ * `billing_events.payload` is still un-granted and still off limits — the raw Stripe event
+ * carries the customer's name and postal address, and nothing here reads it. What CHANGED
+ * (cloud 0029) is that a settled-revenue figure no longer requires it: `billing_invoices`
+ * promotes the one integer the board needs onto a table with no name, no address and no line
+ * item, granted to the staff role whole (`staff-grants.ts`). `revenue.cash` is read from it —
+ * see {@link CashRevenue} and `loadCashRevenue` below. Every other query here reads columns
+ * `ohmail_admin` already held before this slice:
  *   · `credit_ledger(account_id, delta, reason)` — via `admin.credit_ledger`, the redacting view
  *   · `credit_balances(account_id, balance)`
  *   · `billing_events(type, status)`
  *   · `billing_subscriptions(plan, status)`
- * Nothing was widened for this slice.
  *
  * ── SEQUENTIAL, NOT PARALLEL ──────────────────────────────────────────────────────────────
  * The blind pool is `max: 1` and deadlocks when a second read opens while one holds the
  * connection. Every await below is deliberately serial; do not `Promise.all` them.
  */
+
+/**
+ * CASH, FROM `billing_invoices` — ONE aggregate statement, and the month bounds are in its
+ * `WHERE`, not only in its `FILTER`s.
+ *
+ * **That distinction is the whole reason this read is bounded, and the first version got it
+ * wrong.** With `where status = 'paid'` alone and the month expressed only inside
+ * `count(*) filter (…)`, the planner has to hand EVERY paid invoice this deployment has ever
+ * written to the aggregate node — there is no index on `status`, so the figure's cost grows with
+ * the age of the account book while three comments (this one included) claimed it was bounded by
+ * `billing_invoices_paid_at_idx`. It is bounded now because `paid_at` is in the predicate the
+ * index can serve. `paidToday` stays a `FILTER` and is still correct: today is inside this month
+ * by construction, so it narrows the same rows rather than needing any of its own.
+ *
+ * `paid_at`, never `created_at`: a reconcile-healed row keeps the invoice's real payment month
+ * even though the MIRROR row was written later, on whatever day the pass ran.
+ *
+ * ── AND IT GROUPS BY CURRENCY RATHER THAN SUMMING ACROSS ONE ─────────────────────────────
+ * `sum(amount_paid_cents)` over a month holding both USD and EUR invoices is minor units added
+ * to different minor units: a number denominated in nothing, which `money()` would then render
+ * with a `$`. So the statement groups, the largest-settling currency is the one reported, and
+ * {@link CashRevenue.otherCurrencies} counts the ones this figure therefore does NOT include —
+ * the same qualifier `AdminCostSnapshot.unmeasuredProviders` is for, and for the same reason:
+ * silently dropping money is the failure this board exists to refuse, and so is inventing a sum
+ * that no currency actually holds. It is 0 on every deployment that sells in one currency, which
+ * is every deployment today.
+ */
+async function loadCashRevenue(db: AdminDb, now: Date): Promise<CashRevenue> {
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+  const month = monthStart.toISOString().slice(0, 7);
+  const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+
+  const rows = await db
+    .select({
+      currency: billingInvoices.currency,
+      paidInvoices: sql<number>`count(*)::int`,
+      paidCents: sql<string>`coalesce(sum(${billingInvoices.amountPaidCents}), 0)::bigint`,
+      refundedCents: sql<string>`coalesce(sum(${billingInvoices.amountRefundedCents}), 0)::bigint`,
+      paidToday: sql<number>`count(*) filter (where ${billingInvoices.paidAt} >= ${dayStart.toISOString()}::timestamptz and ${billingInvoices.paidAt} < ${dayEnd.toISOString()}::timestamptz)::int`,
+    })
+    .from(billingInvoices)
+    .where(and(
+      eq(billingInvoices.status, "paid"),
+      sql`${billingInvoices.paidAt} >= ${monthStart.toISOString()}::timestamptz`,
+      sql`${billingInvoices.paidAt} < ${monthEnd.toISOString()}::timestamptz`,
+    ))
+    .groupBy(billingInvoices.currency);
+
+  // The currency that SETTLED the most this month is the one reported. Ordered here rather than
+  // in SQL because the net (paid − refunded) is the comparison that matters and it is computed
+  // per row below anyway; the set is one row per currency, so this sorts at most a handful.
+  const byCurrency = rows
+    .map((r) => ({
+      currency: r.currency,
+      paidInvoices: int(r.paidInvoices),
+      netCents: int(r.paidCents) - int(r.refundedCents),
+      paidToday: int(r.paidToday),
+    }))
+    .sort((a, b) => b.netCents - a.netCents);
+  const lead = byCurrency[0] ?? null;
+
+  const reconciliation = await loadInvoiceReconciliation(db);
+
+  return {
+    month,
+    paidInvoices: lead?.paidInvoices ?? 0,
+    mtdCents: lead?.netCents ?? 0,
+    paidToday: lead?.paidToday ?? 0,
+    // "usd" when the month holds no paid invoice at all — a label for an empty figure, not a
+    // claim that anything settled in it.
+    currency: lead?.currency ?? "usd",
+    otherCurrencies: Math.max(0, byCurrency.length - 1),
+    reconciliation,
+  };
+}
+
+async function loadInvoiceReconciliation(db: AdminDb): Promise<InvoiceReconciliationView> {
+  const [run] = await db
+    .select({
+      ranAt: billingReconciliationRuns.ranAt,
+      flagged: billingReconciliationRuns.flagged,
+      // The HEALED count. `flagged` includes rows the pass fixed itself, so without this the
+      // console cannot tell a self-healed lost webhook from a divergence needing a person.
+      invoicesUpserted: billingReconciliationRuns.invoicesUpserted,
+      truncated: billingReconciliationRuns.truncated,
+    })
+    .from(billingReconciliationRuns)
+    .where(and(
+      sql`${billingReconciliationRuns.error} is null`,
+      eq(billingReconciliationRuns.mode, "invoices"),
+    ))
+    .orderBy(desc(billingReconciliationRuns.ranAt))
+    .limit(1);
+
+  const flagged = (run?.flagged ?? {}) as Record<string, number>;
+  const flaggedTotal = Object.values(flagged).reduce((sum, n) => sum + Number(n), 0);
+
+  return {
+    freshness: {
+      // `null` ⇒ the pass has never completed on this deployment — a distinct state from "ran
+      // and found nothing", and the console must be able to say which one it is holding.
+      computedAt: run ? asDate(run.ranAt).toISOString() : null,
+      expectedEverySeconds: ADMIN_INVOICE_RECON_EXPECTED_EVERY_SECONDS,
+    },
+    flagged,
+    flaggedTotal,
+    healed: int(run?.invoicesUpserted ?? 0),
+    truncated: run?.truncated ?? false,
+  };
+}
+
 export async function adminBilling(db: AdminDb, now: Date): Promise<BillingSnapshot> {
   const accountRows = await db.select({ id: accounts.id, name: accounts.name }).from(accounts);
   const subs = newestByAccount(await selectSubscriptions(db));
@@ -1319,6 +1444,10 @@ export async function adminBilling(db: AdminDb, now: Date): Promise<BillingSnaps
     contractedMrrCents: byStatus.get(status)?.contractedMrrCents ?? 0,
   }));
 
+  // Read before `revenue` is built so the object literal can carry `cash` from construction
+  // rather than being patched afterward — sequential on the same `max: 1` connection either way.
+  const cash = await loadCashRevenue(db, now);
+
   const revenue: BillingRevenue = {
     contractedMrrCents: subscriptionStates
       .filter((s) => CONTRACTED_STATUSES.has(s.status))
@@ -1326,13 +1455,14 @@ export async function adminBilling(db: AdminDb, now: Date): Promise<BillingSnaps
     atRiskMrrCents: subscriptionStates
       .filter((s) => AT_RISK_STATUSES.has(s.status))
       .reduce((sum, s) => sum + s.contractedMrrCents, 0),
-    // Filled in below from `billing_events`. COUNTS, never amounts — and the first one counts
-    // APPLICATIONS, never settled payments: a trial-start `invoice.paid` nets to $0 and still
-    // applies, and the only `amount_paid` in this database lives in the un-granted `payload`,
-    // so a role that cannot read it cannot exclude the $0 rows. The field's name carries that
-    // limit — the old `paidInvoiceEvents` implied revenue every trial start inflated.
+    // Filled in below from `billing_events`. COUNTS, never amounts — `billing_events.payload` is
+    // still un-granted, so a role that cannot read it cannot exclude a trial's $0 rows from this
+    // COUNT of applications. The settled figure now lives on `cash` instead, read from the
+    // invoice mirror — this field's name still carries the older limit on purpose, because it
+    // still is one: `appliedInvoiceEvents` counts applications, never payments.
     appliedInvoiceEvents: 0,
     failedPaymentEvents: 0,
+    cash,
   };
 
   const eventCounts = await db
