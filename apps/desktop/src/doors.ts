@@ -740,16 +740,46 @@ async function sealLocalPassword(
  * The one caller reads `null` as "this is not provably the right row" and refuses, which is the
  * safe direction — the alternative is sealing a password onto a row nobody has identified.
  */
-export async function localMailboxAddress(mailboxId: string): Promise<string | null> {
+export type SettledRowAddress =
+  /** The row answered, and this is the address it carries. */
+  | { kind: "address"; address: string }
+  /** The engine answered and the row could not be identified — a refusal, a 404, a blank address. */
+  | { kind: "unreadable" }
+  /**
+   * THE ENGINE COULD NOT BE REACHED AT ALL, which is a different situation and not this check's
+   * to report. No request will land on any row, so there is no wrong-row hazard here — and the
+   * caller has a better sentence for it: the seal it goes on to attempt fails with the engine's
+   * own words ("the mail engine is not answering"), which tells somebody what to do. Collapsing
+   * this into `unreadable` replaced that with a sentence about mailbox identity, which is
+   * accurate about nothing and actionable about less.
+   */
+  | { kind: "unreachable" };
+
+export async function localMailboxAddress(mailboxId: string): Promise<SettledRowAddress> {
+  let res: Response;
   try {
-    const res = await bridgeFetch(`/mailboxes/${encodeURIComponent(mailboxId)}`);
-    if (!res.ok) return null;
-    const row = (await res.json()) as { address?: unknown };
-    return typeof row.address === "string" && row.address.trim() !== "" ? row.address : null;
+    res = await bridgeFetch(`/mailboxes/${encodeURIComponent(mailboxId)}`);
   } catch {
-    return null;
+    return { kind: "unreachable" };
+  }
+  if (!res.ok) return { kind: "unreadable" };
+  try {
+    const row = (await res.json()) as { address?: unknown };
+    return typeof row.address === "string" && row.address.trim() !== ""
+      ? { kind: "address", address: row.address }
+      : { kind: "unreadable" };
+  } catch {
+    return { kind: "unreadable" };
   }
 }
+
+/** The refusal both arms give, written once so the two cannot drift. */
+const COULD_NOT_CHECK =
+  "ohmail could not check which mailbox this copy is opening, so the password you typed was not "
+  + "saved. Try again in a moment.";
+const OPENING_A_DIFFERENT_MAILBOX =
+  "This copy of ohmail is set up for that address but is still opening a different mailbox, so "
+  + "the password you typed was not saved. Add this mailbox from Settings → Mailboxes instead.";
 
 /**
  * Door one: this machine opens the user's own mailbox.
@@ -857,6 +887,41 @@ export async function enterLocalDoor(
   };
 
   if (reconfiguresLocalDoor(standing, address)) {
+    /**
+     * ── AND THE ROW THIS WOULD SEAL ONTO HAS TO CARRY THE TYPED ADDRESS, HERE TOO ─────────────
+     *
+     * `reconfiguresLocalDoor` compares the typed address against `standing.address`, which is the
+     * SETTINGS FILE's. `standing.mailboxId` is the engine's ready snapshot, which is "the active
+     * row for the configured address, ELSE THE OLDEST ACTIVE ROW". Those two agreed for as long as
+     * an install held one mailbox, and this release makes them disagree for the first time:
+     * removing the seed while another mailbox remains deliberately does NOT sign out, so
+     * `config.json` goes on naming the removed address A while `mailboxId` is the survivor B.
+     *
+     * Re-entering A's password from Settings → Desktop — the form arrives pre-filled with the
+     * configured address, so this is the ordinary gesture — then took this arm and sealed A's
+     * host, user and password onto ROW B's credential. From the next boot B is a non-seed row and
+     * dials its own credential meta, which now describes mailbox A: it would sync A's mail into
+     * the mirror labelled with B's address.
+     *
+     * The first-connect arm's twin of this was closed with the same helper. This is the same door
+     * one step later and the same class of write, so it gets the same check and the same words —
+     * `localMailboxAddress` returns `null` for every failure, and "we could not check" refuses
+     * with its own sentence rather than claiming a mismatch nobody observed.
+     *
+     * BEFORE THE SEAL AND BEFORE THE CONFIGURE, which is what makes the refusal free: nothing
+     * about this install has changed when it fires, so the mailbox is left on the configuration
+     * that was working — unlike the first-connect arm, where the engine has already been replaced.
+     */
+    const standingRow = await localMailboxAddress(standing.mailboxId);
+    /* `unreachable` FALLS THROUGH on purpose — see the union. The seal below fails against the
+       same dead engine and says so in the engine's own words, which is the useful sentence. */
+    if (standingRow.kind === "unreadable") {
+      return { status: standing, problem: COULD_NOT_CHECK };
+    }
+    if (standingRow.kind === "address" && !sameAddress(standingRow.address, address)) {
+      return { status: standing, problem: OPENING_A_DIFFERENT_MAILBOX };
+    }
+
     /* SEAL, THEN COMMIT. Nothing about this install has changed yet, so a refusal here returns
        with the mailbox still on the configuration that was working. */
     const refused = await sealLocalPassword(standing.mailboxId, imap, f.password, smtp, smtpHost);
@@ -941,8 +1006,8 @@ export async function enterLocalDoor(
    * cannot establish that this is the right row — and "we could not check" must not be spelled
    * the same as "it matched", which is the direction that costs a credential.
    */
-  const settledAddress = await localMailboxAddress(settled.mailboxId);
-  if (settledAddress === null) {
+  const settledRow = await localMailboxAddress(settled.mailboxId);
+  if (settledRow.kind === "unreadable") {
     /* ── "WE COULD NOT CHECK" IS NOT "IT IS THE WRONG MAILBOX" ───────────────────────────────
      *
      * Both refuse, and refusing is right either way — an unchecked row must not be sealed onto.
@@ -951,14 +1016,9 @@ export async function enterLocalDoor(
      * sentence below states a confident fact about the install ("it is still opening a different
      * mailbox") that a failed read has not established. On a transient read failure that is a
      * confident claim about a state nobody observed. */
-    return {
-      status: settled,
-      problem:
-        "ohmail could not check which mailbox this copy is opening, so the password you typed "
-        + "was not saved. Try again in a moment.",
-    };
+    return { status: settled, problem: COULD_NOT_CHECK };
   }
-  if (!sameAddress(settledAddress, address)) {
+  if (settledRow.kind === "address" && !sameAddress(settledRow.address, address)) {
     return {
       status: settled,
       /* THE SENTENCE HAS TO BE TRUE ABOUT WHAT DID CHANGE, and the first draft was not. The
@@ -967,10 +1027,9 @@ export async function enterLocalDoor(
          for the address that was typed while still opening a different mailbox. The check cannot
          move ahead of the configure — there is no row to read until the engine makes one — so the
          honest answer is to say both halves and name the door that does work. */
-      problem:
-        "This copy of ohmail is set up for that address but is still opening a different mailbox, "
-        + "so the password you typed was not saved. Add this mailbox from Settings → Mailboxes "
-        + "instead.",
+      /* ONE SENTENCE FOR BOTH ARMS. The reconfigure arm reaches the same state one step earlier
+         and with less collateral, and two spellings of one refusal is how they come to disagree. */
+      problem: OPENING_A_DIFFERENT_MAILBOX,
     };
   }
 

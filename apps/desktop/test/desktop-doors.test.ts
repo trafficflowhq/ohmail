@@ -530,12 +530,25 @@ describe("the local door", () => {
       .toEqual([]);
   });
 
-  it("the RECONFIGURE order does not read the row — it already knows which one it is", async () => {
-    /* The guard is the FIRST-CONNECT order's. A reconfigure is entered only when
-       `reconfiguresLocalDoor` has already established that the standing engine serves a `local`
-       door with a ready credential AT THE SAME ADDRESS — the row is the one being reconfigured by
-       construction, and the seal happens before anything about the install changes. A read there
-       would be asking a question its own precondition has answered. */
+  it("the RECONFIGURE order READS THE ROW TOO — its precondition does not answer the question", async () => {
+    /* ── THIS CASE ASSERTED THE OPPOSITE, AND THE REASONING WAS WRONG ────────────────────────
+     *
+     * It read: *"A reconfigure is entered only when `reconfiguresLocalDoor` has already
+     * established that the standing engine serves a `local` door with a ready credential AT THE
+     * SAME ADDRESS — the row is the one being reconfigured by construction."* Every clause is
+     * true and the conclusion does not follow.
+     *
+     * `reconfiguresLocalDoor` compares against `standing.address`, which is the SETTINGS FILE's.
+     * `standing.mailboxId` is the engine's ready snapshot — "the active row for the configured
+     * address, ELSE THE OLDEST ACTIVE ROW". The two agreed for as long as an install held one
+     * mailbox. Removing the seed while another remains makes them disagree deliberately: the pane
+     * does not sign out, so `config.json` goes on naming the removed address while `mailboxId` is
+     * the survivor. Re-entering the removed address's password — the form arrives pre-filled with
+     * it — then sealed that mailbox's host, user and password onto the SURVIVOR's credential row.
+     *
+     * So the precondition answers "does the settings file name this address", and the question is
+     * "is the row this seal would land on that mailbox". Same door as the first-connect arm, one
+     * step later, same class of write, same check. */
     const standing: EngineStatus = { ...SERVING, credentialState: "ready" };
     const asked = shellThatWorks(standing);
     await enterLocalDoor(filled, providerById("fastmail"), standing);
@@ -543,7 +556,36 @@ describe("the local door", () => {
     const reads = asked.filter(
       (a) => a.command === "engine_request" && (a.payload!.method ?? "GET") === "GET",
     );
-    expect(reads, "the reconfigure order read a row it had already identified").toEqual([]);
+    expect(reads.length, "the reconfigure order sealed without identifying the row")
+      .toBeGreaterThan(0);
+    expect(reads[0]!.payload!.url).toBe(`/mailboxes/${SERVING.mailboxId}`);
+  });
+
+  it("REFUSES THE RECONFIGURE when the standing engine is opening a different mailbox", async () => {
+    /* THE SEQUENCE, and it is the one the pane's own behaviour creates: remove the seed while
+       another mailbox remains — no sign-out, by design — and the settings file still names the
+       removed address while the engine has settled on the survivor. Re-entering the removed
+       address's password from Settings → Desktop is the ordinary next gesture.
+
+       MUTATION: delete the check and this reds with a PATCH carrying the typed host, user and
+       password addressed to the survivor's row. */
+    const standing: EngineStatus = { ...SERVING, credentialState: "ready" };
+    // The engine settled on somebody else's row — the oldest surviving mailbox on this install.
+    const asked = shellThatWorks(standing, 200, "someone-else@example.com");
+
+    const result = await enterLocalDoor(filled, providerById("fastmail"), standing);
+
+    expect(result.problem).toMatch(/still opening a different mailbox/);
+    expect(
+      asked.filter((a) => a.command === "engine_request" && a.payload!.method === "PATCH"),
+      "a password was sealed onto a mailbox nobody typed",
+    ).toEqual([]);
+    /* AND NOTHING ABOUT THE INSTALL MOVED. This arm refuses BEFORE the configure, unlike the
+       first-connect one — so the mailbox is left on the configuration that was working. */
+    expect(
+      asked.filter((a) => a.command === "engine_configure"),
+      "the install was reconfigured by a refused attempt",
+    ).toEqual([]);
   });
 
   /**
