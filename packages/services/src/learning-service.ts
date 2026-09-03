@@ -1,36 +1,20 @@
 import { and, eq, sql } from "drizzle-orm";
-import { graduations, learningSignals, rules as rulesTbl, type Tx } from "@trafficflow/db";
-import type { Destination } from "@trafficflow/core/mail";
+import {
+  graduations, rules as rulesTbl, type Tx,
+  recordLearningSignal, patternKeyFor,
+  GRADUATION_THRESHOLD, DEMOTION_THRESHOLD,
+  type LearningSignalInput, type LearningKind, type LearningLabel,
+} from "@trafficflow/db";
 import type { ServiceContext } from "./context.js";
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
-/** Net (positives − negatives) a (pattern, action) must reach before it graduates. */
-export const GRADUATION_THRESHOLD = 3;
-/** Net-negative margin at which an accumulated set of overrides demotes/unpromotes a pattern. */
-export const DEMOTION_THRESHOLD = 2;
-
-export type LearningKind = "screener" | "approval" | "override" | "external_move";
-export type LearningLabel = "positive" | "negative";
-
-export interface LearningSignalInput {
-  triggeringActionId: string;
-  kind: LearningKind;
-  senderAddress?: string | null;
-  senderDomain?: string | null;
-  destination?: Destination | string | null;
-  label: LearningLabel;
-}
-
-/** Deterministic pattern key the pipeline's `RoutingPort.isGraduated` also reads. */
-export function patternKeyFor(
-  s: { senderAddress?: string | null; senderDomain?: string | null; destination?: string | null },
-): string | null {
-  if (!s.destination) return null;
-  if (s.senderAddress) return `sender:${s.senderAddress.toLowerCase()}→${s.destination}`;
-  if (s.senderDomain) return `domain:${s.senderDomain.toLowerCase()}→${s.destination}`;
-  return null;
-}
+// Re-exported rather than re-declared: `packages/db/src/learning-signal.ts` is now the ONE
+// definition (see its own header for why — the worker's request drain needs the write and may
+// not import this package). Every existing importer of these five names from THIS module keeps
+// working unchanged.
+export { GRADUATION_THRESHOLD, DEMOTION_THRESHOLD, patternKeyFor };
+export type { LearningKind, LearningLabel, LearningSignalInput };
 
 /**
  * LearningService. Captures every learning-relevant action as a
@@ -42,11 +26,15 @@ export function patternKeyFor(
  * The `graduations` table is the seam the 1c pipeline reads via
  * `RoutingPort.isGraduated`: once a (sender→destination, route) pattern graduates
  * here, the pipeline auto-applies confident classifications for it.
+ *
+ * `record` / `recordOn` are now thin wrappers over `@trafficflow/db#recordLearningSignal` — see
+ * that function's own header for why the write moved and why this class is not a second
+ * implementation of it.
  */
 export class LearningService {
   /** Public entry: runs on the request's ambient db (which may already be a tx). */
   async record(ctx: ServiceContext, s: LearningSignalInput): Promise<void> {
-    await this.recordOn(asTx(ctx), ctx.accountId, s);
+    await recordLearningSignal(asTx(ctx), ctx.accountId, s);
   }
 
   /**
@@ -56,53 +44,7 @@ export class LearningService {
    * inserts nothing and — crucially — bumps no counter.
    */
   async recordOn(tx: Tx, accountId: string, s: LearningSignalInput): Promise<void> {
-    const inserted = await tx
-      .insert(learningSignals)
-      .values({
-        accountId,
-        triggeringActionId: s.triggeringActionId,
-        kind: s.kind,
-        senderAddress: s.senderAddress ?? null,
-        senderDomain: s.senderDomain ?? null,
-        destination: (s.destination as string | undefined) ?? null,
-        label: s.label,
-      })
-      .onConflictDoNothing({ target: [learningSignals.accountId, learningSignals.triggeringActionId] })
-      .returning({ id: learningSignals.id });
-
-    // Duplicate triggering action → signal already recorded → do NOT double-count.
-    if (inserted.length === 0) return;
-
-    const patternKey = patternKeyFor(s);
-    if (!patternKey) return;
-    await this.bumpCounter(tx, accountId, patternKey, s.label);
-  }
-
-  /**
-   * Advance the (pattern, action='route') counters entirely in SQL:
-   *   positives = positives + 1   (or negatives = negatives + 1)
-   * and flip `graduated` in the same statement, guarded so it is sticky once set
-   * and only trips when net (positives − negatives) reaches the threshold. Because
-   * the increment and the flip are one `ON CONFLICT DO UPDATE`, two concurrent
-   * writers serialize on the row lock and neither loses an increment.
-   */
-  private async bumpCounter(tx: Tx, accountId: string, patternKey: string, label: LearningLabel): Promise<void> {
-    const pos = label === "positive" ? 1 : 0;
-    const neg = label === "negative" ? 1 : 0;
-    const net = sql`(${graduations.positives} + ${pos}) - (${graduations.negatives} + ${neg})`;
-    await tx
-      .insert(graduations)
-      .values({ accountId, patternKey, action: "route", positives: pos, negatives: neg, graduated: false })
-      .onConflictDoUpdate({
-        target: [graduations.accountId, graduations.patternKey, graduations.action],
-        set: {
-          positives: sql`${graduations.positives} + ${pos}`,
-          negatives: sql`${graduations.negatives} + ${neg}`,
-          graduated: sql`(${graduations.graduated} OR ${net} >= ${GRADUATION_THRESHOLD})`,
-          graduatedAt: sql`CASE WHEN ${graduations.graduatedAt} IS NULL AND ${net} >= ${GRADUATION_THRESHOLD} THEN now() ELSE ${graduations.graduatedAt} END`,
-          updatedAt: sql`now()`,
-        },
-      });
+    await recordLearningSignal(tx, accountId, s);
   }
 
   /** True when the (pattern, action) has graduated — the same read the 1c pipeline performs. */

@@ -1,5 +1,4 @@
-import { eq } from "drizzle-orm";
-import { accounts, type Tx } from "@trafficflow/db";
+import { readAccountErasedAt, type Tx } from "@trafficflow/db";
 import { ServiceError } from "./errors.js";
 
 /**
@@ -67,12 +66,10 @@ import { ServiceError } from "./errors.js";
  * typo'd id.
  */
 export async function fenceErasedAccount(tx: Tx, accountId: string): Promise<void> {
-  const [row] = await tx.select({ erasedAt: accounts.erasedAt })
-    .from(accounts)
-    .where(eq(accounts.id, accountId))
-    .limit(1)
-    .for("share");
-  if (row === undefined) {
+  // `readAccountErasedAt` is `@trafficflow/db`'s primitive — see its own header for why the read
+  // moved and why this function is not a second implementation of it.
+  const erasedAt = await readAccountErasedAt(tx, accountId);
+  if (erasedAt === undefined) {
     // No accounts row is PROOF the account was never erased, not a suspicious absence: erasure
     // KEEPS the row (the pseudonymous billing subject) and stamps it — a deleted row is the one
     // thing `deleteAccount` cannot produce. So the fence has nothing to say and stays out of the
@@ -82,7 +79,7 @@ export async function fenceErasedAccount(tx: Tx, accountId: string): Promise<voi
     // the fence into a general existence check nobody asked for.
     return;
   }
-  if (row.erasedAt !== null) {
+  if (erasedAt !== null) {
     throw new ServiceError("account_erased", 410,
       "this account has been deleted; its settings cannot be changed");
   }
