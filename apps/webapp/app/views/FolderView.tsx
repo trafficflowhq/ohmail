@@ -26,6 +26,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
+import { useRowBadgeCopy } from "../shell/row-copy";
 import { presentsUnread, type EngineMessage, type FolderEntity, type TagDTO } from "@ohmail/client-engine";
 import { ListGroupLabel, ListPane, ListRows, MessageRow, ReadColumn, Spinner } from "@ohmail/ui";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
@@ -92,6 +93,7 @@ export function FolderView({
   canReplyAll: (message: EngineMessage) => boolean;
 }) {
   const t = useTranslations("folder");
+  const rowBadge = useRowBadgeCopy();
   const to = useTranslations("ohbox");
   /* The reading column's region name — shared with every split view (`ReadColumn`). */
   const tReader = useTranslations("reader");
@@ -294,7 +296,7 @@ export function FolderView({
                       selected={shown?.id === m.id}
                       threadCount={m.threadCount}
                       hasAttachment={m.hasAttachments}
-                      protected={m.protected != null}
+                      protectedLabel={m.protected != null ? rowBadge.protectedLabel : undefined}
                       tags={tagsOfMessage(m, tags).map((x) => ({ name: x.name, hue: hueOf(x) }))}
                       onClick={() => openRow(m)}
                     />
@@ -342,7 +344,7 @@ export function FolderView({
                   selected={shown?.id === m.id}
                   threadCount={m.threadCount}
                   hasAttachment={m.hasAttachments}
-                  protected={m.protected != null}
+                  protectedLabel={m.protected != null ? rowBadge.protectedLabel : undefined}
                   tags={tagsOfMessage(m, tags).map((x) => ({ name: x.name, hue: hueOf(x) }))}
                   onClick={() => openRow(m)}
                 />

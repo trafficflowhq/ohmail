@@ -37,10 +37,36 @@ export interface FocusReplyOverlayProps {
   onSkip: () => void;
   onClose: () => void;
   /** ReactNode so the host can put the verb's keycap ON the button (the always-on-caps law). */
-  doneLabel?: ReactNode;
-  skipLabel?: string;
+  doneLabel: ReactNode;
+  skipLabel: string;
   /** Rendered when the pile is exhausted (step >= total). */
   emptyState?: ReactNode;
+  /** Every other word this overlay says. See {@link FocusReplyCopy}. */
+  copy: FocusReplyCopy;
+}
+
+/**
+ * The overlay's words, brought by the host.
+ *
+ * `doneLabel` and `skipLabel` used to default to "Done → next" and "Skip", and the six strings
+ * below were literals in the markup — so a German reader stepping through their Answer Later pile
+ * met an English dialog inside a German app. A composite reads no catalogue; the host does, and
+ * hands the words down. Required rather than defaulted, so a missing one is a type error and not
+ * a locale nobody on the team reads.
+ */
+export interface FocusReplyCopy {
+  /** The dialog's accessible name. */
+  ariaLabel: string;
+  /** The done state: the sentence, and the way back. */
+  empty: ReactNode;
+  emptyBack: string;
+  /** "3 of 12" — the host places both numbers, because not every language puts them in this order. */
+  progress: (step: number, total: number) => ReactNode;
+  /** The default textarea's placeholder and accessible name. Unused when `editor` is supplied. */
+  placeholder: string;
+  replyAria: string;
+  /** The word beside the esc keycap. */
+  exit: string;
 }
 
 /**
@@ -61,9 +87,10 @@ export function FocusReplyOverlay({
   onDone,
   onSkip,
   onClose,
-  doneLabel = "Done → next",
-  skipLabel = "Skip",
+  doneLabel,
+  skipLabel,
   emptyState,
+  copy,
 }: FocusReplyOverlayProps) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -93,15 +120,15 @@ export function FocusReplyOverlay({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="fr-card" role="dialog" aria-modal="true" aria-label="Reply run">
+      <div className="fr-card" role="dialog" aria-modal="true" aria-label={copy.ariaLabel}>
         {finished ? (
           (emptyState ?? (
             <div className="empty" style={{ padding: "20px 10px" }}>
               <span className="glyph">🕊</span>
-              <b>Answer Later is empty.</b>
+              <b>{copy.empty}</b>
               <div style={{ marginTop: 18 }}>
                 <Button variant="primary" onClick={onClose}>
-                  Back to Triage
+                  {copy.emptyBack}
                 </Button>
               </div>
             </div>
@@ -109,9 +136,7 @@ export function FocusReplyOverlay({
         ) : (
           <>
             <div className="fr-prog num">
-              <span>
-                {step + 1} of {total}
-              </span>
+              <span>{copy.progress(step + 1, total)}</span>
               <span className="fr-bar">
                 <i style={{ width: `${((step + 1) / total) * 100}%` }} />
               </span>
@@ -122,8 +147,8 @@ export function FocusReplyOverlay({
             {editor ?? (
               <textarea
                 ref={textareaRef}
-                placeholder="Your reply"
-                aria-label="Reply"
+                placeholder={copy.placeholder}
+                aria-label={copy.replyAria}
                 value={value}
                 onChange={onChange ? (e) => onChange(e.target.value) : undefined}
               />
@@ -134,7 +159,7 @@ export function FocusReplyOverlay({
               </Button>
               <Button onClick={onSkip}>{skipLabel}</Button>
               <span className="esc">
-                <Kbd>esc</Kbd> exit
+                <Kbd>esc</Kbd> {copy.exit}
               </span>
             </div>
           </>

@@ -8,21 +8,6 @@ import "./decision-bar.css";
 export type DecisionDestination = "ohbox" | "reads" | "receipts" | "screened" | "spam";
 export type DecisionScope = "sender" | "domain";
 
-/** Button labels, done-state labels and key map — verbatim from the prototype. */
-export const DECISION_LABEL: Record<DecisionDestination, string> = {
-  ohbox: "Ohbox",
-  reads: "Reads",
-  receipts: "Receipts",
-  screened: "Screen out",
-  spam: "Spam",
-};
-export const DECISION_DONE_LABEL: Record<DecisionDestination, string> = {
-  ohbox: "Ohbox",
-  reads: "Reads",
-  receipts: "Receipts",
-  screened: "Screened out",
-  spam: "Spam",
-};
 export const DECISION_KEY: Record<DecisionDestination, string> = {
   ohbox: "o",
   reads: "r",
@@ -42,13 +27,50 @@ const DESTINATIONS: DecisionDestination[] = ["ohbox", "reads", "receipts", "scre
  */
 export const DECISION_QUIET = new Set<DecisionDestination>(["screened", "spam"]);
 
+/** One capsule's words. The ✓ half is absent for a destination that has no read verb. */
+export interface DecisionCapsuleCopy {
+  /** The verb on the label half — "Screen out", not "Screened out". */
+  label: string;
+  /** That half's title, with its key: "Screened out (n)". */
+  title: string;
+  /** The ✓ half, when there is one. */
+  check?: { label: string; title: string };
+}
+
+/**
+ * EVERY WORD THIS BAR SAYS, BROUGHT BY THE HOST.
+ *
+ * The five labels, the scope toggle and the consequence line used to be literals in this file, so
+ * a German window rendered a German rail, German filter chips and an English decision bar — the
+ * one control on the surface that writes a rule. A composite has no catalogue and must not grow
+ * one; the host reads `messages/*.json` and hands the words down, the same contract `Settings`
+ * states ("no fetch, no copy of its own — the host brings the words, from the catalogue").
+ *
+ * Required, not defaulted. An optional copy prop with an English default is the same defect with
+ * a longer fuse: it compiles, it renders, and it is wrong only in the locale nobody on the team
+ * reads. Missing it is a type error at every call site instead.
+ */
+export interface DecisionBarCopy {
+  dest: Record<DecisionDestination, DecisionCapsuleCopy>;
+  scopeAria: string;
+  scopeSender: string;
+  scopeDomain: string;
+  /** The consequence line — the consent disclosure, with the rule target already placed. */
+  rule: ReactNode;
+  /** The disclosure's summary and its body. */
+  halvesLabel: string;
+  halves: ReactNode;
+  /** The word on the narrow-width back affordance. */
+  back: string;
+}
+
 export interface DecisionBarProps {
   /** The AI-preselected destination: ringed, warm, accepts on "y". */
   aiDest?: DecisionDestination;
   scope: DecisionScope;
   onScopeChange: (scope: DecisionScope) => void;
-  /** The rule target shown in the consequence line: address or @domain. */
-  ruleTarget: string;
+  /** Every word on the bar. See {@link DecisionBarCopy}. */
+  copy: DecisionBarCopy;
   /** One click files; `markRead` is true from the ✓ segment / shifted key. */
   onDecide: (dest: DecisionDestination, opts: { markRead: boolean }) => void;
   /**
@@ -98,7 +120,7 @@ export function DecisionBar({
   aiDest,
   scope,
   onScopeChange,
-  ruleTarget,
+  copy,
   onDecide,
   keyboard,
   onBack,
@@ -141,7 +163,7 @@ export function DecisionBar({
     <div className={className ? `decide ${className}` : "decide"}>
       {onBack ? (
         <button type="button" className="scn-back" onClick={onBack}>
-          <Icon name="chev" className="chev" /> Screener
+          <Icon name="chev" className="chev" /> {copy.back}
         </button>
       ) : null}
       <div className="d-btns">
@@ -149,28 +171,31 @@ export function DecisionBar({
           const ai = aiDest === d;
           const k = DECISION_KEY[d];
           const quiet = DECISION_QUIET.has(d);
+          const words = copy.dest[d];
           return (
             <SplitButton
               key={d}
-              label={DECISION_LABEL[d]}
+              label={words.label}
               /* `y` only where `y` is bound — this component's own listener. Everywhere
                  else the capsule shows the letter that files it, which is live in both
                  modes: the registry declares o/r/c/n/x from this same `DECISION_KEY`. */
               kbdHint={keyboard && ai ? "y" : k}
               ai={ai}
               quiet={quiet}
-              title={`${DECISION_DONE_LABEL[d]} (${k})`}
+              title={words.title}
               onPress={() => onDecide(d, { markRead: false })}
               /* No "& mark read" ✓ for the demoting destinations — you don't read what you
-                 screen out or mark spam. The mail destinations keep both halves. */
-              {...(quiet
+                 screen out or mark spam. The mail destinations keep both halves, and the host
+                 leaves `check` off exactly the destinations `DECISION_QUIET` names, so the two
+                 cannot drift: a `check` supplied for a quiet destination is dropped here. */
+              {...(quiet || !words.check
                 ? {}
                 : {
                     check: {
                       onPress: () => onDecide(d, { markRead: true }),
-                      label: `${DECISION_DONE_LABEL[d]}, mark read`,
+                      label: words.check.label,
                       kbdHint: `⇧${k.toUpperCase()}`,
-                      title: `${DECISION_DONE_LABEL[d]}, mark read (${k.toUpperCase()})`,
+                      title: words.check.title,
                     },
                   })}
             />
@@ -181,12 +206,12 @@ export function DecisionBar({
         <SegmentedControl
           variant="scope"
           className="d-scope"
-          ariaLabel="Decision scope"
+          ariaLabel={copy.scopeAria}
           value={scope}
           onChange={(s) => onScopeChange(s)}
           options={[
-            { id: "sender", label: "this sender" },
-            { id: "domain", label: "whole domain" },
+            { id: "sender", label: copy.scopeSender },
+            { id: "domain", label: copy.scopeDomain },
           ]}
         />
         {/* THE CONSEQUENCE LINE, WHICH IS THE CONSENT DISCLOSURE.
@@ -205,12 +230,8 @@ export function DecisionBar({
         {note ? (
           <span className="d-note">{note}</span>
         ) : (
-          <InfoNote
-            className="d-note"
-            lead={<>Becomes a rule — future mail from {ruleTarget} files automatically.</>}
-            moreLabel="What each half of the button does"
-          >
-            The name files the mail waiting here; the ✓ files it and marks it read.
+          <InfoNote className="d-note" lead={copy.rule} moreLabel={copy.halvesLabel}>
+            {copy.halves}
           </InfoNote>
         )}
       </div>

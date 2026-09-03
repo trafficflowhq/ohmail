@@ -36,6 +36,7 @@
  */
 
 import { memo, type ReactNode } from "react";
+import { useTranslations } from "next-intl";
 import type { EngineMessage, MessageBody } from "@ohmail/client-engine";
 import { StreamCard, StreamArt } from "@ohmail/ui";
 import { senderName, displayTime } from "./format";
@@ -94,6 +95,8 @@ function StreamCardMemoInner({
   bodyText, bodyState, bodyHtml, bodyLoadedRemote, remoteImages, loadingLabel, failedLabel, withheldLabel,
   onSelect, onToggle, onAction,
 }: StreamCardMemoProps) {
+  /* The card's two toggle words. `StreamCard` has none of its own — see `copy-census`. */
+  const tm = useTranslations("message");
   /* THE SAME THREE-TERM `remoteLoaded` AS `MessagePane`, and the same withheld button in auto
      mode: the stored flag, the account's auto setting, this session's press. Built inside the
      memo so a skipped render costs nothing. */
@@ -126,6 +129,8 @@ function StreamCardMemoInner({
       subject={m.subject}
       body={bodyText}
       bodyState={bodyState}
+      expandLabel={tm("expandCard")}
+      collapseLabel={tm("collapseCard")}
       loadingLabel={loadingLabel}
       failedLabel={failedLabel}
       withheldLabel={withheldLabel}

@@ -43,7 +43,13 @@ export interface ReadingPaneProps {
   /** Action buttons row. */
   actions?: ReactNode;
   /** Renders the small open-reader affordance in the from-line. */
-  onEnterReader?: () => void;
+  /**
+   * The "open reading mode" button, WITH ITS WORDS — one object, so a caller cannot wire the
+   * press and leave the title and accessible name as this file's English. They were literals
+   * here (`title="Read (↵)"`, `aria-label="Open reading mode"`), which is the one part of this
+   * control a person using a screen reader ever hears.
+   */
+  enterReader?: { onPress: () => void; label: string; title: string };
   /** The sender's initial circle in the from-line. */
   avatarInitial?: string;
   /** Deterministic per-sender hue for that circle; see `Avatar`. */
@@ -89,7 +95,7 @@ export function ReadingPane({
   bodyNoteFailed,
   attachment,
   actions,
-  onEnterReader,
+  enterReader,
   avatarInitial,
   avatarHue,
   onSender,
@@ -130,13 +136,13 @@ export function ReadingPane({
           )}
           <span className="t num">
             {time}
-            {onEnterReader ? (
+            {enterReader ? (
               <button
                 type="button"
                 className="msg-open"
-                title="Read (↵)"
-                aria-label="Open reading mode"
-                onClick={onEnterReader}
+                title={enterReader.title}
+                aria-label={enterReader.label}
+                onClick={enterReader.onPress}
               >
                 <Icon name="open" size={13} />
               </button>

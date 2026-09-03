@@ -91,12 +91,9 @@ export function DesktopScreening({
   if (read.state === "offline") {
     return (
       <>
-        <SettingsSubhead>What reaches your Ohbox</SettingsSubhead>
+        <SettingsSubhead>{t("offlineHead")}</SettingsSubhead>
         {/* NAMED, NOT HIDDEN — see the header. */}
-        <SettingsNote>
-          These settings live on your ohmail Cloud account, so they can&rsquo;t be changed while
-          this install is offline. Your mail keeps arriving; this comes back with the connection.
-        </SettingsNote>
+        <SettingsNote>{t("offlineNote")}</SettingsNote>
       </>
     );
   }

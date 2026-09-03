@@ -50,7 +50,8 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Avatar, DECISION_DONE_LABEL, InfoNote } from "@ohmail/ui";
+import { Avatar, InfoNote } from "@ohmail/ui";
+import { usePileNames } from "./decision-copy";
 import { avatarHue, initialsOf } from "./format";
 import { displayAddress, displayAddressee, displayRuleMatch } from "./idn";
 import { useOverlayClamp } from "./overlay-clamp";
@@ -129,11 +130,9 @@ export function SubjectRuleSheet({
     return () => document.removeEventListener("mousedown", onDown);
   }, [onClose]);
 
-  /**
-   * A key that is not in `messages/en.json` yet falls back to the SAME wording here. `en.json` wins
-   * the moment it exists, so this cannot become a second source of copy.
-   */
-  const copy = (key: string, reported: string): string => (t.has(key) ? t(key) : reported);
+  /* The five pile names as the catalogue has them — the same words the rail, the decision bar
+     and the sender sheet use. See `decision-copy.ts`. */
+  const piles = usePileNames();
 
   const label = displayAddressee(ctx.name, ctx.address);
   /** The sender as the sheet's sentences read them — see `idn.ts`. `ctx.address` writes the rule. */
@@ -183,10 +182,7 @@ export function SubjectRuleSheet({
       ref={rootRef}
       className="senderm"
       role="dialog"
-      aria-label={copy(
-        "subjectAria",
-        `Make a rule for mail from ${who} with this in the subject`,
-      )}
+      aria-label={t("subjectAria", { who })}
       style={style}
     >
       <div className="sm-head">
@@ -198,17 +194,14 @@ export function SubjectRuleSheet({
       </div>
 
       <div className="sm-now">
-        {copy(
-          "subjectLead",
-          "This sender sends more than one kind of mail. File just the ones whose subject matches.",
-        )}
+        {t("subjectLead")}
       </div>
 
       {/* ── THE TERM, AS A CHOICE OF TWO ─────────────────────────────────────────────────────
           ABOVE the destinations, because it changes what pressing one of them writes. It reuses
           `.sm-scope`'s styling for the reason that class exists: this is the same "pick the subject
           of the decision" control the sender sheet's address/domain switch is, one level finer. */}
-      <div className="sm-scope" role="radiogroup" aria-label={copy("subjectTermAria", "Which subject term")}>
+      <div className="sm-scope" role="radiogroup" aria-label={t("subjectTermAria")}>
         {ctx.token ? (
           <button
             type="button"
@@ -224,7 +217,7 @@ export function SubjectRuleSheet({
                 account (the mirror replays the whole change log), but the copy still says "of the
                 mail here" rather than "every message": the server pass re-evaluates each one and a
                 higher-priority rule can keep it where it is. */}
-            <small>{copy("subjectTokenCount", `${tokenCount} of this sender's messages`)}</small>
+            <small>{t("subjectTokenCount", { count: tokenCount })}</small>
           </button>
         ) : null}
         {/* ── THE EDITABLE MATCH (owner request 2026-08-26) ────────────────────────────────
@@ -251,13 +244,13 @@ export function SubjectRuleSheet({
             className="sm-edit-pick"
             onClick={() => { setChoice("whole"); setPending(null); }}
           >
-            {copy("subjectEditLead", "Whose subject contains")}
+            {t("subjectEditLead")}
           </button>
           <input
             type="text"
             className="sm-edit-input"
             value={custom}
-            aria-label={copy("subjectEditAria", "Part of the subject to match")}
+            aria-label={t("subjectEditAria")}
             aria-describedby="sm-edit-status"
             spellCheck={false}
             onFocus={() => { setChoice("whole"); setPending(null); }}
@@ -265,34 +258,23 @@ export function SubjectRuleSheet({
           />
           <span className="sm-edit-status" id="sm-edit-status" role="status">
             <small>
-              {/* Count-bearing, so the en.json form is ICU and gets the value — the plain shim
-                  would return the template with its placeholder unfilled. */}
-              {t.has("subjectWholeCount")
-                ? t("subjectWholeCount", { count: customCount })
-                : `${customCount} of this sender's messages`}
+              {t("subjectWholeCount", { count: customCount })}
             </small>
             {choice === "whole" && customTooLong ? (
               <small className="sm-edit-warn">
-                {/* Value-bearing like the count: the en.json form carries {max}. */}
-                {t.has("subjectEditTooLong")
-                  ? t("subjectEditTooLong", { max: MAX_SUBJECT_TERM_CHARS })
-                  : `Too long to be a rule — a subject match holds at most ${MAX_SUBJECT_TERM_CHARS} characters. Trim it.`}
+                {t("subjectEditTooLong", { max: MAX_SUBJECT_TERM_CHARS })}
               </small>
             ) : null}
             {choice === "whole" && customAll ? (
               <small className="sm-edit-warn">
-                {copy(
-                  "subjectEditAll",
-                  "Matches all of this sender's mail here — it no longer narrows. Use a longer part "
-                    + "of the subject, or file the whole sender by clicking the sender instead.",
-                )}
+                {t("subjectEditAll")}
               </small>
             ) : null}
             {choice === "whole" && customNone ? (
               <small className="sm-edit-warn">
                 {customTrimmed === ""
-                  ? copy("subjectEditEmpty", "Type part of the subject to match.")
-                  : copy("subjectEditNone", "Matches none of this sender's mail here.")}
+                  ? t("subjectEditEmpty")
+                  : t("subjectEditNone")}
               </small>
             ) : null}
           </span>
@@ -313,10 +295,7 @@ export function SubjectRuleSheet({
           >
             {`»${ctx.bodyToken}«`}
             <small>
-              {copy(
-                "bodyTokenCount",
-                `in the message text — ${contentCount} of this sender's messages here`,
-              )}
+              {t("bodyTokenCount", { count: contentCount })}
             </small>
           </button>
         ) : null}
@@ -328,18 +307,10 @@ export function SubjectRuleSheet({
       {!ctx.token ? (
         <InfoNote
           className="sm-confirm-fine"
-          lead={copy(
-            "subjectNoToken",
-            "No repeating tag was found in this sender's other subjects.",
-          )}
-          moreLabel={copy("subjectNoTokenMoreLabel", "What it looks for")}
+          lead={t("subjectNoToken")}
+          moreLabel={t("subjectNoTokenMoreLabel")}
         >
-          {copy(
-            "subjectNoTokenMore",
-            "A tag in brackets, or a label before the first colon or dash, that also appears in "
-              + "another message from the same sender. A phrase that occurs only once would file one "
-              + "message and nothing else.",
-          )}
+          {t("subjectNoTokenMore")}
         </InfoNote>
       ) : null}
 
@@ -350,46 +321,24 @@ export function SubjectRuleSheet({
       {pending ? (
         <div className="sm-confirm">
           <p>
-            {plan.field === "body"
-              ? copy(
-                  "bodyConfirm",
-                  `from ${displayRuleMatch(plan.match)} AND the text contains »${plan.term}« → ${DECISION_DONE_LABEL[pending]}`,
-                )
-              : copy(
-                  "subjectConfirm",
-                  `from ${displayRuleMatch(plan.match)} AND subject contains »${plan.term}« → ${DECISION_DONE_LABEL[pending]}`,
-                )}
+            {t(plan.field === "body" ? "bodyConfirm" : "subjectConfirm", {
+              match: displayRuleMatch(plan.match),
+              term: plan.term,
+              dest: piles[pending],
+            })}
           </p>
           <InfoNote
             className="sm-confirm-fine"
             lead={
               plan.already
-                ? copy("subjectConfirmAlready", "You already have this rule. Nothing will be written.")
+                ? t("subjectConfirmAlready")
                 : RETRO_DEFAULT_ON
-                  ? copy(
-                      "subjectConfirmFine",
-                      `Applies to the ${plan.matched} matching message(s) already here as well as to `
-                        + "future mail. Mail this moves stays moved if you revoke the rule later.",
-                    )
-                  : copy("subjectConfirmFineFuture", "Applies to future mail from this sender.")
+                  ? t("subjectConfirmFine", { count: plan.matched })
+                  : t("subjectConfirmFineFuture")
             }
-            moreLabel={copy("subjectConfirmMoreLabel", "What it does not do")}
+            moreLabel={t("subjectConfirmMoreLabel")}
           >
-            {plan.field === "body"
-              ? copy(
-                  "bodyConfirmMore",
-                  "The sender's other mail is untouched — this rule only names the messages whose text "
-                    + "contains the term. It never says every message: a higher-priority rule can keep "
-                    + "one where it is, and mail you have already filed by hand is left alone. Revoke "
-                    + "or change it at Settings → Rules.",
-                )
-              : copy(
-                  "subjectConfirmMore",
-                  "The sender's other mail is untouched — this rule only names the messages whose subject "
-                    + "matches. It never says every message: a higher-priority rule can keep one where it "
-                    + "is, and mail you have already filed by hand is left alone. Revoke or change it at "
-                    + "Settings → Rules.",
-                )}
+            {t(plan.field === "body" ? "bodyConfirmMore" : "subjectConfirmMore")}
           </InfoNote>
           <span className="sm-confirm-row">
             <button
@@ -402,20 +351,17 @@ export function SubjectRuleSheet({
               disabled={!plan.already && plan.ruleMutations.length === 0}
               onClick={() => { setPending(null); onConfirm(plan.term, pending, plan.field); }}
             >
-              {copy("subjectConfirmGo", `File these to ${DECISION_DONE_LABEL[pending]}`)}
+              {t("subjectConfirmGo", { dest: piles[pending] })}
             </button>
             <button type="button" onClick={() => setPending(null)}>
-              {copy("cancel", "Cancel")}
+              {t("cancel")}
             </button>
           </span>
         </div>
       ) : (
         <ul
           role="listbox"
-          aria-label={copy(
-            "subjectAria",
-            `Make a rule for mail from ${who} with this in the subject`,
-          )}
+          aria-label={t("subjectAria", { who })}
         >
           {SUBJECT_RULE_DESTS.map((dest) => (
             <li
@@ -434,7 +380,7 @@ export function SubjectRuleSheet({
                 }
               }}
             >
-              {DECISION_DONE_LABEL[dest]}
+              {piles[dest]}
               {ctx.current === dest ? <span className="ck">✓</span> : null}
             </li>
           ))}
@@ -448,18 +394,10 @@ export function SubjectRuleSheet({
           address the footer says so — that is the state in which a second press is most likely to be
           a duplicate the user did not intend. */}
       <div className="sm-foot">
+        {/* "narrower", not "subject": the count includes body-term rules. */}
         {ctx.existing.length > 0
-          ? copy(
-              "subjectFootExisting",
-              // "narrower", not "subject": the count includes body-term rules (mail 0052).
-              `You already have ${ctx.existing.length} narrower rule(s) for this sender. See them at `
-                + "Settings → Rules.",
-            )
-          : copy(
-              "subjectFoot",
-              "The sender's other mail keeps going where it goes now. Change or revoke this at "
-                + "Settings → Rules.",
-            )}
+          ? t("subjectFootExisting", { count: ctx.existing.length })
+          : t("subjectFoot")}
       </div>
     </div>
   );

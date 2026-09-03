@@ -2,10 +2,15 @@ import type { ReactNode } from "react";
 import "./protected.css";
 
 export interface ProtectedBlockProps {
-  /** "Verification code" */
-  label?: string;
-  /** "(redacted)" */
-  redactedNote?: string;
+  /**
+   * "Verification code", from the host's catalogue — and "(redacted)" beside it.
+   *
+   * Both defaulted to their English here, and one call site (the Screener's held preview)
+   * passes neither, so a German reader met an English block on exactly the mail this feature
+   * exists for. A composite reads no catalogue; the host does.
+   */
+  label: ReactNode;
+  redactedNote: ReactNode;
   /** The protection promise, rendered under the code line. */
   policy?: ReactNode;
   className?: string;
@@ -16,8 +21,8 @@ export interface ProtectedBlockProps {
  * draws itself shut; the redaction dots settle in one by one.
  */
 export function ProtectedBlock({
-  label = "Verification code",
-  redactedNote = "(redacted)",
+  label,
+  redactedNote,
   policy,
   className,
 }: ProtectedBlockProps) {

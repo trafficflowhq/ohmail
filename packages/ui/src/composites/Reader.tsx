@@ -7,8 +7,13 @@ export interface ReaderProps {
   onClose: () => void;
   /** Usually a <ReadingPane> — rendered as the floating lift-3 sheet. */
   children: ReactNode;
-  /** The fading top hint; null disables it. */
+  /** The fading top hint; null disables it. Defaults to the esc keycap plus {@link returnHint}. */
   hint?: ReactNode | null;
+  /**
+   * The word beside the esc keycap in the default hint — "to return", from the host's catalogue.
+   * Required, because the literal that stood here rendered English into a German reader.
+   */
+  returnHint: string;
   /**
    * Escape returns from reading mode. Pass `false` while something INSIDE the sheet owns
    * Escape — the inline reply editor does. Without the opt-out both handlers
@@ -24,7 +29,7 @@ export interface ReaderProps {
    * false exactly there. Presentation is untouched either way; only the ARIA claim moves.
    */
   modal?: boolean;
-  ariaLabel?: string;
+  ariaLabel: string;
   /**
    * The accessible name of the on-screen back control — a translated string, because the
    * default below is English and this package has no catalogue. The control itself is
@@ -32,7 +37,7 @@ export interface ReaderProps {
    * the esc hint is (rightly) suppressed for coarse pointers by the app, which left the
    * overlay with no visible exit at all — backdrop tap worked, and nothing said so.
    */
-  closeLabel?: string;
+  closeLabel: string;
 }
 
 /**
@@ -45,10 +50,11 @@ export function Reader({
   onClose,
   children,
   hint,
+  returnHint,
   closeOnEscape = true,
   modal = true,
-  ariaLabel = "Reading",
-  closeLabel = "Back",
+  ariaLabel,
+  closeLabel,
 }: ReaderProps) {
   useEffect(() => {
     if (!open) return;
@@ -69,7 +75,7 @@ export function Reader({
       <span className="reader-hint">
         {hint === undefined ? (
           <>
-            <Kbd>esc</Kbd> to return
+            <Kbd>esc</Kbd> {returnHint}
           </>
         ) : (
           hint

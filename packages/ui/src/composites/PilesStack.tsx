@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Icon, type IconName } from "../icons.js";
 import "./piles.css";
 
@@ -5,7 +6,11 @@ export interface PileItem {
   title: string;
   subtitle?: string;
   /** Resurface time — rendered with the small clock ("resurfaces Fri 09:00"). */
-  when?: string;
+  /**
+   * The whole "resurfaces on Friday" phrase, from the host's catalogue — not just the date.
+   * "resurfaces" was a literal in this file, so a German pile read half in English.
+   */
+  when?: ReactNode;
   /** Dimmed once handled (Reply Run). */
   done?: boolean;
 }
@@ -49,7 +54,7 @@ export function PilesStack({ piles, className }: PilesStackProps) {
                 {item.subtitle ? <span>{item.subtitle}</span> : null}
                 {item.when ? (
                   <span className="when">
-                    <Icon name="clock" size={11} /> resurfaces {item.when}
+                    <Icon name="clock" size={11} /> {item.when}
                   </span>
                 ) : null}
               </div>

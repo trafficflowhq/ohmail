@@ -80,7 +80,7 @@ export interface RailGroup {
   custom?: ReactNode;
   /** Subordinate collapsible Tags group, nested under this group. */
   tags?: {
-    label?: string;
+    label: string;
     items: RailTagItem[];
     defaultOpen?: boolean;
     /** Controlled collapse state. Provide with `onOpenChange` when the host persists it. */
@@ -99,7 +99,7 @@ export interface RailMailbox {
 export interface RailNavProps {
   /** Defaults to the ohmail wordmark. */
   wordmark?: ReactNode;
-  composeLabel?: string;
+  composeLabel: string;
   composeKbd?: string;
   onCompose?: () => void;
   composeActive?: boolean;
@@ -108,7 +108,7 @@ export interface RailNavProps {
   onNavigate?: (id: string) => void;
   activeTagId?: string;
   onNavigateTag?: (id: string) => void;
-  mailboxesLabel?: string;
+  mailboxesLabel: string;
   mailboxes?: RailMailbox[];
   /**
    * THE SHELL'S OWN CONTROLS, AT THE FOOT OF THE RAIL.
@@ -183,7 +183,7 @@ function Count({ value, hot }: { value?: number; hot?: boolean }) {
  */
 export function RailNav({
   wordmark,
-  composeLabel = "Compose",
+  composeLabel,
   composeKbd = "c",
   onCompose,
   composeActive,
@@ -192,12 +192,12 @@ export function RailNav({
   onNavigate,
   activeTagId,
   onNavigateTag,
-  mailboxesLabel = "Mailboxes",
+  mailboxesLabel,
   mailboxes,
   dock,
   sync,
   footer,
-  ariaLabel = "Main",
+  ariaLabel,
   className,
 }: RailNavProps) {
   /**
@@ -294,7 +294,7 @@ export function RailNav({
           })}
           {group.tags ? (
             <TagsGroup
-              label={group.tags.label ?? "Tags"}
+              label={group.tags.label}
               items={group.tags.items}
               defaultOpen={group.tags.defaultOpen ?? true}
               open={group.tags.open}

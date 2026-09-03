@@ -120,7 +120,7 @@ export function LocalSuggest({ senders, absorb, ai, onConfigure }: LocalSuggestP
     return (
       <AskWell
         state="refused"
-        ariaLabel="Suggestions"
+        ariaLabel={t("suggestAria")}
         label={problem}
         actions={<Button variant="ghost" onClick={onConfigure}>{t("suggestSetUp")}</Button>}
       />
@@ -196,8 +196,8 @@ export function LocalSuggest({ senders, absorb, ai, onConfigure }: LocalSuggestP
   return (
     <AskWell
       state={running ? "working" : "idle"}
-      ariaLabel="Suggestions"
-      label={total === 1 ? "Suggest for 1 sender" : `Suggest for the first ${total}`}
+      ariaLabel={t("suggestAria")}
+      label={t("suggestAsk", { count: total })}
       /* THE RUNGS. Rendered only when there is a choice to make — one rung is not a ladder,
          it is the button's own number said twice. The top rung says "all N" rather than the
          bare figure, because "all of them" is the thing a person with a backlog is looking
@@ -209,7 +209,7 @@ export function LocalSuggest({ senders, absorb, ai, onConfigure }: LocalSuggestP
             value={total}
             disabled={running}
             onChange={setSize}
-            labelOf={(n) => (n === senders.length ? `all ${n}` : n)}
+            labelOf={(n) => (n === senders.length ? t("suggestAll", { count: n }) : n)}
           />
         ) : null
       }
@@ -217,22 +217,20 @@ export function LocalSuggest({ senders, absorb, ai, onConfigure }: LocalSuggestP
       actions={
         running ? (
           <>
-            <Button disabled aria-busy="true" data-run="working">Suggesting…</Button>
+            <Button disabled aria-busy="true" data-run="working">{t("suggestRunning")}</Button>
             {/* STOPS THE RUN, and says no more than that. The request already in flight finishes at
                 the engine whatever this does — the transport carries no cancellation — so what this
                 actually stops is everything after it. */}
-            <Button variant="ghost" onClick={stop}>Stop</Button>
+            <Button variant="ghost" onClick={stop}>{t("suggestStop")}</Button>
           </>
         ) : (
-          <Button onClick={start}>
-            {total === 1 ? "Suggest for 1 sender" : `Suggest for ${total} senders`}
-          </Button>
+          <Button onClick={start}>{t("suggestGo", { count: total })}</Button>
         )
       }
       note={
         running
           ? null
-          : notice ?? "Uses the model you set up. Senders already answered for are not asked about again."
+          : notice ?? t("suggestNote")
       }
     />
   );

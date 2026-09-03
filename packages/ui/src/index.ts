@@ -88,15 +88,11 @@ export { ReadingPane, ReadColumn } from "./composites/ReadingPane.js";
 export type { ReadingPaneProps, ReadingPaneAttachment } from "./composites/ReadingPane.js";
 export { Reader } from "./composites/Reader.js";
 export type { ReaderProps } from "./composites/Reader.js";
-export {
-  DecisionBar,
-  DECISION_LABEL,
-  DECISION_DONE_LABEL,
-  DECISION_KEY,
-  DECISION_QUIET,
-} from "./composites/DecisionBar.js";
+export { DecisionBar, DECISION_KEY, DECISION_QUIET } from "./composites/DecisionBar.js";
 export type {
+  DecisionBarCopy,
   DecisionBarProps,
+  DecisionCapsuleCopy,
   DecisionDestination,
   DecisionScope,
 } from "./composites/DecisionBar.js";

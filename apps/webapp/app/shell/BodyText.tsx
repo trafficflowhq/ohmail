@@ -336,16 +336,22 @@ function toTree(blocks: Block[]): BodyNode[] {
 }
 
 /**
- * The toggle's two labels. `liveCopy` and not `useTranslations`, for the same reason as
- * `MessageBody.COPY`: this component renders bare — no intl provider — in a dozen unit tests,
- * and the hook throws without one. `test/locale-shim-parity.test.ts` holds this table and the
- * `bodyText` catalogue namespace to the same key set and the same English sentences.
+ * The toggle's two labels, and a link's hover title. `liveCopy` and not `useTranslations`, for
+ * the same reason as `MessageBody.COPY`: this component renders bare — no intl provider — in a
+ * dozen unit tests, and the hook throws without one. `test/locale-shim-parity.test.ts` holds
+ * this table and the `bodyText` catalogue namespace to the same key set and the same English
+ * sentences.
+ *
+ * `linkTitle` is the sentence a reader gets when they hover a link whose text is not its
+ * destination — the one place the body says where a press will take you. It was a template
+ * literal in the markup, so it said it in English wherever the reader was.
  */
 const EN = {
   show: "Show history",
   hide: "Hide history",
+  linkTitle: (host: string) => `Goes to ${host}`,
 };
-export const COPY: typeof EN = liveCopy("bodyText", EN);
+export const COPY: typeof EN = liveCopy("bodyText", EN, { linkTitle: ["host"] });
 
 /**
  * The fold's one decision: which top-level nodes are "the trailing quoted history"?
@@ -536,7 +542,7 @@ function renderInline(nodes: InlineNode[], keyBase: string): ReactNode[] {
             href={node.href}
             target="_blank"
             rel="noopener noreferrer"
-            title={`Goes to ${node.host}`}
+            title={COPY.linkTitle(node.host)}
           >
             {renderInline(node.children, key)}
             {node.elsewhere ? <span className="msg-link-host"> ({node.host})</span> : null}

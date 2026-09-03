@@ -58,8 +58,8 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { DECISION_DONE_LABEL } from "@ohmail/ui";
 import { Avatar, InfoNote } from "@ohmail/ui";
+import { usePileNames } from "./decision-copy";
 import { avatarHue, initialsOf } from "./format";
 import { displayAddress, displayAddressee, displayDomain } from "./idn";
 import { useOverlayClamp } from "./overlay-clamp";
@@ -132,6 +132,9 @@ export function SenderMenu({
   onClose: () => void;
 }) {
   const t = useTranslations("screening");
+  /* The five pile names, from the Screener's namespace — the same words the rail and the
+     decision bar use. See `decision-copy.ts`. */
+  const piles = usePileNames();
   const rootRef = useRef<HTMLDivElement>(null);
   const [scope, setScope] = useState<ScreeningScope>("sender");
   /** The reject destination awaiting its second click, or null. One question at a time. */
@@ -243,7 +246,7 @@ export function SenderMenu({
       <div className="sm-now">
         {subject.current
           ? t("nowIn", {
-              place: subject.current === "screener" ? t("placeScreener") : DECISION_DONE_LABEL[subject.current],
+              place: subject.current === "screener" ? t("placeScreener") : piles[subject.current],
               count: subject.messages.length,
             })
           : t("nowSpread", { count: subject.messages.length })}
@@ -303,9 +306,9 @@ export function SenderMenu({
               ? t("unsubDomain", {
                   domain: whichDomain,
                   senders: preview.senders,
-                  place: DECISION_DONE_LABEL[confirm],
+                  place: piles[confirm],
                 })
-              : t("unsubSender", { sender: who, place: DECISION_DONE_LABEL[confirm] })}
+              : t("unsubSender", { sender: who, place: piles[confirm] })}
           </p>
           {/* THE FINE PRINT, SPLIT ON WHAT A PERSON MUST READ BEFORE PRESSING.
               "Once, and there is no undo" is the irreversible part and it stays on screen with
@@ -346,7 +349,7 @@ export function SenderMenu({
                 }
               }}
             >
-              {DECISION_DONE_LABEL[dest]}
+              {piles[dest]}
               {/* The two destinations that can send mail on your behalf are marked before you
                   reach them, not only in the confirm that follows. */}
               {DECISION_OF_DEST[dest] === "no" && subject.waiting ? (
@@ -377,9 +380,7 @@ export function SenderMenu({
           question, it does not answer this one. Same `.sm-detail` styling for that reason. */}
       {onSubjectRule && scope === "sender" ? (
         <button type="button" className="sm-detail" onClick={onSubjectRule}>
-          {t.has("subjectRuleOpen")
-            ? t("subjectRuleOpen")
-            : "Only some of their mail? Make a rule on the subject too"}
+          {t("subjectRuleOpen")}
         </button>
       ) : null}
       </div>

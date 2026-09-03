@@ -23,7 +23,6 @@ import {
   Button,
   Chip,
   DecisionBar,
-  DECISION_DONE_LABEL,
   DECISION_KEY,
   DECISION_QUIET,
   Icon,
@@ -40,6 +39,8 @@ import {
   type DecisionScope,
 } from "@ohmail/ui";
 import { messageOf, type JunkItemWire } from "../api-client";
+import { PILE_KEY, usePileNames, useDecisionBarCopy } from "../shell/decision-copy";
+import { useRowBadgeCopy } from "../shell/row-copy";
 import { avatarHue, displayTime } from "../shell/format";
 import { junkKeyOf, type JunkWindowControl } from "../shell/junk-window";
 import { displayAddress, displayAddressee, displayAddressUnder, displayDomainLabel } from "../shell/idn";
@@ -59,20 +60,6 @@ import type { SuggestBatchControl } from "../shell/screener-suggest";
 import type { RemoteImagesChrome } from "../shell/remote-images";
 import { MessageBody } from "../components/MessageBody";
 
-/**
- * The copy key that NAMES each pile, so the apply control can say where mail is about to go.
- *
- * A table and not `t(\`pile${dest}\`)`: the destinations are a union, and an interpolated key is
- * a lookup a compiler cannot check — a sixth destination would render the literal string
- * `screener.pileWhatever` into a button rather than failing to build.
- */
-const PILE_KEY: Record<DecisionDestination, string> = {
-  ohbox: "pileOhbox",
-  reads: "pileReads",
-  receipts: "pileReceipts",
-  screened: "pileScreened",
-  spam: "pileSpam",
-};
 
 /**
  * "Reads & Receipts" — the piles an apply would file into, as one phrase.
@@ -523,8 +510,8 @@ function RowActions({
           /* The visible word is short because the row already says WHERE — the suggestion chip
              is one line above it. The accessible name is not allowed that context: a screen
              reader user arriving on this button hears it alone, so it names the pile. */
-          aria-label={t("rowAcceptAria", { dest: DECISION_DONE_LABEL[accept] })}
-          title={t("rowAcceptAria", { dest: DECISION_DONE_LABEL[accept] })}
+          aria-label={t("rowAcceptAria", { dest: t(PILE_KEY[accept]) })}
+          title={t("rowAcceptAria", { dest: t(PILE_KEY[accept]) })}
           onClick={() => onFile(accept)}
         >
           {t("rowAccept")}
@@ -703,6 +690,8 @@ export function ScreenerView({
   onFull: (full: boolean) => void;
 }) {
   const t = useTranslations("screener");
+  const piles = usePileNames();
+  const rowBadge = useRowBadgeCopy();
   const [scopes, setScopes] = useState<Map<string, DecisionScope>>(() => new Map());
   const [choosing, setChoosing] = useState<"allow" | "notspam" | null>(null);
   /**
@@ -1121,7 +1110,7 @@ export function ScreenerView({
         const file: KeyBinding = {
           chord: DECISION_KEY[dest],
           group: "screener",
-          label: t("keyFile", { dest: DECISION_DONE_LABEL[dest] }),
+          label: t("keyFile", { dest: t(PILE_KEY[dest]) }),
           disabled: !decidable,
           run: () => decideCurrent(dest as never, false),
         };
@@ -1131,7 +1120,7 @@ export function ScreenerView({
           {
             chord: `shift+${DECISION_KEY[dest]}`,
             group: "screener",
-            label: t("keyFileRead", { dest: DECISION_DONE_LABEL[dest] }),
+            label: t("keyFileRead", { dest: t(PILE_KEY[dest]) }),
             disabled: !decidable,
             run: () => decideCurrent(dest as never, true),
           },
@@ -1179,9 +1168,9 @@ export function ScreenerView({
           aiSuggestion={
             w.ai
               ? {
-                  // `screener` is in no `DECISION_DONE_LABEL` — the five there are the five a
-                  // decision can FILE to, and this is the one that files nothing. The
-                  // `?? w.ai.dest` fallback would print the raw view key "screener" in the row.
+                  // `screener` is in no pile table — the five there are the five a decision can
+                  // FILE to, and this is the one that files nothing. The `?? w.ai.dest` fallback
+                  // would print the raw view key "screener" in the row.
                   //
                   // THREE STATES, THREE CHIPS. A row with an answer names its pile; a row the
                   // model declined says the decision is yours; a row that never reached a model
@@ -1191,12 +1180,13 @@ export function ScreenerView({
                     ? t("aiNoAnswerChip")
                     : w.ai.dest === "screener"
                       ? t("aiHoldChip")
-                      : DECISION_DONE_LABEL[w.ai.dest as keyof typeof DECISION_DONE_LABEL] ?? w.ai.dest,
+                      : piles[w.ai.dest as DecisionDestination] ?? w.ai.dest,
                   confidence: w.ai.confidence,
                 }
               : undefined
           }
           heldCount={w.held.length}
+          heldLabel={rowBadge.held(w.held.length)}
           /* QUICK-ADJUST, on the row. Every branch of it goes through `state.decide` — the same
              funnel the decision bar, the five keys and both bulks use — so a row press earns
              the undo window, the read clamp, the rule promotion and the past-the-gate branch
@@ -1254,6 +1244,7 @@ export function ScreenerView({
           dull
           selected={w.id === activeId}
           heldCount={w.held.length}
+          heldLabel={rowBadge.held(w.held.length)}
           /* "ALLOW" DID NOT LAND — the same note the waiting row carries, for the same reason.
              A refused release leaves the sender here, and until this the row said nothing about
              it while the toast claimed the mail had gone. See `ScreenerState.refused`. */
@@ -1276,6 +1267,7 @@ export function ScreenerView({
         dull
         selected={r.sender.id === activeId}
         heldCount={r.sender.held.length}
+        heldLabel={rowBadge.held(r.sender.held.length)}
         detection={r.pinned ? t("markedByYou") : r.sender.detection?.label}
         /* A REFUSED "NOT SPAM" SAYS SO, beside the detection badge rather than instead of it: the
            two answer different questions ("why is this here" / "where does this stand"), and a
@@ -1720,6 +1712,7 @@ function HeldMail({
   dull?: boolean;
 }) {
   const t = useTranslations("body");
+  const tm = useTranslations("message");
   /**
    * A CONSENT DECISION MUST NOT BE TAKEN ON TEXT THAT SILENTLY ISN'T THE MAIL.
    *
@@ -1831,7 +1824,7 @@ function HeldMail({
              said it was still loading. The block carries its own default label — the string
              `ohbox.protectedPreview` and `reply.quotedProtected` already show elsewhere — so
              the reader gets the product's one answer for protected mail, not a third one. */
-          <ProtectedBlock />
+          <ProtectedBlock label={tm("protectedLabel")} redactedNote={tm("protectedRedacted")} />
         ) : (
           <MessageBody
             text={body}
@@ -1912,11 +1905,13 @@ function WaitingPreview({
   onBack: () => void;
 }) {
   const t = useTranslations("screener");
+  const piles = usePileNames();
   // What the decision bar SAYS the rule will cover. Display only — the rule the decision writes
   // keys on the stored address (`screener-state.ts` → `decide`), which is why this may be decoded.
   const ruleTarget =
     scope === "domain" ? displayDomainLabel(sender.from.address) : displayAddress(sender.from.address);
   const aiDest = sender.ai?.dest as Parameters<typeof DecisionBar>[0]["aiDest"];
+  const barCopy = useDecisionBarCopy(ruleTarget);
   return (
     <>
       {/* ── THE BAR IS WITHHELD ON A MAILBOX THIS INSTALL DOES NOT ORGANIZE ─────────────────
@@ -1946,7 +1941,7 @@ function WaitingPreview({
           aiDest={aiDest}
           scope={scope}
           onScopeChange={onScopeChange}
-          ruleTarget={ruleTarget}
+          copy={barCopy}
           onDecide={onDecide}
           onBack={onBack}
         />
@@ -1997,8 +1992,7 @@ function WaitingPreview({
               <span>
                 {t("aiSuggests")}{" "}
                 <b>
-                  {DECISION_DONE_LABEL[sender.ai.dest as keyof typeof DECISION_DONE_LABEL] ??
-                    sender.ai.dest}
+                  {piles[sender.ai.dest as DecisionDestination] ?? sender.ai.dest}
                 </b>{" "}
                 <span className="conf num">{sender.ai.confidence.toFixed(2)}</span> —{" "}
                 <span className="why">{t("aiWhy", { why: sender.ai.rationale })}</span>

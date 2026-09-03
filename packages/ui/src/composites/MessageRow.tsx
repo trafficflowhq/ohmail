@@ -160,8 +160,12 @@ export interface MessageRowProps {
    */
   participants?: { initials: string; hue: number }[];
   hasAttachment?: boolean;
-  /** Protected badge (shield + "protected"). */
-  protected?: boolean;
+  /**
+   * The protected badge's WORD, from the host's catalogue — and the badge renders only when it is
+   * given. It used to be a `protected?: boolean` with the English literal "protected" inside this
+   * component, which put an English capsule on every held row of a German window.
+   */
+  protectedLabel?: ReactNode;
   tags?: MessageRowTag[];
   /** Cross-view badge naming the message's home (Tag view). */
   place?: string;
@@ -187,6 +191,8 @@ export interface MessageRowProps {
   aiSuggestion?: { destLabel: string; confidence: number };
   /** Screener variant: held-mail count chip. */
   heldCount?: number;
+  /** The held chip's whole phrase ("2 held"), rendered only when `heldCount > 1`. */
+  heldLabel?: ReactNode;
   /** Spam variant: detection badge text. */
   detection?: string;
   /**
@@ -250,6 +256,7 @@ export function MessageRow(props: MessageRowProps) {
     avatarHue,
     aiSuggestion,
     heldCount,
+    heldLabel,
     detection,
     actions,
     onClick,
@@ -292,10 +299,10 @@ export function MessageRow(props: MessageRowProps) {
       </span>,
     );
   if (hasAttachment) keep.push(<Badge key="attach" icon="clip" />);
-  if (props.protected)
+  if (props.protectedLabel !== undefined)
     keep.push(
       <Badge key="protected" variant="shield" icon="shield">
-        protected
+        {props.protectedLabel}
       </Badge>,
     );
   for (const t of tags ?? [])
@@ -357,8 +364,11 @@ export function MessageRow(props: MessageRowProps) {
         → {aiSuggestion.destLabel} <span className="num">{aiSuggestion.confidence.toFixed(2)}</span>
       </Badge>,
     );
-  if (heldCount !== undefined && heldCount > 1)
-    chips.push(<Badge key="held">{heldCount} held</Badge>);
+  /* The chip's whole phrase, from the host — the count is the host's to place, because "2 held"
+     and "2 zurückgehalten" do not put the number in the same relation to the word everywhere.
+     `heldCount` still decides WHETHER the chip appears; the words are not this file's. */
+  if (heldCount !== undefined && heldCount > 1 && heldLabel !== undefined)
+    chips.push(<Badge key="held">{heldLabel}</Badge>);
   if (detection) chips.push(<Badge key="det">{detection}</Badge>);
 
   const body = (

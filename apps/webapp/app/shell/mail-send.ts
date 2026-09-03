@@ -692,7 +692,7 @@ export function useMailSend(
             ? t("compose.toastScheduled", { when: scheduleLabel(m.sendAt, new Date()) })
             : t("compose.toastSent"))
           : key.startsWith("fwd:")
-            ? (t.has("reply.toastForwarded") ? t("reply.toastForwarded") : "Forwarded.")
+            ? t("reply.toastForwarded")
             : t("reply.toastSent"),
       );
     },

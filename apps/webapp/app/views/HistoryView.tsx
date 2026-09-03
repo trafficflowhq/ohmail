@@ -53,6 +53,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
+import { useRowBadgeCopy } from "../shell/row-copy";
 import { physicalFolderOf, type EngineMessage, type TagDTO } from "@ohmail/client-engine";
 import { InfoNote, ListPane, ListRows, MessageRow, ReadColumn } from "@ohmail/ui";
 import { MarkAllRead } from "../components/MarkAllRead";
@@ -121,6 +122,7 @@ export function HistoryView({
   onMarkAllRead?: (ids: string[]) => void;
 }) {
   const t = useTranslations("history");
+  const rowBadge = useRowBadgeCopy();
   /* The list keys' shared vocabulary and the reading column's region name — the Ohbox's own
      labels and `reader.pane`, so the split views never phrase the same gesture apart. */
   const to = useTranslations("ohbox");
@@ -274,7 +276,7 @@ export function HistoryView({
                   selected={shown?.id === m.id}
                   threadCount={m.threadCount}
                   hasAttachment={m.hasAttachments}
-                  protected={m.protected != null}
+                  protectedLabel={m.protected != null ? rowBadge.protectedLabel : undefined}
                   tags={tagsOfMessage(m, tags).map((x) => ({ name: x.name, hue: hueOf(x) }))}
                   /* WHERE IT ACTUALLY IS. Not a pile label: History is not a folder, and the
                      only honest badge is the server's own. */

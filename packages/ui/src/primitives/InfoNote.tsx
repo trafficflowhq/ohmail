@@ -11,7 +11,7 @@ export interface InfoNoteProps {
   /** The explanation that opens. Present in the DOM either way — see the note below. */
   children: ReactNode;
   /** Accessible name for the toggle, appended to the lead. Defaults to "More about this". */
-  moreLabel?: string;
+  moreLabel: string;
   className?: string;
 }
 
@@ -40,7 +40,7 @@ export interface InfoNoteProps {
  * of some detail sentence proves the sentence EXISTS, not that anybody can see it. A test that
  * means "visible" has to read `open` on the `<details>`.
  */
-export function InfoNote({ lead, children, moreLabel = "More about this", className }: InfoNoteProps) {
+export function InfoNote({ lead, children, moreLabel, className }: InfoNoteProps) {
   return (
     <details className={className ? `infonote ${className}` : "infonote"}>
       <summary className="infonote-sum">

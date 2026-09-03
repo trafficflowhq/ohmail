@@ -8,6 +8,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
+import { useRowBadgeCopy } from "../shell/row-copy";
 import { isOwnSent, isResurfaced, presentsUnread } from "@ohmail/client-engine";
 import type { EngineMessage, TagDTO } from "@ohmail/client-engine";
 import {
@@ -296,6 +297,7 @@ export function OhboxView({
   onMarkAllRead?: (ids: string[]) => void;
 }) {
   const t = useTranslations("ohbox");
+  const rowBadge = useRowBadgeCopy();
   /* The reading column's region name — shared vocabulary with every split view, so the
      screen-reader landing (`ReadColumn regionLabel`) says the same thing everywhere. */
   const tReader = useTranslations("reader");
@@ -1754,7 +1756,7 @@ export function OhboxView({
          fewer than two, so a sent singleton is untouched. */
       participants={participants}
       hasAttachment={m.hasAttachments}
-      protected={m.protected != null}
+      protectedLabel={m.protected != null ? rowBadge.protectedLabel : undefined}
       stateNote={stateNoteOf(m)}
       tags={tagsOfMessage(m, tags).map((tag) => ({ name: tag.name, hue: hueOf(tag) }))}
       /* `picked` carries BOTH the styling and the ARIA now — it used to be a
@@ -1908,7 +1910,7 @@ export function OhboxView({
            which still names the conversation's people: see the singleton row above. */
         participants={participants}
         hasAttachment={g.members.some((m) => m.hasAttachments)}
-        protected={shown.protected != null}
+        protectedLabel={shown.protected != null ? rowBadge.protectedLabel : undefined}
         /* The open target's state, because the target is what the row's click and every verb
            pressed on this row act on — a chip describing some OTHER member would promise a
            toggle the keys cannot deliver. */
@@ -2135,11 +2137,8 @@ export function OhboxView({
         {/* the account's own sent mail rides "Earlier" now, but only the most recent slice of
             it (the `DEFAULT_SENT_HISTORY_MESSAGES` ingest window). Say so rather than let the list
             imply it holds every message ever sent — older sent mail is on the server, reachable
-            through Search. Shown only when sent mail is actually present in the window below.
-            COPY-SHIM: inline literal pending an `en.json` key. */}
-        {hasOwnSent ? (
-          <div className="tail-row">Your recent sent mail is included above. Older sent mail stays on your server — find it in Search.</div>
-        ) : null}
+            through Search. Shown only when sent mail is actually present in the window below. */}
+        {hasOwnSent ? <div className="tail-row">{t("sentNote")}</div> : null}
         {/* The view's own fact — this list is empty — combined with a state derived once, up
             in the shell. `doorbellCount` is the Screener's waiting count, already a prop. */}
         {all.length === 0 ? <SyncState waiting={doorbellCount} settled={settled} /> : null}

@@ -39,8 +39,8 @@ export interface StreamCardProps {
   current?: boolean;
   /** Clamp height in px; the card only clamps if meaningfully taller. */
   clampHeight?: number;
-  expandLabel?: string;
-  collapseLabel?: string;
+  expandLabel: string;
+  collapseLabel: string;
   /**
    * WHAT `body` ACTUALLY IS. Omitted ⇒ `"full"`, the shape every existing caller had.
    *
@@ -116,8 +116,8 @@ export function StreamCard({
   unread,
   current,
   clampHeight = SC_CLAMP,
-  expandLabel = "Expand",
-  collapseLabel = "Collapse",
+  expandLabel,
+  collapseLabel,
   bodyState = "full",
   loadingLabel,
   failedLabel,

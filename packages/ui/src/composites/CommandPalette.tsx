@@ -28,9 +28,22 @@ export interface CommandPaletteProps {
   open: boolean;
   onClose: () => void;
   commands: Command[];
-  placeholder?: string;
-  emptyHint?: ReactNode;
-  ariaLabel?: string;
+  /**
+   * EVERY WORD, FROM THE HOST — none of these default any more.
+   *
+   * They used to: `placeholder`, `emptyHint` and `ariaLabel` carried English defaults, and the
+   * three foot hints ("navigate", "run", "close") were literals in the markup. The webapp passed
+   * the first two and not the third, so a German palette announced itself as "Command palette"
+   * and footed itself in English. A composite has no catalogue; a default in one is an English
+   * string nobody can see is wrong until they read the app in another language.
+   */
+  placeholder: string;
+  emptyHint: ReactNode;
+  ariaLabel: string;
+  /** The foot: the word beside ↑↓, beside ↵, and beside esc. */
+  footNavigate: string;
+  footRun: string;
+  footClose: string;
 }
 
 /**
@@ -41,9 +54,12 @@ export function CommandPalette({
   open,
   onClose,
   commands,
-  placeholder = "Type a command…",
-  emptyHint = "No command — try “screener”, “tag”, “theme”…",
-  ariaLabel = "Command palette",
+  placeholder,
+  emptyHint,
+  ariaLabel,
+  footNavigate,
+  footRun,
+  footClose,
 }: CommandPaletteProps) {
   const [query, setQuery] = useState("");
   const [sel, setSel] = useState(0);
@@ -130,13 +146,13 @@ export function CommandPalette({
         <div className="pal-foot">
           <span>
             <Kbd>↑</Kbd>
-            <Kbd>↓</Kbd> navigate
+            <Kbd>↓</Kbd> {footNavigate}
           </span>
           <span>
-            <Kbd>↵</Kbd> run
+            <Kbd>↵</Kbd> {footRun}
           </span>
           <span>
-            <Kbd>esc</Kbd> close
+            <Kbd>esc</Kbd> {footClose}
           </span>
         </div>
       </div>

@@ -28,6 +28,7 @@
  */
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
+import { useRowBadgeCopy } from "../shell/row-copy";
 import { presentsUnread, type EngineMessage, type TagDTO } from "@ohmail/client-engine";
 import { Button, Kbd, ListPane, ListRows, MessageRow, ReadColumn, TagDot } from "@ohmail/ui";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
@@ -99,6 +100,7 @@ export function TagView({
   admin?: TagAdmin;
 }) {
   const t = useTranslations("tag");
+  const rowBadge = useRowBadgeCopy();
   /* The list keys' shared vocabulary and the reading column's region name — the Ohbox's own
      labels and `reader.pane`, so four surfaces never phrase the same gesture apart. */
   const to = useTranslations("ohbox");
@@ -221,7 +223,7 @@ export function TagView({
                 selected={shown?.id === m.id}
                 threadCount={m.threadCount}
                 hasAttachment={m.hasAttachments}
-                protected={m.protected != null}
+                protectedLabel={m.protected != null ? rowBadge.protectedLabel : undefined}
                 tags={tagsOfMessage(m, tags).map((x) => ({ name: x.name, hue: hueOf(x) }))}
                 place={placeLabel(m.folder)}
                 onClick={() => openRow(m)}

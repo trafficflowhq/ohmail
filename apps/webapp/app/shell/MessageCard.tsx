@@ -324,8 +324,8 @@ export function MessageHeader({
             <button
               type="button"
               className="msg-open"
-              title="Read (↵)"
-              aria-label="Open reading mode"
+              title={tm("openReaderTitle")}
+              aria-label={tm("openReader")}
               onClick={onEnterReader}
             >
               <Icon name="open" size={13} />

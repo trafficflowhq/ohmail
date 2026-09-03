@@ -43,6 +43,7 @@
  */
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
+import { useRowBadgeCopy } from "../shell/row-copy";
 import type { EngineMessage, TagDTO, TriagePileEntry, TriagePiles } from "@ohmail/client-engine";
 import {
   Button,
@@ -158,6 +159,7 @@ export function TriageView({
   onAddTag: (messageId: string, anchor: HTMLElement | null) => void;
 }) {
   const t = useTranslations("triage");
+  const rowBadge = useRowBadgeCopy();
   /* The message verbs' own labels, shared with the global map — the `?` sheet must read one
      sentence for `a` whether the Ohbox's binding answers or this view's does. */
   const ts = useTranslations("shortcuts");
@@ -362,7 +364,7 @@ export function TriageView({
         selected={shown?.id === m.id}
         threadCount={m.threadCount}
         hasAttachment={m.hasAttachments}
-        protected={m.protected != null}
+        protectedLabel={m.protected != null ? rowBadge.protectedLabel : undefined}
         tags={tagsOfMessage(m, tags).map((x) => ({ name: x.name, hue: hueOf(x) }))}
         {...(done ? { className: "fr-done" } : {})}
         /* "DONE" ON A SCHEDULED RESURFACE — the same release verb the pinned row and the action

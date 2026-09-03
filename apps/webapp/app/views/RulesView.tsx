@@ -223,13 +223,6 @@ export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
   const toast = useToast();
 
   /**
-   * A key not yet in `messages/en.json` falls back to the SAME wording here — `en.json` wins the
-   * moment it exists, so this is a shim with one exit and not a second source of copy. Same device
-   * `MessagePane` uses.
-   */
-  const copy = (key: string, reported: string): string => (t.has(key) ? t(key) : reported);
-
-  /**
    * WHAT A RULE SAYS, IN ONE LINE — and for a subject rule that is TWO terms, not one.
    *
    * `what.sender` renders "mail from x@y.com". A rule carrying `subjectContains` says something
@@ -249,11 +242,11 @@ export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
     // A rule may carry either term or both (mail 0052); every carried term is spelled out, because
     // an unnamed conjunct is a row indistinguishable from a broader rule — the defect above.
     if (term !== "" && body !== "") {
-      return copy("whatBoth", `${base} with »${term}« in the subject and »${body}« in the text`);
+      return t("whatBoth", { base, term, body });
     }
-    if (body !== "") return copy("whatBody", `${base} with »${body}« in the text`);
+    if (body !== "") return t("whatBody", { base, body });
     if (term === "") return base;
-    return copy("whatSubject", `${base} with »${term}« in the subject`);
+    return t("whatSubject", { base, term });
   };
   const [open, setOpen] = useState<OpenAction>(null);
   const [query, setQuery] = useState("");

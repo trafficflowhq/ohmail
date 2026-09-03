@@ -41,6 +41,7 @@ import {
   SettingsActions, SettingsBanner, SettingsChoice, SettingsField, SettingsRow, SettingsVerdict,
 } from "@ohmail/ui";
 import type { DecisionDestination, DecisionScope } from "@ohmail/ui";
+import { useDecisionBarCopy } from "./decision-copy";
 import { useKeyBindings } from "./keymap";
 import { PROVIDERS, hostsFor, providerById, providerLabel, type ProviderPreset } from "./providers";
 import {
@@ -346,6 +347,10 @@ export function FirstRun({
   const tp = useTranslations("providerPicker");
   /** The connect funnel's namespace, for the one sentence this flow shares with it. */
   const tj = useTranslations("join");
+  /* THE DECISION BAR'S OWN WORDS come from the Screener's namespace, not this flow's: the bar
+     rendered here IS the Screener's bar, and a second set of five pile names would be a second
+     vocabulary to keep in step. `decide.address` is the sender this step is asking about. */
+  const decideBarCopy = useDecisionBarCopy(decide?.address ?? "");
   const locale = useLocale();
   const ids = useId();
 
@@ -1342,7 +1347,7 @@ export function FirstRun({
                   `c` (Compose); inside this dialog there is no view under it to arbitrate with,
                   and the bar's own listener is the only thing bound. */}
               <DecisionBar
-                scope={scope} onScopeChange={setScope} ruleTarget={decide.address} keyboard
+                scope={scope} onScopeChange={setScope} copy={decideBarCopy} keyboard
                 onDecide={(dest, opts) => {
                   decide.onDecide(dest, { markRead: opts.markRead, scope });
                   // FORWARD, NOT RE-DERIVED. The queue may still hold senders — it usually does

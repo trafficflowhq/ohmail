@@ -546,7 +546,8 @@
     "toastBulkLater": "{count, plural, one {1 message} other {# messages}} queued in Answer Later.",
     "toastBulkAside": "{count, plural, one {1 message} other {# messages}} parked.",
     "toastBulkResurface": "{count, plural, one {1 message} other {# messages}} resurface {when}.",
-    "toastBulkMoved": "{count, plural, =0 {Nothing to move — already in {place}.} one {1 message moved to {place}.} other {# messages moved to {place}.}}"
+    "toastBulkMoved": "{count, plural, =0 {Nothing to move — already in {place}.} one {1 message moved to {place}.} other {# messages moved to {place}.}}",
+    "sentNote": "Your recent sent mail is included above. Older sent mail stays on your server — find it in Search."
   },
   "reads": {
     "title": "Reads",
@@ -766,7 +767,17 @@
     "keyFileRead": "File to {dest} and mark read",
     "retry": "Retry",
     "keySegPrev": "Previous section",
-    "keySegNext": "Next section"
+    "keySegNext": "Next section",
+    "pileScreenOut": "Screen out",
+    "barTitle": "{dest} ({key})",
+    "barMarkRead": "{dest}, mark read",
+    "barMarkReadTitle": "{dest}, mark read ({key})",
+    "barScopeAria": "Decision scope",
+    "barScopeSender": "this sender",
+    "barScopeDomain": "whole domain",
+    "barRule": "Becomes a rule — future mail from {target} files automatically.",
+    "barHalvesLabel": "What each half of the button does",
+    "barHalves": "The name files the mail waiting here; the ✓ files it and marks it read."
   },
   "triage": {
     "title": "Triage",
@@ -788,7 +799,15 @@
     "frSkip": "Skip",
     "frEmptyTitle": "Answer Later is empty.",
     "frEmptyCta": "Back to Triage",
-    "keyReplyRun": "Start the Reply Run"
+    "keyReplyRun": "Start the Reply Run",
+    "runAria": "Reply run",
+    "runEmpty": "Answer Later is empty.",
+    "runBack": "Back to Triage",
+    "runProgress": "{step} of {total}",
+    "runPlaceholder": "Your reply",
+    "runReplyAria": "Reply",
+    "runExit": "exit",
+    "pileResurfaces": "resurfaces {when}"
   },
   "seed": {
     "title": "You've written to {count, plural, one {1 person} other {# people}}.",
@@ -1272,7 +1291,11 @@
     "goTag": "Go to tag: {name}",
     "toggleTheme": "Toggle light / dark",
     "cycleLayout": "Switch layout (Zero / classic)",
-    "resurfaceSel": "Resurface selection"
+    "resurfaceSel": "Resurface selection",
+    "footNavigate": "navigate",
+    "footRun": "run",
+    "footClose": "close",
+    "ariaLabel": "Command palette"
   },
   "dock": {
     "command": "Command",
@@ -1298,7 +1321,8 @@
   "reader": {
     "hint": "to return",
     "back": "Back",
-    "pane": "Open message"
+    "pane": "Open message",
+    "hintReturn": "to return"
   },
   "body": {
     "loading": "Loading the full message…",
@@ -1324,7 +1348,15 @@
     "actions": "Message actions",
     "menuReply": "Reply",
     "menuReplyAll": "Reply all",
-    "menuForward": "Forward"
+    "menuForward": "Forward",
+    "rowProtected": "protected",
+    "rowHeld": "{count} held",
+    "openReader": "Open reading mode",
+    "openReaderTitle": "Read (↵)",
+    "protectedLabel": "Verification code",
+    "protectedRedacted": "(redacted)",
+    "expandCard": "Expand",
+    "collapseCard": "Collapse"
   },
   "nav": {
     "skip": "Skip to content",
@@ -2593,7 +2625,26 @@
     "subjectEditAll": "Matches all of this sender's mail here — it no longer narrows. Use a longer part of the subject, or file the whole sender by clicking the sender instead.",
     "subjectEditNone": "Matches none of this sender's mail here.",
     "subjectEditEmpty": "Type part of the subject to match.",
-    "subjectEditTooLong": "Too long to be a rule — a subject match holds at most {max} characters. Trim it."
+    "subjectEditTooLong": "Too long to be a rule — a subject match holds at most {max} characters. Trim it.",
+    "subjectAria": "Make a rule for mail from {who} with this in the subject",
+    "subjectLead": "This sender sends more than one kind of mail. File just the ones whose subject matches.",
+    "subjectTermAria": "Which subject term",
+    "subjectTokenCount": "{count, plural, one {1 of this sender’s messages} other {# of this sender’s messages}}",
+    "bodyTokenCount": "in the message text — {count, plural, one {1 of this sender’s messages here} other {# of this sender’s messages here}}",
+    "subjectNoToken": "No repeating tag was found in this sender’s other subjects.",
+    "subjectNoTokenMoreLabel": "What it looks for",
+    "subjectNoTokenMore": "A tag in brackets, or a label before the first colon or dash, that also appears in another message from the same sender. A phrase that occurs only once would file one message and nothing else.",
+    "bodyConfirm": "from {match} AND the text contains »{term}« → {dest}",
+    "subjectConfirm": "from {match} AND subject contains »{term}« → {dest}",
+    "subjectConfirmAlready": "You already have this rule. Nothing will be written.",
+    "subjectConfirmFine": "Applies to {count, plural, one {the 1 matching message} other {the # matching messages}} already here as well as to future mail. Mail this moves stays moved if you revoke the rule later.",
+    "subjectConfirmFineFuture": "Applies to future mail from this sender.",
+    "subjectConfirmMoreLabel": "What it does not do",
+    "bodyConfirmMore": "The sender’s other mail is untouched — this rule only names the messages whose text contains the term. It never says every message: a higher-priority rule can keep one where it is, and mail you have already filed by hand is left alone. Revoke or change it at Settings → Rules.",
+    "subjectConfirmMore": "The sender’s other mail is untouched — this rule only names the messages whose subject matches. It never says every message: a higher-priority rule can keep one where it is, and mail you have already filed by hand is left alone. Revoke or change it at Settings → Rules.",
+    "subjectConfirmGo": "File these to {dest}",
+    "subjectFootExisting": "You already have {count, plural, one {1 narrower rule} other {# narrower rules}} for this sender. See them at Settings → Rules.",
+    "subjectFoot": "The sender’s other mail keeps going where it goes now. Change or revoke this at Settings → Rules."
   },
   "reply": {
     "to": "Reply to {name}",
@@ -2671,7 +2722,10 @@
     "bulkToastRevoked": "{count, plural, one {# rule} other {# rules}} revoked. Your mail hasn't moved.",
     "bulkToastQueued": "Revokes queued — they'll go through when you're back online.",
     "bulkToastPartial": "Revoked {ok} of {count}. The rest are still in place.",
-    "bulkToastFailed": "Couldn't revoke those rules. Nothing has changed."
+    "bulkToastFailed": "Couldn't revoke those rules. Nothing has changed.",
+    "whatBoth": "{base} with »{term}« in the subject and »{body}« in the text",
+    "whatBody": "{base} with »{body}« in the text",
+    "whatSubject": "{base} with »{term}« in the subject"
   },
   "drafts": {
     "title": "Drafts",
@@ -2726,7 +2780,8 @@
   },
   "bodyText": {
     "show": "Show history",
-    "hide": "Hide history"
+    "hide": "Hide history",
+    "linkTitle": "Goes to {host}"
   },
   "attachments": {
     "count": "{count, plural, one {# attachment} other {# attachments}}",
@@ -2797,7 +2852,8 @@
     "kPrev": "previous attachment",
     "kNext": "next attachment",
     "kPrevPage": "previous page",
-    "kNextPage": "next page"
+    "kNextPage": "next page",
+    "pagesAria": "Pages"
   },
   "place": {
     "ohbox": "Ohbox",
@@ -2917,6 +2973,15 @@
     "wordsOffline": "Your words live on your ohmail Cloud account, so they can’t be edited while this install is offline. Your mail keeps reading; this comes back with the connection.",
     "suggestChecking": "Checking for a model…",
     "suggestNoModel": "Suggestions come from a model you set up. There is none on this install yet.",
-    "suggestSetUp": "Set up a model"
+    "suggestSetUp": "Set up a model",
+    "suggestAria": "Suggestions",
+    "suggestAsk": "{count, plural, one {Suggest for 1 sender} other {Suggest for the first #}}",
+    "suggestGo": "{count, plural, one {Suggest for 1 sender} other {Suggest for # senders}}",
+    "suggestAll": "all {count}",
+    "suggestRunning": "Suggesting…",
+    "suggestStop": "Stop",
+    "suggestNote": "Uses the model you set up. Senders already answered for are not asked about again.",
+    "offlineHead": "What reaches your Ohbox",
+    "offlineNote": "These settings live on your ohmail Cloud account, so they can’t be changed while this install is offline. Your mail keeps arriving; this comes back with the connection."
   }
 }

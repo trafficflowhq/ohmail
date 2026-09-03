@@ -72,12 +72,12 @@ import {
   planScreeningChange,
   senderScreening,
 } from "./sender-screening";
+import { pileNames } from "./decision-copy";
 import { PLACE_LABEL } from "./format";
 import { displayAddress, displayAddressee, displayDomain, displayDomainLabel } from "./idn";
 import { activeFormatZone } from "./locale";
 import { useAppLocale } from "./LocaleContext";
 import {
-  DECISION_DONE_LABEL,
   DECISION_QUIET,
   type DecisionDestination,
   type DecisionScope,
@@ -429,6 +429,9 @@ export function useScreenerState(
   readOnly: { name: string | null } | null = null,
 ): ScreenerState {
   const t = useTranslations("screener");
+  /* The five pile names as the catalogue has them, so a toast naming a destination uses the
+     word the rail uses. See `decision-copy.ts`. */
+  const piles = pileNames(t);
   // The past-the-gate branch of `commit` speaks the sender-sheet's own sentences (`toastRuled`,
   // `toastRuleFailed`, …), chosen from what the server actually returned — so it reads them from
   // the `screening` namespace, exactly as `AppShell#changeScreening` does.
@@ -985,7 +988,7 @@ export function useScreenerState(
         : dest === "spam"
           ? t("toastSpam", { target: displayAddress(sender.from.address), unsub })
           : t("toastFiled", {
-              dest: DECISION_DONE_LABEL[dest],
+              dest: piles[dest],
               read: read ? "true" : "false",
               target,
             });
@@ -1294,7 +1297,7 @@ export function useScreenerState(
       t(retargets.length > 0 ? "toastReleasedRuled" : "toastReleased", {
         count: sender.held.length,
         sender: displayAddress(sender.from.address),
-        dest: DECISION_DONE_LABEL[dest],
+        dest: piles[dest],
       }),
     );
   };
@@ -1324,7 +1327,7 @@ export function useScreenerState(
       t("toastAllowed", {
         count: sender.held.length,
         sender: displayAddress(sender.from.address),
-        dest: DECISION_DONE_LABEL[dest],
+        dest: piles[dest],
       }),
     );
   };

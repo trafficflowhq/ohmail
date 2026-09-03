@@ -1,14 +1,14 @@
 import "./waterline.css";
 
 export interface WaterlineProps {
-  label?: string;
+  label: string;
   /** Right-hand meta, e.g. "last visit · Mon 18:40". */
   meta?: string;
   className?: string;
 }
 
 /** The seen/unseen boundary — one of Blanc's few deliberate hairlines. */
-export function Waterline({ label = "Seen up to here", meta, className }: WaterlineProps) {
+export function Waterline({ label, meta, className }: WaterlineProps) {
   return (
     <div
       className={className ? `waterline ${className}` : "waterline"}

@@ -370,15 +370,6 @@ function ActionBar({
   useEffect(() => setMenuOpen(false), [message.id]);
 
   /**
-   * A label whose key is not in `messages/en.json` yet.
-   *
-   * The copy is read through `t.has` and falls back to the SAME wording here until the key
-   * lands in that file. `en.json` wins the moment the key exists, so
-   * this cannot become a second source of copy: it is a shim with one exit, not a default.
-   */
-  const copy = (key: string, reported: string): string => (t.has(key) ? t(key) : reported);
-
-  /**
    * MARK UNREAD — the read-state verb of a message that IS read.
    *
    * It PRESSES `u` rather than dispatching its own `mark_seen`, and `press` NOT
@@ -447,7 +438,7 @@ function ActionBar({
         aria-pressed={pile === "reply_later"}
         onClick={() => onAction("later")}
       >
-        {copy("actionLater", "Later")}
+        {t("actionLater")}
         <Key chord="a" />
       </button>
       <button
@@ -503,7 +494,7 @@ function ActionBar({
         className="abar-b abar-solo"
         onClick={(e) => onTag((e.currentTarget as HTMLElement | null) ?? null)}
       >
-        {copy("actionTag", "Tag")}
+        {t("actionTag")}
         <Key chord="t" />
       </button>
     </div>
@@ -699,7 +690,7 @@ function ActionBar({
           run: () => { closeMenu(); onAction("forward"); },
         } as MoreMenuItem]
       : []),
-    { id: "later", group: "defer", label: copy("actionLater", "Later"), run: () => { closeMenu(); onAction("later"); } },
+    { id: "later", group: "defer", label: t("actionLater"), run: () => { closeMenu(); onAction("later"); } },
     { id: "aside", group: "defer", label: t("actionSetAside"), run: () => { closeMenu(); onAction("aside"); } },
     { id: "resurface", group: "defer", label: t("actionResurface"), run: () => { closeMenu(); onPanel("resurface"); } },
     /**
@@ -727,7 +718,7 @@ function ActionBar({
       ? [{
           id: "tag",
           group: "tag",
-          label: copy("actionTag", "Tag"),
+          label: t("actionTag"),
           icon: <Icon name="tag" size={13} />,
           run: () => { closeMenu(); onTag(moreRef.current); },
         } as MoreMenuItem]
@@ -832,7 +823,7 @@ function ActionBar({
         <div
           className="abar-g abar-seg abar-defer"
           role="group"
-          aria-label={copy("groupDefer", "Not now")}
+          aria-label={t("groupDefer")}
         >
           {defer}
         </div>
@@ -844,7 +835,7 @@ function ActionBar({
         <div
           className="abar-g abar-seg abar-file"
           role="group"
-          aria-label={copy("groupFile", "File it")}
+          aria-label={t("groupFile")}
         >
           {file}
         </div>
@@ -895,7 +886,7 @@ function ActionBar({
               onClick={markUnread}
             >
               <span className="abar-dot" aria-hidden="true" />
-              {copy("actionMarkUnread", "Mark unread")}
+              {t("actionMarkUnread")}
               <Key chord="u" />
             </button>
           ) : (
@@ -932,8 +923,8 @@ function ActionBar({
             className="abar-b abar-solo abar-more"
             aria-haspopup="menu"
             aria-expanded={menuOpen}
-            aria-label={copy("actionMore", "More")}
-            title={copy("actionMore", "More")}
+            aria-label={t("actionMore")}
+            title={t("actionMore")}
             onClick={() => setMenuOpen((open) => !open)}
           >
             <Icon name="chev" size={12} className="abar-chev" />
@@ -976,7 +967,7 @@ function ActionBar({
       {menuOpen ? (
         <MoreMenu
           items={menuItems}
-          ariaLabel={copy("actionMore", "More")}
+          ariaLabel={t("actionMore")}
           onClose={closeMenu}
         />
       ) : null}
@@ -1064,6 +1055,7 @@ export function MessagePane({
   const tc = useTranslations("reply");
   /** Hydration state copy, shared with the Reads/Receipts cards and the Screener preview. */
   const tb = useTranslations("body");
+  const tm = useTranslations("message");
   /** The conversation stack, so the pane can open at the LATEST message — see below. */
   const convRef = useRef<HTMLDivElement>(null);
   /**
@@ -1384,8 +1376,10 @@ export function MessagePane({
   const extra = message.protected;
   const focusedBody = isProtected ? (
     <ProtectedBlock
-      label={extra?.label}
-      redactedNote={extra?.redactedNote}
+      /* The server may name the protected field itself; when it does not, the catalogue does —
+         `extra?.label` alone rendered an empty line in every locale. */
+      label={extra?.label ?? tm("protectedLabel")}
+      redactedNote={extra?.redactedNote ?? tm("protectedRedacted")}
       policy={extra ? <ProtectedPolicy text={extra.policy} /> : undefined}
     />
   ) : (

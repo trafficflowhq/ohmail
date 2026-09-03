@@ -1215,6 +1215,21 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
      would reintroduce the hydration mismatch `useDemoMode` exists to prevent. */
   const resolvedDemo = useResolvedDemoMode();
   const t = useTranslations();
+  /* THE REPLY RUN'S WORDS. `FocusReplyOverlay` has none of its own — it is a composite, and
+     composites read no catalogue. The progress line takes both numbers as arguments because not
+     every language puts them in this order. */
+  const frCopy = useMemo(
+    () => ({
+      ariaLabel: t("triage.runAria"),
+      empty: t("triage.runEmpty"),
+      emptyBack: t("triage.runBack"),
+      progress: (step: number, total: number) => t("triage.runProgress", { step, total }),
+      placeholder: t("triage.runPlaceholder"),
+      replyAria: t("triage.runReplyAria"),
+      exit: t("triage.runExit"),
+    }),
+    [t],
+  );
   const engine = useEngine();
   const version = useEngineVersion();
   /**
@@ -7195,6 +7210,8 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
           was quoting, in the same keypress. */}
       <Reader
         open={readerMessage != null}
+        ariaLabel={t("reader.pane")}
+        returnHint={t("reader.hintReturn")}
         closeOnEscape={false}
         /* NON-MODAL exactly at the Zero push tier (review finding, round 1): there the sheet is
            the reading TILE beside a live, operable ribbon, and `aria-modal` would tell
@@ -7348,6 +7365,7 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
           )
         }
         skipLabel={t("triage.frSkip")}
+        copy={frCopy}
       />
 
       {/* Command palette */}
@@ -7357,6 +7375,10 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
         commands={commands}
         placeholder={t("palette.placeholder")}
         emptyHint={t("palette.empty")}
+        ariaLabel={t("palette.ariaLabel")}
+        footNavigate={t("palette.footNavigate")}
+        footRun={t("palette.footRun")}
+        footClose={t("palette.footClose")}
       />
 
       {/* Tag picker */}

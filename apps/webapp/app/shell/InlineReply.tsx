@@ -305,12 +305,6 @@ export function InlineReply({
   const t = useTranslations("reply");
   /** `compose` owns the forwarding honesty line — one sentence, both surfaces. */
   const tc = useTranslations("compose");
-  /**
-   * A label whose key may not be in `messages/*.json` yet — the same shim, with the same one
-   * exit, as `MessagePane.copy`: `t.has` hands the line to the locale files the moment the key
-   * lands there, so this can never become a second source of copy.
-   */
-  const line = (key: string, reported: string): string => (t.has(key) ? t(key) : reported);
   const box = useRef<HTMLDivElement>(null);
 
   /**
@@ -622,7 +616,7 @@ export function InlineReply({
   const headContent = mode === "forward" ? (
     // A forward names NO audience until the user picks one — a head that claimed a recipient
     // here would be inventing the exact default `forwardEnvelopePlan` refuses to derive.
-    <b>{line("forwardHead", "Forward — you pick who receives it")}</b>
+    <b>{t("forwardHead")}</b>
   ) : all ? (
     <>
       <b>{t("toAll", { names: all.to.map(nameOf).join(", ") })}</b>

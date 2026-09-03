@@ -122,6 +122,7 @@ const EN = {
   page: (p: number, n: number) => `${p} / ${n}`,
   prevAttachment: "Previous attachment",
   nextAttachment: "Next attachment",
+  pagesAria: "Pages",
   prevPage: "Previous page",
   nextPage: "Next page",
   hintClose: "Space or Esc to close",
@@ -489,7 +490,7 @@ export function AttachmentPreview({
           </div>
           <div className="ap-tools">
             {kind === "pdf" && isPdfMultiPage ? (
-              <span className="ap-pager" role="group" aria-label="Pages">
+              <span className="ap-pager" role="group" aria-label={COPY.pagesAria}>
                 <button type="button" className="ap-iconbtn" aria-label={COPY.prevPage}
                   aria-disabled={page <= 1 || undefined} onClick={() => goPage(-1)}>{ARROW_UP}</button>
                 <button type="button" className="ap-iconbtn" aria-label={COPY.nextPage}

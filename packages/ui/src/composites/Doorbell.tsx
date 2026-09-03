@@ -21,7 +21,7 @@ export interface DoorbellProps {
   hues?: number[];
   /** "<b>3 new senders</b> waiting" */
   message: ReactNode;
-  actionLabel?: string;
+  actionLabel: string;
   onPress: () => void;
   /** Collapses the doorbell away (all decided). */
   gone?: boolean;
@@ -36,7 +36,7 @@ export function Doorbell({
   initials,
   hues,
   message,
-  actionLabel = "Screener ›",
+  actionLabel,
   onPress,
   gone,
   max = DEFAULT_MAX,
