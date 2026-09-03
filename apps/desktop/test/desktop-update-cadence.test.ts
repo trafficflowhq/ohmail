@@ -1,5 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 import {
   currentUpdateOffer,
@@ -12,6 +14,7 @@ import {
   CHECK_EVERY_MS,
   offerOf,
   POLL_EVERY_MS,
+  REQUEST_RETRIES,
   startUpdateCadence,
 } from "../src/update-cadence.js";
 import type { UpdateReport } from "../src/update.js";
@@ -27,8 +30,9 @@ import type { UpdateReport } from "../src/update.js";
  * What is driven here is the cadence and nothing else. The check itself does not move: the one
  * pinned endpoint, the signature verification, the version guard read out of signed material and
  * the install all stay in the native process, and this file cannot reach any of them. The
- * cadence presses the same button a person presses, on a schedule, and only where the shell's
- * own state says a press WOULD start a check.
+ * cadence asks for the LAUNCH check on a schedule — not the menu press, which is a person
+ * asking and is therefore answered out loud — and only where the shell's own state says a check
+ * would start at all.
  *
  * The clock is the subject, so the clock is a seam: no real timers, no real shell.
  */
@@ -51,15 +55,15 @@ const report = (over: Partial<UpdateReport> = {}): UpdateReport => ({
 
 /** The shell, as a value: what it answers, and what it was asked to do. */
 function shell(answer: () => UpdateReport | null) {
-  const presses: number[] = [];
+  const polls: number[] = [];
   let push: ((r: UpdateReport) => void) | null = null;
   return {
-    presses,
+    polls,
     tell: (r: UpdateReport) => push?.(r),
     options: {
       read: async () => answer(),
-      press: async () => {
-        presses.push(presses.length);
+      poll: async () => {
+        polls.push(polls.length);
       },
       listen: async (show: (r: UpdateReport) => void) => {
         push = show;
@@ -98,9 +102,9 @@ describe("when a periodic check is due", () => {
     // daily" and would also be a rule nobody wrote: the promise is one check a day, and the
     // cheapest way to break it is an interval that is nearly right.
     const r = report({ lastCheckedAt: START });
-    expect(checkDue(r, START + 23 * HOUR, START, false)).toBe(false);
-    expect(checkDue(r, START + CHECK_EVERY_MS - 1, START, false)).toBe(false);
-    expect(checkDue(r, START + CHECK_EVERY_MS, START, false)).toBe(true);
+    expect(checkDue(r, START + 23 * HOUR, START)).toBe(false);
+    expect(checkDue(r, START + CHECK_EVERY_MS - 1, START)).toBe(false);
+    expect(checkDue(r, START + CHECK_EVERY_MS, START)).toBe(true);
   });
 
   it("SURVIVES A SUSPENDED MACHINE, because it compares instants and never counts firings", () => {
@@ -108,7 +112,7 @@ describe("when a periodic check is due", () => {
     // between: every monotonic clock the platforms offer stops with the machine. A cadence
     // built on elapsed ticks would answer "not yet" here and wait another whole day — a person
     // who closes the lid every evening checked every three or four days.
-    expect(checkDue(report({ lastCheckedAt: START }), START + 40 * HOUR, START, false)).toBe(true);
+    expect(checkDue(report({ lastCheckedAt: START }), START + 40 * HOUR, START)).toBe(true);
   });
 
   it("NEVER PRESSES WHERE A PRESS WOULD INSTALL, or where one is already running", () => {
@@ -116,13 +120,13 @@ describe("when a periodic check is due", () => {
     // verified payload" in one — so a cadence that pressed on a schedule without asking would
     // be an updater that installs by itself, which is the one thing this flow refuses to be.
     const waiting = report({ state: "ready", offered: NEXT, canCheck: false, canInstall: true });
-    expect(checkDue(waiting, START + 10 * CHECK_EVERY_MS, START, false)).toBe(false);
+    expect(checkDue(waiting, START + 10 * CHECK_EVERY_MS, START)).toBe(false);
 
     const running = report({ state: "checking", canCheck: false });
-    expect(checkDue(running, START + 10 * CHECK_EVERY_MS, START, false)).toBe(false);
+    expect(checkDue(running, START + 10 * CHECK_EVERY_MS, START)).toBe(false);
   });
 
-  it("STOPS ENTIRELY WHERE CHECKING AGAIN IS KNOWN TO BE FUTILE", () => {
+  it("THE REFUSED-INSTALL STATE IS CLASSIFIED, and it is Linux's alone", () => {
     // The state the strip calls "ohmail could not replace its own files". `canCheck` is TRUE
     // there — a refused install leaves the flow somewhere a press would check from — so the
     // period alone would send this install round the whole loop every twenty-four hours: fetch
@@ -133,25 +137,54 @@ describe("when a periodic check is due", () => {
     // written twice.
     const refused = report({ state: "failed", lastResult: "offered", offered: null });
     expect(cannotSelfInstall(refused, true)).toBe(true);
-    expect(checkDue(refused, START + 10 * CHECK_EVERY_MS, START, true)).toBe(false);
 
     // Everywhere else the same pair is a refusal that may not repeat — a file held open, a
     // half-written temporary directory — and giving up on checking would be the wrong lesson.
     expect(cannotSelfInstall(refused, false)).toBe(false);
-    expect(checkDue(refused, START + CHECK_EVERY_MS, START, false)).toBe(true);
+    expect(checkDue(refused, START + CHECK_EVERY_MS, START)).toBe(true);
 
     // And a check that could not reach the feed is not that state at all, on any platform.
-    const offline = report({ state: "failed", lastResult: "failed" });
-    expect(cannotSelfInstall(offline, true)).toBe(false);
-    expect(checkDue(offline, START + CHECK_EVERY_MS, START, true)).toBe(true);
+    expect(cannotSelfInstall(report({ state: "failed", lastResult: "failed" }), true)).toBe(false);
+
+    // The TIME rule knows nothing about any of it. Whether to give up is a question about how
+    // many attempts have been spent, so it lives in the driver beside the counter that answers
+    // it — and the driver allows exactly one more, because the same state is reachable on a
+    // repairable machine (a full disk, a read-only mount) where giving up at once would leave a
+    // window that never checks again.
+    expect(checkDue(refused, START + CHECK_EVERY_MS, START)).toBe(true);
   });
 
   it("counts from when this window opened when the shell reports no check at all", () => {
     // An older shell, or one whose launch check has not finished. Counting from the moment the
     // window opened is the honest reading of "it has not been checked since then".
     const never = report({ lastCheckedAt: null });
-    expect(checkDue(never, START + 23 * HOUR, START, false)).toBe(false);
-    expect(checkDue(never, START + CHECK_EVERY_MS, START, false)).toBe(true);
+    expect(checkDue(never, START + 23 * HOUR, START)).toBe(false);
+    expect(checkDue(never, START + CHECK_EVERY_MS, START)).toBe(true);
+  });
+});
+
+describe("which request the schedule makes", () => {
+  it("THE SCHEDULE ASKS FOR THE SILENT CHECK, and the press stays the person's", () => {
+    /* A SOURCE ASSERTION, and it has to be: both requests are opaque invokes of a command name,
+       so nothing this side of the boundary can tell them apart by behaviour. What the difference
+       IS lives in the shell — a press is a person asking, so a press that finds nothing raises
+       "ohmail is up to date", a press that cannot reach the feed raises an error, and a press
+       that finds a release opens the progress window. Right for somebody who just pressed a
+       button; wrong once a day forever. Routing this cadence through the press would put a modal
+       over a person's mail every twenty-four hours for as long as the app stayed open and
+       current, which is the nag the whole file exists to replace. */
+    /* Resolved from the run's own directory rather than from `import.meta.url`: this file runs
+       under jsdom, where that is not a file URL. The suite is run from the repository root
+       (`vitest run <path>`), and the length assertion below is what makes a wrong root fail
+       loudly instead of matching nothing and passing. */
+    const src = readFileSync(resolve(process.cwd(), "apps/desktop/src/update-cadence.ts"), "utf8");
+    expect(src.length, "the module under assertion was not found").toBeGreaterThan(2000);
+    expect(src).toMatch(/options\.poll \?\? updatePoll/);
+    expect(src, "the timer must not make the request a person makes")
+      .not.toMatch(/options\.poll \?\? updatePress/);
+    /* `updatePress` is still imported and still used — it is what the STRIP's button calls, and
+       that press IS a person asking. The distinction is which of the two the timer takes. */
+    expect(src).toMatch(/act: \(\) => void updatePress\(\)/);
   });
 });
 
@@ -198,16 +231,16 @@ describe("the cadence, running", () => {
     const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: false });
 
     await run(clock, 12 * HOUR);
-    expect(s.presses, "half a day in, nothing is owed").toHaveLength(0);
+    expect(s.polls, "half a day in, nothing is owed").toHaveLength(0);
 
     await run(clock, 12 * HOUR);
-    expect(s.presses).toHaveLength(1);
+    expect(s.polls).toHaveLength(1);
 
     await run(clock, 23 * HOUR);
-    expect(s.presses, "the day after the press is still that day").toHaveLength(1);
+    expect(s.polls, "the day after the press is still that day").toHaveLength(1);
 
     await run(clock, HOUR);
-    expect(s.presses).toHaveLength(2);
+    expect(s.polls).toHaveLength(2);
     stop();
   });
 
@@ -221,7 +254,7 @@ describe("the cadence, running", () => {
     // tick after it wakes is all it takes, because the decision is arithmetic on two instants.
     clock.at += 30 * HOUR;
     await vi.advanceTimersByTimeAsync(POLL_EVERY_MS);
-    expect(s.presses).toHaveLength(1);
+    expect(s.polls).toHaveLength(1);
     stop();
   });
 
@@ -297,19 +330,55 @@ describe("the cadence, running", () => {
     await run(clock, POLL_EVERY_MS);
     expect(currentUpdateOffer()?.kind, "the strip says it once").toBe("package");
 
-    // A week of it. Every press here would be a whole release fetched again and a native
-    // install dialog raised over somebody's mail, for an install that cannot take it.
+    // ONE more attempt, a day later, and never again. The retry is for the machines this state
+    // is also reachable on and CAN be repaired while the app is open — a full disk since freed,
+    // a mount since made writable. After it, the window stops: every further check would fetch
+    // the whole release again and raise a native install dialog over somebody's mail, for an
+    // install that will refuse it every time.
+    await run(clock, CHECK_EVERY_MS);
+    expect(s.polls, "one retry, spent").toHaveLength(1);
+
     await run(clock, 7 * CHECK_EVERY_MS);
-    expect(s.presses).toEqual([]);
+    expect(s.polls, "a week later, still one — the window has given up on its own").toHaveLength(1);
     stop();
   });
 
-  it("A REJECTED PRESS IS RETRIED ON THE NEXT POLL, not postponed for a day", async () => {
-    // An older shell, or a grant that dropped the command. Stamping the press before it landed
-    // would spend the whole period on an attempt that never reached the shell — a day of not
-    // checking, on precisely the build where the command is unreliable. The retry costs one
-    // refused call per poll and reaches no network: a command the shell refuses is answered by
-    // the shell.
+  it("…and it starts asking again the moment the state clears", async () => {
+    // The counter is CONSECUTIVE, not cumulative. An install that failed once and succeeded on
+    // the retry must not leave the window permanently one strike from silence.
+    vi.useFakeTimers();
+    const clock = { at: START };
+    let now = report({ state: "failed", lastResult: "offered", offered: null });
+    const s = shell(() => now);
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: true });
+
+    await run(clock, CHECK_EVERY_MS);
+    expect(s.polls).toHaveLength(1);
+    await run(clock, CHECK_EVERY_MS);
+    expect(s.polls, "given up").toHaveLength(1);
+
+    now = report({ lastCheckedAt: START });
+    await run(clock, CHECK_EVERY_MS);
+    expect(s.polls, "the state cleared, so the day applies again").toHaveLength(2);
+
+    /* AND THE ALLOWANCE CAME BACK WITH IT. This is the half a reset that never fires would pass:
+       once the state has cleared, `givenUp` is false whatever the counter holds, so only a
+       SECOND refusal can show whether the count was carried over. A window whose user hit a full
+       disk in the morning must not be one strike from silence in the afternoon. */
+    now = report({ state: "failed", lastResult: "offered", offered: null });
+    await run(clock, CHECK_EVERY_MS);
+    expect(s.polls, "a fresh refusal gets its own retry").toHaveLength(3);
+    await run(clock, 7 * CHECK_EVERY_MS);
+    expect(s.polls, "…and then gives up again").toHaveLength(3);
+    stop();
+  });
+
+  it("A REFUSED REQUEST IS RETRIED AT ONCE — a few times, then the day applies again", async () => {
+    // An older shell, or a grant that dropped the command. Stamping the attempt before it landed
+    // would spend the whole period on a request that never reached the shell — a day of not
+    // checking, on precisely the build where the command is unreliable. But the refusal this
+    // will actually meet is PERMANENT for the life of the window, and nothing that could arrive
+    // would stop the retries, so they are counted: a few quick ones, then once a day.
     vi.useFakeTimers();
     const clock = { at: START };
     let refuse = true;
@@ -318,7 +387,7 @@ describe("the cadence, running", () => {
       now: () => clock.at,
       linux: false,
       read: async () => report({ lastCheckedAt: null }),
-      press: async () => {
+      poll: async () => {
         tried += 1;
         if (refuse) throw new Error("no such command");
       },
@@ -331,12 +400,18 @@ describe("the cadence, running", () => {
     await run(clock, POLL_EVERY_MS);
     expect(tried, "and again on the very next poll, not tomorrow").toBe(2);
 
-    // Once one lands, the period applies again.
-    refuse = false;
     await run(clock, POLL_EVERY_MS);
-    expect(tried).toBe(3);
+    expect(tried, "the third spends the allowance").toBe(REQUEST_RETRIES);
     await run(clock, 23 * HOUR);
-    expect(tried, "a press that landed spends the day").toBe(3);
+    expect(tried, "…and the day applies again rather than a call every quarter hour for ever")
+      .toBe(REQUEST_RETRIES);
+
+    // Once one lands, the counter clears and the period is the only rule left.
+    refuse = false;
+    await run(clock, HOUR);
+    expect(tried).toBe(REQUEST_RETRIES + 1);
+    await run(clock, 23 * HOUR);
+    expect(tried, "a request that landed spends the day").toBe(REQUEST_RETRIES + 1);
     stop();
   });
 
@@ -363,7 +438,7 @@ describe("the cadence, running", () => {
     const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: false });
     clock.at += 3 * CHECK_EVERY_MS;
     await vi.advanceTimersByTimeAsync(3 * CHECK_EVERY_MS);
-    expect(s.presses).toEqual([]);
+    expect(s.polls).toEqual([]);
     expect(currentUpdateOffer()).toBeNull();
     stop();
   });
@@ -376,6 +451,6 @@ describe("the cadence, running", () => {
     stop();
     clock.at += 3 * CHECK_EVERY_MS;
     await vi.advanceTimersByTimeAsync(3 * CHECK_EVERY_MS);
-    expect(s.presses).toEqual([]);
+    expect(s.polls).toEqual([]);
   });
 });

@@ -462,6 +462,34 @@ pub fn update_press<R: Runtime>(app: AppHandle<R>) {
     pressed(app);
 }
 
+/// SETTINGS → UPDATES, THE CHECK NOBODY ASKED FOR — the launch check, on a schedule.
+///
+/// ── WHY THIS IS NOT `update_press`, WHICH IS THE WHOLE REASON IT EXISTS ────────────────
+///
+/// A press is a person asking, and this module treats that as the licence to SPEAK: a press
+/// that finds nothing says "ohmail is up to date", a press that cannot reach the feed says so
+/// with a Try-again button, and a press that finds a release opens the progress window. All
+/// three are right for somebody who just pressed a button and would otherwise face dead air.
+/// All three are wrong for a check on a timer, and the file's own header says why — *"a window
+/// appearing by itself over somebody's mail is the interruption this flow exists to remove"*.
+///
+/// Routing a daily cadence through `update_press` would therefore put a modal over a person's
+/// mail every twenty-four hours for as long as the app stayed open and current, which is the
+/// exact nag the cadence was written to replace. The shell cannot tell the two apart from the
+/// call alone — `update_press` takes no argument, deliberately — so the difference is a second
+/// command rather than a flag the window supplies.
+///
+/// It is the LAUNCH CHECK's path exactly: `check(app, false)`, the same call [`on_launch`]
+/// makes. Silent unless it finds something; when it does, the one dialog is raised by
+/// `prompt_ready` as it always was. It names nothing, takes no argument, and can no more start
+/// an install than the press can: `may_start_check` refuses in every stage where a payload is
+/// waiting.
+#[cfg(feature = "local-engine")]
+#[tauri::command]
+pub fn update_poll<R: Runtime>(app: AppHandle<R>) {
+    check(app, false);
+}
+
 /// The check nobody asked for — one request, shortly after the window opens.
 ///
 /// An updater a person has to REMEMBER to run is an updater that does not run, which is what this

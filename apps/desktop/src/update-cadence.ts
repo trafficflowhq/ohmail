@@ -14,10 +14,19 @@
  * Because the check itself is not moving anywhere. Every part of the update that could be
  * dangerous — the one pinned endpoint, the minisign verification, the version guard read out of
  * signed material, the install — stays in the native process, and this file cannot reach any of
- * it. What it does is press the same button a person presses, on a schedule: `update_press`
- * takes no argument, names nothing, and does exactly what picking the menu item does. A check
- * is started only where the shell's own state says a press WOULD start one, so this can never
- * turn a press into an install.
+ * it. What it asks for is the LAUNCH CHECK, on a schedule: `update_poll` takes no argument,
+ * names nothing, and makes the same request `on_launch` makes.
+ *
+ * NOT `update_press`, and that distinction is load-bearing rather than tidy. A press is a person
+ * asking, and the shell answers a person out loud: a press that finds nothing raises "ohmail is
+ * up to date", a press that cannot reach the feed raises an error with a Try-again, and a press
+ * that finds a release opens the progress window. Each is right for somebody who just pressed a
+ * button; each is wrong once a day, forever. A cadence routed through the press would put a
+ * modal over a person's mail every twenty-four hours for as long as the app stayed open and
+ * current — the exact nag this file exists to replace. The check the poll starts is silent
+ * unless it finds something, and even then the only thing raised is the one dialog `prompt_ready`
+ * always raised. A check is started only where the shell's own state says a press WOULD start
+ * one, so this can never turn a request into an install.
  *
  * ── WALL CLOCK, NEVER TICKS, AND THAT IS THE WHOLE DESIGN ──────────────────────────────────
  *
@@ -59,7 +68,7 @@ import {
   type UpdateOffer,
 } from "../../webapp/app/shell/app-update.js";
 import { BUILD_PLATFORM } from "./platform.js";
-import { onUpdateState, updatePress, updateState, type UpdateReport } from "./update.js";
+import { onUpdateState, updatePoll, updatePress, updateState, type UpdateReport } from "./update.js";
 
 /** How long the app may go without asking the feed. */
 export const CHECK_EVERY_MS = UPDATE_PERIOD_MS;
@@ -73,6 +82,28 @@ export const CHECK_EVERY_MS = UPDATE_PERIOD_MS;
  * is opened the app is still working from yesterday's answer.
  */
 export const POLL_EVERY_MS = 15 * 60 * 1000;
+
+/**
+ * How many further scheduled checks a window will spend on an install the app has already been
+ * refused once — see the driver, which carries the whole argument.
+ *
+ * One. Enough to recover the cases that can recover (a full disk since freed, a mount since made
+ * writable); not enough for "checked once a day" to become "asked to restart once a day, for
+ * ever" on a copy whose files belong to a package manager.
+ */
+export const INSTALL_RETRIES = 1;
+
+/**
+ * How many consecutive REFUSED requests are retried at the poll interval before the day applies
+ * again.
+ *
+ * A refusal is normally transient, and retrying at once is right for it. But the refusal this
+ * cadence will actually meet — a shell too old to have the command, or a grant that dropped it —
+ * is permanent for the life of the window, and nothing that could ever arrive would stop the
+ * retries. Three quick attempts, then back to once a day, so a build without the command costs a
+ * handful of refused calls rather than a hundred a day.
+ */
+export const REQUEST_RETRIES = 3;
 
 /**
  * Has this install established that it cannot replace its own files?
@@ -110,16 +141,11 @@ export function cannotSelfInstall(report: UpdateReport, linux: boolean): boolean
  * the one state where a press INSTALLS. A payload waiting to be installed is not a state to
  * re-check from; the shell would only fetch an identical copy of what it already holds.
  *
- * ── AND IT STOPS WHERE CHECKING AGAIN IS KNOWN TO BE FUTILE ────────────────────────────────
+ * ── WHAT IS *NOT* HERE ─────────────────────────────────────────────────────────────────────
  *
- * `canCheck` alone is not enough, and the gap it leaves is worse than the one this file closed.
- * A refused install leaves the flow in a state a press WOULD check from, and the release is
- * still newer, so a bare daily cadence on a package-managed Linux install would: fetch the whole
- * release again, verify it, raise the shell's own "ready to install" dialog — which is not gated
- * on anybody having asked — fail the install again, and repeat every twenty-four hours for the
- * life of the install. Before a cadence existed that sequence cost one run per launch. Making it
- * daily, on precisely the machines whose strip says the app cannot do this, is not a smaller
- * version of the same behaviour; it is the feature working against the people it names.
+ * Giving up. A refused install leaves the flow in a state a press WOULD check from, and stopping
+ * there is a decision about how many times to try rather than about time — so it lives in the
+ * driver, beside the counter it needs, and [`cannotSelfInstall`] is the classifier both use.
  *
  * `floor` is the earliest instant a periodic check may be counted from, and it carries two
  * facts the report cannot: when this window opened, and when this cadence last pressed.
@@ -137,13 +163,8 @@ export function cannotSelfInstall(report: UpdateReport, linux: boolean): boolean
  *
  * So the instant compared is the LATER of what the shell recorded and what this cadence did.
  */
-export function checkDue(
-  report: UpdateReport,
-  now: number,
-  floor: number,
-  linux: boolean,
-): boolean {
-  if (!report.canCheck || cannotSelfInstall(report, linux)) return false;
+export function checkDue(report: UpdateReport, now: number, floor: number): boolean {
+  if (!report.canCheck) return false;
   return periodElapsed(Math.max(report.lastCheckedAt ?? floor, floor), now, CHECK_EVERY_MS);
 }
 
@@ -176,7 +197,8 @@ export interface UpdateCadenceOptions {
   every?: number;
   linux?: boolean;
   read?: () => Promise<UpdateReport | null>;
-  press?: () => Promise<void>;
+  /** The silent check. Named `poll` and not `press` because the two are different requests. */
+  poll?: () => Promise<void>;
   listen?: (show: (report: UpdateReport) => void) => Promise<() => void>;
 }
 
@@ -193,14 +215,21 @@ export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => vo
   const every = options.every ?? POLL_EVERY_MS;
   const linux = options.linux ?? BUILD_PLATFORM === "linux";
   const read = options.read ?? updateState;
-  const press = options.press ?? updatePress;
+  const poll = options.poll ?? updatePoll;
   const listen = options.listen ?? onUpdateState;
 
   const armedAt = now();
   let stopped = false;
   let release: (() => void) | null = null;
-  /** When this cadence last pressed — the second half of `checkDue`'s floor. */
-  let pressedAt: number | null = null;
+  /** When this cadence last asked — the second half of `checkDue`'s floor. */
+  let askedAt: number | null = null;
+  /**
+   * How many scheduled checks this window has spent on a refused install, and how many requests
+   * the shell has refused outright. Two counters because they bound two different runaways, and
+   * both reset the moment the condition they count goes away.
+   */
+  let onRefusedInstall = 0;
+  let refusedRequests = 0;
 
   /**
    * Decide what this report means for the strip.
@@ -235,18 +264,41 @@ export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => vo
     const report = await read();
     if (stopped || report === null) return;
     say(report);
-    if (checkDue(report, now(), Math.max(armedAt, pressedAt ?? armedAt), linux)) {
-      try {
-        await press();
-        /* STAMPED ONLY WHERE THE PRESS LANDED, and the order is the point. Stamping first would
-           hold a REJECTED press off for a full period — an older shell or a grant that dropped
-           the command would cost a whole day of not checking, on exactly the build where the
-           command is unreliable. A rejected press is retried on the next poll instead, which is
-           bounded by the poll interval and reaches no network at all: a command the shell
-           refuses is answered by the shell. */
-        pressedAt = now();
-      } catch {
-        /* A press that did not land must never take a mail client down. */
+
+    /* ── ONE RETRY AFTER A REFUSED INSTALL, THEN THIS WINDOW STOPS ASKING ──────────────────
+       `cannotSelfInstall` is certain on a package-managed copy and merely LIKELY elsewhere in
+       that state: an image on a read-only mount, or under a directory its user cannot write, or
+       a full disk, reaches it too and can be repaired while the app is open. Giving up on the
+       first failure would leave such a person with an app that never checks again for the life
+       of the window — the strip naming a stale version, "last checked" frozen at yesterday, and
+       nothing but Settings → Check now to escape it. Trying for ever is the other error, and it
+       is the expensive one: each attempt fetches the whole release and raises a dialog.
+
+       One more attempt is the bound. It costs one cycle, it recovers the case that can recover,
+       and it stops before "checked once a day" becomes "asked to restart once a day, forever". */
+    const refused = cannotSelfInstall(report, linux);
+    if (!refused) onRefusedInstall = 0;
+    const givenUp = refused && onRefusedInstall >= INSTALL_RETRIES;
+
+    if (givenUp || !checkDue(report, now(), Math.max(armedAt, askedAt ?? armedAt))) return;
+    if (refused) onRefusedInstall += 1;
+    try {
+      await poll();
+      /* STAMPED ONLY WHERE THE REQUEST LANDED, and the order is the point. Stamping first would
+         hold a REFUSED request off for a full period — an older shell, or a grant that dropped
+         the command, would cost a whole day of not checking on exactly the build where the
+         command is unreliable. */
+      askedAt = now();
+      refusedRequests = 0;
+    } catch {
+      /* A request that did not land must never take a mail client down — and must not turn into
+         a call every quarter hour for the life of the window either. A shell without the command
+         refuses every time, and nothing that could ever arrive would stop it, so the retries are
+         counted: a few quick ones for a transient refusal, then the period applies again. */
+      refusedRequests += 1;
+      if (refusedRequests >= REQUEST_RETRIES) {
+        askedAt = now();
+        refusedRequests = 0;
       }
     }
   };

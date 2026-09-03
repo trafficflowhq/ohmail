@@ -736,6 +736,16 @@ describe("the Rust side", () => {
       // anything.
       "update_state",
       "update_press",
+      // …and the THIRD, which is the difference between a check and an interruption. A press is
+      // a person asking, and this shell answers a person out loud: a press that finds nothing
+      // says "ohmail is up to date" in a dialog, a press that cannot reach the feed says so with
+      // a Try-again, and a press that finds a release opens the progress window. All three are
+      // right for somebody who just pressed a button; all three are wrong once a day forever, and
+      // routing the window's daily cadence through the press would have put a modal over
+      // somebody's mail every twenty-four hours for as long as the app stayed open and current.
+      // `update_poll` is the LAUNCH check's own path — `check(app, false)` — and is silent unless
+      // it finds something. It names nothing and takes no argument either.
+      "update_poll",
     ];
 
     expect(build).toMatch(/CARGO_FEATURE_LOCAL_ENGINE/);
@@ -1529,9 +1539,19 @@ describe("the auto-updater", () => {
      * protected is still the important one and is unchanged: the webview is granted no UPDATER
      * PLUGIN permission, and engine.rs contains no part of the update flow.
      *
-     * What engine.rs may now name is exactly two things — the two commands the settings pane
-     * calls — and the count is asserted, not just their presence: a third mention is a fourth
-     * verb somebody added without re-deciding this.
+     * What engine.rs may now name is exactly three things — the two commands the settings pane
+     * calls, and the silent check the window's daily cadence asks for — and the count is
+     * asserted, not just their presence: a fourth mention is a verb somebody added without
+     * re-deciding this.
+     *
+     * IT WAS TWO, and the third was argued in rather than appended. `update_poll` exists because
+     * a press is a person asking and this shell answers a person out loud: a press that finds
+     * nothing raises a dialog saying so. Routing the daily cadence through `update_press` would
+     * therefore have put a modal over somebody's mail every twenty-four hours for as long as the
+     * app stayed open and current. The new command is `check(app, false)` — the LAUNCH check's
+     * own path, silent unless it finds something — and it widens nothing else: it takes no
+     * argument, names no feed, and `may_start_check` refuses it in every stage where a payload is
+     * already waiting, so it can no more install than the press can.
      *
      * COMMENTS ARE STRIPPED FIRST, and that is a narrowing rather than a softening. The claim is
      * about what engine.rs COMPILES, and a raw text match cannot tell that from a sentence. It
@@ -1542,9 +1562,10 @@ describe("the auto-updater", () => {
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/^[ \t]*\/\/.*$/gm, "");
     const named = [...engineCode.matchAll(/updater/g)];
-    expect(named, "engine.rs names the updater somewhere new — re-decide this rule").toHaveLength(2);
+    expect(named, "engine.rs names the updater somewhere new — re-decide this rule").toHaveLength(3);
     expect(engineCode).toMatch(/crate::updater::update_state/);
     expect(engineCode).toMatch(/crate::updater::update_press/);
+    expect(engineCode).toMatch(/crate::updater::update_poll/);
     // And none of the flow, nor the plugin, nor a permission on it.
     for (const forbidden of [
       "tauri_plugin_updater",

@@ -17,12 +17,14 @@
  *
  * ── WHAT CROSSES THE BOUNDARY, WHICH IS AS LITTLE AS BEFORE ────────────────────────────────
  *
- * Two commands, neither taking an argument. {@link updateState} READS the flow's own value — the
- * installed version, the stage, what the last check found and when. {@link updatePress} does
- * exactly what picking the menu item does, and the shell decides what that means in the stage it
- * is in: start a check, or restart into a payload it already fetched and verified. There is no
- * "install" verb and no way to name a feed, a version or a file; a window that could would be a
- * window that had been handed the updater, which is the one thing this design has always refused.
+ * Three commands, none of them taking an argument. {@link updateState} READS the flow's own
+ * value — the installed version, the stage, what the last check found and when.
+ * {@link updatePress} does exactly what picking the menu item does, and the shell decides what
+ * that means in the stage it is in: start a check, or restart into a payload it already fetched
+ * and verified. {@link updatePoll} starts the check the LAUNCH check makes — the same request,
+ * without the dialogs a press earns by being somebody asking. There is no "install" verb and no
+ * way to name a feed, a version or a file; a window that could would be a window that had been
+ * handed the updater, which is the one thing this design has always refused.
  *
  * The push half is the `updater://state` event over the one receive-only
  * `core:event:allow-listen` grant the menu already uses — the shell can make this window hear
@@ -41,9 +43,10 @@
 /** The event the shell emits whenever the update flow moves. Spelled again in `updater.rs`. */
 export const UPDATE_STATE_EVENT = "updater://state";
 
-/** The two commands the shell registers for this file. */
+/** The three commands the shell registers for this file. */
 const STATE_COMMAND = "update_state";
 const PRESS_COMMAND = "update_press";
+const POLL_COMMAND = "update_poll";
 
 /**
  * Where the flow is. The same five the Rust `Stage` has, plus the honest sixth for a payload this
@@ -173,6 +176,31 @@ export async function updatePress(): Promise<void> {
   const shell = internals();
   if (!shell) return;
   await shell.invoke(PRESS_COMMAND);
+}
+
+/**
+ * Ask the shell to CHECK, on nobody's behalf — the launch check's own path, on a schedule.
+ *
+ * ── WHY THIS IS NOT {@link updatePress}, WHICH IS THE WHOLE POINT ──────────────────────────
+ *
+ * A press is a person asking, and the shell answers a person OUT LOUD: a press that finds
+ * nothing raises "ohmail is up to date", a press that cannot reach the feed raises an error with
+ * a Try-again, and a press that finds a release opens the progress window. Every one of those is
+ * right for somebody who has just pressed a button and would otherwise face dead air — and every
+ * one of them is wrong once a day, forever. A cadence routed through the press would put a modal
+ * over somebody's mail every twenty-four hours for as long as the app stayed open and current,
+ * which is precisely the nag the cadence exists to replace.
+ *
+ * The shell cannot tell the two apart from the call: `update_press` takes no argument, by design.
+ * So the difference is a second command rather than a flag this window supplies — and, like the
+ * other two, it names nothing, takes no argument and cannot install anything.
+ *
+ * Rejects on a shell too old to have it, which the caller treats as a press that did not land.
+ */
+export async function updatePoll(): Promise<void> {
+  const shell = internals();
+  if (!shell) return;
+  await shell.invoke(POLL_COMMAND);
 }
 
 /* ── ONE REGISTRATION FOR THE PROCESS, MANY SUBSCRIBERS ────────────────────────────────────────

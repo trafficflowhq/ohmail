@@ -80,6 +80,12 @@ const WINDOW_COMMANDS: &[&str] = &[
     // in the shell.
     "update_state",
     "update_press",
+    // …and the third, which is the SAME check the app makes at launch, on a schedule.
+    // It is a separate command rather than an argument because a press is a person asking,
+    // and this shell treats that as licence to speak: a press that finds nothing says so in
+    // a dialog. Routing a daily cadence through the press would put that dialog over
+    // somebody's mail every day. `src/updater.rs` carries the reasoning.
+    "update_poll",
 ];
 
 fn main() {
