@@ -13,6 +13,31 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### ohmail looks for its own update at least once a day
+
+The app checked for a new release when it started, and whenever you asked it to. If you
+never quit it — and most people do not quit a mail client — it never asked again. It now
+re-checks daily while it is running, measured on the clock rather than on how long the
+machine has been awake, so closing the lid every evening does not postpone it.
+
+Nothing installs itself. When a release is found it is fetched, checked against the
+signing key and offered, exactly as before, and one press installs it. What is new is
+what happens if you answer "Later": the update used to wait in silence until you next
+restarted the app. A quiet line above your mail now says it is ready — at most once a
+day, never twice about the same release, and never while you are writing a message. You
+can put it away.
+
+On Linux, if you installed ohmail from your distribution's packages, the app cannot
+replace its own files and never could; the install failed and told you to try again. It
+now says what is actually true and points at your package manager instead.
+
+Settings → About still shows the version you are on, when it last checked, and a "Check
+now" button. It is where the daily answer shows up.
+
+**In the browser**, a tab left open for days had no way to know that a newer ohmail was
+being served. It notices now, and offers a reload — at most once a day, and never over a
+message you are writing.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
