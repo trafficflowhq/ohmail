@@ -202,6 +202,72 @@ export const mailboxes = pgTable("mailboxes", {
    * the line 0027 drew when it refused to invent a `takeover_authorized_at`.
    */
   organizeConsentedAt: timestamp("organize_consented_at", { withTimezone: true }),
+  /**
+   * ── Mail 0088 — WHEN THE ORGANIZING SITUATION LAST CHANGED, AND WHEN IT WAS ACKNOWLEDGED ──
+   *
+   * The pair is a NOTICE expressed as two instants rather than as a flag, and the derivation is
+   * the whole design: a client shows the line iff `organizerEventAt > coalesce(organizerEventSeenAt,
+   * -infinity)`. Three properties follow from that shape and none of them would follow from a
+   * boolean:
+   *
+   *  · ONCE PER EVENT, on every door at once. A phone, a browser and a desktop reading one row
+   *    agree about whether the person has seen this change; a per-client flag would show the same
+   *    sentence once per client.
+   *  · TWO EVENTS BETWEEN TWO READS COLLAPSE TO THE LATER ONE, by construction. There is no queue
+   *    to drain, so a mailbox that changed hands twice while nobody looked produces one notice
+   *    describing where it ended up — which is the only statement that is still true.
+   *  · A DISMISSAL CANNOT SUPPRESS A LATER EVENT. Stamping `seenAt` answers the event that stood
+   *    when the press happened and nothing after it, because the comparison is against instants
+   *    rather than against a state.
+   *
+   * `organizerEventAt` is written by EVERY writer of the (role, state, holder) triple, and that is
+   * a census rather than a convention: a writer that changes who organizes a mailbox and does not
+   * stamp this leaves a client showing yesterday's sentence with no way to notice.
+   *
+   * NO KIND COLUMN beside them. The sentence a client renders is derived at read time from the
+   * role, `organizerState` and the holder columns, which are the same facts a stored kind would
+   * copy — and a copy is a thing that drifts the first time one writer updates one and not the
+   * other.
+   */
+  organizerEventAt: timestamp("organizer_event_at", { withTimezone: true }),
+  organizerEventSeenAt: timestamp("organizer_event_seen_at", { withTimezone: true }),
+  /**
+   * ── Mail 0088 — "STOP ORGANIZING THIS MAILBOX, KEEP MY MAIL", AS A REQUEST ────────────────
+   *
+   * The mirror image of {@link takeoverAuthorizedAt}, and it is a one-shot for the same reason:
+   * it authorizes one CEASING, not a standing refusal to organize. The route that writes it opens
+   * no socket and touches no role — expunging the claim is an IMAP write, and IMAP writes belong
+   * to the process holding the connection. The organizer's own next pass honours it FIRST, before
+   * it reads the lease at all: it releases the claim, writes the reader role with the holder
+   * columns cleared, closes the appointments it can no longer keep, and clears this column.
+   *
+   * Written under the same `FOR UPDATE` on the mailbox row that `organizeHere` and `delete` take,
+   * so the three serialize: a release racing a claim-back cannot leave a row that is both asking
+   * to stop and authorized to start.
+   */
+  releaseRequestedAt: timestamp("release_requested_at", { withTimezone: true }),
+  /**
+   * ── Mail 0088 — AND THE RECORD THAT THE CEASING HAPPENED ─────────────────────────────────
+   *
+   * {@link releaseRequestedAt} is the ASK and is cleared the instant it is honoured. This is what
+   * the row keeps afterwards, and it exists because the state a release leaves behind is otherwise
+   * INDISTINGUISHABLE from the state a stand-down leaves behind once the winner goes away.
+   *
+   * Both are `organizer_role='reader'` with a consent stamp and four NULL holder columns — because
+   * the reader's own per-cycle peek (`refreshOrganizerHolder`, and the sidecar's twin) writes those
+   * four NULL whenever it looks and finds an empty folder, which is exactly what a stood-down
+   * reader sees the moment the install that beat it releases or is removed.
+   *
+   * Telling them apart is not cosmetic. "Somebody took this mailbox from you" and "you stopped
+   * organizing it here" are different sentences on the claim-back screen, and the first owes a
+   * pending scheduled send an ending that the second has already given it. {@link standDownMemory}
+   * is the one reader, and it answers `null` for a released row precisely so that neither the
+   * sentence nor the launch catch-up fires for a ceasing nobody else caused.
+   *
+   * Cleared by every promotion, so it describes the CURRENT state and never a history: a mailbox
+   * organized here again is not a released one.
+   */
+  organizerReleasedAt: timestamp("organizer_released_at", { withTimezone: true }),
   // ── Mail 0065 — the provider's OWN Junk and Trash folders, as discovered at connect ──
   //
   // Canonical (`/`-delimited) paths, resolved by the worker's connect-time discovery
@@ -2006,6 +2072,76 @@ export const awaySenderState = pgTable("away_sender_state", {
   // THE SERIALISER. The upsert's conflict target, so it is the primary key rather than a unique
   // index beside one: there is no other identity for this row.
   pk: primaryKey({ columns: [t.accountId, t.sender] }),
+}));
+
+/**
+ * A DECISION MADE WHERE THE MAILBOX IS READ, WAITING FOR THE INSTALL THAT ORGANIZES IT (mail 0088).
+ *
+ * ── WHY THE ROW IS NOT THE RECORD ──────────────────────────────────────────────────────────
+ *
+ * The IMAP mailbox is the master, and it is the only medium two installs share — so the thing an
+ * organizer actually acts on is a message the reader appends to `ohmail/_meta`, never this row.
+ * What this table holds is the READER'S OWN BOOKKEEPING: which of its decisions have been handed
+ * to the mailbox, which the organizer has taken, and which have sat there long enough that the
+ * person should be told nobody is organizing.
+ *
+ * Reading it the other way round — the row as the record, the mailbox as a cache — would make a
+ * decision travel through a database two installs may not share, which is precisely the
+ * arrangement the lease exists to avoid.
+ *
+ * ── THE FOUR STATES, AND WHAT MOVES BETWEEN THEM ───────────────────────────────────────────
+ *
+ *   pending  the door wrote it and the reader's cycle has not appended it yet.
+ *   sent     it is in the mailbox. The organizer has not drained it.
+ *   applied  its id is no longer in the mailbox, so the organizer took and expunged it.
+ *   expired  it was still there 24 h later. Nobody is organizing, and the sender returns to the
+ *            reader's queue with a sentence saying so.
+ *
+ * Only the READER advances any of them, and it advances them by LOOKING at the folder — never by
+ * hearing from the organizer, which would need a channel neither side has.
+ *
+ * NO FOREIGN KEYS, on `away_replies`'s rule: the record has to outlive the message it decides
+ * about and the mailbox row it was made against, so a cascade would erase the evidence that a
+ * decision was ever made. The account erasure deletes these rows by `account_id` instead.
+ */
+export const organizerRequests = pgTable("organizer_requests", {
+  /** Also the `X-Ohmail-Request-Id` of the appended record — the two identities are one. */
+  id: uuid("id").defaultRandom().primaryKey(),
+  accountId: uuid("account_id").notNull(),
+  /** The mailbox the decision is about. NO foreign key — see the header. */
+  mailboxId: uuid("mailbox_id").notNull(),
+  /**
+   * WHICH APPLIER RUNS on the organizer side. Closed by `organizer_requests_kind_closed`, for the
+   * reason every closed set in this file is closed: an unhandled member is resolved by whichever
+   * branch the drain falls through to, and here that branch moves somebody's mail.
+   */
+  kind: text("kind").notNull(),
+  /**
+   * THE DECISION ITSELF, and it is UNTRUSTED INPUT on the organizer's side of the handover — it
+   * arrives through an RFC822 header written by another install. It is validated by the same
+   * function the organizer's own door validates with, before anything is applied, and bounded at
+   * the write site.
+   */
+  payload: jsonb("payload").notNull(),
+  /**
+   * WHEN THE PERSON DECIDED, by the deciding door's clock. The drain applies in this order, so two
+   * doors deciding one sender within one cycle land in the order the human made them rather than
+   * in the order the IMAP server happens to list them.
+   */
+  decidedAt: timestamp("decided_at", { withTimezone: true }).notNull(),
+  /** One of the four above. Closed by `organizer_requests_state_closed`. */
+  state: text("state").notNull().default("pending"),
+  /** When it was appended to the mailbox. NULL while `pending`. */
+  sentAt: timestamp("sent_at", { withTimezone: true }),
+  /** When it became `applied` or `expired`. NULL before that. */
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  // THE DRAIN'S OWN READ — "what of mine is still outstanding on this mailbox", once per cycle.
+  // Without it that is a sequential scan of every request the install has ever made, per mailbox,
+  // per cycle: no query is wrong and every test stays green, which is why the index census lists
+  // it rather than trusting the shape.
+  ixMailboxState: index("organizer_requests_mailbox_state_idx").on(t.mailboxId, t.state),
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────

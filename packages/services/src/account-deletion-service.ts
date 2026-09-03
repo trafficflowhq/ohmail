@@ -32,6 +32,7 @@ import {
   messageStates,
   messages,
   notifyRules,
+  organizerRequests,
   outboundSends,
   pairingTokens,
   refreshTokens,
@@ -394,6 +395,14 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     await drop("away_replies", tx.delete(awayReplies).where(eq(awayReplies.accountId, accountId)));
     await drop("away_sender_state", tx.delete(awaySenderState).where(eq(awaySenderState.accountId, accountId)));
     await drop("away_responders", tx.delete(awayResponders).where(eq(awayResponders.accountId, accountId)));
+    // The reader's outstanding decisions (mail 0088). Its `payload` carries whatever the person
+    // decided about a sender — on a `screener.decide` that is a CORRESPONDENT'S ADDRESS and the
+    // verdict passed on them, which is the same class as the two rows above it and is held for a
+    // shorter time only by luck. The table has no foreign key by design (the record has to outlive
+    // the message and the mailbox row), so nothing cascades it and this line is the only thing
+    // that removes it. The catalog sweep enumerates every table with an `account_id` column, so
+    // this was red there until it landed.
+    await drop("organizer_requests", tx.delete(organizerRequests).where(eq(organizerRequests.accountId, accountId)));
     await drop("rules", tx.delete(rules).where(eq(rules.accountId, accountId)));
     await drop("graduations", tx.delete(graduations).where(eq(graduations.accountId, accountId)));
     await drop("learning_signals", tx.delete(learningSignals).where(eq(learningSignals.accountId, accountId)));

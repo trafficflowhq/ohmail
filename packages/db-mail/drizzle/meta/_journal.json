@@ -617,6 +617,13 @@
       "when": 1791600000006,
       "tag": "0087_away_reply_throttle",
       "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1791600000007,
+      "tag": "0088_symmetric_takeover",
+      "breakpoints": true
     }
   ]
 }

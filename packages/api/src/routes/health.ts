@@ -968,6 +968,29 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // validator refuses anything else at the boundary. A missing CHECK costs a defence in depth, not
   // a delivery rate.
   ["away_responders", "throttle"],
+  // mail 0088_symmetric_takeover — the notice's two instants, the release request and the
+  // reader's request queue. TWO markers for a four-object migration, on this list's standing
+  // rule: probe the column a QUERY actually reads, once per table facet. One migration is one
+  // transaction, so a partial 0088 is not reachable and two probes detect exactly what four
+  // would; the two name the two decisions.
+  //
+  //  · `mailboxes.organizer_event_at` is the whole notice. `MailboxService` selects WHOLE ROWS,
+  //    so an API deployed ahead of the migration answers Postgres 42703 on the mailbox panel and
+  //    on the connect flow — `mailboxes.error_code`'s argument, unchanged. It is also the column
+  //    whose absence is worst on the WORKER side, and there the failure is quiet rather than
+  //    loud: every writer of the (role, state, holder) triple stamps it, so a worker ahead of the
+  //    migration would fail its stand-down write and leave the row saying `organizer` about a
+  //    mailbox it has stopped organizing. `release_requested_at` rides this marker — it is added
+  //    by the same statement group and read by the same whole-row selects.
+  //  · `organizer_requests.state` is the queue's own facet. A database without the TABLE answers
+  //    42P01 the first time a reader appends, which is loud; a database that took the table and
+  //    not the CHECK is the quiet one, and that is what the CHECK marker below covers. The column
+  //    marker is here so the table's absence names this migration rather than surfacing as a
+  //    relation error inside a cycle.
+  //
+  // Deploy order is migration → API → worker, 0083's exact reasoning. Two CHECK markers below.
+  ["mailboxes", "organizer_event_at"],
+  ["organizer_requests", "state"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -1174,6 +1197,22 @@ export const SCHEMA_CHECK_MARKERS: ReadonlyArray<string> = [
   // bracket atom walked through it into a column an operator reads. It is the NEWEST entry in the
   // mail journal.
   "mailboxes_smtp_size_probe_code_closed",
+  // mail 0088_symmetric_takeover — the TWO closed sets on `organizer_requests`. Listed on 0027's
+  // rule (the column and the CHECK fail DIFFERENTLY, and only one is loud), and both have 0053's
+  // silent-degradation shape with a sharper edge than most of this list:
+  //
+  //  · `organizer_requests_kind_closed` decides WHICH APPLIER RUNS on the organizer's side of a
+  //    handover. The value arrives out of an RFC822 header another install wrote, so it is
+  //    untrusted by construction; a member outside the set would be resolved by whichever branch
+  //    the drain falls through to, and the branches in that drain move somebody's mail. The write
+  //    site takes a typed literal, so the compiler refuses free text today — and that is code,
+  //    and code regresses.
+  //  · `organizer_requests_state_closed` is the queue's own progress. A value outside the set
+  //    matches none of the four reads, so the request is neither handed over, nor applied, nor
+  //    expired: it simply stops moving, with no error in any log and nothing to grep for. That is
+  //    the exact silence 0053's entry describes.
+  "organizer_requests_state_closed",
+  "organizer_requests_kind_closed",
 ];
 
 /**
@@ -1673,8 +1712,12 @@ export const MAIL_EXPECTED_MARKERS =
  * their statements, which is why the tag below skips over them too.
  *
  * `0087_away_reply_throttle` is probed as `away_responders.throttle` — see that marker's own entry
- * for why the column and not either of the two tables the migration creates. **It is the newest
- * entry, so it is also the tag below.**
+ * for why the column and not either of the two tables the migration creates.
+ *
+ * `0088_symmetric_takeover` is probed as TWO columns and TWO CHECKs —
+ * `mailboxes.organizer_event_at` (the notice, and the column whose absence is quiet on the worker
+ * side) and `organizer_requests.state`, plus both of that table's closed sets. See each list's own
+ * entry for why two columns and not four. **It is the newest entry, so it is also the tag below.**
  *
  * That last sentence is the one this docblock keeps getting wrong, and it is now attached to the
  * marker that is actually newest rather than left on an older one. It stood on `0081` and then on
@@ -1693,7 +1736,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0087_away_reply_throttle";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0088_symmetric_takeover";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */
