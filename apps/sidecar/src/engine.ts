@@ -20,7 +20,7 @@ import {
   mailboxCredentials, mailboxes,
   // Mail 0083 — the role vocabulary and the machine-name bound. One spelling for the sidecar's
   // gate, the worker's gate and the eleven service write doors; see `db/src/organizer-role.ts`.
-  organizerDisplayName, isOrganizerRole,
+  organizerDisplayName, isOrganizerRole, capabilitiesColumn,
   type MailboxDisabledReason, type OrganizerRole, type Tx,
 } from "@trafficflow/db";
 import {
@@ -104,6 +104,11 @@ import {
 // `notePeekedHolder`.
 import { readLeasePeek, type LeasePeekIo } from "@trafficflow/core/adapters/organizer-lease";
 import { OrganizerProfileSync } from "@trafficflow/worker/profile";
+// THE SYMMETRIC-TAKEOVER REQUEST DRAIN (0.14.1), from the worker's own subpath for
+// the same reason `OrganizerProfileSync` is: one implementation of "apply a reader's decision" or
+// "carry this install's own decisions to the mailbox", not a second one that could disagree with
+// what the hosted worker does. See `apps/worker/package.json`'s `//request-drain` note.
+import { applyMetaRequests, driveOutstandingRequests } from "@trafficflow/worker/request-drain";
 // The SCHEDULED-RESURFACE FLIP, from the same package and for the third instance of the same
 // argument. "Resurfaces Friday at 9" is a dated promise the product makes to the user, and the
 // only thing that can keep it is a pass that notices the date has arrived. On a hosted account
@@ -1389,7 +1394,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       try {
         const [row] = await db.select({
           policy: accountSettings.ohboxPolicy, bar: accountSettings.ohboxBar,
-          // ── THE WINDOW, WHICH THIS DOOR DID NOT HAVE (mail 0083) ──────────────────────
+          // ── THE WINDOW, WHICH THIS DOOR DID NOT HAVE  ──────────────────────
           //
           // Before this line `apps/sidecar/src/engine.ts` contained zero occurrences of
           // `screeningCutoff`, `dormancy` or `screeningBaseline` — so the standalone install,
@@ -2550,7 +2555,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       /**
        * Read the lease. Returns false when this install must not organize, and makes that durable.
        *
-       * ── WHAT THE LOSER BECOMES (mail 0083 — this paragraph used to say the opposite) ────────
+       * ── WHAT THE LOSER BECOMES (the mailbox-removal design — this paragraph used to say the opposite) ────────
        *
        * The loser is a READER: connected, poll timer running, mirror growing, `\Seen` its one IMAP
        * write verb. It is NOT a stopped install, and this header said it was — *"stands down on its
@@ -2572,7 +2577,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        */
       /**
        * WHAT THE ROW ALREADY SAYS THE HOLDER IS, so the peek below writes only when something
-       * CHANGED (mail 0088).
+       * CHANGED (0.14.1).
        *
        * The hosted twin (`index.ts#MailboxRuntime.holderSeen`) has carried this since the reader
        * mode landed; this side wrote every poll instead. Seeded NULL rather than from `world`,
@@ -2585,7 +2590,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        */
       const holderSeen: {
         kind: string | null; name: string | null; since: Date | null; state: string | null;
-      } = { kind: null, name: null, since: null, state: null };
+        /** Mail 0089 — the fifth holder column, tracked beside the other four for the same reason. */
+        capabilities: string | null;
+      } = { kind: null, name: null, since: null, state: null, capabilities: null };
 
       /**
        * AN INSTALL THAT IS NOT THE ORGANIZER LOOKS, AND STILL DOES NOT CLAIM.
@@ -2645,13 +2652,16 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           const name = top && top.displayName.trim() !== "" ? organizerDisplayName(top.displayName) : null;
           const kind = top === null ? null : top.kind;
           const since = top ? top.claimedAt : null;
+          // Mail 0089 — the fifth holder column, computed the same way the hosted twin
+          // (`index.ts#refreshReaderHolder`) does: comma-joined, lowercased, empty ⇒ null.
+          const capabilities = top ? capabilitiesColumn(top.capabilities) : null;
           /* The REASON is the caller's, because the two arms that peek mean different things by
              the same four columns. A pre-consent install names no reason — nobody has stood
              anything down and putting "another install has claimed this mailbox" in front of
              somebody who simply has not finished setup would be false. A DEMOTED reader names the
              stand-down it remembers, so the pane keeps saying why it is not organizing. */
           organizer = { organizing: false, reason, heldBy: name };
-          /* ── ZERO WRITES IN THE STEADY STATE, AND THE CHECK IS NEW (mail 0088) ──────────────
+          /* ── ZERO WRITES IN THE STEADY STATE, AND THE CHECK IS NEW (0.14.1) ──────────────
            *
            * This block claimed "ONLY WHEN SOMETHING CHANGED" and then wrote unconditionally — one
            * UPDATE per mailbox per poll for four values that were already there. The hosted twin
@@ -2664,7 +2674,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            * every fifteen seconds for ever.
            */
           const same = holderSeen.kind === kind && holderSeen.name === name
-            && holderSeen.state === state
+            && holderSeen.state === state && holderSeen.capabilities === capabilities
             && (holderSeen.since ? holderSeen.since.getTime() : null)
               === (since ? since.getTime() : null);
           if (same) return;
@@ -2680,11 +2690,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               organizedByName: name,
               organizedSince: since,
               organizerState: state,
+              // Mail 0089 — the fifth holder column, on the same read.
+              organizedByCapabilities: capabilities,
               ...(stateChanged ? { organizerEventAt: now() } : {}),
             })
             .where(eq(mailboxes.id, mb.id));
           holderSeen.kind = kind; holderSeen.name = name;
           holderSeen.since = since; holderSeen.state = state;
+          holderSeen.capabilities = capabilities;
         } catch (err) {
           log("organizer_peek_failed", {
             err,
@@ -2714,7 +2727,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * exactly what it was before this read existed. A takeover deferred to the next poll is a
          * far better outcome than a launch that fails because a status read did.
          */
-        /** What the ROW says the role is, re-read every pass beside the stamp (mail 0088). */
+        /** What the ROW says the role is, re-read every pass beside the stamp (0.14.1). */
         let rowRole: string = "organizer";
         /**
          * DID THE READ ABOVE ACTUALLY LAND? — and this is a `let` rather than an inferred default
@@ -2746,7 +2759,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             // that separates "nobody has been asked" from "this install is the organizer", and
             // before it was read here NOTHING on this door read it at all.
             consentedAt: mailboxes.organizeConsentedAt,
-            /* ── AND THE ROLE, WHICH IS WHAT THE RAM MEMORY WAS STANDING IN FOR (mail 0088) ──
+            /* ── AND THE ROLE, WHICH IS WHAT THE RAM MEMORY WAS STANDING IN FOR (0.14.1) ──
              *
              * `priorStandDown` was a process-local `let`, and the arm it guarded was the whole of
              * "this desktop does not auto-resume". Two things were wrong with reading RAM here and
@@ -2770,6 +2783,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             byName: mailboxes.organizedByName,
             since: mailboxes.organizedSince,
             state: mailboxes.organizerState,
+            // Mail 0089 — the fifth holder column, in the same read for the same reason.
+            capabilities: mailboxes.organizedByCapabilities,
           })
             .from(mailboxes).where(eq(mailboxes.id, mb.id)).limit(1);
           if (row) {
@@ -2783,6 +2798,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             holderSeen.name = row.byName;
             holderSeen.since = row.since;
             holderSeen.state = row.state;
+            holderSeen.capabilities = row.capabilities;
           }
         } catch (err) {
           log("organizer_takeover_reread_failed", {
@@ -2792,7 +2808,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           });
         }
 
-        /* ══ THE RELEASE IS HONOURED FIRST, BEFORE THE LEASE IS READ AT ALL (mail 0088) ═══════
+        /* ══ THE RELEASE IS HONOURED FIRST, BEFORE THE LEASE IS READ AT ALL (0.14.1) ═══════
          *
          * The hosted twin's arm, and its whole argument applies verbatim: "stop organizing this
          * mailbox and keep my mail" is not a question for the lease, and reading the lease first
@@ -2838,12 +2854,15 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 organizedByName: null,
                 organizedSince: null,
                 organizerState: null,
+                // Mail 0089 — the fifth holder column goes with the other four; nobody won this
+                // mailbox, so nobody offers anything.
+                organizedByCapabilities: null,
                 // Both stamps are spent. They are contradictory instructions about one mailbox, and
                 // a release that left a becoming authorized would be promoted straight back by the
                 // very next poll — the control undoing itself.
                 releaseRequestedAt: null,
                 takeoverAuthorizedAt: null,
-                // AND THE RECORD THAT IT HAPPENED (mail 0088). The ask is gone; without this the
+                // AND THE RECORD THAT IT HAPPENED (0.14.1). The ask is gone; without this the
                 // row is byte-identical to a stood-down reader whose winner has since gone away,
                 // and the launch catch-up for orphaned appointments would stop running on it. See
                 // `standDownMemory`'s released arm.
@@ -2853,6 +2872,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               .where(eq(mailboxes.id, mb.id));
             holderSeen.kind = null; holderSeen.name = null;
             holderSeen.since = null; holderSeen.state = null;
+            holderSeen.capabilities = null;
           } catch (err) {
             log("organizer_release_write_failed", {
               err,
@@ -3031,7 +3051,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                   status: sql`case when ${mailboxes.disabledReason} is not null then 'connected' else ${mailboxes.status} end`,
                   disabledReason: null,
                   takeoverAuthorizedAt: null,
-                  /* -- THE ROLE, IN THE SAME STATEMENT AS THE STAMP IT SPENDS (mail 0083) --------
+                  /* -- THE ROLE, IN THE SAME STATEMENT AS THE STAMP IT SPENDS  --------
                    *
                    * Without this the row still says `reader` for an install the lease has just
                    * made the ORGANIZER, and `organizer_role` is the authority every write door
@@ -3051,7 +3071,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                   // Mail 0088 — a mailbox organized here again is not a released one. The marker
                   // describes the CURRENT state, so the promotion ends it.
                   organizerReleasedAt: null,
-                  /* -- AND THE HOLDER COLUMNS GO WITH THE ROLE (mail 0088) ---------------------
+                  /* -- AND THE HOLDER COLUMNS GO WITH THE ROLE (0.14.1) ---------------------
                    *
                    * This block used to leave them, under a note reading *"the two clean-up columns
                    * are deliberately NOT touched: `organized_by_*` is what the pane renders about
@@ -3075,6 +3095,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                   organizedByName: null,
                   organizedSince: null,
                   organizerState: null,
+                  // Mail 0089 — the fifth holder column goes with the other four, for the same
+                  // reason: this row is now the organizer and names no holder at all.
+                  organizedByCapabilities: null,
                   /* -- MAIL 0088: THE ORGANIZING SITUATION JUST CHANGED, SO SAY WHEN ----------
                    *
                    * The fourth of the five writers of the (role, state, holder) triple, and this
@@ -3147,7 +3170,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             "and send, and it moves, files and deletes nothing",
         });
         try {
-          /* -- THE ROLE, NOT THE STATUS (mail 0083) ------------------------------------------
+          /* -- THE ROLE, NOT THE STATUS  ------------------------------------------
            *
            * This wrote `status: "disabled"` and the install stopped: the timer was cleared, the
            * login closed, the mirror frozen at the instant of the handover. That is what
@@ -3175,6 +3198,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               organizedByName: organizerDisplayName(outcome.by?.displayName ?? null),
               organizedSince: outcome.by?.claimedAt ?? null,
               organizerState: outcome.state,
+              // Mail 0089 — the fifth holder column, from the SAME verdict.
+              organizedByCapabilities: capabilitiesColumn(outcome.by?.capabilities ?? null),
               /* THE STAMP THIS PASS READ, and only that one — see {@link observedTakeoverAt}. A
                  press that landed while the lease was being read was never offered to it, and
                  clearing it here would answer a request nothing ever considered. `IS NOT DISTINCT
@@ -3212,7 +3237,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // appointment. A failed close is retried by the launch catch-up while the row still says
         // stood down.
         await standDownAppointments(outcome.reason);
-        /* -- THE TIMER AND THE LOGIN STAY (mail 0083) ----------------------------------------
+        /* -- THE TIMER AND THE LOGIN STAY  ----------------------------------------
          *
          * Three statements used to follow this line — `stopped = true`, `clearTimeout(timer)`,
          * `adapter.close()` — and together they were the whole of "stops syncing entirely". They
@@ -3406,7 +3431,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       };
 
       /**
-       * The drain itself. Never called from outside this closure, and — since mail 0083 — reached
+       * The drain itself. Never called from outside this closure, and — since the mailbox-removal design — reached
        * by a READER as well as by an organizer; `organizer.organizing` is what separates them, both
        * for the passes below and for the `role` every cycle runs under.
        */
@@ -3724,6 +3749,38 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               });
             }
           }
+          /**
+           * ── THE REQUEST DRAIN / THE READER'S OWN CYCLE (0.14.1) ──────────────────
+           *
+           * ONCE PER `syncUntilQuiet()`, not once per inner `drain()` cycle — `ensure_folders`'s
+           * own reasoning applies verbatim: this reads or writes `ohmail/_meta` and doing so once
+           * per DRAIN is a round trip per poll, not a round trip per batch.
+           *
+           * ORGANIZING → `applyMetaRequests` (apply a reader's decision, expunge it); otherwise
+           * → `driveOutstandingRequests` (append this install's own pending decisions, observe
+           * what the organizer took). See `@trafficflow/worker/request-drain`'s own header for
+           * why neither performs a physical IMAP move of its own — `drain()`'s own `runSyncCycle`
+           * call, right after this, reconciles the `folder_state` rows either one writes.
+           */
+          try {
+            if (organizing) {
+              await applyMetaRequests(
+                db, { mailboxId: mb.id, accountId: world.accountId, adapter }, now(),
+                (event, detail) => log(event, { mailboxId: mb.id, ...detail }),
+              );
+            } else {
+              await driveOutstandingRequests(
+                db, { mailboxId: mb.id, accountId: world.accountId, adapter },
+                { installId, kind: "local" }, now(),
+                (event, detail) => log(event, { mailboxId: mb.id, ...detail }),
+              );
+            }
+          } catch (err) {
+            log("organizer_requests_drain_failed", {
+              err, mailboxId: mb.id,
+              reason: "this pass reads or organizes mail regardless; the next pass tries again",
+            });
+          }
           const cycles = await drain(maxCycles);
           // ── THE PORTABLE PROFILE'S WRITE-BEHIND TICK, BEHIND THE GATE IT RIDES ────────────
           //
@@ -3865,7 +3922,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               schedule();
               return;
             }
-            /* -- `!permitted` IS "NOT THE ORGANIZER", NOT "STOP" — THE LAUNCH HALF (mail 0083) --
+            /* -- `!permitted` IS "NOT THE ORGANIZER", NOT "STOP" — THE LAUNCH HALF  --
              *
              * This branch used to `return` here, and what it returned before is the whole first
              * drain, the special-folder discovery AND `schedule()` — so a stood-down install came up

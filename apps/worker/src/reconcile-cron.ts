@@ -10,6 +10,7 @@ import {
   markMailboxStoodDown, stampMailboxSyncNow, type LeaderFence,
 } from "./mailboxes.js";
 import { LeaderFencedError, runSyncCycle, type SyncDeps } from "./sync.js";
+import { applyMetaRequests } from "./request-drain.js";
 import { OrganizerProfileSync } from "./profile.js";
 import { makeStorageCapResolver } from "./storage-cap.js";
 import {
@@ -184,7 +185,7 @@ export async function runReconcileCron(
       });
       return { ran: false, reason: "mailbox-disabled" };
     }
-    // ── AND A **READER** ROW IS REFUSED HERE, BEFORE THE DIAL (mail 0083) ──────────────────
+    // ── AND A **READER** ROW IS REFUSED HERE, BEFORE THE DIAL  ──────────────────
     //
     // This whole pass is an ORGANIZER backstop: it dials, takes the lease permit, ensures the
     // `ohmail/*` tree, and runs two full cycles with `role: "organizer"` — every one of those a
@@ -209,7 +210,7 @@ export async function runReconcileCron(
       return { ran: false, reason: "mailbox-reader" };
     }
 
-    /* ── AND A MAILBOX SOMEBODY HAS ASKED THIS INSTALL TO STOP ORGANIZING (mail 0088) ─────────
+    /* ── AND A MAILBOX SOMEBODY HAS ASKED THIS INSTALL TO STOP ORGANIZING (0.14.1) ─────────
      *
      * The arm above reads the ROLE, and a pending release deliberately does not move it: the row
      * stays `organizer` until the always-on gate honours the request, because the claim lives in
@@ -296,7 +297,7 @@ export async function runReconcileCron(
       // A fenced-out write still stands the mailbox down IN THIS PROCESS: the decision not to
       // organize is ours and is not contingent on recording it.
       try {
-        // The holder columns ride the same write (mail 0083): the demotion IS the banner, and the
+        // The holder columns ride the same write : the demotion IS the banner, and the
         // claim this verdict was reached from is the claim the row should name.
         const written = await markMailboxStoodDown(db, mailboxId, err.reason, {
           fence,
@@ -305,6 +306,7 @@ export async function runReconcileCron(
             displayName: err.by?.displayName ?? null,
             claimedAt: err.by?.claimedAt ?? null,
             state: err.state,
+            capabilities: err.by?.capabilities ?? null,
           },
         });
         if (!written) {
@@ -465,7 +467,7 @@ export async function runReconcileCron(
     await profileSync.armHoldFromFolder();
     const deps: SyncDeps = {
       repo: makeDrizzleRepo(db), adapter, accountId, mailboxId,
-      // ORGANIZER, always, and typed rather than derived (mail 0083). This pass reached here only
+      // ORGANIZER, always, and typed rather than derived . This pass reached here only
       // by passing the reader refusal above AND the lease permit, so the role is a fact about the
       // path rather than a value to look up — and typing it is what makes the census over
       // `runSyncCycle` call sites able to see this composition at all.
@@ -489,6 +491,28 @@ export async function runReconcileCron(
       // no worker leads, and it stands down the moment one does. A cold read per sweep is cheaper
       // to reason about than a memo whose whole safety argument is about who holds the mailbox.
     };
+    // ── THE REQUEST DRAIN, ONCE PER SWEEP, BEFORE THE FIRST CYCLE (0.14.1) ───────────
+    //
+    // This pass IS an organizer path (typed `role: "organizer"` above, reached only past the
+    // reader refusal and the lease permit), so it owes the same drain the always-on worker's
+    // `visitMailbox` owes — see `request-drain.ts`'s own header for why draining before
+    // `runSyncCycle` matters and why nothing here performs a physical IMAP move of its own (the
+    // `folder_state` rows it writes are picked up by THIS sweep's own `runSyncCycle` →
+    // `reconcileFolders`, same as `ensureFolders()` above running once per sweep rather than
+    // once per cycle). A second drain before the SECOND cycle is not owed: nothing new can have
+    // been appended to `ohmail/_meta` in the gap between two cycles this pass itself runs
+    // back-to-back, and the next sweep or the always-on worker picks up anything that does.
+    try {
+      await applyMetaRequests(
+        db, { mailboxId, accountId: row.accountId, adapter }, new Date(),
+        (event, detail) => log.info(cronEvent("reconcile", event), { mailboxId, accountId: row.accountId, ...detail }),
+      );
+    } catch (err) {
+      log.warn(cronEvent("reconcile", "organizer_requests_drain_failed"), {
+        mailboxId, accountId: row.accountId, err,
+        reason: "this sweep organizes mail regardless; the next sweep or the always-on worker drains it",
+      });
+    }
     try {
       // The hold is EVALUATED from the current facts before each pass — never cached (see
       // `importDecisionOpenNow`): an answer landing between the preflight and the first pass,

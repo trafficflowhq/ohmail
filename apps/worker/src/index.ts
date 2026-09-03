@@ -2,7 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 import {
   pruneIdempotencyKeys, noticeSinkFor, setNoticeSink, accountSettings, mailboxCredentials, mailboxes,
   messages, folderState, junkSweepCandidateWhere, closeStoodDownAppointments,
-  RELEASED_ORGANIZER_SEND_SENTENCE,
+  RELEASED_ORGANIZER_SEND_SENTENCE, capabilitiesColumn,
 } from "@trafficflow/db";
 import { makeOwnedDb, makeChangeWakeHub, type OwnedDb, type ChangeWakeFanout } from "@trafficflow/db/cloud";
 import {
@@ -66,6 +66,7 @@ import {
 import { acquireLeaderLock, leaderLockKeyFor, LockLostError, type LeaderLock } from "./leader-lock.js";
 import { startApiCron, type ApiCronHandle, type ApiCronTargetHealth } from "./api-cron.js";
 import { runSyncCycle, LeaderFencedError, type SyncDeps } from "./sync.js";
+import { applyMetaRequests, driveOutstandingRequests } from "./request-drain.js";
 import {
   adoptSweepWindow, junkSweepPass, sweepStateForPress, SWEEP_SCAN_START,
   type SweepScanState,
@@ -387,7 +388,11 @@ interface MailboxRuntime {
    * write the four values that are already there — the same "zero writes in the steady state"
    * rule `clearMailboxSyncBlock` and `clearOrganizerStandDown` each keep for their own columns.
    */
-  holderSeen: { kind: string | null; name: string | null; since: Date | null; state: string | null };
+  holderSeen: {
+    kind: string | null; name: string | null; since: Date | null; state: string | null;
+    /** Mail 0089 — the fifth holder column, tracked beside the other four for the same reason. */
+    capabilities: string | null;
+  };
   /**
    * Mail 0083. What this process IS to this mailbox right now — and it is MUTABLE, unlike almost
    * everything else on a runtime, because the role can flip in either direction without a
@@ -1390,7 +1395,7 @@ export async function startWorkerWithLock(
     }
 
     /**
-     * A READER LOOKS. IT DOES NOT CLAIM (mail 0083).
+     * A READER LOOKS. IT DOES NOT CLAIM .
      *
      * The APPEND-less read of `ohmail/_meta`, run once per reader cycle, whose whole product is
      * the four holder columns — so the banner every client renders is a ROW read rather than a
@@ -1408,7 +1413,10 @@ export async function startWorkerWithLock(
     async function refreshReaderHolder(
       mb: { mailboxId: string; accountId: string },
       adapter: MailboxAdapter,
-      current: { kind: string | null; name: string | null; since: Date | null; state: string | null },
+      current: {
+        kind: string | null; name: string | null; since: Date | null; state: string | null;
+        capabilities: string | null;
+      },
     ): Promise<void> {
       const peek = (adapter as Partial<LeasePeekCapableAdapter>).leasePeekIo;
       if (typeof peek !== "function") return;
@@ -1425,9 +1433,16 @@ export async function startWorkerWithLock(
         const name = top && top.displayName.trim() !== "" ? top.displayName.trim() : null;
         const kind = top === null ? null : top.kind;
         const since = top ? top.claimedAt : null;
+        // Mail 0089 — the fifth holder column, computed the same way `refreshOrganizerHolder`
+        // stores it: comma-joined, lowercased, empty ⇒ null. Compared here too, so a capability
+        // added mid-tenure (a peer upgrading its build without a takeover) still lands on the row —
+        // it just never stamps `organizer_event_at`, on the same argument `organizedSince` shifting
+        // under a renewed tenure already makes below.
+        const capabilities = top ? capabilitiesColumn(top.capabilities) : null;
         if (current.kind === kind && current.name === name && current.state === state
+          && current.capabilities === capabilities
           && (current.since ? current.since.getTime() : null) === (since ? since.getTime() : null)) return;
-        /* ── ONLY AN OCCUPANCY FLIP IS AN EVENT (mail 0088) ──────────────────────────────────
+        /* ── ONLY AN OCCUPANCY FLIP IS AN EVENT (0.14.1) ──────────────────────────────────
          *
          * This function writes whenever ANY of the four columns moved, and most of those movements
          * are not news: a peer restarting shifts `organized_since`, a machine being renamed shifts
@@ -1441,7 +1456,7 @@ export async function startWorkerWithLock(
          */
         const stateChanged = current.state !== state;
         await refreshOrganizerHolder(db, mb.mailboxId, {
-          kind, displayName: name, claimedAt: since, state,
+          kind, displayName: name, claimedAt: since, state, capabilities: top?.capabilities ?? null,
         }, { fence, stateChanged });
         log.info("organizer_holder_refreshed", {
           mailboxId: mb.mailboxId, accountId: mb.accountId,
@@ -1450,6 +1465,7 @@ export async function startWorkerWithLock(
             + "client's banner is a row read rather than an IMAP dial per viewer",
         });
         current.kind = kind; current.name = name; current.since = since; current.state = state;
+        current.capabilities = capabilities;
       } catch (err) {
         // Deliberately swallowed — see the header. A reader that cannot read the lease keeps
         // reading mail.
@@ -1492,7 +1508,7 @@ export async function startWorkerWithLock(
       adapter: MailboxAdapter,
       phase: "attach" | "cycle",
     ): Promise<boolean> {
-      /* ══ THE RELEASE IS HONOURED FIRST, BEFORE THE LEASE IS READ AT ALL (mail 0088) ═══════
+      /* ══ THE RELEASE IS HONOURED FIRST, BEFORE THE LEASE IS READ AT ALL (0.14.1) ═══════
        *
        * "Stop organizing this mailbox and keep my mail" is not a question for the lease. The lease
        * answers "who is entitled to organize this", and the answer here is nobody — the person has
@@ -1563,7 +1579,7 @@ export async function startWorkerWithLock(
         });
         return false;
       }
-      /* -- A CONSENT-LESS MAILBOX IS NEVER PROMOTED BY AN EMPTY FOLDER (mail 0083) -----------
+      /* -- A CONSENT-LESS MAILBOX IS NEVER PROMOTED BY AN EMPTY FOLDER  -----------
        *
        * `decideLease`'s first arm organizes a mailbox with ZERO claims — "nobody has ever
        * organized this mailbox", which is the right answer for a mailbox somebody asked us to
@@ -1660,7 +1676,7 @@ export async function startWorkerWithLock(
         // let a lapse-then-resubscribe seize the mailbox back months later from whatever a human
         // deliberately moved it to. Written only when there IS something to clear, so the steady
         // state is zero extra writes per cycle.
-        /* -- AND THE ROW'S ROLE IS THE THIRD TERM, WITHOUT WHICH THIS WROTE NOTHING (mail 0083)
+        /* -- AND THE ROW'S ROLE IS THE THIRD TERM, WITHOUT WHICH THIS WROTE NOTHING 
          *
          * The two original terms were the whole of "there is a stand-down on this row" while a
          * stand-down WAS `status='disabled'` plus a reason. 0083 moved that fact to
@@ -1696,7 +1712,7 @@ export async function startWorkerWithLock(
         return true;
       }
 
-      /* THE ROW'S MIRROR, AS `markMailboxStoodDown` IS ABOUT TO LEAVE IT (mail 0083). This line
+      /* THE ROW'S MIRROR, AS `markMailboxStoodDown` IS ABOUT TO LEAVE IT . This line
          was `lease.disabledReason = outcome.reason`, which had been true of the write below and
          stopped being true when the demotion moved onto the role: the column gains no writer
          there, so the mirror was recording a value the row does not hold. It happened to keep the
@@ -1720,7 +1736,7 @@ export async function startWorkerWithLock(
           "exactly one active organizer per mailbox is the invariant this enforces",
       });
       try {
-        // The holder columns ride the SAME statement as the role (mail 0083): a row that says
+        // The holder columns ride the SAME statement as the role : a row that says
         // `reader` without naming who organizes it is a banner with a blank in it, and the banner
         // reads the row precisely so no client has to dial IMAP to render one.
         const written = await markMailboxStoodDown(db, mb.mailboxId, outcome.reason, {
@@ -1730,6 +1746,7 @@ export async function startWorkerWithLock(
             displayName: outcome.by ? outcome.by.displayName : null,
             claimedAt: outcome.by ? outcome.by.claimedAt : null,
             state: outcome.state,
+            capabilities: outcome.by ? outcome.by.capabilities : null,
           },
         });
         if (!written) {
@@ -1787,7 +1804,7 @@ export async function startWorkerWithLock(
     async function standDownAppointments(
       mb: { mailboxId: string; accountId: string }, reason: MailboxDisabledReason,
       /**
-       * The RELEASE's sentence, when this close is a release rather than a stand-down (mail 0088).
+       * The RELEASE's sentence, when this close is a release rather than a stand-down (0.14.1).
        * Omitted, `reason` chooses — every pre-0088 caller. See `RELEASED_ORGANIZER_SEND_SENTENCE`
        * for why a release cannot quote a stand-down's: nobody took this mailbox, so "schedule it
        * again where the mailbox is organized now" names a place that does not exist.
@@ -1840,7 +1857,7 @@ export async function startWorkerWithLock(
     async function releaseOrganizerClaim(
       /**
        * The three fields this needs, rather than a whole {@link MailboxRuntime} — which a runtime
-       * still satisfies, so the roster's call sites are unchanged. Widened in mail 0088 because the
+       * still satisfies, so the roster's call sites are unchanged. Widened in 0.14.1 because the
        * release arm inside `mayOrganize` runs BEFORE a runtime exists on the attach path: it holds
        * the adapter and the two ids and nothing else, and building a runtime to satisfy a
        * parameter would be inventing state to describe a mailbox this process is giving up.
@@ -2271,9 +2288,10 @@ export async function startWorkerWithLock(
         const holderSeen = {
           kind: mb.organizedByKind, name: mb.organizedByName,
           since: mb.organizedSince, state: mb.organizerState,
+          capabilities: mb.organizedByCapabilities,
         };
         const tLease = Date.now();
-        /* -- A STAND-DOWN NO LONGER ENDS THE ATTACH (mail 0083) --------------------------------
+        /* -- A STAND-DOWN NO LONGER ENDS THE ATTACH  --------------------------------
          *
          * This block used to `return`, and the mailbox left the roster with its connection closed:
          * standing down meant stopping. It now means BEING A READER — another mail client on the
@@ -2606,7 +2624,7 @@ export async function startWorkerWithLock(
          *
          * A PROMOTION DOES NOT COME THROUGH HERE. This used to read "on promotion the hold is
          * armed by the attach that follows it, which is the first cycle with anything to
-         * inherit", and mail 0083 removed the re-attach that sentence depended on: a reader is
+         * inherit", and the mailbox-removal design removed the re-attach that sentence depended on: a reader is
          * promoted IN PLACE, on the cycle path. The promotion arms its own hold there, and the
          * two call sites are the two ways a process can become this mailbox's organizer.
          */
@@ -3623,7 +3641,7 @@ export async function startWorkerWithLock(
           const organize = await mayOrganize(
             { mailboxId: rt.mailboxId, accountId: rt.accountId }, rt.lease, rt, rt.adapter, "cycle",
           );
-          /* -- THE ROLE FLIP, IN BOTH DIRECTIONS, WITHOUT A RE-ATTACH (mail 0083) -------------
+          /* -- THE ROLE FLIP, IN BOTH DIRECTIONS, WITHOUT A RE-ATTACH  -------------
            *
            * `wasOrganizer` is what this process was a moment ago; `organize` is what the lease
            * just said. The two comparisons below are the only two transitions there are, and each
@@ -3725,8 +3743,51 @@ export async function startWorkerWithLock(
             await refreshReaderHolder(
               { mailboxId: rt.mailboxId, accountId: rt.accountId }, rt.adapter, rt.holderSeen,
             );
+            /**
+             * ── THE READER'S OWN CYCLE, AFTER THE PEEK (0.14.1) ────────────────────
+             *
+             * "The reader's cycle (both doors, after the peek): APPEND each pending → sent…" —
+             * the ruling, verbatim. This install's two IMAP write verbs stay exactly `setFlags`
+             * and this APPEND; it never expunges — see `request-drain.ts`'s own header.
+             */
+            try {
+              await driveOutstandingRequests(
+                db, { mailboxId: rt.mailboxId, accountId: rt.accountId, adapter: rt.adapter },
+                { installId: organizerInstallId, kind: "cloud" }, new Date(),
+                (event, detail) => log.info(event, { mailboxId: rt.mailboxId, accountId: rt.accountId, ...detail }),
+              );
+            } catch (err) {
+              log.error("outstanding_requests_drive_failed", {
+                mailboxId: rt.mailboxId, accountId: rt.accountId, err,
+                reason: "this cycle reads mail regardless; the next cycle tries again",
+              });
+            }
           } else {
             leaseBlocked.delete(rt.mailboxId);
+            /**
+             * ── THE REQUEST DRAIN — a reader's decision, applied before this cycle organizes
+             * anything else (0.14.1) ─────────────────────────────────────────────────
+             *
+             * ONLY an organizer drains: a reader never reaches this branch, and never expunges a
+             * request record — its two IMAP write verbs stay exactly `setFlags` and APPEND. BEFORE
+             * `runSyncCycle`, so a promoted rule this creates governs mail this very pass ingests,
+             * and so the `folder_state` rows it writes (`reconcile_status: 'pending'`) are picked
+             * up by THIS pass's own `reconcileMailbox` → `reconcileFolders` — see
+             * `request-drain.ts`'s own header for why nothing here performs a physical IMAP move
+             * of its own. A failure here never blocks the cycle: it is logged and retried the
+             * cheap way, on the next pass, exactly as the reader-side peek above is.
+             */
+            try {
+              await applyMetaRequests(
+                db, { mailboxId: rt.mailboxId, accountId: rt.accountId, adapter: rt.adapter }, new Date(),
+                (event, detail) => log.info(event, { mailboxId: rt.mailboxId, accountId: rt.accountId, ...detail }),
+              );
+            } catch (err) {
+              log.error("organizer_requests_drain_failed", {
+                mailboxId: rt.mailboxId, accountId: rt.accountId, err,
+                reason: "this cycle organizes mail regardless; the next cycle's drain tries again",
+              });
+            }
           }
           // The classifier is resolved HERE, once per cycle, from the circuit — not stored on
           // `rt.deps`. That is what lets an outage degrade this mailbox to rules-only between

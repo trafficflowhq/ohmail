@@ -1,5 +1,6 @@
 import {
-  CAPABILITY_REQUESTS,
+  // CAPABILITY_REQUESTS is commented out along with its use below — the request-authenticity rule containment,
+  // see `ORGANIZER_CAPABILITIES`'s own header.
   DEFAULT_STALE_AFTER_MS, LeaseUnavailableError, META_FOLDER, isMalformed, parseClaim, runLeaseGate,
   type LeaseIo, type LeaseOp, type LeaseSelf, type LeaseVerdict, type OrganizerClaim,
   type TakeoverAuthorization,
@@ -77,11 +78,27 @@ export const CLOUD_DISPLAY_NAME = "ohmail Cloud";
  * reader's answer to "will this holder take my decision" would then depend on which build happened
  * to be organizing rather than on what that build can do.
  *
- * It is deliberately not injectable. A caller that could narrow it could quietly advertise nothing
- * — which is the failure this exists to prevent, and it would be invisible: every organizer would
- * simply look like an older build to every reader, and the readers would say so.
+ * It is deliberately not injectable. A caller that could narrow it PER-CALL could quietly
+ * advertise less than the build actually supports — invisibly, and inconsistently across
+ * mailboxes on the SAME install. That failure mode is what "not injectable" guards against; it is
+ * a different question from what this ONE constant is set to, which is the paragraph below.
+ *
+ * ── CURRENTLY EMPTY — THE REQUEST-AUTHENTICITY RULE CONTAINMENT (0.14.1) ─────────────────────────────
+ *
+ * `CAPABILITY_REQUESTS` is commented OUT rather than deleted: the request channel is BUILT
+ * (`apps/worker/src/request-drain.ts`, `packages/db/src/organizer-requests.ts`,
+ * `packages/db/src/screener-apply.ts`) but its authenticity is NOT. A request record has to be
+ * signed with a per-account key before an organizer may trust something it reads out of
+ * `ohmail/_meta`, and that work is owed, not done. Advertising nothing here means a reader's `readRequestEligibility` never
+ * reports this organizer `capable`, so `ScreenerService.decide` answers 409 `organizer_outdated`
+ * BEFORE a request is ever queued — exactly the *"the readers would say so"* sentence above,
+ * now describing the intended degraded state rather than a failure. `request-drain.ts`'s own
+ * `REQUEST_AUTHENTICITY_IMPLEMENTED` guard is the SECOND half of this containment (this constant
+ * alone does not stop a record some other process wrote directly into the folder from being
+ * applied) — see that file's header for the full argument. Restore
+ * `[CAPABILITY_REQUESTS]` only once the signature work lands and is reviewed as an untrusted-input boundary.
  */
-export const ORGANIZER_CAPABILITIES: readonly string[] = [CAPABILITY_REQUESTS];
+export const ORGANIZER_CAPABILITIES: readonly string[] = [];
 
 /**
  * An adapter that can hand out the lease's IO.
@@ -302,7 +319,7 @@ export class OrganizerStandDownError extends Error {
   readonly state: LeaseOccupancyState;
   readonly heldBy: string | null;
   /**
-   * THE WINNING CLAIM ITSELF (mail 0083) — beside `heldBy`, which is only its display name.
+   * THE WINNING CLAIM ITSELF  — beside `heldBy`, which is only its display name.
    *
    * `heldBy` was enough while a stand-down wrote one column; the demotion now writes four, and
    * the other three (`kind`, `claimedAt`, and the occupancy above) come off the claim. Carried

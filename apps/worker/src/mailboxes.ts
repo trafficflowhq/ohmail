@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, isNull, ne, sql, type SQL } from "drizzle-orm";
 import {
-  mailboxes, mailboxCredentials, isOrganizerRole, organizerDisplayName, type Tx,
+  mailboxes, mailboxCredentials, isOrganizerRole, organizerDisplayName, capabilitiesColumn, type Tx,
   type OrganizerRole, type OrganizerKind, type OrganizerState,
 } from "@trafficflow/db";
 import { makeDb } from "@trafficflow/db/cloud";
@@ -64,7 +64,7 @@ export interface EnabledMailbox {
   /**
    * Mail 0027. A lease reason left over from a previous stand-down that a human has since
    * re-enabled past. Read only so the gate knows there is something to CLEAR — nothing decides
-   * on it. **It gains no new writer in mail 0083**: a stand-down now writes the ROLE, and
+   * on it. **It gains no new writer in the mailbox-removal design**: a stand-down now writes the ROLE, and
    * `disabled` means tombstone or plan-disable. This column is read for the clear and for nothing
    * else, and existing rows carry it until their next promotion clears it.
    */
@@ -91,6 +91,12 @@ export interface EnabledMailbox {
   organizedByName: string | null;
   organizedSince: Date | null;
   organizerState: string | null;
+  /**
+   * Mail 0089. WHAT the holder offers a reader — the fifth of the roster's holder columns, on
+   * `organizedByKind`'s own reason: carried here so the attach seeds `holderSeen` without a
+   * second query.
+   */
+  organizedByCapabilities: string | null;
   /**
    * Mail 0083. When a human asked THIS install to organize this mailbox. NULL means nobody has —
    * a consent-less reader, which is what `POST /mailboxes` now creates. Read by the attach so a
@@ -262,6 +268,7 @@ export async function loadEnabledMailboxes(
       organizedByName: mailboxes.organizedByName,
       organizedSince: mailboxes.organizedSince,
       organizerState: mailboxes.organizerState,
+      organizedByCapabilities: mailboxes.organizedByCapabilities,
       organizeConsentedAt: mailboxes.organizeConsentedAt,
       releaseRequestedAt: mailboxes.releaseRequestedAt,
       syncBlockedReason: mailboxes.syncBlockedReason,
@@ -286,6 +293,7 @@ export async function loadEnabledMailboxes(
       organizedByName: r.organizedByName ?? null,
       organizedSince: r.organizedSince ?? null,
       organizerState: r.organizerState ?? null,
+      organizedByCapabilities: r.organizedByCapabilities ?? null,
       organizeConsentedAt: r.organizeConsentedAt ?? null,
       releaseRequestedAt: r.releaseRequestedAt ?? null,
       syncBlockedReason: r.syncBlockedReason ?? null,
@@ -1255,6 +1263,13 @@ export interface StandDownHolder {
   claimedAt?: Date | null;
   /** The lease's occupancy as this read saw it. */
   state?: OrganizerState | null;
+  /**
+   * `X-Ohmail-Capabilities` off the winning claim (0.14.1) — what the holder offers a reader.
+   * `undefined`/`null`/`[]` all write NULL (via {@link capabilitiesColumn}), which reads as "we
+   * have not looked" or "nothing offered" — the same fail-safe absence {@link state}'s own NULL
+   * already carries.
+   */
+  capabilities?: readonly string[] | null;
 }
 
 export async function markMailboxStoodDown(
@@ -1297,10 +1312,13 @@ export async function markMailboxStoodDown(
     // different fact from "the claim named the empty string", and only one of them renders.
     organizedByName: organizerDisplayName(opts.by?.displayName ?? null),
     organizedSince: opts.by?.claimedAt ?? null,
-    // The occupancy as THIS read saw it. Persisted now (mail 0083) because a reader cycle
+    // The occupancy as THIS read saw it. Persisted now  because a reader cycle
     // refreshes it every pass — see the column's own note for why `lease.ts` argued it must not
     // be, and why that premise moved.
     organizerState: opts.by?.state ?? null,
+    // Mail 0089 — the fifth holder column, on the same read. Whether a request may be OFFERED to
+    // this reader rests on this and `organizerState` together (`readRequestEligibility`).
+    organizedByCapabilities: capabilitiesColumn(opts.by?.capabilities),
     // Standing down is not failing. See the block above.
     errorCode: null, errorDetail: null, failedAt: null, retryCount: 0,
     // Mail 0029. `disabled_reason` is now the whole answer to "why is this mailbox not syncing",
@@ -1337,7 +1355,7 @@ export async function markMailboxStoodDown(
 }
 
 /**
- * THE PERSON ASKED THIS INSTALL TO STOP ORGANIZING THIS MAILBOX, AND KEEP THE MAIL (mail 0088).
+ * THE PERSON ASKED THIS INSTALL TO STOP ORGANIZING THIS MAILBOX, AND KEEP THE MAIL (0.14.1).
  *
  * The third way a row stops being an organizer, and the first one nobody else caused.
  *
@@ -1381,6 +1399,8 @@ export async function markMailboxReleased(
     organizedByName: null,
     organizedSince: null,
     organizerState: null,
+    // Mail 0089 — the fifth holder column. Nobody holds it, so nobody offers anything.
+    organizedByCapabilities: null,
     // Spent. One ceasing, not a standing refusal.
     releaseRequestedAt: null,
     // AND THE RECORD THAT IT HAPPENED. The ask is gone; without this the row is byte-identical to a
@@ -1524,6 +1544,10 @@ export async function clearOrganizerStandDown(
       organizedByName: null,
       organizedSince: null,
       organizerState: null,
+      // Mail 0089 — the fifth holder column goes with the other four; this row now names no
+      // holder at all, and a stale capability set would answer a request-eligibility check about
+      // an install that is no longer organizing this mailbox.
+      organizedByCapabilities: null,
       disabledReason: null,
       // The authorization is spent by this one becoming. See the header.
       takeoverAuthorizedAt: null,
@@ -1565,6 +1589,11 @@ export async function refreshOrganizerHolder(
       organizedByName: organizerDisplayName(by.displayName ?? null),
       organizedSince: by.claimedAt ?? null,
       organizerState: by.state ?? null,
+      // Mail 0089 — the fifth holder column, refreshed on the SAME per-cycle peek as the other
+      // four. Not part of the `stateChanged` occupancy-flip test below: a capability set changing
+      // while occupancy does not (a holder's build upgrading mid-tenure) is not the notice's
+      // business, the same argument `organizedSince` shifting under a renewed tenure already makes.
+      organizedByCapabilities: capabilitiesColumn(by.capabilities),
       /* ── MAIL 0088: THE THIRD WRITER, AND THE ONLY ONE THAT STAMPS CONDITIONALLY ──────────
        *
        * It stamps `organizer_event_at` ONLY WHEN `organizer_state` FLIPS, and the narrowness is
