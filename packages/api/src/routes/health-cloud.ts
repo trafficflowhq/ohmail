@@ -210,6 +210,28 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   ["credit_usage_totals", "computed_at"],
   ["credit_rollup_runs", "ran_at"],
   ["setup_grants", "kind"],
+  // cloud 0029_billing_invoices_platform_costs_ai_usage — FOUR markers, on 0028's rule: four
+  // independent changes, and a database can genuinely hold some without the others.
+  //
+  // `billing_invoices` is the LOUD one and the reason this migration must land before the API.
+  // The webhook apply writes an invoice row inside the SAME transaction that grants the month's
+  // credits, so an API deployed ahead of the migration 42P01s inside `applyInvoicePaid` — the
+  // apply fails, the event parks as `failed`, and Stripe retries a genuinely paid invoice for
+  // three days while the customer holds no credits. The column probed is `stripe_event_ts`
+  // rather than the key, on the rule the markers above follow: probe what a QUERY touches, and
+  // that column IS the upsert's fence.
+  //
+  // The other three are quiet in three different ways, which is why each gets its own marker.
+  // Without `ai_usage_daily` every metered model call's recorder throws inside `onUsage` — the
+  // client swallows it, so the model call still succeeds and the only symptom is a cost table
+  // that stays empty. Without `platform_costs` the cost pass 42P01s and the board's
+  // infrastructure panel reads "not configured", which is the same words an ABSENT KEY produces.
+  // Without the two counters on `billing_reconciliation_runs` the invoice reconcile's own insert
+  // fails, so the pass that heals lost invoices records nothing and goes stale silently.
+  ["billing_invoices", "stripe_event_ts"],
+  ["platform_costs", "fetched_at"],
+  ["ai_usage_daily", "cost_micro_usd"],
+  ["billing_reconciliation_runs", "invoices_listed"],
 ] as const;
 
 /**
@@ -248,6 +270,17 @@ export const CLOUD_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker
   // A database missing it would take the first refund webhook to a 23502 inside the apply
   // transaction instead of a 503 at the deploy gate.
   ["account_suspensions_provenance_check", "suspended_by"],
+  // cloud 0029 — `billing_recon_runs_mode_check` is REPLACED, not added: the constraint keeps its
+  // 0023 name and gains a third word (`invoices`). That is `0011_trial_credits`' shape exactly,
+  // and it is invisible to every name probe — `SCHEMA_CHECK_MARKERS` sees the same constraint on
+  // an 0028 database as on an 0029 one.
+  //
+  // The consequence of missing it is not a slow query, it is a pass that cannot record itself:
+  // the invoice reconcile inserts `mode = 'invoices'`, the old CHECK rejects it with a 23514, and
+  // the pass that heals lost invoices dies at its final statement — after doing all of its work,
+  // so every invoice is written and the run ledger says the reconciler has stopped. The needle is
+  // the word the migration ADDED, which no 0023 definition can contain.
+  ["billing_recon_runs_mode_check", "invoices"],
 ] as const;
 
 /**
@@ -292,6 +325,15 @@ export const CLOUD_INDEX_MARKERS: ReadonlyArray<string> = [
   // back to walking the unbounded login ledger — correct, and increasingly slow, which for the
   // pass that pages a human is the failure this class exists to catch.
   "auth_events_reuse_account_at_idx",
+  // cloud 0029 — the board's two invoice reads, and the reason they are probed rather than
+  // trusted. `billing_invoices_paid_at_idx` serves "six months of cash across every account" and
+  // `billing_invoices_account_paid_idx` serves the account page's "paying since / last paid".
+  // Both are the `credit_ledger_created_at_idx` case one migration over: a database missing them
+  // computes the RIGHT figures by sequentially scanning every invoice this business has ever
+  // issued, on every console load, for ever. Nothing is wrong and nothing fails, which is
+  // precisely why only a name probe can see it.
+  "billing_invoices_paid_at_idx",
+  "billing_invoices_account_paid_idx",
 ] as const;
 
 /**
@@ -432,10 +474,19 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * `created_at` index whose absence turns an hourly aggregate into an hourly full scan of the
  * money trail while computing exactly the right answer.
  *
+ * `0029_billing_invoices_platform_costs_ai_usage` takes ALL FOUR marker classes, which no
+ * previous cloud entry has: four columns (three new tables plus the invoice reconcile's counter),
+ * two indexes (the board's two invoice reads, silent when absent in `credit_ledger_created_at_idx`'s
+ * exact way), and — the one worth reading this paragraph for — a CHECK DEFINITION, because it
+ * REPLACES `billing_recon_runs_mode_check` under its 0023 name to admit a third mode word. That
+ * replacement is `0011_trial_credits`' shape: no name probe of any class can tell an 0028 database
+ * from an 0029 one, and the failure it hides is a reconcile pass that does all of its work and
+ * then cannot record that it ran.
+ *
  * The tag moves for its own reason: what this constant asserts is "the markers were reconciled
  * against the newest entry", and a stale tag beside an unchanged list is the state the assertion
  * exists to refuse — it cannot tell "nothing needed adding" from "nobody looked". */
-export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0028_credit_rollup_and_account_setup_grant";
+export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0029_billing_invoices_platform_costs_ai_usage";
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
 export const SCHEMA_MARKER_JOURNAL_TAG =

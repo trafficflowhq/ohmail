@@ -238,9 +238,56 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
   // and a class:code-scrubbed error — the two reconciliation alert rules read it on this role.
   // Minus `divergences`, which carries Stripe subscription ids and account ids the alert does
   // not need; the counts are complete without it.
+  // `invoices_listed` / `invoices_upserted` (cloud 0029) — the invoice reconcile's population and
+  // its write count, on the same terms as the four counters beside them. Integers about a pass,
+  // named by this list because the console's reconciliation strip reads them.
   "public.billing_reconciliation_runs": [
     "id", "ran_at", "mode", "stripe_subscriptions", "mirror_rows", "emitted", "apply_failed",
-    "flagged", "pages", "truncated", "error",
+    "flagged", "pages", "truncated", "error", "invoices_listed", "invoices_upserted",
+  ],
+  // ── THE INVOICE MIRROR (cloud 0029) — GRANTED WHOLE, and that is the argument ────────────
+  //
+  // Every other billing table on this list is granted MINUS something: `billing_events` minus
+  // `payload` (a customer's name and postal address), `credit_ledger` minus `source` and `meta`.
+  // This table has no such column, and its whole design is that it never will: an id, an
+  // account, a closed status word, a currency, two integers of cents, a plan, a period and three
+  // timestamps. There are no line items, no description, no customer name and no jsonb bag.
+  //
+  // That is not a coincidence — it is why the table exists. The console needs the invoice
+  // AMOUNT, the amount is inside `billing_events.payload`, and granting that column to reach an
+  // integer would hand a console that must never see a postal address exactly that. Promoting
+  // the integer to a named column is what lets the payload stay un-granted for ever.
+  //
+  // A column added here that carries a description, a memo or a line item is OUTSIDE this
+  // ruling and must not be added to this list — the whole grant would have to be re-argued.
+  "public.billing_invoices": [
+    "stripe_invoice_id", "account_id", "stripe_subscription_id", "stripe_customer_id",
+    "billing_reason", "status", "currency", "amount_paid_cents", "amount_refunded_cents",
+    "plan", "billing_interval", "period_start", "period_end", "paid_at", "stripe_event_ts",
+    "source", "created_at", "updated_at",
+  ],
+  // ── COST OUT (cloud 0029) — OUR OWN BILLS, and no account appears on either table ────────
+  //
+  // Neither has an `account_id`, and neither can: `platform_costs` is what a vendor charges this
+  // deployment, and `ai_usage_daily` is aggregated at the model client, inside `packages/core`,
+  // which is desktop payload and knows nothing about accounts. Per-account AI cost is
+  // APPORTIONED from the credit ledger and labelled as apportioned; attributing a model call to
+  // an account inside the AI package was refused.
+  //
+  // `platform_costs.note` is free text — the ONLY free-text column granted on this list — and it
+  // is a staff operator's note about a payment to our own hosting provider, typed by the person
+  // whose `staff_users` id sits in `entered_by`. It carries no account data because no account
+  // is reachable from the row. `entered_by` is granted as the bare uuid: the console renders
+  // "entered manually on <date>" and the blind role holds no grant on `staff_users` at all, so
+  // the id resolves to a name nowhere on this surface — which is the narrowest thing that still
+  // answers "was this figure measured or typed".
+  "public.platform_costs": [
+    "provider", "metric", "period_start", "period_end", "value", "unit", "cost_cents",
+    "currency", "source", "fetched_at", "entered_by", "note",
+  ],
+  "public.ai_usage_daily": [
+    "day", "host", "model", "calls", "ok_calls", "input_tokens", "output_tokens",
+    "cache_read_tokens", "cache_write_tokens", "cost_micro_usd", "updated_at",
   ],
   // ── THE CREDIT ROLL-UP (cloud 0028) — the console's read path for spend ─────────────────
   //

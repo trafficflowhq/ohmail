@@ -19,7 +19,7 @@
  * beside the journal partition it mirrors.
  */
 
-import { pgTable, uuid, text, timestamp, date, bigint, bigserial, boolean, jsonb, integer, real, unique, uniqueIndex, index, primaryKey, check } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, timestamp, date, bigint, bigserial, boolean, jsonb, integer, numeric, real, unique, uniqueIndex, index, primaryKey, check } from "drizzle-orm/pg-core";
 import { sql, desc } from "drizzle-orm";
 import { accounts, sessions, users } from "./schema-mail.js";
 
@@ -652,7 +652,161 @@ export const billingReconciliationRuns = pgTable("billing_reconciliation_runs", 
   truncated: boolean("truncated").notNull().default(false),
   /** class:code, scrubbed — null on a completed pass. A non-null row does not reset staleness. */
   error: text("error"),
+  /**
+   * INVOICE-MODE COUNTERS (cloud 0029), 0 on every subscription-mode row and on every row that
+   * predates the migration — which is true of them: those passes examined no invoices.
+   *
+   * Two numbers rather than one, because their RATIO is the signal. A healthy deployment lists
+   * a few hundred invoices and upserts zero of them, because the webhook path already wrote
+   * every row; a pass that upserts most of what it lists is a webhook path that has stopped
+   * working, and no single counter can tell those apart.
+   */
+  invoicesListed: integer("invoices_listed").notNull().default(0),
+  invoicesUpserted: integer("invoices_upserted").notNull().default(0),
 }, (t) => ({ ixRanAt: index("billing_recon_runs_ran_at_idx").on(t.ranAt) }));
+
+/**
+ * THE INVOICE MIRROR (cloud 0029) — what customers actually paid, as named columns.
+ *
+ * Today the only `amount_paid` in this database is inside `billing_events.payload`, the raw
+ * Stripe event, which carries the customer's NAME and POSTAL ADDRESS. That column is
+ * deliberately un-granted to the blind staff role, so the console cannot reach the one integer
+ * it needs without being handed the one thing it must never see. The amount is PROMOTED here at
+ * apply time instead — `InvoiceDTO.amountPaid` is already in hand inside `applyInvoicePaid` —
+ * and the payload stays un-granted for ever.
+ *
+ * There is no line-item table and there never will be: every column here is an id, a closed
+ * word, an integer of cents or a timestamp, which is precisely what lets the whole row be
+ * granted to a role that must not see a customer's address.
+ *
+ * `stripeInvoiceId` is the PRIMARY KEY rather than a surrogate, because it is the identity the
+ * two writers (the webhook apply, the daily reconcile) agree on. That makes "one row per
+ * invoice" a fact about the table rather than an arithmetic either writer performs, and it is
+ * what lets a webhook racing a reconcile resolve in the fence rather than in a lock.
+ *
+ * `stripeEventTs` is that fence, and it is `billing_subscriptions.stripe_event_ts`'s twin for
+ * the same measured reason: Stripe delivers in parallel and retries independently, so an older
+ * event can arrive after a newer one and a read-then-write cannot see the difference. The upsert
+ * carries `WHERE existing.stripe_event_ts <= excluded.stripe_event_ts`, and an older event
+ * updating zero rows is a SUCCESSFUL apply.
+ */
+export const billingInvoices = pgTable("billing_invoices", {
+  stripeInvoiceId: text("stripe_invoice_id").primaryKey(),
+  accountId: uuid("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
+  stripeSubscriptionId: text("stripe_subscription_id"),
+  stripeCustomerId: text("stripe_customer_id"),
+  /** Stripe's own word — `subscription_cycle`, `subscription_create`, `subscription_update`, … */
+  billingReason: text("billing_reason"),
+  /** CHECK-constrained to six words; each one changes an arithmetic on the board. */
+  status: text("status").notNull(),
+  /** ISO-4217, as Stripe reports it. Held rather than assumed — see the migration's note. */
+  currency: text("currency").notNull(),
+  amountPaidCents: integer("amount_paid_cents").notNull(),
+  /** Held APART from `amountPaidCents`, never netted: "how much did we refund" is its own fact. */
+  amountRefundedCents: integer("amount_refunded_cents").notNull().default(0),
+  /** The plane's price→plan verdict for the PLAN line. NULL on an add-on-only cycle invoice. */
+  plan: text("plan"),
+  billingInterval: text("billing_interval"),
+  periodStart: timestamp("period_start", { withTimezone: true }),
+  periodEnd: timestamp("period_end", { withTimezone: true }),
+  /** The board's month buckets key on THIS, never `created_at` — a late heal lands in its own month. */
+  paidAt: timestamp("paid_at", { withTimezone: true }),
+  stripeEventTs: timestamp("stripe_event_ts", { withTimezone: true }).notNull(),
+  /** Which writer put this row here. A mirror carried entirely by the heal looks healthy without it. */
+  source: text("source").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  ixAccountPaid: index("billing_invoices_account_paid_idx").on(t.accountId, t.paidAt),
+  ixPaidAt: index("billing_invoices_paid_at_idx").on(t.paidAt),
+}));
+
+/**
+ * INFRASTRUCTURE COST (cloud 0029) — what the vendors charge, per provider, per window.
+ *
+ * **A zero is only ever a row that says zero.** None of the three provider keys exists in
+ * production today, so the likely state of this table for its first weeks is EMPTY — and the
+ * dangerous branch is exactly the one an absent key selects: an adapter answering `0` when it
+ * could not ask, rendered in the same typeface as a measurement. The table's half of the defence
+ * is that an unmeasured window has NO ROW: no placeholder, no zero, no null cost pretending to
+ * be a figure. `costCents` is NOT NULL so that "we don't know" is unrepresentable here and has
+ * to be said where it belongs, in the DTO (`cents: null`, `source: 'unconfigured'`).
+ *
+ * `source` is part of the PRIMARY KEY, so an API row and a hand-entered row for one window
+ * COEXIST and the reader picks the manual one. A person reading a figure off an invoice is
+ * better evidence than an API reporting usage-to-date, and two of the five providers have no
+ * usable billing API at all — keeping both rows is what makes the override auditable.
+ *
+ * `enteredBy` follows `oauthProviderConfig.updatedBy` exactly, for its stated reason:
+ * `auditLog.accountId` is NOT NULL and a payment to our own hosting provider belongs to no
+ * account, so the actor, the time and the note live on the row.
+ */
+export const platformCosts = pgTable("platform_costs", {
+  /** CHECK-constrained: a sixth provider needs an adapter and an env var, never a typo. */
+  provider: text("provider").notNull(),
+  /** The vendor's own vocabulary — free at the column level so a new invoice line is not a fault. */
+  metric: text("metric").notNull(),
+  periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
+  periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
+  /** The measured quantity in `unit`. Beside the money because a price change and a usage change
+   *  are different problems and only these two columns together separate them. */
+  value: numeric("value"),
+  unit: text("unit"),
+  costCents: integer("cost_cents").notNull(),
+  currency: text("currency").notNull().default("usd"),
+  source: text("source").notNull(),
+  /** When the figure was OBTAINED — what the staleness verdict is computed from. */
+  fetchedAt: timestamp("fetched_at", { withTimezone: true }).defaultNow().notNull(),
+  enteredBy: uuid("entered_by").references(() => staffUsers.id),
+  note: text("note"),
+}, (t) => ({
+  pk: primaryKey({
+    name: "platform_costs_pk",
+    columns: [t.provider, t.metric, t.periodStart, t.periodEnd, t.source],
+  }),
+  ixProviderPeriod: index("platform_costs_provider_period_idx").on(t.provider, t.periodStart),
+}));
+
+/**
+ * AI COST, MEASURED AT THE CALL (cloud 0029) — one row per (day, host, model).
+ *
+ * Written by `makeAiUsageRecorder` from the same `AnthropicCallReport` the `ai_call` log line
+ * carries. BOTH, not either: the log line is the per-call forensic record (it holds Anthropic's
+ * `request-id`, the only handle their support can act on), and this table is the arithmetic.
+ *
+ * `host` is in the PRIMARY KEY and it is not decoration. Three processes make metered calls —
+ * the API host, the worker and the self-host server — and they fail independently. A single
+ * deployment-wide total cannot answer the question that matters when the figure looks wrong,
+ * which is *which of the three stopped recording*; split by host, an arm that drops to zero is
+ * visible the day it happens, and the `ai_usage_unrecorded` signal is expressible at all.
+ *
+ * `okCalls` beside `calls`: a failed call costs wall time and no tokens, so a day whose two
+ * counts diverge is a provider incident — and this is the only place that fact is written down.
+ *
+ * `costMicroUsd` is the client's own ESTIMATE (`estimateCostMicroUsd`, from a published price
+ * table), stored as an INTEGER of micro-dollars: a month is millions of these summed, and in
+ * binary floating point that sum would depend on the order the rows arrived in.
+ */
+export const aiUsageDaily = pgTable("ai_usage_daily", {
+  day: date("day").notNull(),
+  /** CHECK-constrained to the three hosts that can make a metered call. */
+  host: text("host").notNull(),
+  /** The model Anthropic BILLED, which is not always the one requested (an alias resolves to a
+   *  dated id). Free text: a CHECK here would make the next model release a failed upsert
+   *  inside a customer's request. */
+  model: text("model").notNull(),
+  calls: integer("calls").notNull().default(0),
+  okCalls: integer("ok_calls").notNull().default(0),
+  inputTokens: bigint("input_tokens", { mode: "number" }).notNull().default(0),
+  outputTokens: bigint("output_tokens", { mode: "number" }).notNull().default(0),
+  cacheReadTokens: bigint("cache_read_tokens", { mode: "number" }).notNull().default(0),
+  cacheWriteTokens: bigint("cache_write_tokens", { mode: "number" }).notNull().default(0),
+  costMicroUsd: bigint("cost_micro_usd", { mode: "number" }).notNull().default(0),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  pk: primaryKey({ name: "ai_usage_daily_pk", columns: [t.day, t.host, t.model] }),
+  ixDay: index("ai_usage_daily_day_idx").on(t.day),
+}));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // REGISTRATION & ONBOARDING (migration 0020): the funnel's two tables.
@@ -1232,7 +1386,7 @@ export const setupGrantSpends = pgTable("setup_grant_spends", {
  * install passes THIS one and nothing else — see `apps/sidecar/src/db.ts`.
  */
 export const cloudSchema = {
-  credentials, webauthnCredentials, webauthnChallenges, totpSecrets, recoveryCodes, loginTokens, oauthAuthCodes, authEvents, authThrottle, pushSubscriptions, billingCustomers, billingSubscriptions, billingReconciliationRuns, creditBalances, creditLedger, creditUsageDaily, creditUsageTotals, creditRollupRuns, billingEvents, workerHeartbeats, alertState, waitlist, staffUsers, staffSessions, accountSuspensions,
+  credentials, webauthnCredentials, webauthnChallenges, totpSecrets, recoveryCodes, loginTokens, oauthAuthCodes, authEvents, authThrottle, pushSubscriptions, billingCustomers, billingSubscriptions, billingReconciliationRuns, billingInvoices, platformCosts, aiUsageDaily, creditBalances, creditLedger, creditUsageDaily, creditUsageTotals, creditRollupRuns, billingEvents, workerHeartbeats, alertState, waitlist, staffUsers, staffSessions, accountSuspensions,
   mailboxOauthCeremonies, mailboxOauthDeviceCeremonies,
   oauthProviderConfig, attachmentStaging, invites, aiAttemptClaims,
   setupGrants, setupGrantSpends,

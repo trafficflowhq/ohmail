@@ -827,10 +827,59 @@ GRANT SELECT (stripe_event_id, type, account_id, event_ts, received_at, error, s
 -- the two reconciliation rules, which is why the grant exists at all. `divergences` (Stripe
 -- subscription ids + account ids) is deliberately NOT granted: the alert needs counts, the
 -- operator detail lives on the runtime-role surfaces.
+-- `invoices_listed` / `invoices_upserted` (cloud 0029) are the invoice reconcile's population
+-- and its write count, on the same terms as the four counters beside them: integers about a
+-- pass, read by the console's reconciliation strip.
 REVOKE ALL ON public.billing_reconciliation_runs FROM ohmail_admin;
 GRANT SELECT (id, ran_at, mode, stripe_subscriptions, mirror_rows, emitted, apply_failed,
-  flagged, pages, truncated, error)
+  flagged, pages, truncated, error, invoices_listed, invoices_upserted)
   ON public.billing_reconciliation_runs TO ohmail_admin;
+
+-- ── 9b-bis. The INVOICE MIRROR (cloud 0029) — GRANTED WHOLE, and that is the argument. ────
+--
+-- Every other billing table in this section is granted MINUS something: `billing_events` minus
+-- `payload` (a customer's name and postal address), `credit_ledger` minus `source` and `meta`.
+-- This table has no such column and its whole design is that it never will — an id, an account,
+-- a closed status word, a currency, two integers of cents, a plan, a period, three timestamps.
+-- No line items, no description, no customer name, no jsonb bag.
+--
+-- That is not a coincidence, it is WHY the table exists. The console needs the invoice amount;
+-- the amount lives inside `billing_events.payload`; granting that column to reach an integer
+-- would hand a console that must never see a postal address exactly that. Promoting the integer
+-- to a named column is what lets the payload stay un-granted for ever.
+--
+-- A column added here that carries a description, a memo or a line item falls OUTSIDE this
+-- ruling: it must not be appended to this grant, and the whole grant would have to be re-argued.
+REVOKE ALL ON public.billing_invoices FROM ohmail_admin;
+GRANT SELECT (stripe_invoice_id, account_id, stripe_subscription_id, stripe_customer_id,
+  billing_reason, status, currency, amount_paid_cents, amount_refunded_cents, plan,
+  billing_interval, period_start, period_end, paid_at, stripe_event_ts, source,
+  created_at, updated_at)
+  ON public.billing_invoices TO ohmail_admin;
+
+-- ── 9b-ter. COST OUT (cloud 0029) — our own bills. NO ACCOUNT APPEARS ON EITHER TABLE. ────
+--
+-- Neither has an `account_id`, and neither can. `platform_costs` is what a vendor charges this
+-- deployment; `ai_usage_daily` is aggregated at the model client inside `packages/core`, which
+-- is desktop payload and knows nothing about accounts. Per-account AI cost is APPORTIONED from
+-- the credit ledger and labelled as apportioned on the board — attributing a model call to an
+-- account inside the AI package was refused.
+--
+-- `platform_costs.note` is the ONLY free-text column granted anywhere in this script, and it is
+-- a staff operator's note about a payment to our own hosting provider, typed by the person whose
+-- `staff_users` id sits in `entered_by`. No account is reachable from the row, so there is
+-- nothing account-derived it could carry. `entered_by` is granted as the bare uuid and this role
+-- holds NO grant on `staff_users`, so it resolves to a name nowhere on this surface — the
+-- narrowest thing that still answers "was this figure measured, or typed by a person".
+REVOKE ALL ON public.platform_costs FROM ohmail_admin;
+GRANT SELECT (provider, metric, period_start, period_end, value, unit, cost_cents, currency,
+  source, fetched_at, entered_by, note)
+  ON public.platform_costs TO ohmail_admin;
+
+REVOKE ALL ON public.ai_usage_daily FROM ohmail_admin;
+GRANT SELECT (day, host, model, calls, ok_calls, input_tokens, output_tokens,
+  cache_read_tokens, cache_write_tokens, cost_micro_usd, updated_at)
+  ON public.ai_usage_daily TO ohmail_admin;
 
 -- ── 9c-bis. The credit ROLL-UP (cloud 0028) — the console's read path for spend. ──────────
 --
