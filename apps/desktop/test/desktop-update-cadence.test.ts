@@ -158,16 +158,50 @@ function callsTo(root: ts.SourceFile, name: string): number {
   ).length;
 }
 
-/** Every ASSIGNMENT to `name` — any operator, any value. */
-function writesTo(root: ts.SourceFile, name: string): ts.Node[] {
-  return nodesOf(root).filter(
-    (n) =>
+/**
+ * Every write of `name`, and the VALUE each one gives it.
+ *
+ * Assignments of any operator, AND the declaration's own initializer — which is a write like any
+ * other and the one a matcher for assignments cannot see. Leaving it out left the latch's `let`
+ * line unguarded: flipped to `true` it starts every window latched, so a window whose first
+ * report is not `idle` gives up after one poll and never checks again, and nothing said so.
+ */
+function writesTo(root: ts.SourceFile, name: string): Array<{ at: ts.Node; value: ts.Node }> {
+  return nodesOf(root).flatMap((n) => {
+    if (
       ts.isBinaryExpression(n) &&
       ts.isIdentifier(n.left) &&
       n.left.text === name &&
       n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-      n.operatorToken.kind <= ts.SyntaxKind.LastAssignment,
+      n.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+    ) {
+      return [{ at: n as ts.Node, value: n.right as ts.Node }];
+    }
+    if (
+      ts.isVariableDeclaration(n) &&
+      ts.isIdentifier(n.name) &&
+      n.name.text === name &&
+      n.initializer !== undefined
+    ) {
+      return [{ at: n as ts.Node, value: n.initializer }];
+    }
+    return [];
+  });
+}
+
+/** Does `outer` lexically contain `inner`? */
+function contains(root: ts.SourceFile, outer: ts.Node, inner: ts.Node): boolean {
+  return inner.getStart(root) >= outer.getStart(root) && inner.end <= outer.end;
+}
+
+/** The `if` inside `where` whose condition reads exactly `condition`. */
+function branchOn(root: ts.SourceFile, where: ts.Node, condition: string): ts.IfStatement {
+  const found = nodesOf(root).filter(
+    (n): n is ts.IfStatement =>
+      ts.isIfStatement(n) && contains(root, where, n) && n.expression.getText(root) === condition,
   );
+  expect(found.map((n) => n.getText(root)), `one \`if (${condition})\``).toHaveLength(1);
+  return found[0]!;
 }
 
 /**
@@ -556,25 +590,40 @@ describe("the cadence, running", () => {
        did". */
     const module = cadenceModule();
 
-    /* ONE PLACE DECIDES WHAT A REPORT MEANS FOR THE LATCH — and the assertion is about WHERE the
-       writes are AND WHAT THEY SAY. Where alone is not enough: `note` legitimately holds two, the
-       set and the clear, and they sit five lines apart differing only in the literal, so a bad
-       merge that makes the clear read `true` is inside `note` and passes a containment check
-       while every `idle` report latches the window and a healthy app stops checking for the rest
-       of its life. Both halves, then: two writes, one of each value, both in `note`. Nodes and
-       not spellings, so an operator or a value written some other way is still counted. */
+    /* ONE PLACE DECIDES WHAT A REPORT MEANS FOR THE LATCH, and each of the three questions a
+       weaker version of this got wrong is asked separately.
+        · WHERE: every write but the declaration's own is inside `note`.
+        · WHAT: the declaration starts it cleared, and the two writes inside `note` are one `true`
+          and one `false`. Counting writes alone is not enough — `note` legitimately holds two —
+          and neither is counting the pair, since a bad merge five lines wide can swap them.
+        · WHICH BRANCH: the `true` sits under the refusal test and the `false` under the settled
+          test, so the inversion that reads correctly and behaves backwards has nowhere to hide.
+       The VALUES are matched as boolean-literal NODES, which is deliberately narrow: a clear
+       written as some other expression that happens to be falsy would fail this. That is the
+       point — these two writes are a shape a reader should be able to see at a glance, and a
+       guard that accepted any falsy expression would accept the thing it exists to notice. */
     const note = declarationOf(module, "note");
     const writes = writesTo(module, "installWasRefused");
-    for (const write of writes) {
+    const declared = declarationOf(module, "installWasRefused");
+    expect(declared.initializer?.kind, "the latch starts cleared")
+      .toBe(ts.SyntaxKind.FalseKeyword);
+
+    const inside = writes.filter((w) => w.at !== declared);
+    expect(inside, "the latch is written twice inside `note`, and nowhere else").toHaveLength(2);
+    for (const write of inside) {
       expect(
-        write.getStart(module) >= note.getStart(module) && write.end <= note.end,
-        `the latch is written outside \`note\`: ${write.getText(module)}`,
+        contains(module, note, write.at),
+        `the latch is written outside \`note\`: ${write.at.getText(module)}`,
       ).toBe(true);
     }
-    const values = writes.map((w) => (w as ts.BinaryExpression).right.getText(module));
-    expect(values.filter((v) => v === "true"), "the latch is SET in one place").toHaveLength(1);
-    expect(values.filter((v) => v === "false"), "and CLEARED in one place").toHaveLength(1);
-    expect(values, "and written nowhere else").toHaveLength(2);
+
+    const set = branchOn(module, note, "installRefused(report)");
+    const clear = branchOn(module, note, 'report.state === "idle"');
+    const under = (kind: ts.SyntaxKind, branch: ts.IfStatement) =>
+      inside.filter((w) => w.value.kind === kind && contains(module, branch, w.at));
+    expect(under(ts.SyntaxKind.TrueKeyword, set), "SET, under the refusal test").toHaveLength(1);
+    expect(under(ts.SyntaxKind.FalseKeyword, clear), "CLEARED, under the settled test")
+      .toHaveLength(1);
 
     /* …and both feeders go through it. The CALL is counted, so the count is indifferent to how a
        third one might be written — spacing, a `void`, an arrow body, a renamed argument. The
