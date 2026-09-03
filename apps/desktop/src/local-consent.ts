@@ -111,6 +111,11 @@ async function patch<T>(body: Record<string, unknown>): Promise<T> {
  * hook keep a stable wire identity across renders.
  */
 export const consentOverBridge: ConsentTransport = {
+  /* THE HOSTED DOOR REACHES THE HOSTED TABLE, which is the one that mounts `foldersRoutes`. The
+     engine serves no folder route of its own and does not try to: `/folders*` is not in
+     `cloud-read.ts`, so every one of the four verbs falls through to the write-through proxy and
+     is answered by the account. See the standalone twin below for the other half. */
+  foldersStorable: true,
   state: async () => jsonOf<ConsentStateWire>(await bridgeFetch(CONSENT_PATH)),
   setAutoSuggest: (enabled) => patch<{ autoSuggestAt: string | null }>({ autoSuggest: enabled }),
   /* THE WINDOW AND ITS MODE, one call and one PATCH — the hosted door's shape exactly, so the
@@ -168,4 +173,35 @@ export const consentOverBridge: ConsentTransport = {
    * appearance choice a machine with no account can make.
    */
   setThemeFace: (themeFace) => patch<{ themeFace: string | null }>({ themeFace }),
+};
+
+/**
+ * THE SAME WIRE, ON THE STANDALONE DOOR — identical routes, one capability short.
+ *
+ * The methods are the hosted transport's, spread rather than rewritten: this is the same engine
+ * request against the same path, and a second copy of the ten calls would be a second definition
+ * of what a consent means. What differs is one declared fact.
+ *
+ * ── THE PANE THAT COULD NOT WORK ────────────────────────────────────────────────────────────
+ *
+ * A standalone engine mounts `localRoutes`, whose consent group is wrapped in
+ * `withoutFoldersFlag` — the read forces `foldersEnabledAt` to null and the PATCH drops a
+ * `foldersEnabled` field silently, because this door serves NO folder verb at all and a raised
+ * flag would mount a rail over four routes that answer 404. That wrapper is right, and it is
+ * invisible from this side: the GET still answers 200, `consent.known` goes true, and the shared
+ * shell drew the whole Folders pane — a master switch that flipped, wrote nothing and snapped
+ * back off, over a per-mailbox list that governed nothing.
+ *
+ * Declaring it here rather than checking the door at the render is the same rule the door rules
+ * in `doors.ts` follow: the decision is a value a test can drive, and the window cannot forget to
+ * make it, because the field is required. When this door grows the four verbs — the standalone
+ * engine owns the IMAP connection, so folder create/rename/delete there is real work with real
+ * failure modes — this constant is the one line that changes.
+ *
+ * A STABLE module constant, like its twin, because `useConsentState` keeps a wire identity across
+ * renders and a fresh object per render would re-arm every effect keyed on it.
+ */
+export const consentOverBridgeStandalone: ConsentTransport = {
+  ...consentOverBridge,
+  foldersStorable: false,
 };

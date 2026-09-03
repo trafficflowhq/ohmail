@@ -26,6 +26,7 @@ import { useState } from "react";
 import { Button, SettingsNote, SettingsRow, SettingsSection, SettingsSubhead } from "@ohmail/ui";
 
 import { engineLogout, type EngineStatus } from "./bridge-fetch.js";
+import type { HostedSession } from "./doors.js";
 import { DesktopAiSettings } from "./DesktopAiSettings.js";
 import type { LocalAiStatus } from "./local-ai.js";
 import { MACHINE_WORD } from "./platform.js";
@@ -53,42 +54,76 @@ const DOOR_NAME: Record<string, string> = {
 };
 
 /**
- * What the engine says about the credential, in words rather than in its own vocabulary.
+ * What this install says about its credential, in words rather than in the engine's vocabulary.
  *
- * Five states and five different sentences, because the recoveries are different: nothing to do,
- * type it again, type it again for a different reason, finish the server change you started, and
- * "this engine is newer than this window, so carry on". Collapsing them into "connected / not
- * connected" is how somebody is sent to re-enter a password that was never the problem.
- *
- * ── AND THE ROW IS NOT CALLED THE SAME THING ON BOTH DOORS ──────────────────────────────────
+ * ── THE ROW IS NOT THE SAME QUESTION ON BOTH DOORS ──────────────────────────────────────────
  *
  * It was "Login: Signed in" everywhere, which is one word for two different things. On the hosted
  * door there is a sign-in and a session, so "Account session" is what the row is about. On the
  * standalone door there is NO sign-in at all — the credential is the mailbox password this
  * computer holds for an IMAP server — so "Login" invited somebody to look for an account they do
- * not have, and "Signed out" described a state that has no signing-in to undo. The label and the
- * two words the ordinary states carry now come from the door, and the three unusual states keep
- * their own sentences, which are about the stored secret either way.
+ * not have, and "Signed out" described a state that has no signing-in to undo.
+ *
+ * The STANDALONE door keeps five states and five different sentences, because the recoveries are
+ * different: nothing to do, type it again, type it again for a different reason, finish the server
+ * change you started, and "this engine is newer than this window, so carry on". Collapsing them
+ * into "connected / not connected" is how somebody is sent to re-enter a password that was never
+ * the problem.
+ *
+ * ── AND ON THE CLOUD DOOR THE FIELD IT SWITCHED ON WAS THE WRONG ONE ────────────────────────
+ *
+ * `credentialState` is the engine's LAUNCH frame, copied through `engine_status` unchanged for
+ * the life of the process. On the STANDALONE door that is harmless: re-sealing a mailbox password
+ * restarts the engine, so the next frame carries the new state. On the CLOUD door a sign-in
+ * happens IN PLACE (`POST /cloud/signin` against the running engine), so an install that started
+ * pre-auth kept reporting `absent` — and this pane told somebody whose mail was arriving that
+ * they were "Signed out" and offered to sign them in again, beside a Settings nav that had
+ * dropped six panes for the same reason. The live verdict is the one the window routes the whole
+ * app off (`HostedSession`), so it is what the cloud arm reads; the other four states are about a
+ * stored secret and stay the engine's own.
  */
-function credentialLine(status: EngineStatus): { label: string; value: string; description: string } {
+function credentialLine(
+  status: EngineStatus,
+  session: HostedSession,
+): { label: string; value: string; description: string } {
   const cloud = status.mode === "cloud";
   const label = cloud ? "Account session" : "Mailbox password";
+  if (cloud) {
+    return session === "live"
+      ? {
+          label,
+          value: "Signed in",
+          description: "This install holds a session for your hosted account.",
+        }
+      : session === "out"
+        ? {
+            label,
+            value: "Signed out",
+            description:
+              "There is no session for this account on this machine. Sign in again below.",
+          }
+        : {
+            label,
+            value: "Checking",
+            description: "The mail engine has not answered about this account's session yet.",
+          };
+  }
+  /* EVERY ARM BELOW IS THE STANDALONE DOOR'S — the cloud door returned above. The two that used
+     to carry a `cloud ? … : …` ternary lost it with that return: a branch no call can reach is a
+     second wording of the session states that nothing keeps in step with the first. */
   switch (status.credentialState) {
     case "ready":
       return {
         label,
-        value: cloud ? "Signed in" : "Stored",
-        description: cloud
-          ? "This install holds a session for your hosted account."
-          : `Sealed under a key in this ${MACHINE_WORD}'s keychain, and working.`,
+        value: "Stored",
+        description: `Sealed under a key in this ${MACHINE_WORD}'s keychain, and working.`,
       };
     case "absent":
       return {
         label,
-        value: cloud ? "Signed out" : "Not stored",
-        description: cloud
-          ? "There is no session for this account on this machine. Sign in again below."
-          : `No mailbox password is stored on this ${MACHINE_WORD}, so nothing is being synced yet.`,
+        value: "Not stored",
+        description:
+          `No mailbox password is stored on this ${MACHINE_WORD}, so nothing is being synced yet.`,
       };
     case "unreadable":
       return {
@@ -197,8 +232,15 @@ export function DesktopSettings({
    * control learns about a key that was just saved without waiting for a relaunch.
    */
   onAiStatus,
+  /**
+   * THIS ENGINE'S LIVE VERDICT ON THE HOSTED SESSION — the gate's `hostedSession`, handed down
+   * rather than re-derived, so the pane and the window can never disagree about whether this
+   * install is signed in. Only the cloud door reads it; see {@link credentialLine}.
+   */
+  session,
 }: {
   status: EngineStatus;
+  session: HostedSession;
   onStatus: (next: EngineStatus) => void;
   onSwitchDoor: () => void;
   onSignIn: () => void;
@@ -212,7 +254,7 @@ export function DesktopSettings({
   const [problem, setProblem] = useState<string | null>(null);
 
   const door = status.mode ? (DOOR_NAME[status.mode] ?? status.mode) : "Not chosen";
-  const credential = credentialLine(status);
+  const credential = credentialLine(status, session);
   /* "organizes" or "reads" — see `install-role.ts`. This pane said the first on an install that
      did the second, beside a Mailboxes pane saying the truth on the same machine. */
   const readOnly = screenerReadOnly(useMailboxFacts());
@@ -254,7 +296,7 @@ export function DesktopSettings({
 
       {problem ? <p className="join-error">{problem}</p> : null}
 
-      {status.mode === "cloud" && status.credentialState !== "ready" ? (
+      {status.mode === "cloud" && session === "out" ? (
         <SettingsRow
           label="Sign in again"
           description="Your hosted session has gone. Signing in happens in the mail engine on this machine."

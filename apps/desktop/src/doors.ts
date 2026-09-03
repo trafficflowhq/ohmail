@@ -199,12 +199,43 @@ export function mailMount(shell: Shell, mounted: string | null): MailMount {
  */
 export type SuggestDoor = "local" | "cloud" | null;
 
-export function suggestDoorFor(status: EngineStatus | null): SuggestDoor {
+/**
+ * IS THERE A LIVE HOSTED SESSION BEHIND THIS WINDOW — asked of the engine, never remembered from
+ * the launch frame.
+ *
+ * ── WHY THIS TYPE EXISTS, AND WHAT READING `credentialState` COST ───────────────────────────
+ *
+ * Every cloud arm below used to read `status.credentialState === "ready"`. That field is a
+ * LAUNCH-TIME SNAPSHOT and the protocol says so in as many words — *"It is the value AT LAUNCH
+ * and is never updated in place"* (`apps/sidecar/src/protocol.ts`) — and the shell re-emits it
+ * from the one `ready` frame on every `engine_status` read, so nothing rewrites it for the life
+ * of the process. A window that starts pre-auth reports `absent`; the person signs in through the
+ * window's own sign-in surface; the engine's session is real, the mirror pulls, mail arrives —
+ * and the field still says `absent`. Six settings panes (the away responder, signatures, folders,
+ * subscription, security, account) and three Screener controls (the dormancy dial, the
+ * auto-suggest opt-in, auto-unsubscribe) were gated on it, so all nine were missing for the rest
+ * of the session with nothing on screen saying why. `unknown` — an engine older than the field —
+ * lost the same nine on every launch, while the shell's own parser documents `unknown` as
+ * "carry on, nothing is wrong".
+ *
+ * The window already holds the live answer: it polls `GET /health` on the cloud door and routes
+ * the whole window off it (pending ⇒ a boot frame, signed-out ⇒ the sign-in surface, expired ⇒
+ * the notice). That answer is what these rules take now.
+ *
+ *  · `"live"`    — the CURRENT engine's own `/health` said `signedIn`, under a key minted for
+ *                  this engine. Every forwarded route will carry a bearer.
+ *  · `"out"`     — signed out, or the hosted API's definitive refusal to renew.
+ *  · `"unknown"` — not asked yet, or no bridge to ask over. Withheld, `suggestDoorFor`'s rule:
+ *                  never a control whose every press could only refuse.
+ */
+export type HostedSession = "live" | "out" | "unknown";
+
+export function suggestDoorFor(status: EngineStatus | null, session: HostedSession): SuggestDoor {
   if (status?.mode === "local") return "local";
-  // READY, not merely present: on this door the credential IS the hosted session, so `absent` is
-  // "signed out" and `unreadable`/`unknown` are "we cannot say" — and a purchase control offered on
-  // a maybe is a purchase control that refuses.
-  if (status?.mode === "cloud" && status.credentialState === "ready") return "cloud";
+  // LIVE, not merely configured: a purchase control offered on a maybe is a purchase control
+  // that refuses. See {@link HostedSession} for why this is the engine's live answer and not the
+  // launch frame's `credentialState`.
+  if (status?.mode === "cloud" && session === "live") return "cloud";
   return null;
 }
 
@@ -241,9 +272,12 @@ export function suggestDoorFor(status: EngineStatus | null): SuggestDoor {
  * The two live arms are NOT interchangeable at the call site: `"local"` also selects the sentence
  * above, and `DesktopGate` reads this function's answer rather than re-deriving the mode.
  */
-export function awayDoorFor(status: EngineStatus | null): "local" | "cloud" | null {
+export function awayDoorFor(
+  status: EngineStatus | null,
+  session: HostedSession,
+): "local" | "cloud" | null {
   if (status?.mode === "local") return "local";
-  return status?.mode === "cloud" && status.credentialState === "ready" ? "cloud" : null;
+  return status?.mode === "cloud" && session === "live" ? "cloud" : null;
 }
 
 /**
@@ -269,9 +303,12 @@ export function awayDoorFor(status: EngineStatus | null): "local" | "cloud" | nu
  *    so the question and the durable answer are the account's own, shared with every browser
  *    tab. Signed out, every call could only be refused: `null`, `suggestDoorFor`'s rule.
  */
-export function profileImportDoorFor(status: EngineStatus | null): "local" | "cloud" | null {
+export function profileImportDoorFor(
+  status: EngineStatus | null,
+  session: HostedSession,
+): "local" | "cloud" | null {
   if (status?.mode === "local") return "local";
-  if (status?.mode === "cloud" && status.credentialState === "ready") return "cloud";
+  if (status?.mode === "cloud" && session === "live") return "cloud";
   return null;
 }
 
@@ -300,14 +337,21 @@ export function profileImportDoorFor(status: EngineStatus | null): "local" | "cl
  *  · HOSTED, SIGNED IN. The account is real and the engine forwards these routes to it with the
  *    bearer, so what is read and written is the account's own row — identical to a browser tab with
  *    one hop more.
- *  · HOSTED, NOT SIGNED IN — or no door yet, or no answer from the shell. `null`. `READY`, not
- *    merely present, for the reason {@link suggestDoorFor} gives: on this door the credential IS
- *    the session, so `absent` is "signed out" and `unreadable`/`unknown` are "we cannot say", and
- *    a settings pane whose only state is an error about something it cannot fix from inside itself
- *    is worse than no pane.
+ *  · HOSTED, NOT SIGNED IN — or no door yet, or no answer from the shell. `null`: a settings pane
+ *    whose only state is an error about something it cannot fix from inside itself is worse than
+ *    no pane.
+ *
+ * THE SIGNED-IN TEST IS {@link HostedSession} AND NOT `credentialState`. This clause used to read
+ * "`READY`, not merely present … on this door the credential IS the session", which was the right
+ * idea about the wrong field: `credentialState` is the launch frame's, never rewritten, so an
+ * install that signed in through the window's own surface kept answering `absent` and lost all
+ * four panes for the rest of the session. See {@link HostedSession} for the whole account.
  */
-export function accountDoorFor(status: EngineStatus | null): "cloud" | null {
-  return status?.mode === "cloud" && status.credentialState === "ready" ? "cloud" : null;
+export function accountDoorFor(
+  status: EngineStatus | null,
+  session: HostedSession,
+): "cloud" | null {
+  return status?.mode === "cloud" && session === "live" ? "cloud" : null;
 }
 
 /**

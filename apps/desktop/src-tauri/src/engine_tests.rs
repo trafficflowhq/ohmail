@@ -2268,7 +2268,7 @@ fn the_browser_can_only_be_sent_where_this_table_says() {
     // property that rule was standing in for is not "no query", it is "no query anything outside
     // this file could have shaped". So the ban stays, with the admitted values named: a new entry
     // that invents a query still fails here, and so does an existing one that grows a parameter.
-    const ALLOWED_QUERIES: [&str; 1] = ["settings=mailboxes"];
+    const ALLOWED_QUERIES: [&str; 2] = ["settings=mailboxes", "settings=devices"];
     for (key, url) in LINKS {
         assert_eq!(link_for(key), Some(url));
         // Every destination is ours, over TLS.

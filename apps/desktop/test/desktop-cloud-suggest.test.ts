@@ -292,22 +292,35 @@ describe("the suggest control each door gets", () => {
   });
 
   it("gives a standalone install its own control", () => {
-    expect(suggestDoorFor(serving({ mode: "local" }))).toBe("local");
-    // And keeps it whatever the hosted-session field says — there is no hosted session on this door.
-    expect(suggestDoorFor(serving({ mode: "local", credentialState: "absent" }))).toBe("local");
+    expect(suggestDoorFor(serving({ mode: "local" }), "unknown")).toBe("local");
+    // And keeps it whatever the hosted session is doing — there is no hosted session on this door.
+    expect(suggestDoorFor(serving({ mode: "local", credentialState: "absent" }), "out"))
+      .toBe("local");
   });
 
   it("gives a signed-in hosted install the shared one", () => {
-    expect(suggestDoorFor(serving({ mode: "cloud" }))).toBe("cloud");
+    expect(suggestDoorFor(serving({ mode: "cloud" }), "live")).toBe("cloud");
+  });
+
+  /**
+   * SIGNED IN IS THE ENGINE'S LIVE ANSWER. This rule used to read the launch frame's
+   * `credentialState`, which the shell never rewrites — so an install that signed in through the
+   * window's own surface lost this control (and six settings panes) for the rest of the session.
+   */
+  it("…whatever the launch frame's credential word says, because it no longer decides", () => {
+    for (const credentialState of ["absent", "unreadable", "unknown", undefined] as const) {
+      expect(suggestDoorFor(serving({ mode: "cloud", credentialState }), "live")).toBe("cloud");
+    }
   });
 
   it("offers nothing where a press could only be refused", () => {
-    // Signed out of the hosted account: every press would fail on the one thing this window
-    // cannot fix from inside the Screener.
-    expect(suggestDoorFor(serving({ mode: "cloud", credentialState: "absent" }))).toBeNull();
-    expect(suggestDoorFor(serving({ mode: "cloud", credentialState: "unreadable" }))).toBeNull();
+    // Signed out of the hosted account, or not yet asked: every press would fail on the one thing
+    // this window cannot fix from inside the Screener.
+    expect(suggestDoorFor(serving({ mode: "cloud" }), "out")).toBeNull();
+    expect(suggestDoorFor(serving({ mode: "cloud" }), "unknown")).toBeNull();
+    expect(suggestDoorFor(serving({ mode: "cloud", credentialState: "ready" }), "out")).toBeNull();
     // No door chosen, and no answer from the shell at all.
-    expect(suggestDoorFor(serving({ mode: null }))).toBeNull();
-    expect(suggestDoorFor(null)).toBeNull();
+    expect(suggestDoorFor(serving({ mode: null }), "live")).toBeNull();
+    expect(suggestDoorFor(null, "live")).toBeNull();
   });
 });

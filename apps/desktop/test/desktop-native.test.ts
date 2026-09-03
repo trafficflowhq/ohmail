@@ -23,6 +23,7 @@ import { NextIntlClientProvider } from "next-intl";
 
 import en from "../../webapp/messages/en.json";
 import { DesktopSettings } from "../src/DesktopSettings.js";
+import type { HostedSession } from "../src/doors.js";
 import { MACHINE_WORD } from "../src/platform.js";
 import type { EngineStatus } from "../src/bridge-fetch.js";
 
@@ -188,7 +189,19 @@ describe("Settings → this install", () => {
     credentialState: "ready",
   };
 
-  const mount = async (status: EngineStatus, onStatus: (s: EngineStatus) => void = () => {}) => {
+  /**
+   * The hosted session's live verdict, handed down by the gate. Defaulted to `"live"` because
+   * that is what every case here but the signed-out one is about — a working install — and
+   * because the alternative, deriving it from `status.credentialState`, is exactly the mistake
+   * the parameter exists to close: that field is the engine's launch frame and the shell never
+   * rewrites it, so an install that signed in after launch reported itself signed out for the
+   * rest of the session.
+   */
+  const mount = async (
+    status: EngineStatus,
+    onStatus: (s: EngineStatus) => void = () => {},
+    session: HostedSession = "live",
+  ) => {
     hostEl = document.createElement("div");
     document.body.append(hostEl);
     root = createRoot(hostEl);
@@ -202,6 +215,7 @@ describe("Settings → this install", () => {
           { locale: "en", messages: en as never, timeZone: "Europe/Zurich" },
           h(DesktopSettings, {
             status,
+            session,
             onStatus,
             onSwitchDoor: () => {},
             onSignIn: () => {},
@@ -277,7 +291,7 @@ describe("Settings → this install", () => {
   });
 
   it("names the OTHER door when the install came in by it", async () => {
-    await mount({ ...SERVING, mode: "cloud", credentialState: "absent" });
+    await mount({ ...SERVING, mode: "cloud", credentialState: "ready" }, () => {}, "out");
     const text = hostEl.textContent ?? "";
     expect(text).toContain("ohmail Cloud");
     // The hosted door DOES have a session, so it keeps the sign-in vocabulary.
@@ -285,6 +299,28 @@ describe("Settings → this install", () => {
     expect(text).toContain("Signed out");
     // A cloud install that has lost its session is offered the way back.
     expect([...hostEl.querySelectorAll("button")].map((b) => b.textContent)).toContain("Sign in");
+  });
+
+  /**
+   * AND THE SAME PANE ON A WINDOW THAT SIGNED IN AFTER LAUNCH, which is where it used to be
+   * wrong about the one thing it is for.
+   *
+   * `credentialState` is the engine's `ready` frame, and the shell re-emits it unchanged on every
+   * status read. A cloud sign-in happens IN PLACE against the running engine, so an install that
+   * started pre-auth carried `absent` for the life of the process — and this pane told somebody
+   * whose mail was arriving that there was no session on this machine, and offered to sign them
+   * in again. The live verdict is what the window routes the whole app off; it is what this pane
+   * reads now, and the launch frame's word must not move it.
+   */
+  it("says the session is live when it is, whatever the launch frame said", async () => {
+    await mount({ ...SERVING, mode: "cloud", credentialState: "absent" }, () => {}, "live");
+    const text = hostEl.textContent ?? "";
+    expect(text).toContain("Signed in");
+    expect(text, "a signed-in install was told it had no session").not.toContain("Signed out");
+    expect(
+      [...hostEl.querySelectorAll("button")].map((b) => b.textContent),
+      "a signed-in install was offered a sign-in",
+    ).not.toContain("Sign in");
   });
 
   it("does not offer a hosted sign-in on a local install", async () => {

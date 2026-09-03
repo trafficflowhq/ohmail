@@ -250,22 +250,41 @@ describe("the door that may ask about found settings", () => {
   });
 
   it("the STANDALONE door always may — the engine it asks is this install's own", () => {
-    expect(profileImportDoorFor(serving({ mode: "local" }))).toBe("local");
+    expect(profileImportDoorFor(serving({ mode: "local" }), "unknown")).toBe("local");
     // Even without the mailbox password: the resting answer is a marker read, no dial, and a
     // held question the engine cannot re-verify is a 502 the hook already swallows.
-    expect(profileImportDoorFor(serving({ mode: "local", credentialState: "absent" }))).toBe("local");
+    expect(profileImportDoorFor(serving({ mode: "local", credentialState: "absent" }), "out"))
+      .toBe("local");
   });
 
   it("the HOSTED door may when signed in — the engine forwards to the account with the bearer", () => {
-    expect(profileImportDoorFor(serving({ mode: "cloud" }))).toBe("cloud");
+    expect(profileImportDoorFor(serving({ mode: "cloud" }), "live")).toBe("cloud");
+  });
+
+  /**
+   * AND "SIGNED IN" IS THE ENGINE'S LIVE ANSWER, NOT THE LAUNCH FRAME'S. `credentialState` is
+   * copied out of the engine's one-shot `ready` frame and never rewritten, so a window that
+   * started pre-auth and signed in through its own surface reported `absent` for the rest of the
+   * session — and this card, with six settings panes, was withheld from an install whose mail was
+   * arriving. Every shape the field can take is asserted here under a live session, because none
+   * of them may decide any more.
+   */
+  it("…and the launch frame's credential word no longer decides it", () => {
+    for (const credentialState of ["absent", "unreadable", "unknown", undefined] as const) {
+      expect(
+        profileImportDoorFor(serving({ mode: "cloud", credentialState }), "live"),
+        `a live session with credentialState=${String(credentialState)} lost the card`,
+      ).toBe("cloud");
+    }
   });
 
   it("nothing while there is no hosted session, no door, or no answer from the shell", () => {
-    expect(profileImportDoorFor(serving({ mode: "cloud", credentialState: "absent" }))).toBeNull();
-    expect(profileImportDoorFor(serving({ mode: "cloud", credentialState: "unreadable" }))).toBeNull();
-    expect(profileImportDoorFor(serving({ mode: "cloud", credentialState: "unknown" }))).toBeNull();
-    expect(profileImportDoorFor(serving({ mode: null }))).toBeNull();
-    expect(profileImportDoorFor(null)).toBeNull();
+    expect(profileImportDoorFor(serving({ mode: "cloud" }), "out")).toBeNull();
+    expect(profileImportDoorFor(serving({ mode: "cloud" }), "unknown")).toBeNull();
+    expect(profileImportDoorFor(serving({ mode: "cloud", credentialState: "ready" }), "out"))
+      .toBeNull();
+    expect(profileImportDoorFor(serving({ mode: null }), "live")).toBeNull();
+    expect(profileImportDoorFor(null, "live")).toBeNull();
   });
 });
 
@@ -284,7 +303,7 @@ describe("the wiring, pinned by source", () => {
 
   it("the window hands its transport in by the door rule", () => {
     expect(gate).toMatch(
-      /\{\.\.\.\(profileImportDoorFor\(status\) !== null \? \{ profileImportTransport: profileImportOverBridge \} : \{\}\)\}/,
+      /\{\.\.\.\(profileImportDoorFor\(status, hostedSession\) !== null \? \{ profileImportTransport: profileImportOverBridge \} : \{\}\)\}/,
     );
   });
 

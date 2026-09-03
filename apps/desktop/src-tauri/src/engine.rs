@@ -3435,7 +3435,7 @@ fn set_badge<R: tauri::Runtime>(app: tauri::AppHandle<R>, count: u32) -> Result<
 /// The table is also why the addresses live HERE rather than in the frontend: the bundle is
 /// asserted to name no host at all, which is the claim the whole preview artifact rests on.
 #[cfg(feature = "local-engine")]
-const LINKS: [(&str, &str); 7] = [
+const LINKS: [(&str, &str); 8] = [
     ("account", "https://ohmail.app/mailbox#/settings"),
     ("security", "https://ohmail.app/mailbox#/settings"),
     ("billing", "https://ohmail.app/mailbox#/settings"),
@@ -3447,6 +3447,13 @@ const LINKS: [(&str, &str); 7] = [
     // and this line decides the whole address, so nothing a caller could shape reaches the browser.
     // `engine_tests.rs` admits this query by name and refuses any other.
     ("mailboxes", "https://ohmail.app/mailbox?settings=mailboxes#/settings"),
+    // THE SECOND ENTRY THAT CARRIES A QUERY, and the same constant-of-this-table rule applies to
+    // every character of it. Settings → Devices on the hosted door is a way out to the account's
+    // own device list, whose mint and revoke are step-up gated; landing on the web client's first
+    // Settings pane instead of Devices would leave the person to find it, which is the thing the
+    // `?settings=` parameter exists to prevent. The page passes the KEY `devices` and this line
+    // decides the whole address.
+    ("devices", "https://ohmail.app/mailbox?settings=devices#/settings"),
     // The browser half of signing in to a hosted account: the page mints a one-use code and the
     // person types it into the window that opened it. It is the ONE entry here the app opens
     // BEFORE it has a session — the rest are administration of an account it is already serving

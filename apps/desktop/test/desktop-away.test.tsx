@@ -225,7 +225,26 @@ describe("the door that may configure an away responder", () => {
   });
 
   it("is the hosted door, signed in", () => {
-    expect(awayDoorFor(serving({ mode: "cloud" }))).toBe("cloud");
+    expect(awayDoorFor(serving({ mode: "cloud" }), "live")).toBe("cloud");
+  });
+
+  /**
+   * AND "SIGNED IN" IS THE ENGINE'S LIVE ANSWER, NOT THE LAUNCH FRAME'S.
+   *
+   * This block used to drive the door off `credentialState`, which the shell copies out of the
+   * engine's one-shot `ready` frame and never rewrites. On the cloud door a sign-in happens IN
+   * PLACE against the running engine, so an install that started pre-auth kept reporting `absent`
+   * for the life of the process — and this pane, with five others, was missing on a window whose
+   * mail was arriving. The field is asserted here in every shape it can take, all with a live
+   * session, precisely because none of them may decide any more.
+   */
+  it("…and the launch frame's credential word no longer decides it", () => {
+    for (const credentialState of ["absent", "unreadable", "unknown", undefined] as const) {
+      expect(
+        awayDoorFor(serving({ mode: "cloud", credentialState }), "live"),
+        `a live session with credentialState=${String(credentialState)} lost the responder`,
+      ).toBe("cloud");
+    }
   });
 
   /**
@@ -244,23 +263,30 @@ describe("the door that may configure an away responder", () => {
    * failure `profileImportDoorFor` already argues against.
    */
   it("is ALSO the standalone door — the engine on this machine sends while the window is open", () => {
-    expect(awayDoorFor(serving({ mode: "local" }))).toBe("local");
-    expect(awayDoorFor(serving({ mode: "local", credentialState: "ready" }))).toBe("local");
-    expect(awayDoorFor(serving({ mode: "local", credentialState: "absent" }))).toBe("local");
+    // The hosted session's state is irrelevant on this door and is asserted so: a standalone
+    // install has no session to be in any of them, and reading one would be a hosted fact
+    // deciding a local pane.
+    expect(awayDoorFor(serving({ mode: "local" }), "unknown")).toBe("local");
+    expect(awayDoorFor(serving({ mode: "local", credentialState: "ready" }), "out")).toBe("local");
+    expect(awayDoorFor(serving({ mode: "local", credentialState: "absent" }), "live")).toBe("local");
   });
 
   it("distinguishes the two live doors rather than answering a boolean", () => {
     // The caller needs WHICH door: `"local"` also selects the "while ohmail is open on this
     // computer" note, and a boolean would put that sentence on the hosted pane where it is false.
-    expect(awayDoorFor(serving({ mode: "local" }))).not.toBe(awayDoorFor(serving({ mode: "cloud" })));
+    expect(awayDoorFor(serving({ mode: "local" }), "live"))
+      .not.toBe(awayDoorFor(serving({ mode: "cloud" }), "live"));
   });
 
   it("is nothing while there is no hosted session, no door, or no answer from the shell", () => {
-    expect(awayDoorFor(serving({ mode: "cloud", credentialState: "absent" }))).toBeNull();
-    expect(awayDoorFor(serving({ mode: "cloud", credentialState: "unreadable" }))).toBeNull();
-    expect(awayDoorFor(serving({ mode: "cloud", credentialState: "unknown" }))).toBeNull();
-    expect(awayDoorFor(serving({ mode: null }))).toBeNull();
-    expect(awayDoorFor(null)).toBeNull();
+    // `out` is signed out or expired; `unknown` is "the engine has not been asked yet, or there is
+    // no bridge to ask over" — and a settings pane whose only state is an error it cannot fix
+    // from inside itself is worse than no pane.
+    expect(awayDoorFor(serving({ mode: "cloud" }), "out")).toBeNull();
+    expect(awayDoorFor(serving({ mode: "cloud" }), "unknown")).toBeNull();
+    expect(awayDoorFor(serving({ mode: "cloud", credentialState: "ready" }), "out")).toBeNull();
+    expect(awayDoorFor(serving({ mode: null }), "live")).toBeNull();
+    expect(awayDoorFor(null, "live")).toBeNull();
   });
 });
 
@@ -284,8 +310,13 @@ describe("the wiring, pinned by source", () => {
     // account, or answer it out of the store on this machine). `awayIsLocal` carries the only
     // difference the window is responsible for: the sentence about replies going out while the
     // app is open, which is true on one door and false on the other.
-    expect(gate).toMatch(/awayDoorFor\(status\) !== null/);
-    expect(gate).toMatch(/awayTransport: awayOverBridge, awayIsLocal: awayDoorFor\(status\) === "local"/);
+    // The SECOND argument is part of the claim: the door rule reads the engine's live session
+    // verdict, not the launch frame's credential word. Handing it `status` alone was how the pane
+    // went missing on an install that signed in after launch.
+    expect(gate).toMatch(/awayDoorFor\(status, hostedSession\) !== null/);
+    expect(gate).toMatch(
+      /awayTransport: awayOverBridge, awayIsLocal: awayDoorFor\(status, hostedSession\) === "local"/,
+    );
   });
 
   it("the shared shell admits a host transport as a second way to be supported", () => {

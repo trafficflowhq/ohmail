@@ -421,8 +421,17 @@ describe("the gate hands the stage its door", () => {
     () => {
       // `consent.known` is one of the four conditions `AppShell` gates the stage on, and it
       // comes from `GET /consent` — which `localRoutes` serves (mail 0083).
+      //
+      // ONE WIRE PER DOOR, and the standalone one is a DIFFERENT object rather than the same
+      // constant behind an `||`. The two route tables are not the same: `localRoutes` wraps the
+      // consent group in `withoutFoldersFlag`, so a standalone install can read and write the
+      // screening window and cannot store the folders flag at all. Sharing the constant is how
+      // the Folders pane came to be drawn on that door over a switch that snapped back.
       expect(gate).toMatch(
-        /accountDoor \|\| firstRunDoorFor\(status\) === "local"\s*\?\s*\{ consentTransport: consentOverBridge \}/,
+        /accountDoor\s*\n?\s*\?\s*\{ consentTransport: consentOverBridge \}/,
+      );
+      expect(gate).toMatch(
+        /firstRunDoorFor\(status\) === "local"\s*\n?\s*\?\s*\{ consentTransport: consentOverBridgeStandalone \}/,
       );
       // And the half of the old rule that survived: a spend control needs a ledger, and a
       // standalone engine has none.

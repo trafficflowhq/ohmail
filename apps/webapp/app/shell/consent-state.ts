@@ -68,6 +68,30 @@ import { readOwner } from "./owner-cookie";
  * shape adapted for the second caller would be a shape invented for it.
  */
 export interface ConsentTransport {
+  /**
+   * CAN THE SERVER BEHIND THIS WIRE ACTUALLY STORE THE FOLDERS FLAG — the one capability this
+   * transport declares, because the route it names cannot be asked.
+   *
+   * ── THE PANE THAT COULD NOT WORK, AND WHY NOTHING NOTICED ───────────────────────────────
+   *
+   * `foldersRoutes` are mounted on the HOSTED table alone, so the standalone and self-host doors
+   * serve no folder verb at all. `packages/api`'s `localRoutes` therefore wraps the consent group
+   * in `withoutFoldersFlag`: the read forces `foldersEnabledAt` to null and the PATCH drops a
+   * `foldersEnabled` field silently, deliberately, so no client can raise a flag whose verbs
+   * would 404.
+   *
+   * That wrapper is right and it is invisible from here. The GET still answers 200, so
+   * `consent.known` goes true, so the shared shell drew the whole Folders pane on a standalone
+   * install: a master switch that flips, writes nothing, and snaps back off, plus a per-mailbox
+   * list under it that governs nothing. A control wired to nothing is the one thing this settings
+   * surface may not be — and the failure is silent in both directions, because "the write was
+   * dropped" and "the account has folders off" are the same two bytes on the wire.
+   *
+   * So the capability is DECLARED by whoever built the wire, which is the only place that knows
+   * which route table is behind it. Required rather than optional: an absent field would select a
+   * branch, and the branch it would select is the one that draws the dead pane.
+   */
+  foldersStorable: boolean;
   state: () => Promise<ConsentStateWire>;
   setAutoSuggest: (enabled: boolean) => Promise<{ autoSuggestAt: string | null }>;
   /**
@@ -103,6 +127,20 @@ export interface ConsentTransport {
 
 /** The hosted transport — the browser talking to the API this app was written against. */
 const CLOUD_CONSENT: ConsentTransport = {
+  /* THE MANAGED API MOUNTS `foldersRoutes`, so this is true of the browser tab this transport was
+     written for — and it is a STATIC claim about a route table this client cannot interrogate,
+     which makes it exactly true of one deployment and not of the other.
+
+     A SELF-HOST server serves `selfHostRoutes`, which spreads `localRoutes` whole and therefore
+     inherits `withoutFoldersFlag` — the same stripped consent group the standalone desktop gets,
+     and no folder verbs either. So a self-host web client draws the same pane that cannot store,
+     and this constant says otherwise. It is declared here rather than guessed because the honest
+     answer is the SERVER's to give: `/hello`'s `features` is where `pairing` already lives for
+     exactly this reason ("an older server never grows a dead entry"), and `folders` belongs
+     beside it. Until it does, this constant is exact for the managed deployment and one release
+     ahead of the truth for a self-hosted one. The desktop's two doors are already answered
+     truthfully, because the transport there is built by something that knows its own door. */
+  foldersStorable: true,
   state: () => consentApi.state(),
   setAutoSuggest: (enabled) => consentApi.setAutoSuggest(enabled),
   setDormancyDays: (days, scope) => consentApi.setDormancyDays(days, scope),
@@ -343,6 +381,15 @@ export interface ConsentState {
    */
   cloudClient: boolean;
   /**
+   * CAN THE SERVER BEHIND THIS WIRE STORE THE FOLDERS FLAG — the transport's own declaration,
+   * republished so the one consumer that must not draw a dead pane can read it beside `known`.
+   *
+   * Derived from the live wire rather than stored, exactly as {@link cloudClient} is, so no
+   * `setState` can leave it behind and no resting value can be mistaken for an answer. See
+   * {@link ConsentTransport.foldersStorable} for what the field asserts and what it cost.
+   */
+  foldersStorable: boolean;
+  /**
    * WHEN THE FIRST-RUN FLOW WAS LAST LEFT — finished OR cancelled, because both stamp it — or
    * `null` for "this account has never been through setup".
    *
@@ -427,6 +474,7 @@ const RESTING: ConsentState = {
   known: false,
   standalone: false,
   cloudClient: false,
+  foldersStorable: false,
   // NEVER BEEN THROUGH SETUP, at rest. Not a safe position — see
   // {@link ConsentState.onboardingCompletedAt}: it is the value that would OPEN a setup dialog,
   // which is why the mount site gates on `known` as well and never on this alone.
@@ -745,6 +793,7 @@ export function useConsentState(
           // because the state object carries them. Nothing may read them off `state`.
           standalone: false,
           cloudClient: false,
+          foldersStorable: false,
         });
         appliedSeq.current = mine;
         // The next boot paints from THIS answer. Written after the state (never instead of
@@ -1068,6 +1117,11 @@ export function useConsentState(
     ...presented,
     standalone: active && !reachable,
     cloudClient: apiConfigured(),
+    /* From the WIRE, so it answers for the transport actually in use rather than for the one this
+       build would fall back to — and only while a wire is reachable at all: with none, the pane it
+       gates is already withheld by `known`, and claiming a capability for a server nobody is
+       talking to would be a second answer to a question that has none. */
+    foldersStorable: reachable && link.current.foldersStorable,
     setThemeFace,
     setAutoSuggest,
     setDormancyDays,

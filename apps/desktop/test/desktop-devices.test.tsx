@@ -207,7 +207,7 @@ const deHost = (de as { host: Record<string, string> }).host;
 
 // ── The door rule ──────────────────────────────────────────────────────────────────────────────
 
-describe("the pane exists on the standalone door only", () => {
+describe("HOST MODE's pane exists on the standalone door only", () => {
   const status = (mode: EngineStatus["mode"]): EngineStatus =>
     ({ state: "serving", mode, credentialState: "ready" }) as EngineStatus;
 
@@ -218,17 +218,32 @@ describe("the pane exists on the standalone door only", () => {
     expect(hostDoorFor(null)).toBe(null);
   });
 
-  it("the gate injects devicesSection through hostDoorFor and nowhere else", () => {
-    // The render decision is the pure function above; this pins the gate TO it, so a rewrite
-    // that injects the pane unconditionally (or on another condition) goes red here while the
-    // pure test above still passes.
+  /**
+   * THE PANE ID IS SHARED, THE NODE IS NOT — and this case used to assert there was exactly one
+   * injection, which was a claim about host mode written as a claim about the whole pane.
+   *
+   * Host mode publishes the mailbox THIS computer opens; an install mirroring a hosted account
+   * has nothing of its own to serve, so `hostDoorFor` withholds it there and that has not
+   * changed. What the old count also enforced was the ABSENCE of any Devices entry on the hosted
+   * door — where the account has real devices, a real session list and a real revoke, all of
+   * which a browser tab shows and this window did not. So there are two arms now, and each is
+   * pinned to its own door: a rewrite that injects either unconditionally still goes red.
+   */
+  it("the gate injects host mode's node through hostDoorFor, and the account's through accountDoor", () => {
     const gate = fs.readFileSync(
       path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../src/DesktopGate.tsx"),
       "utf8",
     );
-    const injections = gate.match(/devicesSection/g) ?? [];
-    expect(injections.length).toBe(1);
-    expect(gate).toMatch(/hostDoorFor\(status\) === "local"\s*\?\s*\{ devicesSection: <DesktopDevices \/> \}/);
+    const injections = gate.match(/devicesSection:/g) ?? [];
+    expect(injections.length, "a third Devices node appeared — which door is it for?").toBe(2);
+    expect(gate).toMatch(
+      /hostDoorFor\(status\) === "local"\s*\n?\s*\?\s*\{ devicesSection: <DesktopDevices \/> \}/,
+    );
+    /* The hosted arm is a DOOR OUT, not a form: the mint and the revoke are step-up gated and
+       nothing this window can do asserts a second factor. Pinned as the place key, because a
+       node that opened the wrong page would be a working button to the wrong screen. */
+    expect(gate).toMatch(/:\s*accountDoor\s*\n?\s*\?\s*\{\s*\n?\s*devicesSection:/);
+    expect(gate).toContain('place="devices"');
   });
 });
 

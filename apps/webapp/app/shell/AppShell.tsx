@@ -6979,10 +6979,21 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
                    on, or a flipped switch would leave this tab's rail where it was. Gated on
                    `consent.known` for the two rows' flash argument (a switch drawn before the
                    server answered shows OFF to an account that turned it ON). Absent on the demo
-                   and on a standalone install (no consent row anywhere); present on the desktop's
-                   hosted door, where `known` becomes true through its transport — a LOCAL install
-                   organizes the same real IMAP folders. */
-                foldersSection={demo || !consent.known ? undefined : (
+                   on the demo. Present on the desktop's hosted door, where `known` becomes true
+                   through its transport.
+
+                   AND GATED ON `foldersStorable` AS WELL, which is the clause the comment here
+                   used to make as a claim about the standalone door — *"absent on a standalone
+                   install (no consent row anywhere)"* — that stopped being true when the screening
+                   window reached that door. `consentRoutes` are mounted on `localRoutes` now, so
+                   the standalone engine answers `GET /consent` and `known` goes true; what it does
+                   NOT serve is a single folder verb, so `packages/api`'s `withoutFoldersFlag`
+                   forces the flag off on the read and drops it silently on the write. The pane
+                   drew anyway: a master switch that flipped, stored nothing and snapped back, over
+                   a per-mailbox list that governed nothing. The capability is the transport's to
+                   declare because only the thing that built the wire knows which route table is
+                   behind it — see {@link ConsentTransport.foldersStorable}. */
+                foldersSection={demo || !consent.known || !consent.foldersStorable ? undefined : (
                   <FoldersRow
                     on={consent.foldersEnabled}
                     /* THE NUDGE — mobile's folders-flag coordinator learned this first: the

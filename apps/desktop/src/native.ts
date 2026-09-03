@@ -122,6 +122,12 @@ export const WEB_PLACES = [
   // origin this window does not have. So the honest surface is a read-only list and a way out to
   // the browser, and this key is the way out.
   "mailboxes",
+  // `devices` is Settings → Devices on the hosted door: the sessions signed into the account, the
+  // pairing mint that puts its mail on a phone, and the take-back. Here for `mailboxes`' reason
+  // said about a different pair of routes — `POST /pair` and `DELETE /devices/:id` are step-up
+  // gated, and a desktop session is stamped with a factor exactly once, when its code was claimed.
+  // A form here would collect a password and be refused, so the window offers the way out instead.
+  "devices",
   // `link-desktop` is the odd one and worth naming: every other place here administers an
   // account this app is already serving, and this one is opened BEFORE there is a session — it
   // is the browser half of signing in, where the page mints a one-use code the person retypes

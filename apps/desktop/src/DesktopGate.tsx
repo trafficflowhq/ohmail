@@ -73,12 +73,12 @@ import { DesktopWebSection } from "./DesktopWebSection.js";
 import {
   accountDoorFor, awayDoorFor, firstRunDoorFor, gateFor, hostDoorFor, mailMount,
   profileImportDoorFor, readShell, suggestDoorFor,
-  type Shell,
+  type HostedSession, type Shell,
 } from "./doors.js";
 import { DesktopDevices } from "./DesktopDevices.js";
 import { awayOverBridge } from "./local-away.js";
 import { profileImportOverBridge } from "./local-profile-import.js";
-import { consentOverBridge } from "./local-consent.js";
+import { consentOverBridge, consentOverBridgeStandalone } from "./local-consent.js";
 import { olderBodyOverBridge } from "./local-older-body.js";
 import { junkOverBridge } from "./local-junk.js";
 import { cloudSuggestWire } from "./cloud-suggest.js";
@@ -311,6 +311,27 @@ export function DesktopGate() {
   const hostedAuthKnown = hostedAuth !== null && hostedAuth.key === authKey;
   const hostedSessionGone = hostedAuthKnown && hostedAuth.gone;
   const hostedPreAuth = hostedAuthKnown && hostedAuth.preAuth;
+  /**
+   * THE ONE FACT EVERY ACCOUNT-SHAPED SURFACE BELOW IS DECIDED BY — this engine's own live
+   * verdict on the hosted session, in the shape the door rules take ({@link HostedSession}).
+   *
+   * It is derived from the SAME probe state the whole-window routing above reads, rather than a
+   * second opinion beside it: pending draws the boot frame, `"out"` draws the sign-in surface or
+   * the expiry notice, and only `"live"` reaches the mail client. Deriving it here — one
+   * expression, one name — is what keeps the settings surface and the window's own routing from
+   * ever disagreeing about whether this install is signed in.
+   *
+   * WHAT IT REPLACED: `status.credentialState`, which the shell copies out of the engine's
+   * one-shot `ready` frame and never rewrites. An install that launched pre-auth and then signed
+   * in through the surface above ran the whole session reported as signed OUT, and the nine
+   * settings surfaces gated on it stayed missing until the app was relaunched.
+   */
+  const hostedSession: HostedSession =
+    door !== "cloud" || !hostedAuthKnown
+      ? "unknown"
+      : hostedAuth.gone || hostedAuth.preAuth
+        ? "out"
+        : "live";
   const [signInAfterExpiry, setSignInAfterExpiry] = useState(false);
   useEffect(() => {
     // A new key is a new engine (or no cloud engine at all): the expiry flow's held step is
@@ -562,7 +583,7 @@ export function DesktopGate() {
     );
   }
 
-  const suggestDoor = suggestDoorFor(status);
+  const suggestDoor = suggestDoorFor(status, hostedSession);
   /**
    * IS THERE A HOSTED ACCOUNT BEHIND THIS WINDOW — the one gate every account-shaped surface below
    * reads, so they can only appear and disappear together.
@@ -578,7 +599,7 @@ export function DesktopGate() {
    * "there is no server here". That is true of the standalone door and false of this one.
    * `accountDoorFor` is where the distinction lives, as a pure function a test can drive.
    */
-  const accountDoor = accountDoorFor(status) === "cloud";
+  const accountDoor = accountDoorFor(status, hostedSession) === "cloud";
 
   /* Null on the one render where the engine has just been asked for and the state that holds it
      has not caught up. React re-renders before painting, so that render is never seen; it still
@@ -717,6 +738,7 @@ export function DesktopGate() {
                 node: (
                   <DesktopSettings
                     status={status}
+                    session={hostedSession}
                     onStatus={onStatus}
                     onSwitchDoor={() => setOverlay("doors")}
                     onSignIn={() => setOverlay("cloud")}
@@ -726,12 +748,39 @@ export function DesktopGate() {
               }
             : undefined
         }
-        /* SETTINGS → DEVICES — host mode's pane, on the STANDALONE door only. `hostDoorFor` is
-           the rule and it is a pure function in `doors.ts` for the reason the other door gates
-           are: host mode publishes the mailbox THIS computer opens, so an install mirroring a
-           hosted account has nothing of its own to serve and gets no entry — withheld
-           structurally rather than offered onto the shell's own refusal. */
-        {...(hostDoorFor(status) === "local" ? { devicesSection: <DesktopDevices /> } : {})}
+        /* SETTINGS → DEVICES — one pane id, one entry per door, and the two doors put genuinely
+           different things behind it.
+
+           STANDALONE: host mode's pane. Publishing the mail engine on THIS computer to the
+           person's own devices is something only an install that holds the whole mailbox can
+           offer, and `hostDoorFor` is the rule — a pure function in `doors.ts` for the reason the
+           other door gates are.
+
+           HOSTED: the ACCOUNT's devices — the sessions signed into it, the pairing mint that puts
+           its mail on a phone, and the take-back. A browser tab against the managed service has
+           had that pane since the device-pairing mount, and this window had NO devices entry at
+           all: an install mirroring the account could not see which devices were signed into it,
+           and could not revoke one. That absence read as "this product does not have that", which
+           is the shape this whole surface exists to remove.
+
+           It is a DOOR OUT rather than a form, and for `DesktopWebSection`'s reason exactly:
+           `POST /pair` and `DELETE /devices/:id` are step-up gated, and nothing this app can do
+           asserts a second factor. A list drawn here over verbs that could only be refused would
+           be worse than the absence — so the pane says where the ceremony happens and opens it.
+           `GET /devices` alone is not gated, but a read-only list beside no verb answers the one
+           question ("who is signed in?") and refuses the one that follows it. */
+        {...(hostDoorFor(status) === "local"
+          ? { devicesSection: <DesktopDevices /> }
+          : accountDoor
+            ? {
+                devicesSection: (
+                  <DesktopWebSection
+                    place="devices"
+                    copy={{ title: "webDevicesTitle", why: "webDevicesWhy", note: "webDevicesNote" }}
+                  />
+                ),
+              }
+            : {})}
         /* A SUGGEST CONTROL PER DOOR, because the two doors are not buying the same thing.
            On the STANDALONE door the model belongs to whoever installed it and nothing is
            metered, so the control names no price and says instead whether there is a model at
@@ -784,8 +833,8 @@ export function DesktopGate() {
            pane's promise differs. `awayIsLocal` carries that difference and nothing else: on the
            standalone door the replies go out only while this window is open, and the pane says so
            rather than borrowing Cloud's always-on copy. */
-        {...(awayDoorFor(status) !== null
-          ? { awayTransport: awayOverBridge, awayIsLocal: awayDoorFor(status) === "local" }
+        {...(awayDoorFor(status, hostedSession) !== null
+          ? { awayTransport: awayOverBridge, awayIsLocal: awayDoorFor(status, hostedSession) === "local" }
           : {})}
         /* SETTINGS FOUND ON A MAILBOX — the profile-import card, on BOTH doors, and this is the
            desktop-standalone tier gaining the flow's flagship case: a mailbox that arrives
@@ -795,7 +844,7 @@ export function DesktopGate() {
            wire is injected — but a different door rule, because the engine on this machine
            serves the three routes ITSELF on the standalone door and forwards them to the account
            on the hosted one. `profileImportDoorFor` is the rule, a pure function a test drives. */
-        {...(profileImportDoorFor(status) !== null ? { profileImportTransport: profileImportOverBridge } : {})}
+        {...(profileImportDoorFor(status, hostedSession) !== null ? { profileImportTransport: profileImportOverBridge } : {})}
         /* SETTINGS → SCREENER AND GENERAL, THE ACCOUNT'S OWN ROW — the dormancy dial, the
            auto-suggest opt-in and auto-unsubscribe, all of which the shared shell already builds
            and all of which it withheld here because its `GET /consent` could not run. Two wires
@@ -821,9 +870,16 @@ export function DesktopGate() {
            it prices a batch against an account's ledger, and there is no ledger and no watermark
            behind a standalone engine. A spend control with nothing behind it is the one thing
            that control must never be. */
-        {...(accountDoor || firstRunDoorFor(status) === "local"
+        /* ONE WIRE PER DOOR, and the two differ by exactly one declared capability: the
+           standalone engine serves no folder verb, so its transport says the folders flag is not
+           storable and the shared shell withholds that pane instead of drawing a switch that
+           snaps back. Everything else about the two objects is the same ten calls against the
+           same paths — see `local-consent.ts`. */
+        {...(accountDoor
           ? { consentTransport: consentOverBridge }
-          : {})}
+          : firstRunDoorFor(status) === "local"
+            ? { consentTransport: consentOverBridgeStandalone }
+            : {})}
         {...(accountDoor ? { suggestWire: cloudSuggestWire } : {})}
         /* THE REACH-PAST BODY WIRE — BOTH doors, `consentTransport`'s transport-not-a-control
            rule: the door, its states and its sentences are the shared shell's

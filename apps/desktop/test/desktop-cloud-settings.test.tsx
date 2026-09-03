@@ -358,16 +358,34 @@ describe("accountDoorFor — which installs have an account to administer", () =
     ({ state: "serving", mode: "cloud", credentialState: "ready", ...over }) as EngineStatus;
 
   it("the hosted door with a session", () => {
-    expect(accountDoorFor(status({}))).toBe("cloud");
+    expect(accountDoorFor(status({}), "live")).toBe("cloud");
+  });
+
+  /**
+   * AND THE SESSION IS THE ENGINE'S LIVE ANSWER, NOT THE LAUNCH FRAME'S.
+   *
+   * This rule used to read `status.credentialState`, which the shell copies out of the engine's
+   * one-shot `ready` frame and never rewrites. On the cloud door a sign-in happens IN PLACE
+   * against the running engine, so an install that started pre-auth reported `absent` for the life
+   * of the process — and Subscription, Security, Account, the consent row and the spend wire were
+   * all withheld from a window whose mail was arriving, until it was relaunched.
+   */
+  it("…on an install that signed in AFTER launch, where the frame still says otherwise", () => {
+    for (const credentialState of ["absent", "unreadable", "unknown", undefined] as const) {
+      expect(
+        accountDoorFor(status({ credentialState }), "live"),
+        `a live session with credentialState=${String(credentialState)} lost the account panes`,
+      ).toBe("cloud");
+    }
   });
 
   it("…and nothing else", () => {
-    expect(accountDoorFor(null)).toBeNull();
-    expect(accountDoorFor(status({ mode: "local" }))).toBeNull();
-    // Signed out, or unreadable: every read would be refused, and a settings pane whose only
+    expect(accountDoorFor(null, "live")).toBeNull();
+    expect(accountDoorFor(status({ mode: "local" }), "live")).toBeNull();
+    // Signed out, or not yet asked: every read would be refused, and a settings pane whose only
     // state is an error about something it cannot fix from inside itself is worse than no pane.
-    expect(accountDoorFor(status({ credentialState: "absent" }))).toBeNull();
-    expect(accountDoorFor(status({ credentialState: "unreadable" }))).toBeNull();
+    expect(accountDoorFor(status({}), "out")).toBeNull();
+    expect(accountDoorFor(status({}), "unknown")).toBeNull();
   });
 });
 
