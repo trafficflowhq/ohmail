@@ -36,9 +36,11 @@ in every language, because they are names on your own mail server and they are w
 other mail app will show you. The sentence now gives both, so what you agree to is what you
 will find.
 
-Two parts of the desktop app are still English in a German window and are not fixed here:
-the door chooser you meet before a mailbox is connected, and the Desktop and About panes in
-Settings.
+The two parts that were still English in a German window are fixed now too: the door
+chooser you meet before a mailbox is connected — all three ways of signing in — and the
+Desktop and About panes in Settings, including the sentences behind "Sign out", "Switch
+mailbox" and the mail engine's own status line. The search box's placeholder and its
+accessible label are translated as well; they had been missed by the earlier pass.
 
 ### Search puts matches first, and keeps the near-misses out of the way
 
