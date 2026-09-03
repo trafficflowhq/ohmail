@@ -90,7 +90,8 @@ Your own addresses no longer count as evidence of which identity is writing. A m
 addressed only to yourself leaves from the address the form opened on, or the one you
 picked, and says nothing. Addressed to yourself *and* a correspondent, the correspondent
 decides, exactly as they would have on their own. An address on a mailbox that can no
-longer send still counts as yours, and so does your own address typed in a different case.
+longer send still counts as yours; so does your own address typed in a different case, and
+so does one filed under a tag — `you+receipts@…` is you.
 
 Nothing changes for a reply or a forward: both answer from the mailbox the original arrived
 in, whoever they are addressed to.

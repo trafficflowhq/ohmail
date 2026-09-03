@@ -248,6 +248,40 @@ function foldAddress(address: string): string {
 }
 
 /**
+ * THE SAME ADDRESS WITH ITS `+`-TAG REMOVED — the key the OWN-ADDRESS question is asked with.
+ *
+ * `me+notes@acme.example` is `me@acme.example` wearing a filing label, and filing a note to
+ * yourself under one is a common enough convention that the whole-address comparison left the
+ * reported defect standing verbatim for it: the tagged form is not literally an address the
+ * account holds, so the recipient rule read it as a stranger on the account's own domain and
+ * moved the sender onto the mailbox the note was addressed to.
+ *
+ * ── WHY THIS IS SAFE HERE AND NOT EVERYWHERE ────────────────────────────────────────────
+ *
+ * A `+` in a local part is a convention, not a guarantee: the RFC lets a provider treat it as an
+ * ordinary character, and a few do. So this is a GUESS, and it is only made where a wrong guess
+ * is cheap. It changes an answer in exactly one case — a recipient whose base address IS one of
+ * the account's own — and there the cost of guessing wrong is a declined auto-switch onto a
+ * mailbox on that same domain. A stranger's tagged address (`dana+work@acme.example`) has a base
+ * the account does not hold, so it still matches and still decides, unchanged.
+ *
+ * {@link foldAddress} deliberately does NOT do this, and the two reply helpers keep using it.
+ * They filter recipients OUT of an envelope, where a wrong guess drops somebody from a reply and
+ * the message never reaches them — the expensive direction. Declining a sender switch and losing
+ * a recipient are not the same kind of mistake, so they are not decided by the same rule.
+ *
+ * A local part that BEGINS with `+` is left whole: there is no base in front of the tag, and an
+ * empty local part is not an address anybody holds.
+ */
+function ownAddressKey(address: string): string {
+  const folded = foldAddress(address);
+  const at = folded.lastIndexOf("@");
+  if (at <= 0) return folded;
+  const plus = folded.indexOf("+");
+  return plus > 0 && plus < at ? folded.slice(0, plus) + folded.slice(at) : folded;
+}
+
+/**
  * EVERY ADDRESS THE ACCOUNT ITSELF HOLDS, folded — including the ones it cannot send from.
  *
  * The options ARE the account's mailboxes. `optionsFromFacts` maps `GET /mailboxes` whole and a
@@ -258,9 +292,11 @@ function foldAddress(address: string): string {
  *
  * There are no aliases in it because the product has none — a mailbox holds one address today.
  * When it holds several, this is the one place they join and nothing else in the rule moves.
+ *
+ * Keyed by {@link ownAddressKey}, so the membership test has to be asked with the same key.
  */
 function ownAddressSet(options: readonly FromOption[]): Set<string> {
-  return new Set(options.map((o) => foldAddress(o.address)));
+  return new Set(options.map((o) => ownAddressKey(o.address)));
 }
 
 /**
@@ -335,7 +371,8 @@ function domainOf(address: string): string | null {
  * line addressed only to yourself resolve through one path.
  *
  * The set is every mailbox on the account, DISABLED ONES INCLUDED ({@link ownAddressSet}) —
- * unlike the match below, which may only propose a mailbox the server would accept.
+ * unlike the match below, which may only propose a mailbox the server would accept — and it is
+ * asked with {@link ownAddressKey}, so a `+`-tagged form of one of your addresses counts as yours.
  *
  * @param recipients the addresses typed on the To line, in order, already parsed.
  */
@@ -346,7 +383,7 @@ export function domainMatchedFrom(
   const mine = ownAddressSet(options);
   let hit: FromOption | null = null;
   for (const recipient of recipients) {
-    if (mine.has(foldAddress(recipient))) continue;
+    if (mine.has(ownAddressKey(recipient))) continue;
     const domain = domainOf(recipient);
     if (domain === null) continue;
     for (const option of options) {
@@ -380,8 +417,18 @@ export function domainMatchedFrom(
  * A user who chose an address has already taken the decision this would take for them, and a pick
  * that has gone stale falls back to the plain derivation exactly as it did before this existed.
  * Nothing downstream of this gate revisits it: a pick made before the recipients were typed and a
- * pick made after them are the same field, so once an address has been chosen no later edit to
- * the To line moves the sender again.
+ * pick made after them are the same field, so once the field is SET no later edit to the To line
+ * moves the sender again.
+ *
+ * "Set" and "chosen" are not the same thing, and the difference has one consequence worth naming.
+ * A REOPENED DRAFT arrives with the field set from its row (`openDraft` ← the row's `mailboxId`,
+ * which `useComposeAutosave` wrote from whatever the resolution was at the time), so the rule is
+ * off for it whether or not a human ever touched the selector. That is the intended reading — a
+ * draft's sender is a decision already taken and re-deriving over it would move the sender of a
+ * message somebody left half-written — but it also means a draft SAVED BEFORE the own-address
+ * rule existed carries the sender the old rule matched, and reopening it keeps that sender rather
+ * than correcting it. Bounded to drafts already on the server, and not repairable from here: the
+ * row records which mailbox, never whether anybody chose it.
  *
  * ── IT IS A DERIVED DEFAULT AND NOTHING ELSE ────────────────────────────────────────────
  *
