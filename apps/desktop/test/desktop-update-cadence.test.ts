@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import ts from "typescript";
 
 import {
   currentUpdateOffer,
@@ -98,42 +99,85 @@ async function run(clock: { at: number }, by: number): Promise<void> {
 }
 
 /**
- * THE MODULE'S OWN CODE, with its prose removed — the input every source assertion below reads.
+ * THE MODULE, PARSED — the input every source assertion below reads.
  *
  * ── WHY THE SOURCE AT ALL ────────────────────────────────────────────────────────────────────
  *
  * Two of the things this file pins cannot be seen from outside the module: which of two opaque
- * command names the schedule invokes, and whether a rule is written once or twice. Both are
+ * command names the schedule asks for, and whether a rule is written once or twice. Both are
  * decisions about the shape of the code, so the code is what is read.
  *
- * ── WHY THE PROSE COMES OUT ──────────────────────────────────────────────────────────────────
+ * ── AND WHY A PARSE RATHER THAN A REGEX, WHICH THIS FILE TRIED FOUR TIMES ───────────────────
  *
- * This is the most comment-dense module in the app and its notes name the very identifiers these
- * assertions count. Counting over the raw text fails on the next paragraph that mentions one —
- * a red over a defect that is not there, which is how a guard ends up switched off.
+ * `one-ui-census.test.ts` already carries this lesson — *"the scan is AST-based (text scanning
+ * was defeated three times over there)"* — and it was re-learned here rather than read. A text
+ * count over this module has to decide what is code and what is prose, and every rule for that
+ * failed in a way that was silent in one direction or the other:
  *
- * ONE PASS WITH AN ALTERNATION, not two passes in some order. Stripping block comments first
- * leaves a line comment containing an unpaired block opener able to start a block that closes at
- * the next terminator; stripping line comments first breaks every doc comment whose terminator
- * shares a line with a `//` — the prevailing style for a one-line note carrying a URL, present in
- * two dozen files here. Both orders therefore delete real code, which BOTH hides an added call and fails the
- * count over nothing. Alternating leaves whichever opener comes first to consume its own body.
+ *   · counting the raw file — the next paragraph that names the identifier fails the guard over
+ *     a defect that is not there, which is how a guard ends up switched off;
+ *   · stripping block comments first — a line comment holding an unpaired opener starts a block
+ *     that closes at the next terminator, deleting the real code between;
+ *   · stripping line comments first — every doc comment whose terminator shares a line with a
+ *     `//` breaks the same way, and that is the prevailing style for a one-line note with a URL;
+ *   · one alternating pass — sound for comments, and still blind to an opener inside a string,
+ *     which opens a span that swallows an added call as far as the next terminator.
  *
- * ── AND WHAT IT STILL CANNOT DO ──────────────────────────────────────────────────────────────
- *
- * It is a stripper, not a lexer: a `//` inside a string or a regex literal is removed with the
- * rest of that line, so a call written after one on the same line is invisible to the counts.
- * The guard raises the floor; it is not a proof, and saying so here is cheaper than a claim that
- * would be wrong.
+ * Each of those hid a third feeder from a guard whose whole job is to notice one. A parser has
+ * no such ambiguity: comments are trivia and are not nodes, and a `/*` inside a string is a
+ * string. The counts below are over CALL EXPRESSIONS and ASSIGNMENTS, so they are indifferent to
+ * spelling as well — spacing, `void`, an arrow body, a renamed argument, `||=`, a value that is
+ * an expression rather than a literal.
  *
  * Resolved from the run's own directory rather than from `import.meta.url`, because this file
- * runs under jsdom where that is not a file URL. The suite runs from the repository root, and the
- * length assertion is what makes a wrong root fail loudly instead of matching nothing and passing.
+ * runs under jsdom where that is not a file URL. The suite runs from the repository root, and
+ * the length check is what makes a wrong root fail loudly instead of finding nothing and passing.
  */
-function cadenceSource(): { src: string; code: string } {
-  const src = readFileSync(resolve(process.cwd(), "apps/desktop/src/update-cadence.ts"), "utf8");
+function cadenceModule(): ts.SourceFile {
+  const path = resolve(process.cwd(), "apps/desktop/src/update-cadence.ts");
+  const src = readFileSync(path, "utf8");
   expect(src.length, "the module under assertion was not found").toBeGreaterThan(2000);
-  return { src, code: src.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "") };
+  return ts.createSourceFile(path, src, ts.ScriptTarget.Latest, true);
+}
+
+/** Every node in the module, in one flat walk. */
+function nodesOf(root: ts.SourceFile): ts.Node[] {
+  const out: ts.Node[] = [];
+  const walk = (node: ts.Node): void => {
+    out.push(node);
+    node.forEachChild(walk);
+  };
+  walk(root);
+  return out;
+}
+
+/** How many times `name(…)` is CALLED — however the call is spelled or the argument named. */
+function callsTo(root: ts.SourceFile, name: string): number {
+  return nodesOf(root).filter(
+    (n) => ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === name,
+  ).length;
+}
+
+/** Every ASSIGNMENT to `name` — any operator, any value. */
+function writesTo(root: ts.SourceFile, name: string): ts.Node[] {
+  return nodesOf(root).filter(
+    (n) =>
+      ts.isBinaryExpression(n) &&
+      ts.isIdentifier(n.left) &&
+      n.left.text === name &&
+      n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      n.operatorToken.kind <= ts.SyntaxKind.LastAssignment,
+  );
+}
+
+/** The `const <name> = …` declaration, so a rule can be asserted to live inside one. */
+function declarationOf(root: ts.SourceFile, name: string): ts.VariableDeclaration {
+  const found = nodesOf(root).filter(
+    (n): n is ts.VariableDeclaration =>
+      ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === name,
+  );
+  expect(found, `one declaration of \`${name}\``).toHaveLength(1);
+  return found[0]!;
 }
 
 describe("when a periodic check is due", () => {
@@ -219,18 +263,26 @@ describe("which request the schedule makes", () => {
        button; wrong once a day forever. Routing this cadence through the press would put a modal
        over a person's mail every twenty-four hours for as long as the app stayed open and
        current, which is the nag the whole file exists to replace. */
-    /* Read over the CODE, not the file: a negative assertion satisfied by a comment is a guard
-       that passes after the code stopped doing the thing — a note quoting the old seam beside a
-       new one that presses would keep both of these green while the timer pressed. */
-    const { code } = cadenceSource();
-    expect(code).toMatch(/options\.poll \?\? updatePoll/);
-    expect(code, "the timer must not make the request a person makes")
-      .not.toMatch(/options\.poll \?\? updatePress/);
-    /* `updatePress` is still imported and still used — it is what the STRIP's button calls, and
-       that press IS a person asking. The distinction is which of the two the timer takes. */
-    expect(code).toMatch(/act: \(\) => void updatePress\(\)/);
-    expect(code.match(/\bupdatePress\s*\(/g), "one press, and it is the strip's button")
-      .toHaveLength(1);
+    /* THE SEAM'S DEFAULT, read off the declaration rather than out of the text — a note quoting
+       the old seam beside a new one that presses would satisfy a text match while the timer
+       pressed, which is the one thing this test exists to prevent. */
+    const module = cadenceModule();
+    const seam = nodesOf(module).find(
+      (n): n is ts.VariableDeclaration =>
+        ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === "poll",
+    );
+    expect(seam?.initializer?.getText(module), "the timer's default request")
+      .toBe("options.poll ?? updatePoll");
+
+    /* `updatePress` is still imported and still called — it is what the STRIP's button does, and
+       that press IS a person asking. The distinction is which of the two the timer takes, so the
+       count is what pins it: one call, and it is the button's. */
+    expect(callsTo(module, "updatePress"), "one press, and it is the strip's button").toBe(1);
+    const press = nodesOf(module).find(
+      (n): n is ts.PropertyAssignment =>
+        ts.isPropertyAssignment(n) && ts.isIdentifier(n.name) && n.name.text === "act",
+    );
+    expect(press?.initializer?.getText(module)).toContain("updatePress()");
   });
 });
 
@@ -486,24 +538,27 @@ describe("the cadence, running", () => {
        A source assertion, like the one for which request the schedule makes, and for the same
        reason: nothing rendered can tell "the listener updated the latch" from "the next tick
        did". */
-    const { code } = cadenceSource();
+    const module = cadenceModule();
 
-    /* Exactly one place decides what a report means for the latch — and the WRITE is matched, not
-       one spelling of it. `installWasRefused ||= true` and a write folded into an expression are
-       both second writers that an exact-literal match would miss while reporting that there was
-       only one. */
-    expect(code.match(/const note = \(report: UpdateReport\): void =>/g)).toHaveLength(1);
-    expect(code.match(/installWasRefused\s*(?:\|\|)?=\s*true/g), "the latch is set in one place")
-      .toHaveLength(1);
+    /* ONE PLACE DECIDES WHAT A REPORT MEANS FOR THE LATCH, and the assertion is about WHERE the
+       writes are rather than how many there are: `note` legitimately holds two, the set and the
+       clear, so a count would have to be 2 and would then be satisfied by any two writes
+       anywhere. Every assignment to the latch has to sit inside `note` — whatever its operator
+       and whatever its value, since the node is what is matched and not a spelling of it. */
+    const note = declarationOf(module, "note");
+    const writes = writesTo(module, "installWasRefused");
+    expect(writes.length, "the latch is written at all").toBeGreaterThan(0);
+    for (const write of writes) {
+      expect(
+        write.getStart(module) >= note.getStart(module) && write.end <= note.end,
+        `the latch is written outside \`note\`: ${write.getText(module)}`,
+      ).toBe(true);
+    }
 
-    /* …and both feeders go through it. COUNTED ON THE CALL AND NOT ON ITS ARGUMENT: keying on
-       the parameter's name — or on indentation, or on a whole statement line — narrows the match
-       until a third feeder spelled any other way matches nothing and leaves this green while its
-       own message is false. A renamed callback parameter is the likeliest of those, because the
-       subscription this pins is already an arrow callback; the whitespace is tolerated for the
-       same reason the indentation is. The declaration does not match, being `const note = (`. */
-    expect(code.match(/\bnote\s*\(/g), "the poll and the subscription, and no third")
-      .toHaveLength(2);
+    /* …and both feeders go through it. The CALL is counted, so the count is indifferent to how a
+       third one might be written — spacing, a `void`, an arrow body, a renamed argument. The
+       declaration is not a call and does not count. */
+    expect(callsTo(module, "note"), "the poll and the subscription, and no third").toBe(2);
   });
 
   it("…and the bound is not Linux's alone — a daily dialog is a nag anywhere", async () => {
