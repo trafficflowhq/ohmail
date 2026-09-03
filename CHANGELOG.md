@@ -13,46 +13,21 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
-### The away responder replies in the thread, at a rate you choose — and works offline of Cloud
+### Still to come
 
-The away responder had a subject line of its own, so a reply arrived as a new message
-about a subject its recipient had never seen. It is a reply now: "Re:" plus what they
-wrote, threaded onto their message, so it lands in the conversation they started.
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
 
-How often one person may be answered is a setting — every message, once until you change
-the text, at most once a day, or at most once a week. Existing responders keep answering
-at most once a day, which is the new default.
+## [0.14.0] — 2026-09-03
 
-"Once until you change the text" means the text. Turning the responder off and on again,
-or opening settings and pressing Save without editing anything, used to start a fresh
-round in which everybody was answered again; it no longer does. The other half of the
-same problem is fixed too: correcting a typo in the middle of a trip used to permanently
-silence everyone who had written before the correction — they received neither the old
-message nor the new one. They are answered now, with what you actually wrote.
-
-**A standalone install answers its own mail for the first time.** The setting was hidden
-there because nothing in the app could send the reply. That is no longer true, and the
-pane says what the app can honestly promise: replies are sent while ohmail is open on
-this computer. Mail that arrives overnight is answered when you next open it. An install
-that reads a mailbox without organizing it answers nobody, so two installs can never both
-reply to the same person.
-
-The list of senders who never get an automatic reply gained the ones you have turned
-away, and separated them from the strangers still waiting in the Screener — those are
-answered only if you have chosen to answer everyone. A message from a mailing list, from
-an address that accepts no reply, from a security-related sender, or from one of your own
-addresses is still never answered, and every reply carries the header that stops somebody
-else's responder answering it back. A message whose text has not been downloaded yet is
-left alone until it has been, rather than treated as carrying no markers at all.
-
-### A send that stalled on this computer is settled on the next pass
-
-If a send was interrupted between your mail server accepting it and the app writing that
-down, the draft could sit at "Sending…" indefinitely on a standalone install. It is
-settled on the next pass now — usually without opening a connection, because the copy in
-your own mailbox is enough to confirm it went. This already worked on ohmail Cloud and on
-a self-hosted server.
-
+A desktop install can hold more than one mailbox. Each one gets its own connection,
+its own organizing claim, its own poll timer and its own saved password and servers;
+adding, removing and re-adding one touches only that mailbox, and an existing install
+upgrades in place with nothing moved. Alongside it the away responder was reworked: it
+replies in the thread instead of sending a message with a subject of its own, it answers
+each person at a rate you choose, and a standalone install can send those replies at all
+for the first time. A send left stalled on a standalone install is settled on the next
+pass.
 
 ### More than one mailbox
 
@@ -107,12 +82,9 @@ sync it now, run its setup again, remove it. Taking a mailbox back from another
 install is offered on every mailbox that is only being read, not just the first one
 in the list.
 
-Removing the last mailbox now returns ohmail to its setup screen and stays that
-way. Before, the mailbox came back in the list after a restart with no password and
-nothing being fetched — the removal was real, but the app was still configured to
-open a mailbox it no longer had. Removing the mailbox this computer was started
-with no longer stops the one that stays, either: each mailbox reaches the server
-its own saved password names, so no mailbox inherits a removed one's server.
+Removing the mailbox this computer was started with no longer stops the one that
+stays: each mailbox reaches the server its own saved password names, so no mailbox
+inherits a removed one's server.
 
 Testing a connection while adding a mailbox works however long the app has been
 open. It used to be checked against a stamp made when the app started, which was
@@ -137,10 +109,45 @@ first time or changing a password later. And the password it saves records both
 servers, incoming and outgoing, so a mailbox added later sends through its own
 server rather than the first mailbox's.
 
-### Still to come
+### The away responder replies in the thread, at a rate you choose — and works offline of Cloud
 
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
+The away responder had a subject line of its own, so a reply arrived as a new message
+about a subject its recipient had never seen. It is a reply now: "Re:" plus what they
+wrote, threaded onto their message, so it lands in the conversation they started.
+
+How often one person may be answered is a setting — every message, once until you change
+the text, at most once a day, or at most once a week. Existing responders keep answering
+at most once a day, which is the new default.
+
+"Once until you change the text" means the text. Turning the responder off and on again,
+or opening settings and pressing Save without editing anything, used to start a fresh
+round in which everybody was answered again; it no longer does. The other half of the
+same problem is fixed too: correcting a typo in the middle of a trip used to permanently
+silence everyone who had written before the correction — they received neither the old
+message nor the new one. They are answered now, with what you actually wrote.
+
+**A standalone install answers its own mail for the first time.** The setting was hidden
+there because nothing in the app could send the reply. That is no longer true, and the
+pane says what the app can honestly promise: replies are sent while ohmail is open on
+this computer. Mail that arrives overnight is answered when you next open it. An install
+that reads a mailbox without organizing it answers nobody, so two installs can never both
+reply to the same person.
+
+The list of senders who never get an automatic reply gained the ones you have turned
+away, and separated them from the strangers still waiting in the Screener — those are
+answered only if you have chosen to answer everyone. A message from a mailing list, from
+an address that accepts no reply, from a security-related sender, or from one of your own
+addresses is still never answered, and every reply carries the header that stops somebody
+else's responder answering it back. A message whose text has not been downloaded yet is
+left alone until it has been, rather than treated as carrying no markers at all.
+
+### A send that stalled on this computer is settled on the next pass
+
+If a send was interrupted between your mail server accepting it and the app writing that
+down, the draft could sit at "Sending…" indefinitely on a standalone install. It is
+settled on the next pass now — usually without opening a connection, because the copy in
+your own mailbox is enough to confirm it went. This already worked on ohmail Cloud and on
+a self-hosted server.
 
 ## [0.13.8] — 2026-09-02
 
@@ -3631,7 +3638,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.13.8...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.14.0
 [0.13.8]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.8
 [0.13.7]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.7
 [0.13.6]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.6
