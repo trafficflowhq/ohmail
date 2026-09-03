@@ -83,7 +83,7 @@
  * door could perform. The control is below, beside the resync, on the local door alone.
  */
 
-import { Fragment, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { Button, SettingsActions, SettingsBanner, SettingsNote, SettingsRow, SettingsSection, SettingsVerdict } from "@ohmail/ui";
 
@@ -91,7 +91,7 @@ import {
   deviceHoldings, holdingsSpeak, readerStandDown, showInboundQuiet, type MailboxFacts,
 } from "../../webapp/app/shell/mail-state";
 import { addressKey } from "../../webapp/app/shell/address-key";
-import { agoStamp } from "../../webapp/app/shell/format";
+import { agoStamp, dayStamp } from "../../webapp/app/shell/format";
 import { activeFormatLocale, activeFormatZone } from "../../webapp/app/shell/locale";
 import { useMailState } from "../../webapp/app/shell/MailStateProvider";
 import { goFirstRun } from "../../webapp/app/shell/routing";
@@ -151,6 +151,19 @@ interface MailboxWire {
   serverMessageCount?: number;
   /** When this install was told it may organize this mailbox (mail 0083); null pre-consent. */
   organizeConsentedAt?: string | null;
+  /**
+   * The once-only organizer notice's evidence pair, on the same rule as the quiet pair below:
+   * absent is an engine that predates the columns, and the line is derived from a COMPARISON of
+   * the two, so a `?? null` would turn silence into "changed, never acknowledged".
+   */
+  organizerEventAt?: string | null;
+  organizerEventSeenAt?: string | null;
+  /** When this install last gave this mailbox up on purpose — the pane's permanent line. */
+  organizerReleasedAt?: string | null;
+  /** Whether a decision made here would be accepted by whoever organizes this mailbox. */
+  organizerAcceptsRequests?: boolean;
+  /** How this mailbox is signed in — it decides one sentence about why a refusal is permanent. */
+  authKind?: "password" | "oauth";
   /** OUR filings this mailbox has not applied yet — the strip's `filing` arm reads it. */
   pendingMoves?: number;
   /**
@@ -162,6 +175,63 @@ interface MailboxWire {
   inboundQuietSince?: string | null;
   inboundQuietDismissedAt?: string | null;
   createdAt?: string;
+}
+
+/** Whether this install can reach one mailbox's server right now. Row id → the answer. */
+export interface MailboxReach {
+  reachable: boolean;
+  /** The server answered and refused the sign-in — a different fact with a different remedy. */
+  signInRefused: boolean;
+  /** ISO instant of the FIRST observation of death in the current outage; null while reachable. */
+  unreachableSince: string | null;
+}
+
+/**
+ * CAN THIS MACHINE REACH ITS MAILBOXES RIGHT NOW — a desktop-only read, on purpose.
+ *
+ * It is NOT part of `MailboxFacts`, and that is not tidiness. Those facts are the shared shell's,
+ * served by `GET /mailboxes` on both doors and consumed by the hosted client too, where "our
+ * socket to your provider" is a fact about a worker on a shard that no user is sitting at. The
+ * liveness of THIS process's own connections has a reader on exactly one surface, so it has a
+ * route on exactly one door.
+ *
+ * ── AN EMPTY ANSWER IS "CANNOT TELL", NEVER "UNREACHABLE" ─────────────────────────────────────
+ *
+ * Three ways this legitimately returns nothing: an engine older than the route (a desktop updates
+ * on its own schedule), the served host transport, which does not carry the local routes at all,
+ * and any transport failure. All three mean the same thing to a reader — no answer — and the
+ * ladder's fallback for an absent id is the state it had before this existed. The dangerous
+ * default is the other one: a pane that read silence as "unreachable" would tell somebody their
+ * mail had stopped every time an update landed.
+ */
+export async function readMailboxReachVia(
+  fetchImpl: (url: string, init?: unknown) => Promise<Response>,
+): Promise<Record<string, MailboxReach>> {
+  let body: {
+    items?: Array<{
+      mailboxId?: unknown; reachable?: unknown; unreachableSince?: unknown; signInRefused?: unknown;
+    }>;
+  };
+  try {
+    const res = await fetchImpl("/local/mailboxes/connections");
+    if (!res.ok) return {};
+    body = (await res.json()) as typeof body;
+  } catch {
+    return {};
+  }
+  const out: Record<string, MailboxReach> = {};
+  for (const it of body.items ?? []) {
+    if (typeof it.mailboxId !== "string" || typeof it.reachable !== "boolean") continue;
+    out[it.mailboxId] = {
+      reachable: it.reachable,
+      unreachableSince: typeof it.unreachableSince === "string" ? it.unreachableSince : null,
+      /* ABSENT READS AS `false`, on this file's standing rule: an engine older than the field
+         cannot have refused a sign-in, and the dangerous default is the other one — telling
+         somebody their password was rejected because their app is out of date. */
+      signInRefused: it.signInRefused === true,
+    };
+  }
+  return out;
 }
 
 /**
@@ -258,6 +328,16 @@ export async function readMailboxFactsVia(
     // available any more.
     ...("serverMessageCount" in m ? { serverMessageCount: m.serverMessageCount } : {}),
     ...("organizeConsentedAt" in m ? { organizeConsentedAt: m.organizeConsentedAt } : {}),
+    // THE ORGANIZER NOTICE'S PAIR, ITS RELEASE STAMP AND THE HOLDER'S ANSWER, forwarded by the
+    // same `in` spread as every optional field here. The notice is a comparison of two instants
+    // and the decision controls hang off the last of them, so absent must arrive absent: on an
+    // engine that predates the columns the line stays silent and the controls stay withheld,
+    // which is what a build that cannot tell should do.
+    ...("organizerEventAt" in m ? { organizerEventAt: m.organizerEventAt } : {}),
+    ...("organizerEventSeenAt" in m ? { organizerEventSeenAt: m.organizerEventSeenAt } : {}),
+    ...("organizerReleasedAt" in m ? { organizerReleasedAt: m.organizerReleasedAt } : {}),
+    ...("organizerAcceptsRequests" in m ? { organizerAcceptsRequests: m.organizerAcceptsRequests } : {}),
+    ...("authKind" in m ? { authKind: m.authKind } : {}),
     ...("pendingMoves" in m ? { pendingMoves: m.pendingMoves } : {}),
     // THE FORWARDING-DETECTION PAIR (mail 0078), forwarded by the same `in` spread and for the
     // same reason as every optional field above: absent is an engine that predates the columns
@@ -351,13 +431,12 @@ function when(iso: string | null | undefined): string {
  * timestamp in it ("since 8/31/2026, 3:28:43 AM") makes it look like an event log and invites
  * watching, which is the same reason the DTO deliberately carries when an install BECAME the
  * organizer rather than when it was last seen: a heartbeat on a screen is a thing people stare at.
+ *
+ * The rule itself moved to the shared shell (`format.ts#dayStamp`) when the browser's Mailboxes
+ * pane grew the same released sentence: one catalogue key rendered on two panes must not be able
+ * to carry two different dates. This name stays because the call sites below read better with it.
  */
-function day(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const at = new Date(iso);
-  if (Number.isNaN(at.getTime())) return "—";
-  return at.toLocaleDateString(activeFormatLocale(), { dateStyle: "medium", timeZone: activeFormatZone() });
-}
+const day = dayStamp;
 
 /**
  * SETTINGS → MAILBOXES, on the desktop.
@@ -491,6 +570,47 @@ export function DesktopMailboxes(
   /* What can go wrong here: the engine refuses a resync (offline, most often), or the operating
      system refuses to open a browser. One line, rendered where the press happened. */
   const [problem, setProblem] = useState<string | null>(null);
+  /**
+   * WHICH MAILBOXES THIS MACHINE CAN REACH — its own poll, and it has to be its own.
+   *
+   * The facts poller reads `GET /mailboxes`, which is the shared route and carries no answer to
+   * this question; see `readMailboxReachVia`. Fifteen seconds is the engine's own poll interval,
+   * so the pane converges within one cycle of the engine noticing, and the first read runs
+   * immediately rather than after a delay — a person opening Settings during an outage is
+   * exactly who this line is for.
+   */
+  const [reach, setReach] = useState<Record<string, MailboxReach>>({});
+  useEffect(() => {
+    /* ── LOCAL DOOR ONLY ──────────────────────────────────────────────────────────────────
+     *
+     * `/local/mailboxes/connections` exists on the local engine and nowhere else. Mounted
+     * unconditionally, this asked for it on the CLOUD door too, where it falls through the cloud
+     * engine's catch-all proxy and becomes a hosted round trip — four a minute, for a route that
+     * does not exist, for as long as the pane is open. The state it would fill is meaningless
+     * there anyway: a Cloud mailbox's connection belongs to a worker on a shard, not to this
+     * machine. `door` is in the dependency list, so switching doors starts or stops it. */
+    if (door !== "local") { setReach({}); return; }
+    let live = true;
+    /* THE SEQUENCE GUARD. Two reads are in flight whenever one takes longer than the interval —
+       an engine mid-reconnect is exactly when it will — and promises settle in whatever order
+       they finish, not the order they started. Without this a slow read that started first can
+       land second and overwrite a newer answer, so the row flips back to "reachable" during an
+       outage (or back to unreachable after it ended) and stays wrong until the next tick. Only a
+       strictly newer response is allowed to write. */
+    let issued = 0;
+    let shown = 0;
+    const read = (): void => {
+      const seq = ++issued;
+      void readMailboxReachVia(bridgeFetch).then((r) => {
+        if (!live || seq <= shown) return;
+        shown = seq;
+        setReach(r);
+      });
+    };
+    read();
+    const id = setInterval(read, 15_000);
+    return () => { live = false; clearInterval(id); };
+  }, [door]);
   /** Mailboxes whose resync this pane has queued, so the row can say so until it lands. */
   const [queued, setQueued] = useState<ReadonlySet<string>>(() => new Set());
   /** Mailboxes whose quiet-notice dismissal is in flight, so the button debounces (mail 0078). */
@@ -503,20 +623,33 @@ export function DesktopMailboxes(
    * line that moves when some other row fails would take it away mid-read.
    */
   /**
-   * WHAT WAS ASKED FOR, AND WHETHER IT COULD HAVE WORKED — the second half is why this is a record
-   * rather than a bare outcome.
+   * WHAT WAS ASKED FOR — a bare outcome now, and the half that is gone went with its premise.
    *
-   * The entry exists to stop a one-shot being pressed twice. A request made while the mailbox was
-   * BLOCKED is not a one-shot at all: it achieves nothing, the running loop clears the stamp, and
-   * the answer it produced tells somebody to stop the other organizer and ask again. So a blocked
-   * entry must never consume the button — not while the holder is still there, and above all not
-   * at the moment it stops, which is exactly when the retry becomes the thing that works.
+   * It used to carry `blocked` beside the outcome, because a press could be refused outright by
+   * the lease on the HOLDER'S KIND: a request made in that state achieved nothing, so it could
+   * not be allowed to consume the one-shot button. Kind no longer ranks — an explicit press
+   * outranks a claim carrying none, and the holder stands down on its next pass — so there is no
+   * blocked state left to keep a retry reachable for. The entry means what it says again: a
+   * request was made, and the row's own role is what ends it.
    */
-  const [reclaimed, setReclaimed] = useState<ReadonlyMap<string, { outcome: TakeoverOutcome; blocked: boolean }>>(
+  const [reclaimed, setReclaimed] = useState<ReadonlyMap<string, { outcome: TakeoverOutcome }>>(
     () => new Map(),
   );
   /** Mailboxes whose takeover request is in flight, so the button debounces. */
   const [reclaiming, setReclaiming] = useState<ReadonlySet<string>>(() => new Set());
+  /**
+   * THE OTHER DIRECTION — what "stop organizing here" answered, per mailbox.
+   *
+   * Two outcomes reach a person and both are successes: `requested`, which the gate honours on
+   * its next pass, and `not_organizing`, which is a mailbox this install was not organizing
+   * anyway. Kept as the outcome rather than a rendered sentence, on `reclaimed`'s own rule, so
+   * the words stay in the catalogue.
+   */
+  const [released, setReleased] = useState<ReadonlyMap<string, string>>(() => new Map());
+  /** Mailboxes whose release is in flight, so the confirm debounces. */
+  const [releasingIds, setReleasingIds] = useState<ReadonlySet<string>>(() => new Set());
+  /** Which mailbox's release is asking whether you meant it, or `null` when none is. */
+  const [releaseFor, setReleaseFor] = useState<string | null>(null);
   /**
    * WHICH MAILBOX'S CLAIM IS ASKING WHETHER YOU MEANT IT, or `null` when none is.
    *
@@ -599,7 +732,7 @@ export function DesktopMailboxes(
    * simply is not served there. The pane's `cloud` test is the same one the header uses for every
    * other asymmetry between the two doors.
    */
-  const reclaim = (id: string, blockedAtPress: boolean): void => {
+  const reclaim = (id: string): void => {
     setProblem(null);
     setReclaiming((q) => new Set(q).add(id));
     void (async () => {
@@ -611,8 +744,7 @@ export function DesktopMailboxes(
         });
         if (!res.ok) throw new Error(await reasonOf(res));
         const body = (await res.json()) as { outcome?: unknown };
-        setReclaimed((m) =>
-          new Map(m).set(id, { outcome: takeoverOutcome(body.outcome), blocked: blockedAtPress }));
+        setReclaimed((m) => new Map(m).set(id, { outcome: takeoverOutcome(body.outcome) }));
         // The row's own state moved (`disabled` → `connected` with the stamp), so the pane must
         // re-read rather than keep rendering the stand-down it was showing.
         refresh();
@@ -620,6 +752,46 @@ export function DesktopMailboxes(
         setProblem(err instanceof Error ? err.message : String(err));
       } finally {
         setReclaiming((q) => {
+          const next = new Set(q);
+          next.delete(id);
+          return next;
+        });
+      }
+    })();
+  };
+
+  /**
+   * STOP ORGANIZING THIS MAILBOX HERE, AND KEEP THE MAIL — the mirror of `reclaim`.
+   *
+   * `POST /mailboxes/:id/release`, the shared route rather than a local-only one, because the act
+   * is the same on both doors: it records a request on the caller's own row and the organizing
+   * gate honours it on its next pass. Nothing here expunges anything — the claim lives in the
+   * mailbox itself, so only the process holding that connection can give it up, which is why the
+   * copy says "within a minute" rather than reporting it done.
+   *
+   * `refresh` on the answer, so the row's state line moves as soon as the gate has acted rather
+   * than on the poller's slower clock. A failure lands in the pane's one problem line, and the
+   * row keeps saying what it said.
+   */
+  const release = (id: string): void => {
+    setProblem(null);
+    setReleasingIds((q) => new Set(q).add(id));
+    void (async () => {
+      try {
+        const res = await bridgeFetch(`/mailboxes/${encodeURIComponent(id)}/release`, {
+          method: "POST",
+        });
+        if (!res.ok) throw new Error(await reasonOf(res));
+        const body = (await res.json()) as { outcome?: unknown };
+        setReleased((m) => new Map(m).set(
+          id,
+          body.outcome === "requested" ? "requested" : "not_organizing",
+        ));
+        refresh();
+      } catch (err) {
+        setProblem(err instanceof Error ? err.message : String(err));
+      } finally {
+        setReleasingIds((q) => {
           const next = new Set(q);
           next.delete(id);
           return next;
@@ -690,6 +862,27 @@ export function DesktopMailboxes(
           method: "DELETE",
         });
         if (!res.ok) throw new Error(await reasonOf(res));
+        /* ── THE MAILBOX IS GONE; ITS CLAIM ON THE MAIL SERVER MAY NOT BE ────────────────────
+         *
+         * The route releases this install's organizer claim out of `ohmail/_meta` before it stops
+         * the runtime, and that release can fail on its own — the mail server can refuse the
+         * search that finds our own records in that folder. When it does the claim STAYS, and
+         * until it goes stale any other install connecting this mailbox stands itself down and
+         * says only that something else organizes it. That is a wait with no visible cause, about
+         * a machine the person has just removed the mailbox from.
+         *
+         * The route reports the outcome because it is the only thing that knows it, and this is
+         * the pane that can say it. Same shape as the sign-out failure below: the removal
+         * committed, what is being reported is the tidying that did not.
+         *
+         * THREE STATES, NOT TWO, and the middle one is why this reads `=== false` rather than
+         * falsy. `true` is released; `false` is a release that was attempted and could not be
+         * completed; ABSENT is an engine that predates the field and cannot answer — which is not
+         * a claim left behind and must not be announced as one. The shell and the engine ship
+         * together, so absent means "older engine", not "unknowable".
+         */
+        const outcome = await res.json().catch(() => null) as { claimReleased?: boolean } | null;
+        if (outcome?.claimReleased === false) setProblem(t("desktopRemovedClaimLeftBehind"));
         /* ── THE SINGLE-MAILBOX SIGN-OUT STOOD HERE, AND ITS OWN NOTE ASKED FOR THIS ──────────
          *
          * It read: *"the multi-mailbox version of this is a roster-aware decision … and it
@@ -842,32 +1035,15 @@ export function DesktopMailboxes(
    * the two rows separately actionable.
    */
 
-  /**
-   * WHETHER THE LEASE CAN GRANT WHAT THIS PRESS ASKS FOR — and it depends on WHO holds it.
+  /* THE "WOULD THE LEASE REFUSE THIS?" PREDICATE IS GONE, WITH THE RULE IT ENCODED.
    *
-   * `decideLease` (`organizer-lease.ts:556-585`) ranks kinds cloud > local > unknown, and this
-   * install is `local`:
-   *
-   *   · a live LOCAL peer — rule 6 — is DISPLACED by an authorized request, unless it renews
-   *     during the gate. The direct promise is true here;
-   *   · a live CLOUD holder — rule 5 — wins "even with authorization". §4 gives a local install no
-   *     path over a live Cloud on purpose: the honest action is to stop it organizing there;
-   *   · a live UNKNOWN kind — rule 2 — stands us down and no authorization overrides it;
-   *   · anything stopped or gone quiet — rules 7-8 — leaves the request free to win.
-   *
-   * So one universal sentence is wrong in one direction or the other, which is how the copy here
-   * was wrong twice: first promising the takeover flat, then promising a running holder always
-   * keeps it. This is the branch, and it is on the row's own two columns.
+   * It branched on the holder's KIND, because the lease ranked a live hosted claim above a local
+   * one and refused a takeover of it "even with authorization" — so on those rows the pane had to
+   * say the press could not take the mailbox and name the order to do it in. Kind no longer
+   * ranks: what ranks is an explicit press, and a claim carrying none loses to one that does,
+   * whichever machine wrote it. Every row a reader can press is a row the press can take, so
+   * there is one sentence again instead of two.
    */
-  const claimWouldBeRefused = (m: MailboxFacts): boolean =>
-    /* `null` IS "THIS INSTALL HAS NOT LOOKED", NOT "STOPPED" — the DTO says so, and the state stays
-       unset when the lease look has not run or failed. Treating it as beatable promised a takeover
-       against a claim that may be perfectly fresh, which rules 5 and 2 refuse whatever was
-       authorized. Unknown is grouped with held for the kinds we cannot beat: the honest position on
-       a state we have not observed is the cautious one, and the cost of being wrong that way is a
-       sentence pointing at an action that also works. */
-    m.organizerState !== "stopped"
-    && (m.organizedBy?.kind === "cloud" || m.organizedBy?.kind === "unknown");
 
   /** The holder's own name for a sentence, or the kind when it did not send one. */
   const holderOf = (m: MailboxFacts): string =>
@@ -910,6 +1086,31 @@ export function DesktopMailboxes(
     if (m.status === "disabled") {
       return m.disabledReason ? t("desktopStateHandedOver") : t("desktopStateDisconnected");
     }
+    /* ── UNREACHABLE OUTRANKS BOTH THE ROLE AND THE PROGRESS ───────────────────────────────
+     *
+     * Above the reader arm and above every progress arm, because all of them describe mail
+     * MOVING and none of it is. "Reading only" over a dead socket reads nothing; "Up to date" is
+     * true of a mirror that stopped growing an hour ago. It stays BELOW `error` and `disabled`,
+     * which are durable statements about the row that a live socket would not contradict.
+     *
+     * It says a fact and nothing else — no "signed out", no "check your connection", no advice.
+     * The mailbox is untouched, the password is untouched, and the engine re-dials on its own;
+     * a sentence implying the person must act would be asking for work that is not theirs. */
+    const r = reach[m.id];
+    /* THE SERVER ANSWERED AND SAID NO — above the unreachable arm, because it is a MORE specific
+       answer to the same question and the generic one would send somebody to check a network
+       that is working perfectly. */
+    if (r?.signInRefused) return t("desktopStateSignInRefused");
+    if (r && !r.reachable) {
+      /* `agoStamp(...).rel` AND NOT `day(...)`: an outage is a DURATION, and the neighbouring
+         `day` stamp is deliberately date-only because the sentences it serves are standing facts
+         somebody reads once. "Unreachable since 5 Sep 2026" tells a person nothing about an
+         outage that began twenty minutes ago; "unreachable since 20 minutes ago" is the whole
+         answer. It is the same stamp the quiet-mailbox line already uses on this pane. */
+      return r.unreachableSince
+        ? t("desktopStateUnreachableSince", { when: agoStamp(r.unreachableSince, Date.now()).rel })
+        : t("desktopStateUnreachable");
+    }
     if (m.organizerRole === "reader") return t("stateReading");
     if (m.syncBlockedSince) return t("desktopStatePaused");
     if (m.lastSyncAt === null) return t("desktopStateFirstOpen");
@@ -918,162 +1119,241 @@ export function DesktopMailboxes(
   };
 
   /**
-   * THE "ORGANIZED SOMEWHERE ELSE" BANNER AND ITS CEREMONY, FOR ONE ROW.
+   * WHO ORGANIZES THIS MAILBOX, AND THE ONE VERB THAT CHANGES IT — for one row, permanently.
    *
    * A closure inside the component rather than a module function, on the rule the rest of this
    * pane follows: it reads the pane's translator, its `reclaimed`/`reclaiming` records and its
    * confirm state, and there is nothing to share it with.
    *
-   * It renders UNDER the row it is about, which is the change multi-mailbox forced. A reader is
-   * connected and syncing, so nothing else on the row says this: the mailbox looks healthy
-   * because it IS healthy, and what is missing is that this machine moves nothing and screens
-   * nothing. `SettingsBanner` is the composite for a standing condition with its one verb: the
-   * fact, since when and from where, and the action.
+   * It renders UNDER the row it is about, which is the change multi-mailbox forced. The row
+   * answers "is my mail coming down?"; this answers the other question somebody with two machines
+   * has — which machine files it — and it never goes away. That is the division of labour with
+   * the quiet line above the Ohbox: that one says what CHANGED, once, and disappears; this is the
+   * standing record, with the controls beside it.
    *
-   * `organizerState === "stopped"` is the arm that turns the fact into a problem — the holder
-   * stopped renewing and new mail is waiting in the inbox with nobody to file it — so it gets
-   * its own sentence rather than a variant of the calm one.
+   * ── THREE STATES, ONE SHAPE ───────────────────────────────────────────────────────────────
+   *
+   *  · ORGANIZING HERE — the ordinary state on a standalone install. Its verb is the release:
+   *    stop filing this mailbox, keep every message where it is, and let any install take it.
+   *  · READING ONLY — somebody else holds it. Its verb is the takeover.
+   *  · NOBODY — this install let it go, or the holder vanished. Its verb is the takeover again,
+   *    and here it is the primary one, because nothing is filing the mailbox at all.
+   *
+   * `SettingsBanner` for all three: the fact, since when, and the action. Told apart by how loud
+   * the surface is rather than by three different constructions — a tint under EVERY row would
+   * mean nothing, so the ordinary state wears a hairline and the two exceptions wear the wash.
+   *
+   * ── AND THE CONSEQUENCE IS STATED BEFORE THE PRESS, NOT AFTER IT ──────────────────────────
+   *
+   * Both verbs open a well under the banner with one sentence in it and the confirm underneath.
+   * Handing a mailbox between machines is the one act on this pane that changes what another
+   * computer does, and the sentence is what makes the press a decision rather than a discovery.
+   * The banner's own verb is withheld while the well is open, so there is exactly one place to
+   * answer.
    */
-  const claimBlock = (m: MailboxFacts): ReactNode => (
-    <>
-      {claimable(m) ? (
+  const organizerBlock = (m: MailboxFacts): ReactNode => {
+    /* WHAT THIS ROW IS, in the vocabulary the block renders. `released` is not merely "reader
+       with no holder": a mailbox nobody has ever agreed to organize is a fresh connection whose
+       next screen is the agreement, and putting "nothing organizes this" over it would be a
+       sentence about a state it was never in. `claimable` keeps that rule. */
+    const holder = Boolean(m.organizedBy && (m.organizedBy.kind || m.organizedBy.name));
+    /* THE LEGACY ARM IS TESTED BEFORE THE HOLDER, and getting that order wrong is not cosmetic.
+       A pre-role engine records a stand-down as `disabled` + a reason and carries NO holder
+       columns at all, so it looks exactly like a mailbox nobody organizes — and it is the
+       opposite: something else took it. Reading it as `released` would put "nothing organizes
+       this mailbox" over a row whose own state column says it was handed over, and would lose the
+       one sentence that says the frozen install is not even reading it. */
+    const role: "organizer" | "reader" | "released" =
+      !claimable(m) ? "organizer"
+        : m.legacyStandDown === true || holder ? "reader" : "released";
+    /* THE RELEASE IS A STANDALONE-DOOR CONTROL. On the hosted door these rows are a mirror of an
+       account whose organizing is the service's, and the browser's own pane is where that is
+       given up — offering it here would be a second door onto one decision, with this one unable
+       to report what the account's worker then did. */
+    const offerRelease = !cloud && role === "organizer" && m.status !== "disabled"
+      && Boolean(m.organizeConsentedAt);
+    if (role === "organizer" && !offerRelease) return null;
+
+    const open = claimFor === m.id;
+    const releasing = releaseFor === m.id;
+    return (
+      <div className="mbx-org" data-role={role}>
         <SettingsBanner
           label={
-            /* A legacy row carries no holder columns at all — the pre-role engine recorded only
-               `disabled_reason` — so there is no name to put in `readerLabel`. */
-            m.legacyStandDown === true
-              ? t("readerLabelLegacy")
-              : t("readerLabel", { name: holderOf(m) })
+            role === "organizer"
+              ? t("stateOrganizing")
+              /* A legacy row carries no holder columns at all — the pre-role engine recorded only
+                 `disabled_reason` — so there is no name to put in `readerLabel`. */
+              : m.legacyStandDown === true
+                ? t("readerLabelLegacy")
+                : role === "released"
+                  ? t("stateNotOrganized")
+                  : t("readerLabel", { name: holderOf(m) })
           }
           description={
-            /* ── A LEGACY STAND-DOWN IS FROZEN, AND SAYING IT READS WOULD CONTRADICT ITS OWN ROW ──
-               The modern reader is CONNECTED AND SYNCING, which is what every sentence below is
-               about. A pre-role engine's stand-down did the opposite: it closed the IMAP handle and
-               stopped the poll timer (`engine.ts:1991-1997`, the path that became the
-               tombstone-only branch), so that row is not reading anything — and its own state
-               column says "Handed over to another install" three lines to the right. It also needs
-               the restart, which the sentence says, because that engine spends the stamp at its
-               next process assembly rather than on a tick. */
-            m.legacyStandDown === true
-              ? t("readerLegacyStandDown")
-              : m.organizerState === "stopped"
-              /* NO AGE, because there is no timestamp that would make one true. It said "last
-                 checked in {when}" and was handed `organizedBy.since` — which is when that install
-                 BECAME the organizer, and the heartbeat is deliberately not persisted
-                 (`index.ts:1349-1353` says why). A holder that organized for eight months and
-                 stopped this morning was reported absent for eight months. The fact worth stating
-                 is that it stopped, and that is all this sentence claims now. */
-              ? t("readerStopped", { name: holderOf(m) })
-              /* EVERY KIND ON ITS OWN BRANCH. `unknown` is a legal kind and a reader may have no
-                 holder recorded at all, and both used to fall through to the CLOUD sentence — so a
-                 row whose wire says nothing about Cloud announced "ohmail Cloud". The third
-                 sentence names no holder, because none is known. */
-              : m.organizedBy?.kind === "local"
-                ? t("readerSinceLocal", {
-                    name: holderOf(m),
-                    since: day(m.organizedBy?.since ?? null),
-                  })
-                : m.organizedBy?.kind === "cloud"
-                  ? t("readerSinceCloud", {
+            role === "organizer"
+              ? t("stateOrganizingHere")
+              : role === "released"
+                /* THE ONE SENTENCE THAT DATES SOMETHING THE PERSON HERE DID. A mailbox whose
+                   holder simply vanished and one this install released look identical from every
+                   other column; only `organizerReleasedAt` tells them apart, and only the second
+                   is worth a sentence in the second person. Absent — an engine that predates the
+                   column — falls back to the holder-less reader line rather than inventing a
+                   date. */
+                ? (m.organizerReleasedAt
+                  ? t("stateReleased", { when: day(m.organizerReleasedAt) })
+                  : t("readerSinceUnknown", { since: day(m.organizedBy?.since ?? null) }))
+              /* ── A LEGACY STAND-DOWN IS FROZEN, AND SAYING IT READS WOULD CONTRADICT ITS OWN ROW ──
+                 The modern reader is CONNECTED AND SYNCING, which is what every sentence below is
+                 about. A pre-role engine's stand-down did the opposite: it closed the IMAP handle and
+                 stopped the poll timer, so that row is not reading anything — and its own state
+                 column says "Handed over to another install" three lines to the right. It also needs
+                 the restart, which the sentence says, because that engine spends the stamp at its
+                 next process assembly rather than on a tick. */
+              : m.legacyStandDown === true
+                ? t("readerLegacyStandDown")
+                : m.organizerState === "stopped"
+                /* NO AGE, because there is no timestamp that would make one true. It said "last
+                   checked in {when}" and was handed `organizedBy.since` — which is when that install
+                   BECAME the organizer, and the heartbeat is deliberately not persisted. A holder
+                   that organized for eight months and stopped this morning was reported absent for
+                   eight months. The fact worth stating is that it stopped. */
+                ? t("readerStopped", { name: holderOf(m) })
+                /* EVERY KIND ON ITS OWN BRANCH. `unknown` is a legal kind and a reader may have no
+                   holder recorded at all, and both used to fall through to the CLOUD sentence — so a
+                   row whose wire says nothing about Cloud announced "ohmail Cloud". The third
+                   sentence names no holder, because none is known. */
+                : m.organizedBy?.kind === "local"
+                  ? t("readerSinceLocal", {
                       name: holderOf(m),
                       since: day(m.organizedBy?.since ?? null),
                     })
-                  : t("readerSinceUnknown", { since: day(m.organizedBy?.since ?? null) })
+                  : m.organizedBy?.kind === "cloud"
+                    ? t("readerSinceCloud", {
+                        name: holderOf(m),
+                        since: day(m.organizedBy?.since ?? null),
+                      })
+                    : t("readerSinceUnknown", { since: day(m.organizedBy?.since ?? null) })
           }
-          /* THE RETRY THE ANSWER TELLS SOMEBODY TO USE HAS TO BE THERE WHEN THEY COME BACK.
-              `reclaimed` records that a request was made and is never cleared, which is right for
-              a request that can succeed: the row's own role is what ends it. A BLOCKED request can
-              never succeed — the holder keeps the mailbox for as long as it is checking in — so
-              its entry would hide the button for the life of the pane, and the sentence it just
-              printed says "stop it organizing there, then ask again". That is the dead end this
-              screen exists to close, arriving through the one branch whose whole purpose is to
-              tell somebody to come back.
+          /* THE VERB, WITHHELD WHILE ITS OWN WELL IS OPEN — one place to answer, and no button
+             that re-asks a question already on screen.
 
-              The order the answer gives IS the reliable one, which is why it is worth keeping
-              reachable: the stamp is cleared by the STAND-DOWN write (`engine.ts:2038`), and once
-              the other holder has gone quiet the lease returns available rather than standing this
-              install down — so nothing clears it and the relaunch spends it.
-
-              THE BUTTON IS SPENT IN ONE QUADRANT OF FOUR, and each of the other three was found
-              by walking a path somebody actually takes. Write the request's blocked-ness against
-              the row's current blocked-ness:
-
-                · beatable then, beatable now  → SPENT. The request is genuinely in flight and a
-                  second press would be a second one-shot;
-                · blocked then, blocked now    → offered. A blocked request achieves nothing, so it
-                  never consumed anything, and the answer beside it says to come back;
-                · blocked then, beatable now   → offered. This is the transition the answer sends
-                  somebody to make, and gating on the row alone removed the button at exactly the
-                  moment the retry would have worked;
-                · beatable then, blocked now   → offered. The holder resumed before this install
-                  was promoted, the lease refused the authorization and the loop cleared it, so the
-                  spent marker describes a request that no longer exists.
-
-              Only the first can still succeed on its own; every other one needs the press back. */
-          {...(claimFor !== m.id
-            && (!reclaimed.has(m.id)
-              || reclaimed.get(m.id)!.blocked
-              || claimWouldBeRefused(m))
-            ? {
-                action: (
-                  <Button variant="primary" onClick={() => setClaimFor(m.id)}>
-                    {t("organizeHere")}
-                  </Button>
-                ),
-              }
-            : {})}
+             THE TAKEOVER'S BUTTON IS ALWAYS OFFERED NOW, and the arithmetic that used to hide it
+             is gone with the rule it rested on. A press used to be refusable by the lease on the
+             holder's KIND, so the pane tracked whether a request had been made and whether it had
+             been blocked, to keep the retry reachable in the case where the answer said "come back
+             later". Kind no longer ranks: an explicit press outranks a claim that carries none,
+             and the holder stands down on its next pass. There is no blocked case to keep a
+             retry reachable for, so `reclaimed` gates the button and nothing else does. */
+          action={
+            open || releasing ? undefined
+              : role === "organizer" ? (
+                <Button variant="ghost" onClick={() => setReleaseFor(m.id)}>
+                  {t("stopOrganizing")}
+                </Button>
+              ) : reclaimed.has(m.id) ? undefined : (
+                <Button
+                  variant={role === "released" ? "primary" : undefined}
+                  onClick={() => setClaimFor(m.id)}
+                >
+                  {t("organizeHere")}
+                </Button>
+              )
+          }
         />
-      ) : null}
-      {/* THE CEREMONY, AND WHAT IT COSTS THE OTHER SIDE, BEFORE IT IS TAKEN. The other install is
-          not killed: it becomes a reader on its next pass and keeps its copy of the mail. Saying
-          so here is the difference between a button somebody presses and one they hesitate over
-          for the wrong reason. */}
-      {claimFor === m.id ? (
-        <SettingsActions>
-          <span className="set-note-inline">
-            {/* THE CEREMONY PROMISES WHAT THIS ENGINE WILL DO, and the two engines do different
-                things. The modern sentence says "on its next pass" — and for a while this comment
-                said that while the copy still said "quit and reopen", which is the shape a claim
-                takes when the code is corrected and the sentence is not. A pre-role engine stopped
-                its poll timer at the stand-down and spends the stamp at its next process assembly,
-                so on that one the confirmation would contradict the acknowledgement it produces
-                one press later. It also names no holder, because a legacy row carries none. */}
-            {m.legacyStandDown === true
-              ? t("organizeHereWhatLegacy")
-              : claimWouldBeRefused(m)
-                ? t("organizeHereWhatBlocked", { name: holderOf(m) })
+        {/* AND WHY A DECISION CANNOT BE MADE HERE, on the mailboxes where the answer is the
+            sign-in rather than a version somebody can update. A password mailbox lets both
+            installs derive the same signing key from the credential they already share; an OAuth
+            one has no such shared secret. Only on a reader row — on a mailbox this install
+            organizes there is no refusal to explain — and only where the field says so, so a
+            build that cannot tell says nothing. */}
+        {role !== "organizer" && m.authKind === "oauth" ? (
+          <SettingsNote>{t("oauthDecideElsewhere")}</SettingsNote>
+        ) : null}
+        {/* ── THE HANDOVER, AND WHAT IT COSTS THE OTHER SIDE, BEFORE IT IS TAKEN ──────────────
+            The other install is not killed: it becomes a reader on its next pass and keeps its
+            copy of the mail. Saying so here is the difference between a button somebody presses
+            and one they hesitate over for the wrong reason.
+
+            THE SENTENCE PROMISES WHAT THIS ENGINE WILL DO, and the two engines do different
+            things. The modern one says "within a minute" — the gate re-reads the stamp at the top
+            of every cycle, so a press on a running install is honoured on the next poll with no
+            relaunch. A pre-role engine stops its poll timer at the stand-down and spends the stamp
+            at its next process assembly, so on that one the sentence has to say to quit and
+            reopen. It also names no holder, because a legacy row carries none. */}
+        {open ? (
+          <div className="mbx-handover">
+            <p className="mbx-handover-what">
+              {m.legacyStandDown === true
+                ? t("organizeHereWhatLegacy")
                 : t("organizeHereWhat", { name: holderOf(m) })}
-          </span>
-          {/* THE PRESS IS KEPT EVEN WHERE THE LEASE WILL REFUSE TODAY, and withholding it was a
-              worse answer than the one it replaced.
-
-              Hiding it rests on `organizerState` becoming something other than `held` once the
-              other holder stops — and that is the assumption that must not be made here. A person
-              who follows the sentence above, stops the organizer there, and comes back to a pane
-              whose only control has vanished has exactly the dead end this whole surface exists to
-              close: no way back at all. Recording the request costs nothing and is not lost — the
-              stamp waits for the relaunch that reads the lease — so keeping the button is safe
-              whichever way the state behaves, and hiding it is safe only one way.
-
-              What changes for this holder is the WORDS: the confirmation says it cannot take the
-              mailbox yet and names the order to do it in, and the answer says the holder keeps it
-              while it is still checking in, whatever was asked for here. Neither promises the
-              renewal race, which is the other branch's condition and not this one's. */}
-          <Button
-            variant="primary"
-            disabled={reclaiming.has(m.id)}
-            onClick={() => {
-              setClaimFor(null);
-              reclaim(m.id, claimWouldBeRefused(m));
-            }}
-          >
-            {t("organizeHereConfirm")}
-          </Button>
-          <Button variant="ghost" onClick={() => setClaimFor(null)}>{t("cancel")}</Button>
-        </SettingsActions>
-      ) : null}
-    </>
-  );
+            </p>
+            <SettingsActions>
+              <Button
+                variant="primary"
+                disabled={reclaiming.has(m.id)}
+                onClick={() => {
+                  setClaimFor(null);
+                  reclaim(m.id);
+                }}
+              >
+                {t("organizeHereConfirm")}
+              </Button>
+              <Button variant="ghost" onClick={() => setClaimFor(null)}>{t("cancel")}</Button>
+            </SettingsActions>
+          </div>
+        ) : null}
+        {/* ── AND THE OTHER DIRECTION, WHICH IS THE ONE THAT WAS MISSING ─────────────────────
+            Until this control existed the only way to make an install stop organizing a mailbox
+            was to remove the mailbox — which deletes the stored password and stops the mail. The
+            sentence's whole job is to say that this is not that: the folders and everything in
+            them stay exactly where they are, and any install can take the mailbox afterwards,
+            including this one. Nothing about it is destructive, and nothing about it is red. */}
+        {releasing ? (
+          <div className="mbx-handover">
+            <p className="mbx-handover-what">{t("stopOrganizingWhat")}</p>
+            <SettingsActions>
+              <Button
+                variant="primary"
+                disabled={releasingIds.has(m.id)}
+                onClick={() => {
+                  setReleaseFor(null);
+                  release(m.id);
+                }}
+              >
+                {t("stopOrganizingConfirm")}
+              </Button>
+              <Button variant="ghost" onClick={() => setReleaseFor(null)}>{t("cancel")}</Button>
+            </SettingsActions>
+          </div>
+        ) : null}
+        {/* WHAT THE ENGINE ANSWERED, kept until the row's own role moves. `reclaimed` and
+            `released` are never cleared by this pane: the row is what ends them, and it does,
+            because the gate writes the role on its next cycle and the poll brings it back. */}
+        {/* `off`, NEVER `wait`. A spinner claims something is in flight, and nothing is: the
+            route RECORDS a request and returns. The gate acts on it at its next tick, which may
+            be a minute away and is not this window's to watch. `wait` also never ends — the entry
+            is only ever added to — so it would spin for the life of the pane, including after the
+            poll confirmed the change and the banner above it had already moved on. And not `ok`
+            either: this window has not been told the mailbox moved, and a tick would say it had. */}
+        {reclaimed.has(m.id) ? (
+          reclaimed.get(m.id)!.outcome === "authorized" ? (
+            <SettingsVerdict
+              state="off"
+              headline={m.legacyStandDown === true ? t("organizeHereQueuedLegacy") : t("organizeHereQueued")}
+            />
+          ) : (
+            <SettingsNote>{t(`desktopOrganizeHere_${reclaimed.get(m.id)!.outcome}`)}</SettingsNote>
+          )
+        ) : null}
+        {released.has(m.id) ? (
+          released.get(m.id) === "requested"
+            ? <SettingsVerdict state="off" headline={t("stopOrganizingQueued")} />
+            : <SettingsNote>{t("stopOrganizingNot")}</SettingsNote>
+        ) : null}
+      </div>
+    );
+  };
 
   return (
     <SettingsSection>
@@ -1144,7 +1424,7 @@ export function DesktopMailboxes(
 
                  ONLY THE ORGANIZING SENTENCE IS HERE. A reader's role, its holder and its since
                  are one statement and they are made together in the banner under the row
-                 (`claimBlock`); printing "Reading only" here as well would say it twice, once
+                 (`organizerBlock`); printing "Reading only" here as well would say it twice, once
                  without the half that matters. The hosted door says neither — its rows are a
                  mirror of an account whose organizing is the service's, not this machine's. */
               /* ── CONSENT IS THE CONDITION, NOT THE ROLE ────────────────────────────────────
@@ -1176,7 +1456,7 @@ export function DesktopMailboxes(
                  therefore offered on exactly the set the handler declines.
 
                  It lives in the banner UNDER THIS ROW now, where the fact it acts on is stated.
-                 See `claimable` and `claimBlock`. What stays here is Sync now, withheld on a
+                 See `claimable` and `organizerBlock`. What stays here is Sync now, withheld on a
                  disconnected mailbox for its own reason: nothing is opening it, so a pass over it
                  cannot be asked for. */
               shown.status === "disabled" ? undefined : (
@@ -1248,8 +1528,9 @@ export function DesktopMailboxes(
             : null}
           {/* ── WHO ORGANIZES THIS ONE, UNDER THE ROW IT IS ABOUT ────────────────────────────
               Per row, because the pane holds several and each can be held by somebody different.
-              It renders nothing on a row this machine organizes — see `claimBlock`. */}
-          {claimBlock(shown)}
+              On a row this machine organizes it is the release; on every other one it is the fact and
+              the way back — see `organizerBlock`. */}
+          {organizerBlock(shown)}
           {/* ══ THE REMOVAL CONFIRMATION — FIVE CONSEQUENCES, AND THE FIFTH IS THIS DOOR'S ══
               The hosted pane's panel, verbatim in shape and in four of its five statements,
               because they are true on both doors: organizing stops, THE MAIL IS UNTOUCHED (the
@@ -1315,76 +1596,10 @@ export function DesktopMailboxes(
               </div>
             </div>
           ) : null}
-          {/* WHAT THE ANSWER WAS, under the row it is about.
-              `authorized` NO LONGER SAYS "QUIT AND REOPEN". That sentence was true when the engine
-              only read the lease at launch; the gate spends the stamp on its next tick now, so the
-              mailbox moves within a pass and telling somebody to restart the app is an instruction
-              to do something that is not needed and does not help.
-
-              ── AND IT IS NOT A SPINNER, WHICH IS TWO DEFECTS IN ONE ─────────────────────────
-              It was `state="wait"`, and `reclaimed` is only ever added to. So after a takeover
-              actually SUCCEEDED — the poll flips the role, the banner goes — the spinner stayed on
-              screen for ever, still claiming the change was pending. And a spinner is the wrong
-              shape even before that: the route only RECORDS the request. `runLeaseGate` reads the
-              lease on the next tick and may clear the stamp without promoting anything
-              (`engine.ts:1951-1955`), in which case nothing further will ever happen and there is
-              nothing to spin about.
-
-              So the press is reported as a COMPLETED action with a stated caveat, and the entry is
-              dropped the moment the role confirms it worked. `off` rather than `ok`: this window
-              has not been told the mailbox moved, and a tick would say it had. */}
-          {reclaimed.has(shown.id) ? (
-            reclaimed.get(shown.id)!.outcome === "authorized" ? (
-              /* ── THE LEGACY ROW COULD NOT REACH THE ANSWER AT ALL ─────────────────────────
-                 The gate below tests `organizerRole === "reader"`, and the mapper coerces a legacy
-                 row's ABSENT role to `organizer` — so on precisely the rows the legacy arm exists
-                 for, this rendered nothing: the button vanished and no acknowledgement replaced it,
-                 with the takeover still unapplied.
-
-                 And the sentence it needs is the one this lane retired. That was right for the
-                 modern engine, which reads the lease on its next tick; a pre-role engine STOPPED
-                 its poll loop at the stand-down and spends the stamp at its next process assembly,
-                 so there a restart is not a superstition, it is the mechanism. The sentence is back
-                 under a name that says when it applies, and it persists until the relaunch clears
-                 the row — because the instruction is outstanding until then. */
-              /* TWO MECHANISMS, AND THIS COMMENT USED TO CLAIM THERE WAS ONE. It read "the
-                 relaunch is what spends the stamp on both engines ... Arming the live loop —
-                 re-reading the column each cycle — would let the press be honoured on the next
-                 pass instead; until it does, this sentence is what is true." **The live loop is
-                 armed.** `mayOrganize` re-reads `takeover_authorized_at` at the top of every gate
-                 (`apps/sidecar/src/engine.ts`, "THE STAMP IS RE-READ EVERY RUN"), and it had to
-                 be: a polling reader otherwise DESTROYS the press, because the poll asks with
-                 `takeover: "none"`, is refused by the very claim being taken over, and the refusal
-                 arm clears the row. So a modern reader is spent on its next poll, and the copy
-                 says so.
-
-                 The LEGACY row is the one the relaunch is still the mechanism for, and the reason
-                 is the roster rather than the gate: it is `disabled`, `loadEnabledMailboxes`
-                 filters on `ne(status, 'disabled')`, so no gate ever runs for it and the stamp is
-                 spent at the next process assembly.
-
-                 What still differs is where losing leaves this install, and there are three
-                 answers rather than one. A modern reader keeps reading — that is what a reader IS.
-                 A legacy stand-down closed its handle and stopped its timer, so it goes on reading
-                 nothing. And a blocked holder keeps the mailbox for as long as it is checking in,
-                 with no renewal race to lose — so its sentence names the order that works instead
-                 of a condition that does not apply to it, and it does NOT claim the request is
-                 held: the same loop that cannot see the stamp clears it on its next stand-down
-                 poll, so asking again after the other organizer stops is the reliable path. */
-              shown.legacyStandDown === true ? (
-                <SettingsVerdict state="off" headline={t("organizeHereQueuedLegacy")} />
-              ) : claimWouldBeRefused(shown) ? (
-                <SettingsVerdict
-                  state="off"
-                  headline={t("organizeHereQueuedBlocked", { name: holderOf(shown) })}
-                />
-              ) : shown.organizerRole === "reader" ? (
-                <SettingsVerdict state="off" headline={t("organizeHereQueued")} />
-              ) : null
-            ) : (
-              <SettingsNote>{t(`desktopOrganizeHere_${reclaimed.get(shown.id)!.outcome}`)}</SettingsNote>
-            )
-          ) : null}
+          {/* THE ANSWER TO A PRESS IS INSIDE `organizerBlock` NOW, under the banner whose verb
+              raised it. It used to stand here, three constructions away from the fact it was
+              about, and it carried a third arm for a takeover the lease would refuse — a state
+              that no longer exists. */}
           {superseded > 0 ? <SettingsNote>{t("superseded")}</SettingsNote> : null}
           {/* ── THE FORWARDING-DETECTION NOTICE (mail 0078), the browser pane's twin ─────────
               `showInboundQuiet` (shared shell, one rule for both surfaces) gates it: a standing

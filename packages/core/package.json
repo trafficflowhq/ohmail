@@ -15,9 +15,12 @@
     "./adapters/organizer-profile": "./src/adapters/organizer-profile.ts",
     "./adapters/organizer-profile-store": "./src/adapters/organizer-profile-store.ts",
     "./adapters/drizzle-repo": "./src/adapters/drizzle-repo.ts",
+    "./organizer-install": "./src/organizer-install.ts",
     "./folder-name": "./src/folder-name.ts",
+    "./destinations": "./src/destinations.ts",
     "./drain-policy": "./src/drain-policy.ts",
-    "./reply-subject": "./src/reply-subject.ts"
+    "./reply-subject": "./src/reply-subject.ts",
+    "./search-rank": "./src/search-rank.ts"
   },
   "dependencies": {
     "drizzle-orm": "0.36.4",

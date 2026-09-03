@@ -543,6 +543,53 @@ body.reading .shell {
   background: oklch(0 0 0 / 0.2);
 }
 
+/* ================= a newer ohmail =================
+   The update strip, a sibling of the sync strip and deliberately its quieter twin. Same
+   geometry — `flex: none` inside .shell, centred row, 11.5px — so the two cannot disagree about
+   what a shell-level sentence looks like, and a neutral ground rather than the accent because
+   this is information and the sync strip is a fault. Nothing about it is conditional on face or
+   layout: it reads tokens and nothing else. */
+.upd-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 4px 9px;
+  padding: 5px 14px;
+  font-size: 11.5px;
+  color: var(--ink2);
+  background: var(--tint);
+  border-bottom: 1px solid var(--hair);
+}
+/* Both controls are the strip's own shape rather than the app's Button: a 22px-tall row cannot
+   hold a control built for a form without growing to twice its height, which is the difference
+   between a strip and a banner. */
+.upd-bar button {
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+  border: 0;
+  cursor: pointer;
+  border-radius: var(--r-pill);
+  padding: 1px 9px;
+  background: transparent;
+}
+.upd-bar .upd-do {
+  color: var(--on-accent);
+  background: var(--accent);
+}
+.upd-bar .upd-do:hover {
+  filter: brightness(1.06);
+}
+.upd-bar .upd-later {
+  color: var(--ink3);
+}
+.upd-bar .upd-later:hover {
+  color: var(--ink2);
+  background: var(--tint2);
+}
+
 /* ================= the same sentence, in the rail =================
    The rail's own copy of the sync line — `SyncBar variant="rail"`, rendered into the slot
    above the dock. Exactly one of the two shapes is ever on screen: the rail form wherever the

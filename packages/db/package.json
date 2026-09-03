@@ -8,6 +8,7 @@
     "./admin": "./src/admin.ts",
     "./cloud": "./src/cloud.ts",
     "./journal": "./src/journal.ts",
+    "./ledger-source": "./src/ledger-source.ts",
     "./mail": "./src/schema-mail.ts",
     "./testing": "./src/testing.ts"
   },

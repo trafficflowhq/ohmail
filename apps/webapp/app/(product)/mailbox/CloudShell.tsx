@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
 import { AppShell } from "../../shell/AppShell";
 import type { MailboxFacts } from "../../shell/mail-state";
 import { toMailboxFacts } from "./mailbox-facts";
+import { buildToken } from "../../shell/app-update";
+import { startBuildWatch } from "../../shell/build-watch";
 import { COMPOSE_ATTACH_STAGED_SURFACE_BYTES } from "../../components/ComposeAttach";
 import { auth, mailboxes as mailboxApi } from "../../api-client";
 import { AboutSection } from "./AboutSection";
@@ -59,6 +61,30 @@ beginOAuthReturn();
  * explanation instead of a shell.
  */
 export function CloudShell({ demo }: { demo: boolean }) {
+  /**
+   * IS THIS TAB STILL THE APP THIS ORIGIN SERVES? A browser client is downloaded once and then
+   * left running, and nothing about a deployment tells the tabs already open that they are
+   * looking at an older program. The watch asks `/version` occasionally and, when the answer is
+   * a build this document is not, raises the shell's quiet strip — at most once a day per build.
+   *
+   * ARMED HERE rather than in `AppShell`, and that is the same boundary every prop below draws:
+   * the shared shell is also the desktop app's window, which reaches no network at all and
+   * updates from a signed release feed instead. A build watch there would be a request that
+   * cannot be made about a build that does not update that way.
+   *
+   * NOT ON THE DEMO. The landing page's mailbox is a fixtures world with nothing to reload into,
+   * and a bar about a newer ohmail over invented mail is a sentence about the wrong thing.
+   *
+   * The token is computed from the constants `next.config.mjs` inlined into THIS bundle, so it
+   * names the build the reader is running by construction rather than by configuration.
+   */
+  useEffect(() => {
+    if (demo) return;
+    return startBuildWatch({
+      token: buildToken(process.env.NEXT_PUBLIC_APP_VERSION, process.env.NEXT_PUBLIC_BUILD),
+    });
+  }, [demo]);
+
   /**
    * Does this deployment invite users? Two gates in one hook: the COMPILED flavor (the
    * managed bundle's branch is a constant `false` — no `/hello` round trip is even paid) and

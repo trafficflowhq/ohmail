@@ -294,6 +294,13 @@ export const OWN_PATHS = Object.freeze([
   // the matcher/OWN_PATHS drift test excludes it from the matcher alongside the manifest.
   "/demo",
   "/manifest.webmanifest", "/api/waitlist",
+  // `/version` answers a short digest of the build this deployment is serving, for one reader:
+  // a tab that loaded some time ago and wants to know whether it is still the app this origin
+  // serves (`app/shell/build-watch.ts`). Not under `/api`, so it shadows nothing — it is a fact
+  // about the WEB deployment rather than about the API. Excluded from the middleware matcher
+  // alongside the manifest: it is machine-read, carries no session and needs no canonical-host
+  // redirect, so an edge invocation in front of it would buy nothing.
+  "/version",
   // The catch-all behind the branded 404 (`app/(marketing)/[...missing]/page.tsx`): every
   // path no route above claims, answered with `notFound()` and a real 404 status. In this
   // list because this deployment does answer those paths; excluded from the middleware

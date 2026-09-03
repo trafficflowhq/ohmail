@@ -1,20 +1,21 @@
 import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 import {
   messages,
   folderState,
-  contacts,
-  accountSettings,
-  rules as rulesTbl,
   routingDecisions,
   claimIdempotencyKey,
-  recordChange,
-  upsertDesiredSeen,
   screenerLedgerSource,
   storeScreenerSuggestion,
   screenerSuggestionsBySender,
   SCREENER_SUGGESTION_PROVENANCE,
   AI_ACTION_WEIGHTS,
-  assertAccountOrganizes,
+  // 0.14.1, 0.14.1 — the request path. See `screener-apply.ts` and `organizer-role.ts` in
+  // `@trafficflow/db` for why the transactional core and the eligibility read live there.
+  heldRowById, applyScreenerDecision, AccountErasedError, readAccountErasedAt, domainOf,
+  readRequestEligibility, readOrganizerRole, insertOrganizerRequest, listOutstandingForAccount,
+  OrganizedElsewhereError, MailboxNotFoundError,
+  type AppliedScreenerRow, type RequestEligibility, type OrganizedBy,
   type Tx,
 } from "@trafficflow/db";
 // Values from the root barrel's pure leaf, the GATE as a type only — see `drafting-service.ts`.
@@ -30,7 +31,6 @@ import {
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
-import { fenceErasedAccount } from "./erasure-fence.js";
 import { getScreeningPreference } from "./screening-preference.js";
 import { LearningService } from "./learning-service.js";
 import { clampLimit, decodeKeysetCursor, encodeListCursor } from "./pagination.js";
@@ -70,31 +70,6 @@ const NO_FOLDER: Destination = "ohmail/Screened";
  */
 const DECIDABLE_FOLDERS: ReadonlySet<string> = new Set<Destination>([
   YES_FOLDER, "ohmail/Reads", "ohmail/Receipts", NO_FOLDER, "ohmail/Quarantine",
-]);
-
-/**
- * ── THE TWO "NO" DESTINATIONS WHOSE MAIL A DECISION MARKS READ, AND THE SAFETY LINE ─────────
- *
- * A screen-out (`ohmail/Screened`) or a spam press (`ohmail/Quarantine`) is the user saying they
- * are done with this sender, so the mail they dismissed should not sit unread on the server for
- * ever. This set is exactly those two folders, and its membership IS the safety boundary
- * itself: `INBOX`, `ohmail/Reads` and `ohmail/Receipts` are ADMITTED mail and their read
- * state is never touched here — admitting a sender is not reading their backlog — and
- * `ohmail/Screener` is not a {@link DECIDABLE_FOLDERS} member at all, so mail still waiting at the
- * gate for a decision can never be pre-read (which would hide that it needs the user's attention).
- *
- * The `\Seen` write is ADDITIVE and reversible: this records `flag_state.desired_seen = true`
- * (`last_set_by = 'us'`, so it is distinguishable from the mailbox's own state and reversible by
- * `scripts/undo-runaway-reads.mjs`), and the worker's `reconcileFlags` (`apps/worker/src/sync.ts`)
- * adds `\Seen` on the real server. No move, no delete, no flag is ever REMOVED by this.
- *
- * It equals `decision === "no"` today — the consent gate refuses any other pairing — but is
- * expressed as folder membership so a future destination cannot silently inherit a read-mark by
- * being wired to a `no`. The same shape, for the same reason, as the membership-first check in
- * `DECIDABLE_FOLDERS`.
- */
-const MARK_READ_ON_DECIDE: ReadonlySet<string> = new Set<Destination>([
-  NO_FOLDER, "ohmail/Quarantine",
 ]);
 
 /**
@@ -217,6 +192,18 @@ export interface ScreenDecisionResult {
   messageId: string;
   appliedFolder: Folder;
   createdRuleId: string | null;
+}
+
+/**
+ * `POST /screener/:id`'s OTHER shape (0.14.1) — a reader's decision, accepted but not
+ * yet applied. `202`, never `200`: "Rule saved" is never claimed before the organizer's own pass
+ * actually applies it (the ruling's own words). `holder` is who the client names in "Decided —
+ * <holder> files it on its next pass."
+ */
+export interface ScreenRequestResult {
+  pending: true;
+  requestId: string;
+  holder: OrganizedBy;
 }
 
 /* ── The explicit suggestion purchase ───────────────────────────────────────────────────── */
@@ -706,6 +693,19 @@ export interface ScreenerSuggestResult {
  * `senders` is exactly the set the control should POST back, so the thing that was priced and
  * the thing that is bought are the same list rather than two computations that agree today.
  */
+/**
+ * ── A PAGE CAN COME BACK EMPTY WITH A CURSOR STILL SET, AND THAT MEANS "KEEP GOING" ──────────
+ *
+ * Stated as a contract because it stopped being theoretical when reader decisions started
+ * queueing. `nextCursor` is anchored to the last row the QUERY consumed, never to the last row the
+ * page RETURNS — anchoring it to the returned rows would re-offer or skip rows the next call has
+ * already passed. But the returned rows are the query's rows MINUS every sender with a decision in
+ * flight, and if a whole page's worth of senders were decided on another door, `items` is empty
+ * while there is plenty more queue behind it.
+ *
+ * So a caller must stop on `nextCursor === null`, never on `items.length === 0`. A client that
+ * stops on empty shows an empty Screener to somebody whose queue is not empty.
+ */
 export interface ScreenerPage extends Page<ScreenerItem> {
   suggestable: {
     /** Page senders that are held, AI-eligible, and have no stored suggestion yet. */
@@ -741,9 +741,68 @@ export interface ScreenerPage extends Page<ScreenerItem> {
      */
     recommendedPerRequest: number;
   };
+  /**
+   * SENDERS THIS INSTALL HAS ALREADY DECIDED ON, WAITING FOR THE ORGANIZER (0.14.1).
+   *
+   * A sender with a `pending` or `sent` request in `organizer_requests` is EXCLUDED from `items`
+   * above the instant the decision is made — "the sender leaves the reader's queue immediately"
+   * (the ruling's own words) — and named here instead, so the client can render "Decided —
+   * <holder> files it on its next pass" rather than showing the sender in the queue a second
+   * time under a different state.
+   *
+   * Visible only on the door that made the decision — see
+   * `@trafficflow/db#listOutstandingForAccount`'s own header for why: `organizer_requests` is
+   * per-install bookkeeping, and a different install's `GET /screener` reads a different
+   * database with no row for it at all. That install still shows the sender as held, truthfully,
+   * until the organizer's own pass actually applies the decision.
+   */
+  pendingDecisions: ScreenerPendingDecision[];
+}
+
+/** One entry of {@link ScreenerPage.pendingDecisions}. */
+export interface ScreenerPendingDecision {
+  /** The address (sender scope) or the domain (domain scope) the decision covers, lower-cased. */
+  subject: string;
+  scope: "sender" | "domain";
+  decidedAt: string;
+  /**
+   * Has this install's own cycle appended it to the mailbox yet?
+   *
+   * KEPT ALONGSIDE {@link state} rather than replaced by it: a client written against the 0.14.1
+   * shape reads this field, and `state === "sent"` is exactly what it always meant. Renaming it
+   * would have been a wire break for a rename's worth of benefit.
+   */
+  sent: boolean;
+  /**
+   * WHERE THE DECISION ACTUALLY IS (mail 0090).
+   *
+   *  · `pending` — queued here, not yet handed to the mailbox.
+   *  · `sent`    — in the mailbox, waiting for the organizer.
+   *  · `refused` — the organizer answered, and said no. **The sender is back in the queue**; this
+   *    entry exists to explain why the decision the person made did not take effect.
+   *
+   * `applied` and `expired` never appear: the first needs no explaining and the second returns the
+   * sender to the queue with the ordinary "nobody is organizing this" notice.
+   */
+  state: "pending" | "sent" | "refused";
+  /**
+   * What the organizer said no to — a closed vocabulary this codebase defines (`unauthenticated`,
+   * `conflict`, `wrong_mailbox`, `invalid_payload`, `unhandled_kind`, `stale`, `account_erased`),
+   * never free text and never a stranger's. `null` outside `refused`, and also for a refusal whose
+   * named reason this build does not recognise — a newer organizer's vocabulary reaches an older
+   * reader as "refused, reason unknown" rather than as an unrendered string.
+   */
+  refusedReason: string | null;
 }
 
 interface ScreenerRow {
+  /**
+   * WHICH MAILBOX THIS MESSAGE IS IN. The role is asked per mailbox, never per account (an
+   * account may hold an organized mailbox and a read-only one at once), so anything that has to
+   * know whether a decision on this message could ever be APPLIED needs the mailbox it belongs
+   * to. `suggest` is the caller that does.
+   */
+  mailboxId: string;
   messageId: string;
   threadId: string | null;
   fromAddress: string;
@@ -782,15 +841,16 @@ const HELD_COLUMNS = {
   messageId: messages.id, threadId: messages.threadId, fromAddress: messages.fromAddress,
   subject: messages.subject, snippet: messages.snippet, date: messages.date,
   nativeLocator: messages.nativeLocator, observedFolder: folderState.observedFolder,
-  updatedAt: messages.updatedAt, unread: messages.unread,
+  updatedAt: messages.updatedAt, unread: messages.unread, mailboxId: messages.mailboxId,
 } as const;
 
 function toScreenerRow(r: {
   messageId: string; threadId: string | null; fromAddress: string; subject: string;
   snippet: string; date: Date | null; nativeLocator: unknown; observedFolder: string;
-  updatedAt: Date; unread: boolean;
+  updatedAt: Date; unread: boolean; mailboxId: string;
 }): ScreenerRow {
   return {
+    mailboxId: r.mailboxId,
     messageId: r.messageId,
     threadId: r.threadId ?? null,
     fromAddress: r.fromAddress,
@@ -805,7 +865,6 @@ function toScreenerRow(r: {
 }
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
-const domainOf = (addr: string): string => { const i = addr.indexOf("@"); return i >= 0 ? addr.slice(i + 1) : ""; };
 
 /**
  * The `(date, messageId)` keyset for the Screener's `date desc, messageId desc` order — the
@@ -894,7 +953,39 @@ export class ScreenerReadService {
     // ONE bounded query: the representative per sender, the order, the keyset and the LIMIT are
     // all decided by Postgres. See {@link heldSenderPage} for why none of it is done here.
     const windowed = await this.heldSenderPage(ctx, { after, limit: limit + 1 });
-    const pageRows = windowed.slice(0, limit);
+    const unfiltered = windowed.slice(0, limit);
+
+    // ── A SENDER THIS INSTALL HAS ALREADY DECIDED ON LEAVES THE QUEUE (0.14.1) ────
+    //
+    // ONE extra query for the whole page, on `list`'s own established rule beside it. Small by
+    // construction: `organizer_requests` holds at most a handful of in-flight decisions per
+    // account, drained within a cycle or two of being written. A `scope:"domain"` decision
+    // excludes every held sender AT that domain, not only the one address the decision named —
+    // the same "the whole bag follows the scope" rule `decide` itself enforces.
+    const outstanding = await listOutstandingForAccount(asTx(ctx), ctx.accountId, ctx.now());
+    // ── A REFUSAL DOES NOT EXCLUDE, AND THAT IS THE WHOLE DIFFERENCE ────────────────────────
+    //
+    // `pending` and `sent` mean "the person has answered for this sender and we are carrying it
+    // out", so the sender leaves the queue. `refused` means the organizer said NO — the decision
+    // did not happen, so the sender must come BACK and be answerable again. Excluding it would
+    // hide a sender the person still has to deal with, which is the same class of lie as
+    // reporting a refusal as applied.
+    const stillWaiting = outstanding.filter((o) => o.state !== "refused");
+    const outstandingSenders = new Set(stillWaiting.filter((o) => o.scope === "sender").map((o) => o.match));
+    const outstandingDomains = new Set(stillWaiting.filter((o) => o.scope === "domain").map((o) => o.match));
+    const isDecided = (address: string): boolean => {
+      const lower = address.toLowerCase();
+      return outstandingSenders.has(lower) || outstandingDomains.has(domainOf(lower));
+    };
+    const pageRows = unfiltered.filter((r) => !isDecided(r.fromAddress));
+    const pendingDecisions: ScreenerPendingDecision[] = outstanding.map((o) => ({
+      subject: o.match, scope: o.scope, decidedAt: o.decidedAt.toISOString(),
+      // KEPT, and kept meaning exactly what it always meant, so a client written against the
+      // 0.14.1 shape does not change behaviour: "this install has handed the decision over".
+      sent: o.state === "sent",
+      state: o.state,
+      refusedReason: o.refusedReason,
+    }));
 
     // The account's posture, resolved the same way the worker and the API read it — NULL/absent ⇒
     // {@link resolveOhboxPolicy}'s lenient default. It changes only how a STORED verdict reads as
@@ -945,7 +1036,11 @@ export class ScreenerReadService {
       .filter((r) => !stored.has(r.fromAddress.toLowerCase()))
       .map((r) => r.fromAddress.toLowerCase());
 
-    const last = pageRows[pageRows.length - 1];
+    // The CURSOR is anchored to the last row the QUERY consumed (`unfiltered`), never to the
+    // last row this page actually RETURNS (`pageRows`, which can be shorter once a decided
+    // sender is filtered out) — anchoring it to `pageRows` would re-offer or skip rows the next
+    // call already passed, exactly the failure the keyset exists to avoid.
+    const last = unfiltered[unfiltered.length - 1];
     const nextCursor = windowed.length > limit && last ? encodeScreenerCursor(last) : null;
     return {
       items,
@@ -956,13 +1051,22 @@ export class ScreenerReadService {
         maxPerRequest: MAX_SUGGEST_SENDERS,
         recommendedPerRequest: SUGGEST_RECOMMENDED_PER_REQUEST,
       },
+      pendingDecisions,
     };
   }
 
-  async decide(
-    ctx: ServiceContext, id: string, b: ScreenBody,
-    opts: { idempotency?: ScreenIdempotency | null } = {},
-  ): Promise<ScreenDecisionResult> {
+  /**
+   * ══════════════════════════════════════════════════════════════════════════════════════════
+   *  VALIDATE — pure input-format checks, shared by the organizer's direct write and the
+   *  reader's request. 0.14.1: extracted so the SAME function refuses a malformed
+   *  decision whichever door it arrives through, rather than one door's checks drifting from
+   *  the other's.
+   * ══════════════════════════════════════════════════════════════════════════════════════════
+   */
+  private async validateScreenerDecision(ctx: ServiceContext, id: string, b: ScreenBody): Promise<{
+    scope: "sender" | "domain"; decision: "yes" | "no"; dest: Destination | undefined;
+    target: AppliedScreenerRow; address: string; domain: string; appliedFolder: Destination;
+  }> {
     // ── THE ROUTE HANDS THIS BODY OVER UNVALIDATED ──────────────────────────────────────────
     //
     // `routes/screener.ts` does `readBody<ScreenBody>(req)`, which is a CAST and not a check, so
@@ -1019,7 +1123,7 @@ export class ScreenerReadService {
         );
       }
     }
-    // ── TWO INDEXED READS, NOT THE WHOLE QUEUE ──────────────────────────────────────────────
+    // ── ONE INDEXED READ, NOT THE WHOLE QUEUE ───────────────────────────────────────────────
     //
     // This used to be `heldRows(ctx)` — every held message in the account — followed by a
     // `.find` and a `.filter` in JavaScript. On a large mailbox that is **thousands of rows,
@@ -1032,8 +1136,11 @@ export class ScreenerReadService {
     //
     // The target lookup stays a HELD-ONLY lookup, so the 404 still means "not in the Screener"
     // and not merely "no such message" — deciding on mail that is not at the gate would create a
-    // promoted rule for a sender nobody was asked about.
-    const target = await this.heldRowById(ctx, id);
+    // promoted rule for a sender nobody was asked about. `@trafficflow/db#heldRowById`, not this
+    // class's own read stack — it is the ONE implementation the drain also reads through
+    // (`heldRowsForSender`/`heldRowsForDomain`, inside `applyScreenerDecision`), and it is the
+    // one that carries `mailboxId`, which the role branch below needs.
+    const target = await heldRowById(asTx(ctx), ctx.accountId, id);
     if (!target) throw new ServiceError("not_found", 404, "screener item not found");
 
     const address = target.fromAddress.toLowerCase();
@@ -1059,202 +1166,128 @@ export class ScreenerReadService {
       );
     }
 
-    // ── THE BAG FOLLOWS THE SCOPE, AND EARLIER IT DID NOT ───────────────────────────────────
-    //
-    // This was `heldRowsForSender(ctx, address)` unconditionally. A `scope: "domain"` decision
-    // therefore wrote a rule saying "everyone at corp.com goes to Screened" and then moved ONE
-    // address's mail, leaving every other held sender at that domain waiting at a gate whose
-    // own rule already said to let them through — and nothing repairs that later, because
-    // `rules` is consulted when mail ARRIVES and never retroactively. The rule and the mail it
-    // moves are one decision; they have to have one subject.
-    //
-    // `split_part(lower(…), '@', 2)` and not a suffix match: `lower(from) like '%@corp.com'`
-    // would also catch `evil-corp.com`, and this is the same expression
-    // `drizzle-repo.ts#listScreenerBacklog` and `sensitive-rescreen.ts#selectCandidates`
-    // already use to ask "has the user ruled on this sender", so the set a rule MOVES and the
-    // set it is later understood to COVER are computed the same way.
-    //
-    // Still ALL of the matching held mail — `decide` re-routes the whole bag by contract, and
-    // a page of it would leave the rest stranded at a gate whose rule now says "allow".
-    const heldMail = scope === "domain"
-      ? await this.heldRowsForDomain(ctx, domain)
-      : await this.heldRowsForSender(ctx, address);
+    return { scope, decision, dest, target, address, domain, appliedFolder };
+  }
 
-    /**
-     * The subset of {@link heldMail} this decision ACTUALLY re-routed — see the guard inside the
-     * transaction. Declared out here because two things after the commit need it and neither may
-     * act on a row the guard skipped: the IMAP write-path (it would move mail the database says
-     * is elsewhere) and auto-unsubscribe (it would leave a list on behalf of a message that is
-     * no longer screened out).
+  /**
+   * ══════════════════════════════════════════════════════════════════════════════════════════
+   *  DECIDE — 0.14.1: branches on the mailbox's role for THIS install.
+   * ══════════════════════════════════════════════════════════════════════════════════════════
+   *
+   * An ORGANIZER writes directly, exactly as before this slice — `applyAsOrganizer` below is
+   * `decide`'s old transactional body, unchanged in EFFECT and now sharing its core
+   * (`@trafficflow/db#applyScreenerDecision`) with the organizer's own request drain
+   * (`apps/worker/src/request-drain.ts`), which applies the identical decision when a READER
+   * made it. A READER never writes here: its decision becomes a REQUEST — a row in
+   * `organizer_requests` and, on its own next cycle, a record appended to `ohmail/_meta` — and
+   * the organizer applies it on ITS next pass. only the organizer moves.
+   *
+   * The role is asked PER MAILBOX (`readRequestEligibility`, keyed on `target.mailboxId`), never
+   * per account: an account may hold several mailboxes with different roles, and this decision
+   * is about the ONE the held message belongs to.
+   */
+  async decide(
+    ctx: ServiceContext, id: string, b: ScreenBody,
+    opts: { idempotency?: ScreenIdempotency | null } = {},
+  ): Promise<ScreenDecisionResult | ScreenRequestResult> {
+    const v = await this.validateScreenerDecision(ctx, id, b);
+
+    const eligibility = await readRequestEligibility(asTx(ctx), ctx.accountId, v.target.mailboxId);
+    if (!eligibility) throw new MailboxNotFoundError(v.target.mailboxId);
+    // A TOMBSTONE IS NOT A READER. A removed mailbox keeps whatever `organizer_role` it had, so
+    // it reads `capable: false` and would fall to the reader branch — which refuses with "another
+    // install is organizing this mailbox", names whoever held it before the removal, and offers a
+    // takeover of something that no longer exists. Every clause of that is false. Not-found is
+    // what the row actually says.
+    if (eligibility.status === "disabled") throw new MailboxNotFoundError(v.target.mailboxId);
+
+    /* ── THE ROLE ALONE DECIDES THIS BRANCH. `capable` MUST NOT APPEAR HERE ──────────────────
+     *
+     * `capable` answers a question a READER asks about the install that HOLDS its mailbox: will
+     * that holder take a decision made somewhere else. It says nothing about whether THIS install
+     * may write to a mailbox it organizes itself, and reading it that way puts a header an
+     * ATTACKER can write (a claim is a message anyone with append rights can leave in the folder)
+     * in front of the organizer's own press — the highest-traffic decide in the product, and the
+     * whole of a standalone install's Screener.
+     *
+     * It was `role === "organizer" && capable`, which was not wrong TODAY only because `capable`
+     * happens to reduce to `status !== "disabled"` whenever the role is `organizer`. That is a
+     * coincidence of one boolean's current definition, not a property anybody stated, and the
+     * tombstone half of it is already checked on the line above — so the conjunct bought nothing
+     * and would have started refusing every organizer's own decision the day `capable` grew a
+     * requirement. Removed rather than left as a trap with a comment on it.
      */
-    const rerouted: ScreenerRow[] = [];
+    if (eligibility.role === "organizer") {
+      return this.applyAsOrganizer(ctx, id, v, opts);
+    }
+    return this.requestAsReader(ctx, id, v, eligibility, opts);
+  }
 
-    // ── DB tx: mark known (yes) + promoted rule + folder-state re-route + change_log + learning (step 2) ──
+  /**
+   * THE ORGANIZER'S DIRECT WRITE — `decide`'s pre-0.14.1 transaction, its core moved to
+   * `@trafficflow/db#applyScreenerDecision` (contacts, the screening baseline, the promoted
+   * rule, the held-bag re-route guarded on `desired_folder = 'ohmail/Screener'`,
+   * mark-read-on-decide, the learning signal) so the organizer's own door and its request drain
+   * are ONE implementation. Everything that stays HERE is either HTTP-specific (the idempotency
+   * claim-and-replay) or needs a dependency the drain does not have (the injected IMAP adapter,
+   * the unsubscribe courtesy).
+   */
+  private async applyAsOrganizer(
+    ctx: ServiceContext, id: string,
+    v: {
+      scope: "sender" | "domain"; decision: "yes" | "no"; address: string; appliedFolder: Destination;
+      target: AppliedScreenerRow;
+    },
+    opts: { idempotency?: ScreenIdempotency | null },
+  ): Promise<ScreenDecisionResult> {
+    const { scope, decision, address, appliedFolder, target } = v;
+    let rerouted: AppliedScreenerRow[] = [];
+
     const result = await asTx(ctx).transaction(async (tx) => {
-      rerouted.length = 0;
-      // ── ERASURE FENCE, FIRST — this transaction writes `account_settings` (the baseline
-      // stamp below), so it is a settings writer and a late one could recreate erased state.
-      // First statement so the lock chain stays accounts → contacts/settings → sequence row;
-      // `erasure-fence.ts` carries the argument.
-      await fenceErasedAccount(tx, ctx.accountId);
-      /* -- A READER DOES NOT SCREEN (mail 0083) --------------------------------------------
-       *
-       * The Screener is the organizing act, not a view of it: a decision writes a RULE, re-routes
-       * every message the sender has in the mirror, and hands screened-out senders to the
-       * unsubscribe path. Every one of those is executed by the organizer against the organizer's
-       * store, so a decision taken where nothing organizes is a promise nobody keeps — and the
-       * queue would go on offering the same senders for ever, because nothing moves them out.
-       *
-       * ACCOUNT-SCOPED, on the same argument as the rules door: a screener decision IS a rule,
-       * rules belong to the account, and they travel in the profile document. Inside the
-       * transaction and after the erasure fence, so the lock chain is unchanged.
-       */
-      await assertAccountOrganizes(tx as unknown as Tx, ctx.accountId);
-      if (decision === "yes") {
-        await tx.insert(contacts).values({ accountId: ctx.accountId, address })
-          .onConflictDoNothing({ target: [contacts.accountId, contacts.address] });
+      // ── THE ROLE IS RE-READ HERE, INSIDE THE WRITE, UNDER THE SHARE LOCK ────────────────────
+      //
+      // `decide`'s own `readRequestEligibility` is a PLAIN read on the ambient handle — right for
+      // choosing a branch, and not evidence about a write that has not started yet. READ
+      // COMMITTED gives every statement a fresh snapshot, so between that read and this
+      // transaction the worker's lease gate can commit a demotion, and an install that is now a
+      // READER would insert a promoted rule and a bag of `last_set_by: 'us'` move intents.
+      // `assertOrganizerRole`'s own header records that exact interleaving and why the lock is
+      // the only thing that closes it.
+      //
+      // AFTER the erasure fence and not before: `applyScreenerDecision` takes `accounts FOR SHARE`
+      // as its first statement, and `deleteAccount` takes the same row first — so this transaction
+      // must reach `accounts` before it reaches `mailboxes`, or the two orders cross and deadlock.
+      const erasedAt = await readAccountErasedAt(tx, ctx.accountId);
+      if (erasedAt != null) {
+        throw new ServiceError("account_erased", 410,
+          "this account has been deleted; its settings cannot be changed");
       }
+      const locked = await readOrganizerRole(tx, ctx.accountId, target.mailboxId, { lock: true });
+      if (!locked) throw new MailboxNotFoundError(target.mailboxId);
+      if (locked.status === "disabled") throw new MailboxNotFoundError(target.mailboxId);
+      if (locked.role !== "organizer") throw new OrganizedElsewhereError(target.mailboxId, locked.by);
 
-      /**
-       * ── THE SCREENING BASELINE, STAMPED ON THE FIRST DECIDE AND NEVER AGAIN (mail 0056) ───
-       *
-       * The instant the cutline measures its window back from. Until it exists the window slides
-       * off `now()` and the unread test ignores age entirely, so any old unread mail entering the
-       * mirror — a backfill reaching further back, a folder read for the first time, a `\Seen`
-       * flag adopted late — resurrects a sender the account had already worked past, and the
-       * queue never stays empty. `client-engine/src/consent-cutline.ts` carries the argument.
-       *
-       * WHY HERE. This transaction is the account's decision that a sender is answered for; the
-       * FIRST one is the account saying the queue is a thing it is now working through. Nothing
-       * else in the product is that event: `seed_confirmed_at` is answered before any mail has
-       * been screened, and a login is not a decision.
-       *
-       * WHY `setWhere: isNull(...)` AND NOT AN OVERWRITE. The baseline is established once. A
-       * later decide is the account USING a queue that already has a baseline, and re-stamping
-       * would drag the cutoff forward every time somebody presses a button — which drops every
-       * sender whose newest mail just fell behind the new cutoff out of the queue, silently, as a
-       * side effect of answering an unrelated one.
-       *
-       * AND IT IS WHAT MAKES THE RACE SAFE. Two decides on one account commit concurrently — two
-       * devices, or a client firing a batch. Both reach this upsert, Postgres serialises them on
-       * the primary key, and the loser re-evaluates `screening_baseline_at IS NULL` against the
-       * WINNER's committed row and skips. One baseline, and it is the earlier one. A
-       * read-then-write here would produce two different answers under exactly that interleaving
-       * and PGlite would never show it — `consent-baseline.concurrency.pg.test.ts` runs it on
-       * real Postgres for the reason `consent-auto-suggest.concurrency.pg.test.ts` states.
-       *
-       * Column-scoped, like every other writer on this row: only `screening_baseline_at` and
-       * `updated_at` are touched, so a concurrent `confirmSeed` or `setDormancyDays` is not
-       * clobbered by a stale snapshot.
-       */
-      await tx.insert(accountSettings).values({
-        accountId: ctx.accountId,
-        screeningBaselineAt: ctx.now(),
-        updatedAt: ctx.now(),
-      }).onConflictDoUpdate({
-        target: accountSettings.accountId,
-        set: { screeningBaselineAt: ctx.now(), updatedAt: ctx.now() },
-        setWhere: isNull(accountSettings.screeningBaselineAt),
-      });
-
-      const [rule] = await tx.insert(rulesTbl).values({
-        accountId: ctx.accountId,
-        kind: scope === "domain" ? "domain" : "sender",
-        match: scope === "domain" ? domain : address,
-        destination: appliedFolder,
-        provenance: "promoted",
-        enabled: true,
-      }).returning({ id: rulesTbl.id });
-      let lastSeq = await recordChange(tx, { accountId: ctx.accountId, entityType: "rule", entityId: rule!.id, op: "create", meta: null });
-
-      /**
-       * ── THE RE-ROUTE IS GUARDED ON THE ROW STILL BEING HELD, AND THAT IS A FIX ─────────────
-       *
-       * `heldMail` was read OUTSIDE this transaction, so between that read and this write the
-       * row can have been re-routed by somebody else: a second device, `ruleRetroPass`, or —
-       * the case that was observed on a live mailbox — the client's own follow-up `move`. The
-       * upsert had no `where`, so it stamped `appliedFolder` over whatever had landed, and the
-       * user's stated destination lost to the endpoint's default. That is the whole of the
-       * misfiled-bulletins defect: the `move` to `ohmail/Reads` committed first and this
-       * line put it back to `INBOX`.
-       *
-       * Removing the client composition (which this change also does) does not close it, because
-       * a shipped DESKTOP mirror goes on composing `decide` + `move` until it updates. So the
-       * guard lives here, where every writer passes: `DO UPDATE … WHERE desired_folder =
-       * 'ohmail/Screener'` re-routes only rows that are STILL at the gate. A row that has moved
-       * on keeps where it went — "user always wins", the same rule the reconciler runs on — and
-       * an old client's racing `move` to Reads now WINS instead of being clobbered.
-       *
-       * `.returning()` is what makes the `change_log` honest: a row the guard skipped did not
-       * move, so emitting a `move` change for it would tell every client's delta stream that
-       * mail went somewhere it did not, and the next drain would paint it in the wrong pile.
-       * The IMAP write-path below iterates the same list for the same reason.
-       *
-       * ON CONFLICT and not a plain UPDATE: `heldRows` INNER JOINs `folder_state`, so a row
-       * always exists and the INSERT always conflicts — the values arm is unreachable in
-       * practice and is kept only because the upsert shape is what every other writer here uses.
-       */
-      for (const m of heldMail) {
-        const [hit] = await tx.insert(folderState).values({
-          messageId: m.messageId, desiredFolder: appliedFolder, observedFolder: m.observedFolder,
-          lastSetBy: "us", reconcileStatus: "pending", conflict: false,
-        }).onConflictDoUpdate({
-          target: folderState.messageId,
-          set: { desiredFolder: appliedFolder, lastSetBy: "us", reconcileStatus: "pending", conflict: false, updatedAt: ctx.now() },
-          // `setWhere`, not the deprecated `where`: both render into the same slot, but `where`
-          // reads as though it filtered the CONFLICT TARGET (a partial-index predicate, which is
-          // `targetWhere`). This is the `DO UPDATE … WHERE` arm, and the column reference is the
-          // EXISTING row — `excluded.*` would be the row we are proposing.
-          setWhere: eq(folderState.desiredFolder, SCREENER_FOLDER),
-        }).returning({ messageId: folderState.messageId });
-        if (!hit) continue;
-        rerouted.push(m);
-        lastSeq = await recordChange(tx, {
-          accountId: ctx.accountId, entityType: "message", entityId: m.messageId, op: "move",
-          meta: { from: m.observedFolder, to: appliedFolder },
+      let applied;
+      try {
+        applied = await applyScreenerDecision(tx, {
+          accountId: ctx.accountId, mailboxId: target.mailboxId, scope, address, appliedFolder, decision,
+          triggeringActionId: `screener:${id}`, now: ctx.now(),
         });
-
-        // ── A SCREEN-OUT OR SPAM PRESS MARKS THE MAIL READ, IN THIS SAME TRANSACTION ─────────
-        //
-        // Only the two "no" destinations qualify — see {@link MARK_READ_ON_DECIDE} for why this
-        // is a folder-membership check and not `decision === "no"`, and for the safety boundary
-        // it draws. ADDITIVE: `desired_seen = true` is a `\Seen` to ADD, never a flag to remove,
-        // and the worker's `reconcileFlags` applies it on the real server — the API opens no IMAP.
-        //
-        // THE shared intent writer (`@trafficflow/db` `flag-intent.ts` — this block used to be
-        // its inline twin): `observed_seen` (`!m.unread` — held mail has no `flag_state` row at
-        // ingest, `pipeline.ts` writes only `folder_state`) is supplied for the INSERT alone,
-        // and on the UPDATE the worker's observed truth is preserved with `reconcile_status`
-        // recomputed in SQL against the STORED value.
-        // A `\Seen` already on the server ⇒ `reconciled`, no needless STORE.
-        if (MARK_READ_ON_DECIDE.has(appliedFolder)) {
-          await upsertDesiredSeen(tx, m.messageId, !m.unread, true, ctx.now());
-          // The mirror the client renders. `unread` is written by the API at mark-read time, never
-          // by the reconciler (see `scripts/undo-runaway-reads.mjs`), so without this the lists
-          // would still show the dismissed mail bold. `last_read_at` tracks the flag, as
-          // `MessageService.markSeen` does, so the two read-paths file identically in "Earlier".
-          await tx.update(messages)
-            .set({ unread: false, lastReadAt: ctx.now(), updatedAt: ctx.now() })
-            .where(and(eq(messages.id, m.messageId), eq(messages.accountId, ctx.accountId)));
-          // The read-state delta the client applies — `op: "update"`, the same contract
-          // `markSeen` emits for a read change. Distinct from the `move` above: one says where the
-          // mail went, this says it is no longer unread.
-          lastSeq = await recordChange(tx, {
-            accountId: ctx.accountId, entityType: "message", entityId: m.messageId, op: "update", meta: null,
-          });
+      } catch (err) {
+        // `applyScreenerDecision` fences the account itself, first — see its own header. Its
+        // `AccountErasedError` is a db-layer type; the HTTP contract here has always been this
+        // exact `ServiceError`, so it is translated rather than let escape as an unrecognised 500.
+        if (err instanceof AccountErasedError) {
+          throw new ServiceError("account_erased", 410,
+            "this account has been deleted; its settings cannot be changed");
         }
+        throw err;
       }
+      rerouted = applied.rerouted;
 
-      await this.learning.recordOn(tx, ctx.accountId, {
-        triggeringActionId: `screener:${id}`,
-        kind: "screener",
-        senderAddress: scope === "domain" ? null : address,
-        senderDomain: scope === "domain" ? domain : null,
-        destination: appliedFolder,
-        label: "positive",
-      });
-
-      const dto: ScreenDecisionResult = { messageId: id, appliedFolder, createdRuleId: rule!.id };
+      const dto: ScreenDecisionResult = {
+        messageId: id, appliedFolder, createdRuleId: applied.createdRuleId,
+      };
 
       // Store the verbatim response IN this tx so a commit-then-crash retry
       // replays the SAME 200 — never re-creating the promoted rule (the dup-rule
@@ -1267,7 +1300,7 @@ export class ScreenerReadService {
           requestHash: opts.idempotency.requestHash,
           responseStatus: 200,
           responseJson: dto,
-          seq: Number(lastSeq),
+          seq: Number(applied.lastSeq),
           now: ctx.now(),
         });
         // A LOST claim = a concurrent same-key request committed first. Throwing rolls THIS
@@ -1298,7 +1331,7 @@ export class ScreenerReadService {
       for (const m of rerouted) {
         await applyReconcileAction(
           { repo, adapter, accountId: ctx.accountId, mailboxId: "" },
-          { messageId: m.messageId, locator: m.nativeLocator, state: { desiredFolder: appliedFolder, observedFolder: m.observedFolder, lastSetBy: "us" } },
+          { messageId: m.messageId, locator: m.nativeLocator as NativeLocator, state: { desiredFolder: appliedFolder, observedFolder: m.observedFolder, lastSetBy: "us" } },
           { type: "move", to: appliedFolder },
         );
       }
@@ -1330,11 +1363,107 @@ export class ScreenerReadService {
     //
     // `rerouted` and not `heldMail`, for the reason the IMAP loop above gives: a row this
     // decision did not claim is not one it may leave a mailing list on behalf of.
+    //
+    // NOT PERFORMED ON THE DRAIN'S OWN APPLY OF A READER'S REQUEST — see
+    // `@trafficflow/db#applyScreenerDecision`'s own header for the documented gap.
     if (this.deps.unsubscribe && decision === "no") {
       await this.deps.unsubscribe.onScreenOut(ctx, rerouted.map((m) => m.messageId));
     }
 
     return result;
+  }
+
+  /**
+   * THE READER'S DECISION — a REQUEST, waiting for the organizer to apply it (0.14.1).
+   *
+   * Offered only while `eligibility.capable` — the holder's claim advertises
+   * {@link CAPABILITY_REQUESTS} AND `organizer_state = 'held'` (see
+   * `readRequestEligibility`'s own header). Otherwise `409 organized_elsewhere`, naming which of
+   * the two is missing so the client can render the right sentence and the claim CTA — never a
+   * silent queue nobody is ever going to drain.
+   *
+   * `match` — `address` for a sender-scope decision, `domain` for a domain-scope one — is what
+   * `listOutstandingForAccount` (`@trafficflow/db`) keys the Screener list's exclusion on, and what
+   * `apps/worker/src/request-drain.ts`'s validator re-checks before applying anything: the
+   * payload is untrusted the instant it leaves this process and travels through an RFC822 header
+   * another install wrote.
+   */
+  private async requestAsReader(
+    ctx: ServiceContext, id: string,
+    v: {
+      scope: "sender" | "domain"; decision: "yes" | "no"; address: string; domain: string;
+      appliedFolder: Destination; target: AppliedScreenerRow;
+    },
+    eligibility: RequestEligibility,
+    opts: { idempotency?: ScreenIdempotency | null },
+  ): Promise<ScreenRequestResult> {
+    if (!eligibility.capable) {
+      throw new OrganizedElsewhereError(
+        v.target.mailboxId, eligibility.by,
+        eligibility.by.kind === null ? "no_organizer" : "organizer_outdated",
+      );
+    }
+
+    const { scope, decision, address, domain, appliedFolder } = v;
+    const requestId = randomUUID();
+    const match = scope === "domain" ? domain : address;
+    const decidedAt = ctx.now();
+
+    const dto: ScreenRequestResult = {
+      pending: true,
+      requestId,
+      holder: eligibility.by,
+    };
+
+    try {
+      await asTx(ctx).transaction(async (tx) => {
+        // FENCE FIRST, as the first statement of this transaction — `erasure-fence.ts`'s own rule
+        // for every writer of account-scoped state, `applyScreenerDecision` included. A reader
+        // with a stale page open could otherwise queue a request against an account whose erasure
+        // has already committed; the request would sit in `organizer_requests` until the
+        // organizer's drain reached it and (correctly) fenced there too, but the row itself
+        // should never be written.
+        const erasedAt = await readAccountErasedAt(tx, ctx.accountId);
+        if (erasedAt != null) throw new AccountErasedError(ctx.accountId);
+
+        await insertOrganizerRequest(tx, {
+          id: requestId,
+          accountId: ctx.accountId,
+          mailboxId: v.target.mailboxId,
+          kind: "screener.decide",
+          // Exactly what the drain needs to call `applyScreenerDecision` again, unchanged — see
+          // that function's `ApplyScreenerDecisionInput`. `match` rides along for
+          // `listOutstandingForAccount`'s own read; the drain does not use it.
+          payload: { scope, address, appliedFolder, decision, match },
+          decidedAt,
+        });
+
+        // Same replay contract as the organizer's own door — a lost response must not queue a
+        // second request for the same press.
+        if (opts.idempotency) {
+          const claimed = await claimIdempotencyKey(tx, {
+            accountId: ctx.accountId,
+            key: opts.idempotency.key,
+            requestHash: opts.idempotency.requestHash,
+            responseStatus: 202,
+            responseJson: dto,
+            seq: null,
+            now: ctx.now(),
+          });
+          if (!claimed) throw new IdempotencyRaceLost(ctx.accountId, opts.idempotency.key);
+        }
+      });
+    } catch (err) {
+      // Same translation as `applyAsOrganizer`'s own catch, and for the same reason: a db-layer
+      // type must not escape as an unrecognised 500.
+      if (err instanceof AccountErasedError) {
+        throw new ServiceError("account_erased", 410,
+          "this account has been deleted; its settings cannot be changed");
+      }
+      throw err;
+    }
+
+    return dto;
   }
 
   /**
@@ -1471,74 +1600,13 @@ export class ScreenerReadService {
   }
 
   /**
-   * ONE held row by message id — `decide`'s target lookup, on the primary key.
-   *
-   * The `desired_folder = ohmail/Screener` predicate is inherited from {@link heldRows} and is
-   * the load-bearing half: it is what makes a message that has already left the gate a 404
-   * rather than a silent second decision on mail nobody is holding.
+   * `heldRowById` / `heldRowsForSender` / `heldRowsForDomain` USED TO LIVE HERE, and now live in
+   * `@trafficflow/db#screener-apply.ts` — see that module's own header (0.14.1):
+   * `decide`'s validate step and `applyScreenerDecision`'s own internals both read through them,
+   * and the organizer's request drain (`apps/worker/src/request-drain.ts`) needs the identical
+   * queries without importing this package. `decide` was their only caller in this class; moving
+   * them left nothing behind to keep.
    */
-  private async heldRowById(ctx: ServiceContext, id: string): Promise<ScreenerRow | null> {
-    const rows = await this.heldRows(ctx, eq(messages.id, id));
-    return rows[0] ?? null;
-  }
-
-  /**
-   * Every held row for ONE sender, matched case-insensitively on the address.
-   *
-   * `lower(from_address)` and not a bare `eq`: the queue is keyed by `fromAddress.toLowerCase()`
-   * everywhere else in this file, and a sender who varies their capitalisation between messages
-   * would otherwise have half their bag re-routed and half left at the gate — with a promoted
-   * rule already saying they are allowed through.
-   */
-  protected async heldRowsForSender(ctx: ServiceContext, address: string): Promise<ScreenerRow[]> {
-    return this.heldRows(ctx, sql`lower(${messages.fromAddress}) = ${address}`);
-  }
-
-  /**
-   * Every held row for ONE DOMAIN — what a `scope: "domain"` decision re-routes.
-   *
-   * ── THIS PREDICATE IS `packages/core/src/rules.ts#domainOf`, TRANSLATED ──────────────────
-   *
-   * The set this moves and the set the promoted rule will COVER have to be the same set, and
-   * the second one is not decided here — it is decided by `matches()` in `core/src/rules.ts`,
-   * which fires a `kind:'domain'` rule when `r.match.toLowerCase() === domainOf(author)` with
-   * `domainOf` = **everything after the FIRST `@`**, exact equality, no subdomains. So this is
-   * `substring(… from position('@' …) + 1)`, which is that function character for character.
-   *
-   * Three shapes were rejected, each wrong in a way that only shows up on mail somebody sends
-   * you deliberately:
-   *
-   *  · `like '%@' || domain` — `_` and `%` inside a domain are LIKE wildcards, and it also
-   *    matches `a@mail.corp.com` for `corp.com`, importing subdomain semantics the core matcher
-   *    does not have. Mail would move now and then never match the rule again.
-   *  · `like '%' || domain` — additionally matches `evil-corp.com` for `corp.com`, so screening
-   *    a domain would rule on a lookalike an attacker controls.
-   *  · `split_part(lower(from_address), '@', 2)` — what `drizzle-repo.ts#listScreenerBacklog`
-   *    and `sensitive-rescreen.ts#selectCandidates` use. It agrees with `domainOf` on every
-   *    ordinary address and DISAGREES on `a@b@c.example`, where it answers `b` and the core
-   *    matcher answers `b@c.example`. Copying it would have made this file agree with two
-   *    backlog passes and disagree with the router that actually files the mail. **That
-   *    divergence is pre-existing and is left alone here — it is those predicates' bug, and
-   *    reproducing it to look consistent would put it in a
-   *    third place.**
-   *
-   * The `position(…) > 0` guard is not redundant: Postgres' `substring(x from 1)` returns the
-   * WHOLE string when `position` answers 0, so without it a malformed `from_address` of
-   * `corp.com` — no `@` at all — would be swept into a decision about `corp.com` that the core
-   * matcher (`domainOf("corp.com") === ""`) would never honour.
-   *
-   * `domain` is expected already lower-cased and non-empty; `decide` guarantees both before
-   * calling (`domainOf` of a lower-cased address, plus the 422 above).
-   */
-  protected async heldRowsForDomain(ctx: ServiceContext, domain: string): Promise<ScreenerRow[]> {
-    return this.heldRows(ctx, sql`
-      position('@' in lower(${messages.fromAddress})) > 0
-      and substring(
-        lower(${messages.fromAddress})
-        from position('@' in lower(${messages.fromAddress})) + 1
-      ) = ${domain}
-    `);
-  }
 
   /**
    * THE STORED SUGGESTIONS FOR A SET OF SENDERS — what {@link ScreenerReadService.list} draws.
@@ -1766,17 +1834,26 @@ export class ScreenerService extends ScreenerReadService {
     const ohboxPolicy = resolveOhboxPolicy(pref.ohboxPolicy);
     const ohboxBar = pref.ohboxBar ?? undefined;
 
-    /* -- A READER BUYS NO SUGGESTIONS (mail 0083) ------------------------------------------
+    /* -- A READER BUYS SUGGESTIONS TOO — BUT ONLY WHERE THE ANSWER COULD BE ACTED ON ---------
      *
-     * Refused BEFORE the model is called and before a credit can be debited, which is the whole
-     * placement argument: a suggestion is bought so a person can act on it in the Screener, and
-     * `decide` — the only thing that acts on it — is refused for a reader one door over. Buying
-     * an answer to a question this install may not answer would spend somebody's money on
-     * nothing, and it is a real charge rather than a hypothetical: `tryDebit` runs per sender.
+     * This used to refuse a reader outright, before the model was ever called: a suggestion is
+     * bought so a person can act on it in the Screener, and `decide` — the only thing that acts on
+     * one — refused a reader one door over, so buying an answer nobody could use would spend
+     * somebody's money on nothing.
      *
-     * Account-scoped, matching `decide`, because it is the same decision one step earlier.
+     * `decide` no longer refuses a reader outright: it turns the decision into a REQUEST for the
+     * install that organizes the mailbox. So the blanket refusal is wrong now. But the reasoning
+     * BEHIND it survives intact, and the version of this comment that removed the check missed
+     * it — "a reader's suggestion is no longer a purchase with nothing to act on" is only true
+     * while some organizer will actually take the request. A reader whose holder is an older build
+     * (or whose mailbox has no holder at all) gets `409 organizer_outdated` from `decide`, so a
+     * suggestion for that mailbox is exactly the old case again: money spent, and first-contact
+     * subjects sent to a model, for advice that cannot be applied.
+     *
+     * So the gate is not "am I the organizer" but "could a decision here ever land", asked PER
+     * MAILBOX — which is the same question `decide` asks, through the same function. A mailbox
+     * this account organizes passes it trivially.
      */
-    await assertAccountOrganizes(asTx(ctx) as unknown as Tx, ctx.accountId);
 
     // ONE query for the whole set, and the representative per sender chosen by the SAME rule
     // `list` presents — otherwise the page prices one message and the purchase buys another.
@@ -1797,6 +1874,69 @@ export class ScreenerService extends ScreenerReadService {
       const p = prev?.date?.getTime() ?? 0;
       if (!prev || t > p || (t === p && r.messageId > prev.messageId)) rep.set(key, r);
     }
+
+    /* ── THE ELIGIBILITY GATE, BEFORE A SINGLE MODEL CALL ────────────────────────────────────
+     *
+     * One read per DISTINCT mailbox in the set, not one per sender: a set of forty senders in one
+     * mailbox asks once. Senders whose mailbox could never have the decision applied are dropped
+     * from the purchase entirely rather than answered and billed.
+     *
+     * REFUSED, not silently emptied, when nothing survives: a 200 carrying no suggestions is what
+     * a caller sees when the model had nothing to say, and "your other install is too old to apply
+     * this" is a different sentence that names something the person can fix. It is the same
+     * refusal `decide` gives for the same mailbox, so the two doors cannot disagree.
+     */
+    const eligibilityByMailbox = new Map<string, RequestEligibility | null>();
+    for (const mailboxId of new Set([...rep.values()].map((r) => r.mailboxId))) {
+      eligibilityByMailbox.set(
+        mailboxId, await readRequestEligibility(asTx(ctx), ctx.accountId, mailboxId),
+      );
+    }
+    /**
+     * WHETHER THERE WAS ANYTHING TO GATE, captured BEFORE the filter runs.
+     *
+     * `rep` is already empty when none of the named senders is still held — a stale Screener page,
+     * a sender the worker's own pass screened out a moment ago, another tab. That is an ordinary
+     * 200 with nothing to buy, and it has nothing to do with who organizes the mailbox. Reading
+     * the post-filter emptiness alone turned it into `409 organized_elsewhere` naming an EMPTY
+     * mailbox id and a holder of `null` — every clause false, on a request that used to succeed.
+     */
+    const hadCandidates = rep.size > 0;
+    /**
+     * THE FIRST INELIGIBLE MAILBOX, AND ITS OWN ELIGIBILITY, AS ONE VALUE.
+     *
+     * These were two variables latched by two `??=` — and two `??=` on the same line do NOT latch
+     * together. `null` is a legitimate eligibility (the read found no row at all), so the id
+     * latched on the first ineligible mailbox while the eligibility stayed null and latched again
+     * on a LATER one. The sentence that reached the person then named one mailbox's id beside a
+     * different mailbox's holder, and chose between "nobody is organizing this" and "that install
+     * is too old" from the second mailbox while pointing at the first.
+     *
+     * A comment two lines down used to assert this could not happen ("the id and the holder are
+     * taken from the SAME mailbox"), which is what made it hard to see. One object, latched once,
+     * is the shape where that sentence is true by construction rather than by assertion — the
+     * object is always truthy, so `??=` captures exactly the first ineligible mailbox and both
+     * halves come from it.
+     */
+    let ineligibleAt: { mailboxId: string; eligibility: RequestEligibility | null } | null = null;
+    for (const [sender, row] of [...rep.entries()]) {
+      const e = eligibilityByMailbox.get(row.mailboxId) ?? null;
+      if (e && e.capable && e.status !== "disabled") continue;
+      ineligibleAt ??= { mailboxId: row.mailboxId, eligibility: e };
+      rep.delete(sender);
+    }
+    if (hadCandidates && rep.size === 0) {
+      const ineligible = ineligibleAt?.eligibility ?? null;
+      throw new OrganizedElsewhereError(
+        ineligibleAt?.mailboxId ?? "",
+        ineligible?.by ?? { kind: null, name: null, since: null },
+        // `?? null` first: `ineligible?.by.kind` short-circuits to UNDEFINED when the eligibility
+        // read itself returned null, and `undefined === null` is false — so the `no_organizer` arm
+        // was unreachable in exactly the case it names.
+        (ineligible?.by.kind ?? null) === null ? "no_organizer" : "organizer_outdated",
+      );
+    }
+
     // What is already bought. Read ONCE for the set, and the reason it is read at all is that a
     // `duplicate` costs the user nothing and costs US a model call.
     const stored = await this.storedSuggestions(ctx, [...rep.values()].map((r) => r.messageId), ohboxPolicy);

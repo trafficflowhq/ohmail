@@ -31,6 +31,7 @@ import "../../webapp/app/zero-layout.css";
 
 import { bridgeAvailable, connectLocalEngine } from "./bridge-fetch.js";
 import { startOmarchyFeed } from "./omarchy.js";
+import { startUpdateCadence } from "./update-cadence.js";
 import { DesktopGate } from "./DesktopGate.js";
 import { errorSentence, GateBoundary } from "./GateBoundary.js";
 import { GateNotice } from "./GateNotice.js";
@@ -100,6 +101,15 @@ enableDesktopAttachments();
    theme feed must never hold the first paint, and its failure mode is "static defaults",
    which is not a failure a person should wait on. */
 void startOmarchyFeed();
+
+/* THE APP'S OWN UPDATE, ON A CLOCK. The native process checks the signed release feed shortly
+   after this window opens and whenever somebody asks it to; nothing asked again while the window
+   stayed open, and a mail client is the archetype of a window nobody closes. This arms the daily
+   re-ask — wall-clock, so a suspended laptop does not postpone it — and it is a capability of the
+   WINDOW, like the three arms above, not of any view. It presses the same button a person
+   presses and can install nothing; `update-cadence.ts` carries the whole reasoning. The teardown
+   it hands back is dropped deliberately: this window's life IS the cadence's life. */
+startUpdateCadence();
 
 /* The pre-paint theme stamp. `themeInitScript()` from @ohmail/ui exists for
    server-rendered pages, which inline it as a <script>; the desktop CSP forbids

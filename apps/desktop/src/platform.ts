@@ -42,3 +42,15 @@ export function machineWordOf(platform: string): MachineWord {
  */
 export const MACHINE_WORD: MachineWord =
   machineWordOf(typeof __OHMAIL_PLATFORM__ === "string" ? __OHMAIL_PLATFORM__ : "");
+
+/**
+ * The platform this artifact was BUILT for, as `process.platform` spells it — or "" where no
+ * bundler folded the constant in (the test runner, importing this module from source).
+ *
+ * Beside {@link MACHINE_WORD} rather than derived from it, because the two answer different
+ * questions and the vocabulary deliberately collapses cases the mechanism must not. "computer"
+ * is the right word for Linux AND for a platform this app has no word for; a rule about how the
+ * app updates itself has to be able to tell those apart.
+ */
+export const BUILD_PLATFORM: string =
+  typeof __OHMAIL_PLATFORM__ === "string" ? __OHMAIL_PLATFORM__ : "";

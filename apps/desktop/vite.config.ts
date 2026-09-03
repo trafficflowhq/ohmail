@@ -232,10 +232,14 @@ const BASE_MESSAGE_NAMESPACES = [
   // is the second kind of read the header note warns about and is caught the same way.
   "markAll", "message", "viewError",
   "shortcuts", "sync", "tag", "triage",
-  // `update` is Settings → About → Updates (`src/DesktopUpdate.tsx`) — the app's own update, in
-  // the one place it can always be found. It is a DESKTOP-ONLY namespace: the browser client has
-  // no build to update. Genuinely reachable in the engine-bearing binary, and on the desktops
-  // where the compositor owns the window frame it is the ONLY update affordance there is
+  // `update` is the app's own update, in both places it is said: Settings → About → Updates
+  // (`src/DesktopUpdate.tsx`) and the shell's quiet strip (`app/shell/UpdateNotice.tsx`).
+  // NO LONGER DESKTOP-ONLY, and the line that said so is worth correcting rather than deleting:
+  // the browser client genuinely had no build to update, and now it does — a tab is a program
+  // downloaded once and left running for weeks, and the strip is how it is told the origin has
+  // moved on. The namespace is read by shared shell code, so both bundles need it.
+  // Genuinely reachable in the engine-bearing binary, and on the desktops where the compositor
+  // owns the window frame the settings pane is the ONLY update affordance there is
   // (`src-tauri/src/frame.rs` — no menu bar, so no menu item), which makes a missing namespace
   // here worse than the usual raw key: it would render `update.upToDate` on the one control that
   // tells somebody whether their mail client is current.

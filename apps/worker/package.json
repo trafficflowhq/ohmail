@@ -13,7 +13,8 @@
     "./screener-auto-suggest": "./src/screener-auto-suggest.ts",
     "./sender-name-backfill": "./src/sender-name-backfill.ts",
     "./thread-join-heal": "./src/thread-join-heal.ts",
-    "./inbound-quiet": "./src/inbound-quiet.ts"
+    "./inbound-quiet": "./src/inbound-quiet.ts",
+    "./request-drain": "./src/request-drain.ts"
   },
   "dependencies": {
     "drizzle-orm": "0.36.4",

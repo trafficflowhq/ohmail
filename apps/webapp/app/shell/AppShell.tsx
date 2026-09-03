@@ -146,6 +146,7 @@ import "./zone-cursor.css";
 import { ColumnHandles } from "./ColumnHandles";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { SyncBar } from "./SyncBar";
+import { UpdateNotice } from "./UpdateNotice";
 import { MailStateProvider, useMailState, type FreshnessProbe, type MailboxProbe } from "./MailStateProvider";
 /* The ONE stand-down predicate, aggregated over the roster: does this install organize anything?
    Settings → Mailboxes renders its banner from the same `readerStandDown` underneath. */
@@ -6244,6 +6245,19 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
             900px the rail is a drawer that is closed most of the time, so the strip and the
             corner pill are the only way the mailbox can speak, and they keep the job. */}
         <SyncBar />
+
+        {/* A NEWER OHMAIL, IN EVERY VIEW. The strip's sibling and its argument: rendered once by
+            the shell so no view can forget it, outside every list's scroller, and absent from the
+            DOM whenever there is nothing to say. What is on offer differs by door — a build this
+            origin is already serving, or a signed release the desktop shell has fetched and
+            verified — and this shell knows neither; `app-update.ts` holds the one offer and the
+            once-a-day restraint on saying it.
+
+            HELD WHILE A MESSAGE IS BEING WRITTEN. A strip appearing above somebody mid-sentence
+            moves the layout under their cursor, and the press it offers throws the draft's window
+            away. The offer is not withdrawn and not re-decided — it is simply not drawn until the
+            compose is closed. */}
+        <UpdateNotice quiet={effectiveView === "compose"} />
 
         <div className="topbar">
           <button

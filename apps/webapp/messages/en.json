@@ -2883,7 +2883,13 @@
     "neverChecked": "Not checked yet",
     "check": "Check now",
     "restart": "Restart to install",
-    "working": "Working…"
+    "working": "Working…",
+    "barReload": "A newer ohmail is available.",
+    "barReloadAction": "Reload",
+    "barRestart": "ohmail {version} is ready to install.",
+    "barRestartAction": "Restart now",
+    "barPackage": "A newer ohmail is available. This copy was installed by your package manager, so update it there.",
+    "barLater": "Later"
   },
   "desktopScreener": {
     "filedHead": "How your mail is filed",
