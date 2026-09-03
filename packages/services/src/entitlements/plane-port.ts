@@ -1,5 +1,5 @@
 import type {
-  EntitlementAddon, EntitlementEvent, EntitlementPlan, ReconcilePageDTO,
+  EntitlementAddon, EntitlementEvent, EntitlementPlan, InvoiceReconcilePageDTO, ReconcilePageDTO,
 } from "./entitlement-event.js";
 
 /**
@@ -111,4 +111,31 @@ export interface BillingPlanePort {
    * Throws on any plane/Stripe failure — the pass records a failed run, never a converged one.
    */
   reconcileSubscriptions(req: { cursor: string | null; limit: number }): Promise<ReconcilePageDTO>;
+
+  /**
+   * THE INVOICE RECONCILIATION READ — one page of the plane's Stripe invoice list, projected
+   * into {@link InvoiceStateDTO}. A READ and nothing else; the plane decides nothing.
+   *
+   * It exists because `billing_invoices` has exactly one writer today — the webhook apply — and
+   * a webhook that is never delivered leaves no row and no trace. Stripe retries for ~3 days and
+   * then stops for ever, so one outage window is a month of revenue the board under-reports with
+   * every test green. That is the subscription reconciler's founding case, one table over.
+   *
+   * ── `since`, AND WHY IT IS NOT THE SAME BOUND AS THE SUBSCRIPTION PASS'S ──────────────────
+   *
+   * Subscriptions are a population of hundreds and the pass reads all of them. Invoices are a
+   * population that grows by one per customer per month, for ever, and re-listing the whole
+   * history nightly would spend an increasing amount of somebody's rate limit to re-observe rows
+   * that cannot change. So the pass bounds the LISTING by creation time and the plane translates
+   * it to Stripe's own `created[gte]`.
+   *
+   * `null` means no bound — the full history, which is what a first pass on a deployment that
+   * has never reconciled invoices actually wants. The caller owns that choice; a port that
+   * defaulted it would make "reconcile everything" unreachable.
+   *
+   * Throws on any plane/Stripe failure — the pass records a failed run, never a converged one.
+   */
+  reconcileInvoices(req: {
+    cursor: string | null; limit: number; since: number | null;
+  }): Promise<InvoiceReconcilePageDTO>;
 }

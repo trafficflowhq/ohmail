@@ -9,6 +9,7 @@ import type { Tx } from "@trafficflow/db";
 import {
   runAwayResponderPass,
   reapStaleWebSessions, reconcileBillingMirror, recordReconcileFailure,
+  reconcileBillingInvoices, recordInvoiceReconcileFailure, INVOICE_RECONCILE_MODE,
   runScheduledSendPass, runSendReconcilePass, SEND_RECONCILE_NET_TIMEOUTS,
   TransientDialRefusal, type AdminDb,
 } from "@trafficflow/services";
@@ -172,6 +173,26 @@ export const SMTP_SIZE_CRON_PATH = "/internal/mailboxes/smtp-size";
  * without paging.
  */
 export const BILLING_RECONCILE_CRON_PATH = "/internal/billing/reconcile/run";
+
+/**
+ * The PATH the INVOICE reconciliation is scheduled at — a SEPARATE route from the subscription
+ * reconciler above rather than a second job folded into it, and the separation is a budget and a
+ * cadence rather than a preference.
+ *
+ * · **Budget.** That invocation already spends up to forty seconds walking Stripe's subscription
+ *   list and re-driving apply transactions against its own sixty-second platform ceiling. Adding
+ *   a two-thousand-invoice walk to it would spend the subscription heal's remaining time on this
+ *   one's listing, and the pass that heals a lost cancellation is the one with an entitlement
+ *   riding on it.
+ * · **Cadence.** The subscription mirror is LIVE STATE and is reconciled hourly. An invoice is a
+ *   RECORD: once paid it does not change, so a lost one is equally lost an hour later and equally
+ *   healed a day later. Hourly would spend twenty-four times the rate limit to notice the same
+ *   thing at the same time.
+ *
+ * Driven every 24 h by the worker's `api-cron.ts` (the reason is on
+ * {@link SESSIONS_REAP_CRON_PATH}), and a census text-matches this literal against that table.
+ */
+export const BILLING_INVOICE_RECONCILE_CRON_PATH = "/internal/billing/invoices/reconcile/run";
 
 /**
  * The PATH the SCHEDULED-SEND pass is scheduled at (Send later, mail 0077) — exported for the
@@ -635,6 +656,86 @@ async function reconcilePass(
   }
 }
 
+/**
+ * One INVOICE reconciliation pass. The subscription pass's shape above, borrowed property for
+ * property — no armed internal surface ⇒ 404, wrong secret ⇒ 401, billing unconfigured ⇒ a 200
+ * skip, a pass that could not run ⇒ a recorded failed row and a 503 — and one departure.
+ *
+ * THE DEPARTURE: there is no dry-run twin. The subscription pass has one because its armed mode
+ * re-drives `applyEvent`, which grants credits, so an operator needs a way to see what it WOULD
+ * do before it does it. This pass grants nothing and can move no money by construction: it
+ * upserts a mirror row from an observation, through a fenced statement, and its worst possible
+ * outcome is a row that says what Stripe says. A read-only twin would be a second route
+ * answering a question the armed one already answers safely.
+ *
+ * It runs on `deps.db`, the RUNTIME connection, for the sibling passes' reason: it writes
+ * `billing_invoices` and `billing_reconciliation_runs`, and the content-blind staff handle holds
+ * SELECT on both and must not gain more.
+ */
+async function invoiceReconcilePass(req: Request, deps: ApiDeps): Promise<Response> {
+  const route = BILLING_INVOICE_RECONCILE_CRON_PATH;
+  const log = (deps.logger ?? silentLogger).child({ route });
+  const cfg = deps.alerts;
+  if (!cfg || cfg.secret.trim().length === 0) {
+    return json(404, { error: { code: "not_found" } });
+  }
+  const cron = cfg.cronSecret?.trim();
+  const authorized = presentsSecret(req, cfg.secret)
+    || (cron !== undefined && cron.length > 0 && presentsSecret(req, cron));
+  if (!authorized) {
+    log.warn("billing_invoice_reconcile_unauthorized", {});
+    return json(401, { error: { code: "unauthorized" } });
+  }
+  const plane = deps.services?.billingPlane;
+  if (!plane) {
+    // A deployment without billing has no invoices to reconcile, and a cron with nothing to do
+    // did not fail. Deliberately WITHOUT the subscription pass's "unconfigured with history"
+    // arm: that one exists because a mis-flip must become durable immediately for the mirror
+    // that carries live entitlements. An invoice mirror that stops being written loses a number,
+    // not a customer's access, and the honest tripwire for it is the same staleness read the
+    // panel already makes — a skipped pass writes no row, so the stamp ages and says so.
+    return json(200, { skipped: "billing_unconfigured" });
+  }
+  // `?since=all` asks for the whole history — the BACKFILL, and the one thing an operator has to
+  // be able to run by hand: the default window is 35 days, so the invoices that predate this
+  // table's first deploy are reachable no other way. Any other value (including its absence) is
+  // the default window; there is deliberately no numeric parameter, because a hand-typed window
+  // is a way to record a pass that examined less than it appears to have.
+  const full = new URL(req.url).searchParams.get("since") === "all";
+  try {
+    const report = await reconcileBillingInvoices(deps.db, {
+      plane,
+      now: deps.now,
+      ...(full ? { windowDays: null } : {}),
+    });
+    if (report.invoicesUpserted > 0 || Object.keys(report.flagged).length > 0) {
+      log.warn("billing_invoice_reconcile_divergence", {
+        listed: report.invoicesListed, upserted: report.invoicesUpserted,
+        flagged: Object.entries(report.flagged).map(([c, n]) => `${c}:${n}`).join(","),
+        pages: report.pages, truncated: report.truncated,
+      });
+    }
+    return json(200, {
+      now: deps.now().toISOString(),
+      mode: INVOICE_RECONCILE_MODE,
+      invoicesListed: report.invoicesListed,
+      invoicesUpserted: report.invoicesUpserted,
+      flagged: report.flagged,
+      divergences: report.divergences,
+      pages: report.pages,
+      truncated: report.truncated,
+    });
+  } catch (err) {
+    // The pass itself could not run. Record it (best effort — the 503 is the load-bearing part)
+    // with class:code only, never message text.
+    log.error("billing_invoice_reconcile_failed", { err });
+    try {
+      await recordInvoiceReconcileFailure(deps.db, scrubError(err), deps.now());
+    } catch { /* the 503 already says it; a second failure must not mask the first */ }
+    return json(503, { error: { code: "invoice_reconcile_failed" } });
+  }
+}
+
 export const internalRoutes: Route[] = [
   {
     method: "POST",
@@ -1086,5 +1187,24 @@ export const internalRoutes: Route[] = [
     cost: "unauthenticated",
     options: { public: true, anonymous: true, raw: true },
     handler: async (req, deps) => reconcilePass(req, deps, "apply", BILLING_RECONCILE_CRON_PATH),
+  },
+  {
+    /**
+     * `GET /internal/billing/invoices/reconcile/run` — the INVOICE mirror's daily heal.
+     *
+     * The subscription reconciler's shape verbatim, each borrowed property load-bearing for the
+     * reasons stated there: GET because a cron issues GET and only GET; either shared secret in
+     * constant time; 404 on a deployment that armed no internal surface — which does mean lost
+     * invoices are NOT healed there, and that is the honest state of a host nobody armed a clock
+     * on.
+     *
+     * `?since=all` runs the pass over the whole invoice history instead of the 35-day window.
+     * See `invoiceReconcilePass`.
+     */
+    method: "GET",
+    pattern: BILLING_INVOICE_RECONCILE_CRON_PATH,
+    cost: "unauthenticated",
+    options: { public: true, anonymous: true, raw: true },
+    handler: async (req, deps) => invoiceReconcilePass(req, deps),
   },
 ];

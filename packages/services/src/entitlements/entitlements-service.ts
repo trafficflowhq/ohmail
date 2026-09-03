@@ -18,6 +18,8 @@ import {
   grantTrialCredits,
   latestInvoiceGrantSource,
   ledgerSources,
+  recordInvoiceReversal,
+  upsertBillingInvoice,
   liveSubscriptionOf,
   lockAccountBalance,
   recordBillingEventFailure,
@@ -586,6 +588,36 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
    * precede `customer.subscription.created`), and an unknown price there is a THROW, never a
    * default.
    */
+  /**
+   * WHAT PLAN AND CADENCE THIS INVOICE WAS FOR, for the mirror row — a projection, never a
+   * decision, and NEVER a refusal.
+   *
+   * The distinction from {@link monthlyCreditsFor} directly below is the point of writing this
+   * out. That function decides how many credits to GRANT, so an invoice it cannot read
+   * unambiguously is a `BillingApplyError` and a retry: guessing there is a wrong allowance
+   * nothing downstream can detect. This one fills two descriptive columns on a row whose money
+   * is `amount_paid_cents`, and refusing here would mean an invoice that was genuinely paid is
+   * absent from the cash figure because its shape confused a label.
+   *
+   * So every unreadable shape answers `null`, and `null` is honest: an add-on-only cycle invoice
+   * HAS no plan, an invoice whose line list is paginated may be hiding the plan line, and a
+   * proration invoice names two prices because it is the boundary between them. The board reads
+   * a null plan as "cash we cannot attribute to a tier", which is what it is.
+   */
+  const planOfInvoice = (inv: InvoiceDTO): {
+    plan: string | null; billingInterval: string | null;
+  } => {
+    if (inv.linesTruncated) return { plan: null, billingInterval: null };
+    const planLines = inv.lines.filter((l) => !l.proration && l.addon == null && l.plan != null);
+    const plans = [...new Set(planLines.map((l) => l.plan!))];
+    if (plans.length !== 1) return { plan: null, billingInterval: null };
+    const intervals = [...new Set(planLines.map((l) => l.interval).filter((i) => i != null))];
+    return {
+      plan: plans[0]!,
+      billingInterval: intervals.length === 1 ? intervals[0]! : null,
+    };
+  };
+
   const monthlyCreditsFor = async (
     tx: LedgerTx, inv: InvoiceDTO,
   ): Promise<number> => {
@@ -715,7 +747,7 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
    * refinement. See {@link applyZeroCreateRollover}.
    */
   const applyInvoicePaid = async (
-    tx: LedgerTx, accountId: string, inv: InvoiceDTO, stripeEventId: string,
+    tx: LedgerTx, accountId: string, inv: InvoiceDTO, stripeEventId: string, eventTs: Date,
   ): Promise<void> => {
     const invoiceId = inv.id;
     if (!invoiceId) {
@@ -723,6 +755,43 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
     }
     const reason = inv.billingReason;
     const amountPaid = inv.amountPaid;
+
+    // THE MIRROR WRITE COMES FIRST, INSIDE THIS TRANSACTION, AND BEFORE EVERY RETURN BELOW.
+    //
+    // Placement is the whole correctness of it, and both halves are deliberate.
+    //
+    // **First**, because this function has five exits and four of them are early returns for
+    // invoices that grant nothing — an add-on-only cycle, a $0 create, a proration, a $0 manual.
+    // Every one of those is still an invoice a customer received and the board must count; a
+    // mirror write placed beside the grant would record only the invoices that happen to move
+    // credits, and the cash figure would silently exclude the whole add-on business.
+    //
+    // **Inside**, because the grant and the record of what was paid for it are one economic
+    // event. A mirror write outside the transaction would survive a rollback of the grant — an
+    // invoice on the board that bought nothing — and a grant that survived a failed mirror write
+    // would be credits with no invoice behind them. The `LedgerReplayError` path is the case that
+    // makes this concrete: it throws THROUGH this transaction on purpose, so the rollback must
+    // take this row with it, or a replayed event would leave a mirror row claiming a second
+    // month of revenue that never arrived.
+    //
+    // A `false` return is a SUCCESS — the fence refused a stale delivery, or the row is already
+    // in a terminal reversal state. See `upsertBillingInvoice`.
+    await upsertBillingInvoice(tx, {
+      stripeInvoiceId: invoiceId,
+      accountId,
+      stripeSubscriptionId: inv.subscriptionId,
+      stripeCustomerId: inv.customerId,
+      billingReason: reason,
+      status: "paid",
+      currency: inv.currency,
+      amountPaidCents: amountPaid,
+      ...planOfInvoice(inv),
+      periodStart: inv.periodStart === null ? null : fromUnix(inv.periodStart),
+      periodEnd: inv.periodEnd === null ? null : fromUnix(inv.periodEnd),
+      paidAt: inv.paidAt === null ? null : fromUnix(inv.paidAt),
+      stripeEventTs: eventTs,
+      source: "webhook",
+    });
 
     // AN ADD-ON-ONLY CYCLE INVOICE IS NOT A RENEWAL BOUNDARY. A mixed-cadence subscription —
     // an annual plan carrying monthly add-ons — bills the add-ons on their own monthly cycle
@@ -1118,16 +1187,46 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
       }
 
       case "invoice_paid": {
-        await applyInvoicePaid(tx, accountId, event.invoice, event.id);
+        await applyInvoicePaid(tx, accountId, event.invoice, event.id, fromUnix(event.created));
         return;
       }
 
       case "invoice_payment_failed": {
         // Dunning. The BALANCE IS UNTOUCHED — a failed payment never revokes credits the
         // customer already bought; `aiEnabled: false` past grace is what stops further SPEND.
+        const eventTs = fromUnix(event.created);
+
+        // THE MIRROR ROW IS WRITTEN BEFORE THE SUBSCRIPTION CHECK BELOW, and the ordering is a
+        // fix rather than a habit. The dunning arm returns early for an invoice with no
+        // subscription parent, which is correct for the mirror UPDATE it is about to make — but a
+        // one-off invoice that failed to collect is still an invoice, and the board's "how much
+        // are we failing to collect" figure is exactly the one that must not silently exclude it.
+        //
+        // Written with `amountPaidCents: 0`, which is not a guess: `invoice.payment_failed` means
+        // no money arrived, and `amount_paid` on such an invoice is 0. The amount at stake is
+        // `amount_due`, which the mirror deliberately does not carry — a board that showed
+        // amounts nobody paid beside amounts they did would be adding two different things.
+        if (event.invoice.id) {
+          await upsertBillingInvoice(tx, {
+            stripeInvoiceId: event.invoice.id,
+            accountId,
+            stripeSubscriptionId: event.invoice.subscriptionId,
+            stripeCustomerId: event.invoice.customerId,
+            billingReason: event.invoice.billingReason,
+            status: "payment_failed",
+            currency: event.invoice.currency,
+            amountPaidCents: 0,
+            ...planOfInvoice(event.invoice),
+            periodStart: event.invoice.periodStart === null ? null : fromUnix(event.invoice.periodStart),
+            periodEnd: event.invoice.periodEnd === null ? null : fromUnix(event.invoice.periodEnd),
+            paidAt: null,
+            stripeEventTs: eventTs,
+            source: "webhook",
+          });
+        }
+
         const subId = event.invoice.subscriptionId;
         if (!subId) return;                    // not a subscription invoice — nothing to mark
-        const eventTs = fromUnix(event.created);
         const marked = await tx
           .update(billingSubscriptions)
           .set({
@@ -1206,6 +1305,45 @@ export function makeEntitlementsService(cfg: EntitlementsServiceConfig = {}): En
         if (outcome.changed) {
           raise({
             stage: "apply", code: "revenue_reversal_suspended",
+            stripeEventId: event.id, eventType: event.type, accountId,
+          });
+        }
+
+        // ── THE MONEY, WHICH THE SUSPENSION ALONE COULD NEVER STATE (contract v3) ───────────
+        //
+        // "This account was suspended for a reversal" is a support fact. "We gave back $29 of
+        // the $1,240 we took in March" is the fact a revenue figure is made of, and until v3 the
+        // only place that number existed was inside `billing_events.payload` — the column that
+        // carries a customer's name and postal address and is therefore un-granted to the
+        // console for ever. So the plane now sends the cents and the invoice they came off, and
+        // the mirror records them.
+        //
+        // A `false` return is NOT a failure of this event and must never become one: the
+        // suspension above has already happened, it is the load-bearing half, and a 500 here
+        // would make Stripe re-drive a reversal that was correctly applied. It means the money
+        // could not be ATTRIBUTED — either the reversal names no invoice (a one-off charge
+        // outside any invoice), or the mirror holds no row for it (its `invoice.paid` predates
+        // this table, or was one of the deliveries this whole slice exists because we lost).
+        // Unattributable money is exactly what a human should see, so it raises.
+        // THE SHAPE IS CHECKED RATHER THAN TRUSTED, and it is the terminal-noop arm's argument
+        // one union member over: this DTO crossed an HTTP boundary whose client validates only
+        // "an object with an event", so a version-skewed or truncated delivery can present a v3
+        // envelope with a v2 reversal inside it. Passing `undefined` into the statement would
+        // make that a driver error, i.e. a 500 that re-drives a suspension already correctly
+        // applied. It is treated as unattributable instead, which is what it is.
+        const { stripeInvoiceId, amountCents } = event.reversal;
+        const attributable =
+          typeof stripeInvoiceId === "string" && stripeInvoiceId !== ""
+          && typeof amountCents === "number" && Number.isFinite(amountCents) && amountCents >= 0;
+        const attributed = !attributable ? false : await recordInvoiceReversal(tx, {
+          stripeInvoiceId,
+          amountRefundedCents: amountCents,
+          status: event.type.startsWith("charge.dispute") ? "disputed" : "refunded",
+          stripeEventTs: fromUnix(event.created),
+        });
+        if (!attributed) {
+          raise({
+            stage: "apply", code: "revenue_reversal_unattributed",
             stripeEventId: event.id, eventType: event.type, accountId,
           });
         }

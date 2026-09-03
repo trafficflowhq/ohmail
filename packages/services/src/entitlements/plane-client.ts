@@ -1,4 +1,6 @@
-import type { EntitlementEvent, ReconcilePageDTO } from "./entitlement-event.js";
+import type {
+  EntitlementEvent, InvoiceReconcilePageDTO, InvoiceStateDTO, ReconcilePageDTO,
+} from "./entitlement-event.js";
 import type { BillingPlanePort, PlaneCheckoutRequest, WebhookVerdict } from "./plane-port.js";
 
 /**
@@ -243,6 +245,37 @@ export function makeBillingPlaneClient(cfg: BillingPlaneClientConfig): BillingPl
       return {
         observedAt: parsed.observedAt,
         events: parsed.events as EntitlementEvent[],
+        nextCursor: parsed.nextCursor as string | null,
+      };
+    },
+
+    async reconcileInvoices(
+      req: { cursor: string | null; limit: number; since: number | null },
+    ): Promise<InvoiceReconcilePageDTO> {
+      const res = await post("/v1/reconcile/invoices", JSON.stringify(req), {
+        "content-type": "application/json",
+      }, (status) => status === 200);
+      if (res.status !== 200) {
+        // The subscription read's rule verbatim, and it matters MORE here: an empty page reads
+        // as "Stripe holds no invoices in this window", which the pass would take as evidence
+        // that every mirror row it holds is absent from Stripe. A failed list must be a failed
+        // pass, never a converged one.
+        throw new Error(`billing plane answered ${res.status} for /v1/reconcile/invoices`);
+      }
+      const parsed = (res.bodyIsJson ? res.body : undefined) as {
+        observedAt?: unknown; invoices?: unknown; nextCursor?: unknown;
+      } | undefined;
+      if (
+        !parsed || typeof parsed.observedAt !== "number" || !Array.isArray(parsed.invoices)
+        || (parsed.nextCursor !== null && typeof parsed.nextCursor !== "string")
+      ) {
+        throw new Error(
+          "billing plane answered 200 without an invoice page for /v1/reconcile/invoices",
+        );
+      }
+      return {
+        observedAt: parsed.observedAt,
+        invoices: parsed.invoices as InvoiceStateDTO[],
         nextCursor: parsed.nextCursor as string | null,
       };
     },

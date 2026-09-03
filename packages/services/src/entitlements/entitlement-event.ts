@@ -1,7 +1,9 @@
 /**
- * `EntitlementEvent` v2: what the billing plane hands the open server after it has
+ * `EntitlementEvent` v3: what the billing plane hands the open server after it has
  * verified a Stripe delivery. (v2, 2026-08-22: items and lines carry the plane's add-on and
- * billing-interval verdicts — the annual prices and the two paid add-ons.)
+ * billing-interval verdicts — the annual prices and the two paid add-ons. v3, 2026-09-03: a
+ * revenue reversal carries the MONEY it reversed and the invoice it reversed, so the invoice
+ * mirror can record a refund as cents rather than as a suspension nobody can put a figure on.)
  *
  * This file is the WIRE CONTRACT between two programs that must not link (the AGPL boundary):
  * the private plane verifies the HMAC, checks the envelope (`livemode`, `api_version`, the org
@@ -28,7 +30,7 @@
  */
 
 /** The version this module speaks. The plane stamps it; the open server refuses anything else. */
-export const ENTITLEMENT_EVENT_VERSION = 2 as const;
+export const ENTITLEMENT_EVENT_VERSION = 3 as const;
 
 /**
  * The two purchasable add-ons, as the plane's verdict about a price id. Structurally identical
@@ -135,6 +137,33 @@ export interface InvoiceDTO {
   id: string | null;
   billingReason: string | null;
   amountPaid: number;
+  /**
+   * The invoice's currency, ISO-4217 as Stripe reports it (v3). Held because the mirror stores
+   * `amount_paid_cents` and a cent figure with no denomination beside it is a number that does
+   * not exist — the same rule that keeps `value` and `unit` together on `platform_costs`.
+   */
+  currency: string;
+  /**
+   * The billed PERIOD, unix seconds, or null (v3). Stripe's Basil shapes keep the period on the
+   * invoice's LINES, so the plane takes the widest span across them — min start, max end — which
+   * is the same composition `periodOf` performs for a subscription's items. It is on the mirror
+   * so the board can say what a payment BOUGHT rather than only when it arrived: an annual
+   * invoice and a monthly one are the same cents and very different revenue.
+   */
+  periodStart: number | null;
+  periodEnd: number | null;
+  /**
+   * `status_transitions.paid_at`, unix seconds, or null (v3) — when STRIPE says the money
+   * arrived, which is not when we heard about it.
+   *
+   * The distinction is the whole reason this is a field rather than `event.created`. The mirror
+   * has two writers, and the reconcile pass can heal an invoice weeks after the fact; keyed on
+   * the event clock, that invoice would land in the month we noticed rather than the month it was
+   * paid, and a monthly cash figure that moves when the reconciler runs is not a cash figure.
+   * Null on a `payment_failed` — nothing was paid — and null on a paid invoice whose payload
+   * carries no transition, where the mirror records the money and not the moment.
+   */
+  paidAt: number | null;
   customerId: string | null;
   /** `parent.subscription_details.subscription` — the mirror row this invoice belongs to. */
   subscriptionId: string | null;
@@ -159,6 +188,38 @@ export interface RevenueReversalDTO {
    * failed resolution is a plane 5xx, which the relay maps to 503 so Stripe re-drives.
    */
   customerId: string | null;
+  /**
+   * HOW MUCH was reversed, in the smallest currency unit (v3). For `charge.refunded` this is
+   * the charge's `amount_refunded` — CUMULATIVE, so a second partial refund carries the running
+   * total and the mirror can write it idempotently instead of adding; for a lost dispute it is
+   * the dispute's own amount.
+   *
+   * It exists because the suspension alone could not answer the one question a money board is
+   * for. "This account was suspended for a reversal" is a support fact; "we gave back $29 of the
+   * $1,240 we took in March" is the fact that belongs in a revenue figure, and before v3 the only
+   * place that number existed was inside `billing_events.payload`, which is un-granted for a
+   * customer's postal address. Zero is a legitimate value (a $0 dispute is not a thing, but a
+   * charge whose refunds have been reversed is), so this is a number and never null.
+   */
+  amountCents: number;
+  /** The reversal's currency, ISO-4217 as Stripe reports it. Held for `amountCents`' sake: a
+   *  cent figure with no denomination beside it is a number that does not exist. */
+  currency: string;
+  /**
+   * The invoice the reversed charge PAID (`in_…`), or null.
+   *
+   * This is the field that makes the reversal reach the invoice mirror at all, and it is
+   * nullable for two honest reasons rather than one: a charge created outside an invoice (a
+   * one-off Dashboard charge) has none, and a DISPUTE names only its charge — the plane resolves
+   * the charge to its invoice with the Stripe key it holds, and a resolution that fails is a
+   * plane 5xx, which the relay maps to 503 so Stripe re-drives rather than a null that would
+   * silently lose the figure.
+   *
+   * A null is NOT a failure open-side: the suspension still happens, exactly as it did in v2, and
+   * the mirror simply has no row to attribute the money to. The board reads that as revenue it
+   * cannot allocate, which is the truth.
+   */
+  stripeInvoiceId: string | null;
 }
 
 /**
@@ -213,5 +274,70 @@ export interface ReconcilePageDTO {
   /** Unix SECONDS at which the plane read this page from Stripe. Stamped on every event. */
   observedAt: number;
   events: EntitlementEvent[];
+  nextCursor: string | null;
+}
+
+/**
+ * ONE INVOICE AS STRIPE HOLDS IT (v3) — the invoice reconciliation's unit, and deliberately NOT
+ * an {@link EntitlementEvent}.
+ *
+ * The subscription reconciliation mints the `subscription`-kind event the missed webhook WOULD
+ * have carried, so the heal runs down the webhook's own apply path and grants nothing twice. An
+ * invoice cannot take that shape and must not be made to: minting an `invoice_paid` event for
+ * every listed invoice would run `applyInvoicePaid` over the whole history, and that function
+ * GRANTS CREDITS. The ledger's `UNIQUE (account_id, source)` would refuse the replays, correctly,
+ * but the pass's whole output would then be `LedgerReplayError`s — a reconciler whose success
+ * looks exactly like its failure.
+ *
+ * So this is an OBSERVATION, and the invoice pass compares it against the mirror row and upserts
+ * the difference. No credits move on that path, ever: money is granted by the webhook and by
+ * nothing else, which is the property that makes a daily full-history pass safe to run at all.
+ */
+export interface InvoiceStateDTO {
+  /** `in_…`. */
+  id: string;
+  /** `parent.subscription_details.metadata.account_id` — the primary resolution, as ever. */
+  accountIdFromMetadata: string | null;
+  /** For the `billing_customers` fallback, exactly as the webhook's `resolveAccount` uses it. */
+  customerId: string | null;
+  subscriptionId: string | null;
+  billingReason: string | null;
+  /**
+   * STRIPE'S OWN status word — `draft`, `open`, `paid`, `uncollectible`, `void`. Not the mirror's
+   * six-word vocabulary: the translation is the OPEN side's, because the mirror's `refunded` and
+   * `disputed` are states Stripe's invoice object does not have (they live on the charge) and a
+   * reconcile that mapped a refunded invoice back to `paid` would silently undo the reversal
+   * arm's work every night.
+   */
+  status: string;
+  currency: string;
+  amountPaid: number;
+  plan: EntitlementPlan | null;
+  interval: EntitlementInterval | null;
+  periodStart: number | null;
+  periodEnd: number | null;
+  /** `status_transitions.paid_at`, unix seconds, or null. */
+  paidAt: number | null;
+  /** `created`, unix seconds — what a reconcile-sourced write stamps as its fence value. */
+  created: number;
+}
+
+/**
+ * One page of the INVOICE reconciliation read — what the plane's `POST /v1/reconcile/invoices`
+ * answers.
+ *
+ * `observedAt` is the moment the plane read the page, and the invoice pass stamps it as the
+ * `stripe_event_ts` of every row it writes. That is the conservative choice and it is the
+ * opposite of the subscription pass's, which backdates by a second: there, a stale snapshot
+ * losing a tie to a live webhook is the failure to avoid. Here the mirror row is a RECORD rather
+ * than a live state — an invoice's amount does not change after it is paid — so the pass's job is
+ * to fill gaps, and a fence that loses every tie would make a healed row un-healable if the same
+ * pass ever had to correct it. The webhook still wins any genuine race, because its event clock
+ * is the moment Stripe acted and the pass's is the moment we looked, which is later.
+ */
+export interface InvoiceReconcilePageDTO {
+  /** Unix SECONDS at which the plane read this page from Stripe. */
+  observedAt: number;
+  invoices: InvoiceStateDTO[];
   nextCursor: string | null;
 }

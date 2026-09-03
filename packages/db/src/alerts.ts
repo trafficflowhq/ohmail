@@ -635,6 +635,20 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   //    failed. CRITICAL: money state needs a person.
   // The alert RESOLVES through the same read: the next converged pass writes emitted=0 with no
   // flags, this rule stops firing, and `runAlertPass` closes the alert_state row.
+  //
+  // ── AND THE MODE FILTER IS NOT COSMETIC (cloud 0029) ──────────────────────────────────
+  //
+  // "Either mode" means either SUBSCRIPTION mode. Since 0029 the same run ledger also carries
+  // `mode = 'invoices'` rows from the invoice mirror's daily heal, and those must be invisible
+  // here for a reason this rule already knows in its other half: it reads the NEWEST row, so an
+  // invoice pass — which runs on its own clock and converges on its own schedule — would become
+  // the newest row and this rule would report ITS verdict about a different table as the
+  // subscription mirror's. A converged invoice pass would silently resolve a live subscription
+  // divergence, every night; a flagged invoice would page as a subscription problem.
+  //
+  // The invoice pass's own divergences are recorded and counted on its rows; a rule for them is
+  // the reliability lane's, and it must be written against `mode = 'invoices'` for the mirror
+  // image of this reason.
   const lastRun = await db
     .select({
       ranAt: billingReconciliationRuns.ranAt,
@@ -645,7 +659,8 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
       truncated: billingReconciliationRuns.truncated,
     })
     .from(billingReconciliationRuns)
-    .where(sql`${billingReconciliationRuns.error} is null`)
+    .where(sql`${billingReconciliationRuns.error} is null
+      and ${billingReconciliationRuns.mode} in ('dry-run','apply')`)
     .orderBy(sql`${billingReconciliationRuns.ranAt} desc`)
     .limit(1);
   const run = lastRun[0];

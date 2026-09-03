@@ -66,7 +66,7 @@ import { silentLogger, type Logger } from "@trafficflow/core";
 export interface ApiCronTarget {
   /** Closed name, stable across renames of the path — the key an operator greps for. */
   target: "billing_reconcile" | "sessions_reap" | "smtp_size" | "scheduled_send"
-    | "send_reconcile" | "away_responder";
+    | "send_reconcile" | "away_responder" | "billing_invoice_reconcile";
   /** The API route, poked as `GET {baseUrl}{route}` with the bearer secret. */
   route: string;
   /** The cadence. Jitter (up to {@link jitterMs}) is ADDED per wait, never subtracted. */
@@ -202,6 +202,30 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
     // ceiling; this bound is the caller's mirror of that ceiling, not a hope.
     timeoutMs: 60 * 1000,
     jitterMs: 6 * 1000,
+  },
+  {
+    // THE INVOICE MIRROR'S HEAL (cloud 0029). A separate target from `billing_reconcile` above
+    // rather than a second job on its clock, and the separation is a budget and a cadence:
+    // that invocation already spends up to forty seconds walking Stripe's subscription list and
+    // re-driving apply transactions against a sixty-second ceiling, and an invoice is a RECORD
+    // rather than live state — a lost one is equally lost an hour later and equally healed a day
+    // later, so hourly would spend twenty-four times the rate limit to notice the same thing at
+    // the same time.
+    //
+    // EVERY 24 h, and the pass's own listing window (35 days) is what makes that safe rather than
+    // the cadence: the window is strictly longer than the cadence it covers, so a pass that
+    // skipped a night still sees everything the missed one would have.
+    target: "billing_invoice_reconcile",
+    route: "/internal/billing/invoices/reconcile/run",
+    everyMs: 24 * 60 * 60 * 1000,
+    // Its OWN stagger, deliberately not sharing `billing_reconcile`'s 90 s: both dial the plane,
+    // which dials Stripe, and two listings starting together on every leader takeover is two
+    // rate-limit budgets spent at once. Late enough that the hourly subscription pass has
+    // finished its first walk.
+    firstDelayMs: 6 * 60 * 1000,
+    // The pass bounds itself at 40 s (`INVOICE_RECONCILE_DEADLINE_MS`) inside a route whose
+    // platform ceiling is 60 s; this is the caller's mirror of that ceiling, not a hope.
+    timeoutMs: 120 * 1000,
   },
 ];
 

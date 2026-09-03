@@ -209,6 +209,16 @@ export {
 } from "./setup-grant.js";
 
 export {
+  // The invoice mirror's two fenced writes (cloud 0029). ONE statement shared by the webhook
+  // apply and the daily reconcile, because a fence written twice is a fence that will eventually
+  // be written differently. See `billing-invoices.ts` for why the upsert never touches a
+  // refund — Stripe's invoice object cannot express one, so a nightly heal would reset it.
+  upsertBillingInvoice, recordInvoiceReversal,
+  type BillingInvoiceStatus, type BillingInvoiceSource,
+  type BillingInvoiceWrite, type InvoiceReversalWrite,
+} from "./billing-invoices.js";
+
+export {
   // The day-grained credit aggregates the admin console reads instead of scanning the ledger
   // (cloud 0028), and the retention sweep for the setup pool's draw record. `credit_ledger`
   // itself is never pruned — see the module header for the four mechanisms that depend on it.

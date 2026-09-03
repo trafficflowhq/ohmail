@@ -1,6 +1,6 @@
 /**
  * The OPEN billing seam: the entitlements service (all state, all transactions), the
- * `BillingPlanePort` the Stripe machinery is reached through, and the `EntitlementEvent` v1
+ * `BillingPlanePort` the Stripe machinery is reached through, and the `EntitlementEvent` v3
  * wire contract between the two. Nothing under this directory may import `stripe`, even
  * type-only — the plane repo re-declares the DTO structurally, and a type dependency in either
  * direction is the link the AGPL boundary forbids.
@@ -10,6 +10,7 @@ export {
   type EntitlementEvent, type EntitlementPlan, type ReconcilePageDTO,
   type CheckoutLinkDTO, type SubscriptionDTO, type SubscriptionItemDTO,
   type InvoiceDTO, type InvoiceLineDTO, type RevenueReversalDTO,
+  type InvoiceStateDTO, type InvoiceReconcilePageDTO,
 } from "./entitlement-event.js";
 export {
   type BillingPlanePort, type PlaneCheckoutRequest, type WebhookVerdict,
@@ -23,6 +24,12 @@ export {
   RECONCILE_MAX_PAGES, RECONCILE_TEST_ROW_PREFIX, RECONCILE_COMP_ROW_PREFIX, RECONCILE_RUN_RETENTION_MS,
   type ReconcileCode, type ReconcileDivergence, type ReconcileReport, type ReconcileOptions,
 } from "./reconcile.js";
+export {
+  reconcileBillingInvoices, recordInvoiceReconcileFailure, lastInvoiceReconcileAt,
+  INVOICE_RECONCILE_MAX_PAGES, INVOICE_RECONCILE_WINDOW_DAYS, INVOICE_RECONCILE_MODE,
+  type InvoiceReconcileCode, type InvoiceDivergence, type InvoiceReconcileReport,
+  type InvoiceReconcileOptions, type InvoiceReconcilePlane,
+} from "./reconcile-invoices.js";
 export {
   makeEntitlementsService, BillingApplyError, GRACE_MS, ERASURE_CANCEL_TIMEOUT_MS,
   type EntitlementsService, type EntitlementsServiceConfig,
