@@ -383,6 +383,56 @@ describe("the cadence, running", () => {
     stop();
   });
 
+  it("…AND IT LETS GO ONCE A CYCLE HAS ENDED SOMEWHERE ELSE", async () => {
+    /* A latch that only ever sets is the other failure, and it is the one that hurts the person
+       whose problem was temporary: a disk that was full, a file that was held open. Their retry
+       reaches the feed and the release turns out to be withdrawn, or the check simply cannot
+       reach it — either way the window is still open, still running, and would never check again
+       for as long as it stayed that way. */
+    vi.useFakeTimers();
+    const clock = { at: START };
+    let now = report({ state: "failed", lastResult: "offered", offered: null });
+    const s = shell(() => now);
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: false });
+
+    await run(clock, CHECK_EVERY_MS);
+    expect(s.polls, "the one retry").toHaveLength(1);
+    await run(clock, CHECK_EVERY_MS);
+    expect(s.polls, "spent").toHaveLength(1);
+
+    // The retry's own cycle ended with no install to refuse — the release was withdrawn.
+    now = report({ state: "idle", lastResult: "upToDate", lastCheckedAt: clock.at });
+    await run(clock, POLL_EVERY_MS);
+    now = report({ lastCheckedAt: null });
+    await run(clock, CHECK_EVERY_MS);
+    expect(s.polls, "the episode is over, so the day is the only rule again").toHaveLength(2);
+    stop();
+  });
+
+  it("…and the subscription feeds the same observation the poll does", async () => {
+    /* THE POLL IS A QUARTER-HOUR SAMPLE OF A STATE MACHINE THAT MOVES ON EVENTS. The failure
+       dialog offers "Try again"; somebody presses it, and the flow leaves `failed` for `checking`
+       long before any tick looks. With the clear rule above, a sample-only latch still reaches
+       the right answer — every path out of a refusal either returns to it (the tick sees it) or
+       settles somewhere else (the episode is genuinely over) — so this is promptness rather than
+       correctness, and it is asserted as what it is: ONE observation, two feeders. A second copy
+       of the rule in the listener is what this exists to prevent.
+
+       A source assertion, like the one for which request the schedule makes, and for the same
+       reason: nothing rendered can tell "the listener updated the latch" from "the next tick
+       did". */
+    const src = readFileSync(resolve(process.cwd(), "apps/desktop/src/update-cadence.ts"), "utf8");
+    expect(src.length).toBeGreaterThan(2000);
+    // Exactly one place decides what a report means for the latch…
+    expect(src.match(/const note = \(report: UpdateReport\): void =>/g)).toHaveLength(1);
+    expect(src.match(/installWasRefused = true;/g), "the latch is set in one place")
+      .toHaveLength(1);
+    // …and both feeders go through it.
+    expect(src.match(/^ {4}note\(report\);$/gm), "the poll and the subscription, and no third")
+      .toHaveLength(1);
+    expect(src.match(/^ {6}note\(report\);$/gm)).toHaveLength(1);
+  });
+
   it("…and the bound is not Linux's alone — a daily dialog is a nag anywhere", async () => {
     // The SENTENCE is Linux's, because only there can the files belong to something else. The
     // BOUND is not: an install that keeps refusing on any platform would otherwise raise the

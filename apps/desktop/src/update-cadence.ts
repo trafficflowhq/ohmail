@@ -230,8 +230,9 @@ export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => vo
   /** When this cadence last asked — the second half of `checkDue`'s floor. */
   let askedAt: number | null = null;
   /**
-   * Has an install been refused in this window, and how many scheduled checks have been spent
-   * since — the bound on the daily loop a refused install would otherwise start.
+   * Is a refused install still the thing standing in front of this window, and how many scheduled
+   * checks have been spent since it started — the bound on the daily loop a refusal would
+   * otherwise begin.
    *
    * A LATCH RATHER THAN A RUN OF CONSECUTIVE REPORTS, and the difference is the whole guard.
    * Counting consecutive refused reports cannot work, because THE CHECK ITSELF moves the report
@@ -241,9 +242,13 @@ export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => vo
    * — the release re-fetched and the install dialog re-raised every twenty-four hours for ever,
    * which is exactly the outcome it exists to prevent.
    *
-   * Nothing resets it, and nothing needs to: every way out of a refused install ends this window.
-   * The retry succeeds and the app restarts into the new release, or somebody presses Check now
-   * in Settings — which is a person asking, and not this cadence's business.
+   * CLEARED ON A SETTLED REPORT, though, and that second half is as load-bearing as the first. A
+   * latch that only ever sets turns one transient failure — a disk that was full, a file that was
+   * held open — into a window that never checks again for as long as it stays open: the strip
+   * silent, "last checked" frozen, and nothing but Settings → Check now to escape, which is not
+   * something anybody knows they need. The refusal is over when a CYCLE has ended somewhere else:
+   * `idle` or `failed` without the offer beside it. The in-flight stages are deliberately not
+   * settled — they are what the retry produces, and treating them as recovery is the defect above.
    */
   let installWasRefused = false;
   let checksSinceRefusal = 0;
@@ -257,6 +262,29 @@ export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => vo
    * because an offer that has been installed or has failed away is one nobody should still be
    * looking at.
    */
+  /**
+   * Take note of a report — the latch, and nothing else.
+   *
+   * SEPARATE FROM THE POLL, because the poll is a quarter-hour sample of a state machine that
+   * moves on events. A refused install can begin and end between two ticks: the failure dialog
+   * offers "Try again", somebody presses it, and the flow leaves `failed` for `checking` before
+   * any tick has looked. The subscription sees every transition, so the latch is set from there
+   * as well — otherwise the bound would miss exactly the person who is already trying hardest,
+   * and the daily loop it exists to stop would run unbounded.
+   */
+  const note = (report: UpdateReport): void => {
+    if (installRefused(report)) {
+      installWasRefused = true;
+      return;
+    }
+    // A SETTLED report ends the episode. `checking`, `downloading` and `ready` are what the retry
+    // itself produces and mean nothing about whether the install will refuse again.
+    if (report.state === "idle" || report.state === "failed") {
+      installWasRefused = false;
+      checksSinceRefusal = 0;
+    }
+  };
+
   const say = (report: UpdateReport): void => {
     const offer = offerOf(report, linux);
     if (offer === null) {
@@ -282,6 +310,7 @@ export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => vo
     if (stopped) return;
     const report = await read();
     if (stopped || report === null) return;
+    note(report);
     say(report);
 
     /* ── ONE RETRY AFTER A REFUSED INSTALL, THEN THIS WINDOW STOPS ASKING ──────────────────
@@ -296,7 +325,6 @@ export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => vo
        same state is reachable elsewhere from a full disk or a read-only mount and can be repaired
        while the app is open, so refusing to try again at all would leave that person a window
        that never checks again. One retry buys the recovery and stops short of a daily dialog. */
-    if (installRefused(report)) installWasRefused = true;
     const givenUp = installWasRefused && checksSinceRefusal >= INSTALL_RETRIES;
 
     if (givenUp || !checkDue(report, now(), Math.max(armedAt, askedAt ?? armedAt))) {
@@ -335,7 +363,9 @@ export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => vo
      quarter-hour. */
   void (async () => {
     const off = await listen((report) => {
-      if (!stopped) say(report);
+      if (stopped) return;
+      note(report);
+      say(report);
     });
     if (stopped) off();
     else release = off;
