@@ -61,3 +61,23 @@
 .btn.primary[data-send="sent"]::after{width:100%;transform-origin:left;animation:send-done .32s var(--swift) both}
 @keyframes send-pass{from{transform:translateX(-100%)}to{transform:translateX(278%)}}
 @keyframes send-done{from{transform:scaleX(0)}to{transform:none}}
+
+/* ═══ THE SAME STATES ON ANY VERB — `data-run="working|done"` ═════════════════════════════════
+ *
+ * The Screener's bulk verbs (Apply, the ask's confirm) carry their run the way Send carries its
+ * send: the label keeps the verb, the band passes along the foot, the control refuses a second
+ * press. Same keyframes, same geometry; on a panel capsule the band is the accent, on a primary
+ * one it is the on-accent light. `refused` and `idle` have no dress — a refusal is a sentence in
+ * the status line, and idle is the button as it was. */
+.btn[data-run]{position:relative;overflow:hidden}
+.btn[data-run="working"],.btn[data-run="working"]:disabled,.btn[data-run="working"]:disabled:hover,
+.btn[data-run="done"],.btn[data-run="done"]:disabled,.btn[data-run="done"]:disabled:hover{
+  background:var(--panel);color:var(--ink);box-shadow:var(--lift-0);transform:none;cursor:progress}
+.btn[data-run="done"],.btn[data-run="done"]:disabled{cursor:default}
+.btn[data-run="working"]::after,.btn[data-run="done"]::after{content:"";position:absolute;left:0;bottom:0;height:2px;width:36%;
+  background:var(--accent);opacity:.7;pointer-events:none}
+.btn[data-run="working"]::after{animation:send-pass 1.4s linear infinite}
+.btn[data-run="done"]::after{width:100%;transform-origin:left;animation:send-done .32s var(--swift) both}
+.btn.primary[data-run="working"],.btn.primary[data-run="working"]:disabled,.btn.primary[data-run="working"]:disabled:hover,
+.btn.primary[data-run="done"],.btn.primary[data-run="done"]:disabled{background:var(--accent);color:var(--on-accent)}
+.btn.primary[data-run]::after{background:var(--on-accent);opacity:.6}

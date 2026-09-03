@@ -39,7 +39,7 @@
 
 import { useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Button } from "@ohmail/ui";
+import { AskWell, Button, SizeLadder } from "@ohmail/ui";
 
 import { unavailableLine, type LocalAiStatus } from "./local-ai.js";
 import {
@@ -115,11 +115,15 @@ export function LocalSuggest({ senders, absorb, ai, onConfigure }: LocalSuggestP
       : unavailableLine(ai);
 
   if (problem) {
+    /* The well in its refused state: the engine's sentence where the question would be, and the
+       one verb that answers it. */
     return (
-      <div className="scn-suggest" role="group" aria-label="Suggestions">
-        <span className="scn-sg-note">{problem}</span>
-        <Button variant="ghost" onClick={onConfigure}>{t("suggestSetUp")}</Button>
-      </div>
+      <AskWell
+        state="refused"
+        ariaLabel="Suggestions"
+        label={problem}
+        actions={<Button variant="ghost" onClick={onConfigure}>{t("suggestSetUp")}</Button>}
+      />
     );
   }
 
@@ -185,46 +189,51 @@ export function LocalSuggest({ senders, absorb, ai, onConfigure }: LocalSuggestP
     })();
   };
 
+  /* THE SAME WELL the hosted control uses, so a person who has seen one has seen the other:
+     the question and its rungs, the status line, the verbs, the sentence at the foot. `working`
+     while a run is on — the confirm carries it along its foot and reads "Suggesting…"; the
+     status line carries the count. */
   return (
-    <div className="scn-suggest" role="group" aria-label="Suggestions">
-      {running ? (
-        <>
-          <span className="scn-sg-price num" role="status">{notice}</span>
-          {/* STOPS THE RUN, and says no more than that. The request already in flight finishes at
-              the engine whatever this does — the transport carries no cancellation — so what this
-              actually stops is everything after it. */}
-          <Button variant="ghost" onClick={stop}>Stop</Button>
-        </>
-      ) : (
-        <>
-          {/* THE RUNGS. Rendered only when there is a choice to make — one rung is not a ladder,
-              it is the button's own number said twice. The top rung says "all N" rather than the
-              bare figure, because "all of them" is the thing a person with a backlog is looking
-              for and a number alone does not say whether it is all of them. */}
-          {sizes.length > 1 ? (
-            <div className="scn-sg-sizes">
-              {sizes.map((n) => (
-                <button
-                  key={n}
-                  type="button"
-                  className={n === total ? "scn-sg-size on" : "scn-sg-size"}
-                  aria-pressed={n === total}
-                  onClick={() => setSize(n)}
-                >
-                  {n === senders.length ? `all ${n}` : n}
-                </button>
-              ))}
-            </div>
-          ) : null}
+    <AskWell
+      state={running ? "working" : "idle"}
+      ariaLabel="Suggestions"
+      label={total === 1 ? "Suggest for 1 sender" : `Suggest for the first ${total}`}
+      /* THE RUNGS. Rendered only when there is a choice to make — one rung is not a ladder,
+         it is the button's own number said twice. The top rung says "all N" rather than the
+         bare figure, because "all of them" is the thing a person with a backlog is looking
+         for and a number alone does not say whether it is all of them. */
+      ladder={
+        sizes.length > 1 ? (
+          <SizeLadder
+            sizes={sizes}
+            value={total}
+            disabled={running}
+            onChange={setSize}
+            labelOf={(n) => (n === senders.length ? `all ${n}` : n)}
+          />
+        ) : null
+      }
+      status={running ? notice : null}
+      actions={
+        running ? (
+          <>
+            <Button disabled aria-busy="true" data-run="working">Suggesting…</Button>
+            {/* STOPS THE RUN, and says no more than that. The request already in flight finishes at
+                the engine whatever this does — the transport carries no cancellation — so what this
+                actually stops is everything after it. */}
+            <Button variant="ghost" onClick={stop}>Stop</Button>
+          </>
+        ) : (
           <Button onClick={start}>
             {total === 1 ? "Suggest for 1 sender" : `Suggest for ${total} senders`}
           </Button>
-          <span className="scn-sg-note">
-            Uses the model you set up. Senders already answered for are not asked about again.
-          </span>
-          {notice ? <span className="scn-sg-note" role="status">{notice}</span> : null}
-        </>
-      )}
-    </div>
+        )
+      }
+      note={
+        running
+          ? null
+          : notice ?? "Uses the model you set up. Senders already answered for are not asked about again."
+      }
+    />
   );
 }

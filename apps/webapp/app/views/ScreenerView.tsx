@@ -17,6 +17,9 @@ import type {
   UnsubscribeResult,
 } from "@ohmail/client-engine";
 import {
+  AskWell,
+  BulkProgress,
+  BulkStrip,
   Button,
   Chip,
   DecisionBar,
@@ -30,6 +33,9 @@ import {
   MessageRow,
   ProtectedBlock,
   SegmentedControl,
+  SizeLadder,
+  Spinner,
+  type AskWellState,
   type DecisionDestination,
   type DecisionScope,
 } from "@ohmail/ui";
@@ -279,9 +285,24 @@ function FilterChips({
  * and an indeterminate bar on screen — a run that claims to be in flight forever — so a track
  * with no denominator is no track.
  */
-function BulkProgress({ done, total }: { done: number; total: number }) {
+function ProgressTrack({ done, total }: { done: number; total: number }) {
   if (!(total > 0)) return null;
   return <progress className="scn-prog" aria-hidden="true" value={done} max={total} />;
+}
+
+/**
+ * WHAT THE ASK IS DOING, in the Send verb's vocabulary — worn by the well as `data-state`.
+ *
+ * `working` while the server is being asked (a price, or the purchase itself); `refused` when the
+ * last answer was a sentence instead of a price — the dry run threw, or answered without a cost
+ * (`quote` null with a notice standing); `idle` otherwise. `done` is the resting row's state, not
+ * the open well's, and the resting row states it in words. Read off the fields the hook already
+ * publishes: a second phase written here would be a second opinion about what the server said.
+ */
+function askState(control: SuggestBatchControl): AskWellState {
+  if (control.phase === "pricing" || control.phase === "running") return "working";
+  if (control.notice !== null && control.quote === null) return "refused";
+  return "idle";
 }
 
 /**
@@ -340,7 +361,9 @@ export function SuggestControl({ control }: { control: SuggestBatchControl }) {
             {t("suggest.allSuggested", { count: control.resuggestable })}
           </span>
         ) : (
-          <Button variant="ghost" onClick={control.open}>
+          /* A capsule like the apply beside it, not a ghost: it is the way to the strip's other
+             verb, and it spends nothing to press — the ask that opens names its price first. */
+          <Button onClick={control.open}>
             {t("suggest.open")}
           </Button>
         )}
@@ -350,7 +373,7 @@ export function SuggestControl({ control }: { control: SuggestBatchControl }) {
             they are different acts. Pressing it enters the same quote → confirm → progress flow,
             so nothing here can spend before the server has named a figure. */}
         {control.resuggestable > 0 ? (
-          <Button variant="ghost" onClick={control.openAgain}>
+          <Button onClick={control.openAgain}>
             {t("suggest.again")}
           </Button>
         ) : null}
@@ -359,85 +382,89 @@ export function SuggestControl({ control }: { control: SuggestBatchControl }) {
   }
 
   const busy = control.phase === "pricing" || control.phase === "running";
+  const running = control.phase === "running";
   return (
-    <div
-      className="scn-suggest"
-      role="group"
-      aria-label={t(again ? "suggest.ariaAgain" : "suggest.aria")}
-    >
-      <span className="scn-sg-lab">{t(again ? "suggest.labelAgain" : "suggest.label")}</span>
-      <div className="scn-sg-sizes">
-        {control.sizes.map((n) => (
-          <button
-            key={n}
-            type="button"
-            className={n === control.size ? "scn-sg-size on" : "scn-sg-size"}
-            aria-pressed={n === control.size}
-            disabled={control.phase === "running"}
-            onClick={() => control.choose(n)}
+    <AskWell
+      state={askState(control)}
+      ariaLabel={t(again ? "suggest.ariaAgain" : "suggest.aria")}
+      label={t(again ? "suggest.labelAgain" : "suggest.label")}
+      ladder={
+        <SizeLadder
+          sizes={control.sizes}
+          value={control.size}
+          disabled={running}
+          onChange={control.choose}
+          /* `pool` and not `available`: the top of a re-ask ladder is "all 74 of the senders
+             that already have an answer", and read off the buy list that label would be
+             attached to the wrong number or to no size at all. */
+          labelOf={(n) => (n === control.pool ? t("suggest.sizeAll", { count: n }) : n)}
+        />
+      }
+      /* THE PRICE, AND ONLY EVER THE SERVER'S. `quote` is what a dry run over this exact
+         sender set answered; while it is null there is no number to show and no confirm to
+         press. A count multiplied by a credit cost held in this file would be a second
+         implementation of who is eligible, quoting one figure while the purchase bought
+         another. While the check runs the line carries the waiting mark beside its sentence;
+         while the purchase runs the confirm itself carries the run and the note the count, so
+         the line stands empty rather than saying the same thing a third time. */
+      status={
+        control.phase === "pricing" ? (
+          <>
+            <Spinner />
+            {t("suggest.pricing")}
+          </>
+        ) : running ? null : control.quote ? (
+          t("suggest.price", {
+            senders: control.quote.senders,
+            credits: control.quote.credits,
+          })
+        ) : null
+      }
+      actions={
+        <>
+          <Button
+            disabled={busy || !control.quote || control.quote.senders === 0}
+            aria-busy={running || undefined}
+            data-run={running ? "working" : undefined}
+            onClick={control.confirm}
           >
-            {/* `pool` and not `available`: the top of a re-ask ladder is "all 74 of the senders
-                that already have an answer", and read off the buy list that label would be
-                attached to the wrong number or to no size at all. */}
-            {n === control.pool ? t("suggest.sizeAll", { count: n }) : n}
-          </button>
-        ))}
-      </div>
-      {/* THE PRICE, AND ONLY EVER THE SERVER'S. `quote` is what a dry run over this exact
-          sender set answered; while it is null there is no number to show and no confirm to
-          press. A count multiplied by a credit cost held in this file would be a second
-          implementation of who is eligible, quoting one figure while the purchase bought
-          another. */}
-      <span className="scn-sg-price num" role="status">
-        {control.phase === "pricing"
-          ? t("suggest.pricing")
-          : control.phase === "running"
-            ? t("suggest.running")
-            : control.quote
-              ? t("suggest.price", {
-                  senders: control.quote.senders,
-                  credits: control.quote.credits,
-                })
-              : ""}
-      </span>
-      <Button
-        disabled={busy || !control.quote || control.quote.senders === 0}
-        onClick={control.confirm}
-      >
-        {/* THE SERVER'S COUNT WHEN THERE IS ONE, the chosen size only while the price is still
-            unknown — and the button is unpressable in exactly that window. A label built from
-            `size` alone would say "Suggest for 25 senders" over a quote of 12, which is the
-            control naming one number and spending against another.
+            {/* THE SERVER'S COUNT WHEN THERE IS ONE, the chosen size only while the price is
+                still unknown — and the button is unpressable in exactly that window. A label
+                built from `size` alone would say "Suggest for 25 senders" over a quote of 12,
+                which is the control naming one number and spending against another.
 
-            On the re-ask that gap is the ordinary case rather than a race: the server prices only
-            what it is not already holding, so a ladder of 74 routinely quotes 3. "Suggest again
-            for 3 senders" over a chosen 74 is the truth — those three are the ones with new mail,
-            and the other 71 answer from what was already bought. */}
-        {t(again ? "suggest.confirmAgain" : "suggest.confirm", {
-          n: control.quote?.senders ?? control.size,
-        })}
-      </Button>
-      <Button variant="ghost" disabled={control.phase === "running"} onClick={control.cancel}>
-        {t("suggest.cancel")}
-      </Button>
-      {/* Whatever the server said, verbatim — an empty balance, AI switched off, no model
-          connected on this deployment. Each is a different, actionable fact and none of them
-          is inferable from a status code. */}
-      {control.notice ? (
-        <span className="scn-sg-note" role="status">
-          {control.notice}
-        </span>
-      ) : null}
-      {/* HOW FAR THE PURCHASE HAS GOT, as a track under the sentence that says it in words.
-          A chosen size larger than one request is bought as several chunks, so a 40-sender
-          press is several round trips and the only evidence of the middle ones was a number
-          in a sentence changing. Read straight off `control.progress` — the field the hook
-          publishes beside the notice, from the same two sources — and absent in every phase
-          but `running`, which is why a finished run leaves no bar behind. */}
-      {control.progress ? (
-        <BulkProgress done={control.progress.done} total={control.progress.total} />
-      ) : null}
-    </div>
+                On the re-ask that gap is the ordinary case rather than a race: the server prices
+                only what it is not already holding, so a ladder of 74 routinely quotes 3.
+                "Suggest again for 3 senders" over a chosen 74 is the truth — those three are the
+                ones with new mail, and the other 71 answer from what was already bought.
+
+                While the purchase runs the button says so in the verb's progressive form and
+                carries the run along its foot (`data-run`), the way Send carries a send. */}
+            {running
+              ? t("suggest.running")
+              : t(again ? "suggest.confirmAgain" : "suggest.confirm", {
+                  n: control.quote?.senders ?? control.size,
+                })}
+          </Button>
+          <Button variant="ghost" disabled={running} onClick={control.cancel}>
+            {t("suggest.cancel")}
+          </Button>
+          {/* HOW FAR THE PURCHASE HAS GOT, as a track beside the verbs. A chosen size larger
+              than one request is bought as several chunks, so a 40-sender press is several
+              round trips and the only evidence of the middle ones was a number in a sentence
+              changing. Read straight off `control.progress` — the field the hook publishes
+              beside the notice, from the same two sources — and absent in every phase but
+              `running`, which is why a finished run leaves no bar behind. */}
+          {control.progress ? (
+            <ProgressTrack done={control.progress.done} total={control.progress.total} />
+          ) : null}
+        </>
+      }
+      /* Whatever the server said, verbatim — an empty balance, AI switched off, no model
+         connected on this deployment. Each is a different, actionable fact and none of them
+         is inferable from a status code. */
+      note={control.notice}
+    />
   );
 }
 
@@ -568,7 +595,7 @@ function Empty({ segment, settled }: { segment: ScreenerSegmentId; settled: bool
             `prefers-reduced-motion` answer the ring already has. Same reuse `SyncBar` makes,
             for the same reason and with the same note about the `mbx-` prefix. */}
         <span className="mbx-wait">
-          <span className="mbx-spin" aria-hidden="true" />
+          <Spinner className="mbx-spin" />
           {speak ? <b>{t("loading")}</b> : null}
         </span>
       </div>
@@ -1318,7 +1345,7 @@ export function ScreenerView({
                 is as true here as anywhere. The suggest control stays for the same reason it
                 exists — a suggestion is advice, and a reader may still buy and read it. */}
             {segment === "waiting" && (state.waitingCount > 0 || aiCreditNode) ? (
-              <div className="scn-bulk">
+              <BulkStrip ariaLabel={t("bulkAria")}>
                 {state.waitingCount > 0 ? (
                   <>
                   {/* A BULK CONTROL MAY NOT OUTLIVE THE THING IT ACTS ON.
@@ -1326,9 +1353,19 @@ export function ScreenerView({
                       this button used to file every waiting stranger into the Ohbox and
                       promote a rule for each, while its label said it was applying
                       suggestions the user was never shown. `markAllSpam` says exactly what it
-                      does and needs no such gate. */}
+                      does and needs no such gate.
+
+                      While a run is on, the button carries it (`data-run`, the Send verb's
+                      dress) and refuses a second press — `applyAll` already drops one on
+                      `bulkBusy`, so this is the refusal made visible, not a new one. */}
                   {state.suggestedCount > 0 && state.readOnly === null ? (
-                    <Button kbdHint="a" onClick={() => state.applyAll(scopeOf)}>
+                    <Button
+                      kbdHint="a"
+                      disabled={state.applying !== null}
+                      aria-busy={state.applying !== null || undefined}
+                      data-run={state.applying !== null ? "working" : undefined}
+                      onClick={() => state.applyAll(scopeOf)}
+                    >
                       {t("applyAll", {
                         count: state.suggestedCount,
                         piles: pileList(state.suggestedDests, t),
@@ -1357,7 +1394,7 @@ export function ScreenerView({
                     button in it. It renders itself away when there is nothing worth saying, so
                     the ordinary case (AI on, plenty of allowance) is an unchanged strip. */}
                 {aiCreditNode}
-              </div>
+              </BulkStrip>
             ) : null}
             {/* HOW FAR THE BULK HAS GOT. `applyAll` and `markAllSpam` dispatch one row every
                 240ms, so a forty-sender press is ten seconds of work whose only evidence was
@@ -1366,15 +1403,14 @@ export function ScreenerView({
                 off `state.applying`, which is null unless a run is in flight, so a finished run
                 leaves nothing behind. */}
             {segment === "waiting" && state.applying ? (
-              <div className="scn-applying">
-                <span className="scn-applying-lab num" role="status">
-                  {t("applying", {
-                    done: state.applying.done,
-                    total: state.applying.total,
-                  })}
-                </span>
-                <BulkProgress done={state.applying.done} total={state.applying.total} />
-              </div>
+              <BulkProgress
+                label={t("applying", {
+                  done: state.applying.done,
+                  total: state.applying.total,
+                })}
+                done={state.applying.done}
+                total={state.applying.total}
+              />
             ) : null}
             {/* THE PARTITION, under the controls that act on it. Waiting only: the screened-out
                 and spam segments are already one group each, and a chip row over them would
@@ -2235,7 +2271,7 @@ function JunkRows({
     return (
       <div className="empty" role="status" aria-busy="true">
         <span className="mbx-wait">
-          <span className="mbx-spin" aria-hidden="true" />
+          <Spinner className="mbx-spin" />
           <span>{t("junkLoading")}</span>
         </span>
       </div>
@@ -2358,7 +2394,7 @@ function JunkSearchState({ search, localCount }: { search: JunkWindowControl["se
       {search.phase === "searching" ? (
         <p className="scn-junk-note" role="status" aria-busy="true">
           <span className="mbx-wait">
-            <span className="mbx-spin" aria-hidden="true" />
+            <Spinner className="mbx-spin" />
             <span>{t("junkSearching", { q })}</span>
           </span>
         </p>

@@ -102,6 +102,14 @@ export type {
 } from "./composites/DecisionBar.js";
 export { Doorbell } from "./composites/Doorbell.js";
 export type { DoorbellProps } from "./composites/Doorbell.js";
+export { BulkStrip, BulkProgress, AskWell, SizeLadder } from "./composites/BulkStrip.js";
+export type {
+  BulkStripProps,
+  BulkProgressProps,
+  AskWellProps,
+  AskWellState,
+  SizeLadderProps,
+} from "./composites/BulkStrip.js";
 export { CommandPalette } from "./composites/CommandPalette.js";
 export type { CommandPaletteProps, Command } from "./composites/CommandPalette.js";
 export { ProtectedBlock } from "./composites/ProtectedBlock.js";
