@@ -170,14 +170,32 @@ function writesTo(root: ts.SourceFile, name: string): ts.Node[] {
   );
 }
 
+/**
+ * The one node matching `pick`, and an assertion that there IS only one.
+ *
+ * NEVER `find`, which takes the first hit and cannot tell "the thing I meant" from "a decoy
+ * above it". A helper extracted over the real one, carrying the shape this file pins, would let
+ * the real one be changed underneath while every assertion kept reading the decoy — green, with
+ * the defect live. Uniqueness is the half that makes locating a node an assertion at all.
+ */
+function theOne<T extends ts.Node>(
+  root: ts.SourceFile,
+  what: string,
+  pick: (n: ts.Node) => n is T,
+): T {
+  const found = nodesOf(root).filter(pick);
+  expect(found.map((n) => n.getText(root)), `exactly one ${what}`).toHaveLength(1);
+  return found[0]!;
+}
+
 /** The `const <name> = …` declaration, so a rule can be asserted to live inside one. */
 function declarationOf(root: ts.SourceFile, name: string): ts.VariableDeclaration {
-  const found = nodesOf(root).filter(
+  return theOne(
+    root,
+    `declaration of \`${name}\``,
     (n): n is ts.VariableDeclaration =>
       ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === name,
   );
-  expect(found, `one declaration of \`${name}\``).toHaveLength(1);
-  return found[0]!;
 }
 
 describe("when a periodic check is due", () => {
@@ -267,22 +285,20 @@ describe("which request the schedule makes", () => {
        the old seam beside a new one that presses would satisfy a text match while the timer
        pressed, which is the one thing this test exists to prevent. */
     const module = cadenceModule();
-    const seam = nodesOf(module).find(
-      (n): n is ts.VariableDeclaration =>
-        ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === "poll",
-    );
-    expect(seam?.initializer?.getText(module), "the timer's default request")
+    expect(declarationOf(module, "poll").initializer?.getText(module), "the timer's default request")
       .toBe("options.poll ?? updatePoll");
 
     /* `updatePress` is still imported and still called — it is what the STRIP's button does, and
        that press IS a person asking. The distinction is which of the two the timer takes, so the
        count is what pins it: one call, and it is the button's. */
     expect(callsTo(module, "updatePress"), "one press, and it is the strip's button").toBe(1);
-    const press = nodesOf(module).find(
+    const press = theOne(
+      module,
+      "offer with something to press",
       (n): n is ts.PropertyAssignment =>
         ts.isPropertyAssignment(n) && ts.isIdentifier(n.name) && n.name.text === "act",
     );
-    expect(press?.initializer?.getText(module)).toContain("updatePress()");
+    expect(press.initializer.getText(module)).toBe("() => void updatePress()");
   });
 });
 
@@ -540,20 +556,25 @@ describe("the cadence, running", () => {
        did". */
     const module = cadenceModule();
 
-    /* ONE PLACE DECIDES WHAT A REPORT MEANS FOR THE LATCH, and the assertion is about WHERE the
-       writes are rather than how many there are: `note` legitimately holds two, the set and the
-       clear, so a count would have to be 2 and would then be satisfied by any two writes
-       anywhere. Every assignment to the latch has to sit inside `note` — whatever its operator
-       and whatever its value, since the node is what is matched and not a spelling of it. */
+    /* ONE PLACE DECIDES WHAT A REPORT MEANS FOR THE LATCH — and the assertion is about WHERE the
+       writes are AND WHAT THEY SAY. Where alone is not enough: `note` legitimately holds two, the
+       set and the clear, and they sit five lines apart differing only in the literal, so a bad
+       merge that makes the clear read `true` is inside `note` and passes a containment check
+       while every `idle` report latches the window and a healthy app stops checking for the rest
+       of its life. Both halves, then: two writes, one of each value, both in `note`. Nodes and
+       not spellings, so an operator or a value written some other way is still counted. */
     const note = declarationOf(module, "note");
     const writes = writesTo(module, "installWasRefused");
-    expect(writes.length, "the latch is written at all").toBeGreaterThan(0);
     for (const write of writes) {
       expect(
         write.getStart(module) >= note.getStart(module) && write.end <= note.end,
         `the latch is written outside \`note\`: ${write.getText(module)}`,
       ).toBe(true);
     }
+    const values = writes.map((w) => (w as ts.BinaryExpression).right.getText(module));
+    expect(values.filter((v) => v === "true"), "the latch is SET in one place").toHaveLength(1);
+    expect(values.filter((v) => v === "false"), "and CLEARED in one place").toHaveLength(1);
+    expect(values, "and written nowhere else").toHaveLength(2);
 
     /* …and both feeders go through it. The CALL is counted, so the count is indifferent to how a
        third one might be written — spacing, a `void`, an arrow body, a renamed argument. The
