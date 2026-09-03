@@ -589,6 +589,154 @@ export interface BillingSnapshot {
   failedEvents: FailedBillingEvent[];
 }
 
+
+/* ── cost out (cloud 0029) ──────────────────────────────────────────────────────────────── */
+
+/** The five providers the cost board knows. `platform_costs.provider`'s CHECK. */
+export type AdminCostProvider = "vercel" | "supabase" | "anthropic" | "railway" | "resend";
+
+/**
+ * ONE PROVIDER'S FIGURE, AND HOW MUCH OF A FIGURE IT IS.
+ *
+ * `cents: null` is the state this whole panel is designed around, because it is the state
+ * production is in: none of the three provider keys exists, so the honest answer for every one of
+ * them today is "not measured". A `0` here would be a margin somebody believes.
+ *
+ * `source` is what separates the four ways a number can be on this row:
+ *
+ *  · `api`          — a vendor answered, inside one cadence. The only "current" reading.
+ *  · `manual`       — a person read an invoice. Better evidence than an API reporting
+ *                     usage-to-date, which is why it WINS when both exist for one window.
+ *  · `stale`        — an API row nobody has been able to refresh. The FIGURE stands and the word
+ *                     says how old it is; a provider that stopped answering must not read as one
+ *                     that reported the same number again.
+ *  · `unconfigured` — no key, or no adapter at all (`railway`/`resend` are manual by design).
+ *                     `cents` is null and the board says "not configured".
+ */
+export interface ProviderCostView {
+  provider: AdminCostProvider;
+  /** `null` means NOT MEASURED. It is never 0 for want of a measurement. */
+  cents: number | null;
+  currency: string;
+  /** When the figure was OBTAINED — not when the window closed. `null` when there is none. */
+  fetchedAt: string | null;
+  source: "api" | "manual" | "unconfigured" | "stale";
+  /** The operator's note on a manual row — why this figure replaced the API's. */
+  note: string | null;
+  /** The `staff_users` id of whoever typed a manual row. `null` on an API row. */
+  enteredBy: string | null;
+}
+
+/** One model's month: what it was called for and what it cost. Measured, not apportioned. */
+export interface AiModelCost {
+  model: string;
+  calls: number;
+  /** Calls that returned. A day whose two counts diverge is a provider incident. */
+  okCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  cents: number;
+}
+
+/**
+ * ONE ACCOUNT'S UNIT ECONOMICS — and every AI figure on it is APPORTIONED, which the type says
+ * out loud on every row rather than in a comment somewhere.
+ *
+ * Nothing in this system knows which account a model call belonged to. Attributing one inside the
+ * AI package was refused: that package is desktop payload and knows nothing about accounts. So an
+ * account's share is derived from the credits it spent against the credits the deployment spent,
+ * per day and per model family — a good estimate, and not a measurement.
+ *
+ * `attribution` is a single-member union rather than a boolean or a comment, so a console that
+ * rendered `aiCents` without the label would have to delete a field to do it.
+ */
+export interface AccountUnitCost {
+  accountId: string;
+  name: string | null;
+  plan: AdminPlan | null;
+  /** Metered credits this account spent this month — the apportionment's numerator. */
+  credits: number;
+  /** ALWAYS `"apportioned"`. See this interface's header. */
+  attribution: "apportioned";
+  /** This account's apportioned share of the deployment's model spend, in cents. */
+  aiCents: number;
+  /**
+   * What the account contributes in a month, at list price. Annual billing is ten monthly months
+   * paid up front, so an annual customer's monthly-equivalent is a twelfth of the year — which is
+   * what makes the two comparable in one column.
+   *
+   * `null` when there is no live subscription: a trial or a lapsed account has no price, and 0
+   * would make every margin below read as −100 %.
+   */
+  monthlyPriceCents: number | null;
+  /**
+   * `(price − apportioned AI) ÷ price`, as a whole percentage. `null` when there is no price —
+   * an account with no subscription has no margin, and a number there would be an invention.
+   */
+  grossMarginPct: number | null;
+}
+
+/**
+ * THE COST BOARD, for the current month.
+ *
+ * Three figures with three different epistemic statuses, and this shape exists to keep them
+ * apart: infrastructure is measured or explicitly not, AI is measured at the call, and AI per
+ * account is apportioned and labelled. A panel that summed them into one confident number would
+ * be the failure the whole slice is built to avoid.
+ */
+export interface AdminCostSnapshot {
+  now: string;
+  /** `YYYY-MM` — the month every figure below is about. */
+  month: string;
+  providers: ProviderCostView[];
+  /**
+   * Σ of the providers that HAVE a figure, in cents. `null` when not one of them does — which is
+   * the state a deployment with no provider keys is in, and it is not zero.
+   */
+  infrastructureCents: number | null;
+  /**
+   * How many providers contributed NOTHING because nobody measured them.
+   *
+   * The qualifier without which `infrastructureCents` reads as a bill. Four measured providers and
+   * one absent sum to a number that is too small by exactly the amount nobody looked at, and this
+   * is the field that says so.
+   */
+  unmeasuredProviders: number;
+  /** Σ of every model's cost this month, in cents. Measured at the call. */
+  aiCents: number;
+  models: AiModelCost[];
+  /**
+   * Per HOST. Three processes make metered calls and they fail independently — an arm that drops
+   * to zero here is the recorder that stopped, which no deployment-wide total could show.
+   */
+  hosts: Array<{ host: string; calls: number; cents: number }>;
+  /** Infrastructure + AI, month to date. */
+  monthToDateCents: number;
+  /**
+   * MTD ÷ elapsed days × the month's length. `null` when there is nothing measured to project
+   * from — a projection of an unmeasured month is a number about nothing.
+   */
+  projectedMonthCents: number | null;
+  /** How many days the projection is extrapolating FROM. On day one this is 1, and it shows. */
+  projectionBasisDays: number;
+  daysInMonth: number;
+  accounts: {
+    /** The most expensive accounts to serve, by apportioned AI cost. */
+    topByCost: AccountUnitCost[];
+    /** The thinnest margins — the ones the tier's pricing is wrong about. */
+    bottomByMargin: AccountUnitCost[];
+    /** Accounts whose apportioned cost exceeds what they pay. Zero is the healthy value. */
+    underwater: number;
+    /** How many accounts the ranking was computed over. */
+    walked: number;
+    /**
+     * The scan hit its cap, so the rankings are over a SUBSET. A "top ten" computed from an
+     * arbitrary slice must not present itself as the top ten, and this is what stops it.
+     */
+    truncated: boolean;
+  };
+}
+
 /* ── funnel ────────────────────────────────────────────────────────────────────────────── */
 
 /**

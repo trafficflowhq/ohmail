@@ -1,5 +1,6 @@
 import { silentLogger } from "@trafficflow/core";
 import { suspendAccount, resumeAccount, resyncMailbox } from "@trafficflow/db/cloud";
+import { recordManualPlatformCost, type CostProvider } from "@trafficflow/services";
 import { resolveStaffSession, type StaffIdentity } from "./admin-staff.js";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
 import type { ApiDeps } from "../deps.js";
@@ -58,6 +59,9 @@ type WriteRun = (
 
 /** A note shorter than this is refused — the same floor the console's form enforces. */
 const MIN_NOTE_LENGTH = 8;
+
+/** `platform_costs.provider`'s CHECK, restated at the wire so a typo is a 400 and not a 23514. */
+const COST_PROVIDERS = ["vercel", "supabase", "anthropic", "railway", "resend"] as const;
 
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
@@ -265,8 +269,153 @@ async function resync(
   };
 }
 
+
 /**
- * All three writes are `public + anonymous + raw`, exactly as the reads and the staff sign-in
+ * The wrapper for a write whose subject is NOT an account.
+ *
+ * `staffWriteRoute` above validates an `accountId` from the body, which is right for all three
+ * of its users and wrong for the cost entry: a payment to our own hosting provider has no
+ * account, and inventing one to satisfy a wrapper would put the fiction into the row.
+ *
+ * So this is the same gate MINUS that one check, and every other property is preserved rather
+ * than re-implemented: unarmed ⇒ 404, shared secret ⇒ 401, LIVE STAFF SESSION ⇒ 401, the
+ * eight-character note floor, `no-store`, and a 503 an operator can read instead of the
+ * platform's 500. The staff-session check is the mutation-watched one, here as there — a caller
+ * holding only the shared secret authorises nothing.
+ */
+function staffBodyWriteRoute(
+  name: string,
+  run: (
+    body: Record<string, unknown>, staff: StaffIdentity, deps: ApiDeps,
+  ) => Promise<{ status: number; body: unknown }>,
+): Handler {
+  return async (req, deps) => {
+    const cfg = deps.admin;
+    const log = (deps.logger ?? silentLogger).child({ route: `/admin/${name}` });
+    if (!cfg || cfg.secret.trim().length === 0) return json(404, { error: { code: "not_found" } });
+    if (!presentsSecret(req, cfg.secret)) {
+      log.warn("admin_write_unauthorized", {});
+      return json(401, { error: { code: "unauthorized" } });
+    }
+    let body: Record<string, unknown>;
+    try {
+      body = (await req.json()) as Record<string, unknown>;
+    } catch {
+      return json(400, { error: { code: "bad_request" } });
+    }
+    const staff = await resolveStaffSession(deps.db, str(body.sessionToken) || undefined, deps.now());
+    if (!staff) {
+      log.warn("admin_write_no_staff_session", {});
+      return json(401, { error: { code: "staff_session_required" } });
+    }
+    const note = str(body.note).trim();
+    if (note.length < MIN_NOTE_LENGTH) return json(400, { error: { code: "note_required" } });
+    try {
+      const out = await run(body, staff, deps);
+      return json(out.status, out.body);
+    } catch (err) {
+      log.error("admin_write_failed", { err });
+      return json(503, { error: { code: "admin_write_failed" } });
+    }
+  };
+}
+
+/**
+ * ══ THE FOURTH WRITE: A COST FIGURE SOMEBODY READ OFF AN INVOICE ═══════════════════════════
+ *
+ * `POST /admin/platform-costs`, and it is the first write in this file whose subject is NOT an
+ * account. That is the one thing about it worth reading carefully, because it changes where the
+ * audit trail lives.
+ *
+ * ── WHY THERE IS NO `audit_log` ROW ────────────────────────────────────────────────────────
+ *
+ * `auditLog.accountId` is NOT NULL, and a payment to our own hosting provider belongs to no
+ * account. `admin-oauth.ts` reached this same wall for the same reason and settled it the same
+ * way — the actor, the time and the operator's note live ON THE ROW
+ * (`platform_costs.entered_by`, `.note`, `.fetched_at`) — and `admin.ts` §2 records the ruling in
+ * one sentence: forcing an account id in "would be a lie in the column the audit trail is keyed
+ * by". This route follows that precedent rather than re-deciding it.
+ *
+ * Everything else that makes an admin write safe is unchanged and deliberately not
+ * re-implemented: unarmed ⇒ 404, shared secret ⇒ 401, a LIVE STAFF SESSION ⇒ 401, an
+ * eight-character note, `no-store`, and `deps.db` rather than the content-blind console role.
+ *
+ * ── WHY A MANUAL FIGURE IS FIRST-CLASS AND NOT A FALLBACK ──────────────────────────────────
+ *
+ * Two of the five providers have no usable billing API at all, and for the other three a person
+ * reading the invoice is better evidence than an API reporting usage-to-date. `source` is part of
+ * the primary key, so this row and the API's row for one window COEXIST: the reader prefers this
+ * one, and the API's own number stays there to disagree with — which is what makes an override
+ * auditable rather than a deletion.
+ */
+async function platformCost(
+  body: Record<string, unknown>,
+  staff: StaffIdentity,
+  deps: ApiDeps,
+): Promise<{ status: number; body: unknown }> {
+  const provider = str(body.provider).trim();
+  if (!(COST_PROVIDERS as readonly string[]).includes(provider)) {
+    return { status: 400, body: { error: { code: "provider_invalid" } } };
+  }
+  const metric = str(body.metric).trim();
+  if (metric.length === 0 || metric.length > 64) {
+    return { status: 400, body: { error: { code: "metric_required" } } };
+  }
+  // THE MONTH, as `YYYY-MM`, and never a free pair of timestamps. Every one of these vendors
+  // bills by calendar month, and the board projects from a month — a hand-typed window that
+  // covered 27 days would produce a figure nobody could compare against an invoice, and it would
+  // land under its own primary key rather than overriding the API row it was meant to correct.
+  const month = str(body.month).trim();
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+    return { status: 400, body: { error: { code: "month_invalid" } } };
+  }
+  const [year, mon] = month.split("-").map(Number) as [number, number];
+  const periodStart = new Date(Date.UTC(year, mon - 1, 1));
+  const periodEnd = new Date(Date.UTC(year, mon, 1));
+
+  // CENTS, as an integer, and refused otherwise. A float of dollars typed into a money column is
+  // the shape that silently stores 4099 as 4098 — the column is an integer for that reason, and
+  // the wire should be too rather than rounding on somebody's behalf.
+  const costCents = body.costCents;
+  if (typeof costCents !== "number" || !Number.isInteger(costCents) || costCents < 0
+    || costCents > 100_000_000) {
+    return { status: 400, body: { error: { code: "cost_cents_invalid" } } };
+  }
+
+  await recordManualPlatformCost(deps.db, {
+    provider: provider as CostProvider,
+    metric,
+    periodStart,
+    periodEnd,
+    costCents,
+    ...(typeof body.currency === "string" && body.currency.trim()
+      ? { currency: body.currency.trim().toLowerCase().slice(0, 8) } : {}),
+    ...(typeof body.value === "number" && Number.isFinite(body.value) ? { value: body.value } : {}),
+    ...(typeof body.unit === "string" && body.unit.trim()
+      ? { unit: body.unit.trim().slice(0, 32) } : {}),
+    note: str(body.note).trim(),
+    enteredBy: staff.staffId,
+  });
+
+  return {
+    status: 200,
+    body: {
+      ok: true,
+      action: "admin.platform_cost.record",
+      provider,
+      metric,
+      month,
+      costCents,
+      // The actor is echoed for the console's confirmation line only. The DURABLE record of who
+      // typed it is `platform_costs.entered_by`, on the row — see this function's header.
+      actor: staff.email,
+      at: deps.now().toISOString(),
+    },
+  };
+}
+
+/**
+ * All FOUR writes are `public + anonymous + raw`, exactly as the reads and the staff sign-in
  * routes, and for the same reason: ANONYMOUS_PIPELINE resolves no customer session, so there is no
  * `users` row whose state could be confused with the target account's. The authority is the shared
  * secret plus, inside the handler, a live `staff_sessions` row.
@@ -278,4 +427,5 @@ export const adminActionRoutes: Route[] = [
   { method: "POST", pattern: "/admin/accounts/suspend", cost: COST, options: OPTIONS, handler: staffWriteRoute("suspend", suspend) },
   { method: "POST", pattern: "/admin/accounts/resume", cost: COST, options: OPTIONS, handler: staffWriteRoute("resume", resume) },
   { method: "POST", pattern: "/admin/mailboxes/resync", cost: COST, options: OPTIONS, handler: staffMailboxWriteRoute("resync", resync) },
+  { method: "POST", pattern: "/admin/platform-costs", cost: COST, options: OPTIONS, handler: staffBodyWriteRoute("platform-costs", platformCost) },
 ];

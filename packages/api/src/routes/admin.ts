@@ -1,7 +1,7 @@
 import { silentLogger, type Logger } from "@trafficflow/core";
 import {
   adminAccountDetail, adminAccountLedgerDay, adminAccounts, adminActions, adminAlerts, adminWorker,
-  adminWorkerInstances, adminBilling, adminFunnel,
+  adminWorkerInstances, adminBilling, adminCosts, adminFunnel,
   type AccountQuery, type AdminDb, type ApiHealth, type OverviewSnapshot,
 } from "@trafficflow/services";
 import { DEFAULT_ALERT_THRESHOLDS } from "@trafficflow/db/cloud";
@@ -488,11 +488,11 @@ function adminRoute(name: string, read: StaffRead): Handler {
   };
 }
 
-/** All eight are GET, all eight are `public + anonymous + raw`. There is no ninth. */
+/** All NINE are GET, all nine are `public + anonymous + raw`. There is no tenth. */
 const OPTIONS = { public: true, anonymous: true, raw: true } as const;
 
 /**
- * All eight are `unauthenticated`: their authority is a shared secret compared in
+ * All NINE are `unauthenticated`: their authority is a shared secret compared in
  * constant time (`secret-auth.ts`), never a user session, and ANONYMOUS_PIPELINE resolves
  * no session at all, so there is no account whose verification state could be judged.
  * `test/spend-gate.test.ts` asserts that pairing in both directions — an `anonymous` route must
@@ -558,6 +558,25 @@ export const adminRoutes: Route[] = [
     cost: COST,
     options: OPTIONS,
     handler: adminRoute("billing", (_req, ctx) => adminBilling(ctx.db, ctx.now())),
+  },
+  {
+    /**
+     * THE COST BOARD — what serving customers cost this month, and how much of it was measured.
+     *
+     * A read of its own rather than a widening of `/admin/billing`, and the split is the two
+     * sides of a margin: that one answers "what did we sell", this one "what did it cost us".
+     * Folding them together would also fold their FRESHNESS together — the billing figures are
+     * live reads and roll-up aggregates, and these are a six-hourly vendor poll and a day-grained
+     * usage table, so one stamp over both would have to be wrong about one of them.
+     *
+     * Every read it makes is bounded and day-grained: three aggregates over `ai_usage_daily` and
+     * `platform_costs`, and one capped per-account join. Nothing here touches `credit_ledger`.
+     */
+    method: "GET",
+    pattern: "/admin/costs",
+    cost: COST,
+    options: OPTIONS,
+    handler: adminRoute("costs", (_req, ctx) => adminCosts(ctx.db, ctx.now())),
   },
   {
     method: "GET",

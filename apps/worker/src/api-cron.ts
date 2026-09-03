@@ -66,7 +66,7 @@ import { silentLogger, type Logger } from "@trafficflow/core";
 export interface ApiCronTarget {
   /** Closed name, stable across renames of the path — the key an operator greps for. */
   target: "billing_reconcile" | "sessions_reap" | "smtp_size" | "scheduled_send"
-    | "send_reconcile" | "away_responder" | "billing_invoice_reconcile";
+    | "send_reconcile" | "away_responder" | "billing_invoice_reconcile" | "platform_costs";
   /** The API route, poked as `GET {baseUrl}{route}` with the bearer secret. */
   route: string;
   /** The cadence. Jitter (up to {@link jitterMs}) is ADDED per wait, never subtracted. */
@@ -226,6 +226,27 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
     // The pass bounds itself at 40 s (`INVOICE_RECONCILE_DEADLINE_MS`) inside a route whose
     // platform ceiling is 60 s; this is the caller's mirror of that ceiling, not a hope.
     timeoutMs: 120 * 1000,
+  },
+  {
+    // WHAT THE VENDORS CHARGE (cloud 0029) — three cheap GETs, four times a day.
+    //
+    // SIX HOURS rather than daily, and the reason is the CURRENT month: every one of these
+    // providers reports usage-to-date, so the open month's figure moves all day and a
+    // once-a-day read makes the board's projection up to 24 hours behind on the one number an
+    // operator is watching precisely because it is moving. It is also what the staleness word
+    // is written against — `COST_STALE_AFTER_MS` is 24 h, four cadences, so a pass missed on a
+    // deploy does not make a healthy provider read as one that stopped answering.
+    //
+    // A deployment that has configured no provider credential gets `unconfigured` from every
+    // adapter, so this clock writes nothing and SAYS SO — which the board renders as "not
+    // configured", and which is deliberately distinguishable from a clock that never fired.
+    target: "platform_costs",
+    route: "/internal/platform-costs/run",
+    everyMs: 6 * 60 * 60 * 1000,
+    // Its own stagger. Nothing here is urgent — a cost figure is hours old by nature — so it
+    // goes last, behind every pass that has a customer waiting on it.
+    firstDelayMs: 9 * 60 * 1000,
+    timeoutMs: 60 * 1000,
   },
 ];
 

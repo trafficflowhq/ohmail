@@ -295,6 +295,12 @@ export {
 // a body, a credential or a Stripe payload. See the header of `admin-service.ts`.
 export * from "./admin-dto.js";
 export {
+  // The COST BOARD's read (cloud 0029). Every AI figure it puts on an account is APPORTIONED and
+  // labelled as such at the type level — nothing in this system knows which account a model call
+  // belonged to, and attributing one inside the AI package was refused.
+  adminCosts, COST_RANK_LIMIT, COST_ACCOUNT_SCAN_CAP, FAMILY_OF_REASON,
+} from "./admin-costs.js";
+export {
   adminAccounts, adminAccountDetail, adminAccountLedgerDay,
   adminBilling, adminFunnel, adminWorker, adminWorkerInstances,
   adminAlerts, adminActions, adminAttentionRank,
@@ -309,6 +315,18 @@ export {
 } from "./admin-service.js";
 // The one per-IP slot limiter, shared by the waitlist and by registration.
 export { reserveIpSlot } from "./ip-throttle.js";
+
+export {
+  // WHAT THE VENDORS CHARGE (cloud 0029). The port has THREE outcomes and the third is the
+  // point: `unconfigured` writes NOTHING and the DTO answers `cents: null`, because none of the
+  // three provider keys exists in production and an adapter that answered 0 when it could not
+  // ask would be a margin somebody believes.
+  makePlatformCostPort, runPlatformCostPass, recordManualPlatformCost, costsForMonth,
+  API_COST_PROVIDERS, COST_STALE_AFTER_MS, MANUAL_COST_MIN_NOTE,
+  type CostProvider, type PlatformCostPort, type PlatformCostFetch, type PlatformCostRow,
+  type PlatformCostEnv, type PlatformCostPassReport, type PlatformCostPassOptions,
+  type ManualCostEntry, type ProviderCost,
+} from "./platform-costs.js";
 // The ONE-TIME re-evaluation (mail 0030) of mail that `pipeline.ts:393`'s sensitivity
 // override had already misrouted into the Ohbox. The routing was fixed forward; this moves
 // what was already filed. Marker-last, idempotent, and it opens NO IMAP connection — it writes

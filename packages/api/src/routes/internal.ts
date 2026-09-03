@@ -10,6 +10,7 @@ import {
   runAwayResponderPass,
   reapStaleWebSessions, reconcileBillingMirror, recordReconcileFailure,
   reconcileBillingInvoices, recordInvoiceReconcileFailure, INVOICE_RECONCILE_MODE,
+  runPlatformCostPass,
   runScheduledSendPass, runSendReconcilePass, SEND_RECONCILE_NET_TIMEOUTS,
   TransientDialRefusal, type AdminDb,
 } from "@trafficflow/services";
@@ -193,6 +194,21 @@ export const BILLING_RECONCILE_CRON_PATH = "/internal/billing/reconcile/run";
  * {@link SESSIONS_REAP_CRON_PATH}), and a census text-matches this literal against that table.
  */
 export const BILLING_INVOICE_RECONCILE_CRON_PATH = "/internal/billing/invoices/reconcile/run";
+
+/**
+ * The PATH the PLATFORM COST pass is scheduled at — what the vendors charge, asked for once every
+ * six hours.
+ *
+ * Six hours rather than daily, and the reason is the CURRENT month: every one of these providers
+ * reports usage-to-date, so the open month's figure moves all day and a once-a-day read makes
+ * the board's projection up to 24 hours behind on the number an operator is watching precisely
+ * because it is moving. Six hours is four reads a day for three cheap GETs, and it is what
+ * `COST_STALE_AFTER_MS` (24 h) is written against — four cadences of slack, so one missed pass on
+ * a deploy does not read as a provider that stopped answering.
+ *
+ * Driven by the worker's `api-cron.ts`, and a census text-matches this literal against that table.
+ */
+export const PLATFORM_COSTS_CRON_PATH = "/internal/platform-costs/run";
 
 /**
  * The PATH the SCHEDULED-SEND pass is scheduled at (Send later, mail 0077) — exported for the
@@ -736,6 +752,58 @@ async function invoiceReconcilePass(req: Request, deps: ApiDeps): Promise<Respon
   }
 }
 
+/**
+ * One PLATFORM COST pass. The reconcilers' shape above, property for property — 404 on an unarmed
+ * surface, either shared secret in constant time — and one departure worth naming.
+ *
+ * THE DEPARTURE: there is no "unconfigured" skip. The other passes answer `200 {skipped}` when
+ * billing is not wired, because a deployment without billing has nothing to reconcile. This one
+ * RUNS on a deployment with no provider keys, deliberately, and records `unconfigured` per
+ * provider — which is the whole design. An absent key is a STATE the board has to be able to
+ * render ("not configured"), and it is a different state from "nobody asked", which is what a
+ * skipped pass would leave behind.
+ *
+ * It runs on `deps.db`, the runtime connection: it writes `platform_costs`, and the blind staff
+ * handle holds SELECT on that table and must not gain more.
+ */
+async function platformCostPass(req: Request, deps: ApiDeps): Promise<Response> {
+  const log = (deps.logger ?? silentLogger).child({ route: PLATFORM_COSTS_CRON_PATH });
+  const cfg = deps.alerts;
+  if (!cfg || cfg.secret.trim().length === 0) {
+    return json(404, { error: { code: "not_found" } });
+  }
+  const cron = cfg.cronSecret?.trim();
+  const authorized = presentsSecret(req, cfg.secret)
+    || (cron !== undefined && cron.length > 0 && presentsSecret(req, cron));
+  if (!authorized) {
+    log.warn("platform_costs_unauthorized", {});
+    return json(401, { error: { code: "unauthorized" } });
+  }
+  const port = deps.services?.platformCosts;
+  if (!port) {
+    // A host that composed no port at all — the desktop engine's shape, and any deployment that
+    // does not want to ask. Distinct from a port that answers `unconfigured`: that one asked and
+    // found no key. Recorded as a skip, which writes nothing and is what it is.
+    return json(200, { skipped: "cost_port_unconfigured" });
+  }
+  try {
+    const report = await runPlatformCostPass(deps.db, { port, now: deps.now });
+    // Logged at INFO on every pass rather than only on a change: this is the one surface where
+    // "nothing was written" is the expected answer for weeks, and a log line that appears only on
+    // success would make the healthy state look like a dead clock.
+    log.info("platform_cost_pass", {
+      outcomes: report.providers
+        .map((p) => `${p.provider}:${p.outcome}${p.code ? `(${p.code})` : ""}`).join(","),
+    });
+    return json(200, { now: deps.now().toISOString(), providers: report.providers });
+  } catch (err) {
+    // `raw` means no error envelope above this handler; it must never throw. The pass absorbs
+    // per-provider faults itself, so this catches only a database refusal.
+    log.error("platform_cost_pass_failed", { err });
+    return json(503, { error: { code: "platform_cost_pass_failed" } });
+  }
+}
+
 export const internalRoutes: Route[] = [
   {
     method: "POST",
@@ -1206,5 +1274,20 @@ export const internalRoutes: Route[] = [
     cost: "unauthenticated",
     options: { public: true, anonymous: true, raw: true },
     handler: async (req, deps) => invoiceReconcilePass(req, deps),
+  },
+  {
+    /**
+     * `GET /internal/platform-costs/run` — what the vendors charge, every six hours.
+     *
+     * The reconcilers' shape verbatim, each borrowed property load-bearing for the reasons stated
+     * there: GET because a cron issues GET and only GET; either shared secret in constant time;
+     * 404 on a deployment that armed no internal surface — which does mean costs are NOT measured
+     * there, and that is the honest state of a host nobody armed a clock on.
+     */
+    method: "GET",
+    pattern: PLATFORM_COSTS_CRON_PATH,
+    cost: "unauthenticated",
+    options: { public: true, anonymous: true, raw: true },
+    handler: async (req, deps) => platformCostPass(req, deps),
   },
 ];

@@ -1,5 +1,6 @@
 import type {
   AdminDb, AuthService, ProposalsService, BillingPlanePort, EntitlementsService, WaitlistService,
+  PlatformCostPort,
 } from "@trafficflow/services";
 import type { AlertSink, AlertThresholds, MsOAuthBootstrap } from "@trafficflow/db/cloud";
 import type { FetchLike, MicrosoftDeviceClient } from "@trafficflow/core";
@@ -71,6 +72,18 @@ declare module "./deps.js" {
     // absent, and `WaitlistService` handles that by recording the row and reporting
     // `mailed: false`, so `apps/api-vercel` builds one unconditionally.
     waitlist?: WaitlistService;
+    /**
+     * WHAT THE VENDORS CHARGE — the read port behind `GET /internal/platform-costs/run`.
+     *
+     * OPTIONAL, and its absence is a first-class state on the same terms as `billingPlane`
+     * above: a host that composes no port at all (the desktop engine, a self-host box whose
+     * operator has no interest in our hosting bill) answers `200 {skipped}` and writes nothing.
+     *
+     * That is DIFFERENT from a port that answers `unconfigured`, and the console must be able to
+     * tell them apart: the second one asked and found no key, which is production's state today
+     * and the thing the board renders as "not configured". The first was never asked.
+     */
+    platformCosts?: PlatformCostPort;
   }
   interface ApiDeps {
     /**
