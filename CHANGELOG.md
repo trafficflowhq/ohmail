@@ -13,6 +13,59 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### The Screener's controls, in one shape
+
+The row above the waiting list — Apply, Suggest…, Mark all spam — is now one row of
+capsules of one size. Asking for suggestions opens a single block under it: how many senders
+to ask about (a segmented choice), the server's price, and the one button that spends,
+with the server's own sentence at the foot when there is one. While a purchase runs, the
+button says so and carries the run along its foot, the way Send does; the Apply button does
+the same while it files, and refuses a second press until it is done. The filter capsules
+under the row show which one is chosen — before, the chosen one was drawn in a colour no
+stylesheet defined, so it looked like the rest.
+
+### The sender panel is never cut off
+
+The panel that decides where a sender's mail goes — from any list, any card, or the `s`
+key — used to be cut to the space beside the row it opened from: opened mid-screen in a
+900-pixel-tall window, it showed about half of itself with a scrollbar, while the rest of the
+window stood empty. It now stands whole wherever the window holds it, sliding up over its row
+by exactly the pixels it lacks, and scrolls inside only when it is taller than the window
+itself. It is wider, and laid out as a settings pane: whose mail, where it goes, the rule as a
+switch with its note, the ways onward, and the reason — at the sizes settings use.
+
+### The waiting mark holds still
+
+The small mark that says something is running — beside the sync line, on a folder that is
+still loading, on a connection check — no longer spins as a box. It is a frame whose corners
+follow the theme (a ring on the paper face, a square on the ohmarchy face) with a segment
+travelling around its edge, one lap a second. On the ohmarchy face the square stays put and
+the segment runs its four sides.
+
+### The Screener doorbell's initials, on the ohmarchy face
+
+The initials in the "N waiting" line overlapped as square tiles with crossing rings. On the
+ohmarchy face they now stand in a row with a small gap, and the "+N" tile is gone there —
+the count is already in the sentence beside them. The paper face is unchanged.
+
+### Keycaps say Ctrl where there is no ⌘
+
+Every keycap that named the modifier said ⌘, on every platform. On Linux and Windows the
+caps — the sidebar's Command row, the top bar's pill, Send, and the shortcut list — now say
+Ctrl, which is the key that works there.
+
+### The shortcut list
+
+Each place is listed once, with both of its chords on one row ("1 · g o"). The "Go to
+Triage" row is gone — the sidebar has no such place; "Go to Answer Later" (`g l`) reaches the
+same view. Every row starts with a capital, and the list is wide enough for three columns.
+
+### A wide sidebar no longer starves the reading column
+
+A sidebar dragged to its widest kept that width when the window shrank, leaving the reading
+column a sliver. Its ceiling now follows the window, so narrowing the window narrows the
+sidebar first.
+
 ### ohmail looks for its own update at least once a day
 
 The app checked for a new release when it started, and whenever you asked it to. If you
