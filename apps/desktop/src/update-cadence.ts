@@ -106,9 +106,9 @@ export const INSTALL_RETRIES = 1;
 export const REQUEST_RETRIES = 3;
 
 /**
- * Has this install established that it cannot replace its own files?
+ * Did an INSTALL refuse — as opposed to a check failing to reach the feed?
  *
- * ── HOW A FAILED INSTALL IS TOLD APART FROM A FAILED CHECK, WHICH SHARE ONE STATE ──────────
+ * ── THE TWO SHARE ONE STAGE, AND THE LAST CHECK'S RESULT SEPARATES THEM EXACTLY ────────────
  *
  * The shell reports a stage and, separately, what the last completed CHECK found, and the pair
  * separates them exactly. Every path that ends a check writes the check's result: a check that
@@ -117,20 +117,26 @@ export const REQUEST_RETRIES = 3;
  * `offered` from the successful check that produced the payload. `failed` beside `offered` is
  * therefore the one combination that can only mean the install itself refused.
  *
- * Linux only, and that is the whole reason it is worth a name. This app updates itself by
- * replacing the single executable file it runs from. Installed from a distribution's packages
- * instead, those files belong to the package manager, the replacement is not this app's business
- * and it will not succeed on the next attempt either. Everywhere else a refused install can be
- * something transient — a file held open, a half-written temporary directory — and trying again
- * tomorrow is the right answer rather than a resignation.
+ * This is the whole of the discrimination, and it is exact: every path that ENDS A CHECK writes
+ * the check's result, and the install's failure path writes none, because it was not a check. So
+ * `failed` beside `offered` is the one pair that can only mean the install itself refused.
+ */
+export function installRefused(report: UpdateReport): boolean {
+  return report.state === "failed" && report.lastResult === "offered";
+}
+
+/**
+ * …and the case where that refusal is a FACT ABOUT THE INSTALL rather than an accident.
  *
- * ONE PREDICATE FOR TWO DECISIONS, deliberately: what the window SAYS about this state and
- * whether the cadence keeps CHECKING in it are the same judgement, and a version of this that
- * said "your package manager has it" while quietly re-downloading the release every night would
- * be the exact nag the strip exists to replace.
+ * Linux only, because that is where a copy's files can belong to something else. Everywhere else
+ * a refused install is a mishap — a file held open, a half-written temporary directory — and
+ * telling somebody to go to a package manager would be a sentence about a machine they are not
+ * using. This is the SENTENCE's condition; the CADENCE's bound is [`installRefused`] and applies
+ * on every platform, because a daily dialog about an install that keeps failing is a nag whatever
+ * the reason for the failing.
  */
 export function cannotSelfInstall(report: UpdateReport, linux: boolean): boolean {
-  return linux && report.state === "failed" && report.lastResult === "offered";
+  return linux && installRefused(report);
 }
 
 /**
@@ -224,11 +230,24 @@ export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => vo
   /** When this cadence last asked — the second half of `checkDue`'s floor. */
   let askedAt: number | null = null;
   /**
-   * How many scheduled checks this window has spent on a refused install, and how many requests
-   * the shell has refused outright. Two counters because they bound two different runaways, and
-   * both reset the moment the condition they count goes away.
+   * Has an install been refused in this window, and how many scheduled checks have been spent
+   * since — the bound on the daily loop a refused install would otherwise start.
+   *
+   * A LATCH RATHER THAN A RUN OF CONSECUTIVE REPORTS, and the difference is the whole guard.
+   * Counting consecutive refused reports cannot work, because THE CHECK ITSELF moves the report
+   * off that state: the request starts a check, the flow goes checking → downloading → ready, and
+   * every tick in between reports something that is not a refused install. A counter reset on
+   * those would reset on every cycle it was meant to be counting, so the bound would never engage
+   * — the release re-fetched and the install dialog re-raised every twenty-four hours for ever,
+   * which is exactly the outcome it exists to prevent.
+   *
+   * Nothing resets it, and nothing needs to: every way out of a refused install ends this window.
+   * The retry succeeds and the app restarts into the new release, or somebody presses Check now
+   * in Settings — which is a person asking, and not this cadence's business.
    */
-  let onRefusedInstall = 0;
+  let installWasRefused = false;
+  let checksSinceRefusal = 0;
+  /** Consecutive requests the shell refused outright. */
   let refusedRequests = 0;
 
   /**
@@ -266,30 +285,36 @@ export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => vo
     say(report);
 
     /* ── ONE RETRY AFTER A REFUSED INSTALL, THEN THIS WINDOW STOPS ASKING ──────────────────
-       `cannotSelfInstall` is certain on a package-managed copy and merely LIKELY elsewhere in
-       that state: an image on a read-only mount, or under a directory its user cannot write, or
-       a full disk, reaches it too and can be repaired while the app is open. Giving up on the
-       first failure would leave such a person with an app that never checks again for the life
-       of the window — the strip naming a stale version, "last checked" frozen at yesterday, and
-       nothing but Settings → Check now to escape it. Trying for ever is the other error, and it
-       is the expensive one: each attempt fetches the whole release and raises a dialog.
+       A refused install leaves the flow somewhere a check would start from, and the release is
+       still newer — so without a bound the day sends this window round the whole loop for ever:
+       fetch the release again, verify it, raise the shell's own "ready to install" dialog (which
+       is not gated on anybody having asked for the check), fail the install again, repeat
+       tomorrow. That is a modal over somebody's mail once a day for the life of the install.
 
-       One more attempt is the bound. It costs one cycle, it recovers the case that can recover,
-       and it stops before "checked once a day" becomes "asked to restart once a day, forever". */
-    const refused = cannotSelfInstall(report, linux);
-    if (!refused) onRefusedInstall = 0;
-    const givenUp = refused && onRefusedInstall >= INSTALL_RETRIES;
+       ONE more attempt, and NOT platform-gated even though the sentence the strip says is. On a
+       copy whose files belong to a package manager the second attempt is certain to fail; the
+       same state is reachable elsewhere from a full disk or a read-only mount and can be repaired
+       while the app is open, so refusing to try again at all would leave that person a window
+       that never checks again. One retry buys the recovery and stops short of a daily dialog. */
+    if (installRefused(report)) installWasRefused = true;
+    const givenUp = installWasRefused && checksSinceRefusal >= INSTALL_RETRIES;
 
-    if (givenUp || !checkDue(report, now(), Math.max(armedAt, askedAt ?? armedAt))) return;
-    if (refused) onRefusedInstall += 1;
+    if (givenUp || !checkDue(report, now(), Math.max(armedAt, askedAt ?? armedAt))) {
+      /* Nothing was attempted, so a part-spent run of refusals is not carried into a later day:
+         it would silently shorten that day's allowance to whatever was left of this one. */
+      refusedRequests = 0;
+      return;
+    }
     try {
       await poll();
-      /* STAMPED ONLY WHERE THE REQUEST LANDED, and the order is the point. Stamping first would
-         hold a REFUSED request off for a full period — an older shell, or a grant that dropped
-         the command, would cost a whole day of not checking on exactly the build where the
-         command is unreliable. */
+      /* COUNTED AND STAMPED ONLY WHERE THE REQUEST LANDED, and the order is the point. Stamping
+         first would hold a REFUSED request off for a full period — an older shell, or a grant
+         that dropped the command, would cost a whole day of not checking on exactly the build
+         where the command is unreliable — and counting first would spend the install allowance on
+         an attempt that never reached the shell at all. */
       askedAt = now();
       refusedRequests = 0;
+      if (installWasRefused) checksSinceRefusal += 1;
     } catch {
       /* A request that did not land must never take a mail client down — and must not turn into
          a call every quarter hour for the life of the window either. A shell without the command

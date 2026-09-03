@@ -12,6 +12,7 @@ import {
   cannotSelfInstall,
   checkDue,
   CHECK_EVERY_MS,
+  installRefused,
   offerOf,
   POLL_EVERY_MS,
   REQUEST_RETRIES,
@@ -136,15 +137,21 @@ describe("when a periodic check is due", () => {
     // the machines it names, and it is why the predicate is shared with `offerOf` rather than
     // written twice.
     const refused = report({ state: "failed", lastResult: "offered", offered: null });
-    expect(cannotSelfInstall(refused, true)).toBe(true);
+    expect(installRefused(refused), "the bound's condition, on every platform").toBe(true);
+    expect(cannotSelfInstall(refused, true), "the sentence's condition, on Linux").toBe(true);
 
     // Everywhere else the same pair is a refusal that may not repeat — a file held open, a
     // half-written temporary directory — and giving up on checking would be the wrong lesson.
     expect(cannotSelfInstall(refused, false)).toBe(false);
     expect(checkDue(refused, START + CHECK_EVERY_MS, START)).toBe(true);
 
-    // And a check that could not reach the feed is not that state at all, on any platform.
-    expect(cannotSelfInstall(report({ state: "failed", lastResult: "failed" }), true)).toBe(false);
+    // And a check that could not reach the feed is not that state at all, on any platform —
+    // neither for the sentence nor for the bound. "Update it through your package manager" is a
+    // false claim about a network failure, and giving up on checking would be the wrong lesson
+    // from one.
+    const offline = report({ state: "failed", lastResult: "failed" });
+    expect(cannotSelfInstall(offline, true)).toBe(false);
+    expect(installRefused(offline)).toBe(false);
 
     // The TIME rule knows nothing about any of it. Whether to give up is a question about how
     // many attempts have been spent, so it lives in the driver beside the counter that answers
@@ -343,33 +350,52 @@ describe("the cadence, running", () => {
     stop();
   });
 
-  it("…and it starts asking again the moment the state clears", async () => {
-    // The counter is CONSECUTIVE, not cumulative. An install that failed once and succeeded on
-    // the retry must not leave the window permanently one strike from silence.
+  it("…AND THE BOUND SURVIVES THE STATES THE CHECK ITSELF PRODUCES", async () => {
+    /* THE TEST THE FIRST VERSION OF THIS BOUND WOULD HAVE PASSED WHILE BEING USELESS. A counter
+       reset on any report that is not a refused install resets on every cycle it is meant to be
+       counting, because the request it bounds is precisely what moves the report along: the check
+       starts, the flow goes checking → downloading → ready, and only then does an install refuse
+       again. Holding `read()` at one constant refused report never exercises that. This walks the
+       real ladder, twice, and the bound has to survive it. */
     vi.useFakeTimers();
     const clock = { at: START };
-    let now = report({ state: "failed", lastResult: "offered", offered: null });
+    const REFUSED = report({ state: "failed", lastResult: "offered", offered: null });
+    let now = REFUSED;
     const s = shell(() => now);
     const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: true });
 
     await run(clock, CHECK_EVERY_MS);
-    expect(s.polls).toHaveLength(1);
-    await run(clock, CHECK_EVERY_MS);
-    expect(s.polls, "given up").toHaveLength(1);
+    expect(s.polls, "the one retry").toHaveLength(1);
 
-    now = report({ lastCheckedAt: START });
-    await run(clock, CHECK_EVERY_MS);
-    expect(s.polls, "the state cleared, so the day applies again").toHaveLength(2);
-
-    /* AND THE ALLOWANCE CAME BACK WITH IT. This is the half a reset that never fires would pass:
-       once the state has cleared, `givenUp` is false whatever the counter holds, so only a
-       SECOND refusal can show whether the count was carried over. A window whose user hit a full
-       disk in the morning must not be one strike from silence in the afternoon. */
-    now = report({ state: "failed", lastResult: "offered", offered: null });
-    await run(clock, CHECK_EVERY_MS);
-    expect(s.polls, "a fresh refusal gets its own retry").toHaveLength(3);
+    // …and the cycle that retry starts, exactly as the shell drives it.
+    for (const stage of [
+      report({ state: "checking", canCheck: false }),
+      report({ state: "downloading", offered: NEXT, canCheck: false }),
+      report({ state: "ready", offered: NEXT, canCheck: false, canInstall: true }),
+    ]) {
+      now = stage;
+      await run(clock, POLL_EVERY_MS);
+    }
+    // The person presses Restart, the install refuses again, and a day goes by.
+    now = REFUSED;
     await run(clock, 7 * CHECK_EVERY_MS);
-    expect(s.polls, "…and then gives up again").toHaveLength(3);
+    expect(s.polls, "the allowance was spent, and the ladder did not hand it back").toHaveLength(1);
+    stop();
+  });
+
+  it("…and the bound is not Linux's alone — a daily dialog is a nag anywhere", async () => {
+    // The SENTENCE is Linux's, because only there can the files belong to something else. The
+    // BOUND is not: an install that keeps refusing on any platform would otherwise raise the
+    // shell's "ready to install" dialog once a day for the life of the window.
+    vi.useFakeTimers();
+    const clock = { at: START };
+    const s = shell(() => report({ state: "failed", lastResult: "offered", offered: null }));
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: false });
+
+    expect(currentUpdateOffer(), "and it says nothing, because there is nowhere else to go")
+      .toBeNull();
+    await run(clock, 7 * CHECK_EVERY_MS);
+    expect(s.polls).toHaveLength(1);
     stop();
   });
 
@@ -412,6 +438,75 @@ describe("the cadence, running", () => {
     expect(tried).toBe(REQUEST_RETRIES + 1);
     await run(clock, 23 * HOUR);
     expect(tried, "a request that landed spends the day").toBe(REQUEST_RETRIES + 1);
+    stop();
+  });
+
+  it("A REQUEST THE SHELL NEVER TOOK SPENDS NOTHING — neither the day nor the install retry", async () => {
+    // Both counters are advanced where the request LANDED. A build whose window lacks the
+    // command would otherwise give up its one install retry having made no check at all, and
+    // would spend a day it never used.
+    vi.useFakeTimers();
+    const clock = { at: START };
+    let refuse = true;
+    let tried = 0;
+    const stop = startUpdateCadence({
+      now: () => clock.at,
+      linux: true,
+      read: async () => report({ state: "failed", lastResult: "offered", offered: null }),
+      poll: async () => {
+        tried += 1;
+        if (refuse) throw new Error("no such command");
+      },
+      listen: async () => () => {},
+    });
+
+    await run(clock, CHECK_EVERY_MS);
+    expect(tried, "refused, so nothing is spent").toBe(1);
+
+    // The command starts working — an unreachable case in practice, and exactly the one that
+    // shows the allowance was still there to be spent.
+    refuse = false;
+    await run(clock, POLL_EVERY_MS);
+    expect(tried, "the retry the refusals had not consumed").toBe(2);
+    await run(clock, 7 * CHECK_EVERY_MS);
+    expect(tried, "…and now it is spent").toBe(2);
+    stop();
+  });
+
+  it("…and a part-spent run of refusals is not carried into a later day", async () => {
+    // Two refusals on one day, then the day stops being due — the person pressed Check now in
+    // Settings and the shell recorded a fresh stamp. Carrying the count forward would give the
+    // next day one attempt instead of the three the constant documents.
+    vi.useFakeTimers();
+    const clock = { at: START };
+    let stamp: number | null = null;
+    let tried = 0;
+    const stop = startUpdateCadence({
+      now: () => clock.at,
+      linux: false,
+      read: async () => report({ lastCheckedAt: stamp }),
+      poll: async () => {
+        tried += 1;
+        throw new Error("no such command");
+      },
+      listen: async () => () => {},
+    });
+
+    await run(clock, CHECK_EVERY_MS);
+    await run(clock, POLL_EVERY_MS);
+    expect(tried, "two refusals, one short of the allowance").toBe(2);
+
+    // Somebody checks by hand; the shell records it, so nothing is due for a day.
+    stamp = clock.at;
+    await run(clock, 23 * HOUR);
+    expect(tried, "nothing was due, so nothing was tried").toBe(2);
+
+    /* Exactly three polls' worth of time, so the count is unambiguous: a fresh allowance spends
+       three attempts here, a carried-over one spends a single attempt and then stamps the day. */
+    stamp = null;
+    await run(clock, REQUEST_RETRIES * POLL_EVERY_MS);
+    expect(tried, "a fresh allowance, not the remainder of an old one")
+      .toBe(2 + REQUEST_RETRIES);
     stop();
   });
 

@@ -35,9 +35,11 @@
 //!
 //! One decision, asked once, at the end:
 //!
-//!   1. The app checks the feed shortly after launch, and whenever the menu item
-//!      is picked. While a check runs the item says so and is disabled, so a slow
-//!      feed is visible where the user just pressed rather than as dead air.
+//!   1. The app checks the feed shortly after launch, once a day while it stays
+//!      open (`update_poll`, driven by `src/update-cadence.ts` on a wall clock),
+//!      and whenever the menu item is picked. While a check runs the item says so
+//!      and is disabled, so a slow feed is visible where the user just pressed
+//!      rather than as dead air.
 //!   2. A newer signed release is FETCHED in the background. Nothing is installed
 //!      by that: `Update::download` streams the payload, minisign-verifies it and
 //!      hands back bytes. A check the user asked for also opens the small progress
@@ -61,12 +63,26 @@
 //! payload could sit unmentioned for as long as the window stayed open.
 //!
 //! `src/update-cadence.ts` closes both, from the window and on a wall clock. It
-//! gains nothing this file withholds: it presses `update_press`, which takes no
-//! argument, and only where `Flow::press` already answers `Check` — so it can start
-//! a check and cannot install. The re-ask it raises is a quiet strip in the window,
-//! never a dialog, and it treats the FIRST sight of a ready payload as this file's
-//! dialog already asking. So the count above still holds: one dialog per release,
-//! from here, and the strip is what carries it a day later.
+//! gains nothing this file withholds: it calls `update_poll`, which takes no
+//! argument and is `check(app, false)` — the launch check's own path — and it calls
+//! it only where `Flow::press` already answers `Check`, so it can start a check and
+//! cannot install.
+//!
+//! NOT `update_press`, and that is worth stating because the press was the obvious
+//! thing to reuse and is wrong. A press is a person asking, and this file answers a
+//! person out loud: a press that finds nothing says "ohmail is up to date", a press
+//! that cannot reach the feed says so with a Try-again, a press that finds a release
+//! opens the progress window. Each of those is right for somebody who pressed a
+//! button and would otherwise face dead air; each is wrong once a day for ever, and
+//! a scheduled press would have shown a modal over somebody's mail every twenty-four
+//! hours on an install that was already current.
+//!
+//! The re-ask the window raises is a quiet strip, never a dialog, and it treats the
+//! FIRST sight of a ready payload as this file's dialog already asking. So the count
+//! above still holds: one dialog per release, from here, and the strip is what
+//! carries it a day later. A failing install is bounded on the window's side too —
+//! one scheduled check after a refusal, then it stops — so an install that cannot
+//! succeed does not turn the one dialog into a daily one.
 //!
 //! The stamp that makes the cadence possible is `Check::at_unix_ms`, which is wall
 //! clock rather than monotonic for the reason its own comment gives. That choice
@@ -232,8 +248,21 @@ impl Flow {
             (stage, _) => stage.clone(),
         };
         if self.stage == Stage::Checking {
-            // A new run gets a new chance to ask. Reached by a user pressing the item after a
-            // "Later" was withdrawn by a failure, which is the only way back to `Checking`.
+            // A NEW CYCLE GETS A NEW CHANCE TO ASK — and what can start a cycle has changed, so
+            // the old note beside this line ("reached by a user pressing the item … the only way
+            // back to `Checking`") is no longer true and is corrected rather than left standing.
+            // `update_poll` reaches here on a timer, with nobody asking.
+            //
+            // The rule the line implements is unchanged and is still the one wanted: a deferral
+            // answers the payload that was on the table, and a cycle that reaches `Checking` is
+            // on its way to a fresh one. Reaching `Checking` at all requires `may_start_check`,
+            // which refuses in `Ready` — so a payload somebody said "Later" to is never
+            // re-offered by this; what can happen is that an install FAILED after the deferral,
+            // and the next cycle offers the release again.
+            //
+            // That is bounded on the window's side rather than here: `src/update-cadence.ts`
+            // allows exactly one scheduled check after a refused install and then stops, so a
+            // failing install cannot turn this into a dialog a day for the life of the app.
             self.deferred = false;
         }
     }
