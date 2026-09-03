@@ -40,6 +40,39 @@ now" button. It is where the daily answer shows up.
 being served. It notices now, and offers a reload — at most once a day, and never over a
 message you are writing.
 
+### Fixed — the settings a connected install shows
+
+An install signed in to a hosted account was missing six Settings sections and three
+Screener controls, and the Desktop section told you that you were signed out while your
+mail was arriving.
+
+The app asked the mail engine about your session once, when the engine started, and then
+kept that answer for as long as the app was open. Signing in happens against the running
+engine, so an app that started signed out went on describing itself that way for the rest
+of the session — and the sections that belong to an account went with it: the away
+responder, signatures, folders, subscription, security and your account, along with the
+Screener's dormancy window, its automatic suggestions and its unsubscribe switch. Quitting
+and reopening was the only way back, and nothing on screen suggested it.
+
+The app already asks the engine about your session every minute, and already uses that
+answer to decide whether to show your mail at all. That is now the answer the settings
+follow too, so what a section can reach is what decides whether it is drawn.
+
+### Added — Devices, on an install connected to an account
+
+Settings gains a Devices section on an install connected to a hosted account: the devices
+signed in to it, adding one, and signing one out. Those all ask for a second factor from
+the last few minutes, which this app has no way to give, so the section opens the page in
+your browser where you are already signed in — the same shape Security and Your account
+already use. A standalone install keeps its own Devices section, which is a different
+thing: serving the mailbox on this computer to your own devices.
+
+### Changed — Folders on a standalone install
+
+A standalone install no longer offers the "Use folders" section. The mail engine on this
+computer does not create, rename or delete folders, so the switch stored nothing and moved
+back to off on its own. It returns when there is something behind it.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
