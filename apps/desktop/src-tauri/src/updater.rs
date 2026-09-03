@@ -52,6 +52,28 @@
 //! prompt, no dialog stacked on a dialog, and no path where the app relaunches
 //! itself while somebody is reading their mail.
 //!
+//! ── WHAT THE WINDOW ADDS TO THAT, AND WHY IT IS NOT A SECOND POLICY ───────────
+//!
+//! Two of the sentences above are true of THIS FILE and were, for a window nobody
+//! closes, the whole story: the check happens once at launch, and "Later" is spent
+//! for the run. A mail client is the archetype of a program left running for weeks,
+//! so on those installs "checks at launch" meant "checked once", and a verified
+//! payload could sit unmentioned for as long as the window stayed open.
+//!
+//! `src/update-cadence.ts` closes both, from the window and on a wall clock. It
+//! gains nothing this file withholds: it presses `update_press`, which takes no
+//! argument, and only where `Flow::press` already answers `Check` — so it can start
+//! a check and cannot install. The re-ask it raises is a quiet strip in the window,
+//! never a dialog, and it treats the FIRST sight of a ready payload as this file's
+//! dialog already asking. So the count above still holds: one dialog per release,
+//! from here, and the strip is what carries it a day later.
+//!
+//! The stamp that makes the cadence possible is `Check::at_unix_ms`, which is wall
+//! clock rather than monotonic for the reason its own comment gives. That choice
+//! turns out to be load-bearing twice: a suspended machine stops every monotonic
+//! clock the platforms offer, so a cadence built on one would postpone itself for
+//! as long as a laptop was shut.
+//!
 //! ── WHAT IT WILL AND WILL NOT DO ──────────────────────────────────────────────
 //!
 //!   * ONE endpoint, pinned in `tauri.conf.json` (`plugins.updater.endpoints`):
