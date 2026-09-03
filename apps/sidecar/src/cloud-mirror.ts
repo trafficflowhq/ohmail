@@ -876,6 +876,22 @@ function mailboxRow(world: LocalWorld, m: MailboxDTO, now: Date) {
     organizedByName: m.organizedBy?.name ?? null,
     organizedSince: asDate(m.organizedBy?.since ?? null),
     organizerState: m.organizerState ?? null,
+    /* ── THE NOTICE'S TWO INSTANTS TRAVEL WITH THE ROLE (mail 0088) ──────────────────────────
+     *
+     * They are mirrored for the same reason the role above them is, and the argument is sharper
+     * here: the notice is DERIVED (`event_at > seen_at`), so a mirror that carried the role and
+     * not the instants would show a Cloud-connected desktop a mailbox whose organizer had visibly
+     * changed and no line saying so — or, worse, would leave `seen_at` NULL against a live
+     * `event_at` and re-show a notice the person had already dismissed in the browser. The point
+     * of putting the pair in a row rather than in client state is that every door agrees; a door
+     * that mirrors half of it disagrees by construction.
+     *
+     * Both, never one: `event_at` alone re-shows a dismissed notice, `seen_at` alone hides a real
+     * one. The hosted row is the authority for both and this install writes neither of its own
+     * while it is a Cloud client — its own dismiss goes to the hosted route, and the next mirror
+     * pull brings the answer back. */
+    organizerEventAt: asDate(m.organizerEventAt),
+    organizerEventSeenAt: asDate(m.organizerEventSeenAt),
     organizeConsentedAt: asDate(m.organizeConsentedAt),
     smtpMaxSizeBytes: m.smtpMaxSizeBytes ?? null,
     // NOT decoration: `compose-from.ts` orders the From options by `createdAt` ascending and calls

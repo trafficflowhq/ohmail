@@ -182,6 +182,14 @@ export async function ensureLocalWorld(db: LocalDb, input: EnsureLocalWorldInput
       disabledReason: mailboxes.disabledReason,
       organizerRole: mailboxes.organizerRole,
       organizedByKind: mailboxes.organizedByKind,
+      // Mail 0088 — the third term of `standDownMemory`'s live arm. It is what tells a
+      // RELEASED mailbox (no holder, no occupancy) from a stood-down one, which are
+      // otherwise the same row shape and want opposite sentences.
+      organizerState: mailboxes.organizerState,
+      // Mail 0088 — the release MARKER, and the fourth term of `standDownMemory`'s live arm. It is
+      // what tells a released mailbox from a stood-down one, which are otherwise the same row once
+      // the winner's claim goes away.
+      organizerReleasedAt: mailboxes.organizerReleasedAt,
       organizeConsentedAt: mailboxes.organizeConsentedAt,
       takeoverAuthorizedAt: mailboxes.takeoverAuthorizedAt,
     })
@@ -339,6 +347,14 @@ export async function loadLocalRoster(db: LocalDb, accountId: string): Promise<L
       // mailbox: a machine can be the organizer of one and a reader of another at the same time.
       organizerRole: mailboxes.organizerRole,
       organizedByKind: mailboxes.organizedByKind,
+      // Mail 0088 — the third term of `standDownMemory`'s live arm. It is what tells a
+      // RELEASED mailbox (no holder, no occupancy) from a stood-down one, which are
+      // otherwise the same row shape and want opposite sentences.
+      organizerState: mailboxes.organizerState,
+      // Mail 0088 — the release MARKER, and the fourth term of `standDownMemory`'s live arm. It is
+      // what tells a released mailbox from a stood-down one, which are otherwise the same row once
+      // the winner's claim goes away.
+      organizerReleasedAt: mailboxes.organizerReleasedAt,
       organizeConsentedAt: mailboxes.organizeConsentedAt,
       takeoverAuthorizedAt: mailboxes.takeoverAuthorizedAt,
     })

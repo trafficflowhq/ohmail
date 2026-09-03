@@ -42,9 +42,32 @@ if (!keyProvider) { console.error("set TF_KEK_V1 — the restore must decrypt IM
 const owned = makeOwnedDb(dbUrl);
 const db = owned.db as unknown as Tx;
 
-const [mb] = await db.select({ id: mailboxes.id, accountId: mailboxes.accountId, address: mailboxes.address })
+const [mb] = await db.select({
+  id: mailboxes.id, accountId: mailboxes.accountId, address: mailboxes.address,
+  /* ── "STOP ORGANIZING THIS MAILBOX" IS A REFUSAL FOR THIS TOOL TOO (mail 0088) ─────────────
+   *
+   * The lease gate below cannot answer this. A pending release leaves the row as `organizer` on
+   * purpose — the claim is in the customer's IMAP folder and expunging it belongs to the process
+   * holding that connection — so every lease-shaped check passes and this runner would take the
+   * permit, renewing the very claim the person asked to have removed, and then move their mail.
+   *
+   * It is REFUSED rather than honoured, on the reconcile backstop's reasoning: releasing means
+   * expunging a claim, writing the row and closing the appointments the install can no longer
+   * keep, and a second copy of that sequence here would be a second answer to what stopping means.
+   * The always-on gate performs it; this tool declines to act past a request it can see.
+   */
+  releaseRequestedAt: mailboxes.releaseRequestedAt,
+})
   .from(mailboxes).where(eq(mailboxes.id, mailboxId)).limit(1);
 if (!mb) { console.error(`no mailbox ${mailboxId}`); await owned.close(); process.exit(2); }
+if (mb.releaseRequestedAt !== null) {
+  console.error(
+    `mailbox ${mailboxId} has been asked to stop being organized here — refusing to write to it. `
+    + "The organizer's next pass releases the claim; run this again afterwards if it is still needed.",
+  );
+  await owned.close();
+  process.exit(2);
+}
 
 const [{ n: candidates }] = await db.select({ n: sql<number>`count(*)::int` })
   .from(messages).innerJoin(messageBodies, eq(messageBodies.messageId, messages.id))
@@ -130,7 +153,7 @@ try {
       },
       // A takeover is a human decision recorded on the mailbox row; an operator invoking a repair
       // has not made it.
-      takeover: "none",
+      takeover: null,
       log: (event, detail) => { console.log(`${event} ${JSON.stringify(detail)}`); },
     });
   } catch (err) {

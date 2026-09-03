@@ -134,6 +134,14 @@ export async function authorizeOrganizerTakeover(
       // stand-down's WHO moved onto this column when `disabled_reason` lost its writer, so it is
       // what `standDownMemory` recomposes the reason from.
       organizedByKind: mailboxes.organizedByKind,
+      // Mail 0088 — the third term of `standDownMemory`'s live arm. It is what tells a
+      // RELEASED mailbox (no holder, no occupancy) from a stood-down one, which are
+      // otherwise the same row shape and want opposite sentences.
+      organizerState: mailboxes.organizerState,
+      // Mail 0088 — the release MARKER, and the fourth term of `standDownMemory`'s live arm. It is
+      // what tells a released mailbox from a stood-down one, which are otherwise the same row once
+      // the winner's claim goes away.
+      organizerReleasedAt: mailboxes.organizerReleasedAt,
       organizeConsentedAt: mailboxes.organizeConsentedAt,
     })
     .from(mailboxes)
@@ -371,6 +379,14 @@ export async function requestOrganizerTakeover(
       // stand-down's WHO moved onto this column when `disabled_reason` lost its writer, so it is
       // what `standDownMemory` recomposes the reason from.
       organizedByKind: mailboxes.organizedByKind,
+      // Mail 0088 — the third term of `standDownMemory`'s live arm. It is what tells a
+      // RELEASED mailbox (no holder, no occupancy) from a stood-down one, which are
+      // otherwise the same row shape and want opposite sentences.
+      organizerState: mailboxes.organizerState,
+      // Mail 0088 — the release MARKER, and the fourth term of `standDownMemory`'s live arm. It is
+      // what tells a released mailbox from a stood-down one, which are otherwise the same row once
+      // the winner's claim goes away.
+      organizerReleasedAt: mailboxes.organizerReleasedAt,
       organizeConsentedAt: mailboxes.organizeConsentedAt,
     })
     .from(mailboxes)

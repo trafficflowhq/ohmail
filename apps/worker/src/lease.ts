@@ -1,4 +1,5 @@
 import {
+  CAPABILITY_REQUESTS,
   DEFAULT_STALE_AFTER_MS, LeaseUnavailableError, META_FOLDER, isMalformed, parseClaim, runLeaseGate,
   type LeaseIo, type LeaseOp, type LeaseSelf, type LeaseVerdict, type OrganizerClaim,
   type TakeoverAuthorization,
@@ -63,6 +64,24 @@ export function cloudInstallId(environment: string): string {
  * be a place and not an id. For Cloud the place is Cloud.
  */
 export const CLOUD_DISPLAY_NAME = "ohmail Cloud";
+
+/**
+ * WHAT AN ORGANIZER RUNNING THIS CODE OFFERS A READER — written onto every claim this composition
+ * renews, and the only place either door decides it.
+ *
+ * ── ONE CONSTANT, BECAUSE BOTH DOORS RUN THIS FUNCTION ────────────────────────────────────
+ *
+ * The hosted worker and the desktop engine both reach the lease through {@link readMailboxLease},
+ * so the advertised set is a property of THIS module rather than of either caller. Two spellings —
+ * one per door — would be a capability a reader detects on Cloud and not on a desktop, and the
+ * reader's answer to "will this holder take my decision" would then depend on which build happened
+ * to be organizing rather than on what that build can do.
+ *
+ * It is deliberately not injectable. A caller that could narrow it could quietly advertise nothing
+ * — which is the failure this exists to prevent, and it would be invisible: every organizer would
+ * simply look like an older build to every reader, and the readers would say so.
+ */
+export const ORGANIZER_CAPABILITIES: readonly string[] = [CAPABILITY_REQUESTS];
 
 /**
  * An adapter that can hand out the lease's IO.
@@ -146,7 +165,8 @@ export interface MailboxLeaseInput {
   adapter: MailboxAdapter;
   self: LeaseSelf;
   now: Date;
-  takeover?: TakeoverAuthorization;
+  /** The press, with its instant, or `null` when nobody asked for this install. */
+  takeover?: TakeoverAuthorization | null;
   staleAfterMs?: number;
   log?: (event: string, detail: Record<string, unknown>) => void;
 }
@@ -183,6 +203,7 @@ export async function readMailboxLease(input: MailboxLeaseInput): Promise<Mailbo
     io: adapter.leaseIo(),
     self,
     now,
+    capabilities: ORGANIZER_CAPABILITIES,
     ...(input.takeover !== undefined ? { takeover: input.takeover } : {}),
     ...(input.staleAfterMs !== undefined ? { staleAfterMs: input.staleAfterMs } : {}),
     ...(input.log !== undefined ? { log: input.log } : {}),

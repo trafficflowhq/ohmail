@@ -98,6 +98,15 @@ export interface EnabledMailbox {
    */
   organizeConsentedAt: Date | null;
   /**
+   * Mail 0088. THE PERSON ASKED THIS INSTALL TO STOP ORGANIZING THIS MAILBOX AND KEEP THE MAIL.
+   *
+   * On the roster row for `takeoverAuthorizedAt`'s reason exactly: it is written by ANOTHER
+   * process while this one is already organizing, so a value read once at attach would leave the
+   * press doing nothing until the worker restarted. The gate honours it before it reads the lease
+   * at all — reading the lease first would renew a claim this install is about to delete.
+   */
+  releaseRequestedAt: Date | null;
+  /**
    * Mail 0029. What the row currently says about why this mailbox is not being synced.
    *
    * READ SO THE WORKER KNOWS WHETHER THERE IS ANYTHING TO CLEAR, and for no other purpose —
@@ -254,6 +263,7 @@ export async function loadEnabledMailboxes(
       organizedSince: mailboxes.organizedSince,
       organizerState: mailboxes.organizerState,
       organizeConsentedAt: mailboxes.organizeConsentedAt,
+      releaseRequestedAt: mailboxes.releaseRequestedAt,
       syncBlockedReason: mailboxes.syncBlockedReason,
       retryAfter: mailboxes.retryAfter,
       retryCount: mailboxes.retryCount,
@@ -277,6 +287,7 @@ export async function loadEnabledMailboxes(
       organizedSince: r.organizedSince ?? null,
       organizerState: r.organizerState ?? null,
       organizeConsentedAt: r.organizeConsentedAt ?? null,
+      releaseRequestedAt: r.releaseRequestedAt ?? null,
       syncBlockedReason: r.syncBlockedReason ?? null,
       retryAfter: r.retryAfter ?? null,
       retryCount: r.retryCount ?? 0,
@@ -319,6 +330,12 @@ export async function loadMailboxById(
     disabledReason: string | null;
     /** Mail 0083. The reconcile backstop is an ORGANIZER pass and must refuse a reader row. */
     organizerRole: OrganizerRole;
+    /**
+     * Mail 0088. AND IT MUST REFUSE A MAILBOX SOMEBODY HAS ASKED IT TO STOP ORGANIZING, which the
+     * role above cannot tell it: a pending release deliberately leaves the row an `organizer`
+     * until the gate that performs the release runs.
+     */
+    releaseRequestedAt: Date | null;
   }
   | null
 > {
@@ -328,6 +345,7 @@ export async function loadMailboxById(
       takeoverAuthorizedAt: mailboxes.takeoverAuthorizedAt,
       disabledReason: mailboxes.disabledReason,
       organizerRole: mailboxes.organizerRole,
+      releaseRequestedAt: mailboxes.releaseRequestedAt,
     })
     .from(mailboxes).where(eq(mailboxes.id, mailboxId)).limit(1);
   const r = rows[0];
@@ -1241,7 +1259,7 @@ export interface StandDownHolder {
 
 export async function markMailboxStoodDown(
   db: WorkerDb, mailboxId: string, reason: MailboxDisabledReason,
-  opts: { fence?: LeaderFence; by?: StandDownHolder } = {},
+  opts: { fence?: LeaderFence; by?: StandDownHolder; now?: Date } = {},
 ): Promise<boolean> {
   const safe: MailboxDisabledReason =
     isMailboxDisabledReason(reason) ? reason : "organized_elsewhere:unknown";
@@ -1299,6 +1317,89 @@ export async function markMailboxStoodDown(
     // The authorization is spent by definition: we are no longer the organizer, so becoming one
     // again is a new BECOMING and needs a new explicit action (§4, "No seize-back").
     takeoverAuthorizedAt: null,
+    // Mail 0088 — and BEING BEATEN IS NOT RELEASING. A row that carried both would report the
+    // quieter of the two events to a person whose mailbox somebody else has just taken, and the
+    // claim-back screen would name no previous holder on the one occasion there is one.
+    organizerReleasedAt: null,
+    // ── MAIL 0088: THE ORGANIZING SITUATION JUST CHANGED, SO SAY WHEN ────────────────────────
+    //
+    // One of the five writers of the (role, state, holder) triple, and every one of them stamps
+    // this in the SAME statement as the fact it is announcing. Not in a second write, for the
+    // reason the holder columns ride this statement: a row that says `reader` while its event
+    // instant still describes the previous situation is a client rendering yesterday's sentence,
+    // and there would be nothing anywhere to notice it.
+    //
+    // `organizer_event_seen_at` is deliberately NOT cleared. The notice is `event_at > seen_at`,
+    // so advancing `event_at` is already the whole of "show this again" — and clearing the
+    // acknowledgement as well would lose the record of an older dismissal for no gain.
+    organizerEventAt: opts.now ?? new Date(),
+  }).where(lifecycleWhere(mailboxId, opts.fence)).returning({ id: mailboxes.id }));
+}
+
+/**
+ * THE PERSON ASKED THIS INSTALL TO STOP ORGANIZING THIS MAILBOX, AND KEEP THE MAIL (mail 0088).
+ *
+ * The third way a row stops being an organizer, and the first one nobody else caused.
+ *
+ *  · {@link markMailboxStoodDown} — somebody else won the mailbox. The row NAMES them.
+ *  · `MailboxService.delete` — the row is retired. Credentials go, the mirror stops.
+ *  · this — nobody won it and nothing is retired. The row keeps its credentials, its consent and
+ *    its mirror, and the next cycle is a READER cycle whose peek reports whoever claims it later.
+ *
+ * ── EVERY HOLDER COLUMN IS CLEARED, AND THAT IS THE DIFFERENCE FROM A STAND-DOWN ───────────
+ *
+ * A stand-down writes the winner into `organized_by_*` because there IS a winner. Here there is
+ * none: this install has released its own claim and `ohmail/_meta` is empty as far as anyone knows.
+ * Leaving the columns populated would put "organized by ohmail Cloud" on a mailbox nothing is
+ * organizing, which is the banner lying in the most confusing possible direction — the person just
+ * pressed the button that makes it stop.
+ *
+ * `organizer_state` goes to NULL for the same reason and it is load-bearing beyond cosmetics:
+ * `standDownMemory` reads exactly this shape — reader, consented, no holder, no state — as the
+ * RELEASED arm and answers `null`, so nothing downstream treats a deliberate release as a
+ * stand-down it should offer to reverse.
+ *
+ * ── AND THE RELEASE REQUEST IS SPENT HERE ─────────────────────────────────────────────────
+ *
+ * `release_requested_at` authorizes one ceasing, exactly as `takeover_authorized_at` authorizes one
+ * becoming. Left standing it would answer the next cycle's gate too, and every cycle after it —
+ * so an install that had been asked to stop once could never be asked to start again: the press
+ * would write a takeover stamp and this arm, which runs first, would release it before the lease
+ * was ever consulted.
+ *
+ * FENCED like every other lifecycle write. A fenced-out release still happened IN THIS PROCESS —
+ * the claim is already out of the mailbox by the time this is called — and a successor leader
+ * reads a row with the request still on it and performs the same release on its own next pass.
+ */
+export async function markMailboxReleased(
+  db: WorkerDb, mailboxId: string, opts: { fence?: LeaderFence; now?: Date } = {},
+): Promise<boolean> {
+  return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes).set({
+    organizerRole: "reader",
+    // Nobody holds it. See the header — this is the whole difference from a stand-down.
+    organizedByKind: null,
+    organizedByName: null,
+    organizedSince: null,
+    organizerState: null,
+    // Spent. One ceasing, not a standing refusal.
+    releaseRequestedAt: null,
+    // AND THE RECORD THAT IT HAPPENED. The ask is gone; without this the row is byte-identical to a
+    // stood-down reader whose winner has since gone away, and `standDownMemory` would have to
+    // derive "released" from an absence three other writers also produce. See the column.
+    organizerReleasedAt: opts.now ?? new Date(),
+    // AND ANY UNSPENT TAKEOVER GOES WITH IT. The two stamps are contradictory instructions about
+    // the same mailbox, and a release that left a becoming authorized would be promoted straight
+    // back by the very next gate — the control undoing itself, which is this feature's own named
+    // risk. The `FOR UPDATE` on the service side keeps the two presses ordered; this is what makes
+    // the LOSING order harmless rather than merely unlikely.
+    takeoverAuthorizedAt: null,
+    // Standing down is not failing, and neither is stopping on purpose. Same four columns, same
+    // argument as the stand-down above.
+    errorCode: null, errorDetail: null, failedAt: null, retryCount: 0,
+    syncBlockedReason: null, syncBlockedSince: null,
+    retryAfter: null,
+    // Mail 0088 — the fifth writer of the triple. See `markMailboxStoodDown`'s note.
+    organizerEventAt: opts.now ?? new Date(),
   }).where(lifecycleWhere(mailboxId, opts.fence)).returning({ id: mailboxes.id }));
 }
 
@@ -1404,7 +1505,7 @@ export async function clearMailboxSyncBlock(
  * only invokes this when there is something to clear.
  */
 export async function clearOrganizerStandDown(
-  db: WorkerDb, mailboxId: string, opts: { fence?: LeaderFence } = {},
+  db: WorkerDb, mailboxId: string, opts: { fence?: LeaderFence; now?: Date } = {},
 ): Promise<boolean> {
   return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes)
     .set({
@@ -1426,6 +1527,16 @@ export async function clearOrganizerStandDown(
       disabledReason: null,
       // The authorization is spent by this one becoming. See the header.
       takeoverAuthorizedAt: null,
+      // Mail 0088 — a mailbox organized here again is not a released one. The marker describes the
+      // CURRENT state, so the promotion is what ends it; left standing it would make the next
+      // claim-back report "you stopped organizing this" about a mailbox this install is organizing.
+      organizerReleasedAt: null,
+      // Mail 0088 — the second writer of the (role, state, holder) triple. A PROMOTION is an event
+      // in exactly the sense the notice means: the person is entitled to be told once that this
+      // install now organizes the mailbox, and on any other door they have open the sentence is
+      // the one that says somebody else took it. Stamped in the same statement as the flip, on
+      // `markMailboxStoodDown`'s reasoning.
+      organizerEventAt: opts.now ?? new Date(),
     })
     .where(lifecycleWhere(mailboxId, opts.fence))
     .returning({ id: mailboxes.id }));
@@ -1446,7 +1557,7 @@ export async function clearOrganizerStandDown(
  */
 export async function refreshOrganizerHolder(
   db: WorkerDb, mailboxId: string, by: StandDownHolder,
-  opts: { fence?: LeaderFence } = {},
+  opts: { fence?: LeaderFence; now?: Date; stateChanged?: boolean } = {},
 ): Promise<boolean> {
   return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes)
     .set({
@@ -1454,6 +1565,25 @@ export async function refreshOrganizerHolder(
       organizedByName: organizerDisplayName(by.displayName ?? null),
       organizedSince: by.claimedAt ?? null,
       organizerState: by.state ?? null,
+      /* ── MAIL 0088: THE THIRD WRITER, AND THE ONLY ONE THAT STAMPS CONDITIONALLY ──────────
+       *
+       * It stamps `organizer_event_at` ONLY WHEN `organizer_state` FLIPS, and the narrowness is
+       * the whole point rather than a saving. This function runs once per reader cycle and writes
+       * whenever ANY of the four columns moved — including `organized_since` shifting because the
+       * holder renewed under a new tenure, or a display name changing. Those are not events in the
+       * sense the notice means: nothing about who organizes this mailbox has changed, and a person
+       * would be told the same thing again every time a peer restarted.
+       *
+       * `held` → `stopped` and `stopped` → `held` ARE events, and they are the two the reader's
+       * own surface exists for: "another install organizes this now" and "that install stopped —
+       * you can claim it". So does either direction to or from NULL, which is a holder appearing
+       * in or vanishing from a folder that had none.
+       *
+       * The caller decides, because the caller is what holds the previous value — this function
+       * takes no read of its own, deliberately: a SELECT here would be a second round trip per
+       * reader cycle to re-learn something the cycle already knows.
+       */
+      ...(opts.stateChanged ? { organizerEventAt: opts.now ?? new Date() } : {}),
     })
     .where(lifecycleWhere(mailboxId, opts.fence))
     .returning({ id: mailboxes.id }));

@@ -130,16 +130,28 @@ export function organizerDisplayName(raw: string | null | undefined): string | n
  * (`disabled` + a reason is a PAUSE this install must not resume from; `disabled` + none is a
  * TOMBSTONE the user asked for).
  *
- * The second arm is the live one, and it asks TWO questions because `reader` carries two states:
- * a mailbox nobody has consented to organize is a reader too. See the guard in the body.
+ * The second arm is the live one, and it asks THREE questions because `reader` carries THREE
+ * states — a mailbox nobody has consented to organize is a reader, and since mail 0088 so is one
+ * whose owner deliberately released it. See the two guards in the body: the first is an absence
+ * (no holder, no consent) and the second is a MARKER, because the release's own shape turned out
+ * not to be distinguishable by absence at all.
  *
  * A reader is `connected`, on its own roster, and its
  * `organized_by_kind` is the same closed three the reason's suffix carries — which is exactly
  * what migration 0083's backfill relied on when it split the one column into the other two, so
  * recomposing the string here is reading back what that migration wrote rather than inventing a
- * value. `'unknown'` for a reader whose first cycle has not looked yet: the row says somebody
- * else organizes this mailbox and does not yet say who, and the stand-down memory must survive
- * that gap or a relaunch inside it auto-resumes.
+ * value.
+ *
+ * **The line that used to end this paragraph was retired by mail 0088.** It read: *"`'unknown'`
+ * for a reader whose first cycle has not looked yet: the row says somebody else organizes this
+ * mailbox and does not yet say who, and the stand-down memory must survive that gap or a relaunch
+ * inside it auto-resumes."* It is kept here rather than deleted because the hazard it names was
+ * real and is now closed somewhere else: a reader with no takeover stamp never enters
+ * `runLeaseGate` on either door, so a relaunch inside that gap cannot auto-resume whatever this
+ * function answers. What the sentence cost, once the release existed, was the ability to tell a
+ * released mailbox from a stood-down one at all — they are the same row shape — and the release is
+ * a real state a person creates on purpose while the gap was a moment nothing observes. The gap
+ * still resolves on the next peek, which writes a kind and a state.
  */
 export function standDownMemory(row: {
   status: string;
@@ -147,6 +159,16 @@ export function standDownMemory(row: {
   organizedByKind: string | null;
   organizeConsentedAt: Date | null;
   disabledReason: string | null;
+  /**
+   * Mail 0088 — the lease's occupancy as this row last recorded it, and the RELEASE MARKER.
+   *
+   * Both REQUIRED, not optional, for the reason every required field in this area is: an optional
+   * field defaulted to `undefined` would make the released arm below unreachable at whichever call
+   * site forgot it, and the symptom would be a released mailbox reported as a stand-down — an
+   * offer to reverse a handover that never happened.
+   */
+  organizerState: string | null;
+  organizerReleasedAt: Date | null;
 }): MailboxDisabledReason | null {
   if (row.status === "disabled") {
     return isMailboxDisabledReason(row.disabledReason) ? row.disabledReason : null;
@@ -173,6 +195,55 @@ export function standDownMemory(row: {
    * with neither is untouched.
    */
   if (row.organizedByKind === null && row.organizeConsentedAt === null) return null;
+  /* -- AND A RELEASED MAILBOX NEVER STOOD DOWN EITHER (mail 0088) -----------------------------
+   *
+   * The THIRD state a `reader` row can be in, and it did not exist when the two arms above were
+   * written: the person pressed "stop organizing here", this install expunged its own claim, and
+   * NOBODY took the mailbox. `markMailboxReleased` is what leaves it, and the sidecar's inline
+   * twin.
+   *
+   * Without this arm a release reads as `organized_elsewhere:unknown` (the consent term of the
+   * test above is satisfied), which is false in the way that matters most at the one door that
+   * asks: the claim-back reports `previousReason`, so a person who had released their own mailbox
+   * and then pressed "Organize here" would be told they had just taken it back from another
+   * organizer that never existed.
+   *
+   * ── THE DISCRIMINATOR IS A MARKER, AND THE ABSENCE THAT LOOKED LIKE ONE IS NOT EXACT ───────
+   *
+   * This arm read `organized_by_kind IS NULL AND organizer_state IS NULL AND consented`, on the
+   * argument that a genuine stand-down writes both holder columns in the SAME statement as the
+   * role, so the shape is unreachable from one. **That argument is wrong, and a review round found
+   * it.** `markMailboxStoodDown` is not the last writer of those columns: `refreshOrganizerHolder`
+   * and the sidecar's `notePeekedHolder` are enumerated writers of the same triple, and both write
+   * all four holder columns NULL whenever the per-cycle peek finds an EMPTY folder — which is
+   * exactly what a stood-down reader sees the moment the install that beat it releases or is
+   * removed. A genuine stand-down therefore decays into the "released" shape on its own, one poll
+   * later, with nothing having released anything.
+   *
+   * The cost of that was not the sentence alone. `world.standDownReason` feeds the desktop's
+   * LAUNCH CATCH-UP for orphaned scheduled sends, so a stood-down install whose winner had gone
+   * away would stop closing them — the appointment goes on saying "Sends Tue 14:50" for a time
+   * that has passed, for ever, which is the orphan `closeStoodDownAppointments` exists for.
+   *
+   * So the release writes a MARKER only the release writes (`organizer_released_at`, mail 0088)
+   * and this arm keys on it. Every promotion clears it, so it describes the current state.
+   *
+   * ── AND WHAT MAKES IT SAFE, WHICH IS NOT THIS FUNCTION ─────────────────────────────────────
+   *
+   * The auto-resume this memory exists to prevent is closed STRUCTURALLY as of 0.14.1: a reader
+   * with no takeover stamp never enters `runLeaseGate` on EITHER door, so an empty folder can no
+   * longer be read as permission whatever this function answers. That is why the arm can be added
+   * at all — before the gate fix, returning `null` here would have let the very next cycle
+   * re-promote the install that had just been asked to stop, which is this feature's own named
+   * risk. The two changes are one change and neither is correct alone.
+   */
+  /* LOOSE EQUALITY, DELIBERATELY. The field is required by the type, so typed code cannot omit it —
+     but this function is reachable from code that is not typechecked, and a caller that selected
+     the row without this column would hand it `undefined`. `!== null` reads `undefined` as A
+     RELEASE and erases the memory for every row it is asked about, which is the failure this arm
+     exists to prevent, inverted. `!= null` reads an absent value as NOT RELEASED, which keeps the
+     memory — the direction that costs a wrong sentence rather than a lost one. */
+  if (row.organizerReleasedAt != null) return null;
   const kind = isOrganizerKind(row.organizedByKind) ? row.organizedByKind : "unknown";
   const reason = `organized_elsewhere:${kind}`;
   /* Composed and then CHECKED rather than cast — and the check is UNREACHABLE from today's tree,

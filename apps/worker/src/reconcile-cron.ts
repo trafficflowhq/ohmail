@@ -209,6 +209,36 @@ export async function runReconcileCron(
       return { ran: false, reason: "mailbox-reader" };
     }
 
+    /* ── AND A MAILBOX SOMEBODY HAS ASKED THIS INSTALL TO STOP ORGANIZING (mail 0088) ─────────
+     *
+     * The arm above reads the ROLE, and a pending release deliberately does not move it: the row
+     * stays `organizer` until the always-on gate honours the request, because the claim lives in
+     * the customer's IMAP folder and expunging it belongs to the process holding that connection.
+     * So this backstop sailed straight past the guard above and did exactly what the person had
+     * just asked it to stop doing — dial, take the permit (renewing the very claim they asked to
+     * have removed), `ensureFolders`, and file mail — inside the window before the gate ran.
+     *
+     * Refusing rather than HONOURING it, and the distinction is the seam this file is on the wrong
+     * side of: releasing means expunging a claim, writing the row and closing the appointments
+     * this install can no longer keep, and there is exactly one place that sequence lives. A second
+     * copy here would be a second answer to "what does stopping mean", which is how the two doors
+     * came to disagree about the reader gate in the first place.
+     *
+     * THE RESIDUAL, STATED RATHER THAN LEFT TO BE FOUND: a mailbox served ONLY by this backstop —
+     * no always-on worker on its shard — keeps the request until a worker cycle runs, so the
+     * release is deferred rather than lost. That is the same shape as every other decision this
+     * file defers to the gate, and it is strictly better than the alternative it replaces, which
+     * was organizing past the request for ever.
+     */
+    if (row.releaseRequestedAt !== null) {
+      log.info(cronEvent("reconcile", "mailbox_release_requested"), {
+        mailboxId, accountId: row.accountId,
+        reason: "somebody has asked this install to stop organizing this mailbox; the backstop "
+          + "organizes nothing here and leaves the request for the gate that performs it",
+      });
+      return { ran: false, reason: "mailbox-release-requested" };
+    }
+
     // CLAIM THE SHARD, so the fence has a leadership record to be refused against. Written only
     // after every validation above has passed: a run that is about to return `other-shard` has no
     // business announcing itself as the shard's leader.
@@ -345,7 +375,9 @@ export async function runReconcileCron(
         // A FUNCTION, not an instant. The permit re-reads past its TTL and needs the clock at the
         // moment it asks, not the clock at the moment this pass started.
         now: () => new Date(),
-        takeover: row.takeoverAuthorizedAt ? "authorized" : "none",
+        // The instant, not a flag (0.14.1) — the election ranks one press against another, so the
+        // row's own stamp travels unchanged. See `mayOrganize` in `index.ts`.
+        takeover: row.takeoverAuthorizedAt ? { authorizedAt: row.takeoverAuthorizedAt } : null,
         ...(config.organizer?.staleAfterMs !== undefined ? { staleAfterMs: config.organizer.staleAfterMs } : {}),
         log: (event, detail) => { log.info(event, { ...detail, mailboxId, accountId: row.accountId }); },
       });

@@ -436,6 +436,33 @@ export interface MailboxDTO {
    * status gate would blank the field on exactly the rows it describes.
    */
   organizeConsentedAt: ISODateTime | null;
+  /**
+   * WHEN THE ORGANIZING SITUATION LAST CHANGED, AND WHEN THE PERSON LAST ACKNOWLEDGED IT (0.14.1).
+   *
+   * The notice a client shows is derived — `organizerEventAt > organizerEventSeenAt`, with a null
+   * `seenAt` meaning "never acknowledged" — rather than sent as a flag. Two instants rather than a
+   * boolean is what makes three properties hold at once, and none of them would hold otherwise:
+   *
+   *  · ONCE PER EVENT, ON EVERY DOOR. A phone, a browser and a desktop reading one row agree about
+   *    whether this has been seen. A per-client flag shows the same sentence once per client.
+   *  · TWO CHANGES BETWEEN TWO READS COLLAPSE TO THE LATER ONE. A mailbox that changed hands twice
+   *    while nobody looked produces one notice describing where it ended up — the only statement
+   *    still true — because there is no queue to drain.
+   *  · A DISMISSAL CANNOT SUPPRESS A LATER CHANGE. Stamping `seenAt` answers the event that stood
+   *    when the press happened and nothing after it.
+   *
+   * THE SENTENCE IS NOT ON THE WIRE, deliberately: it is derived at read time from
+   * {@link organizerRole}, {@link organizerState} and {@link organizedBy}, which are the same
+   * facts a stored sentence would copy. A copy is a thing that drifts the first time one writer
+   * updates one and not the other, and it would also be a server-rendered string a client cannot
+   * translate.
+   *
+   * UNCONDITIONAL, on the four organizer fields above them: every state they describe happens
+   * while `status` IS `connected`, so a status gate would blank them on exactly the rows they are
+   * about.
+   */
+  organizerEventAt: ISODateTime | null;
+  organizerEventSeenAt: ISODateTime | null;
   id: string;
   provider: string;              // 'imap' today; 'exchange' planned
   address: string;

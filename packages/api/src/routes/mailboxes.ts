@@ -204,6 +204,57 @@ export const mailboxRoutes: Route[] = [
     },
   },
   {
+    method: "POST",
+    pattern: "/mailboxes/:id/organizer-notice/dismiss",
+    // `work`, and no step-up — the `inbound-quiet/dismiss` precedent one route up, with its
+    // argument unchanged: one timestamp on the caller's own mailbox row (mail 0088), no socket, no
+    // spend, and dismissing a notice about your own mailbox is not a credential act. A second
+    // factor here would teach people the notice is dangerous, which is the opposite of true and
+    // would make them leave it standing.
+    //
+    // Naturally idempotent: a repeat press re-stamps the same acknowledgement, which only makes it
+    // more durable — the client's comparison is `eventAt > seenAt`.
+    //
+    // Mounted on the LOCAL door too, through `mailboxRoutes` (`local.ts`), because a standalone
+    // install shows the same notice off the same row and must be able to dismiss it. Nothing about
+    // this handler is hosted-specific.
+    cost: "work",
+    handler: async (req, deps, params) => {
+      const dto = await mailbox(deps).dismissOrganizerNotice(serviceContext(deps, req), params.id!);
+      return jsonResponse(dto);
+    },
+  },
+  {
+    method: "POST",
+    pattern: "/mailboxes/:id/release",
+    /* `work`, NOT `connection` — and the contrast with `/organize` two routes down is the whole
+     * classification argument rather than a technicality.
+     *
+     * `/organize` is `connection` because it MAY DIAL: the ceremony can carry a mailbox password
+     * and proves it against the customer's provider before writing anything. This opens no socket
+     * and can open none — the claim it is asking to give up lives in the customer's IMAP folder,
+     * and expunging it is the organizer's own next pass, not this request's.
+     *
+     * NO STEP-UP, and this is the asymmetry to state plainly because the reflex is to mirror
+     * `/organize`'s. A second factor guards the direction that TAKES CONTROL of somebody's mail;
+     * this direction gives it up, keeps every credential and every message, and is reversible with
+     * one press of the button beside it. Gating it would mean a person who has lost access to their
+     * second factor cannot stop a machine from filing their mail — which is a lockout of exactly
+     * the shape the 0.14.1 election exists to remove.
+     *
+     * Local twin for free through `mailboxRoutes`: `POST /local/mailboxes/:id/release`.
+     */
+    cost: "work",
+    handler: async (req, deps, params) => {
+      const result = await mailbox(deps).release(serviceContext(deps, req), params.id!);
+      // 202 for the one outcome that changed something, and it is an ACCEPTED rather than an OK on
+      // purpose: the ceasing has not happened yet. The organizer's next pass is what releases the
+      // claim, so a 200 would claim the mailbox had already been let go. `/organize` answers the
+      // same way for the same reason.
+      return jsonResponse(result, { status: result.outcome === "requested" ? 202 : 200 });
+    },
+  },
+  {
     method: "GET",
     pattern: "/mailboxes/:id/organizer",
     // `connection`, NOT `read`. `read` is defined as reading rows already stored for the caller's

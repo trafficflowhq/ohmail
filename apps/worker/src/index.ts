@@ -2,6 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 import {
   pruneIdempotencyKeys, noticeSinkFor, setNoticeSink, accountSettings, mailboxCredentials, mailboxes,
   messages, folderState, junkSweepCandidateWhere, closeStoodDownAppointments,
+  RELEASED_ORGANIZER_SEND_SENTENCE,
 } from "@trafficflow/db";
 import { makeOwnedDb, makeChangeWakeHub, type OwnedDb, type ChangeWakeFanout } from "@trafficflow/db/cloud";
 import {
@@ -105,7 +106,7 @@ import type { Tx, OrganizerRole, OrganizerState } from "@trafficflow/db";
 import {
   loadEnabledMailboxes, loadMailboxCreds, loadMailboxById, bootstrapEnvCreds,
   markMailboxFailed, markMailboxConnected, markMailboxStoodDown, clearOrganizerStandDown,
-  refreshOrganizerHolder,
+  markMailboxReleased, refreshOrganizerHolder,
   markMailboxSyncBlocked, clearMailboxSyncBlock,
   classifyMailboxError, mailboxErrorDetail,
   stampMailboxSyncNow, stampInitialImportComplete, makeSyncWriteFence, type LeaderFence,
@@ -365,6 +366,16 @@ interface MailboxRuntime {
      * one they merely connected.
      */
     organizeConsentedAt: Date | null;
+    /**
+     * Mail 0088. THE PERSON ASKED THIS INSTALL TO STOP ORGANIZING THIS MAILBOX AND KEEP THE MAIL.
+     *
+     * The mirror of {@link takeoverAuthorizedAt} in every respect that matters here: written by
+     * ANOTHER process while this one is already organizing, re-read every roster pass for that
+     * reason, and spent by the first gate that honours it. The gate takes it BEFORE the lease read
+     * — see the arm at the top of `mayOrganize` for why reading the lease first would renew a claim
+     * this install is about to delete.
+     */
+    releaseRequestedAt: Date | null;
   };
   /**
    * Mail 0083. WHAT THE ROW ALREADY SAYS THE HOLDER IS, so a reader's per-cycle peek writes only
@@ -1396,9 +1407,22 @@ export async function startWorkerWithLock(
         const since = top ? top.claimedAt : null;
         if (current.kind === kind && current.name === name && current.state === state
           && (current.since ? current.since.getTime() : null) === (since ? since.getTime() : null)) return;
+        /* ── ONLY AN OCCUPANCY FLIP IS AN EVENT (mail 0088) ──────────────────────────────────
+         *
+         * This function writes whenever ANY of the four columns moved, and most of those movements
+         * are not news: a peer restarting shifts `organized_since`, a machine being renamed shifts
+         * `organized_by_name`. Telling somebody "another install organizes this mailbox now" for
+         * either of those would be the notice crying wolf — and the once-per-event promise is only
+         * worth something if what counts as an event is what a person would call one.
+         *
+         * `held` ⇄ `stopped`, and either direction to or from "we have not looked", ARE what the
+         * two reader sentences are about: somebody is organizing this, or somebody stopped and you
+         * can claim it.
+         */
+        const stateChanged = current.state !== state;
         await refreshOrganizerHolder(db, mb.mailboxId, {
           kind, displayName: name, claimedAt: since, state,
-        }, { fence });
+        }, { fence, stateChanged });
         log.info("organizer_holder_refreshed", {
           mailboxId: mb.mailboxId, accountId: mb.accountId,
           organizerState: state, heldBy: name,
@@ -1441,11 +1465,84 @@ export async function startWorkerWithLock(
         takeoverAuthorizedAt: Date | null; disabledReason: string | null;
         organizerRole: OrganizerRole;
         organizeConsentedAt: Date | null;
+        /** Mail 0088 — "stop organizing this mailbox, keep my mail", honoured before anything. */
+        releaseRequestedAt: Date | null;
       },
       nonce: { leaseNonce: string | null },
       adapter: MailboxAdapter,
       phase: "attach" | "cycle",
     ): Promise<boolean> {
+      /* ══ THE RELEASE IS HONOURED FIRST, BEFORE THE LEASE IS READ AT ALL (mail 0088) ═══════
+       *
+       * "Stop organizing this mailbox and keep my mail" is not a question for the lease. The lease
+       * answers "who is entitled to organize this", and the answer here is nobody — the person has
+       * withdrawn the entitlement, and there is no folder content that could change that.
+       *
+       * ── AND IT IS FIRST FOR A REASON THAT IS NOT ORDERING PREFERENCE ────────────────────────
+       *
+       * Below this arm, `readMailboxLease` APPENDS. An install that read the lease before honouring
+       * the release would renew its claim, and then release it one statement later — leaving a
+       * window in which a machine that has been told to stop is advertising itself as the
+       * organizer, once per cycle, in somebody else's mailbox. It would also spend the round trip.
+       *
+       * THE ORDER OF THE THREE WRITES BELOW IS LOAD-BEARING:
+       *
+       *  1. the CLAIM goes first, while the connection that can expunge it is open. This is the
+       *     only teardown-shaped path in this process that releases, and it releases for
+       *     `releaseOrganizerClaim`'s stated reason: a fresh claim left behind stands another
+       *     install down for the whole staleness window, at exactly the moment somebody has chosen
+       *     to move organizing elsewhere.
+       *  2. the ROW second, which is what makes the release durable and what
+       *     `closeStoodDownAppointments` reads to decide it may act (its precondition is
+       *     `organizer_role = 'reader'`, checked inside its own transaction).
+       *  3. the APPOINTMENTS last, and only after the row says reader — the other order closes
+       *     nothing, silently, because the precondition is not met yet.
+       *
+       * A FAILED RELEASE DOES NOT ABORT THE CEASING. This install has stopped organizing whichever
+       * way the writes went; the costs of each failure are one staleness window (the claim), one
+       * more cycle in which the request is re-honoured (the row), and a worse sentence on a
+       * scheduled send (the appointments). None of them is a reason to keep organizing.
+       */
+      if (lease.releaseRequestedAt !== null) {
+        await releaseOrganizerClaim(
+          { mailboxId: mb.mailboxId, accountId: mb.accountId, adapter },
+          "the person asked this install to stop organizing this mailbox and keep reading it",
+        );
+        try {
+          const written = await markMailboxReleased(db, mb.mailboxId, { fence });
+          if (written) {
+            // The in-memory mirror of what the row now holds, on the same discipline the
+            // stand-down arm keeps: this pass's own later reads must not act on a value the write
+            // has just replaced, and the next cycle must not re-honour a request that is spent.
+            lease.releaseRequestedAt = null;
+            lease.takeoverAuthorizedAt = null;
+            lease.organizerRole = "reader";
+          } else {
+            log.info("organizer_release_write_fenced", {
+              mailboxId: mb.mailboxId, accountId: mb.accountId,
+              reason: "the mailbox is a tombstone, or this instance no longer leads the shard",
+            });
+          }
+        } catch (err) {
+          log.error("organizer_release_write_failed", {
+            mailboxId: mb.mailboxId, accountId: mb.accountId, err,
+            reason: "this process has stopped organizing the mailbox and its claim is gone; the "
+              + "row could not record it, so the next cycle honours the request again",
+          });
+        }
+        // The sentence is the RELEASE's, not a stand-down's: nobody took this mailbox, so
+        // "schedule it again where the mailbox is organized now" would name a place that does not
+        // exist. See `RELEASED_ORGANIZER_SEND_SENTENCE`.
+        await standDownAppointments(
+          mb, "organized_elsewhere:unknown", RELEASED_ORGANIZER_SEND_SENTENCE,
+        );
+        log.info("organizer_released", {
+          mailboxId: mb.mailboxId, accountId: mb.accountId, phase,
+          reason: "the person stopped organizing this mailbox here; the row keeps its credentials, "
+            + "its consent and its mirror, and this install reads it from now on",
+        });
+        return false;
+      }
       /* -- A CONSENT-LESS MAILBOX IS NEVER PROMOTED BY AN EMPTY FOLDER (mail 0083) -----------
        *
        * `decideLease`'s first arm organizes a mailbox with ZERO claims — "nobody has ever
@@ -1473,6 +1570,53 @@ export async function startWorkerWithLock(
         });
         return false;
       }
+      /* ══ A READER WITH NO PRESS NEVER ENTERS THE GATE ═══════════════════════════════════════
+       *
+       * ── THE DEFECT THIS CLOSES, WHICH WAS LIVE ON CLOUD AND ONLY ON CLOUD ──────────────────
+       *
+       * `readMailboxLease` is not a report. It runs the WRITE gate, and `decideLease`'s arm 4 —
+       * "the folder holds no readable claim at all, so nobody has ever organized this mailbox" —
+       * answers `organize` and APPENDS. That arm is correct for the question it is asked. The
+       * mistake was asking it.
+       *
+       * A CONSENTED READER against an EMPTY `ohmail/_meta` is not a hypothetical: it is what the
+       * folder looks like the moment the other organizer releases cleanly, which is precisely what
+       * a well-behaved stand-down and the release below both produce. This gate then ran arm 4 on
+       * the very next cycle, claimed the mailbox, and `:1493` promoted the row — AUTO-RESUME WITH
+       * NO PRESS, sixty seconds after somebody deliberately moved organizing away.
+       *
+       * The desktop door never had it (`reader-no-auto-resume.test.ts` pins the sidecar's arm), so
+       * the two doors disagreed about the product's own governing rule — *ceasing to organize is
+       * automatic; BECOMING an organizer always requires an explicit human action* — with the
+       * hosted side on the wrong side of it.
+       *
+       * ── AND WITHOUT THIS LINE THE RELEASE ABOVE IS A CONTROL THAT UNDOES ITSELF ────────────
+       *
+       * That is what makes this a REQUIRED fix rather than a hardening. "Stop organizing here" ends
+       * with an empty folder and a consented reader — the exact shape arm 4 promotes — so the
+       * release would be reversed by the next cycle of the process that performed it, every time,
+       * and the button would look broken in the most alarming possible way.
+       *
+       * ── WHAT REPLACES THE READ ─────────────────────────────────────────────────────────────
+       *
+       * Nothing here, and that is deliberate: BOTH call sites already peek on a `false` answer
+       * (`attach`'s else-branch and `visitMailbox`'s `if (!organize)`), through `refreshReaderHolder`
+       * — the APPEND-less `readLeasePeek` whose IO object has one method and no way to write. So
+       * the reader still learns who holds the mailbox on every cycle and its banner stays fresh;
+       * it simply learns by LOOKING. Peeking a second time here would double the FETCH per cycle
+       * for one answer.
+       *
+       * `takeoverAuthorizedAt` is the exemption and must be: that stamp IS the explicit human
+       * action, so a reader carrying one is exactly the reader that should be allowed to claim.
+       */
+      if (lease.organizerRole === "reader" && lease.takeoverAuthorizedAt === null) {
+        log.info("organizer_reader_peek_only", {
+          mailboxId: mb.mailboxId, accountId: mb.accountId, phase,
+          reason: "this install reads this mailbox and nobody has asked it to organize it, so it "
+            + "looks at the lease and never runs the gate — an empty folder is not permission",
+        });
+        return false;
+      }
       const outcome = await readMailboxLease({
         adapter,
         self: leaseSelfFor(nonce),
@@ -1480,7 +1624,12 @@ export async function startWorkerWithLock(
         // The no-seize-back rule. The stamp is what tells "the user just added this
         // mailbox to Cloud" apart from "the subscription lapsed and came back", which are
         // otherwise identical to the gate.
-        takeover: lease.takeoverAuthorizedAt ? "authorized" : "none",
+        //
+        // THE INSTANT AND NOT A FLAG (0.14.1). It is the row's own `takeover_authorized_at`,
+        // handed over unchanged, because the election ranks presses against each other: what
+        // decides a contest between this install and another one that has ALSO been pressed for is
+        // which person pressed last, and a boolean cannot say.
+        takeover: lease.takeoverAuthorizedAt ? { authorizedAt: lease.takeoverAuthorizedAt } : null,
         ...(organizerStaleAfterMs !== undefined ? { staleAfterMs: organizerStaleAfterMs } : {}),
         log: (event, detail) => { log.info(event, { ...detail, mailboxId: mb.mailboxId, accountId: mb.accountId }); },
       });
@@ -1617,10 +1766,18 @@ export async function startWorkerWithLock(
      */
     async function standDownAppointments(
       mb: { mailboxId: string; accountId: string }, reason: MailboxDisabledReason,
+      /**
+       * The RELEASE's sentence, when this close is a release rather than a stand-down (mail 0088).
+       * Omitted, `reason` chooses — every pre-0088 caller. See `RELEASED_ORGANIZER_SEND_SENTENCE`
+       * for why a release cannot quote a stand-down's: nobody took this mailbox, so "schedule it
+       * again where the mailbox is organized now" names a place that does not exist.
+       */
+      sentence?: string,
     ): Promise<void> {
       try {
         const r = await closeStoodDownAppointments(db as unknown as Tx, {
           accountId: mb.accountId, mailboxId: mb.mailboxId, reason, now: new Date(),
+          ...(sentence !== undefined ? { sentence } : {}),
         });
         // Only when something closed: the overwhelming majority of stand-downs have no
         // appointment to close and must stay silent.
@@ -1660,7 +1817,17 @@ export async function startWorkerWithLock(
      * Best effort, always. A failed release costs the winner one staleness window; a release
      * that could abort a detach would be strictly worse than the fault it reports.
      */
-    async function releaseOrganizerClaim(rt: MailboxRuntime, why: string): Promise<void> {
+    async function releaseOrganizerClaim(
+      /**
+       * The three fields this needs, rather than a whole {@link MailboxRuntime} — which a runtime
+       * still satisfies, so the roster's call sites are unchanged. Widened in mail 0088 because the
+       * release arm inside `mayOrganize` runs BEFORE a runtime exists on the attach path: it holds
+       * the adapter and the two ids and nothing else, and building a runtime to satisfy a
+       * parameter would be inventing state to describe a mailbox this process is giving up.
+       */
+      rt: { mailboxId: string; accountId: string; adapter: MailboxAdapter },
+      why: string,
+    ): Promise<void> {
       try {
         const released = await releaseMailboxClaim(rt.adapter, organizerInstallId);
         if (released === 0) return;
@@ -2075,6 +2242,10 @@ export async function startWorkerWithLock(
           // reason, so without this the gate had nothing left to notice it by.
           organizerRole: mb.organizerRole,
           organizeConsentedAt: mb.organizeConsentedAt,
+          // Mail 0088 — the release request, read at attach for the same reason the stamp above
+          // it is: a press that landed while this process was down is still owed an answer, and
+          // the first gate after a restart is where it gets one.
+          releaseRequestedAt: mb.releaseRequestedAt,
         };
         /** What the row says the holder is, so the reader peek writes only on a CHANGE. */
         const holderSeen = {
@@ -2802,6 +2973,11 @@ export async function startWorkerWithLock(
               // nothing until the worker happened to restart. The two columns are written in one
               // transaction, so refreshing them together is also what keeps them consistent here.
               organizeConsentedAt: mb.organizeConsentedAt,
+              // Mail 0088. Refreshed with the pair above and for the identical reason: "stop
+              // organizing this mailbox" is written by ANOTHER process while this one is already
+              // organizing it, and a value captured at attach would leave the person's press
+              // doing nothing until the worker happened to restart.
+              releaseRequestedAt: mb.releaseRequestedAt,
             };
             // CONVERGE THE ROW ONTO REALITY — but only about a mailbox that has actually SYNCED.
             //

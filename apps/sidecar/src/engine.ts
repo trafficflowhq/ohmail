@@ -16,7 +16,8 @@ import {
 // `classifyLedgerSource`, `drizzle-repo.ts` imports the tables), so this file should not be the
 // module that enters that graph.
 import {
-  accountSettings, closeStoodDownAppointments, mailboxCredentials, mailboxes,
+  accountSettings, closeStoodDownAppointments, RELEASED_ORGANIZER_SEND_SENTENCE,
+  mailboxCredentials, mailboxes,
   // Mail 0083 — the role vocabulary and the machine-name bound. One spelling for the sidecar's
   // gate, the worker's gate and the eleven service write doors; see `db/src/organizer-role.ts`.
   organizerDisplayName, isOrganizerRole,
@@ -100,7 +101,7 @@ import {
 // The APPEND-LESS read, straight from core: an install that has not been asked to organize must
 // still be able to say who does, and `runLeaseGate` cannot answer that question without taking
 // the mailbox (its empty-folder arm claims). One method, no way to write. See
-// `notePreConsentHolder`.
+// `notePeekedHolder`.
 import { readLeasePeek, type LeasePeekIo } from "@trafficflow/core/adapters/organizer-lease";
 import { OrganizerProfileSync } from "@trafficflow/worker/profile";
 // The SCHEDULED-RESURFACE FLIP, from the same package and for the third instance of the same
@@ -2481,10 +2482,19 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * still-stood-down install runs the catch-up again, and the row it would close is still
        * exactly as it was.
        */
-      const standDownAppointments = async (reason: MailboxDisabledReason): Promise<void> => {
+      const standDownAppointments = async (
+        reason: MailboxDisabledReason,
+        /**
+         * The RELEASE's sentence, when this close is a release rather than a stand-down (mail
+         * 0088). Omitted, `reason` chooses — the stand-down arm and the launch catch-up. See
+         * `RELEASED_ORGANIZER_SEND_SENTENCE` for why a release cannot quote a stand-down's.
+         */
+        sentence?: string,
+      ): Promise<void> => {
         try {
           const r = await closeStoodDownAppointments(db as unknown as Tx, {
             accountId: world.accountId, mailboxId: mb.id, reason, now: now(),
+            ...(sentence !== undefined ? { sentence } : {}),
           });
           // Only when something closed: an install with no appointments — the overwhelming case —
           // stays silent on every stand-down and every launch, the rule every pass here follows.
@@ -2561,7 +2571,36 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * the mailbox cannot hold, and only an explicit human action clears it.
        */
       /**
-       * A PRE-CONSENT INSTALL LOOKS, AND STILL DOES NOT CLAIM.
+       * WHAT THE ROW ALREADY SAYS THE HOLDER IS, so the peek below writes only when something
+       * CHANGED (mail 0088).
+       *
+       * The hosted twin (`index.ts#MailboxRuntime.holderSeen`) has carried this since the reader
+       * mode landed; this side wrote every poll instead. Seeded NULL rather than from `world`,
+       * which does not carry the four columns — so the first peek of a launch always writes, once,
+       * and every settled poll after it writes nothing.
+       *
+       * The first write's `organizer_event_at` is stamped only if the OCCUPANCY differs from this
+       * seed, i.e. only when the peek actually finds a holder. A launch that finds the same empty
+       * folder the row already recorded stamps nothing.
+       */
+      const holderSeen: {
+        kind: string | null; name: string | null; since: Date | null; state: string | null;
+      } = { kind: null, name: null, since: null, state: null };
+
+      /**
+       * AN INSTALL THAT IS NOT THE ORGANIZER LOOKS, AND STILL DOES NOT CLAIM.
+       *
+       * ── TWO ARMS REACH IT, AND UNTIL 0.14.1 ONLY ONE DID ────────────────────────────────────
+       *
+       * A PRE-CONSENT install: nobody has asked this machine to organize the mailbox.
+       * A DEMOTED READER: somebody else won it, or the person released it here.
+       *
+       * The second arm used to return without peeking at all — it read a value in RAM
+       * (`priorStandDown`) and stopped — so a demoted desktop's holder columns FROZE at the instant
+       * of the handover. The pane went on naming whoever had taken the mailbox long after they had
+       * stopped, and if the mailbox changed hands again nothing on this install ever learned it.
+       * A reader that keeps polling has no excuse for that: it is connected to the mailbox and the
+       * answer is one FETCH away.
        *
        * The consent arm below returns BEFORE `readMailboxLease`, and it has to: that function is not
        * a report, it APPENDS on an empty folder. But returning early also means never learning who
@@ -2588,7 +2627,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * ONLY WHEN SOMETHING CHANGED, so the steady state of a mailbox waiting on its consent screen
        * is one FETCH and zero writes per pass.
        */
-      const notePreConsentHolder = async (): Promise<void> => {
+      const notePeekedHolder = async (reason: MailboxDisabledReason | null): Promise<void> => {
         const peekIo = (adapter as Partial<{ leasePeekIo(): LeasePeekIo }>).leasePeekIo;
         if (typeof peekIo !== "function") return;
         try {
@@ -2605,20 +2644,52 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           const state = seen.state === "held" ? "held" : seen.state === "stopped" ? "stopped" : null;
           const name = top && top.displayName.trim() !== "" ? organizerDisplayName(top.displayName) : null;
           const kind = top === null ? null : top.kind;
-          organizer = { organizing: false, reason: null, heldBy: name };
+          const since = top ? top.claimedAt : null;
+          /* The REASON is the caller's, because the two arms that peek mean different things by
+             the same four columns. A pre-consent install names no reason — nobody has stood
+             anything down and putting "another install has claimed this mailbox" in front of
+             somebody who simply has not finished setup would be false. A DEMOTED reader names the
+             stand-down it remembers, so the pane keeps saying why it is not organizing. */
+          organizer = { organizing: false, reason, heldBy: name };
+          /* ── ZERO WRITES IN THE STEADY STATE, AND THE CHECK IS NEW (mail 0088) ──────────────
+           *
+           * This block claimed "ONLY WHEN SOMETHING CHANGED" and then wrote unconditionally — one
+           * UPDATE per mailbox per poll for four values that were already there. The hosted twin
+           * (`index.ts#refreshReaderHolder`) had the comparison and this side did not, and nothing
+           * could notice: an idempotent write is invisible.
+           *
+           * It stops being invisible the moment an event instant rides the same statement, which
+           * is why the comparison lands here rather than in a tidying pass. Without it every poll
+           * of a settled reader would stamp `organizer_event_at` and the notice would reappear
+           * every fifteen seconds for ever.
+           */
+          const same = holderSeen.kind === kind && holderSeen.name === name
+            && holderSeen.state === state
+            && (holderSeen.since ? holderSeen.since.getTime() : null)
+              === (since ? since.getTime() : null);
+          if (same) return;
+          /* AN OCCUPANCY FLIP IS AN EVENT; A RENAME OR A NEW TENURE IS NOT. The hosted twin's
+             argument verbatim: `held` ⇄ `stopped` (and either direction to or from "we have not
+             looked") is what the reader's two sentences are about, while a peer restarting shifts
+             `organized_since` and a machine being renamed shifts the name — neither is news, and
+             telling somebody about them is the notice crying wolf. */
+          const stateChanged = holderSeen.state !== state;
           await db.update(mailboxes)
             .set({
               organizedByKind: kind,
               organizedByName: name,
-              organizedSince: top ? top.claimedAt : null,
+              organizedSince: since,
               organizerState: state,
+              ...(stateChanged ? { organizerEventAt: now() } : {}),
             })
             .where(eq(mailboxes.id, mb.id));
+          holderSeen.kind = kind; holderSeen.name = name;
+          holderSeen.since = since; holderSeen.state = state;
         } catch (err) {
           log("organizer_peek_failed", {
             err,
-            reason: "this install has not been asked to organize this mailbox and could not see who "
-              + "does; the row keeps its previous answer and the next pass looks again",
+            reason: "this install reads this mailbox and could not see who organizes it; the row "
+              + "keeps its previous answer and the next pass looks again",
           });
         }
       };
@@ -2643,6 +2714,31 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * exactly what it was before this read existed. A takeover deferred to the next poll is a
          * far better outcome than a launch that fails because a status read did.
          */
+        /** What the ROW says the role is, re-read every pass beside the stamp (mail 0088). */
+        let rowRole: string = "organizer";
+        /**
+         * DID THE READ ABOVE ACTUALLY LAND? — and this is a `let` rather than an inferred default
+         * because the alternative was measured to be a hole.
+         *
+         * `rowRole` is a fresh optimistic literal per call, so a re-read that THREW left it saying
+         * `"organizer"` and the gate below ran the write gate anyway. That is the auto-resume this
+         * release exists to close, reached through the read that was added to close it: the person
+         * releases, the row says `reader`, the folder is empty, a later poll's point-read fails,
+         * and `decideLease`'s arm 4 hands the mailbox straight back — under a row that still says
+         * `reader`, so the install would move mail on IMAP while its own API refused every write.
+         *
+         * The comment that stood here claimed the failure "leaves the in-memory value standing,
+         * which is exactly what it was before this read existed". That was true of
+         * `priorStandDown`, an outer-scope value that survived polls. It is not true of a local
+         * initialiser, and the difference is the defect.
+         *
+         * So an unreadable row is treated as "do not claim". The cost is one deferred poll for an
+         * organizer — its claim stays fresh for forty more renews — against a reversed human
+         * decision the other way.
+         */
+        let rowRead = false;
+        /** Mail 0088 — "stop organizing this mailbox and keep my mail", if it has been asked. */
+        let releaseRequested: Date | null = null;
         try {
           const [row] = await db.select({
             at: mailboxes.takeoverAuthorizedAt,
@@ -2650,12 +2746,43 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             // that separates "nobody has been asked" from "this install is the organizer", and
             // before it was read here NOTHING on this door read it at all.
             consentedAt: mailboxes.organizeConsentedAt,
+            /* ── AND THE ROLE, WHICH IS WHAT THE RAM MEMORY WAS STANDING IN FOR (mail 0088) ──
+             *
+             * `priorStandDown` was a process-local `let`, and the arm it guarded was the whole of
+             * "this desktop does not auto-resume". Two things were wrong with reading RAM here and
+             * only one of them was a staleness:
+             *
+             *  · another writer moves this row — the local `organize here` door, a `DELETE`, the
+             *    Settings pane — and RAM does not hear about it;
+             *  · and a value that starts NULL at assembly means the FIRST pass after a press is
+             *    resolved from a snapshot taken before it, so the two halves of the gate can
+             *    disagree about the same row inside one cycle.
+             *
+             * The row is the memory the mailbox cannot hold, so the row is what is read. One
+             * indexed point-read per poll, in the SAME statement as the columns beside it.
+             */
+            role: mailboxes.organizerRole,
+            releaseAt: mailboxes.releaseRequestedAt,
+            // The holder columns, so the peek below can tell a CHANGE from a no-op without a
+            // second round trip — and so a value another writer moved is not compared against a
+            // stale copy in this process.
+            byKind: mailboxes.organizedByKind,
+            byName: mailboxes.organizedByName,
+            since: mailboxes.organizedSince,
+            state: mailboxes.organizerState,
           })
             .from(mailboxes).where(eq(mailboxes.id, mb.id)).limit(1);
           if (row) {
+            rowRead = true;
             takeoverAuthorized = row.at !== null;
             observedTakeoverAt = row.at;
             consented = row.consentedAt !== null;
+            rowRole = row.role;
+            releaseRequested = row.releaseAt;
+            holderSeen.kind = row.byKind;
+            holderSeen.name = row.byName;
+            holderSeen.since = row.since;
+            holderSeen.state = row.state;
           }
         } catch (err) {
           log("organizer_takeover_reread_failed", {
@@ -2664,15 +2791,119 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               "row and the next cycle asks again",
           });
         }
-        // The row's memory outranks the folder. See `priorStandDown` above: this is the arm that
-        // makes "the desktop does not auto-resume" survive a relaunch, and it deliberately does not
-        // even read the lease — there is nothing for the gate to decide about a mailbox this install
-        // has been told to stop organizing.
-        //
-        // A LIVE REQUEST OUTRANKS THAT MEMORY, and it has to now that the stamp is re-read: the
-        // press is the explicit human action the stand-down's stickiness exists to wait for, and
-        // `priorStandDown` was computed at assembly from a row that had no stamp on it yet.
-        if (priorStandDown && !takeoverAuthorized) return false;
+
+        /* ══ THE RELEASE IS HONOURED FIRST, BEFORE THE LEASE IS READ AT ALL (mail 0088) ═══════
+         *
+         * The hosted twin's arm, and its whole argument applies verbatim: "stop organizing this
+         * mailbox and keep my mail" is not a question for the lease, and reading the lease first
+         * would RENEW a claim this install is about to delete — advertising a machine that has been
+         * told to stop, once per poll, in somebody's mailbox.
+         *
+         * The three writes are in the same load-bearing order: the CLAIM while the connection that
+         * can expunge it is open, then the ROW (which is what makes the ceasing durable and what
+         * `closeStoodDownAppointments` reads to decide it may act), then the APPOINTMENTS. None of
+         * the three may abort the ceasing: this install has stopped organizing whichever way they
+         * went.
+         *
+         * THE TIMER AND THE LOGIN STAY, exactly as they do on a stand-down. A release keeps the
+         * mirror growing, the mail readable and the send path open — that is the whole difference
+         * between it and removing the mailbox, and it is what the copy promises.
+         */
+        if (releaseRequested !== null) {
+          try {
+            const released = await releaseMailboxClaim(adapter, installId);
+            if (released > 0) {
+              log("organizer_claim_released", {
+                claims: released,
+                reason: "the person asked this install to stop organizing this mailbox; its claim "
+                  + "is out of the folder so another install can take it without waiting out the "
+                  + "staleness window",
+              });
+            }
+          } catch (err) {
+            log("organizer_claim_release_failed", {
+              err,
+              reason: "the claim ages out of the mailbox on its own; until it does, another "
+                + "install that tries to take this mailbox over stands itself down again",
+            });
+          }
+          try {
+            await db.update(mailboxes)
+              .set({
+                organizerRole: "reader",
+                // Nobody won this mailbox. Leaving the holder columns populated would put
+                // "organized by <someone>" on a mailbox nothing is organizing, in front of the
+                // person who just pressed the button that stopped it.
+                organizedByKind: null,
+                organizedByName: null,
+                organizedSince: null,
+                organizerState: null,
+                // Both stamps are spent. They are contradictory instructions about one mailbox, and
+                // a release that left a becoming authorized would be promoted straight back by the
+                // very next poll — the control undoing itself.
+                releaseRequestedAt: null,
+                takeoverAuthorizedAt: null,
+                // AND THE RECORD THAT IT HAPPENED (mail 0088). The ask is gone; without this the
+                // row is byte-identical to a stood-down reader whose winner has since gone away,
+                // and the launch catch-up for orphaned appointments would stop running on it. See
+                // `standDownMemory`'s released arm.
+                organizerReleasedAt: now(),
+                organizerEventAt: now(),
+              })
+              .where(eq(mailboxes.id, mb.id));
+            holderSeen.kind = null; holderSeen.name = null;
+            holderSeen.since = null; holderSeen.state = null;
+          } catch (err) {
+            log("organizer_release_write_failed", {
+              err,
+              reason: "this install has stopped organizing the mailbox and its claim is gone; the "
+                + "row could not record it, so the next poll honours the request again",
+            });
+          }
+          takeoverAuthorized = false;
+          observedTakeoverAt = null;
+          organizer = { organizing: false, reason: null, heldBy: null };
+          /* NOT `priorStandDown`. That memory answers "somebody else holds this", and it is what
+             `standDownMemory` derives from the row — which now reports a released mailbox as no
+             memory at all. Setting it here would make the pane say another organizer had taken the
+             mailbox from an install whose owner simply stopped it. */
+          // The RELEASE's sentence: nobody took this mailbox, so "schedule it again where the
+          // mailbox is organized now" would name a place that does not exist.
+          await standDownAppointments("organized_elsewhere:unknown", RELEASED_ORGANIZER_SEND_SENTENCE);
+          log("organizer_released", {
+            reason: "the person stopped organizing this mailbox here; this install keeps its login, "
+              + "its poll timer, its credentials and its mirror, and reads the mailbox from now on",
+          });
+          return false;
+        }
+
+        /* ══ A READER WITH NO PRESS NEVER ENTERS THE GATE — AND IT LOOKS ═══════════════════════
+         *
+         * This replaces `if (priorStandDown && !takeoverAuthorized) return false;`, and it changes
+         * two things: WHERE the answer comes from (the row, not RAM — see the re-read above) and
+         * what happens on the way out.
+         *
+         * The old arm returned without peeking, so a demoted desktop's holder columns froze at the
+         * instant of the handover: the pane named whoever had taken the mailbox for ever, and a
+         * second handover was invisible here. `notePeekedHolder` is the APPEND-less read — an IO
+         * object with one method and no way to write — so the reader learns who holds the mailbox
+         * every poll and still cannot claim it.
+         *
+         * A LIVE PRESS OUTRANKS THE ROLE, and it must: the press is the explicit human action this
+         * arm exists to wait for, and the stamp is re-read above precisely so a press that landed
+         * after assembly is seen.
+         */
+        if (!rowRead || (rowRole === "reader" && !takeoverAuthorized)) {
+          if (!rowRead) {
+            log("organizer_row_unreadable", {
+              reason: "this pass could not read the row that says whether this install organizes "
+                + "this mailbox, so it looks at the lease and claims nothing — an unreadable row "
+                + "is not permission, and the next poll asks again",
+            });
+          }
+          await notePeekedHolder(priorStandDown as MailboxDisabledReason | null);
+          return false;
+        }
         /* -- NOBODY HAS AGREED TO THIS YET, SO THIS INSTALL READS AND ARRANGES NOTHING ----------
          *
          * AHEAD OF THE LEASE READ, and that ordering is the whole guard rather than a detail.
@@ -2709,7 +2940,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          */
         if (!consented && !takeoverAuthorized) {
           organizer = { organizing: false, reason: null, heldBy: null };
-          await notePreConsentHolder();
+          await notePeekedHolder(null);
           return false;
         }
         const outcome = await readMailboxLease({
@@ -2720,7 +2951,15 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // organizer went quiet" from "the user wants this machine to have it". Without it the
           // lease reports such a mailbox as available and declines to take it, which is the right
           // default and the wrong answer once somebody has actually asked.
-          takeover: takeoverAuthorized ? "authorized" : "none",
+          //
+          // THE INSTANT, and it is `observedTakeoverAt` rather than a fresh clock reading: the
+          // stamp this pass actually read is the one it may act on, and it is the same value the
+          // stand-down below compares against before voiding anything. A `now()` here would make
+          // every press look like it happened at the moment of the gate — so a stale press that
+          // ought to lose rule 6 would win it, on every cycle, for ever.
+          takeover: takeoverAuthorized && observedTakeoverAt !== null
+            ? { authorizedAt: observedTakeoverAt }
+            : null,
           ...(config.leaseStaleAfterMs !== undefined ? { staleAfterMs: config.leaseStaleAfterMs } : {}),
           log,
         });
@@ -2809,6 +3048,47 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                    * writes are the right place for that, not a stamp-spending UPDATE.
                    */
                   organizerRole: "organizer",
+                  // Mail 0088 — a mailbox organized here again is not a released one. The marker
+                  // describes the CURRENT state, so the promotion ends it.
+                  organizerReleasedAt: null,
+                  /* -- AND THE HOLDER COLUMNS GO WITH THE ROLE (mail 0088) ---------------------
+                   *
+                   * This block used to leave them, under a note reading *"the two clean-up columns
+                   * are deliberately NOT touched: `organized_by_*` is what the pane renders about
+                   * the install that held it, and the next cycle's own writes are the right place
+                   * for that."* The hosted twin has cleared them in this same statement since mail
+                   * 0083, and its reason is the one that governs: **a row that says `organizer`
+                   * while still naming who organizes it is a banner that contradicts itself**, and
+                   * every client reads the ROW rather than dialling IMAP precisely so it can be
+                   * read cheaply everywhere.
+                   *
+                   * "The next cycle's own writes" was the load-bearing half and it is false for
+                   * this shape: `notePeekedHolder` is the only later writer of these columns and it
+                   * runs on the READER arm, which an organizer never reaches. So the stale holder
+                   * stood until something demoted the install again.
+                   *
+                   * It stopped being cosmetic when the notice landed: its sentence is derived from
+                   * the role, the occupancy and the holder, so an organizer row naming a previous
+                   * holder renders "another install organizes this mailbox now" about itself.
+                   */
+                  organizedByKind: null,
+                  organizedByName: null,
+                  organizedSince: null,
+                  organizerState: null,
+                  /* -- MAIL 0088: THE ORGANIZING SITUATION JUST CHANGED, SO SAY WHEN ----------
+                   *
+                   * The fourth of the five writers of the (role, state, holder) triple, and this
+                   * is the promotion half. A person watching another door — the phone, a browser
+                   * on the hosted account — is entitled to be told once that this install now
+                   * organizes the mailbox; on their door the sentence is the one that says
+                   * somebody else took it.
+                   *
+                   * In the SAME statement as the role, on `markMailboxStoodDown`'s reasoning: a
+                   * row whose role has moved while its event instant still describes the previous
+                   * situation is a client rendering yesterday's sentence, with nothing anywhere to
+                   * notice it.
+                   */
+                  organizerEventAt: now(),
                 })
                 .where(eq(mailboxes.id, mb.id))
                 .returning({ status: mailboxes.status });
@@ -2886,6 +3166,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           await db.update(mailboxes)
             .set({
               organizerRole: "reader",
+              // Mail 0088 — BEING BEATEN IS NOT RELEASING. A row carrying both would report the
+              // quieter of the two events to a person whose mailbox somebody else has just taken.
+              organizerReleasedAt: null,
               organizedByKind: (outcome.by?.kind ?? outcome.reason.split(":")[1] ?? "unknown"),
               // Header-safe and capped at the write — this is another install's machine name,
               // arriving out of an RFC822 header it wrote.
@@ -2901,6 +3184,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                  rely on. */
               takeoverAuthorizedAt: sql`case when ${mailboxes.takeoverAuthorizedAt} is not distinct from ${observedTakeoverAt}
                 then null else ${mailboxes.takeoverAuthorizedAt} end`,
+              // Mail 0088 — the demotion half, and the fifth writer of the triple. Stamped in the
+              // same statement as the role and the holder columns it is announcing.
+              organizerEventAt: now(),
             })
             .where(eq(mailboxes.id, mb.id));
         } catch (err) {

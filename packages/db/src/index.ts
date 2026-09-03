@@ -50,6 +50,12 @@ export { upsertDesiredSeen } from "./flag-intent.js";
 // Reaches `schema-mail.js`, `change-log.js` and `mailbox-errors.js` alone.
 export {
   closeStoodDownAppointments, STAND_DOWN_SEND_SENTENCES,
+  // The RELEASE's sentence (mail 0088). The same close with the same precondition — a release
+  // leaves a reader — and a different sentence, because a release hands the mailbox to nobody
+  // while keeping everything: "schedule it again where the mailbox is organized now" would name a
+  // place that does not exist. Passed as `StandDownSendsInput.sentence`; see that field for why it
+  // is a parameter rather than a fourth `MailboxDisabledReason` member.
+  RELEASED_ORGANIZER_SEND_SENTENCE,
   // The REMOVAL arm of the same module. A user removing a mailbox orphans its appointments in
   // exactly the way a stand-down does, and the close was refused for it by construction — the
   // stand-down's precondition reads a null `disabled_reason` as "not my event" — so a removal

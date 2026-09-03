@@ -69,6 +69,30 @@ export type MailboxTakeoverResult =
   | { outcome: "disconnected" };
 
 /**
+ * What {@link MailboxService.release} found, and therefore what it did (mail 0088).
+ *
+ * A CLOSED SET for {@link MailboxTakeoverResult}'s reason: the two non-events want two different
+ * sentences and a caller that only knows "nothing happened" has to invent one. Neither is an
+ * error, and that is the design — a request to stop organizing a mailbox that is not being
+ * organized here has already got what it asked for.
+ */
+export type MailboxReleaseResult =
+  /**
+   * The request is recorded. The organizer honours it on its next pass — which is at most one
+   * poll interval away and is what the copy has to say ("within a minute"), because the claim
+   * lives in the mailbox and only the process holding that connection can expunge it.
+   */
+  | { outcome: "requested" }
+  /**
+   * This install does not organize this mailbox, so there is nothing to stop. A no-op and NOT a
+   * refusal: the person's intent is already true, and it is also where a second press lands, since
+   * the first one's gate demotes the row within a cycle.
+   */
+  | { outcome: "not_organizing" }
+  /** Disconnected by the user. A removed mailbox has no organizing to stop. Nothing written. */
+  | { outcome: "disconnected" };
+
+/**
  * The optional credential half of {@link MailboxService.organizeHere} — a password re-entered
  * inside the claim ceremony.
  *
@@ -1828,6 +1852,25 @@ export class MailboxService {
         // ends the relationship it was granted inside. Left set, it would be spent by whatever
         // re-enabled the row months later — the standing right the one-shot rule forbids.
         takeoverAuthorizedAt: null,
+        /* ── AND THE RELEASE REQUEST, FOR THE MIRROR REASON (mail 0088) ────────────────────
+         *
+         * A one-shot in the other direction, and it is worse to leave standing than the stamp
+         * above: the stamp is spent by a gate that runs only for a mailbox on the roster, while a
+         * release is honoured by a BACKGROUND pass — so a tombstone carrying one is a request a
+         * worker would act on, minutes later, against a mailbox the person removed.
+         *
+         * Caught by the race in `mailbox-takeover.concurrency.pg.test.ts` rather than by reading:
+         * a release that commits FIRST and a disconnect that commits second leave exactly this
+         * row, and the two doors serialize on the same `FOR UPDATE` so the interleaving is
+         * ordinary rather than exotic.
+         *
+         * `organizer_released_at` goes with it. A removal is not a release — the row is a
+         * tombstone, nobody organizes it and nobody stopped organizing it — and
+         * `closeRemovedMailboxAppointments`'s own header states the distinction the two sentences
+         * turn on.
+         */
+        releaseRequestedAt: null,
+        organizerReleasedAt: null,
         // ── AND THE SYNC BLOCK, FOR THE IDENTICAL REASON (mail 0029) ─────────────────────
         //
         // `mailbox-errors.ts` names the writers that hold "every writer that makes the statement
@@ -1927,6 +1970,120 @@ export class MailboxService {
       .set({ inboundQuietDismissedAt: ctx.now() })
       .where(and(eq(mailboxes.id, id), eq(mailboxes.accountId, ctx.accountId)));
     return this.toDTO(ctx, await this.ownedRow(ctx, id));
+  }
+
+  /**
+   * DISMISS THE ORGANIZER NOTICE for one mailbox (mail 0088) — "yes, I know who organizes this".
+   *
+   * ── THE SAME TWO-INSTANT SHAPE AS `dismissInboundQuiet`, AND FOR THE SAME REASONS ──────────
+   *
+   * The notice is `organizer_event_at > coalesce(organizer_event_seen_at, -infinity)`, so a
+   * dismissal is one timestamp and nothing else. Everything the sibling above argues holds here
+   * verbatim: stamped over whatever stood (a repeat press only makes the dismissal more durable),
+   * never cleared by the worker, and it suppresses only an event that PREDATES the press — a
+   * handover that happens afterwards re-shows, which is exactly what the presser meant.
+   *
+   * ── DELIBERATELY LEGAL WITH NO EVENT STANDING ──────────────────────────────────────────────
+   *
+   * Racing the worker is an everyday event here rather than a rare one: the gate stamps
+   * `organizer_event_at` on a sixty-second cycle while a person is looking at the notice it
+   * produced. Refusing a dismissal because the row moved a second ago would 409 somebody who is
+   * agreeing with us, and it would do it at the exact moment the sentence changed under them.
+   *
+   * ── NO STEP-UP, AND THAT IS AN ARGUMENT RATHER THAN AN OVERSIGHT ───────────────────────────
+   *
+   * `POST /mailboxes/:id/organize` carries one because it decides who moves somebody's mail. This
+   * decides whether a line is on a screen. A second factor in front of it would teach people that
+   * dismissing a notice is dangerous, which is the opposite of true and would make them leave it
+   * up — the sibling above states the same rule for the same reason.
+   *
+   * No `change_log` row, matching every other mailbox-lifecycle write: the panel and the sidebar
+   * poll `GET /mailboxes`, and the DTO this returns lets the pressing client settle at once.
+   */
+  async dismissOrganizerNotice(ctx: ServiceContext, id: string): Promise<MailboxDTO> {
+    await this.ownedRow(ctx, id); // 404 if not owned
+    await asTx(ctx).update(mailboxes)
+      .set({ organizerEventSeenAt: ctx.now() })
+      .where(and(eq(mailboxes.id, id), eq(mailboxes.accountId, ctx.accountId)));
+    return this.toDTO(ctx, await this.ownedRow(ctx, id));
+  }
+
+  /**
+   * STOP ORGANIZING THIS MAILBOX HERE, AND KEEP MY MAIL (mail 0088).
+   *
+   * The mirror of {@link organizeHere}, and the control the symmetric takeover was missing: until
+   * it existed, the only way to make a hosted organizer let go of a mailbox was to remove the
+   * mailbox — which deletes the credentials, stops the mirror and asks for the password again.
+   * People do not want that. They want the mail to keep arriving on the machine they are looking
+   * at while a different machine does the filing.
+   *
+   * ── IT AUTHORIZES A CEASING. IT DOES NOT PERFORM ONE ───────────────────────────────────────
+   *
+   * `organizeHere`'s boundary, in the other direction and for the identical reason: the claim
+   * lives in the customer's IMAP folder, expunging it is an IMAP write, and IMAP writes belong to
+   * the process that holds the connection. So this writes one timestamp and returns. The
+   * organizer's next pass honours it FIRST — before it reads the lease at all — releases the claim,
+   * writes the reader role with the holder columns cleared, closes the appointments it can no
+   * longer keep, and clears this column.
+   *
+   * A serverless function that expunged the claim itself would also be deciding, in a request, a
+   * question the gate is the single writer of.
+   *
+   * ── THE `FOR UPDATE` IS THE SAME LOCK, ON THE SAME ROW, IN THE SAME ORDER ──────────────────
+   *
+   * `organizeHere`, `update` and `delete` all take it, and this joins them, so the four serialize
+   * instead of interleaving. The interleaving it forbids is not exotic: a release and a claim-back
+   * are opposite instructions about one mailbox, and two requests that both read the row before
+   * either wrote would leave it carrying BOTH stamps. The gate honours the release first, so the
+   * losing order would silently discard a press the person had just been told succeeded.
+   *
+   * (`markMailboxReleased` also clears `takeover_authorized_at` for the same pair, which is what
+   * makes the residual harmless rather than merely unlikely — belt to this brace.)
+   *
+   * ── WHAT IS REFUSED, AND WHAT IS A NO-OP ───────────────────────────────────────────────────
+   *
+   * A tombstone (`status = 'disabled'`) is refused rather than revived: `organizeHere`'s argument
+   * verbatim — a removed mailbox has no organizing to stop, and answering anything else would be a
+   * lie in the reassuring direction.
+   *
+   * A mailbox this install does NOT organize is a no-op that answers honestly rather than a 409.
+   * The person's intent — "do not organize this here" — is already true, and there is nothing for
+   * a refusal to tell them to do differently. It is also the state a second press lands in, since
+   * the first one's gate demotes the row within a cycle.
+   */
+  async release(ctx: ServiceContext, id: string): Promise<MailboxReleaseResult> {
+    return asTx(ctx).transaction(async (tx) => {
+      const current = await this.ownedRowOn(tx, ctx, id, { forUpdate: true }); // 404 if not owned
+      // The tombstone, checked before the role for `organizeHere`'s reason: a removed mailbox's
+      // role says nothing about it.
+      if (current.status === "disabled") return { outcome: "disconnected" as const };
+      if (current.organizerRole !== "organizer") return { outcome: "not_organizing" as const };
+      await tx.update(mailboxes)
+        .set({
+          // NOT the role, and not the holder columns. **The GATE demotes**, exactly as it promotes,
+          // and for the same reason: flipping the role here would make a button in a browser the
+          // thing that decides who organizes a mailbox, with no reference to what the mailbox
+          // itself says — and it would leave a live claim standing in `ohmail/_meta` under a row
+          // that denies it.
+          releaseRequestedAt: ctx.now(),
+          // The block is this process's report about the worker's relationship to the mailbox, and
+          // this request invalidates it in both directions — `update` and `organizeHere` apply the
+          // same rule. The worker re-writes it within one pass if it is still true.
+          syncBlockedReason: null,
+          syncBlockedSince: null,
+        })
+        .where(and(
+          eq(mailboxes.id, id),
+          eq(mailboxes.accountId, ctx.accountId),
+          // Never revive a tombstone. Unreachable past the guard above — the row lock plus the
+          // re-read is what actually orders this against `delete` — and it stays for
+          // `organizeHere`'s stated reason: an UPDATE that is safe only because of a lock taken
+          // thirty lines earlier is one refactor away from being unsafe, and the refactor would
+          // fail nothing.
+          ne(mailboxes.status, "disabled"),
+        ));
+      return { outcome: "requested" as const };
+    });
   }
 
   /**
@@ -2217,7 +2374,28 @@ export class MailboxService {
         // direction.
         return { outcome: "disconnected" as const };
       }
-      if (current.organizerRole !== "reader" && current.organizeConsentedAt !== null) {
+      /* ── AND A PENDING RELEASE IS A THIRD STATE THIS CEREMONY IS FOR (mail 0088) ────────────
+       *
+       * `release` deliberately leaves the row an `organizer` with its consent intact — the GATE
+       * demotes, because the claim is in the customer's IMAP folder. That is exactly the shape the
+       * precondition below reads as "already organizing", so without this term:
+       *
+       *   press "Stop organizing here"; change your mind two seconds later and press "Organize
+       *   here" → 200 `already_organizing`, no stamp written, and the gate releases the mailbox a
+       *   minute later anyway.
+       *
+       * The person is told the opposite of what happens, and there is no second press that helps:
+       * every one of them lands on the same row and gets the same answer until the release
+       * completes. `release`'s own note argues the `FOR UPDATE` makes the two doors safe against
+       * each other, and it does — but a lock orders WRITES, and the failure here is a press that
+       * writes nothing at all.
+       *
+       * So a release-pending row is claim-back-eligible, and the update below cancels the request.
+       * Which is also the honest reading of the two columns: they are contradictory instructions
+       * about one mailbox, and the LATER press is the one a person meant.
+       */
+      const releasePending = current.releaseRequestedAt !== null;
+      if (!releasePending && current.organizerRole !== "reader" && current.organizeConsentedAt !== null) {
         /* ── ALREADY ORGANIZING, AND THE WINDOW STILL HAS TO LAND ──────────────────────────
          *
          * This used to return here and write nothing, which made "How far back" DECORATIVE on
@@ -2331,6 +2509,21 @@ export class MailboxService {
         // Rows written before mail 0083 still carry a stand-down reason; clear it with the rest so
         // a mailbox being organized here does not also claim somebody else organizes it.
         disabledReason: null,
+        /* ── AND THE RELEASE REQUEST IS CANCELLED (mail 0088) ─────────────────────────────────
+         *
+         * The two stamps are contradictory instructions about one mailbox and the gate honours the
+         * release FIRST, so leaving this standing would let a request the person has just changed
+         * their mind about win over the press they made second. Cleared unconditionally: the row
+         * lock above orders this against `release` itself, so whichever of the two commits last is
+         * the answer — which is what a person means by pressing a button.
+         *
+         * `organizer_released_at` goes with it, on `clearOrganizerStandDown`'s reasoning: the
+         * marker describes the CURRENT state, and a mailbox somebody has just asked to organize
+         * here is not a released one. Without that, the next claim-back would report "you stopped
+         * organizing this" about a mailbox this install organizes.
+         */
+        releaseRequestedAt: null,
+        organizerReleasedAt: null,
         // The block is this process's report about the worker's relationship to the mailbox, and
         // this request invalidates it in both directions — the same rule `update` applies. The
         // worker re-writes it within one roster pass if it is still true.
@@ -2823,6 +3016,21 @@ export class MailboxService {
       // neighbours, and as a plain instant: no coercion is possible or needed, since the only
       // writer is `organizeHere`'s COALESCE.
       organizeConsentedAt: m.organizeConsentedAt ? m.organizeConsentedAt.toISOString() : null,
+      /* THE NOTICE'S TWO INSTANTS (mail 0088), projected RAW and compared by the client.
+       *
+       * The comparison is deliberately not done here. `organizerEventAt > organizerEventSeenAt` is
+       * a rendering decision, and a server-computed boolean would settle it once for every door —
+       * which is wrong the moment two doors are open, because a dismissal on one of them changes
+       * the answer for the other and the polled row is how it travels. Sending both instants means
+       * every client computes the same predicate from the same facts and a dismissal converges on
+       * the next poll like every other lifecycle change.
+       *
+       * UNCONDITIONAL, like the four organizer fields above them: every state they describe
+       * happens while `status` IS `connected`. No coercion is possible or needed — both are plain
+       * instants written by this build's own writers.
+       */
+      organizerEventAt: m.organizerEventAt ? m.organizerEventAt.toISOString() : null,
+      organizerEventSeenAt: m.organizerEventSeenAt ? m.organizerEventSeenAt.toISOString() : null,
       // WHAT THIS MAILBOX'S SUBMISSION SERVER SAID IT WILL ACCEPT (mail 0055). UNCONDITIONAL, for
       // the reason the two lines above are: it is meaningful in every lifecycle state, and it is
       // read by the compose surface rather than by any error copy. `null` is "not known" — no

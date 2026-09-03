@@ -131,12 +131,62 @@ export const REMOVED_MAILBOX_SEND_SENTENCE =
   "This mailbox was removed from ohmail, so the scheduled send was not made. "
   + "Nothing was deleted from the mail server. Connect the mailbox again to schedule it.";
 
+/**
+ * WHAT A RELEASED MAILBOX'S DRAFTS ROW QUOTES (mail 0088) — the third occasion, and it needed its
+ * own sentence for the reason the removal's does.
+ *
+ * The three differ in the only thing a stored sentence has to get right: WHERE the message can be
+ * sent from now.
+ *
+ *  · a stand-down hands the mailbox to another organizer, so "schedule it again where the mailbox
+ *    is organized now" is true and actionable;
+ *  · a removal hands it to nobody and takes the credentials with it;
+ *  · a RELEASE hands it to nobody and keeps everything. The mailbox is still connected, the mirror
+ *    still grows, and the person can organize it here again with one press — so the true sentence
+ *    is neither of the other two. Quoting the stand-down's would tell somebody who had just chosen
+ *    to stop organizing that another install had claimed their mailbox, which is the exact class of
+ *    false statement `MailboxService.delete` clears `disabled_reason` to avoid.
+ *
+ * Past tense on the cause, for the reason the removal's header gives: the sentence has to survive
+ * the mailbox being organized again later, and "was released" does.
+ */
+export const RELEASED_ORGANIZER_SEND_SENTENCE =
+  "This install stopped organizing this mailbox, so the scheduled send was not made. "
+  + "Nothing was deleted from the mail server. Organize the mailbox again, or schedule it "
+  + "where it is organized now.";
+
 export interface StandDownSendsInput {
   accountId: string;
   mailboxId: string;
   /** The reason the mailbox is standing down — chooses the sentence. */
   reason: MailboxDisabledReason;
   now: Date;
+  /**
+   * THE SENTENCE, WHEN THE OCCASION IS NOT A STAND-DOWN (mail 0088).
+   *
+   * Omitted, the sentence is looked up from {@link reason}, which is every existing caller and is
+   * the shape this function was written for. Supplied, it REPLACES that lookup — for the one
+   * occasion that shares this function's precondition (`organizer_role = 'reader'`, checked inside
+   * the transaction) and does not share its cause: a deliberate release, where nobody took the
+   * mailbox and there is nowhere to send the person.
+   *
+   * ── WHY A PARAMETER RATHER THAN A FOURTH `reason` MEMBER ──────────────────────────────────
+   *
+   * `MailboxDisabledReason` is a closed set with a CHECK behind it and a column that stores it, and
+   * a release is NOT one of its members — nobody is organizing this mailbox elsewhere, which is
+   * exactly what all three existing members assert. Widening that union to carry a sentence would
+   * put a value in the type that no row may hold and that `reasonFor` can never produce.
+   *
+   * ── AND WHY NOT A SECOND EXPORTED FUNCTION, LIKE THE REMOVAL'S ────────────────────────────
+   *
+   * `closeRemovedMailboxAppointments` is separate because its PRECONDITION is different (a
+   * tombstone, not a reader) and preconditions are what distinguish these paths. A release leaves
+   * a reader, so it shares this precondition exactly — and a third copy of the same guarded UPDATE
+   * would be a third place for the lock order and the fence-inheritance argument to drift.
+   *
+   * The caller still passes a `reason`, and it is still what the log line names.
+   */
+  sentence?: string;
 }
 
 export interface StandDownSendsResult {
@@ -306,7 +356,9 @@ export async function closeStoodDownAppointments(
     return closeAppointmentsWithSentence(tx, {
       accountId: input.accountId,
       mailboxId: input.mailboxId,
-      sentence: STAND_DOWN_SEND_SENTENCES[reason],
+      // An explicit sentence wins; otherwise the reason chooses. See `StandDownSendsInput.sentence`
+      // for why the release supplies one rather than adding a fourth `reason` member.
+      sentence: input.sentence ?? STAND_DOWN_SEND_SENTENCES[reason],
       now: input.now,
     });
   });

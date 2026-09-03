@@ -433,8 +433,28 @@ export const DEFAULT_STALE_AFTER_MS = 10 * 60 * 1000;
 /** Who is holding a claim. A closed set — an unrecognised value is foreign-and-unknown. */
 export type OrganizerKind = "local" | "cloud";
 
-/** Whether a human has authorized THIS organizer to become the organizer of this mailbox. */
-export type TakeoverAuthorization = "authorized" | "none";
+/**
+ * A HUMAN ASKED FOR THIS INSTALL, AND WHEN.
+ *
+ * ── IT USED TO BE THE STRING `"authorized"`, AND THE INSTANT IS THE WHOLE 0.14.1 CHANGE ──────
+ *
+ * A boolean-shaped authorization can answer "may I take this mailbox" and nothing else, so the
+ * only way to rank two installs that had BOTH been pressed was to rank something else — which is
+ * what `kind` was doing, and why a local install had no path over a live Cloud however recently
+ * its owner had asked. The instant makes the press itself rankable, so the election orders by the
+ * thing a person actually did, and a stale press loses to a fresh one on both doors from the same
+ * folder contents.
+ *
+ * It is an object rather than a bare `Date | null` so that the type CANNOT accept the old string:
+ * `takeover: "authorized"` compiles nowhere now, which is the point. A union that still admitted a
+ * string would leave a call site nobody updated reading as "pressed at the epoch" — the lowest
+ * rank there is — so every authorized takeover in the fleet would be stale, silently, with the
+ * suite green.
+ */
+export interface TakeoverAuthorization {
+  /** The instant the press was recorded, as the row holds it. */
+  authorizedAt: Date;
+}
 
 /** A claim message, parsed. */
 export interface OrganizerClaim {
@@ -448,6 +468,21 @@ export interface OrganizerClaim {
   displayName: string;
   /** Per-write nonce. See the clone defence on {@link LeaseSelf}. */
   nonce: string;
+  /**
+   * THE INSTANT OF THE PRESS THIS TENURE RESTS ON — what {@link compareStrength} ranks first.
+   *
+   * `null` for three populations and they are not the same thing, though the election treats them
+   * alike (lowest): a claim written on an empty folder, where there was nobody to take over from;
+   * a claim written by an install that predates this field; and a renewal descended from either.
+   * All three mean "nobody pressed for this", which is the honest thing to rank below a press.
+   */
+  authorizedAt: Date | null;
+  /**
+   * WHAT THIS ORGANIZER OFFERS A READER, as the claim advertises it. Empty means none — which is
+   * what every pre-0.14.1 claim says, and it is a true statement about those installs rather than
+   * a gap in the parse.
+   */
+  capabilities: readonly string[];
   /** Whatever the IO layer needs to expunge this exact message. */
   ref?: unknown;
 }
@@ -537,6 +572,22 @@ export interface OrganizeVerdict {
    * organizers and never more.
    */
   displace: readonly unknown[];
+  /**
+   * DID THIS WIN COME FROM THE PRESS, or from continuation? (0.14.1)
+   *
+   * `true` only on rule 6 — a human asked for this install and its press outranked every live
+   * claim. `false` on rules 3 and 4, which are continuation and an empty folder, and which are
+   * reached with a press outstanding often enough that "was a press present" is not the same
+   * question.
+   *
+   * The gate needs the distinction to decide what STAMP to write onto the renewed claim: an
+   * authorized win writes the press this decision rested on, and everything else carries forward
+   * whatever the install's own prior claim held. Deriving it from `displace.length > 0` would be
+   * true today by accident — every ref the IO layer hands over is defined — and would silently
+   * become wrong for a rule-6 win whose beaten claims had no refs, which is the case where the
+   * gate would then write no stamp at all and hand the mailbox straight back on the next election.
+   */
+  authorized: boolean;
 }
 
 /** Somebody else is organizing this mailbox right now. Stop, and release our own claim. */
@@ -581,7 +632,31 @@ const H = {
   claimedAt: "X-Ohmail-Claimed-At",
   displayName: "X-Ohmail-Display-Name",
   nonce: "X-Ohmail-Nonce",
+  /**
+   * THE INSTANT OF THE PRESS THAT CREATED THIS TENURE — the field the election now ranks on.
+   *
+   * Additive at protocol 1, deliberately: an install one release older parses every field it knows
+   * and ignores this one, which is exactly the behaviour a cross-version handover needs. What it
+   * costs is stated where the ranking is (see {@link compareStrength}) — an older install ranks by
+   * incumbency alone and can therefore win an election a newer one would give to the press.
+   */
+  authorizedAt: "X-Ohmail-Authorized-At",
+  /**
+   * WHAT THIS ORGANIZER CAN DO FOR A READER — a comma-separated set; absent means none.
+   *
+   * It exists so a reader can tell "the organizer will take my decisions" from "the organizer is
+   * an older build that will never look", and say so instead of leaving somebody waiting for ever
+   * on a machine that is never going to answer.
+   */
+  capabilities: "X-Ohmail-Capabilities",
 } as const;
+
+/**
+ * The one capability there is today: this organizer drains decision records out of the meta
+ * folder. Exported because both writers and the reader's door name the same string, and two
+ * spellings of a capability are a capability that is never detected.
+ */
+export const CAPABILITY_REQUESTS = "requests";
 
 /** Strip CR/LF so a display name can never inject a header. */
 function headerSafe(v: string): string {
@@ -596,6 +671,31 @@ export interface ClaimInput {
   claimedAt: Date;
   nonce: string;
   protocol?: number;
+  /**
+   * THE PRESS THIS TENURE RESTS ON, or `null` for a tenure nobody pressed for.
+   *
+   * ── REQUIRED, AND NOT OPTIONAL, AND THE DIFFERENCE IS THE WHOLE FIELD ─────────────────────
+   *
+   * `authorizedAt?: Date` would compile at every existing call site and write NOTHING at all of
+   * them — so every claim this build wrote would rank as an unpressed one, every authorized
+   * takeover would read as stale to the next election, and the feature would be off in production
+   * with a green suite behind it. Making it required means a caller has to decide, once, per
+   * write site, and the compiler names the sites.
+   *
+   * `null` is a real answer and the common one: a claim on an empty folder is arm 4's
+   * "nobody has ever organized this mailbox", which is not a press and must not rank as one.
+   */
+  authorizedAt: Date | null;
+  /**
+   * WHAT THIS ORGANIZER OFFERS A READER. Required for {@link authorizedAt}'s reason exactly: an
+   * optional field left off every call site would advertise nothing from every organizer, and a
+   * reader reading that would tell its user the holder is too old to take decisions — on a fleet
+   * where every holder is this build.
+   *
+   * Empty is legal and means "none"; the header is then omitted, which is what an older reader
+   * sees anyway.
+   */
+  capabilities: readonly string[];
 }
 
 /**
@@ -607,6 +707,15 @@ export interface ClaimInput {
  */
 export function formatClaim(c: ClaimInput): string {
   const protocol = c.protocol ?? CLAIM_PROTOCOL;
+  // ── AN ABSENT HEADER IS THE ONLY SPELLING OF "NONE" ─────────────────────────────────────
+  //
+  // Neither field is ever written empty. `X-Ohmail-Authorized-At:` with nothing after it would
+  // parse to an unreadable date, which is a MALFORMED claim — evidence somebody claimed that
+  // cannot be read, and the strongest refusal in this module. `X-Ohmail-Capabilities:` empty would
+  // be a set containing one empty string. Both are the same mistake: a field that means "nothing"
+  // has to be absent, because a reader one release older cannot tell an empty value from a value
+  // it does not understand.
+  const capabilities = c.capabilities.map(headerSafe).filter((v) => v !== "");
   const lines = [
     `${H.lease}: 1`,
     `${H.kind}: ${c.kind}`,
@@ -614,6 +723,8 @@ export function formatClaim(c: ClaimInput): string {
     `${H.protocol}: ${protocol}`,
     `${H.heartbeat}: ${c.heartbeat.toISOString()}`,
     `${H.claimedAt}: ${c.claimedAt.toISOString()}`,
+    ...(c.authorizedAt ? [`${H.authorizedAt}: ${c.authorizedAt.toISOString()}`] : []),
+    ...(capabilities.length > 0 ? [`${H.capabilities}: ${capabilities.join(", ")}`] : []),
     `${H.displayName}: ${headerSafe(c.displayName)}`,
     `${H.nonce}: ${headerSafe(c.nonce)}`,
     `Subject: ohmail organizer claim`,
@@ -666,7 +777,17 @@ export function parseClaim(raw: string, ref?: unknown): ClaimRecord | null {
   // Every field the decision reads gets the same treatment, for the same reason: a duplicated
   // `X-Ohmail-Install-Id` or `X-Ohmail-Heartbeat` would let a crafted record present one identity
   // to a reader that takes the first value and another to one that takes the last.
-  for (const field of [H.kind, H.installId, H.protocol, H.heartbeat, H.claimedAt, H.nonce]) {
+  //
+  // `X-Ohmail-Authorized-At` joins that list because the ELECTION reads it first, so a duplicate
+  // is the same attack one field over: a crafted record could rank as a fresh press to a reader
+  // that takes the last value and as an unpressed claim to one that takes the first, and the two
+  // readers would elect different organizers off the same folder. `X-Ohmail-Capabilities` joins it
+  // because a reader DECIDES on it — whether to hand this organizer a decision or to tell its user
+  // nobody will take one — and a record that answers that question twice has not answered it.
+  for (const field of [
+    H.kind, H.installId, H.protocol, H.heartbeat, H.claimedAt, H.nonce,
+    H.authorizedAt, H.capabilities,
+  ]) {
     if (count(field) > 1) return malformed(`duplicate ${field}`);
   }
 
@@ -689,6 +810,33 @@ export function parseClaim(raw: string, ref?: unknown): ClaimRecord | null {
   const kindRaw = (get(H.kind) ?? "").toLowerCase();
   const kind: OrganizerKind | "unknown" = kindRaw === "local" || kindRaw === "cloud" ? kindRaw : "unknown";
 
+  /* ── AN ABSENT PRESS IS `null`; AN UNREADABLE ONE IS MALFORMED ──────────────────────────────
+   *
+   * The two are deliberately not folded together, and the direction matters. Absent is the common
+   * case — every pre-0.14.1 claim and every arm-4 claim — and it means "nobody pressed", which is
+   * a fact the election ranks lowest and carries on with. A header that is PRESENT and unreadable
+   * is a record that tried to say something about its own authority and failed, and reading that
+   * as "nobody pressed" would let a corrupted or crafted stamp quietly demote a real press to the
+   * bottom of the order. `heartbeat` above takes the same line for the same reason.
+   */
+  const authorizedAtRaw = get(H.authorizedAt);
+  let authorizedAt: Date | null = null;
+  if (authorizedAtRaw !== undefined) {
+    const parsed = new Date(authorizedAtRaw);
+    if (Number.isNaN(parsed.getTime())) return malformed("unreadable authorized-at");
+    authorizedAt = parsed;
+  }
+
+  /* A SET, ORDER-FREE AND CASE-FOLDED, and an unknown member is KEPT rather than dropped: this
+     build cannot know what a later one advertises, and a reader that silently discarded the
+     members it did not recognise would be unable to say "that organizer offers something I do not
+     understand" — which is a different sentence from "that organizer offers nothing". Empty
+     members are dropped, so `a, , b` is two capabilities and not three. */
+  const capabilities = (get(H.capabilities) ?? "")
+    .split(",")
+    .map((v) => v.trim().toLowerCase())
+    .filter((v) => v !== "");
+
   const claim: OrganizerClaim = {
     installId,
     kind,
@@ -697,6 +845,8 @@ export function parseClaim(raw: string, ref?: unknown): ClaimRecord | null {
     claimedAt: Number.isNaN(claimedAt.getTime()) ? heartbeat : claimedAt,
     displayName: get(H.displayName) ?? "",
     nonce: get(H.nonce) ?? "",
+    authorizedAt,
+    capabilities,
   };
   return ref === undefined ? claim : { ...claim, ref };
 }
@@ -708,8 +858,13 @@ export interface DecideLeaseInput {
   claims: readonly ClaimRecord[];
   now: Date;
   staleAfterMs?: number;
-  /** `"authorized"` iff a human explicitly asked THIS organizer to take this mailbox. */
-  takeover?: TakeoverAuthorization;
+  /**
+   * The press this install is acting on, or `null` when nobody has asked for it.
+   *
+   * Carrying the INSTANT rather than a flag is what lets rule 6 ask the only question that
+   * matters between two pressed installs: whose press is newer. See {@link TakeoverAuthorization}.
+   */
+  takeover?: TakeoverAuthorization | null;
 }
 
 /**
@@ -843,36 +998,126 @@ interface Election {
    * election rather than by removing the claim from it.
    */
   plausible: ReadonlySet<OrganizerClaim>;
+  /**
+   * Claims whose PRESS is not implausibly far in the future — the same idea as {@link plausible},
+   * one field over, and it exists because 0.14.1 moved the election onto a field the heartbeat's
+   * ceiling does not cover.
+   *
+   * ── WHY THE CLAMP ALONE IS NOT ENOUGH HERE, AND IT IS FOR THE HEARTBEAT ────────────────────
+   *
+   * Measured, not reasoned: a claim stamped `2099-01-01` clamps to `now + MAX_FUTURE_SKEW_MS`, and
+   * an honest press is made AT `now` — so the clamped value is always strictly greater and the
+   * honest press can never win rule 6. The seventy-three-year lockout, reproduced on the field that
+   * now decides the election. The heartbeat does not have this shape because liveness is a
+   * comparison of DIFFERENCES against the newest claim in the folder, so a clamped outlier stops
+   * being able to look newer than everything else; "is my press newer than theirs" is a comparison
+   * against a value, and clamping only moves the value.
+   *
+   * So the clamp is kept (it bounds the RANKING, which every reader must compute identically) and
+   * an implausible press additionally loses the one protection it must not have: the ability to
+   * REFUSE a human's takeover. Rule 6's maximum is taken over this set.
+   *
+   * ── THE CLOCK DEPENDENCE IS THE ONE THE MODULE ALREADY ACCEPTS ─────────────────────────────
+   *
+   * This is the reader's own clock deciding something, which the header's rule confines to two
+   * uses. It is the SECOND of them exactly: single-sided, and it can only ever let a human's
+   * takeover displace a live install — one organizer, the safe direction, and precisely what an
+   * authorized takeover is defined to do. It cannot make two readers both organize, because the
+   * winner is displaced from the folder in the same gate and its own next read finds its claim gone.
+   */
+  plausiblePress: ReadonlySet<OrganizerClaim>;
   /** Nothing PLAUSIBLE in the folder has been renewed within one window of the READER's now. */
   quiet: boolean;
   /** Claims that announce themselves and cannot be read. Evidence, never nothing. */
   malformed: readonly MalformedClaim[];
 }
 
-/** `min(heartbeat, now + MAX_FUTURE_SKEW_MS)` — see {@link MAX_FUTURE_SKEW_MS}. */
-function clampHeartbeat(c: OrganizerClaim, now: Date): OrganizerClaim {
+/**
+ * `min(t, now + MAX_FUTURE_SKEW_MS)` for BOTH instants a broken clock can inflate — the heartbeat
+ * and the press. See {@link MAX_FUTURE_SKEW_MS}.
+ *
+ * The press needs the same ceiling as the heartbeat and for a sharper reason. `authorizedAt` is
+ * now the FIRST term of the order, so an install whose clock reads 2099 would write a press that
+ * outranks every honest one for seventy-three years — the exact seventy-three-year failure the
+ * heartbeat ceiling exists to end, moved to the field that decides the election rather than the
+ * field that decides liveness. Clamped rather than rejected, on the same argument: a press with a
+ * silly clock is still a press, it simply stops being able to look newer than now.
+ */
+function clampFuture(c: OrganizerClaim, now: Date): OrganizerClaim {
   const ceiling = now.getTime() + MAX_FUTURE_SKEW_MS;
-  if (c.heartbeat.getTime() <= ceiling) return c;
-  return { ...c, heartbeat: new Date(ceiling) };
+  const hbOver = c.heartbeat.getTime() > ceiling;
+  const azOver = c.authorizedAt !== null && c.authorizedAt.getTime() > ceiling;
+  if (!hbOver && !azOver) return c;
+  return {
+    ...c,
+    ...(hbOver ? { heartbeat: new Date(ceiling) } : {}),
+    ...(azOver ? { authorizedAt: new Date(ceiling) } : {}),
+  };
 }
 
 /**
  * Strongest first.
  *
- *  1. `cloud` outranks `local` — §4's "a fresh cloud lease outranks local for CONTINUING
- *     coverage". A cloud claim is only ever IN the folder because a cloud won a gate, and winning
- *     one over a live local already required a human, so presence is the proof of continuation.
- *  2. Then INCUMBENCY: the oldest `claimedAt`. Nobody self-promotes by arriving.
- *  3. Then `installId`, then `nonce` — a TOTAL order, so no two readers can break a tie
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * A PRESS RANKS. KIND DOES NOT. (0.14.1)
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * The first term used to be `kind`: `cloud` outranked `local`, on the older reading of the
+ * dual-mode rule that "a fresh cloud lease outranks local for CONTINUING coverage". **That term is
+ * deleted**, and with it rule 5, whose whole content was refusing an authorized local install over
+ * a live cloud one.
+ *
+ * The case it was wrong about is the ordinary one rather than an exotic one: somebody loses access
+ * to the machine their hosted organizer runs on — a VPS they can no longer reach, a subscription
+ * on an address they cannot log into — and wants the mailbox organized from the laptop in front of
+ * them. Under the kind rule there was no path. The honest action offered was to give the mailbox
+ * up on the side they had just lost access to, which is the side that cannot act. A rule whose
+ * remedy requires the party that has disappeared is not a rule about continuation; it is a lockout.
+ *
+ * What replaces it says the same thing the kind rule was reaching for, without the asymmetry:
+ * **liveness is not authority, and an explicit press outranks both.** Presence in the folder still
+ * protects an incumbent against anything that merely ARRIVES — an install with no press ranks
+ * below an incumbent with none, on `claimedAt` — so nobody self-promotes. What presence no longer
+ * does is outrank a human who deliberately asked for a different machine.
+ *
+ * The order, and each term is load-bearing:
+ *
+ *  1. **The PRESS, newest first**, clamped by {@link clampFuture} so a dead clock battery cannot
+ *     mint an unbeatable authorization. `null` — nobody pressed for this tenure — ranks LOWEST,
+ *     which is what makes an ordinary renewal lose to any press at all and is the whole mechanism
+ *     of a takeover.
+ *  2. **Then INCUMBENCY**: the oldest `claimedAt`. Unchanged, and it is what decides between two
+ *     unpressed claims (the common steady state) and between two claims pressed in the same
+ *     millisecond. Nobody self-promotes by arriving.
+ *  3. **Then `installId`, then `nonce`** — a TOTAL order, so no two readers can break a tie
  *     differently. The nonce is what closes the restored-clone case, where two live processes
  *     share an install id AND a `claimedAt`: `compareIncumbency` returned 0, `Array.sort` is not
  *     required to be stable across differing input orders, and two clones reading the same folder
  *     in different orders each elected themselves. Measured, not theorised.
+ *
+ * `kind` survives on the claim and is still read — `reasonFor` composes the stand-down reason from
+ * it and every banner names it — it simply no longer decides anything.
+ *
+ * ── THE CROSS-VERSION CASE, STATED RATHER THAN DISCOVERED ─────────────────────────────────────
+ *
+ * An install one release older runs this function without term 1, so it ranks by incumbency alone.
+ * Two builds therefore CAN elect differently off one folder for one cycle — and the outcome is
+ * bounded and safe in the direction that matters: the older install's own rule 5 still refuses it
+ * a live cloud claim, and where it does win, it wins by being the incumbent, which is a claim that
+ * is already in the folder. The convergence cases are enumerated as decide-table tests rather than
+ * argued here.
  */
 function compareStrength(a: OrganizerClaim, b: OrganizerClaim): number {
-  const kindRank = (k: OrganizerClaim["kind"]): number => (k === "cloud" ? 2 : k === "local" ? 1 : 0);
-  const byKind = kindRank(b.kind) - kindRank(a.kind);
-  if (byKind !== 0) return byKind;
+  // Newest press first, and a claim with no press is `-Infinity` — below every real instant, and
+  // below another unpressed claim only by the terms after this one.
+  const press = (c: OrganizerClaim): number => c.authorizedAt?.getTime() ?? -Infinity;
+  const byPress = press(b) - press(a);
+  // `-Infinity - -Infinity` is NaN, and `NaN !== 0` is TRUE — so an unguarded subtraction here
+  // would return NaN for the ordinary two-unpressed-claims case, which `Array.sort` treats as
+  // "leave them where they are" and which is exactly the order-dependent tie the total order below
+  // exists to make impossible. Both-null is the steady state of every mailbox nobody has pressed
+  // on, so this is the common path rather than an edge.
+  if (byPress !== 0 && !Number.isNaN(byPress)) return byPress;
   const byClaimed = a.claimedAt.getTime() - b.claimedAt.getTime();
   if (byClaimed !== 0) return byClaimed;
   if (a.installId !== b.installId) return a.installId < b.installId ? -1 : 1;
@@ -883,9 +1128,13 @@ function runElection(claims: readonly ClaimRecord[], now: Date, staleAfterMs: nu
   const { valid, malformed } = coalesce(claims);
   const ceiling = now.getTime() + MAX_FUTURE_SKEW_MS;
   const plausible = new Set<OrganizerClaim>();
+  const plausiblePress = new Set<OrganizerClaim>();
   const candidates = valid.map((raw) => {
-    const c = clampHeartbeat(raw, now);
+    const c = clampFuture(raw, now);
     if (raw.heartbeat.getTime() <= ceiling) plausible.add(c);
+    // A claim with NO press is plausible about its press by construction: there is nothing to
+    // disbelieve. Only a stamp beyond the ceiling is excluded — see `Election.plausiblePress`.
+    if (raw.authorizedAt === null || raw.authorizedAt.getTime() <= ceiling) plausiblePress.add(c);
     return c;
   });
 
@@ -904,7 +1153,7 @@ function runElection(claims: readonly ClaimRecord[], now: Date, staleAfterMs: nu
     .reduce<number>((m, c) => Math.max(m, c.heartbeat.getTime()), -Infinity);
   const quiet = !Number.isFinite(newestPlausible) || now.getTime() - newestPlausible >= staleAfterMs;
 
-  return { candidates, live, winner, plausible, quiet, malformed };
+  return { candidates, live, winner, plausible, plausiblePress, quiet, malformed };
 }
 
 /**
@@ -927,13 +1176,23 @@ function runElection(claims: readonly ClaimRecord[], now: Date, staleAfterMs: nu
  *     mailbox, so there is nobody to take over from. A transient double-append here is the
  *     designed handover window, and {@link runLeaseGate}'s append-then-verify is what bounds it to
  *     the cycle in which it happens.
- *  5. **We lost, and the winner is a LIVE claim of a kind that outranks ours ⇒ stand down, even
- *     with authorization.** §4 gives a local install no path over a live Cloud: the honest action
- *     there is `Remove from this Mac`, and the Cloud side is where a mailbox is given up. The
- *     asymmetry is deliberate and is not a missing feature.
- *  6. **We lost, and a human authorized THIS install ⇒ organize, and DISPLACE what we beat.** §4's
- *     "adding a mailbox to Cloud IS the explicit action, so this informs and proceeds". The
- *     displacement is what records the handover in the shared medium; see {@link OrganizeVerdict}.
+ *  5. **DELETED IN 0.14.1, and the deletion is the release.** It read: *"we lost, and the winner
+ *     is a LIVE claim of a kind that outranks ours ⇒ stand down, even with authorization"*, on the
+ *     older reading that a local install has no path over a live Cloud and that the honest action
+ *     is to give the mailbox up on the Cloud side. That remedy requires the side the person has
+ *     just lost access to, which is exactly the population it stranded: a VPS nobody can reach any
+ *     more, a hosted organizer on an address its owner cannot log into. The asymmetry was recorded
+ *     here as deliberate, and it was — it is now ruled wrong. Kind no longer ranks anywhere; see
+ *     {@link compareStrength}. The numbering is kept so that the rules below keep the names every
+ *     test, log line and neighbouring comment uses for them.
+ *  6. **We lost, and a human pressed for THIS install more recently than for any live rival ⇒
+ *     organize, and DISPLACE what we beat.** STRICT: an equal instant is not newer, and breaks on
+ *     `installId` like every other tie. A press that is NOT newer is STALE — it falls through to
+ *     7/8 and the caller voids it there, which is the whole replay protection and is the reason
+ *     there is deliberately no "the stamp is older than the holder's claimedAt" check: that check
+ *     breaks the two-press race, where the second presser's stamp is legitimately older than the
+ *     first presser's tenure.
+ *     The displacement is what records the handover in the shared medium; see {@link OrganizeVerdict}.
  *  7. **We lost, and the folder is still being renewed ⇒ stand down.** Somebody is organizing it.
  *  8. **We lost, and the folder has gone quiet ⇒ `available`.** Somebody WAS organizing and
  *     nothing has renewed since. Offerable, never taken: BECOMING an organizer always requires an
@@ -942,7 +1201,7 @@ function runElection(claims: readonly ClaimRecord[], now: Date, staleAfterMs: nu
 export function decideLease(input: DecideLeaseInput): LeaseVerdict {
   const { self, now } = input;
   const staleAfterMs = input.staleAfterMs ?? DEFAULT_STALE_AFTER_MS;
-  const takeover = input.takeover ?? "none";
+  const takeover = input.takeover ?? null;
   const ourProtocol = self.protocol ?? CLAIM_PROTOCOL;
 
   const election = runElection(input.claims, now, staleAfterMs);
@@ -991,40 +1250,91 @@ export function decideLease(input: DecideLeaseInput): LeaseVerdict {
   const { winner } = election;
 
   // 3 — we hold the strongest live claim. Continuation.
-  if (winner && isOurs(winner)) return { verdict: "organize", renew: true, displace: [] };
+  if (winner && isOurs(winner)) return { verdict: "organize", renew: true, displace: [], authorized: false };
 
   // 4 — an EMPTY folder. Nobody has ever organized this mailbox, so there is nobody to take over
   // from. Emptiness is the whole condition, and "no winner" is deliberately not the test: a folder
   // that holds only unreadable claims, or only a claim dated 2099, has evidence in it and belongs
   // to the arms below.
   if (election.candidates.length === 0 && election.malformed.length === 0) {
-    return { verdict: "organize", renew: true, displace: [] };
+    /* ── AND IT STAMPS THE PRESS WHEN THERE IS ONE, WHICH IS NOT OBVIOUS ──────────────────────
+     *
+     * There is nothing to DISPLACE here — an empty folder has no handover to record — so the
+     * tempting answer is `authorized: false`, and it was, for exactly as long as it took to write
+     * down what the caller does next: it SPENDS the row's stamp on this win. That pair is an
+     * inversion, and the sequence is ordinary rather than exotic:
+     *
+     *   FIRST   somebody presses "Organize here" on a laptop that is asleep. The stamp sits on its
+     *           row, unspent — no gate has run.
+     *   SECOND  they change their mind and press on Cloud. `ohmail/_meta` is empty (nobody has ever
+     *           organized this mailbox, or the last organizer released cleanly), so Cloud takes
+     *           arm 4. An unstamped claim means Cloud's tenure ranks at minus infinity.
+     *   THIRD   the laptop wakes, offers its earlier press against Cloud's unpressed claim, and
+     *           wins rule 6.
+     *
+     * The OLDER decision reverses the newer one, and both installs agree it should — which is the
+     * one failure mode ranking by the press exists to make impossible.
+     *
+     * So the flag says what the FIELD says: this tenure rests on that press. It is false on rule 3
+     * because a continuation rests on the prior tenure (whose stamp is carried forward), and false
+     * here when nobody pressed, which is the common arm-4 case — a consented organizer meeting an
+     * empty folder.
+     */
+    return { verdict: "organize", renew: true, displace: [], authorized: takeover !== null };
   }
 
-  // 5 — a live organizer of a kind that outranks us is never taken, authorized or not. §4 gives a
-  // local install no path over a live Cloud.
-  //
-  // GATED ON TWO THINGS, and both were learned by watching this arm misfire.
-  //
-  //  · **The folder must not be QUIET.** §4's rule is that a *fresh* cloud lease outranks local for
-  //    continuing coverage — the protection belongs to an organizer that is demonstrably still
-  //    there. Without this clause a Cloud subscription that lapsed months ago still refused
-  //    `Organize from this Mac`, which is precisely the transition §4 spells out as one line and
-  //    one click.
-  //  · **The claim must be PLAUSIBLE.** Otherwise one machine with a broken clock writing a `cloud`
-  //    claim dated 2099 refuses every authorized local takeover for ever, and the only cure is a
-  //    person finding and deleting the bookkeeping message by hand.
-  const ourKindRank = self.kind === "cloud" ? 2 : 1;
-  const winnerKindRank = winner === null ? 0 : winner.kind === "cloud" ? 2 : 1;
-  if (
-    winner !== null && winnerKindRank > ourKindRank
-    && !election.quiet && election.plausible.has(winner)
-  ) {
-    return { verdict: "stand_down", reason: reasonFor(winner), by: winner };
-  }
+  /* -- 5 IS GONE (0.14.1). The paragraph that stood here is preserved in the header's rule 5,
+   * because the argument it made was not careless — it was a considered asymmetry, and it is the
+   * asymmetry that is now ruled wrong. Nothing takes its place: with `kind` out of
+   * `compareStrength`, a live cloud claim and a live local claim are ranked by the same two
+   * questions as any other pair, and the press is the first of them.
+   *
+   * What is NOT lost with it: `election.quiet` and `election.plausible`, which rule 5 also
+   * consulted, are still computed and still used — `quiet` decides arm 8 (offerable vs held) and
+   * `plausible` keeps a 2099 claim from being treated as a live organizer. Only the kind
+   * comparison is deleted. */
 
-  // 6 — a human asked for this mailbox. Take it, and record the handover in the folder.
-  if (takeover === "authorized") {
+  // 6 — a human asked for this mailbox MORE RECENTLY than for anything alive in it. Take it, and
+  // record the handover in the folder.
+  //
+  // ── STRICTLY NEWER THAN THE LIVE MAXIMUM, AND THAT COMPARISON IS THE REPLAY PROTECTION ─────
+  //
+  // A stamp is a one-shot on the row, spent by the gate that succeeds — but the row and the folder
+  // are two stores, and the case this arm has to survive is the one where they disagree: a press
+  // that already won, was already recorded in `ohmail/_meta` as this install's tenure, and is then
+  // offered again by a caller that failed to void it. Ranking it against the LIVE MAXIMUM answers
+  // that without needing to know anything about the row: our own winning claim carries that very
+  // instant, so `>` is false against ourselves and the replay decides nothing.
+  //
+  // STRICT, so an equal instant is not a win. Two presses recorded in the same millisecond break on
+  // `installId` inside `compareStrength` instead, which every reader of the folder computes the
+  // same way — as opposed to `>=`, under which BOTH installs would displace each other's claim in
+  // the same cycle and the mailbox would end with no claim at all.
+  //
+  // AND DELIBERATELY NOT "the stamp must be newer than the holder's `claimedAt`". That check reads
+  // as an obvious tightening and it breaks the two-press race, which is the ordinary case rather
+  // than an exotic one: A presses and wins, B presses eight seconds later, and B's stamp is older
+  // than A's tenure by construction because A's tenure began when A won. Under that check B — the
+  // person's LATER decision — could never take the mailbox.
+  //
+  // OVER THE LIVE **AND PLAUSIBLY-PRESSED** CLAIMS. The second filter is what keeps this arm from
+  // reproducing the seventy-three-year lockout on the field the election now turns on: a stamp
+  // dated 2099 clamps to `now + MAX_FUTURE_SKEW_MS`, which is strictly greater than any press a
+  // human can make at `now`, so without it one machine with a dead clock battery could refuse every
+  // takeover for ever and the only cure would be a person deleting the bookkeeping message by hand.
+  // See `Election.plausiblePress` for why the clamp alone answers this for the heartbeat and not
+  // for the press. Such a claim is still RANKED — `compareStrength` sees its clamped value, so no
+  // two readers disagree about the winner — it simply loses the power to veto a human.
+  const livePress = election.live
+    .filter((c) => election.plausiblePress.has(c))
+    .reduce<number>((m, c) => Math.max(m, c.authorizedAt?.getTime() ?? -Infinity), -Infinity);
+  const ourPress = takeover === null
+    ? -Infinity
+    // Clamped exactly as a claim's own stamp is, and for the same reason: a machine whose clock
+    // reads 2099 must not be able to press its way past every honest organizer for ever. The row
+    // is not a more trustworthy clock than the folder — it is the SAME machine's clock.
+    : Math.min(takeover.authorizedAt.getTime(), now.getTime() + MAX_FUTURE_SKEW_MS);
+  if (takeover !== null && ourPress > livePress) {
     // EVERY ref the read held for the beaten organizers — the RAW claim list, deliberately not
     // the election's candidates: coalesce keeps one claim per install, but the folder
     // legitimately holds duplicates (append-then-expunge's own crash residue), and a
@@ -1052,10 +1362,15 @@ export function decideLease(input: DecideLeaseInput): LeaseVerdict {
           && !((c.protocol > ourProtocol || c.kind === "unknown") && rawIsLive(c))))
       .map((c) => c.ref)
       .filter((r): r is unknown => r !== undefined);
-    return { verdict: "organize", renew: true, displace: displaced };
+    return { verdict: "organize", renew: true, displace: displaced, authorized: true };
   }
 
   // 7 / 8 — we lost. Whether it is offerable is the only thing left to say.
+  //
+  // A STALE PRESS ARRIVES HERE, and that is where it is meant to arrive. It is not an error and it
+  // gets no arm of its own: the caller's stand-down path already voids the stamp it just offered,
+  // so the request is consumed by the pass that considered and refused it rather than left on the
+  // row to be re-offered every cycle against an organizer it can never beat.
   if (!election.quiet && winner !== null) {
     return { verdict: "stand_down", reason: reasonFor(winner), by: winner };
   }
@@ -1108,6 +1423,15 @@ export interface LeaseHolder {
   claimedAt: Date;
   /** Still being renewed, judged against the same window the gate judges against. */
   fresh: boolean;
+  /**
+   * WHAT THIS HOLDER OFFERS A READER, off its claim (0.14.1). Empty means none, which is the true
+   * answer for every install older than this field rather than a gap in the read.
+   *
+   * It is on the PREVIEW and not only in the gate because the surface that needs it is a reader's,
+   * and a reader never runs the gate. Without it a reader would have to choose between offering a
+   * decision to an organizer that will never look at it and refusing every organizer on principle.
+   */
+  capabilities: readonly string[];
 }
 
 /**
@@ -1183,6 +1507,11 @@ export function peekLease(input: PeekLeaseInput): LeasePeek {
       heartbeat: c.heartbeat,
       claimedAt: c.claimedAt,
       fresh: isFresh(c.heartbeat, input.now, staleAfterMs) || unrankableInstalls.has(c.installId),
+      /* Reported for the holder the coalesce KEPT — the newest claim per install — because that is
+         the build currently running there. An older duplicate advertising less is residue of a
+         renew this same install is about to expunge, and reporting the weaker set would tell a
+         reader its live organizer had gone backwards. */
+      capabilities: c.capabilities,
     }))
     .sort((a, b) => b.heartbeat.getTime() - a.heartbeat.getTime());
 
@@ -1527,7 +1856,15 @@ export interface LeaseGateInput {
   self: LeaseSelf;
   now: Date;
   staleAfterMs?: number;
-  takeover?: TakeoverAuthorization;
+  takeover?: TakeoverAuthorization | null;
+  /**
+   * WHAT THIS ORGANIZER ADVERTISES TO READERS — written onto every claim this gate renews.
+   *
+   * Required, on {@link ClaimInput.capabilities}'s reasoning: an optional field defaulted to empty
+   * would make every organizer in the fleet look like a build too old to take a reader's decision,
+   * with nothing failing anywhere.
+   */
+  capabilities: readonly string[];
   /** Injected for tests; production uses `crypto.randomUUID()`. */
   newNonce?: () => string;
   log?: (event: string, detail: Record<string, unknown>) => void;
@@ -1679,6 +2016,51 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
     .sort((a, b) => a.claimedAt.getTime() - b.claimedAt.getTime())[0];
   const claimedAt = priorOwn?.claimedAt ?? now;
 
+  /* ── THE PRESS TRAVELS WITH THE TENURE, EXACTLY AS `claimedAt` DOES (0.14.1) ────────────────
+   *
+   * A tenure has two facts a renewal must carry rather than re-derive: when it began, and what
+   * authorized it. `claimedAt` has always been carried — restarting it on every renew would make
+   * every install look like the newest arrival for ever. The press is the same shape of fact and
+   * needs the same treatment, and it fails in a sharper way if it is not carried:
+   *
+   *   an authorized takeover writes a claim stamped with the press; sixty seconds later the same
+   *   install renews, this time on rule 3 with no press outstanding; a renewal that wrote no stamp
+   *   would replace the winning claim with an UNPRESSED one — and the very next election would
+   *   rank it below the incumbent it had just displaced, if that incumbent were still around, or
+   *   below the next arrival with any press at all. The takeover would undo itself one minute
+   *   later, which is the same class of self-reversal `OrganizeVerdict.displace` exists to close.
+   *
+   * So: an AUTHORIZED win writes the press it rested on; every other win carries forward whatever
+   * this install's own prior claim held. The `authorized` flag comes off the verdict rather than
+   * from `input.takeover !== null`, because a press can be outstanding while the win comes from
+   * rules 3 or 4 — and in those two cases nothing was taken over, so nothing should be stamped.
+   */
+  /* ── AND IT IS THE NEWEST OWN CLAIM THAT CARRIES IT, NOT `priorOwn` ──────────────────────
+   *
+   * `priorOwn` is the OLDEST of our claims by `claimedAt`, which is right for the incumbency clock
+   * and wrong for this. `claimedAt` is itself carried forward, so a pre-press claim and the
+   * post-press claim share an identical one, the sort is a tie, and array order — IMAP uid
+   * ascending, i.e. the older residue first — decides which one is read.
+   *
+   * That is reachable through a partial expunge, which is the failure this module already refuses
+   * to infer from a driver's return value: an install wins rule 6, `removeClaims` applies the
+   * STORE for the displaced ref and is refused for ours, and the handover verification checks only
+   * that the DISPLACED refs are gone and that our new nonce survived — it never asks about our own
+   * older refs. One cycle later the residue is `priorOwn`, the renewal writes `authorizedAt: null`,
+   * and the tenure a person authorized ranks as unpressed: it then loses rule 6 to any rival with
+   * any stamp at all. Precisely the self-reversal the block above exists to prevent, reached
+   * through the field that was added to prevent it.
+   *
+   * Newest heartbeat wins, with the nonce as the tie-break, so the answer is order-free for the
+   * same reason `coalesce`'s is.
+   */
+  const newestOwn = claims
+    .filter((c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId)
+    .sort(compareRecency)[0];
+  const authorizedAt = verdict.authorized
+    ? (input.takeover?.authorizedAt ?? null)
+    : (newestOwn?.authorizedAt ?? null);
+
   const nonce = newNonce();
   try {
     await io.appendClaim(
@@ -1690,6 +2072,8 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
         claimedAt,
         nonce,
         protocol: self.protocol ?? CLAIM_PROTOCOL,
+        authorizedAt,
+        capabilities: input.capabilities,
       }),
     );
   } catch (err) {
