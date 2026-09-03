@@ -1950,6 +1950,10 @@ export const healthRoutes: Route[] = [
       // this?" has no answer, and the KEK/schema comparisons lose their anchor. The host
       // still serves — this is a reporting fault, not a fatal one — but it is NOT healthy.
       const buildError = injected?.buildError ?? null;
+      // Where `version` came from — see {@link BuildIdentitySource}. Published beside
+      // `version`/`buildError` on every branch, like `dbProvider`, so a consumer never has to
+      // infer provenance from the presence or absence of a fault.
+      const buildSource = injected?.buildSource ?? null;
       // NOT a `healthFault` — see `HealthConfig.adminError` for why an unarmed staff
       // console must not darken the product host. It is published because with the surface
       // unarmed there is no `/admin/*` endpoint left that could report its own absence.
@@ -2044,6 +2048,7 @@ export const healthRoutes: Route[] = [
         return healthResponse(503, {
           ok: false,
           version,
+          buildSource,
           dbLatencyMs: probe.dbLatencyMs,
           error: "database_unreachable",
           errorCode: probe.errorCode,
@@ -2056,7 +2061,7 @@ export const healthRoutes: Route[] = [
       }
       if (probe.kind === "empty") {
         return healthResponse(503, {
-          ok: false, version, dbLatencyMs: probe.dbLatencyMs, error: "database_probe_empty", kek,
+          ok: false, version, buildSource, dbLatencyMs: probe.dbLatencyMs, error: "database_probe_empty", kek,
           dbProvider,
           billing,
           ...pager,
@@ -2071,6 +2076,7 @@ export const healthRoutes: Route[] = [
       return healthResponse(fault ? 503 : 200, {
         ok: fault === null,
         version,
+        buildSource,
         dbLatencyMs: probe.dbLatencyMs,
         pgTrgm: probe.pgTrgm,
         schemaOk: probe.schemaOk,

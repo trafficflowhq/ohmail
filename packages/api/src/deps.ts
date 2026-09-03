@@ -462,9 +462,33 @@ export interface AlertSinkSummary {
  * Absent on `ApiDeps`, the route falls back to `kekEnvIdentity(process.env)` and
  * {@link API_VERSION}, so a host that forgets to inject still reports truthfully.
  */
+/**
+ * WHERE {@link HealthConfig.version} came from, ordered by how tightly each is bound to the
+ * artifact rather than by how the environment happens to list them — same four values and same
+ * meaning as the worker's `BuildIdentitySource` (`apps/worker/src/build-version.ts`):
+ * `"platform"` (the hosting platform's own git metadata — nothing can make it disagree with
+ * what is running), `"file"` (a build-identity file written into the deployed tree, so it is an
+ * input to the artifact rather than state beside it), `"variable"` (an operator-set project
+ * variable that lives beside the artifact and can go stale the moment a later build fails while
+ * the old one keeps serving), or `"none"` (nothing said).
+ *
+ * A Vercel deploy from a `git archive` extraction carries no
+ * `.git`, so the platform sets no commit sha and every host used to fall straight through to
+ * `TF_BUILD_VERSION` — a pinned project variable nobody updates on every deploy — with `version`
+ * presenting that stale label as confidently as a sha read out of the artifact. The source is
+ * published beside the value so a consumer can tell the two apart.
+ */
+export type BuildIdentitySource = "platform" | "file" | "variable" | "none";
+
 export interface HealthConfig {
   /** Build identity — the deployment's commit sha where the platform provides one. */
   version: string;
+  /**
+   * Where {@link HealthConfig.version} came from — see {@link BuildIdentitySource}. Absent on a
+   * host that has not adopted per-source resolution; `/health` then omits the provenance rather
+   * than guessing one.
+   */
+  buildSource?: BuildIdentitySource | null;
   /**
    * WHICH SCHEMA THIS HOST IS SUPPOSED TO HAVE. Absent means both journals, which is every
    * hosted deployment.
@@ -753,6 +777,20 @@ export interface ApiDeps {
   oauth?: OAuthTokenProvider;
   /** Set by `withIdempotency`; consumed by the handler's service. */
   idempotency?: IdempotencyContext | null;
+  /**
+   * The platform scheduler's own credential (`CRON_SECRET`), independent of the alerting block.
+   * Absent or `null` ⇒ this host has no cron credential; a scheduled route then falls back to
+   * whatever gate it has of its own, and answers 404 only when it has none at all.
+   */
+  cronSecret?: string | null;
+  /**
+   * On a `credentialSubject` route, the account the presented CREDENTIAL resolved to — set through
+   * `ServiceContext.noteCredentialAccount` by the seam that minted or rotated the session, and
+   * read by `createApp.handle` to name the response. Absent means the response established
+   * nothing for anybody (a refused sign-in, a challenge with no tokens in it), and the account
+   * header is then omitted. Never read on any other route.
+   */
+  credentialAccount?: string | null;
   /** Typed service bag; populated as services land. */
   services?: ApiServices;
   /** SSE timings for `GET /events`; falls back to {@link DEFAULT_SSE}. */

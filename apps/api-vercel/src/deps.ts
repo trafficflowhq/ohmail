@@ -655,7 +655,8 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
     // deployment's behaviour without touching this file.
     requireVerifiedForProduct: true,
     health: {
-      version: cfg.version, kek: cfg.kek, kekError: cfg.kekError, buildError: cfg.buildError,
+      version: cfg.version, buildSource: cfg.buildSource, kek: cfg.kek, kekError: cfg.kekError,
+      buildError: cfg.buildError,
       // Non-fatal by design: `/health` names it and still answers 200, because an unarmed
       // STAFF console is not a reason to take the product host out of rotation.
       adminError: cfg.adminError,

@@ -1,14 +1,16 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   keyProviderFromEnv, kekEnvIdentity, assertAnthropicKey,
   type KeyProvider, type KekEnvIdentity,
 } from "@trafficflow/core";
-import { DEFAULT_SSE, type SseConfig } from "@trafficflow/api";
+import { DEFAULT_SSE, type SseConfig, type BuildIdentitySource } from "@trafficflow/api";
 // One definition of "unusable as the serverless runtime connection", shared with the
 // build gate in `next.config.mjs` (duplicated there in JS, because it cannot import TS).
 // `transactionPoolerReason` is its mirror: the LISTEN URL must NOT be the transaction pooler.
 import { runtimeUrlReason, providerFamily, transactionPoolerReason } from "@trafficflow/db";
 import { msOAuthEnv, type MsOAuthBootstrap } from "@trafficflow/db/cloud";
-import { makeAuthConfig, type AuthConfig } from "@trafficflow/services";
+import { makeAuthConfig, type AuthConfig, type PlatformCostEnv } from "@trafficflow/services";
 
 /**
  * Deployment configuration for the serverless API host.
@@ -204,6 +206,13 @@ export interface HostConfig {
   /** Build identity for `/health` — the deployment's commit sha where available. */
   version: string;
   /**
+   * Where {@link HostConfig.version} came from — platform | file | variable | none. See
+   * {@link buildIdentityOf}; published on `/health` beside `version` so a `variable` answer
+   * (an operator-typed label, not one read out of the deployed artifact) is distinguishable
+   * from one the platform or a build-time file can vouch for.
+   */
+  buildSource: BuildIdentitySource;
+  /**
    * Why {@link HostConfig.version} is not a real build identity, on a host where that is not
    * acceptable. Non-null ⇒ `/health` answers 503 `build_identity_unknown`.
    */
@@ -262,6 +271,39 @@ export interface HostConfig {
    * `packages/db`, which the WORKER also calls, so the two hosts cannot accept different sets.
    */
   msOAuth: MsOAuthBootstrap;
+  /**
+   * WHAT THE VENDORS CHARGE — the credentials the six-hourly platform-cost pass asks with.
+   *
+   * ALWAYS PRESENT and possibly all-empty, on {@link HostConfig.msOAuth}'s terms rather than
+   * {@link HostConfig.admin}'s: `null` here would make "no credential" and "this host does not
+   * do costs" the same value, and those are different states that the cost board is required to
+   * tell apart. A host that composes NO PORT AT ALL answers `200 {skipped}` on
+   * `/internal/platform-costs/run` and writes nothing — the desktop engine's shape. A host that
+   * composes a port with no credential ASKS, gets `unconfigured` from each adapter, and the
+   * board renders "not configured". This deployment is always the second one: it is the hosted
+   * API, the surface the console reads, so it always has an opinion about the bill even when
+   * that opinion is "nobody gave me a key".
+   *
+   * Read HERE and nowhere else, on {@link AdminConfig}'s rule: a route or a service reaching
+   * into `process.env` makes every test of it depend on the runner's ambient variables and makes
+   * a host unable to state what it is configured with.
+   */
+  platformCosts: PlatformCostEnv;
+  /**
+   * `CRON_SECRET` — the platform's own scheduler credential, held at the TOP LEVEL and not
+   * inside {@link alerts}.
+   *
+   * It lives here because the cost pass is a scheduled route that has nothing to do with
+   * alerting, and reading the credential off the alerting block made an unrelated optional
+   * feature decide whether costs were ever collected: with `TF_ALERT_SECRET` unset the pass
+   * answered 404 to every invocation, no vendor was ever asked, and the board went on calling a
+   * fully configured vendor "not configured". `alerts.cronSecret` is the same value and is kept
+   * for the alerting routes; this one is what a route may use without depending on that block.
+   *
+   * `null` when unset or shorter than 24 characters — same rule as everywhere else, because
+   * there is no rate limit behind the compare on a public URL.
+   */
+  cronSecret: string | null;
   /**
    * WHERE THIS DEPLOYMENT'S APP LIVES — the absolute origin the OAuth bounce redirects a browser to.
    *
@@ -490,24 +532,122 @@ export type HostState =
 const csv = (raw: string | undefined): string[] =>
   (raw ?? "").split(",").map((s) => s.trim()).filter((s) => s.length > 0);
 
-const buildVersion = (env: NodeJS.ProcessEnv): string =>
-  env.VERCEL_GIT_COMMIT_SHA?.trim() || env.TF_BUILD_VERSION?.trim() || "dev";
+/**
+ * A `BUILD_VERSION` file at this app's project root — `apps/api-vercel/BUILD_VERSION` — written
+ * into the deployed tree at deploy time, exactly as `apps/worker/src/build-version.ts` reads
+ * `apps/worker/BUILD_VERSION` for the Railway image.
+ *
+ * `process.cwd()`, not `__dirname` and not `import.meta.url`. Two reasons, both checked rather
+ * than assumed:
+ *
+ *  1. **`import.meta` does not compile here.** This package carries no `"type": "module"`
+ *     (unlike the worker's), so `tsc -b tsconfig.check.json` treats it as CommonJS and refuses
+ *     `import.meta` outright (`TS1470`) — proven by running that exact check.
+ *  2. **`__dirname` resolves to the wrong directory once webpack bundles this module into a
+ *     shared chunk.** Verified by building this app locally with a placeholder file present and
+ *     inspecting the compiled output: the `join(__dirname, ...)` call DOES get traced into the
+ *     route's `route.js.nft.json` (Node File Trace is conservative about what it includes), but
+ *     at runtime `__dirname` inside the bundled chunk is the chunk's OWN directory
+ *     (`.next/server/chunks/`), not this source file's — Vercel's own guidance names this exact
+ *     failure ("Vercel with Next.js examines static `process.cwd()` calls … it's crucial to use
+ *     `process.cwd()` instead of `__dirname`"). `process.cwd()` is the officially documented,
+ *     traced-and-supported pattern for reading a project-root file from a Vercel Function, and
+ *     it is stable across bundling because it is a runtime call, not a build-time path.
+ *
+ * This app's Vercel project Root Directory is `apps/api-vercel` (the runbook's third artifact,
+ * separate from `ohmail-landing` and `ohmail-admin`), so `process.cwd()` in the deployed
+ * function is this app's own root — the same directory the deploy step writes the file into.
+ */
+const buildVersionFile = (): string => {
+  try {
+    return readFileSync(join(process.cwd(), "BUILD_VERSION"), "utf8").trim();
+  } catch {
+    return "";
+  }
+};
 
 /**
- * A PRODUCTION deployment must be able to say which build it is.
+ * WHICH BUILD THIS IS, and the ORDER of the three sources is the whole design — the same
+ * argument as the worker's `buildIdentityOf` (`apps/worker/src/build-version.ts`), restated here
+ * because this host resolves it independently:
  *
- * `version: "dev"` in production means no commit sha (a CLI deploy from a worktree carries no
- * git metadata) and no `TF_BUILD_VERSION`, so the first question of any incident — "which build
- * is serving this?" — has no answer, and the KEK/schema comparisons `/health` publishes lose the
- * anchor that makes them comparable between hosts. This is reported, not thrown: darkening the
- * host over a missing label would be absurd, and `/health` is the only channel that can say it.
- * `VERCEL_ENV` is set by the platform (`production` / `preview` / `development`), so previews
- * and local runs are unaffected.
+ *  1. `VERCEL_GIT_COMMIT_SHA` — the platform's own git metadata. Present only on a deploy the
+ *     platform built from a source it can name; nothing can make it disagree with what is
+ *     running, so it wins whenever it is there. **Absent on a `git archive` deploy** — the
+ *     extracted tree carries no `.git`, so the platform has nothing to read, and every such
+ *     deploy used to fall straight through to the variable below.
+ *  2. {@link buildVersionFile} — written into the tree that gets deployed, so it is an input to
+ *     the artifact rather than state beside it.
+ *  3. `TF_BUILD_VERSION`, last — an operator-set project variable. It lives BESIDE the artifact,
+ *     and the two go out of step in the direction that matters: bump the variable, have the
+ *     deploy fail or ship from a stale tree, and the OLD build keeps serving while reporting the
+ *     NEW sha — a health endpoint that lies with more confidence than the silence it replaces.
+ *     Measured live 2026-09-03: the first 0.14 API deploy answered `version 64249869…` (the
+ *     0.13.8 sha) while `schemaMarkers` read 127/127 through a marker that exists only in 0.14 —
+ *     both cannot be true of one build, and the variable was the only source that had ever been
+ *     written.
+ *
+ * Every term is trimmed, including the file read: a `BUILD_VERSION` holding only whitespace is
+ * still truthy untrimmed, and a blank label must fall through to the next source rather than
+ * be published as an identity — the same trap `vercel env add` has via stdin (silently stores an
+ * empty value that `env ls` then lists as present and Encrypted).
  */
-const buildIdentityError = (env: NodeJS.ProcessEnv, version: string): string | null =>
-  env.VERCEL_ENV?.trim() === "production" && version === "dev"
-    ? "no build identity: set TF_BUILD_VERSION (or deploy from git so VERCEL_GIT_COMMIT_SHA is present)"
-    : null;
+export const buildIdentityOf = (
+  env: NodeJS.ProcessEnv,
+  file: () => string = buildVersionFile,
+): { version: string; source: BuildIdentitySource } => {
+  const platform = env.VERCEL_GIT_COMMIT_SHA?.trim();
+  if (platform) return { version: platform, source: "platform" };
+  const fromFile = file().trim();
+  if (fromFile) return { version: fromFile, source: "file" };
+  const variable = env.TF_BUILD_VERSION?.trim();
+  if (variable) return { version: variable, source: "variable" };
+  return { version: "dev", source: "none" };
+};
+
+export const buildVersion = (env: NodeJS.ProcessEnv, file: () => string = buildVersionFile): string =>
+  buildIdentityOf(env, file).version;
+
+/**
+ * A PRODUCTION deployment must be able to say which build it is, AND say so honestly.
+ *
+ * `version: "dev"` in production means none of the three sources answered, so the first
+ * question of any incident — "which build is serving this?" — has no answer, and the
+ * KEK/schema comparisons `/health` publishes lose the anchor that makes them comparable between
+ * hosts. This is reported, not thrown: darkening the host over a missing label would be absurd,
+ * and `/health` is the only channel that can say it. `VERCEL_ENV` is set by the platform
+ * (`production` / `preview` / `development`), so previews and local runs are unaffected.
+ *
+ * ── THE SECOND ARM, AND THE INCIDENT THAT ADDED IT ─────────────────────────────────────────
+ *
+ * A `source: "variable"` answer is the state this whole module exists to make rare: `version`
+ * carries a real-looking sha, `buildError` used to read `null`, and the label named a build this
+ * deployment was never built from — measured 2026-09-03, the old rule fired only on the literal
+ * string `"dev"`, so a stale
+ * variable defeated the detector it was supposed to trigger. `version` still carries the
+ * variable's value — it is the operator's stated intent, and suppressing it would lose the one
+ * clue to what they meant — but the JSON stops presenting it as an identity read out of the
+ * artifact. **Do not close this by updating `TF_BUILD_VERSION`** — that makes one `/health` read
+ * honest and leaves the defect: the next deploy from a git-archived tree with no
+ * `apps/api-vercel/BUILD_VERSION` term reports the SAME false confidence.
+ */
+export const buildIdentityError = (
+  env: NodeJS.ProcessEnv,
+  version: string,
+  source: BuildIdentitySource = version === "dev" ? "none" : "file",
+): string | null => {
+  if (env.VERCEL_ENV?.trim() !== "production") return null;
+  if (source === "none" || version === "dev") {
+    return "no build identity: apps/api-vercel/BUILD_VERSION is absent from this deployment " +
+      "and neither VERCEL_GIT_COMMIT_SHA nor TF_BUILD_VERSION is set";
+  }
+  if (source === "variable") {
+    return "build identity came from TF_BUILD_VERSION, not from the deployment: " +
+      "apps/api-vercel/BUILD_VERSION is absent from this build, so `version` names whatever " +
+      "the variable was last set to and may name a build this deployment was never built from";
+  }
+  return null;
+};
 
 /**
  * Reject a connection that cannot serve as the POOLED one — a direct database endpoint, or
@@ -942,7 +1082,7 @@ export function loadHostConfig(env: NodeJS.ProcessEnv): HostConfig {
   const sseEnabled = env.TF_SSE?.trim() === "1" ? true : DEFAULT_SSE_ENABLED;
 
   const cookieHosts = assertCookieHosts(csv(env.TF_COOKIE_HOSTS));
-  const version = buildVersion(env);
+  const { version, source: buildSource } = buildIdentityOf(env);
   const mail = loadMailConfig(env);
   const alerts = loadAlertsConfig(env);
   const admin = loadAdminConfig(env);
@@ -966,7 +1106,8 @@ export function loadHostConfig(env: NodeJS.ProcessEnv): HostConfig {
     sseListenUrl: loadSseListenUrl(env),
     cookieHosts: cookieHosts.length > 0 ? cookieHosts : DEFAULT_COOKIE_HOSTS,
     version,
-    buildError: buildIdentityError(env, version),
+    buildSource,
+    buildError: buildIdentityError(env, version, buildSource),
     billingPlane,
     alerts,
     admin: admin.admin,
@@ -977,6 +1118,13 @@ export function loadHostConfig(env: NodeJS.ProcessEnv): HostConfig {
     // inside a route). `msOAuthEnv` accepts the canonical `MS_OAUTH_*` names and the `MICROSOFT_*`
     // aliases a live environment may hold, and it is the same function the worker calls.
     msOAuth: msOAuthEnv(env),
+    // The vendor cost credentials, resolved ONCE here like every other block. Always an object,
+    // possibly with every member absent — see the field's own note.
+    platformCosts: loadPlatformCostCredentials(env),
+    cronSecret: ((): string | null => {
+      const raw = env.CRON_SECRET?.trim();
+      return raw && raw.length >= 24 ? raw : null;
+    })(),
     // Validated by assertAppUrl (a redirect target). A value it REFUSES falls back to
     // `defaultOrigin(authConfig)` rather than failing boot: this is not a new reason for a host to
     // refuse to start, and the fallback is itself a boot-validated first-party origin.
@@ -1043,6 +1191,43 @@ export function loadAnthropicKey(env: NodeJS.ProcessEnv): string | null {
   const raw = (env.ANTHROPIC_API_KEY ?? "").trim();
   if (raw === "") return null;
   return assertAnthropicKey(raw);
+}
+
+/**
+ * The vendor cost credentials, as the port reads them.
+ *
+ * ── IT NEVER REFUSES AND NEVER THROWS ────────────────────────────────────────────────────
+ *
+ * Unlike {@link loadAdminConfig} and {@link loadAlertsConfig}, there is nothing here to refuse.
+ * A missing credential is not a misconfiguration — it is the state the cost board is designed to
+ * render, and every adapter answers `unconfigured` for it without making a request. A partial
+ * pair is not a misconfiguration either: the port requires `VERCEL_TOKEN` and `VERCEL_TEAM_ID`
+ * TOGETHER and answers `unconfigured` when it has only one, because a token with no team asks
+ * about whoever owns the token and returns a number belonging to somebody's personal account —
+ * a wrong figure rather than a missing one, which is strictly the worse of the two. That rule
+ * belongs to the port, where a self-hosted composition gets it too, so this function does not
+ * restate it.
+ *
+ * `ANTHROPIC_ADMIN_API_KEY` is deliberately NOT {@link loadAnthropicKey}'s variable and is not
+ * validated by `assertAnthropicKey`: it is an ADMIN-scoped organization key (`sk-ant-admin…`),
+ * a different credential with a different blast radius from the inference key this product
+ * spends on, and the two must never be substitutable for one another by accident.
+ *
+ * `SUPABASE_ACCESS_TOKEN` / `SUPABASE_PROJECT_REF` are NOT read here, and setting them changes
+ * nothing: Supabase's Management API publishes no billing usage surface, so that provider is
+ * manual-entry only. A variable a deployment can set that does nothing is worse than an absent
+ * one — it reads as a feature somebody armed.
+ */
+export function loadPlatformCostCredentials(env: NodeJS.ProcessEnv): PlatformCostEnv {
+  const value = (raw: string | undefined): string | undefined => {
+    const trimmed = raw?.trim();
+    return trimmed ? trimmed : undefined;
+  };
+  return {
+    VERCEL_TOKEN: value(env.VERCEL_TOKEN),
+    VERCEL_TEAM_ID: value(env.VERCEL_TEAM_ID),
+    ANTHROPIC_ADMIN_API_KEY: value(env.ANTHROPIC_ADMIN_API_KEY),
+  };
 }
 
 /**
