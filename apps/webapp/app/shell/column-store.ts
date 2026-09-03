@@ -117,8 +117,21 @@ export const SPLIT_VAR = "--split-user";
  */
 export const SPLIT_SK_VAR = "--split-user-sk";
 
-/** The rail's track, as CSS. One string, so the stylesheet and the stamp cannot drift. */
-export const RAIL_TRACK = `clamp(${RAIL.min}px, var(${RAIL_VAR}, ${RAIL.dflt}px), ${RAIL.max}px)`;
+/**
+ * The rail's track, as CSS. One string, so the stylesheet and the stamp cannot drift.
+ *
+ * THE CEILING FOLLOWS THE WINDOW. A constant 360px cap let a rail dragged wide keep its width
+ * while the window shrank, and at 1000px the reading column was left ~250px — its header
+ * address ran into the time and its action pill clipped. The cap is now the smaller of the
+ * rail's own ceiling and what the window leaves once the list keeps its floor and the reading
+ * column its own (`LIST.min` + `LIST.viewerMin`, plus the two edge gaps and the two tile gaps,
+ * in tokens): the viewer keeps a floor at every width the split exists at, with no script
+ * running. When the window is too narrow for even the floor, `clamp()` resolves to the rail's
+ * minimum, which is the right answer there too.
+ */
+export const RAIL_TRACK =
+  `clamp(${RAIL.min}px, var(${RAIL_VAR}, ${RAIL.dflt}px), `
+  + `min(${RAIL.max}px, calc(100vw - ${LIST.min + LIST.viewerMin}px - 2 * var(--gap-edge) - 2 * var(--gap-tile))))`;
 
 /** What is left for the list once the reading column keeps its floor — per box. */
 const ROOM_SPLIT = `calc(100% - ${LIST.viewerMin}px - var(--gap-tile))`;

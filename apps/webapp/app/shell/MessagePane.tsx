@@ -20,7 +20,7 @@ import { replyAllRecipients } from "./compose-from";
 import { useBarDensity } from "./bar-density";
 import { InlineReply } from "./InlineReply";
 import { inlineForwardKey } from "./mail-send";
-import { chordKeys, useBinding, useKeyPress } from "./keymap";
+import { chordKeys, useBinding, useKeyPress, useModGlyph } from "./keymap";
 import { useBodyStalled, useMessageChrome, type MessageBarPanel } from "./message-chrome";
 import { subscribeSessionRevival, useSessionDead } from "./session-truth";
 import { MoreMenu, type MoreMenuItem } from "./MoreMenu";
@@ -202,8 +202,9 @@ function useBarPanel(messageId: string): [BarPanel | null, (next: BarPanel | nul
  */
 function Key({ chord }: { chord: string }) {
   const binding = useBinding(chord);
+  const mod = useModGlyph();
   if (!binding) return null;
-  return <Kbd>{chordKeys(chord).join(" ")}</Kbd>;
+  return <Kbd>{chordKeys(chord, mod).join(" ")}</Kbd>;
 }
 
 /**

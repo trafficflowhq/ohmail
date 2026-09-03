@@ -43,7 +43,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useTranslations } from "next-intl";
-import { chordKeys, useBinding } from "./keymap";
+import { chordKeys, useBinding, useModGlyph } from "./keymap";
 import { replySubject } from "@ohmail/client-engine";
 import type {
   AddressBookEntry,
@@ -540,6 +540,7 @@ export function InlineReply({
       : replyEnvelopePlan(message, options.map((o) => o.address), replyAll, envelope);
   /** Is the send chord bound here (a provider stands above)? Gates the Send button's keycap. */
   const sendChord = useBinding("mod+Enter");
+  const mod = useModGlyph();
   const locked = !canSend(
     send,
     mode === "forward"
@@ -844,7 +845,7 @@ export function InlineReply({
           {t(verb.key)}
           {/* The verb's chord, from the live registry — the action-bar law (§12): an action
               button wears its keycap always; a provider-less mount has no binding, no cap. */}
-          {sendChord ? <Kbd>{chordKeys("mod+Enter").join(" ")}</Kbd> : null}
+          {sendChord ? <Kbd>{chordKeys("mod+Enter", mod).join(" ")}</Kbd> : null}
         </Button>
         <Button variant="ghost" onClick={onClose}>
           {t("cancel")}

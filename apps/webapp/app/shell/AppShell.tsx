@@ -138,7 +138,7 @@ import { SIG_FOLLOWING, effectiveSignature, withSignature, type SignatureState }
 import { useDraftReply, type DraftedReply } from "./draft-reply";
 import { RichEditor } from "./RichEditor";
 import { TagPicker, placePicker, type TagPickerState } from "./TagPicker";
-import { KeymapProvider, useKeyBindings, type KeyBinding } from "./keymap";
+import { KeymapProvider, useKeyBindings, useModGlyph, type KeyBinding } from "./keymap";
 import { createSeenBatcher } from "./seen-batch";
 import { readColumnHidden, readColumnHiddenFor, watchZeroPushTier, zeroPushTier } from "./narrow";
 import { ZoneCursor, currentZone, setRailSummon } from "./zone-nav";
@@ -250,6 +250,16 @@ const RAIL_OF_TRIAGE_PILE: Record<TriagePileId, string> = {
  * cannot put `3` on the wrong row, only include or exclude a row from being numbered.
  */
 const PILE_IDS: string[] = ["ohbox", "reads", "receipts", "screener", ...Object.keys(TRIAGE_PILE_OF_RAIL)];
+/** The `g` chord's label key per numbered rail row — one sentence for both chords to a place. */
+const PILE_CHORD_LABEL: Record<string, "shortcuts.goOhbox" | "shortcuts.goReads" | "shortcuts.goReceipts" | "shortcuts.goScreener" | "shortcuts.goLater" | "shortcuts.goParked" | "shortcuts.goResurface"> = {
+  ohbox: "shortcuts.goOhbox",
+  reads: "shortcuts.goReads",
+  receipts: "shortcuts.goReceipts",
+  screener: "shortcuts.goScreener",
+  triage: "shortcuts.goLater",
+  "triage-aside": "shortcuts.goParked",
+  "triage-resurface": "shortcuts.goResurface",
+};
 
 /** The `boot-cache.ts` scope for the account's own addresses. See `ownAddresses` below. */
 const OWN_ADDRESSES_BOOT_SCOPE = "own-addresses";
@@ -2145,6 +2155,8 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
   const [previewFor, setPreviewFor] = useState<{ messageId: string; attachmentId: string } | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [senderMenu, setSenderMenu] = useState<SenderMenuState | null>(null);
+  /* The modifier's cap on this keyboard — the three hand-written caps below read it. */
+  const modCap = useModGlyph();
   const [senderAudit, setSenderAudit] = useState<SenderAuditState | null>(null);
   /* The subject-rule sheet — the finer sibling of the sender popover, opened from a message's
      title. It lives here for the reason every overlay here does: `MessagePane` is mounted TWICE
@@ -5263,7 +5275,6 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
     { chord: "g r", group: "navigate", label: t("shortcuts.goReads"), run: () => go("reads") },
     { chord: "g e", group: "navigate", label: t("shortcuts.goReceipts"), run: () => go("receipts") },
     { chord: "g s", group: "navigate", label: t("shortcuts.goScreener"), run: () => go("screener") },
-    { chord: "g t", group: "navigate", label: t("shortcuts.goTriage"), run: () => go("triage") },
     /* ── THE REST OF THE `g` LEADER (the ohmarchy keymap, Phase 1) ──────────────────────
        The prototype's grammar reaches every place through `g`; the shipping leader stopped
        at five. The three triage horizons take the pile's own initial (Later / Parked /
@@ -5899,8 +5910,11 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
     numberNav.map((item, i) => ({
       chord: String(i + 1),
       group: "navigate" as const,
-      // The rail's own label, so the sheet and the rail cannot disagree about what `3` is.
-      label: t("shortcuts.goPile", { pile: item.label }),
+      // THE SAME SENTENCE THE `g` CHORD USES for this place, so the sheet folds the two chords
+      // into one row ("1 · g o  Go to the Ohbox") instead of listing every destination twice
+      // under two spellings. A rail row with no `g` chord (a tag, a folder) keeps the generic
+      // "Go to {pile}" over the rail's own label.
+      label: PILE_CHORD_LABEL[item.id] ? t(PILE_CHORD_LABEL[item.id]!) : t("shortcuts.goPile", { pile: item.label }),
       /* A HELD DIGIT IS ONE NAVIGATION. Auto-repeat re-running a jump is never wanted — and
          it was exploitable across a boundary: hold `1` with compose's send-later picker
          open, the first press schedules and CLOSES the picker, and the repeats then fell
@@ -6196,7 +6210,7 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
       <button type="button" className="ritem dock-cmd" onClick={palette.openPalette}>
         {t("dock.command")}
         <span className="cnt">
-          <Kbd>⌘K</Kbd>
+          <Kbd>{modCap}K</Kbd>
         </span>
       </button>
       <button
@@ -6279,7 +6293,7 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
               closed drawer is one nobody is told about. See `PullNewMail.tsx`. */}
           <PullNewMail variant="topbar" binding={pullBinding} />
           <button type="button" className="tb-btn" onClick={palette.openPalette}>
-            ⌘K
+            {modCap}K
           </button>
         </div>
 
@@ -7329,7 +7343,7 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
             <>
               {t("triage.frDone")}
               {/* The verb's chord (the run's own ⌘↵ binding) — the always-on-caps law. */}
-              <Kbd>⌘ ↵</Kbd>
+              <Kbd>{modCap} ↵</Kbd>
             </>
           )
         }

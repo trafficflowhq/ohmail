@@ -48,7 +48,7 @@ import { addressBook } from "@ohmail/client-engine";
 import type { EngineDraft, OhmailEngine } from "@ohmail/client-engine";
 import type { Editor } from "@tiptap/react";
 import { Button, Chip, Icon, Kbd, useToast } from "@ohmail/ui";
-import { chordKeys, useBinding, useKeyBindings } from "../shell/keymap";
+import { chordKeys, useBinding, useKeyBindings, useModGlyph } from "../shell/keymap";
 import { go } from "../shell/routing";
 import { displayAddress } from "../shell/idn";
 import { canSend, sendVerb, type SendState } from "../shell/mail-send";
@@ -335,6 +335,7 @@ export function ComposeView({
    */
   /** Is the send chord bound here (a provider stands above)? Gates the Send button's keycap. */
   const sendChord = useBinding("mod+Enter");
+  const mod = useModGlyph();
   const [sendLaterOpen, setSendLaterOpen] = useState(false);
   const [openedAt, setOpenedAt] = useState<Date>(() => new Date());
   const [customAt, setCustomAt] = useState("");
@@ -926,7 +927,7 @@ export function ComposeView({
                     {t("sendLaterConfirm")}
                     {/* The chord's cap moves HERE while the picker is open — ⌘↵ schedules
                         the standing custom time, which is exactly this button's press. */}
-                    {sendChord ? <Kbd>{chordKeys("mod+Enter").join(" ")}</Kbd> : null}
+                    {sendChord ? <Kbd>{chordKeys("mod+Enter", mod).join(" ")}</Kbd> : null}
                   </Button>
                   <Button variant="ghost" onClick={closeSendLater}>{t("sendLaterClose")}</Button>
                 </div>
@@ -954,7 +955,7 @@ export function ComposeView({
                     (the picker's own confirm wears it then) — a cap on Send-now claiming a
                     key that schedules would be the bar advertising a lie (review finding,
                     round 1). */}
-                {sendChord && !sendLaterOpen ? <Kbd>{chordKeys("mod+Enter").join(" ")}</Kbd> : null}
+                {sendChord && !sendLaterOpen ? <Kbd>{chordKeys("mod+Enter", mod).join(" ")}</Kbd> : null}
               </Button>
               {/* SEND LATER — beside Send because it is the same act on a different clock. The
                   SAME lock (`locked`) gates it: a message that may not be sent now may not be

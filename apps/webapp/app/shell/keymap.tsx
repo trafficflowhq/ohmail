@@ -40,6 +40,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 /* The rules that stop key hints being shown on devices with no keys. It rides with the
@@ -131,6 +132,8 @@ interface Registry {
   register: (layer: Omit<Layer, "id">) => () => void;
   /** Everything currently bound, in DISPATCH order. Bumps whenever a layer's shape changes. */
   bindings: KeyBinding[];
+  /** The modifier's cap on this keyboard — ⌘ or Ctrl. See {@link useModGlyph}. */
+  mod: string;
   /**
    * RUN a chord's binding as if it had been typed, and say whether anything did.
    *
@@ -211,10 +214,40 @@ export function chordMatches(chord: string, e: KeyboardEvent): boolean {
   return key.length === 1 ? e.key.toLowerCase() === key.toLowerCase() : e.key === key;
 }
 
-/** The chord as keycaps, for `<Kbd>`: `"mod+k"` → `["⌘", "K"]`, `"g o"` → `["g", "o"]`. */
-export function chordKeys(chord: string): string[] {
+/**
+ * THE MODIFIER'S OWN NAME ON THIS KEYBOARD. `mod` is one binding token — `chordMatches` accepts
+ * ⌘ or Ctrl for it — but a cap has to read the way the key on the desk does: a Linux or Windows
+ * keyboard has no ⌘, and "⌘K" on it documents a key that does nothing (reported: every modifier
+ * cap said ⌘ on Linux while Ctrl+K opened the palette and Super+K did nothing). Detected from the
+ * platform, never from the face; an iPad reporting as a Mac is a Mac for this purpose.
+ */
+export function modGlyph(): string {
+  if (typeof navigator === "undefined") return "⌘";
+  const platform = navigator.platform ?? "";
+  const ua = navigator.userAgent ?? "";
+  return /Mac|iPhone|iPad|iPod/.test(platform) || /Macintosh|iPhone|iPad/.test(ua) ? "⌘" : "Ctrl";
+}
+
+const subscribeNever = () => () => {};
+const serverMod = () => "⌘";
+/**
+ * `modGlyph()` for a render — hydration-safe. The server has no keyboard and says ⌘; the client
+ * snapshot is the platform's, and `useSyncExternalStore` swaps to it as hydration completes
+ * rather than as a later effect, so a client-only mount (the desktop) never paints the wrong cap.
+ */
+export function useModGlyph(): string {
+  return useSyncExternalStore(subscribeNever, modGlyph, serverMod);
+}
+
+/**
+ * The chord as keycaps, for `<Kbd>`: `"mod+k"` → `["⌘", "K"]`, `"g o"` → `["g", "o"]`.
+ * `mod` is the modifier's cap on this keyboard — pass {@link useModGlyph}'s answer from a render;
+ * the default is the Mac's, which is what a caller with no keyboard in front of it (a test, the
+ * server) gets.
+ */
+export function chordKeys(chord: string, mod = "⌘"): string[] {
   const caps: Record<string, string> = {
-    mod: "⌘",
+    mod,
     shift: "⇧",
     Enter: "↵",
     Escape: "esc",
@@ -325,13 +358,14 @@ export function KeymapProvider({ children }: { children: ReactNode }) {
     return false;
   }, [ordered]);
 
+  const mod = useModGlyph();
   const value = useMemo<Registry>(
     // `version` is the dependency that matters: it changes when a layer is added, removed
     // or reshaped, which is exactly when the overlay's content changes. `press` is NOT
     // subject to it — it resolves its handler when it is called.
-    () => ({ register, bindings: ordered(), press }),
+    () => ({ register, bindings: ordered(), press, mod }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [register, ordered, press, version],
+    [register, ordered, press, mod, version],
   );
 
   return <KeymapContext.Provider value={value}>{children}</KeymapContext.Provider>;

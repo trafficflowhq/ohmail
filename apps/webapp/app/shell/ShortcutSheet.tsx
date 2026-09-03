@@ -15,7 +15,7 @@
 import { useEffect } from "react";
 import { useTranslations } from "next-intl";
 import { Icon, Kbd } from "@ohmail/ui";
-import { chordKeys, groupedBindings, useKeymap, type BindingGroup } from "./keymap";
+import { chordKeys, groupedBindings, useKeymap, type BindingGroup, type KeyBinding } from "./keymap";
 
 /**
  * `KeyboardEvent.key` values that are a modifier being held, not a keystroke being made.
@@ -29,7 +29,7 @@ const MODIFIER_KEYS = new Set([
 
 export function ShortcutSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const t = useTranslations("shortcuts");
-  const { bindings } = useKeymap();
+  const { bindings, mod } = useKeymap();
 
   useEffect(() => {
     if (!open) return;
@@ -63,6 +63,24 @@ export function ShortcutSheet({ open, onClose }: { open: boolean; onClose: () =>
   if (!open) return null;
   const groups = groupedBindings(bindings);
   const groupLabel = (g: BindingGroup) => t(`group.${g}` as "group.navigate");
+  /**
+   * ONE ROW PER SENTENCE. Two chords that do the same thing — `1` and `g o` both go to the
+   * Ohbox — are one instruction with two spellings, so they share a row rather than listing
+   * every destination twice. Folded on the LABEL, which is the registry's own text: the digit
+   * bindings borrow the `g` chord's sentence for exactly this reason. A row is inert only when
+   * every chord on it is.
+   */
+  const rows = (items: KeyBinding[]): Array<{ label: string; chords: string[]; disabled: boolean }> => {
+    const out: Array<{ label: string; chords: string[]; disabled: boolean }> = [];
+    for (const b of items) {
+      const row = out.find((r) => r.label === b.label);
+      if (row) {
+        row.chords.push(b.chord);
+        row.disabled = row.disabled && Boolean(b.disabled);
+      } else out.push({ label: b.label, chords: [b.chord], disabled: Boolean(b.disabled) });
+    }
+    return out;
+  };
 
   return (
     <>
@@ -81,14 +99,19 @@ export function ShortcutSheet({ open, onClose }: { open: boolean; onClose: () =>
             <section key={g.group}>
               <h4>{groupLabel(g.group)}</h4>
               <ul>
-                {g.items.map((b) => (
-                  <li key={b.chord} className={b.disabled ? "off" : undefined}>
+                {rows(g.items).map((row) => (
+                  <li key={row.chords[0]} className={row.disabled ? "off" : undefined}>
                     <span className="ks-keys">
-                      {chordKeys(b.chord).map((k, i) => (
-                        <Kbd key={`${k}-${i}`}>{k}</Kbd>
+                      {row.chords.map((chord, c) => (
+                        <span key={chord} className="ks-chord">
+                          {c > 0 ? <span className="ks-or" aria-hidden="true">·</span> : null}
+                          {chordKeys(chord, mod).map((k, i) => (
+                            <Kbd key={`${k}-${i}`}>{k}</Kbd>
+                          ))}
+                        </span>
                       ))}
                     </span>
-                    <span className="ks-lab">{b.label}</span>
+                    <span className="ks-lab">{row.label}</span>
                   </li>
                 ))}
               </ul>

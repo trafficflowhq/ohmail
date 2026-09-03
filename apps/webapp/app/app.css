@@ -64,7 +64,7 @@ body.reading .shell {
    `.col-handle-rail`, which must sit exactly where this track ends, reads the same expression
    (`shell/column-handles.css`) instead of restating three numbers that could drift. */
 .deck {
-  --rail-track: clamp(200px, var(--rail-w, 224px), 360px);
+  --rail-track: clamp(200px, var(--rail-w, 224px), min(360px, calc(100vw - 800px - 2 * var(--gap-edge) - 2 * var(--gap-tile))));
   flex: 1;
   min-height: 0;
   display: grid;
@@ -1091,8 +1091,11 @@ body.reading .shell {
    its own number. */
 .view-ohbox .doorbell .avs .av.more {
   width: auto;
-  min-width: 26px;
-  padding: 0 7px;
+  /* The floor and the padding carry the same teaching product `doorbell.css` collapses the
+     counter with: 26px and 7px under paper, zero under the ringed face — `min-width` outranks
+     `max-width`, so a constant floor here would hold the tile open on the face that drops it. */
+  min-width: calc(26px * (1 - var(--teach)));
+  padding: 0 calc(7px * (1 - var(--teach)));
   border-radius:var(--r-pill);
 }
 
@@ -1119,89 +1122,6 @@ body.reading .shell {
 }
 .scn-seg button.on .scnt {
   color: var(--ink2);
-}
-.scn-bulk {
-  display: flex;
-  gap: 7px;
-  flex-wrap: wrap;
-}
-.scn-bulk .btn {
-  font-size: 11.5px;
-  padding: 4.5px 11px;
-}
-/* the waiting queue, partitioned — one chip per suggested pile, plus the two the apply
-   button steps over (`.off`) and the "All" reset */
-.scn-chips {
-  display: flex;
-  gap: 5px;
-  flex-wrap: wrap;
-}
-.scn-chip {
-  font: inherit;
-  font-size: 11px;
-  padding: 3px 9px;
-  border: 1px solid var(--line);
-  border-radius:var(--r-pill);
-  background: none;
-  color: var(--ink2);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 0.14s var(--swift), color 0.14s var(--swift),
-    border-color 0.14s var(--swift);
-}
-.scn-chip:hover {
-  background: var(--tint);
-}
-.scn-chip .num {
-  font-variant-numeric: tabular-nums;
-  color: var(--ink3);
-  margin-left: 2px;
-}
-/* the two the bulk apply will not touch read quieter than the four it will */
-.scn-chip.off {
-  color: var(--ink3);
-  border-style: dashed;
-}
-.scn-chip.on {
-  background: var(--chip);
-  border-color: transparent;
-  color: var(--ink);
-}
-.scn-chip.on .num {
-  color: var(--ink2);
-}
-/* a bulk in flight — the sentence, and the same numbers as a track */
-.scn-applying {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.scn-applying-lab {
-  font-size: 11.5px;
-  color: var(--ink2);
-}
-.scn-prog {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 108px;
-  height: 3px;
-  border: 0;
-  border-radius:var(--r-pill);
-  background: var(--line);
-  flex: none;
-}
-.scn-prog::-webkit-progress-bar {
-  background: var(--line);
-  border-radius:var(--r-pill);
-}
-.scn-prog::-webkit-progress-value {
-  background: var(--accent);
-  border-radius:var(--r-pill);
-  transition: width 0.25s var(--swift);
-}
-.scn-prog::-moz-progress-bar {
-  background: var(--accent);
-  border-radius:var(--r-pill);
 }
 /* quick-adjust — the accept and the destination menu that ride each waiting row */
 .scn-act {
@@ -1338,70 +1258,6 @@ body.reading .shell {
     opacity: 1;
     pointer-events: auto;
   }
-}
-/* the suggestion purchase — batch size, the server's price, confirm */
-.scn-suggest {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  flex-wrap: wrap;
-}
-.scn-sg-lab {
-  font-size: 11.5px;
-  color: var(--ink3);
-}
-.scn-sg-sizes {
-  display: inline-flex;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--line);
-  border-radius:calc(var(--r-ctl) * 7 / 8);
-}
-.scn-sg-size {
-  font: inherit;
-  font-size: 11.5px;
-  font-variant-numeric: tabular-nums;
-  padding: 2.5px 9px;
-  border: 0;
-  border-radius:calc(var(--r-ctl) * 5 / 8);
-  background: none;
-  color: var(--ink2);
-  cursor: pointer;
-}
-.scn-sg-size.on {
-  background: var(--chip);
-  color: var(--ink);
-  font-weight: 600;
-}
-.scn-sg-size:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-/* The price sits between the choice and the confirm, so it cannot be missed on the way. */
-.scn-sg-price {
-  font-size: 11.5px;
-  color: var(--ink);
-  font-weight: 550;
-}
-.scn-sg-note {
-  font-size: 11.5px;
-  color: var(--ink3);
-  flex-basis: 100%;
-}
-/* THE CLOSED STATE — the way in, and the way back for a queue that has already been answered.
-   One row so the resting sentence and "Suggest again…" sit on the baseline the bulk strip's other
-   buttons do, rather than the sentence pushing them apart. */
-.scn-sg-rest {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-}
-/* Stated in the note's own voice, not a button's: nothing here is pressable, and dressing a fact
-   as an action is how a person presses it looking for the thing it is telling them is done. */
-.scn-sg-all {
-  font-size: 11.5px;
-  color: var(--ink3);
 }
 /* WHAT THE AI ALLOWANCE IS DOING. `flex-basis: 100%` puts it on its own line under the bulk
    strip's buttons — the same device `.scn-sg-note` uses — so it is a footnote to that row and
@@ -3930,16 +3786,8 @@ textarea.c-input:read-only {
 .mbx-ok { font-size: 12px; color: var(--ink2); font-variant-numeric: tabular-nums; }
 .mbx-bad { font-size: 12px; color: var(--danger, #b3261e); }
 .mbx-wait { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--ink2); }
-/* A one-second sweep, not a throbber: it says "something is running" without asking to be
-   watched. Honest about the worker's cadence — this can legitimately sit for a minute. */
-.mbx-spin {
-  width: 11px; height: 11px; border-radius:var(--r-pill);
-  border: 1.5px solid var(--hair); border-top-color: var(--accent);
-  animation: mbx-spin 1s linear infinite;
-}
-@keyframes mbx-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .mbx-spin { animation: none; } }
-
+/* The waiting mark beside these rows is `Spinner` (packages/ui, `.spin`): a segment running the
+   mark's own perimeter, ring or square by the radius token; `.mbx-spin` is the host's hook. */
 /* ── THE DEVICE-CODE, AS THE ONE THING BEING TRANSCRIBED ─────────────────────────────────────
    This code is read off a screen and typed, by eye, into a different device. Everything here
    serves that single act and nothing else:
@@ -4018,7 +3866,7 @@ textarea.c-input:read-only {
      up to `rail + gap` too wide and put the snap back on every cold boot, which review caught
      before it shipped. */
   grid-template-columns:
-    clamp(200px, var(--rail-w, 224px), 360px)
+    clamp(200px, var(--rail-w, 224px), min(360px, calc(100vw - 800px - 2 * var(--gap-edge) - 2 * var(--gap-tile))))
     var(--split-user-sk, minmax(320px, 400px) 1fr);
   gap: 0 var(--gap-tile); /* mirrors .deck — the skeleton must sit exactly where the shell will */
   /* NO own height or width: in the gate this sits absolutely at `inset:16px`
@@ -4218,82 +4066,6 @@ textarea.c-input:read-only {
 }
 .view .row .av:hover {
   box-shadow: var(--lift-2);
-}
-
-/* ================= sender screening popover ========================== */
-.senderm {
-  position: fixed;
-  z-index: var(--z-pal);
-  width: 252px;
-  border-radius:calc(var(--r-overlay) * 18 / 20);
-  background: var(--float);
-  box-shadow: var(--lift-3);
-  overflow: hidden;
-  animation: rise 0.2s var(--spring);
-}
-.sm-head {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 12px 15px 9px;
-}
-.sm-who {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-.sm-who b {
-  font-size: 12.5px;
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.sm-who small {
-  font-size: 11px;
-  color: var(--ink3);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.sm-now {
-  padding: 0 15px 9px;
-  font-size: 11px;
-  color: var(--ink3);
-}
-.senderm ul {
-  list-style: none;
-  padding: 6px;
-  margin: 0;
-}
-.senderm li {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 8px 11px;
-  border-radius:calc(var(--r-card) * 11 / 14);
-  font-size: 12.5px;
-  cursor: pointer;
-}
-.senderm li:hover {
-  background: var(--tint);
-}
-.senderm li.sel {
-  background: var(--accent-soft);
-  color: var(--accent-ink);
-  font-weight: 600;
-}
-.senderm li .ck {
-  margin-left: auto;
-  color: var(--accent-ink);
-  font-size: 11px;
-  font-weight: 650;
-}
-.sm-foot {
-  padding: 8px 15px 11px;
-  font-size: 10.5px;
-  line-height: 1.5;
-  color: var(--ink3);
 }
 
 /* ================= the conversation =============================
@@ -5263,8 +5035,10 @@ textarea.c-input:read-only {
   left: 50%;
   top: 12vh;
   transform: translateX(-50%);
-  width: min(620px, calc(100vw - 32px));
-  max-height: 74vh;
+  /* Wide enough for three columns: the list is fifty rows, and at two columns it ran past a
+     720px window's fold with nothing but an overlay scrollbar to say so. */
+  width: min(900px, calc(100vw - 32px));
+  max-height: 80vh;
   overflow-y: auto;
   border-radius:calc(var(--r-overlay) * 22 / 20);
   background: var(--float);
@@ -5306,6 +5080,8 @@ textarea.c-input:read-only {
   grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
   gap: 6px 26px;
   margin-top: 14px;
+  /* a group's rows stay together: a column never breaks inside one */
+  align-items: start;
 }
 .ks-cols h4 {
   font-size: 10.5px;
@@ -5338,6 +5114,16 @@ textarea.c-input:read-only {
   gap: 3px;
   flex: none;
   min-width: 62px;
+}
+/* two chords to one sentence: "1 · g o" */
+.ks-chord {
+  display: inline-flex;
+  gap: 3px;
+  align-items: baseline;
+}
+.ks-or {
+  color: var(--ink3);
+  padding: 0 2px;
 }
 .ks-lab {
   min-width: 0;
