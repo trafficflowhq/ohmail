@@ -73,6 +73,28 @@ A standalone install no longer offers the "Use folders" section. The mail engine
 computer does not create, rename or delete folders, so the switch stored nothing and moved
 back to off on its own. It returns when there is something behind it.
 
+### A message to yourself keeps the address you were writing from
+
+When you address a message to somebody on a domain one of your own addresses stands on,
+ohmail sends it from that address and says on the From line that it switched. The rule is
+there for an account holding two businesses' addresses, where the default would otherwise
+be the wrong company about half the time.
+
+Your own addresses were caught by it too, and they should not have been. Every address you
+hold stands on one of your own domains, so a note to your own second mailbox — the
+commonest reason to type your own address into a compose form — moved the sender onto the
+mailbox you were writing *to*, and announced the switch as though a correspondent had asked
+for it.
+
+Your own addresses no longer count as evidence of which identity is writing. A message
+addressed only to yourself leaves from the address the form opened on, or the one you
+picked, and says nothing. Addressed to yourself *and* a correspondent, the correspondent
+decides, exactly as they would have on their own. An address on a mailbox that can no
+longer send still counts as yours, and so does your own address typed in a different case.
+
+Nothing changes for a reply or a forward: both answer from the mailbox the original arrived
+in, whoever they are addressed to.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
