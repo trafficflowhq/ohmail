@@ -588,6 +588,14 @@ export interface RequestEligibility {
   /** `organizer_role = 'organizer'`, OR (holder advertises `requests` AND `organizer_state = 'held'`). */
   capable: boolean;
   by: OrganizedBy;
+  /**
+   * The mailbox's own `status`, so a caller can tell a TOMBSTONE from a reader. Both answer
+   * `capable: false`, and they are not the same thing: a removed mailbox is organized by nobody,
+   * so refusing it with "another install is organizing this" names a holder that no longer holds
+   * anything and offers a takeover of a mailbox that is gone. `ScreenerService.decide` reads this
+   * and answers not-found instead.
+   */
+  status: string;
 }
 
 export async function readRequestEligibility(
@@ -616,6 +624,7 @@ export async function readRequestEligibility(
     role,
     state,
     capable,
+    status: row.status,
     by: {
       kind: isOrganizerKind(row.kind) ? row.kind : null,
       name: row.name ?? null,

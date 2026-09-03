@@ -13,7 +13,7 @@ import {
   // 0.14.1, 0.14.1 — the request path. See `screener-apply.ts` and `organizer-role.ts` in
   // `@trafficflow/db` for why the transactional core and the eligibility read live there.
   heldRowById, applyScreenerDecision, AccountErasedError, readAccountErasedAt, domainOf,
-  readRequestEligibility, insertOrganizerRequest, listOutstandingForAccount,
+  readRequestEligibility, readOrganizerRole, insertOrganizerRequest, listOutstandingForAccount,
   OrganizedElsewhereError, MailboxNotFoundError,
   type AppliedScreenerRow, type RequestEligibility, type OrganizedBy,
   type Tx,
@@ -1134,6 +1134,12 @@ export class ScreenerReadService {
 
     const eligibility = await readRequestEligibility(asTx(ctx), ctx.accountId, v.target.mailboxId);
     if (!eligibility) throw new MailboxNotFoundError(v.target.mailboxId);
+    // A TOMBSTONE IS NOT A READER. A removed mailbox keeps whatever `organizer_role` it had, so
+    // it reads `capable: false` and would fall to the reader branch — which refuses with "another
+    // install is organizing this mailbox", names whoever held it before the removal, and offers a
+    // takeover of something that no longer exists. Every clause of that is false. Not-found is
+    // what the row actually says.
+    if (eligibility.status === "disabled") throw new MailboxNotFoundError(v.target.mailboxId);
 
     // `&& eligibility.capable`, not `role === "organizer"` alone: `capable` is FALSE for a
     // disabled (tombstoned) mailbox even when its `organizer_role` column still reads
@@ -1167,6 +1173,29 @@ export class ScreenerReadService {
     let rerouted: AppliedScreenerRow[] = [];
 
     const result = await asTx(ctx).transaction(async (tx) => {
+      // ── THE ROLE IS RE-READ HERE, INSIDE THE WRITE, UNDER THE SHARE LOCK ────────────────────
+      //
+      // `decide`'s own `readRequestEligibility` is a PLAIN read on the ambient handle — right for
+      // choosing a branch, and not evidence about a write that has not started yet. READ
+      // COMMITTED gives every statement a fresh snapshot, so between that read and this
+      // transaction the worker's lease gate can commit a demotion, and an install that is now a
+      // READER would insert a promoted rule and a bag of `last_set_by: 'us'` move intents.
+      // `assertOrganizerRole`'s own header records that exact interleaving and why the lock is
+      // the only thing that closes it.
+      //
+      // AFTER the erasure fence and not before: `applyScreenerDecision` takes `accounts FOR SHARE`
+      // as its first statement, and `deleteAccount` takes the same row first — so this transaction
+      // must reach `accounts` before it reaches `mailboxes`, or the two orders cross and deadlock.
+      const erasedAt = await readAccountErasedAt(tx, ctx.accountId);
+      if (erasedAt != null) {
+        throw new ServiceError("account_erased", 410,
+          "this account has been deleted; its settings cannot be changed");
+      }
+      const locked = await readOrganizerRole(tx, ctx.accountId, target.mailboxId, { lock: true });
+      if (!locked) throw new MailboxNotFoundError(target.mailboxId);
+      if (locked.status === "disabled") throw new MailboxNotFoundError(target.mailboxId);
+      if (locked.role !== "organizer") throw new OrganizedElsewhereError(target.mailboxId, locked.by);
+
       let applied;
       try {
         applied = await applyScreenerDecision(tx, {
