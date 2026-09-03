@@ -27,6 +27,14 @@ import {
    * the same reason the staging sweep is:
    * `ai_attempt_claims` exists only where there is a ledger to coordinate. */
   pruneAiAttemptClaims,
+  /* The credit roll-up: day-grained aggregates for the admin console's spend panels, plus the
+   * retention sweep over the setup pool's draw record. Cloud, on the staging sweep's argument —
+   * there are no credits to aggregate where there is no ledger. It reads `credit_ledger` and
+   * NEVER writes to it; the table is append-only by trigger and its newest row is coupled to
+   * `credit_balances` at COMMIT, so the aggregates exist precisely so the reads can be cheap
+   * WITHOUT the trail being shortened. */
+  runCreditRollupPass, isNightlyRollupSlot,
+  CREDIT_ROLLUP_HOURLY_DAYS, CREDIT_ROLLUP_NIGHTLY_DAYS,
   type AiCreditGate,
   type AlertSink,
   type AlertSinkHealth,
@@ -751,6 +759,18 @@ export async function startWorkerWithLock(
     let dutyAccounts: string[] = [];
     // Time-gate for the global maintenance pass; starts "due" so a fresh leader sweeps once.
     let lastMaintenanceAt = 0;
+    /**
+     * When this leader last ran the WIDE credit roll-up (three days, totals, divergence, the
+     * setup-spend sweep). `null` until it has, so a leader that takes over during the nightly
+     * hour runs it once rather than skipping the night — the same first-cycle argument every
+     * time-gate above makes, and here it is the difference between a nightly pass and a pass
+     * that any deploy at 03:0x silently cancels.
+     *
+     * In memory rather than on `credit_rollup_runs`: a duplicate wide pass costs one extra
+     * recompute of three days over an append-only source, which is free and correct, while a
+     * missed one leaves the totals a day behind. The cheap failure is the right default.
+     */
+    let lastNightlyRollupAt: Date | null = null;
     /**
      * The staging bucket's client, built ONCE per run rather than per pass — it is a closure over
      * three strings and a `fetch`, so rebuilding it hourly would be pure waste. `null` when this
@@ -4709,6 +4729,69 @@ export async function startWorkerWithLock(
             reason: "no staging bucket is configured on this worker; if the API stages, its " +
               "bucket is not being swept",
           });
+        }
+
+        // ── THE CREDIT ROLL-UP ─────────────────────────────────────────────────────────
+        //
+        // Day-grained aggregates so the admin console reads spend without scanning the
+        // ledger. Here rather than in a platform cron for the reason every sweep above is
+        // here: the worker is the single elected writer, so exactly one process runs it, and
+        // a failure is a logged warning rather than a cycle abort.
+        //
+        // TWO CADENCES, ONE CALL. Hourly recomputes today and yesterday — cheap, two indexed
+        // range scans — and keeps the console within an hour of the truth. Once a night the
+        // same function widens to three days and additionally rebuilds the lifetime totals,
+        // measures ledger-versus-balance divergence and sweeps the setup pool's expired draw
+        // records. The wide arm is nightly because its two extra steps are full passes, and
+        // hourly because a console reporting yesterday's spend during an incident is the
+        // failure the aggregates were built to remove.
+        //
+        // The pass NEVER throws and records its own run row, including on failure — so the
+        // only thing left to do here is say so out loud when it did not complete.
+        const nightly = isNightlyRollupSlot(new Date(), lastNightlyRollupAt);
+        try {
+          const rollup = await runCreditRollupPass(db as unknown as Tx, {
+            now: new Date(),
+            days: nightly ? CREDIT_ROLLUP_NIGHTLY_DAYS : CREDIT_ROLLUP_HOURLY_DAYS,
+            totals: nightly,
+            divergence: nightly,
+            prune: nightly,
+          });
+          // ONLY ON SUCCESS. Advancing the marker unconditionally burns the night's slot on a
+          // transient fault — a lock timeout in the prune, a statement timeout inside
+          // `findCreditDivergence` — and `isNightlyRollupSlot` then refuses for the rest of the
+          // hour and the whole next day, leaving the lifetime totals and the divergence count a
+          // further 24 h stale. Leaving it unset costs at most a second wide pass within the same
+          // hour, which is a recompute over an append-only source: free, and correct.
+          if (nightly && rollup.error === null) lastNightlyRollupAt = new Date();
+          if (rollup.error !== null) {
+            log.warn("credit_rollup_failed", {
+              nightly, err: rollup.error, days: rollup.daysRecomputed,
+              reason: "the aggregates keep the values the last complete pass wrote, and the " +
+                "console's freshness stamp ages accordingly — the money itself is untouched, " +
+                "since this pass only ever reads credit_ledger",
+            });
+          } else {
+            log.info("credit_rollup_ok", {
+              nightly,
+              days: rollup.daysRecomputed, rows: rollup.rowsWritten,
+              divergent: rollup.divergentAccounts, prunedSetupSpends: rollup.prunedSetupSpends,
+            });
+            // A non-zero divergence is the ledger and the balances disagreeing about somebody's
+            // money. It is not this pass's to fix and it must not be silent.
+            if ((rollup.divergentAccounts ?? 0) > 0) {
+              log.error("credit_divergence_detected", {
+                accounts: rollup.divergentAccounts,
+                reason: "credit_balances and credit_ledger disagree for at least one account — " +
+                  "findCreditDivergence names them on a privileged connection",
+              });
+            }
+          }
+        } catch (err) {
+          // Unreachable by contract (`runCreditRollupPass` catches its own), and caught anyway:
+          // an unexpected throw here would take the whole maintenance tail with it, including
+          // the sweeps above that have already run.
+          log.error("credit_rollup_threw", { err });
         }
       }
 

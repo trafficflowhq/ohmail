@@ -266,6 +266,21 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     fence: "leader lock",
   },
   {
+    name: "credit_rollup",
+    module: `${DB}/credit-rollup.ts`, entry: "runCreditRollupPass",
+    triggers: ["cycle-tail"],
+    cadence: "in the hourly maintenance slot: today + yesterday every hour; at 03:00 UTC once, "
+      + "the last three days plus totals, the divergence count and the setup-spend sweep",
+    budget: "one indexed range scan of credit_ledger per day recomputed (credit_ledger_created_at_idx); "
+      + "the nightly arm adds one full ledger/balance comparison and one bounded delete",
+    owns: "the admin console reads day-grained credit aggregates instead of scanning the money trail, "
+      + "and setup_grant_spends past its retention horizon goes away",
+    fence: "leader lock (the hourly maintenance slot is leader-only and global, not per account); "
+      + "never throws — a failed pass records its own scrubbed row and the tail carries on. "
+      + "It writes NO DDL and no delete against credit_ledger: that table is append-only by trigger "
+      + "and its newest row is coupled to credit_balances at COMMIT",
+  },
+  {
     name: "api_cron",
     module: `${W}/api-cron.ts`, entry: "startApiCron",
     triggers: ["interval"],
