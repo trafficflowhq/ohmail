@@ -26,6 +26,7 @@
  */
 
 import type * as React from "react";
+import { Spinner } from "@ohmail/ui";
 
 /** One sentence per phase the engine announces. Exported so a test can drive the whole table. */
 export function bootSentence(phase: string | null | undefined): string {
@@ -84,7 +85,7 @@ export function BootStatus({
           would be a second thing to keep honest. */}
       <div className="rail-sync busy">
         <div className="rs-line">
-          <span className="mbx-spin" aria-hidden="true" />
+          <Spinner className="mbx-spin" />
           <b>{sentence ?? bootSentence(phase)}</b>
         </div>
         <span className="rs-track" aria-hidden="true">

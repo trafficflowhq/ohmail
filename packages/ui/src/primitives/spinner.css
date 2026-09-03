@@ -1,0 +1,21 @@
+/* THE WAITING MARK — one construction, both faces.
+
+   A segment travels the frame's perimeter, one lap a second, and the frame itself never moves.
+   The frame is an SVG rect whose corner radius is the pill token: under paper `--r-pill` is
+   larger than half the side, so the rect IS a circle and the segment is the familiar arc; under
+   ohmarchy the token is 0, the rect is a square, and the same segment runs its four edges. The
+   rotation the old mark used (`transform: rotate`) is exactly what read wrong on a square — a
+   spinning box, not a waiting one — so nothing here rotates: `pathLength="100"` normalises both
+   shapes to one dash space and the animation moves the dash offset, which is motion ALONG the
+   path whatever the path's shape. No selector names a face; the radius token decides.
+
+   Sized by the host (`.mbx-spin`, the settings verdict's mark); 11px is the strip's default.
+   `overflow: visible` so the stroke's outer half is never clipped at the viewBox edge.
+
+   Reduced motion: base.css runs every animation once in .01ms, so the segment lands at its
+   start and rests — the mark still says "waiting", it just does not move. */
+.spin{width:11px;height:11px;flex:none;display:inline-block;vertical-align:middle;overflow:visible}
+.spin rect{fill:none;stroke-width:1.6;rx:var(--r-pill)}
+.spin .spin-track{stroke:var(--hair)}
+.spin .spin-run{stroke:var(--accent);stroke-dasharray:30 70;animation:spin-lap 1s linear infinite}
+@keyframes spin-lap{to{stroke-dashoffset:-100}}

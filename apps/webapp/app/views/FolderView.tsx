@@ -27,7 +27,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { presentsUnread, type EngineMessage, type FolderEntity, type TagDTO } from "@ohmail/client-engine";
-import { ListGroupLabel, ListPane, ListRows, MessageRow, ReadColumn } from "@ohmail/ui";
+import { ListGroupLabel, ListPane, ListRows, MessageRow, ReadColumn, Spinner } from "@ohmail/ui";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { avatarOf, rowStamp, hueOf, rowAddress, senderName, tagsOfMessage } from "../shell/format";
 import { folderLeafOf, folderParentOf } from "../shell/folders";
@@ -360,7 +360,7 @@ export function FolderView({
                 </>
               ) : older.loading ? (
                 <span className="mbx-wait">
-                  <span className="mbx-spin" aria-hidden="true" />
+                  <Spinner className="mbx-spin" />
                   {to("olderLoading")}
                 </span>
               ) : (

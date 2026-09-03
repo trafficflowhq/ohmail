@@ -58,7 +58,7 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslations } from "next-intl";
-import { Button, SettingsNote, SettingsRow, SettingsSection, SettingsVerdict } from "@ohmail/ui";
+import { Button, SettingsNote, SettingsRow, SettingsSection, SettingsVerdict, Spinner } from "@ohmail/ui";
 /* The first-run flow's route helper. The pane NAVIGATES rather than rendering the stage: the
    stage lives in the shared shell above every pane, so a person who opens it from here keeps the
    app behind it and lands back in this pane when they leave. */
@@ -2113,7 +2113,7 @@ export function MailboxSection() {
                 </span>
               ) : queued.has(m.id) ? (
                 <span className="mbx-wait">
-                  <span className="mbx-spin" aria-hidden="true" />
+                  <Spinner className="mbx-spin" />
                   {t("syncQueued")}
                 </span>
               ) : importingSole ? (
@@ -2123,7 +2123,7 @@ export function MailboxSection() {
                    sentence instead. Deliberately count-free — the strip has the number, and the
                    same sentence twice on one screen is noise. */
                 <span className="mbx-wait">
-                  <span className="mbx-spin" aria-hidden="true" />
+                  <Spinner className="mbx-spin" />
                   {t("syncRunning")}
                 </span>
               ) : stamp === null ? (
@@ -2132,7 +2132,7 @@ export function MailboxSection() {
                    the one per-mailbox clock the shared `UPDATE` does not touch — so it cannot
                    be four words that never change for half an hour. */
                 <span className="mbx-wait">
-                  <span className="mbx-spin" aria-hidden="true" />
+                  <Spinner className="mbx-spin" />
                   {t("syncFirstPending", {
                     when: m.createdAt ? agoStamp(m.createdAt, now).rel : AGO_COPY.justNow,
                   })}
@@ -2215,7 +2215,7 @@ export function MailboxSection() {
           primed to believe. `role="status"`, because this is progress and not an alert. */}
       {finishing ? (
         <p className="acct-lead" role="status">
-          <span className="mbx-spin" aria-hidden="true" />
+          <Spinner className="mbx-spin" />
           {t("oauthFinishing")}
         </p>
       ) : null}

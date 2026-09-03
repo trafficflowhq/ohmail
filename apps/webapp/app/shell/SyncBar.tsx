@@ -69,6 +69,7 @@
  * would be a second defect dressed as a fix for the first.
  */
 import type { ReactNode } from "react";
+import { Spinner } from "@ohmail/ui";
 import { useTranslations } from "next-intl";
 import { apiConfigured } from "../api-client";
 import { useMailState } from "./MailStateProvider";
@@ -401,7 +402,7 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): 
  * report; announcing it would add noise, not information.
  */
 function Glyph({ warn = false, busy = false }: { warn?: boolean; busy?: boolean }) {
-  if (busy) return <span className="mbx-spin" aria-hidden="true" />;
+  if (busy) return <Spinner className="mbx-spin" />;
   return (
     <span className="glyph" aria-hidden="true">
       {warn ? "⚠" : "✉"}

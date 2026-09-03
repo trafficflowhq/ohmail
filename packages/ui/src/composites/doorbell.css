@@ -19,8 +19,17 @@
 .doorbell:hover{transform:translateY(-1px);box-shadow:var(--lift-0)}
 .doorbell.gone{height:0 !important;margin-top:0;margin-bottom:0;padding-top:0;padding-bottom:0;opacity:0;pointer-events:none}
 .doorbell .avs{display:flex;flex:none}
-.doorbell .avs .av{margin-left:-7px;color:var(--ink2)}
+/* THE STACK IS A PAPER GESTURE. Overlapping circles read as a fan of people; the same overlap on
+   the ringed face — square tiles, each wearing a 1px ring — read as tiles cut into one another
+   with no edge saying which is in front. So the overlap is a product of the teaching switch, the
+   way the selected row's hop is: −7px under paper (`--teach` 0, unchanged to the pixel) and a 3px
+   gap under ohmarchy (`--teach` 1), a flat row of tiles. No selector names a face. */
+.doorbell .avs .av{margin-left:calc(-7px * (1 - var(--teach)) + 3px * var(--teach));color:var(--ink2)}
 .doorbell .avs .av:first-child{margin-left:0}
+/* The "+N" tile goes with the fan. On the flat row it is a fifth tile beside a sentence that
+   already carries the count ("+10 · 14 waiting" — two numbers, one fact), so its width is the
+   same product: the tile's own 26px under paper, zero under ohmarchy. */
+.doorbell .avs .av.more{max-width:calc(26px * (1 - var(--teach)));margin-left:calc(-7px * (1 - var(--teach)));overflow:hidden}
 .doorbell .db-txt{font-size:12px;color:var(--ink2);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .doorbell .db-txt b{color:var(--ink);font-weight:600}
 .doorbell .db-go{margin-left:auto;flex:none;font-size:12px;font-weight:600;color:var(--accent-ink)}

@@ -19,6 +19,7 @@ import {
   ListRows,
   MessageRow,
   ReadColumn,
+  Spinner,
 } from "@ohmail/ui";
 import { MarkAllRead } from "../components/MarkAllRead";
 import { ShortcutHint } from "../shell/ShortcutHint";
@@ -2215,7 +2216,7 @@ export function OhboxView({
               </>
             ) : older.loading ? (
               <span className="mbx-wait">
-                <span className="mbx-spin" aria-hidden="true" />
+                <Spinner className="mbx-spin" />
                 {t("olderLoading")}
               </span>
             ) : (
@@ -2623,7 +2624,7 @@ function SyncState({ waiting, settled }: { waiting: number; settled: boolean }) 
             `prefers-reduced-motion` answer the ring already has. Same reuse `SyncBar` makes,
             for the same reason and with the same note about the `mbx-` prefix. */}
         <span className="mbx-wait">
-          <span className="mbx-spin" aria-hidden="true" />
+          <Spinner className="mbx-spin" />
           {speak ? <b>{t("loading")}</b> : null}
         </span>
         {/* The column's own geometry, under the sentence, on its own shorter grace — see the

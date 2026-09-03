@@ -20,6 +20,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { Spinner } from "@ohmail/ui";
 import { useTranslations } from "next-intl";
 import { OhmailEngine, type EntityReader, type MirrorFreshness } from "@ohmail/client-engine";
 import { isDemoRequested } from "../demo-mode";
@@ -643,7 +644,7 @@ function SessionScreen({ status }: { status: "resolving" | "unauthenticated" }) 
             seen, and the ring's `prefers-reduced-motion` rule comes with it. */}
         {slow ? (
           <span className="mbx-wait">
-            <span className="mbx-spin" aria-hidden="true" />
+            <Spinner className="mbx-spin" />
             {t("opening")}
           </span>
         ) : null}

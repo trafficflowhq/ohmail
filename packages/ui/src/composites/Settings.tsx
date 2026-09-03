@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Icon, type IconName } from "../icons.js";
+import { Spinner } from "../primitives/Spinner.js";
 import "./settings.css";
 
 export interface SettingsSectionProps {
@@ -197,7 +198,9 @@ export function SettingsVerdict({ state, headline, detail, hint, when }: Setting
   const mark = state === "ok" ? "✓" : state === "bad" ? "✕" : "";
   return (
     <div className={`set-verdict ${state}`} role="status" aria-live="polite" aria-busy={state === "wait" || undefined}>
-      <span className="set-verdict-mark" aria-hidden="true">{mark}</span>
+      <span className="set-verdict-mark" aria-hidden="true">
+        {state === "wait" ? <Spinner /> : mark}
+      </span>
       <b>{headline}</b>
       {detail ? <p>{detail}</p> : null}
       {hint ? <p className="set-verdict-hint">{hint}</p> : null}
