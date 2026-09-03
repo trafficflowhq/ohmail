@@ -13,6 +13,33 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### German where the app used to speak half English
+
+With the language set to Deutsch, the one control that stayed in English was the one that
+matters most: the Screener's decision bar. The five destinations, the "this sender / whole
+domain" choice and the line saying that a press becomes a rule were all English, beside a
+sidebar and a message list that were German. Four of those five names already had a German
+translation. Nothing connected it to the bar.
+
+That is fixed, and so is everything that shared its cause — a component holding its own
+words instead of taking them from the language files. Twelve more parts of the interface
+did: the "protected" badge on a held message and the "held" chip beside it, the ⌘K
+palette's foot, the reading pane's return hint, the Reply Run's screens, the "open reading
+mode" button, and the rule-by-subject sheet, which was English from top to bottom inside a
+German window. Where a sentence names a destination it now uses the word the sidebar shows,
+so a message filed to Belege is described as going to Belege.
+
+The first-run consent screen was not untranslated but wrong, which is worse. It said ohmail
+would create folders called "Belege", "Aussortiert" and "Quarantäne". The folders it
+actually creates are `ohmail/Receipts`, `ohmail/Screened` and `ohmail/Quarantine` — English
+in every language, because they are names on your own mail server and they are what every
+other mail app will show you. The sentence now gives both, so what you agree to is what you
+will find.
+
+Two parts of the desktop app are still English in a German window and are not fixed here:
+the door chooser you meet before a mailbox is connected, and the Desktop and About panes in
+Settings.
+
 ### Search puts matches first, and keeps the near-misses out of the way
 
 Search has always tolerated typos: ask for "invoce" and it finds the invoice. It did that
