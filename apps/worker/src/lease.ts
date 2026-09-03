@@ -1,6 +1,6 @@
 import {
-  // CAPABILITY_REQUESTS is commented out along with its use below — the request-authenticity rule containment,
-  // see `ORGANIZER_CAPABILITIES`'s own header.
+  // CAPABILITY_REQUESTS is commented out along with its use below — see
+  // `ORGANIZER_CAPABILITIES`'s own header for the containment it is part of.
   DEFAULT_STALE_AFTER_MS, LeaseUnavailableError, META_FOLDER, isMalformed, parseClaim, runLeaseGate,
   type LeaseIo, type LeaseOp, type LeaseSelf, type LeaseVerdict, type OrganizerClaim,
   type TakeoverAuthorization,

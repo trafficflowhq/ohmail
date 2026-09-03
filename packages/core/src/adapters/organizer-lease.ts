@@ -2586,11 +2586,10 @@ export function parseRequest(raw: string, ref?: unknown): RequestMessageRecord |
   }
 
   /**
-   * BOUNDED BEFORE ANYTHING ELSE READS THEM — the request-authenticity rule
-   * a record is another install's
-   * (or, before the request channel is authenticated, ANYONE with APPEND rights on this folder's)
-   * input, so every field gets a length ceiling before it is used for anything, including as a
-   * component of the idempotency key downstream.
+   * BOUNDED BEFORE ANYTHING ELSE READS THEM. A record is another install's input — or, until the
+   * request channel is authenticated, the input of ANYONE with APPEND rights on this folder — so
+   * every field gets a length ceiling before it is used for anything, including as a component of
+   * the idempotency key downstream.
    */
   const requestId = get(RH.requestId);
   if (!requestId || requestId.length > 128) return malformed("no or oversized request id");

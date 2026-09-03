@@ -130,8 +130,7 @@ function payloadHash(payload: unknown): string {
 }
 
 /**
- * THE ORGANIZER'S DRAIN AS THE HOSTS CALL IT — the the request-authenticity rule containment gate, and behind it
- * the machinery. See {@link REQUEST_AUTHENTICITY_IMPLEMENTED} for why the gate is shut.
+ * THE ORGANIZER'S DRAIN AS THE HOSTS CALL IT — the containment gate, and behind it the machinery. See {@link REQUEST_AUTHENTICITY_IMPLEMENTED} for why the gate is shut.
  *
  * The gate is HERE, on the entry point every host reaches (`apps/worker/src/index.ts`,
  * `apps/worker/src/reconcile-cron.ts`, `apps/sidecar/src/engine.ts`), rather than repeated at each
@@ -166,7 +165,7 @@ export async function applyMetaRequests(
   if (raw.length === 0) return EMPTY_RESULT;
   log("organizer_requests_suppressed", {
     mailboxId: rt.mailboxId, accountId: rt.accountId, count: raw.length,
-    reason: "request authenticity (the request-authenticity rule) is not yet implemented — nothing is applied",
+    reason: "a request cannot be verified yet, so nothing here is applied",
   });
   return EMPTY_RESULT;
 }
@@ -176,9 +175,9 @@ export async function applyMetaRequests(
  * `decided_at` then id order — two doors deciding one sender in one cycle land in the order the
  * human made them.
  *
- * **UNGUARDED, AND NO HOST MAY CALL IT WHILE THE GATE IS SHUT.** This is the machinery ruling
- * that rule contains: it trusts what it reads out of a folder any process with write access to the
- * mailbox could have appended to. It stays exported so its behaviour remains under test while the
+ * **UNGUARDED, AND NO HOST MAY CALL IT WHILE THE GATE IS SHUT.** This is the machinery the gate
+ * contains: it trusts what it reads out of a folder any process with write access to the mailbox
+ * could have appended to. It stays exported so its behaviour remains under test while the
  * channel is inert (`request-drain.test.ts`), and so enabling it later is one function rather
  * than a commented-out body to restore. `applyMetaRequests` above is the door; this is the room.
  */
@@ -329,7 +328,7 @@ export async function applyMetaRequestsUnguarded(
           decision: decision.decision,
           triggeringActionId: `screener:request:${record.requestId}`,
           now,
-          // the request-authenticity rule.5 — "The drain never stamps `screening_baseline_at`". See
+          // The drain never stamps `screening_baseline_at`. See
           // `ApplyScreenerDecisionInput.stampBaseline`'s own doc comment for why.
           stampBaseline: false,
         });
