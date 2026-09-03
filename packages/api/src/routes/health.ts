@@ -991,6 +991,14 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // Deploy order is migration → API → worker, 0083's exact reasoning. Two CHECK markers below.
   ["mailboxes", "organizer_event_at"],
   ["organizer_requests", "state"],
+  // mail 0089_organizer_capability — the fifth holder column, `organized_by_capabilities`: what
+  // the holder offers a reader. `MailboxService` and every write site named in the column's own
+  // comment select/write whole rows, so an API ahead of the migration 42703s the mailbox panel;
+  // a worker ahead of it fails every reader-cycle holder refresh silently — the column simply is
+  // not there to write, and every request offer answers `409 organized_elsewhere` with
+  // `reason: "organizer_outdated"` regardless of the true holder, because a column that cannot
+  // be read reads as "we have not looked". Deploy order: migration → API → worker, unchanged.
+  ["mailboxes", "organized_by_capabilities"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -1717,7 +1725,11 @@ export const MAIL_EXPECTED_MARKERS =
  * `0088_symmetric_takeover` is probed as TWO columns and TWO CHECKs —
  * `mailboxes.organizer_event_at` (the notice, and the column whose absence is quiet on the worker
  * side) and `organizer_requests.state`, plus both of that table's closed sets. See each list's own
- * entry for why two columns and not four. **It is the newest entry, so it is also the tag below.**
+ * entry for why two columns and not four.
+ *
+ * `0089_organizer_capability` is probed as `mailboxes.organized_by_capabilities` — the fifth
+ * holder column, a single additive nullable field, so one column is the whole probe. **It is the
+ * newest entry, so it is also the tag below.**
  *
  * That last sentence is the one this docblock keeps getting wrong, and it is now attached to the
  * marker that is actually newest rather than left on an older one. It stood on `0081` and then on
@@ -1736,7 +1748,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0088_symmetric_takeover";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0089_organizer_capability";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */

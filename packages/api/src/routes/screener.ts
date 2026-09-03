@@ -47,8 +47,17 @@ export const screenerRoutes: Route[] = [
       const page = await screener(deps).list(serviceContext(deps, req), { cursor, limit });
       // `suggestable` is the PRICE of this page — `{ senders, credits }` — so a control can
       // state both before it offers the button, from the response it already has.
+      //
+      // `pendingDecisions` is the OTHER half of the same idea (0.14.1): a sender this install has
+      // decided on but whose organizer has not applied it yet is already GONE from `items` — the
+      // service excludes them, so a queue that simply rendered `items` would show the press
+      // working and say nothing about what happened next. The client needs the excluded set BY
+      // NAME to say "waiting for <holder>" rather than leaving a row it just removed unexplained.
+      // Dropping it here is how the exclusion becomes a disappearance, which is why this field is
+      // on the wire before any client reads it.
       return jsonResponse({
         items: page.items, nextCursor: page.nextCursor, suggestable: page.suggestable,
+        pendingDecisions: page.pendingDecisions,
       });
     },
   },
@@ -215,7 +224,17 @@ export const screenerRoutes: Route[] = [
       const result = await screener(deps).decide(serviceContext(deps, req), params.id!, body, {
         idempotency: deps.idempotency ?? null,
       });
-      return jsonResponse(result);
+      // ── 200 IS A DECISION APPLIED; 202 IS A DECISION QUEUED, AND THEY ARE NOT THE SAME NEWS ──
+      //
+      // On a mailbox this install ORGANIZES, `decide` writes: the rule exists, the mail has moved,
+      // 200. On a mailbox it merely READS, the decision becomes a request for whoever holds the
+      // mailbox and NOTHING has been applied yet — the honest code for that is 202, and it is
+      // what the service already stores for the idempotent replay (`requestAsReader`'s
+      // `claimIdempotencyKey` call, `responseStatus: 202`). Returning 200 on the live call would
+      // make the FIRST press and its REPLAY answer differently for one unchanged decision, which
+      // is the one thing an idempotent route may not do. `messages.ts`'s own 202 is the precedent.
+      const status = "pending" in result && result.pending === true ? 202 : 200;
+      return jsonResponse(result, { status });
     },
   },
 ];
