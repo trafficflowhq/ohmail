@@ -2387,3 +2387,362 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
   }
   return { verdict, nonce };
 }
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+//  LAYER 4: REQUESTS — A READER'S DECISION, WAITING FOR THE ORGANIZER (0.14.1)
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+//
+// The claim answers "who organizes this mailbox". A request answers a narrower question: "what
+// did a READER decide, and has the organizer taken it yet". Both live in `ohmail/_meta` — it is
+// the only medium two installs share — and both FETCH in the same round trip a cycle already
+// pays for the claim, because the discriminator (`X-Ohmail-Request: 1` vs `X-Ohmail-Lease: 1`) is
+// read off the SAME header block {@link parseClaim} already ignores a request record on (it
+// returns `null` for any message without `X-Ohmail-Lease: 1`, and a request record never carries
+// that header).
+//
+// A request record is HEADERS-ONLY, like a claim, and for the same reason: the payload is a
+// customer's own screener decision — bounded, validated by the same function the organizer's own
+// door validates with — never free text a stranger's mail client could inject into. It travels
+// base64url-encoded in `X-Ohmail-Request-Payload` so a value containing a colon, a CRLF or a
+// header-folding space cannot be misread as a second header.
+
+/** The one capability a request record needs from the organizer. See {@link CAPABILITY_REQUESTS}. */
+const RH = {
+  request: "X-Ohmail-Request",
+  requestId: "X-Ohmail-Request-Id",
+  requestKind: "X-Ohmail-Request-Kind",
+  installId: "X-Ohmail-Install-Id",
+  organizerKind: "X-Ohmail-Organizer-Kind",
+  decidedAt: "X-Ohmail-Decided-At",
+  protocol: "X-Ohmail-Protocol",
+  payload: "X-Ohmail-Request-Payload",
+} as const;
+
+/** The request record's own protocol — independent of {@link CLAIM_PROTOCOL}, additive the same way. */
+export const REQUEST_PROTOCOL = 1;
+
+/**
+ * THE WIRE CEILING ON `X-Ohmail-Request-Payload`, once base64url-encoded.
+ *
+ * A customer's own screener decision is small (a scope, a decision, an address or a domain, a
+ * destination folder) and this is generous against it — the ceiling exists to keep a malformed or
+ * hostile payload from growing an RFC822 header without bound, not to accommodate a legitimate
+ * decision that is close to it. `formatRequest` refuses to write past it rather than truncate,
+ * because a truncated payload is a payload that decodes to something the sender never decided.
+ */
+export const REQUEST_PAYLOAD_MAX_BYTES = 4096;
+
+/**
+ * WHAT AN ORGANIZER DRAINS. Closed by `organizer_requests_kind_closed` in Postgres — the same
+ * four members. `rule.*` is shaped and validated here (0.14.1's migration already carries the
+ * CHECK) but has no applier until the rules-pane lane lands; a drain that meets one today refuses
+ * it exactly as it refuses a kind it has never heard of. See {@link isRequestKind}.
+ */
+export const REQUEST_KINDS = ["screener.decide", "rule.create", "rule.update", "rule.delete"] as const;
+export type RequestKind = (typeof REQUEST_KINDS)[number];
+
+export function isRequestKind(v: unknown): v is RequestKind {
+  return typeof v === "string" && (REQUEST_KINDS as readonly string[]).includes(v);
+}
+
+export interface RequestInput {
+  /** Also the row id in `organizer_requests` — the two identities are one, by design. */
+  requestId: string;
+  kind: RequestKind;
+  installId: string;
+  /** This install's own kind, so the organizer's drain can log who asked without a second lookup. */
+  organizerKind: OrganizerKind;
+  /** WHEN THE PERSON DECIDED, by the deciding door's clock — the drain applies in this order. */
+  decidedAt: Date;
+  protocol?: number;
+  /** The decision itself. Bounded and encoded by this function; never trust it unvalidated. */
+  payload: unknown;
+}
+
+/** A request record, parsed. `kind` is NOT narrowed to {@link RequestKind} — see {@link parseRequest}. */
+export interface RequestRecord {
+  requestId: string;
+  kind: string;
+  installId: string;
+  organizerKind: OrganizerKind | "unknown";
+  decidedAt: Date;
+  protocol: number;
+  /** Decoded JSON. STILL UNTRUSTED — the organizer's drain validates it before applying anything. */
+  payload: unknown;
+  ref?: unknown;
+}
+
+/** A message that says it is a request and then is not parseable as one. See {@link MalformedClaim}. */
+export interface MalformedRequestRecord {
+  malformed: true;
+  reason: string;
+  ref?: unknown;
+}
+
+export type RequestMessageRecord = RequestRecord | MalformedRequestRecord;
+
+export function isMalformedRequest(r: RequestMessageRecord): r is MalformedRequestRecord {
+  return (r as MalformedRequestRecord).malformed === true;
+}
+
+function b64urlEncode(json: string): string {
+  return Buffer.from(json, "utf8").toString("base64url");
+}
+function b64urlDecode(s: string): string {
+  return Buffer.from(s, "base64url").toString("utf8");
+}
+
+/**
+ * One RFC822 message per outstanding decision. Mirrors {@link formatClaim}'s shape and its rule:
+ * the body is a sentence for a human who opens `ohmail/_meta`, and carries no information the
+ * headers do not.
+ *
+ * ── A UNIT TEST PINS THAT THIS NEVER COLLIDES WITH A CLAIM OR A PROFILE RECORD ─────────────
+ *
+ * `organizer-request.test.ts` asserts the output of this function never contains
+ * `X-Ohmail-Lease` or `X-Ohmail-Profile` — the two other record types this folder holds. A
+ * request record that accidentally carried either header would be read as evidence of a DIFFERENT
+ * kind of record by a reader that checks discriminators in a different order than this file does.
+ */
+export function formatRequest(r: RequestInput): string {
+  const protocol = r.protocol ?? REQUEST_PROTOCOL;
+  const encoded = b64urlEncode(JSON.stringify(r.payload ?? null));
+  if (encoded.length > REQUEST_PAYLOAD_MAX_BYTES) {
+    throw new Error(
+      `request payload for ${r.requestId} is ${encoded.length} bytes encoded, over the `
+      + `${REQUEST_PAYLOAD_MAX_BYTES}-byte ceiling — refused rather than truncated`,
+    );
+  }
+  const lines = [
+    `${RH.request}: 1`,
+    `${RH.requestId}: ${headerSafe(r.requestId)}`,
+    `${RH.requestKind}: ${headerSafe(r.kind)}`,
+    `${RH.installId}: ${headerSafe(r.installId)}`,
+    `${RH.organizerKind}: ${r.organizerKind}`,
+    `${RH.decidedAt}: ${r.decidedAt.toISOString()}`,
+    `${RH.protocol}: ${protocol}`,
+    `${RH.payload}: ${encoded}`,
+    `Subject: ohmail organizer request`,
+    `Date: ${r.decidedAt.toUTCString()}`,
+    `MIME-Version: 1.0`,
+    `Content-Type: text/plain; charset=utf-8`,
+    "",
+    "A reader made a decision on this mailbox and is waiting for the install that organizes it to",
+    "apply it. This message is bookkeeping — deleting it before that happens loses the decision.",
+    "",
+  ];
+  return lines.join("\r\n");
+}
+
+/**
+ * Read the headers of one message as a request record. Returns `null` when it is not a request at
+ * all (a claim, a profile record, or a stray) — mirrors {@link parseClaim}'s discriminator rule
+ * exactly, including the duplicate-header refusal: a record that announces itself twice and
+ * disagrees with itself is evidence of a request that cannot be trusted, not an absent one.
+ */
+export function parseRequest(raw: string, ref?: unknown): RequestMessageRecord | null {
+  const headerBlock = raw.split(/\r?\n\r?\n/, 1)[0] ?? "";
+  const headers = new Map<string, string>();
+  const seen = new Map<string, number>();
+  for (const line of headerBlock.replace(/\r?\n[ \t]+/g, " ").split(/\r?\n/)) {
+    const at = line.indexOf(":");
+    if (at <= 0) continue;
+    const name = line.slice(0, at).trim().toLowerCase();
+    headers.set(name, line.slice(at + 1).trim());
+    seen.set(name, (seen.get(name) ?? 0) + 1);
+  }
+  const get = (k: string): string | undefined => headers.get(k.toLowerCase());
+  const count = (k: string): number => seen.get(k.toLowerCase()) ?? 0;
+  const malformed = (reason: string): MalformedRequestRecord =>
+    ref === undefined ? { malformed: true, reason } : { malformed: true, reason, ref };
+
+  if (count(RH.request) > 1) return malformed("duplicate request header");
+  if (get(RH.request) !== "1") return null; // not a request — a claim, a profile record, or a stray
+
+  for (const field of [
+    RH.requestId, RH.requestKind, RH.installId, RH.organizerKind, RH.decidedAt, RH.protocol, RH.payload,
+  ]) {
+    if (count(field) > 1) return malformed(`duplicate ${field}`);
+  }
+
+  /**
+   * BOUNDED BEFORE ANYTHING ELSE READS THEM — the request-authenticity rule
+   * a record is another install's
+   * (or, before the request channel is authenticated, ANYONE with APPEND rights on this folder's)
+   * input, so every field gets a length ceiling before it is used for anything, including as a
+   * component of the idempotency key downstream.
+   */
+  const requestId = get(RH.requestId);
+  if (!requestId || requestId.length > 128) return malformed("no or oversized request id");
+
+  const kind = get(RH.requestKind);
+  if (!kind || kind.length > 64) return malformed("no or oversized request kind");
+
+  const installId = get(RH.installId);
+  if (!installId || installId.length > 256) return malformed("no or oversized install id");
+
+  const organizerKindRaw = (get(RH.organizerKind) ?? "").toLowerCase();
+  const organizerKind: OrganizerKind | "unknown" =
+    organizerKindRaw === "local" || organizerKindRaw === "cloud" ? organizerKindRaw : "unknown";
+
+  const protocolRaw = get(RH.protocol);
+  const protocol = Number(protocolRaw);
+  if (!protocolRaw || !Number.isFinite(protocol) || protocol < 1) return malformed("unreadable protocol");
+
+  const decidedAt = new Date(get(RH.decidedAt) ?? "");
+  if (Number.isNaN(decidedAt.getTime())) return malformed("unreadable decided-at");
+
+  const encoded = get(RH.payload);
+  if (!encoded) return malformed("no payload");
+  // BOUNDED BEFORE DECODING, and the rule is stated as a size test on the ENCODED text: "encoded.length >
+  // REQUEST_PAYLOAD_MAX_BYTES refused before decoding". A record whose header claims a payload
+  // past the write side's own ceiling is refused on the length ALONE, so a hostile record cannot
+  // spend a base64 decode plus a `JSON.parse` over an attacker-chosen number of bytes — the read
+  // side must not trust that every writer honours `formatRequest`'s own refusal to write past it.
+  if (encoded.length > REQUEST_PAYLOAD_MAX_BYTES) return malformed("payload exceeds the byte ceiling");
+  let payload: unknown;
+  try {
+    payload = JSON.parse(b64urlDecode(encoded));
+  } catch {
+    return malformed("unreadable payload");
+  }
+
+  const record: RequestRecord = { requestId, kind, installId, organizerKind, decidedAt, protocol, payload };
+  return ref === undefined ? record : { ...record, ref };
+}
+
+/** One message in the meta folder, as the request IO layer sees it. Mirrors {@link RawClaimMessage}. */
+export interface RawRequestMessage {
+  ref: unknown;
+  raw: string;
+}
+
+/**
+ * WHICH REQUEST OPERATION FAILED. Mirrors {@link LeaseOp} and for the same reason: a catch that
+ * wraps more than one IMAP command must name which one threw.
+ */
+export type RequestOp = "list_requests" | "append_request" | "remove_requests" | "no_request_io";
+
+export class RequestUnavailableError extends Error {
+  readonly op: RequestOp;
+  constructor(message: string, options: { op: RequestOp; cause?: unknown }) {
+    super(message, options);
+    this.name = "RequestUnavailableError";
+    this.op = options.op;
+  }
+}
+
+/**
+ * The narrow IO a decision request needs: APPEND, FETCH-headers, STORE `\Deleted` + EXPUNGE — the
+ * same three IMAP capabilities {@link LeaseIo} needs, on the same folder, through the same
+ * resolution ({@link makeMetaFolderRef}). A separate object rather than three more methods on
+ * {@link LeaseIo}, because the two are held by different installs for different reasons: a READER
+ * calls `appendRequest` and never `removeRequests` (its two IMAP write verbs are `setFlags` and
+ * this APPEND — see the lease module header); an ORGANIZER calls `removeRequests` after draining
+ * and never `appendRequest`. Folding them into one object would make both capabilities reachable
+ * from a reader's own accessor, which is exactly the kind of widening
+ * {@link ImapAdapter.leasePeekIo}'s docblock warns against one seam over.
+ */
+export interface RequestIo {
+  /** Every message in the meta folder that carries `X-Ohmail-Request: 1`. */
+  listRequests(): Promise<RawRequestMessage[]>;
+  /** APPEND one decision. Does NOT create `ohmail/_meta` — see the header below. */
+  appendRequest(raw: string): Promise<void>;
+  /** STORE `\Deleted` + EXPUNGE the given messages. */
+  removeRequests(refs: readonly unknown[]): Promise<void>;
+}
+
+/**
+ * A {@link RequestIo} bound to a live connection.
+ *
+ * ── IT NEVER CREATES `ohmail/_meta` ─────────────────────────────────────────────────────────
+ *
+ * A request is offered to a reader ONLY while a holder's claim advertises
+ * {@link CAPABILITY_REQUESTS} and `organizer_state='held'` (the HTTP door's own gate, in
+ * `packages/db`) — which is only ever true once an organizer has already run `ensureMetaFolder()`
+ * at least once. So by the time `appendRequest` is ever called, the folder is guaranteed to
+ * exist, and creating it here — the way {@link makeLeaseIo} does for a claim — would be a write
+ * this object has no standing to make: a reader that could conjure the organizer's own folder
+ * into existence is a reader one step from conjuring a claim into it.
+ *
+ * `listRequests` does its OWN `FETCH 1:*`, independent of {@link LeaseIo.listClaims} /
+ * {@link LeasePeekIo.listClaims} — a second round trip per cycle rather than the theoretical one
+ * the module header's opening paragraph describes, because the two IO objects do not share a
+ * cursor. Correct, not optimal: a mailbox is polled every 15–60 s, and the folder this reads is
+ * unsubscribed bookkeeping holding at most a handful of small messages.
+ */
+export function makeRequestIo(client: LeaseImapClient, toServerPath: (canonical: string) => string): RequestIo {
+  const meta = makeMetaFolderRef(client, toServerPath);
+  return {
+    async listRequests(): Promise<RawRequestMessage[]> {
+      let at: MetaFolderLocation;
+      try {
+        at = await meta.locate();
+      } catch (err) {
+        throw new RequestUnavailableError(
+          `the requests in ${META_FOLDER} could not be located`,
+          { op: "list_requests", cause: err },
+        );
+      }
+      if (at.row === null) return [];
+      try {
+        const lock = await client.getMailboxLock(at.path);
+        try {
+          const out: RawRequestMessage[] = [];
+          const selected = client.mailbox;
+          const count = typeof selected === "object" && selected !== null ? selected.exists : undefined;
+          if (count === 0) return out;
+          for await (const m of client.fetch("1:*", { uid: true, headers: true }, { uid: false })) {
+            if (!m.headers) continue;
+            out.push({ ref: m.uid, raw: m.headers.toString("utf8") });
+          }
+          return out;
+        } finally {
+          lock.release();
+        }
+      } catch (err) {
+        throw new RequestUnavailableError(
+          `the requests in ${META_FOLDER} could not be read`,
+          { op: "list_requests", cause: err },
+        );
+      }
+    },
+
+    async appendRequest(raw: string): Promise<void> {
+      try {
+        await client.append(await meta.path(), raw, ["\\Seen"]);
+      } catch (err) {
+        throw new RequestUnavailableError(
+          `a decision could not be appended to ${META_FOLDER}`,
+          { op: "append_request", cause: err },
+        );
+      }
+    },
+
+    async removeRequests(refs: readonly unknown[]): Promise<void> {
+      const uids = refs.filter((r): r is number => typeof r === "number");
+      if (uids.length === 0) return;
+      try {
+        const lock = await client.getMailboxLock(await meta.path());
+        try {
+          // See `makeLeaseIo.removeClaims` for why a `false` resolve is treated as a failure
+          // rather than swallowed: a refused expunge here is exactly what the idempotency key at
+          // `meta-request:<id>` exists to make safe to retry, and swallowing it would leave a
+          // request applied AND still sitting in the folder, re-read (and re-refused-to-reapply,
+          // harmlessly) on every cycle for ever.
+          const done = await client.messageDelete(uids, { uid: true });
+          if (done === false) {
+            throw new Error(`the server refused to expunge ${uids.length} request message(s) from ${META_FOLDER}`);
+          }
+        } finally {
+          lock.release();
+        }
+      } catch (err) {
+        throw new RequestUnavailableError(
+          `${uids.length} request message(s) in ${META_FOLDER} could not be removed`,
+          { op: "remove_requests", cause: err },
+        );
+      }
+    },
+  };
+}

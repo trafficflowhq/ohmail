@@ -108,8 +108,8 @@ import {
 import { pinnedLookup } from "../net/pinned-fetch.js";
 import {
   AmbiguousMetaFolderError,
-  makeLeaseIo, makeLeasePeekIo, personalNamespacesOf, resolveOhmailFolder,
-  type LeaseImapClient, type LeaseIo, type LeasePeekIo, type MetaNamespaceSource,
+  makeLeaseIo, makeLeasePeekIo, makeRequestIo, personalNamespacesOf, resolveOhmailFolder,
+  type LeaseImapClient, type LeaseIo, type LeasePeekIo, type MetaNamespaceSource, type RequestIo,
 } from "./organizer-lease.js";
 import { makeProfileIo, type ProfileImapClient, type ProfileIo } from "./organizer-profile.js";
 // The HARD per-message ceiling `normalizeMime` enforces after a download — imported so
@@ -2240,6 +2240,26 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   }
 
   /**
+   * A READER'S DECISION, WAITING FOR THE ORGANIZER — the IO both sides of a request drive, bound
+   * to THIS adapter's live login (0.14.1).
+   *
+   * A FOURTH accessor beside {@link leaseIo}, {@link leasePeekIo} and {@link profileIo}, for the
+   * same reason each of those is its own method rather than a flag on another: the capability has
+   * to be visible at the call site. A reader calls `appendRequest`; an organizer calls
+   * `listRequests` and `removeRequests` after applying. Neither ever calls the other's half, and
+   * this object does not distinguish — the caller's OWN role, checked before this is ever reached,
+   * is what keeps a reader from expunging an organizer's drained requests.
+   */
+  requestIo(): RequestIo {
+    // The lease, profile and request reads all run BEFORE the cycle and on the raw client, so
+    // without this a retired adapter's next visit would reach for a destroyed connection here —
+    // and that failure would be wrapped as a request fault, which is deliberately not this
+    // mailbox's fault. Refuse with the breach instead, so the cause survives the trip.
+    this.assertUsable();
+    return makeRequestIo(this.client as unknown as LeaseImapClient, (c) => this.toServerPath(c));
+  }
+
+  /**
    * IS THIS LIST ROW OUR FOLDER, or somebody else's directory that happens to end in our name?
    *
    * `resolveOhmailFolder`'s authoritative branch already answers this — it accepts only the FIRST
@@ -3401,7 +3421,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           uidNext: truncated ? (prev?.uidNext ?? 0) : mb.uidNext,
           highestModseq: flagsTruncated || !caps.condstore ? (prev?.highestModseq ?? "0") : advanceTo,
           // THE SERVER'S OWN COUNT, which this SELECT already answered and which was discarded
-          // here for the whole life of the adapter (mail 0083). It is deliberately NOT held back
+          // here for the whole life of the adapter . It is deliberately NOT held back
           // under truncation the way the three cursors above are: a cursor that advances past
           // unread work loses mail, so truncation must hold it — but a COUNT is just what the
           // folder holds right now, and reporting last cycle's total for a folder that is
