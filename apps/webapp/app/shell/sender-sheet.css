@@ -1,33 +1,93 @@
-/* ================= the sender sheet's later additions =================
-   The scope switch, the auto-unsubscribe disclosure and the audit panel.
+/* ================= THE SENDER PANEL =================
+   The popover that decides where a sender's mail goes — reached from any list row's circle or
+   address, from a message's sender chip, from the `s` key — and its sibling, the subject sheet.
+   Every rule for both lives here, beside the components, so the desktop build and the web read
+   one stylesheet.
 
-   ── WHY THIS IS ITS OWN FILE AND NOT `app/app.css` ─────────────────────────────────────
-   `app/shell` is copied into the public desktop mirror and `app/app.css` is NOT
-   (`scripts/publish-desktop.mjs` copies `apps/webapp/app/shell` with ext `.ts/.tsx/.css`, and
-   the webapp's own `app/` files are DENY'd). Rules for a shell component therefore have to
-   live beside the component or the desktop build renders it unstyled — the same reason
-   `action-bar.css` and `search-keys.css` sit where they do, imported directly by the
-   component that needs them.
+   ── THE ANATOMY, top to bottom ─────────────────────────────────────────────────────────
+   who (the head) → the situation line → whose mail (the scope tiles) → where it goes (the five
+   destinations) → the rule (a settings row: label left, switch right, the note under) → the ways
+   onward (links, never verbs) → the reason (the footer). The sections are separated by the
+   settings pane's hairline rule and read at the settings pane's sizes: 13px rows, 12px labels,
+   11.5px notes — never a 10px line. The old sheet was 252px wide with 10.5px fine print packed
+   into 6px gutters; a panel that asks somebody to decide where a person's mail goes for ever
+   should not be read with a squint.
 
-   The popover's own box (`.senderm`, `.sm-head`, `.sm-now`, `.sm-foot`) stays in `app.css`
-   untouched: the sheet was to be left exactly as it is, and moving its rules would be a diff
-   that claims to be a redesign. Everything below sits INSIDE that popover: the
-   sheet grows a little taller and nothing that was in it moved. */
+   ── NEVER CUT OFF ──────────────────────────────────────────────────────────────────────
+   The box is a fixed overlay whose height is MEASURED after render and placed by
+   `overlay-clamp.ts`: whole below the anchor when it fits there, whole above it when it fits
+   there, otherwise whole wherever it fits — sliding up over its anchor rather than capping
+   beside it — and only a panel taller than the viewport itself scrolls inside. `overflow` is the
+   hook's inline `auto`, never `hidden`, and nothing in here sets a height. Both faces: the
+   radius, the lift and the gutters are tokens; under ohmarchy this is a ringed square tile. */
+.senderm {
+  position: fixed;
+  z-index: var(--z-pal);
+  width: min(340px, calc(100vw - 20px));
+  border-radius: calc(var(--r-overlay) * 18 / 20);
+  background: var(--float);
+  box-shadow: var(--lift-3);
+  animation: rise 0.2s var(--spring);
+  container-type: inline-size;
+}
+.sm-head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 15px 18px 10px;
+}
+.sm-who {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.sm-who b {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sm-who small {
+  font-size: 11.5px;
+  color: var(--ink3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* the situation: "12 messages — now in Ohbox" */
+.sm-now {
+  padding: 0 18px 12px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink2);
+}
+/* ── a section's label — the settings subhead, at the panel's size; it is also the rule ── */
+.sm-sec {
+  padding: 10px 18px 0;
+  border-top: 1px solid var(--hair-soft);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--ink3);
+}
+/* ── whose mail: two tiles, the count on the choice ── */
 .sm-scope {
   display: flex;
-  gap: 4px;
-  padding: 2px 9px 8px;
+  gap: 6px;
+  padding: 8px 12px 10px;
 }
 .sm-scope button {
   flex: 1 1 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
   align-items: flex-start;
-  padding: 6px 9px;
-  border-radius:calc(var(--r-ctl) * 10 / 8);
-  font-size: 11.5px;
+  padding: 8px 11px;
+  border-radius: calc(var(--r-ctl) * 10 / 8);
+  font-size: 12px;
   font-weight: 550;
   color: var(--ink2);
   text-align: left;
@@ -47,8 +107,8 @@
   min-width: 0;
   max-width: 100%;
   white-space: normal;
-  font-size: 10px;
-  line-height: 1.35;
+  font-size: 11px;
+  line-height: 1.4;
   color: var(--ink3);
   font-feature-settings: "tnum";
   font-variant-numeric: tabular-nums;
@@ -63,23 +123,146 @@
 }
 .sm-scope button.on small {
   color: var(--accent-ink);
-  opacity: 0.75;
+  opacity: 0.8;
 }
+/* ── where it goes: the five destinations, the current one marked ── */
+.senderm ul {
+  list-style: none;
+  padding: 6px 8px 8px;
+  margin: 0;
+}
+.senderm li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: calc(var(--r-card) * 11 / 14);
+  font-size: 13px;
+  cursor: pointer;
+}
+.senderm li:hover {
+  background: var(--tint);
+}
+.senderm li.sel {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.senderm li .ck {
+  margin-left: auto;
+  color: var(--accent-ink);
+  font-size: 11.5px;
+  font-weight: 650;
+}
+/* The two destinations that can send mail on your behalf, marked before you reach them. */
+.senderm li .sm-warn {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--accent-ink);
+  opacity: 0.8;
+}
+.senderm li .sm-warn + .ck {
+  margin-left: 6px;
+}
+/* ── the rule: a settings row. ONE button is the whole row — label, note and knob — so the
+   row is the switch (`role="switch"` on it) and a tap anywhere on it turns the rule. The knob
+   is the switch primitive's drawing, keyed off THIS button's state rather than its own. ── */
+.sm-rule {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 11px 18px 10px;
+  border-top: 1px solid var(--hair-soft);
+  text-align: left;
+  font-family: inherit;
+  color: var(--ink);
+  cursor: pointer;
+}
+.sm-rule:hover {
+  background: var(--tint);
+}
+.sm-rule .lab {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sm-rule .lab b {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.sm-rule .lab small {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--ink3);
+  font-variant-numeric: tabular-nums;
+}
+.sm-rule .switch {
+  margin-left: 0;
+  pointer-events: none;
+}
+.sm-rule[aria-checked="true"] .switch {
+  background: var(--accent);
+}
+.sm-rule[aria-checked="true"] .switch i {
+  transform: translateX(17px);
+}
+.sm-rule:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+/* ── the ways onward — links, not verbs: each opens a different question ── */
+.sm-links {
+  display: flex;
+  flex-direction: column;
+  padding: 5px 8px 6px;
+  border-top: 1px solid var(--hair-soft);
+}
+.sm-detail {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: calc(var(--r-ctl) * 10 / 8);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--accent-ink);
+  text-align: left;
+}
+.sm-detail:hover {
+  background: var(--tint);
+}
+/* ── the reason ── */
+.sm-foot {
+  padding: 10px 18px 14px;
+  border-top: 1px solid var(--hair-soft);
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--ink3);
+}
+.sm-scope button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 /* ── THE EDITABLE SUBJECT MATCH (SubjectRuleSheet) ────────────────────────────────────────
    A radio TILE that holds a text field: the same tile grammar as the buttons beside it —
    `.on` accent, count in `small` — plus a field whose value is the term. The field is
    borderless inside the tile (the tile is the control's box), and the warnings under the
-   count are the fragment's two honest failure states, in the sheet's own fine-print size. */
+   count are the fragment's two honest failure states, in the sheet's own note size. */
 .sm-scope .sm-edit {
   flex: 1 1 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
   align-items: flex-start;
-  padding: 6px 9px;
-  border-radius:calc(var(--r-ctl) * 10 / 8);
-  font-size: 11.5px;
+  padding: 8px 11px;
+  border-radius: calc(var(--r-ctl) * 10 / 8);
+  font-size: 12px;
   font-weight: 550;
   color: var(--ink2);
   text-align: left;
@@ -95,14 +278,14 @@
   min-width: 0;
   max-width: 100%;
   white-space: normal;
-  font-size: 10px;
-  line-height: 1.35;
+  font-size: 11px;
+  line-height: 1.4;
   font-weight: 450;
   color: var(--ink3);
 }
 .sm-scope .sm-edit.on small {
   color: var(--accent-ink);
-  opacity: 0.75;
+  opacity: 0.8;
 }
 /* The tile's own radio — the lead line as the atomic pick control, the field beside it.
    `.sm-scope .sm-edit-pick`, NOT bare `.sm-edit-pick`: the sheet's generic `.sm-scope button`
@@ -122,7 +305,7 @@
   text-align: left;
   cursor: pointer;
   font-family: inherit;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.01em;
   color: inherit;
@@ -147,10 +330,10 @@
   min-width: 0;
   border: 0;
   margin: 1px 0;
-  padding: 2px 0;
+  padding: 3px 0;
   background: none;
   font-family: inherit;
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 550;
   color: var(--ink);
   border-bottom: 1px solid var(--hair-soft);
@@ -170,38 +353,25 @@
   color: var(--danger-ink, var(--ink2));
   opacity: 1;
 }
-.sm-scope button:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-/* The two destinations that can send mail on your behalf, marked before you reach them. */
-.senderm li .sm-warn {
-  margin-left: auto;
-  font-size: 10px;
-  font-weight: 650;
-  color: var(--accent-ink);
-  opacity: 0.8;
-}
-.senderm li .sm-warn + .ck {
-  margin-left: 5px;
-}
+
+/* ── THE CONFIRM, which carries the disclosure — a flat well in the accent wash ── */
 .sm-confirm {
-  margin: 0 9px 8px;
-  padding: 10px 12px;
-  border-radius:calc(var(--r-card) * 12 / 14);
+  margin: 4px 12px 10px;
+  padding: 12px 14px;
+  border-radius: var(--r-card);
   background: var(--accent-soft);
 }
 .sm-confirm p {
   margin: 0;
-  font-size: 11.5px;
+  font-size: 12.5px;
   line-height: 1.5;
   color: var(--ink);
 }
 /* The fine print is an `InfoNote` (a `<details>`), not the `<p>` above it, so it takes no
    styling from `.sm-confirm p` and states its own line-height. */
 .sm-confirm .sm-confirm-fine {
-  margin-top: 7px;
-  font-size: 10.5px;
+  margin-top: 8px;
+  font-size: 11.5px;
   line-height: 1.5;
   color: var(--ink2);
 }
@@ -209,23 +379,25 @@
    `.sm-confirm`, so the rule above never reached it and it printed wall-to-wall, crowding
    its own (i). Same inset as `.sm-now`, whose sentence it follows. */
 .senderm > .sm-confirm-fine {
-  margin: 0 15px 9px;
-  font-size: 10.5px;
+  margin: 0 18px 10px;
+  font-size: 11.5px;
   line-height: 1.5;
   color: var(--ink2);
 }
 .sm-confirm-row {
   display: flex;
-  gap: 7px;
+  gap: 8px;
   flex-wrap: wrap;
-  margin-top: 10px;
+  margin-top: 12px;
 }
 .sm-confirm-row button {
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
-  border-radius:var(--r-pill);
-  padding: 4px 11px;
+  border-radius: var(--r-pill);
+  padding: 6px 13px;
   color: var(--ink2);
+  background: var(--panel);
+  box-shadow: var(--lift-0);
 }
 .sm-confirm-row button.go {
   color: var(--on-accent);
@@ -237,20 +409,6 @@
 .sm-confirm-row button.go:hover {
   color: var(--on-accent);
   opacity: 0.9;
-}
-.sm-detail {
-  display: block;
-  width: calc(100% - 12px);
-  margin: 0 6px 2px;
-  padding: 7px 9px;
-  border-radius:calc(var(--r-ctl) * 10 / 8);
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--accent-ink);
-  text-align: left;
-}
-.sm-detail:hover {
-  background: var(--tint);
 }
 
 /* ================= the audit panel =================
@@ -380,4 +538,3 @@
     padding: 18px 18px 16px;
   }
 }
-

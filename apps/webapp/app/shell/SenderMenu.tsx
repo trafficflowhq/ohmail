@@ -210,6 +210,8 @@ export function SenderMenu({
       </div>
 
       {canScope ? (
+        <>
+        <div className="sm-sec">{t("scopeAria")}</div>
         <div className="sm-scope" role="radiogroup" aria-label={t("scopeAria")}>
           {(["sender", "domain"] as const).map((s) => (
             <button
@@ -235,6 +237,7 @@ export function SenderMenu({
             </button>
           ))}
         </div>
+        </>
       ) : null}
 
       <div className="sm-now">
@@ -252,21 +255,21 @@ export function SenderMenu({
           sender's rule is promoted by the decide itself, so a switch there would be a control
           that cannot change the outcome.
 
-          It reuses `.sm-scope`'s styling because `sender-sheet.css` is not this change's to
-          restyle, and carries `sm-rule` so a test can name it without depending on order. The
-          scope switch's own test now selects it by `role="radiogroup"` rather than by that
-          class, which is what this file's tests were supposed to do in the first place. */}
+          It is a settings row — the label block left, the switch right, the note under — and
+          the WHOLE row is the switch (`role="switch"` on the one button; the knob inside it is a
+          drawing keyed off the row's own state), so a tap anywhere on the row turns the rule.
+          `sm-rule` names it for a test without depending on order. */}
       {!subject.waiting ? (
-        <div className="sm-scope">
-          <button
-            type="button"
-            role="switch"
-            aria-checked={makeRule}
-            aria-label={t("ruleToggleAria")}
-            className={makeRule ? "sm-rule on" : "sm-rule"}
-            onClick={() => setMakeRule((on) => !on)}
-          >
-            {makeRule ? `✓ ${t("ruleToggle")}` : t("ruleToggle")}
+        <button
+          type="button"
+          role="switch"
+          aria-checked={makeRule}
+          aria-label={t("ruleToggleAria")}
+          className="sm-rule"
+          onClick={() => setMakeRule((on) => !on)}
+        >
+          <span className="lab">
+            <b>{t("ruleToggle")}</b>
             {/* ── THE RETROACTIVE HALF, SAID BEFORE THE CLICK AND WITH ITS SIZE ──
                 The rule is now applied to mail already on the server, by a worker pass, and this
                 is where the user learns that and how much it is about. It rides the SAME switch
@@ -281,9 +284,14 @@ export function SenderMenu({
             {makeRule && RETRO_DEFAULT_ON ? (
               <small>{t("ruleRetro", { count: subject.messages.length })}</small>
             ) : null}
-          </button>
-        </div>
+          </span>
+          <span className="switch" aria-hidden="true">
+            <i />
+          </span>
+        </button>
       ) : null}
+
+      <div className="sm-sec">{t("sectionWhere")}</div>
 
       {/* ── THE CONFIRM, WHICH CARRIES THE DISCLOSURE ──────────────────────────────────────
           Not an "are you sure?" — the user is sure. It is the one moment at which "this will
@@ -350,6 +358,7 @@ export function SenderMenu({
         </ul>
       )}
 
+      <div className="sm-links">
       <button type="button" className="sm-detail" onClick={() => onOpenDetail(scope)}>
         {t("auditOpen", { count: subject.messages.length })}
       </button>
@@ -373,6 +382,7 @@ export function SenderMenu({
             : "Only some of their mail? Make a rule on the subject too"}
         </button>
       ) : null}
+      </div>
 
       {/* ── THE FOOTER, WHICH NOW HAS THREE TRUE SENTENCES INSTEAD OF TWO ────────────────
           A Screener-held sender goes through the endpoint that promotes a rule. Past the gate,

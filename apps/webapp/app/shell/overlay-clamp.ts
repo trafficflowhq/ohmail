@@ -19,8 +19,16 @@
  *
  *  1. **Below the anchor** when the whole sheet fits there — the placement every caller expects.
  *  2. **Flipped above the anchor** when below is too short but above holds the whole sheet.
- *  3. **The roomier side, capped, scrolling inside** when neither side holds it whole. Capping
- *     is what keeps every destination REACHABLE; the scrollbar is the affordance that says so.
+ *  3. **Whole, wherever it fits** when neither side holds it but the viewport does: the sheet
+ *     keeps its natural height and slides up from the anchor by exactly the pixels it lacks,
+ *     covering part of its anchor. This replaced "the roomier side, capped": a 580px panel
+ *     opened from a row mid-screen in a 900px window was being cut to ~430px with an inner
+ *     scroll while 880px of window stood empty — reported as "cut off even when plenty of
+ *     space would be available". A covered anchor is dismissable; a capped panel is one you
+ *     scroll to finish reading.
+ *  4. **The whole viewport band, scrolling inside** only when the sheet is taller than the
+ *     viewport itself. Capping is what keeps every destination REACHABLE there; the scrollbar
+ *     is the affordance that says so.
  *
  * And unconditionally: the box never starts above the viewport's top edge and never ends past
  * its bottom edge (degenerate viewports shorter than the minimum useful height are the one
@@ -88,13 +96,12 @@ export function clampOverlay(
     // 2. Flipped above the anchor, whole — the bottom edge rests on the anchor's top.
     top = anchorTop - OVERLAY_GAP - naturalHeight;
     maxHeight = above;
-  } else if (below >= above) {
-    // 3. Neither side holds it whole: the roomier side, capped, scrolling inside.
-    top = anchorBottom + OVERLAY_GAP;
-    maxHeight = below;
   } else {
-    top = OVERLAY_EDGE;
-    maxHeight = above;
+    // 3./4. Neither side holds it whole: the viewport band is the cap. A sheet the band holds
+    // keeps its height and slides up from the anchor by what it lacks (the final clamp below
+    // does the sliding); a taller one starts at the top edge and scrolls inside.
+    top = anchorBottom + OVERLAY_GAP;
+    maxHeight = viewportHeight - 2 * OVERLAY_EDGE;
   }
 
   // The unconditional half: viewport-bound, floored at usability, on-screen at both edges.
