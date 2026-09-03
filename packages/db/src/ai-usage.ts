@@ -115,7 +115,7 @@ export function makeAiUsageRecorder(
 
   const add = (report: AiUsageReport, at: Date): Bucket => {
     const day = dayOf(at);
-    const key = `${day}${report.model}`;
+    const key = `${day} ${report.model}`;
     const b = pending.get(key) ?? {
       day, model: report.model, calls: 0, okCalls: 0,
       inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costMicroUsd: 0,
@@ -188,7 +188,7 @@ export function makeAiUsageRecorder(
         // THE API HOST. The promise is returned so the client can await it: a serverless process
         // may be frozen the moment its response is written, and a floating write is a write that
         // may never land. One indexed upsert beside a 2–25 second model call is not a cost.
-        pending.delete(`${bucket.day}${bucket.model}`);
+        pending.delete(`${bucket.day} ${bucket.model}`);
         return write([bucket]).catch(() => { dropped += 1; });
       }
       // THE BUFFERED HOSTS. Flushed on the next call past the window rather than on a timer, so
