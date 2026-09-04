@@ -1902,20 +1902,33 @@ export class ScreenerService extends ScreenerReadService {
      * mailbox id and a holder of `null` — every clause false, on a request that used to succeed.
      */
     const hadCandidates = rep.size > 0;
-    let ineligibleMailboxId: string | null = null;
-    let ineligible: RequestEligibility | null = null;
+    /**
+     * THE FIRST INELIGIBLE MAILBOX, AND ITS OWN ELIGIBILITY, AS ONE VALUE.
+     *
+     * These were two variables latched by two `??=` — and two `??=` on the same line do NOT latch
+     * together. `null` is a legitimate eligibility (the read found no row at all), so the id
+     * latched on the first ineligible mailbox while the eligibility stayed null and latched again
+     * on a LATER one. The sentence that reached the person then named one mailbox's id beside a
+     * different mailbox's holder, and chose between "nobody is organizing this" and "that install
+     * is too old" from the second mailbox while pointing at the first.
+     *
+     * A comment two lines down used to assert this could not happen ("the id and the holder are
+     * taken from the SAME mailbox"), which is what made it hard to see. One object, latched once,
+     * is the shape where that sentence is true by construction rather than by assertion — the
+     * object is always truthy, so `??=` captures exactly the first ineligible mailbox and both
+     * halves come from it.
+     */
+    let ineligibleAt: { mailboxId: string; eligibility: RequestEligibility | null } | null = null;
     for (const [sender, row] of [...rep.entries()]) {
       const e = eligibilityByMailbox.get(row.mailboxId) ?? null;
       if (e && e.capable && e.status !== "disabled") continue;
-      // The id and the holder are taken from the SAME mailbox, so the sentence cannot name one
-      // mailbox's id beside another's holder — two iteration orders used to decide them apart.
-      ineligibleMailboxId ??= row.mailboxId;
-      ineligible ??= e;
+      ineligibleAt ??= { mailboxId: row.mailboxId, eligibility: e };
       rep.delete(sender);
     }
     if (hadCandidates && rep.size === 0) {
+      const ineligible = ineligibleAt?.eligibility ?? null;
       throw new OrganizedElsewhereError(
-        ineligibleMailboxId ?? "",
+        ineligibleAt?.mailboxId ?? "",
         ineligible?.by ?? { kind: null, name: null, since: null },
         // `?? null` first: `ineligible?.by.kind` short-circuits to UNDEFINED when the eligibility
         // read itself returned null, and `undefined === null` is false — so the `no_organizer` arm
