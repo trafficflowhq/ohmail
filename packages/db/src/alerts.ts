@@ -695,12 +695,27 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   // nothing cycled yet) and briefly whenever the roster churns, so the honest threshold is one
   // that a booting worker clears and a stuck one does not. Ten minutes is several roster passes.
   //
-  // MEASURED FROM `beat_at`, which is the only clock this row carries for the condition — the
-  // heartbeat has no `degraded_since` column, and adding one would put a state machine in the
-  // hot path of a best-effort write. The consequence is stated rather than hidden: this rule
-  // fires when a worker has been beating for longer than the threshold AND is degraded NOW,
-  // which a worker that flapped in and out of degraded would also satisfy. Flapping is itself
-  // worth a look, and the detail says what was actually read.
+  // ── WHAT THE THRESHOLD ACTUALLY MEASURES, WHICH IS **UPTIME**, NOT DEGRADED DURATION ──
+  //
+  // Stated plainly because this comment previously said `beat_at` and the code has always read
+  // `started_at`, which is a different question with a different answer.
+  //
+  // The heartbeat has no `degraded_since` column — adding one would put a state machine in the
+  // hot path of a best-effort write — so the only durable clock available here is when the
+  // PROCESS started. The condition is therefore "up for longer than the threshold AND degraded
+  // at this instant", not "degraded for longer than the threshold".
+  //
+  // THE LIMITATION THAT FOLLOWS, and it is real rather than theoretical: the threshold only
+  // suppresses a BOOT. Past the first ten minutes it suppresses nothing, so a leader that has
+  // been up for a day and flips `degraded` for a single beat — one roster churn, one mailbox
+  // re-attaching — satisfies both halves and pages as a CRITICAL immediately. That is the noisy
+  // page this file's whole incident/signal split exists to prevent, reached by the one rule
+  // whose threshold looks like it already prevents it.
+  //
+  // Closing it needs `degraded_since` stamped by the worker and read here; it is recorded as
+  // owed rather than fixed quietly, because changing when a critical fires is a decision and not
+  // a tidy-up. Until then the detail sentence says what was actually read, so an operator can
+  // see that the figure is uptime.
   for (const shard of shards) {
     const beat = bySh.get(shard);
     if (!beat || !beat.leader || !beat.degraded) continue;
@@ -940,7 +955,22 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   // entitlement has PARKED are excluded from both sides: they are not supposed to be syncing, so
   // counting them in the denominator would make a real outage look like a smaller share of a
   // larger population.
-  const laggingAccounts = onDuty.length;
+  // COUNTED OVER THE WARNING TIER'S OWN ACCOUNTS, which is not `onDuty.length`.
+  //
+  // `onDuty` is every account with ANY lagging mailbox, critical ones included, and using it
+  // here promoted the WARNING row on a population it does not describe. The case is ordinary:
+  // three accounts two hours behind and one account forty minutes behind gives `criticalCount`
+  // 3, `warningCount` 1 and `onDuty.length` 4 — so the warning row crossed the three-account arm
+  // and PAGED, claiming "4 of N on-duty account(s) are affected", for a condition that is one
+  // mailbox on one account. The three genuinely broken accounts were already paging under
+  // `sync_lag:critical`, so the promotion added nothing except a second page with a wrong number
+  // in it, and the number is the one an operator sizes the incident from.
+  //
+  // The critical row has always filtered its own population (`criticalCount > 0`, below); this
+  // is the mirror of that, and the two together mean each tier's population describes the
+  // mailboxes that tier is actually about.
+  const laggingAccounts = onDuty
+    .filter((r) => Number(r.count) - Number(r.criticalCount) > 0).length;
   const [dutyRow] = await db
     .select({ n: sql<number>`count(distinct ${mailboxes.accountId})::int` })
     .from(mailboxes)

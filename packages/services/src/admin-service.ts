@@ -23,6 +23,8 @@ import {
   workerHeartbeats,
   evaluateAlerts,
   alertClass,
+  listOpenAlerts,
+  SCOPED_ALERT_KINDS,
   alertDriverStatuses,
   platformSignalWindow,
   listFailedBillingEvents,
@@ -1908,7 +1910,7 @@ export async function adminAlerts(db: AdminDb, now: Date): Promise<AlertSummary[
     .from(alertState);
   const state = new Map(stateRows.map((r) => [r.alertKey, r]));
 
-  return firing.map((alert) => {
+  const evaluated = firing.map((alert) => {
     const row = state.get(alert.key);
     return {
       key: alert.key,
@@ -1933,6 +1935,41 @@ export async function adminAlerts(db: AdminDb, now: Date): Promise<AlertSummary[
       fixHref: alert.fixHref ?? null,
     } satisfies AlertSummary;
   });
+
+  // ── AND THE ROWS THIS READ STRUCTURALLY CANNOT EVALUATE ───────────────────────────────
+  //
+  // The console is not an alert DRIVER. It evaluates without one, deliberately — a read that
+  // named itself an arm would resolve a live driver's row and would report a scheduler dark that
+  // is running perfectly. But two rules are gated on exactly that name (`schema_behind`, keyed by
+  // the host whose journal is ahead, and `alert_driver_dark`, keyed by the arm being reported),
+  // and one more family is gated on `shards`. So the evaluated set NEVER contains them.
+  //
+  // The consequence was that `schema_behind` — an incident with `fixHref: "/reliability"` — was
+  // invisible on the one page its own deep link points at. An operator following the link from a
+  // page would arrive at a board that showed nothing wrong.
+  //
+  // These rows are therefore READ from `alert_state` rather than evaluated: the drivers wrote
+  // them, and what the drivers wrote is the only evidence this read can have. `openedAt` and
+  // `notifiedAt` come from the row for the same reason. This does not reintroduce the drift the
+  // comment above guards against — that argument is about a class the CURRENT pass just
+  // recomputed, and here there is no current computation to prefer.
+  const scoped = (await listOpenAlerts(db))
+    .filter((r) => SCOPED_ALERT_KINDS.has(r.kind) && !firing.some((a) => a.key === r.alertKey))
+    .map((r) => ({
+      key: r.alertKey,
+      kind: r.kind as AlertSummary["kind"],
+      severity: r.severity === "critical" ? "bad" : "warn",
+      title: r.detail?.split(". ")[0] ?? r.alertKey,
+      detail: r.detail ?? "Recorded by the other alert driver; this read cannot evaluate it.",
+      count: 1,
+      openedAt: r.openedAt.toISOString(),
+      notifiedAt: r.notifiedAt ? r.notifiedAt.toISOString() : null,
+      cls: r.cls,
+      affectedAccounts: r.affectedAccounts,
+      fixHref: r.fixHref,
+    } satisfies AlertSummary));
+
+  return [...evaluated, ...scoped];
 }
 
 export async function adminWorker(db: AdminDb, now: Date): Promise<WorkerSnapshot> {

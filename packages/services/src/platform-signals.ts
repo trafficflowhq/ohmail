@@ -120,6 +120,26 @@ export const DEFAULT_SIGNAL_PROJECTS: readonly string[] = ["ohmail-api"];
  */
 export const SIGNAL_PAGE_BUDGET = 20;
 
+/**
+ * THE WALL-CLOCK BUDGET FOR ONE POLL, and it is a SEPARATE guard from the page budget.
+ *
+ * The page budget bounds how many laps the walk may take; it does not bound how LONG they take,
+ * and those are different questions once each lap has its own 15 s timeout. Twenty laps against a
+ * slow log endpoint is 300 s for ONE project, and `VERCEL_SIGNAL_PROJECTS` may name several — all
+ * of it inside a cron target that declares 60 s and a platform that kills the invocation anyway.
+ *
+ * The failure that produces is the quiet one. The invocation dies mid-walk, `runPlatformSignalPass`
+ * never reaches its upsert, NO row is written for that window, and the board reports "not
+ * measured" — which is indistinguishable from having no token at all. So a slow endpoint would
+ * take the rule dark and look like a configuration state.
+ *
+ * 40 s leaves room inside the declared 60 s for the prune and the upsert that follow the walk.
+ * Crossing it stops the walk and marks the row `truncated`, which is the outcome the design
+ * already treats as safe: a partial count over the newest slice, honest about being partial, and
+ * a lower bound in the only direction a rate rule can be wrong in.
+ */
+export const SIGNAL_WALL_CLOCK_MS = 40_000;
+
 /** The window one poll covers. Matches the cron's cadence — three of these make the rule's 15 min. */
 export const SIGNAL_WINDOW_MS = 5 * 60 * 1000;
 
@@ -136,11 +156,18 @@ const trimmed = (v: string | undefined): string => (v ?? "").trim();
  */
 export function makePlatformSignalPort(
   env: PlatformSignalEnv,
-  opts: { fetchImpl?: typeof fetch; timeoutMs?: number; pageBudget?: number } = {},
+  opts: {
+    fetchImpl?: typeof fetch; timeoutMs?: number; pageBudget?: number;
+    wallClockMs?: number; nowMs?: () => number;
+  } = {},
 ): PlatformSignalPort {
   const doFetch = opts.fetchImpl ?? globalThis.fetch;
   const timeoutMs = opts.timeoutMs ?? 15_000;
   const budget = opts.pageBudget ?? SIGNAL_PAGE_BUDGET;
+  const wallClockMs = opts.wallClockMs ?? SIGNAL_WALL_CLOCK_MS;
+  // Injectable so the deadline is TESTABLE without a slow endpoint or a real clock. A guard whose
+  // only trigger is "wait forty seconds" is a guard nobody watches fail.
+  const nowMs = opts.nowMs ?? (() => Date.now());
 
   return {
     async fetch(window) {
@@ -157,6 +184,10 @@ export function makePlatformSignalPort(
         ? trimmed(env.VERCEL_SIGNAL_PROJECTS).split(",").map((p) => p.trim()).filter(Boolean)
         : [...DEFAULT_SIGNAL_PROJECTS];
 
+      // ONE DEADLINE FOR THE WHOLE POLL, not one per project: what has to fit inside the
+      // invocation is every project's walk plus the write, so a per-project budget would
+      // multiply by the project count — which is the shape of the problem, not a bound on it.
+      const deadline = nowMs() + wallClockMs;
       const rows: PlatformSignalRow[] = [];
       for (const project of projects) {
         const walked = await walk(project);
@@ -183,7 +214,10 @@ export function makePlatformSignalPort(
         const seen = new Set<string>();
 
         while (cursor > window.start.getTime()) {
-          if (pages >= budget) {
+          // BOTH ceilings return the same shape — a partial count that says it is partial. The
+          // page budget bounds the number of laps; this bounds their total cost, and only the
+          // second one can be crossed by an endpoint that answers slowly rather than deeply.
+          if (pages >= budget || nowMs() >= deadline) {
             return { row: { provider: "vercel", project, windowStart: window.start, requests, errors5xx, truncated: true } };
           }
           pages++;
@@ -241,6 +275,13 @@ export function makePlatformSignalPort(
           // loop — fifty requests inside one millisecond would otherwise spin until the
           // invocation is killed. Marked truncated, because it is: the rest of the window is
           // genuinely unread.
+          //
+          // AN EMPTY BATCH WITH `hasMoreRows: true` LANDS HERE, AND `truncated` IS THE RIGHT
+          // ANSWER FOR IT — stated because it reads at first like a false positive and is not.
+          // The endpoint has said more rows exist and then handed back none, so the cursor cannot
+          // advance and everything older in the window stays unread. Reporting that as a complete
+          // count would be the actual defect: it would put a confident total on a board for a
+          // window the poll never finished reading.
           if (oldest >= cursor) {
             return { row: { provider: "vercel", project, windowStart: window.start, requests, errors5xx, truncated: true } };
           }
