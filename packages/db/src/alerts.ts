@@ -3282,6 +3282,7 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
       delivered: 0,
       failedSinks: 0,
       sinkFailureStreak: streak?.consecutiveFailures ?? 0,
+      sinksConfigured: sinks.length,
     });
     // Nothing was ATTEMPTED, so the streak is neither advanced nor cleared. A quiet hour is
     // not evidence that the pager works — that was the whole shape of the bug this reports.
@@ -3350,6 +3351,7 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
     delivered: delivered.length,
     failedSinks: failed.length,
     sinkFailureStreak: streak?.consecutiveFailures ?? 0,
+    sinksConfigured: sinks.length,
   });
 
   return {
@@ -3377,6 +3379,8 @@ interface AlertPassRecord {
   delivered: number;
   failedSinks: number;
   sinkFailureStreak: number;
+  /** How many sinks this arm had. ZERO is the finding — it cannot page anybody. */
+  sinksConfigured: number;
 }
 
 /**
@@ -3410,6 +3414,7 @@ async function recordAlertPass(db: Tx, rec: AlertPassRecord): Promise<void> {
         delivered: rec.delivered,
         failedSinks: rec.failedSinks,
         sinkFailureStreak: rec.sinkFailureStreak,
+        sinksConfigured: rec.sinksConfigured,
       })
       .onConflictDoUpdate({
         target: alertPassRuns.driver,
@@ -3419,6 +3424,7 @@ async function recordAlertPass(db: Tx, rec: AlertPassRecord): Promise<void> {
           delivered: rec.delivered,
           failedSinks: rec.failedSinks,
           sinkFailureStreak: rec.sinkFailureStreak,
+          sinksConfigured: rec.sinksConfigured,
         },
       });
   } catch { /* see the header: the pass must outlive its own bookkeeping */ }
@@ -3433,6 +3439,12 @@ export interface AlertDriverStatus {
   delivered: number;
   failedSinks: number;
   sinkFailureStreak: number;
+  /**
+   * How many sinks this arm had on its last pass. ZERO means it CANNOT PAGE ANYBODY, and no
+   * other field on this row can say so: an arm that never attempts a delivery never fails one,
+   * so `sinkFailureStreak` sits at zero and reads exactly like a healthy arm.
+   */
+  sinksConfigured: number;
 }
 
 /**
@@ -3453,6 +3465,7 @@ export async function alertDriverStatuses(db: Tx): Promise<AlertDriverStatus[]> 
       firing: alertPassRuns.firing,
       delivered: alertPassRuns.delivered,
       failedSinks: alertPassRuns.failedSinks,
+      sinksConfigured: alertPassRuns.sinksConfigured,
       sinkFailureStreak: alertPassRuns.sinkFailureStreak,
     })
     .from(alertPassRuns);
@@ -3467,6 +3480,7 @@ export async function alertDriverStatuses(db: Tx): Promise<AlertDriverStatus[]> 
       delivered: Number(r?.delivered ?? 0),
       failedSinks: Number(r?.failedSinks ?? 0),
       sinkFailureStreak: Number(r?.sinkFailureStreak ?? 0),
+      sinksConfigured: Number(r?.sinksConfigured ?? 0),
     };
   });
 }

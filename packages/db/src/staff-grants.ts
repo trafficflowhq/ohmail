@@ -401,7 +401,11 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
   // identity, it belongs in the log line where a drain gates it, and no operator screen needs it
   // to learn that the pager is being refused.
   "public.alert_pass_runs": [
+    // `sinks_configured` is a COUNT of arms, never their names — a sink name is a vendor
+    // endpoint's identity and belongs in the log line where a drain gates it. Zero is the
+    // finding: an arm with no sinks cannot page, and no other column on this row can say so.
     "driver", "ran_at", "firing", "delivered", "failed_sinks", "sink_failure_streak",
+    "sinks_configured",
   ],
   // ── WHAT THE PLATFORM SERVED (cloud 0030) ─────────────────────────────────────────────────
   //

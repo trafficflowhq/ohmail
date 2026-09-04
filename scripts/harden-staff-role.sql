@@ -1032,6 +1032,11 @@ GRANT DELETE ON public.alert_state TO ohmail_admin;
 
 -- `alert_pass_runs` (cloud 0030) — the pulse of the thing that takes everyone else's pulse.
 --
+-- `sinks_configured` (cloud 0030) is a COUNT of an arm's sinks, never their names — a sink name is
+-- a vendor endpoint's identity and belongs in the log line where a drain gates it. Zero is the
+-- finding it exists for: an arm with no sinks cannot page anybody, and `sink_failure_streak`
+-- cannot say so, because an arm that never attempts a delivery never fails one.
+--
 -- WRITTEN by this role, on `alert_state`'s exact argument: the API host's driver runs its whole
 -- pass over `ohmail_admin`, and this table records that the pass happened. A read-only grant
 -- would mean the arm hardest to observe is the one that never records itself, which is the
@@ -1044,11 +1049,11 @@ GRANT DELETE ON public.alert_state TO ohmail_admin;
 -- NO DELETE: the pass upserts one row per driver for ever. Nothing here is ever resolved and
 -- removed, so the verb `alert_state` needs has no caller here and is not granted.
 REVOKE ALL ON public.alert_pass_runs FROM ohmail_admin;
-GRANT SELECT (driver, ran_at, firing, delivered, failed_sinks, sink_failure_streak)
+GRANT SELECT (driver, ran_at, firing, delivered, failed_sinks, sink_failure_streak, sinks_configured)
   ON public.alert_pass_runs TO ohmail_admin;
-GRANT INSERT (driver, ran_at, firing, delivered, failed_sinks, sink_failure_streak)
+GRANT INSERT (driver, ran_at, firing, delivered, failed_sinks, sink_failure_streak, sinks_configured)
   ON public.alert_pass_runs TO ohmail_admin;
-GRANT UPDATE (driver, ran_at, firing, delivered, failed_sinks, sink_failure_streak)
+GRANT UPDATE (driver, ran_at, firing, delivered, failed_sinks, sink_failure_streak, sinks_configured)
   ON public.alert_pass_runs TO ohmail_admin;
 
 -- `platform_signals` (cloud 0030) — request and error counts from the hosting platform's own log

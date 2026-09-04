@@ -205,3 +205,22 @@ ALTER TABLE "worker_heartbeats" ADD COLUMN IF NOT EXISTS "ai_circuit_open_since"
 -- degraded, it is unobserved, and neither state may page.
 ALTER TABLE "worker_heartbeats" ADD COLUMN IF NOT EXISTS "degraded_since"
   timestamp with time zone;
+--> statement-breakpoint
+
+-- ══ 6. HOW MANY SINKS THAT ARM ACTUALLY HAD ════════════════════════════════════════════════
+--
+-- `sink_failure_streak` counts consecutive FAILED deliveries, and a driver with NO sinks at all
+-- never attempts one — so its streak sits at zero for ever and every reader that judges health by
+-- the streak calls it healthy. An arm that cannot page anybody is the single worst state this
+-- subsystem can be in, and it was the state that read greenest.
+--
+-- Counted rather than inferred. It can ALMOST be derived — an arm that had something firing and
+-- neither delivered nor failed attempted nothing — but only while something is firing, and the
+-- question "can this arm page a human" has to be answerable on a quiet deployment too. That is
+-- the whole distinction between a live alarm and a configuration nobody has checked.
+--
+-- DEFAULT 0 is the safe direction on the file's standing rule: a row written by a driver that
+-- predates the column reads as "no sinks", which a reader renders as unhealthy. The other default
+-- would make an unknown arm look armed.
+ALTER TABLE "alert_pass_runs" ADD COLUMN IF NOT EXISTS "sinks_configured"
+  integer NOT NULL DEFAULT 0;

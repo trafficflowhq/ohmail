@@ -1871,6 +1871,7 @@ export async function adminAlertDrivers(db: AdminDb, now: Date): Promise<AdminAl
     delivered: r.delivered,
     failedSinks: r.failedSinks,
     sinkFailureStreak: r.sinkFailureStreak,
+    sinksConfigured: r.sinksConfigured,
   }));
 }
 

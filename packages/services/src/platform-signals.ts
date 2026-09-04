@@ -412,6 +412,16 @@ export function makePlatformSignalPort(
             // `Number.isFinite` check, and all recorded as a successful non-5xx request. A
             // private API that changed this field's shape would be logged as a healthy
             // deployment rather than as a failure to measure one.
+            // A BLANK STRING IS NOT A STATUS, and the type check alone let one through.
+            // `Number("")` and `Number("  ")` are both 0 — finite, past the guard below, and
+            // counted as a served non-5xx response. A schema wobble that emptied this field
+            // would therefore DILUTE the error rate with fabricated successes, or suppress the
+            // alert outright once enough of them landed in the denominator. This is the same
+            // omission the timestamp parser already carries a guard for; the status field needed
+            // its own and did not have it.
+            if (typeof r.statusCode === "string" && r.statusCode.trim().length === 0) {
+              return { failed: "unreadable_status" };
+            }
             if (typeof r.statusCode !== "number" && typeof r.statusCode !== "string") {
               return { failed: "unreadable_status" };
             }

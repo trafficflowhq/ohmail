@@ -201,6 +201,12 @@ export interface AdminAlertDriver {
   delivered: number;
   failedSinks: number;
   sinkFailureStreak: number;
+  /**
+   * How many sinks this arm had. ZERO means it cannot page anybody — the worst state this
+   * subsystem has, and the one that read greenest, because an arm that never attempts a
+   * delivery never fails one and its failure streak stays at zero.
+   */
+  sinksConfigured: number;
 }
 
 /**
