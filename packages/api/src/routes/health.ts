@@ -1236,6 +1236,17 @@ export const SCHEMA_CHECK_MARKERS: ReadonlyArray<string> = [
   //    the exact silence 0053's entry describes.
   "organizer_requests_state_closed",
   "organizer_requests_kind_closed",
+  // mail 0091_request_refusal_closed — the closed set behind `organizer_requests.refused_reason`.
+  // 0090 added the column as free text and the write path was already closed in code: an
+  // acknowledgement is verified under the account's key before it is read, and its parser maps any
+  // reason outside the eight-word vocabulary to NULL. That argument is exactly the one 0029's entry
+  // above says is not enough on its own — the operator console's isolation sweep can see a
+  // constraint and cannot see a parser, so a closed set that lives only in code is classified as
+  // free text, correctly. With the CHECK present the column is REFUSED_BY_CONSTRAINT there, and
+  // that classification is an argument ABOUT THIS CONSTRAINT: take it away and the line becomes an
+  // assertion about free text while nothing in the product misbehaves and no test notices. Which is
+  // why the classification and this marker landed in the same commit.
+  "organizer_requests_refused_reason_closed",
 ];
 
 /**
@@ -1748,7 +1759,12 @@ export const MAIL_EXPECTED_MARKERS =
  * `0090_request_key` is probed as `organizer_requests.refused_reason` — one additive nullable
  * column, so one column is the whole probe. Its NAME promises a key column that the migration
  * deliberately does not create (the signing key is derived, never stored), and probing for one
- * would fail against a correctly migrated database. **It is the newest entry, so it is also the
+ * would fail against a correctly migrated database.
+ *
+ * `0091_request_refusal_closed` adds NO column — it closes the set behind the column 0090 added —
+ * so it is probed by its CHECK alone, in `SCHEMA_CHECK_MARKERS`. That is the whole of it, and it is
+ * the case those lists exist for: a database with the column and without the constraint accepts
+ * whatever a write site lets through and says nothing. **It is the newest entry, so it is also the
  * tag below.**
  *
  * That last sentence is the one this docblock keeps getting wrong, and it is now attached to the
@@ -1768,7 +1784,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0090_request_key";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0091_request_refusal_closed";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */
