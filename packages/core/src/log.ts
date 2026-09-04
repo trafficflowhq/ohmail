@@ -426,6 +426,16 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // census refused it every time, leaving a line about outbound mail unable to say how much
   // mail went out.
   "draftId", "claimed", "sent", "unverified", "deferred",
+  // ── The REQUEST DRAIN's own counter, added WITH its call sites ──
+  //
+  // `applied` / `refused` / `deferred` are already here; `standing` is the fourth outcome and it
+  // is separated on this file's own "three different 3am questions" rule. It counts records the
+  // organizer deliberately left alone — a future protocol version, or a kind this build has no
+  // applier for — which is the one outcome where a NONZERO value is unremarkable: it means a
+  // newer install is talking to an older one, and the records become applicable when that one
+  // updates. Folding it into `refused` would make an ordinary version skew read as a run of
+  // rejected decisions; folding it into `deferred` would promise a retry that changes nothing.
+  "standing",
   // ── The SEND RECONCILER's two counters, added WITH the call sites ──
   //
   // The pass that resolves a `pending` reservation nobody is coming back for reports the four
