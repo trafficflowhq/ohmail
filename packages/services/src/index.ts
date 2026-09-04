@@ -327,6 +327,19 @@ export {
   type PlatformCostEnv, type PlatformCostPassReport, type PlatformCostPassOptions,
   type ManualCostEntry, type ProviderCost,
 } from "./platform-costs.js";
+export {
+  // WHAT THE PLATFORM SERVED (cloud 0030). The same three-outcome port as the cost one above,
+  // and here the third outcome is what keeps a rule from firing on nothing: an unconfigured
+  // deployment writes NO ROW, so the window read returns an empty set and the board says
+  // "5xx: not measured". A pass that wrote zeros would satisfy every test about the rule staying
+  // quiet, and would put a measured-looking zero on a screen for a figure nobody ever asked for.
+  makePlatformSignalPort, runPlatformSignalPass,
+  VERCEL_REQUEST_LOGS_URL, DEFAULT_SIGNAL_PROJECTS,
+  SIGNAL_PAGE_BUDGET, SIGNAL_WINDOW_MS, SIGNAL_RETENTION_MS,
+  type SignalProvider, type PlatformSignalPort, type PlatformSignalFetch,
+  type PlatformSignalRow, type PlatformSignalEnv,
+  type PlatformSignalPassReport, type PlatformSignalPassOptions,
+} from "./platform-signals.js";
 // The ONE-TIME re-evaluation (mail 0030) of mail that `pipeline.ts:393`'s sensitivity
 // override had already misrouted into the Ohbox. The routing was fixed forward; this moves
 // what was already filed. Marker-last, idempotent, and it opens NO IMAP connection — it writes

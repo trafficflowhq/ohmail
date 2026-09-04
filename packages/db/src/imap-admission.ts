@@ -91,6 +91,101 @@ export function imapAdmissionKey(mailboxId: string): string {
   return `${IMAP_ADMISSION_NAMESPACE}${mailboxId}`;
 }
 
+/**
+ * The DEPLOYMENT-WIDE refusal counter's key namespace (cloud 0030's reliability rules).
+ *
+ * ── WHY A SECOND COUNTER OVER THE SAME MECHANISM, AND NOT A COLUMN OR A TABLE ─────────────
+ *
+ * A refusal means a mailbox was at its connection cap. At a trickle that is the cap doing
+ * exactly its job; in a burst it is a mailbox nothing can get a connection to, and an attachment
+ * fetch, an add-time probe and a send reconcile are all queueing behind it. Nothing recorded that
+ * anywhere: {@link acquireImapSlot} gives the over-count straight back on a refusal, so by the
+ * time the next statement runs the evidence is gone.
+ *
+ * It cannot ride the worker heartbeat, which is where a reliability signal would ordinarily go:
+ * BOTH admission call sites are on the API host (the add-time probe and the attachment adapter),
+ * the worker never acquires a slot at all, and the API host is serverless — no heartbeat row, and
+ * no in-process counter that survives the invocation. A durable, host-independent counter is the
+ * only shape that works.
+ *
+ * It does not need a table either. This file's own header argues that `auth_throttle` is the
+ * repository's generic namespaced rolling-window counter rather than an auth-only store, and a
+ * count-per-window is precisely what it does. A migration for a second counter over the mechanism
+ * the first one already uses would be a table for nothing.
+ *
+ * ── ONE KEY, NOT ONE PER MAILBOX ──────────────────────────────────────────────────────────
+ *
+ * The rule's question is "is admission refusing a lot right now", which is deployment-wide, and a
+ * per-mailbox key would make the alert's read a scan of a namespace instead of one indexed row.
+ * WHICH mailbox is in the log line at the refusal site, where a drain gates it; the counter is
+ * the part that has to be cheap to read on every alert pass.
+ */
+export const IMAP_REFUSAL_KEY = "imap:refused:all";
+
+/**
+ * Record one admission refusal. Best-effort by contract — see the throw note below.
+ *
+ * The window ROLLS exactly as the admission counter's does: a row untouched for longer than
+ * `windowMs` is reset to 1 by the next refusal rather than trusted, so the count this returns is
+ * always "refusals inside a window ending now" and no sweep, poll or expiry job is owed. The
+ * consequence, stated: a window that rolls mid-burst splits it across two windows, so a burst
+ * straddling the boundary can read lower than it was. That is the safe direction for a rule that
+ * fires above a threshold — it can only ever under-report — and it costs at most one window of
+ * delay before the burst is fully inside one.
+ *
+ * NEVER LET THIS THROW INTO THE CALLER. It runs on the refusal path, whose job is to return
+ * "busy, try again" to a person waiting on an attachment; a counter that failed must not turn a
+ * handled refusal into a 500. The call sites wrap it, and this function does not swallow on their
+ * behalf — a swallow here would hide a real database fault from every caller at once.
+ */
+export async function recordImapRefusal(
+  db: Tx, now: Date, windowMs: number = IMAP_REFUSAL_WINDOW_MS,
+): Promise<void> {
+  const nowIso = now.toISOString();
+  const staleIso = new Date(now.getTime() - windowMs).toISOString();
+  const stale = sql`${authThrottle.windowStartedAt} < ${staleIso}::timestamptz`;
+  await db.insert(authThrottle)
+    .values({ key: IMAP_REFUSAL_KEY, failures: 1, windowStartedAt: now, updatedAt: now })
+    .onConflictDoUpdate({
+      target: authThrottle.key,
+      set: {
+        failures: sql`case when ${stale} then 1 else ${authThrottle.failures} + 1 end`,
+        windowStartedAt: sql`case when ${stale} then ${nowIso}::timestamptz else ${authThrottle.windowStartedAt} end`,
+        updatedAt: now,
+      },
+    });
+}
+
+/**
+ * The default refusal window. Matches `AlertThresholds.imapRefusalWindowMs`, and the two are the
+ * same judgment stated once each: the counter's window and the rule's lookback have to agree, or
+ * the rule divides a count formed over one span by a threshold written for another.
+ */
+export const IMAP_REFUSAL_WINDOW_MS = 15 * 60 * 1000;
+
+/**
+ * Refusals inside the current window, or 0 when nothing has been refused.
+ *
+ * A row whose window has already ROLLED reads as 0 rather than as its stale count: the counter is
+ * reset lazily by the next write, so a burst that stopped an hour ago still has its row sitting
+ * there with the old number in it, and returning that would keep the incident firing for ever
+ * after the fault ended.
+ */
+export async function imapRefusalsInWindow(
+  db: Tx, now: Date, windowMs: number = IMAP_REFUSAL_WINDOW_MS,
+): Promise<number> {
+  const cut = new Date(now.getTime() - windowMs);
+  const [row] = await db
+    .select({ failures: authThrottle.failures, windowStartedAt: authThrottle.windowStartedAt })
+    .from(authThrottle)
+    .where(eq(authThrottle.key, IMAP_REFUSAL_KEY))
+    .limit(1);
+  if (!row) return 0;
+  const started = new Date(row.windowStartedAt as unknown as string);
+  if (started < cut) return 0;
+  return Number(row.failures ?? 0);
+}
+
 export interface ImapSlotInput {
   mailboxId: string;
   /** How many connections this deployment may hold open for the mailbox at once. */

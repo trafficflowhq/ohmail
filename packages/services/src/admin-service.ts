@@ -22,6 +22,7 @@ import {
   waitlist,
   workerHeartbeats,
   evaluateAlerts,
+  alertClass,
   listFailedBillingEvents,
   listStuckSends,
   DEFAULT_ALERT_THRESHOLDS,
@@ -1872,6 +1873,15 @@ export async function adminAlerts(db: AdminDb, now: Date): Promise<AlertSummary[
       // far as anyone can tell now, and nobody has been told.
       openedAt: iso(row?.openedAt ?? null) ?? now.toISOString(),
       notifiedAt: iso(row?.notifiedAt ?? null),
+      // READ FROM THE FIRING ALERT, not from the `alert_state` row, and the two can legitimately
+      // differ for one pass: a promoting rule computes its class from a population that has just
+      // moved, and the row still carries what the LAST pass wrote until this one's observation
+      // lands. The console must render what is true now — which is what the evaluator just
+      // computed — for the same reason this whole function evaluates rather than reading: the
+      // surface an operator looks at and the condition that pages them must not drift apart.
+      cls: alertClass(alert),
+      affectedAccounts: alert.affectedAccounts ?? null,
+      fixHref: alert.fixHref ?? null,
     } satisfies AlertSummary;
   });
 }

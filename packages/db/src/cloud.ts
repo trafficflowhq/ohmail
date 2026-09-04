@@ -72,7 +72,9 @@ export {
  */
 export {
   acquireImapSlot, releaseImapSlot, imapAdmissionKey,
+  recordImapRefusal, imapRefusalsInWindow,
   IMAP_ADMISSION_NAMESPACE, IMAP_ADMISSION_WINDOW_MS,
+  IMAP_REFUSAL_KEY, IMAP_REFUSAL_WINDOW_MS,
   type ImapSlotInput,
 } from "./imap-admission.js";
 
@@ -165,7 +167,8 @@ export {
   writeHeartbeat, refreshHeartbeat, clearHeartbeat, humanAge,
   listFailedBillingEvents, listStuckSends, listOpenAlerts,
   newDeliveryStreak, newSinkStreak, redactEndpoint, classifyTransportError, sinkHealthOf,
-  alertSignature,
+  alertSignature, alertClass, incidentsOf, signalsOf,
+  alertDriverStatuses, platformSignalWindow, CLOUD_JOURNAL_HEAD_WHEN,
   DEFAULT_ALERT_THRESHOLDS, DEFAULT_ALERT_REPEAT_MS, DEFAULT_ALERT_RENOTIFY_UNCHANGED_MS,
   DEFAULT_CLAIM_TTL_MS,
   DEFAULT_SINK_FAILURE_ESCALATION,
@@ -175,6 +178,7 @@ export {
   type StuckSendRow, type AlertDeliveryResult, type DeliveryStreak, type SinkEscalation,
   type AlertSinkOutcome, type SinkOutcome, type DeliveryReport, type SinkStreak,
   type SinkDegradation, type AlertSinkHealth,
+  type AlertClass, type AlertDriver, type AlertDriverStatus, type PlatformSignalWindow,
 } from "./alerts.js";
 
 export {

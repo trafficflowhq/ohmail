@@ -42,7 +42,23 @@ export type AdminSeverity = "ok" | "warn" | "bad" | "idle";
 export type AdminAlertKind =
   | "worker_down" | "billing_events_failed" | "sends_stuck" | "sync_lag" | "storage_at_cap"
   | "billing_reconciliation_divergence" | "billing_reconciliation_stale" | "device_sync_stale"
-  | "session_sync_stale" | "session_reuse_revoked";
+  | "session_sync_stale" | "session_reuse_revoked"
+  // Cloud 0030's reliability rules. This union is a MIRROR of `AlertKind` in `alerts.ts` and a
+  // census asserts the two are equal in both directions — a kind the console cannot name renders
+  // as an unstyled row, and a kind the console names that no rule produces is dead code that
+  // reads as coverage.
+  | "worker_degraded" | "api_5xx_rate" | "schema_behind" | "imap_admission_refused"
+  | "ai_provider_down" | "credit_rollup_stale" | "alert_driver_dark" | "credential_replay_wide";
+/**
+ * INCIDENT or SIGNAL — the class that decided whether this row went to a sink.
+ *
+ * The console splits its Reliability page on this and nothing else: incidents are the ones that
+ * page, signals are informational. It is on the wire rather than re-derived from `kind` because
+ * two rules compute it from POPULATION — the same lagging-sync condition is a signal at two
+ * accounts and an incident at twenty — so a console-side lookup table would disagree with the
+ * pager exactly when the answer matters.
+ */
+export type AdminAlertClass = "incident" | "signal";
 export type AdminMailboxStatus = "connected" | "error" | "disabled";
 export type AdminPlan = "solo" | "plus" | "pro";
 /** All eight `billing_subscriptions.status` values (migration 0018's CHECK) plus `none`. */
@@ -146,6 +162,40 @@ export interface AlertSummary {
   count: number;
   openedAt: string;
   notifiedAt: string | null;
+  /** Whether this row was delivered to a sink. See {@link AdminAlertClass}. */
+  cls: AdminAlertClass;
+  /**
+   * How many ACCOUNTS this affects, or null when the rule does not measure a population.
+   *
+   * NOT `count`, which the two differ on exactly where it matters: `sync_lag`'s count is
+   * MAILBOXES, and forty lagging mailboxes on one account is a different incident from forty on
+   * forty. null is not 0 — "one deployment-wide fact" and "counted accounts, found none" are
+   * different claims and the console renders them differently.
+   */
+  affectedAccounts: number | null;
+  /**
+   * The console path an operator should open to act on this — `/worker`, `/accounts/<id>`.
+   * A literal composed by the rule with, at most, an id interpolated in; rendered as a link and
+   * never fetched.
+   */
+  fixHref: string | null;
+}
+
+/**
+ * ONE ALERT DRIVER'S LAST PASS — rendered for BOTH arms, always, on the Reliability page.
+ *
+ * The pair of drivers exists because a process cannot report its own death, and this is how a
+ * person checks the pair is actually a pair. `ranAt: null` means the arm has NEVER recorded a
+ * pass, which the console renders as "never" rather than omitting the row: an absent arm and an
+ * arm that has never run read identically to a person and mean opposite things.
+ */
+export interface AdminAlertDriver {
+  driver: "worker" | "api";
+  ranAt: string | null;
+  firing: number;
+  delivered: number;
+  failedSinks: number;
+  sinkFailureStreak: number;
 }
 
 export interface OverviewSnapshot {
