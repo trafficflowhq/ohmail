@@ -75,7 +75,7 @@ export function SegmentedControl<T extends string = string>({
   const ref = useRef<HTMLDivElement>(null);
   const naturalRef = useRef<number | null>(null);
   const [stack, setStack] = useState(false);
-  const labelsKey = options.map((o) => `${o.label}${o.count ?? ""}`).join("");
+  const labelsKey = options.map((o) => `${o.label}|${o.count ?? ""}`).join(" ");
 
   useEffect(() => {
     // New words: forget the old row width and measure the new one in row form.
