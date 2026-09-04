@@ -34,6 +34,55 @@ import { WATCHED_FOLDERS, type ImapAuth } from "./imap-types.js";
  * for a second ohmail fighting the first. `adopt_external` is explicitly
  * NOT load-bearing here.
  *
+ * ── THE WIRE FORMAT, IN ONE PLACE ────────────────────────────────────────────────────────
+ *
+ * `ohmail/_meta` is a protocol between builds that update on completely different clocks: the
+ * hosted service in minutes, a desktop install in days, a phone in months. Every one of them reads
+ * and writes this one folder, so the format is the compatibility surface and it is defined HERE
+ * rather than inferred from four parsers.
+ *
+ * **Every record is HEADERS-ONLY.** One `X-Ohmail-*` header names the kind; the rest of the record
+ * is that kind's fields; the body is one sentence for a human who opens the folder in another mail
+ * client. Nothing reads the body. Records are APPENDED with `\Seen` and are removed only by the
+ * install that wrote them or by the organizer that has handled them.
+ *
+ * ### The four kinds, and the ONE header that tells them apart
+ *
+ * | discriminator          | kind      | written by | parsed by                                  |
+ * | ---------------------- | --------- | ---------- | ------------------------------------------ |
+ * | `X-Ohmail-Lease: 1`    | claim     | organizer  | {@link parseClaim}                         |
+ * | `X-Ohmail-Request: 1`  | request   | reader     | {@link parseRequestEnvelope}               |
+ * | `X-Ohmail-Ack: 1`      | ack       | organizer  | {@link parseAck}                           |
+ * | `X-Ohmail-Profile`     | profile   | organizer  | `organizer-profile.ts`                     |
+ *
+ * {@link META_RECORD_KINDS} is that table as data, and {@link classifyMetaRecord} is the only
+ * function that reads a discriminator. **A fifth kind is one entry in that array** plus its own
+ * parser — not a fourth predicate that four call sites must remember to consult.
+ *
+ * A record carrying no discriminator this build knows is `null`: not ours, not touched, not
+ * counted. Somebody else's mail client may keep something in this folder and it is not ours to
+ * destroy.
+ *
+ * ### Two protocol numbers, and they move independently
+ *
+ * {@link CLAIM_PROTOCOL} versions the claim; {@link REQUEST_PROTOCOL} versions the request and its
+ * acknowledgement. They are separate because the election and the decision channel change for
+ * unrelated reasons, and a shared number would force a fleet-wide step for either.
+ *
+ * ### What a build does with a record it was not built for — BOTH directions
+ *
+ * | | an OLDER build meets a NEWER record | a NEWER build meets an OLDER record |
+ * | --- | --- | --- |
+ * | **claim** | ranks it as `kind: "unknown"` and treats it as LIVE — an unrankable fresh claim refuses even an authorized takeover, so the mailbox is left to whoever holds it rather than contested by a build that cannot read the holder. Never expunged. | ranks it normally. Fields it does not carry read as absent, and absence has a defined meaning at every one of them (`authorizedAt: null` is "nobody pressed for this install", which is the resting state). |
+ * | **request** | LEAVES IT STANDING — `protocol > REQUEST_PROTOCOL`, or a kind with no applier here, is neither applied nor expunged, and the record waits for a build that understands it. **This courtesy is extended only to records that VERIFY**, because an unauthenticated record that could reach a permanent disposition is a denial of service anyone with folder rights can mount. | applies it. New fields are additive and optional; the signature is over a canonical form that names its own fields, so an older record hashes the older list. |
+ * | **ack** | leaves it standing, same rule and the same verification-first ordering. | reads it. **The ack's signed field list is FIXED at protocol 1** — see {@link REQUEST_PROTOCOL} for why adding a field there is a breaking change that needs a bump and a tolerant, protocol-keyed canonicalization. |
+ * | **profile** | ignores a document version it cannot read, and does not overwrite it. | reads it; `organizer-profile.ts` carries that half. |
+ *
+ * The rule underneath all eight cells: **an unreadable record is evidence, never permission.** A
+ * build that cannot understand something in this folder must leave both the record and the mailbox
+ * alone, because "I do not understand this" and "there is nothing here" have to stay
+ * distinguishable — the same rule the folder-level read holds for a truncated fetch.
+ *
  * ── THREE LAYERS, AND THE SPLIT IS THE POINT ──────────────────────────────────────────────
  *
  *   1. FORMAT  — {@link formatClaim} / {@link parseClaim}. Pure string work.
@@ -1576,33 +1625,13 @@ export function makeLeasePeekIo(client: LeaseImapClient, toServerPath: (canonica
 
       const lock = await client.getMailboxLock(at.path);
       try {
-        const out: RawClaimMessage[] = [];
-        // The same defensive read `makeLeaseIo.listClaims` documents at length: `1:*` is not a
-        // valid messageset against an empty mailbox and Dovecot refuses the command outright,
-        // while GreenMail tolerates it. Only a POSITIVELY KNOWN zero skips the fetch.
-        const count = await selectedCount(client);
-        if (count === 0) return out;
-        for await (const m of client.fetch("1:*", { uid: true, headers: true }, { uid: false })) {
-          if (!m.headers) continue;
-          out.push({ ref: m.uid, raw: m.headers.toString("utf8") });
-          // ── AND THE READ ITSELF IS BOUNDED ────────────────────────────────────────────────
-          //
-          // `REQUEST_DRAIN_MAX_PER_CYCLE` bounds how many records are APPLIED. It does not bound
-          // how many are fetched, retained or header-parsed, and this loop had no ceiling at all —
-          // so a folder anyone with APPEND rights can write to decided how much work every cycle
-          // did, on every host, for ever. At a large enough N the FETCH itself times out, and the
-          // organizer lease then reads that as "the lease could not be read", which is exempted
-          // from the failure counter and retried indefinitely: the mailbox's MAIL stops syncing,
-          // not just its request channel.
-          //
-          // The cap is generous against every legitimate population — a claim or two, an
-          // acknowledgement per decision in flight, and the decisions themselves — so reaching it
-          // means something is wrong rather than something is busy. Nothing is deleted on the way
-          // past: this folder is the customer's, and a message this build does not recognise is
-          // not its to destroy.
-          if (out.length >= META_RECORDS_MAX_PER_FETCH) break;
-        }
-        return out;
+        // The shared bounded read — see {@link readMetaFolderWindow}. A folder too full to read in
+        // one window is reported as a read that FAILED, which {@link readLeasePeek} turns into
+        // {@link LeaseUnavailableError}: this surface exists to tell a person who holds their
+        // mailbox, and "I could not see all of it" must render as unknown rather than as nobody.
+        const read = await readMetaFolderWindow(client);
+        if (read.truncated) throw new MetaFolderTruncatedError(read.records.length, read.total);
+        return read.records;
       } finally {
         lock.release();
       }
@@ -1841,6 +1870,148 @@ async function selectedCount(client: LeaseImapClient): Promise<number | undefine
   return typeof selected === "object" && selected !== null ? selected.exists : undefined;
 }
 
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  ONE BOUNDED READ OF `ohmail/_meta`, NEWEST FIRST — the only `FETCH` in this module
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Three reads used to run their own `FETCH 1:*` against this one folder — the lease gate, the
+ * read-only peek, and the shared record list. They are one loop now. The module header has claimed
+ * since the record channel shipped that the folder's kinds come off "the same headers FETCH", and
+ * three copies of a loop is three places for the ceiling, the ordering and the empty-folder
+ * defence to drift apart. `client.fetch(` appears exactly once below, and a census test keeps it
+ * that way; the per-kind parsing stays with each caller.
+ *
+ * ── WHY NEWEST FIRST, AND WHY IT IS NOT A PREFERENCE ────────────────────────────────────────
+ *
+ * `FETCH 1:*` returns the LOWEST sequence numbers first — arrival order, oldest first. A ceiling
+ * applied by breaking out of that loop therefore keeps the OLDEST records and silently drops every
+ * later one. In this folder that is backwards in the only case that matters: a claim is renewed by
+ * APPENDING, a decision is APPENDED, an acknowledgement is APPENDED. Everything live is at the
+ * END of the folder, and everything an ordinary mailbox accumulates is at the start.
+ *
+ * So five hundred harmless messages — which anyone with APPEND rights on the folder can put there,
+ * and which is well inside what a shared folder, a filing rule or another mail client can produce
+ * without anybody intending harm — would hide every claim, every decision and every acknowledgement
+ * written after them, for good. The drain would find no decisions; the peek would report that
+ * nobody organizes a mailbox somebody is actively organizing; and the gate would read an empty
+ * election and claim a mailbox that is already held. **A truncated read was indistinguishable from
+ * a complete one at every call site**, which is the property that turns a full folder into a
+ * silent, permanent fault rather than a visible one.
+ *
+ * The window therefore runs from the END: with `exists` known and above the ceiling, the FETCH asks
+ * for `exists - ceiling + 1 : *`. Where the count is not known — a client that does not expose one
+ * — the range stays `1:*` and the ceiling is enforced by counting, which is the older behaviour and
+ * is why nothing that fits inside the ceiling reads any differently than it did.
+ *
+ * ── AND A TRUNCATED READ SAYS SO ────────────────────────────────────────────────────────────
+ *
+ * `truncated` is the whole point of returning a record rather than an array. Every caller treats it
+ * as "I could not look", never as "there is nothing there": the gate writes nothing at all, the
+ * peek reports the mailbox as unknown rather than unheld, and the record drain skips its cycle and
+ * expunges nothing. That is the same rule the absent-folder case already follows, for the same
+ * reason — a decision taken on a partial view of this folder is how a mailbox ends up with two
+ * organizers, or a person is told a decision was applied that nobody ever saw.
+ *
+ * One message beyond the ceiling is read and discarded rather than kept, so "the folder holds more
+ * than the window" is a fact off the wire instead of an inference from a full window: a folder
+ * holding EXACTLY the ceiling is complete, and reporting it as truncated would stop a mailbox for
+ * no reason.
+ */
+export interface MetaFolderRead {
+  /** The records the window covered, in the server's own order (oldest first WITHIN the window). */
+  records: RawMetaMessage[];
+  /** The folder holds more than {@link META_RECORDS_MAX_PER_FETCH}; older records were not read. */
+  truncated: boolean;
+  /** The folder's message count as the server reported it, or `null` when it did not say. */
+  total: number | null;
+}
+
+/**
+ * THE FOLDER HOLDS MORE THAN ONE READ MAY TAKE.
+ *
+ * Its own class so that each caller can convert it into the refusal its own layer already has —
+ * {@link LeaseUnavailableError} for the lease, {@link RequestUnavailableError} for the records —
+ * rather than every caller re-deriving "a full folder is a look that failed" from a boolean it
+ * might forget to check. Carrying the counts is what lets the refusal say how full the folder is,
+ * which is the one thing that tells somebody reading a log what to do about it.
+ */
+export class MetaFolderTruncatedError extends Error {
+  /** How many records the window covered. */
+  readonly read: number;
+  /** The ceiling that bounded it. */
+  readonly limit: number;
+  /** The folder's message count, where the server reported one. */
+  readonly total: number | null;
+  constructor(read: number, total: number | null) {
+    super(
+      `${META_FOLDER} holds more than the ${META_RECORDS_MAX_PER_FETCH} records one read may take` +
+      `${total === null ? "" : ` (${total} present)`}, so what is in it is not fully known and ` +
+      `nothing was decided from it`,
+    );
+    this.name = "MetaFolderTruncatedError";
+    this.read = read;
+    this.limit = META_RECORDS_MAX_PER_FETCH;
+    this.total = total;
+  }
+}
+
+/**
+ * The shared read itself. The folder must already be SELECTED — every caller takes the lock, and
+ * taking it here would mean this function had to know the path, which is the one thing the three
+ * callers legitimately resolve for themselves.
+ *
+ * Exported so the window is testable as the mechanism it is. Its callers all convert `truncated`
+ * into a refusal, so a test driving them can only ever observe the refusal — which would leave
+ * "the window runs from the END of the folder" asserted nowhere, and a ceiling that quietly went
+ * back to keeping the oldest records would pass every guard above it.
+ */
+export async function readMetaFolderWindow(client: LeaseImapClient): Promise<MetaFolderRead> {
+  // AN EMPTY `_meta` IS THE NORMAL STATE OF A FRESH MAILBOX, AND `1:*` IS NOT A VALID MESSAGESET
+  // WHEN A MAILBOX HOLDS NOTHING.
+  //
+  // The failure this defends: every genuinely fresh mailbox was unorganizable and the product
+  // showed "waiting for first sync" for ever. The folder is created one call earlier, so on a first
+  // attach this FETCH always ran against zero messages. Some servers tolerate that and answer an
+  // empty set; Dovecot refuses the command outright — measured against a real one:
+  //
+  //     Error in IMAP command FETCH: Invalid messageset
+  //
+  // which becomes a lease that "could not be read", which the sync loop exempts BY CLASS from its
+  // failure counter — so it retried every thirty seconds for ever, wrote nothing and quarantined
+  // nothing. Correct behaviour at every layer, composing into a mailbox that can never be adopted.
+  //
+  // Read DEFENSIVELY: only a POSITIVELY KNOWN zero skips the fetch. A count we cannot see means
+  // "unknown", so the fetch still runs.
+  const count = await selectedCount(client);
+  if (count === 0) return { records: [], truncated: false, total: 0 };
+  const total = typeof count === "number" ? count : null;
+
+  // The window's start. Above the ceiling this deliberately skips the oldest records — see the
+  // header: in this folder the oldest are the ones that have been superseded or were never ours.
+  const from = total !== null && total > META_RECORDS_MAX_PER_FETCH
+    ? total - META_RECORDS_MAX_PER_FETCH + 1
+    : 1;
+  let truncated = from > 1;
+
+  const records: RawMetaMessage[] = [];
+  // HEADERS ONLY. A claim's body is one sentence for a human, a decision's payload rides in its
+  // headers, and fetching sources here would make every cycle's cost scale with whatever else ends
+  // up in this folder.
+  for await (const m of client.fetch(`${from}:*`, { uid: true, headers: true }, { uid: false })) {
+    if (!m.headers) continue;
+    // The one message past the ceiling: proof there are more, then stop. Nothing is deleted on the
+    // way past — this folder is the customer's, and a message this build does not recognise is not
+    // its to destroy.
+    if (records.length >= META_RECORDS_MAX_PER_FETCH) {
+      truncated = true;
+      break;
+    }
+    records.push({ ref: m.uid, raw: m.headers.toString("utf8") });
+  }
+  return { records, truncated, total };
+}
+
 export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: string) => string): LeaseIo {
   // ONE resolution, shared with the APPEND-less peek. A writer and a reader that spell "where is
   // `_meta`" differently is exactly how each ends up renewing a claim the other cannot see.
@@ -1871,36 +2042,26 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
     async listClaims(): Promise<RawClaimMessage[]> {
       const lock = await client.getMailboxLock(await meta.path());
       try {
-        const out: RawClaimMessage[] = [];
-        // AN EMPTY `_meta` IS THE NORMAL STATE OF A FRESH MAILBOX, AND `1:*` IS NOT A VALID
-        // MESSAGESET WHEN A MAILBOX HOLDS NOTHING.
+        // THE GATE'S READ IS BOUNDED, AND THIS IS THE READ THAT MOST NEEDED IT.
         //
-        // The failure: every genuinely fresh mailbox was unorganizable, and the product showed
-        // "waiting for first sync" for ever. `ensureMetaFolder()` creates the folder one line
-        // earlier, so on a first attach this FETCH always ran against zero messages. GreenMail
-        // tolerates that and answers an empty set; Dovecot refuses the command outright —
-        // measured against a real Dovecot server:
+        // It had no ceiling at all, so a folder anyone with APPEND rights can write to decided how
+        // much work every election did, on every host, for ever. At a large enough count the FETCH
+        // itself times out, and the gate reads that as "the lease could not be read" — exempted
+        // from the sync failure counter and retried indefinitely, so the mailbox's MAIL stops
+        // moving, not merely its record channel.
         //
-        //     Error in IMAP command FETCH: Invalid messageset
-        //
-        // which `runLeaseGate` turns into `LeaseUnavailableError`, which the worker exempts BY
-        // CLASS from `maxSyncFailures` — so it retried every thirty seconds for ever, wrote
-        // nothing to the mailbox row, and quarantined nothing. Correct behaviour at every layer,
-        // composing into a mailbox that can never be adopted. The whole test suite was green
-        // because the only server it ever ran against was the tolerant one.
-        //
-        // Read DEFENSIVELY: only a POSITIVELY KNOWN zero skips the fetch. An `exists` we cannot
-        // see means "unknown", so the fetch still runs and every existing caller — including
-        // every fake in the tests — behaves exactly as it did before.
-        const count = await selectedCount(client);
-        if (count === 0) return out;
-        // HEADERS ONLY. A claim's body is one sentence for a human, and fetching sources here
-        // would make the gate's cost scale with whatever else ends up in this folder.
-        for await (const m of client.fetch("1:*", { uid: true, headers: true }, { uid: false })) {
-          if (!m.headers) continue;
-          out.push({ ref: m.uid, raw: m.headers.toString("utf8") });
-        }
-        return out;
+        // A TRUNCATED READ IS REFUSED RATHER THAN DECIDED ON. The election below would otherwise
+        // run over a partial folder, and its "nobody has ever organized this mailbox" arm is
+        // reached by seeing no claim — which is exactly what a hidden claim looks like. Claiming a
+        // mailbox on that reading is the two-organizer fault the whole module exists to prevent, so
+        // this refuses in the same voice an unreadable folder does. No claim is appended and
+        // nothing is expunged, and the install keeps whatever role it already had. (`ensureMetaFolder`
+        // has already run by the time this is called — it is idempotent, and a folder full enough to
+        // reach here plainly exists — so "no claim is appended, nothing is expunged" is the exact
+        // guarantee rather than "no command is sent".)
+        const read = await readMetaFolderWindow(client);
+        if (read.truncated) throw new MetaFolderTruncatedError(read.records.length, read.total);
+        return read.records;
       } finally {
         lock.release();
       }
@@ -2005,6 +2166,18 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
   try {
     messages = await io.listClaims();
   } catch (err) {
+    /* ── A FOLDER TOO FULL TO READ GETS ITS OWN LINE, BECAUSE IT IS THE ONE FAULT HERE SOMEBODY
+     *    CAN ACT ON ────────────────────────────────────────────────────────────────────────────
+     *
+     * Everything else that lands here is a transport fault: the connection dropped, the server
+     * refused, the folder went away. This one is a fact about the mailbox — `ohmail/_meta` holds
+     * more records than a single read may take — and it does not clear on its own. Nothing is
+     * written on this path: no claim is appended, nothing is expunged, and the install keeps
+     * whatever role it already had, which is the safe direction when the election cannot be seen
+     * whole. The line carries the counts so the folder can be found and emptied. */
+    if (err instanceof MetaFolderTruncatedError) {
+      log("lease_meta_truncated", { read: err.read, limit: err.limit, total: err.total });
+    }
     throw new LeaseUnavailableError(
       `the organizer lease in ${META_FOLDER} could not be read; this mailbox cannot be organized safely`,
       { op: "list_claims", cause: err },
@@ -2508,7 +2681,33 @@ const RH = {
   sig: "X-Ohmail-Request-Sig",
 } as const;
 
-/** The request record's own protocol — independent of {@link CLAIM_PROTOCOL}, additive the same way. */
+/**
+ * The request record's own protocol — independent of {@link CLAIM_PROTOCOL}, additive the same way.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  A CONSTRAINT ON WHOEVER RAISES THIS NUMBER, WRITTEN DOWN WHILE IT IS STILL FREE
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * **"Additive the same way" does not extend to the ACKNOWLEDGEMENT's fields.** {@link parseAck}
+ * hard-requires `X-Ohmail-Request-Mailbox` and folds it into {@link canonicalAck} unconditionally,
+ * so the acknowledgement's signed shape is fixed at this protocol number. Two consequences follow,
+ * and neither is visible from the parser alone:
+ *
+ *  · **An ack field added later is a BREAKING change, not an additive one.** Fold a new field into
+ *    the canonical bytes and every acknowledgement written by a build that predates it fails
+ *    verification — not "is ignored", fails — because the two sides hash different strings. Both
+ *    installs in a pair are then telling each other that genuine records are unauthenticated.
+ *  · So the field goes in behind a protocol BUMP, and the parser that ships with the bump has to
+ *    read the OLDER shape tolerantly: canonicalize by the ack's own declared protocol, so a
+ *    protocol-1 ack keeps hashing the protocol-1 field list. A build that verifies only the newest
+ *    shape cannot be deployed to one side of a pair at a time, which is the only way it ever gets
+ *    deployed.
+ *
+ * This costs nothing today: the field has been required since the acknowledgement existed, and no
+ * released build writes an ack without it, so there is no older shape in the wild to be tolerant of
+ * yet. That is precisely why it is recorded now rather than discovered by the first build that
+ * needs a second field.
+ */
 export const REQUEST_PROTOCOL = 1;
 
 /**
@@ -3270,12 +3469,16 @@ export class RequestUnavailableError extends Error {
  * ── ONE FETCH, THREE PARSERS ────────────────────────────────────────────────────────────────
  *
  * `ohmail/_meta` holds three kinds of record — claims, requests and acks — and the module header
- * has claimed since 0.14.1 that they come off "the same headers FETCH in one round trip". They did
- * not: {@link makeLeaseIo.listClaims} and the old `makeRequestIo.listRequests` each ran their own
- * `FETCH 1:*` against the same folder in the same cycle, because the two objects did not share a
- * cursor. {@link listMetaRecords} is that shared read, and the claim, request and ack parsers all
- * run over ITS output — so the sentence is now true rather than aspirational, and a fourth record
- * type costs no round trip at all.
+ * has claimed since the channel shipped that they come off "the same headers FETCH in one round
+ * trip". {@link listMetaRecords} sorts one read into its kinds, and the claim, request and ack
+ * parsers all run over ITS output, so a fourth record type costs no round trip at all.
+ *
+ * **The loop underneath is shared too, and saying so is a correction.** This block used to say the
+ * sentence above was "now true rather than aspirational" while three separate `FETCH 1:*` loops —
+ * this one, the lease gate's and the read-only peek's — still stood in the module, each with its
+ * own copy of the ceiling and the empty-folder defence, and two of the three keeping the OLDEST
+ * records when the ceiling bit. They are one function now ({@link readMetaFolderWindow}), and a
+ * census test asserts there is exactly one `client.fetch(` here to keep the claim honest.
  *
  * ── AND TWO OBJECTS, BECAUSE A READER MUST NOT BE ABLE TO EXPUNGE ───────────────────────────
  *
@@ -3296,12 +3499,17 @@ export interface RawMetaMessage {
  *
  * Every legitimate population of `ohmail/_meta` is tiny: one claim per install, one acknowledgement
  * per decision still in flight, and the decisions themselves — which the drain removes as it
- * handles them. This is far above all of that, because its job is to stop an ATTACKER choosing how
- * much work a cycle does, not to be tight.
+ * handles them. This is far above all of that, because its job is to stop anyone with APPEND rights
+ * on the folder choosing how much work a cycle does, not to be tight.
+ *
+ * It bounds ONE READ, and it is not a filter: passing it does not drop records, it makes the read
+ * REFUSE. {@link readMetaFolderWindow} explains why — a ceiling that silently keeps a subset makes
+ * a partial view of this folder indistinguishable from a complete one, and every decision taken
+ * from this folder is wrong on a partial view.
  */
 export const META_RECORDS_MAX_PER_FETCH = 500;
 
-/** The shared read. One `FETCH 1:*` of the folder's headers, unfiltered — the parsers sort it out. */
+/** The shared read: the folder's headers, unfiltered and bounded — the parsers sort it out. */
 export interface MetaRecordsIo {
   listMetaRecords(): Promise<RawMetaMessage[]>;
 }
@@ -3320,13 +3528,68 @@ export interface RequestOrganizerIo extends MetaRecordsIo {
   remove(refs: readonly unknown[]): Promise<void>;
 }
 
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  THE PARSER REGISTRY — one discriminator per kind, in one place
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * The module header's table, as data. It exists so that adding a fifth record type to
+ * `ohmail/_meta` is ONE ENTRY here plus a parser, rather than a fourth hand-written predicate that
+ * every reader of the folder has to remember to consult — which is how the third one went wrong:
+ * `isRequestRecord` answered on the FIRST occurrence of its header while the parser refused
+ * duplicates outright, so a class of message was permanently unremovable and nothing said so.
+ *
+ * The `match` functions are the EXISTING predicates rather than a new uniform one, deliberately.
+ * They differ in what they do with a repeated discriminator, and each difference is a decision that
+ * was argued at the parser it belongs to — replacing them with one generic reader here would quietly
+ * re-decide all three.
+ *
+ * `profile` is listed and has no matcher: its records live in this folder and are parsed by
+ * `organizer-profile.ts`, which owns the document format. Listing it is what makes the count four
+ * everywhere instead of three here and four in the header.
+ */
+export type MetaRecordKind = "claim" | "request" | "ack" | "profile";
+
+export interface MetaRecordKindSpec {
+  kind: MetaRecordKind;
+  /** The header whose presence declares the kind. */
+  header: string;
+  /** Does this raw record declare this kind? `null` for a kind another module owns. */
+  match: ((raw: string) => boolean) | null;
+}
+
+export const META_RECORD_KINDS: readonly MetaRecordKindSpec[] = [
+  // A claim's matcher is the PARSER, which is the strongest form this table can take: `parseClaim`
+  // answers `null` for "not a claim" and a MALFORMED claim for "says it is one and cannot be read",
+  // so the two cannot disagree about a duplicated discriminator by construction. The other two
+  // reached that same rule the long way, through a defect each.
+  { kind: "claim", header: H.lease, match: (raw: string): boolean => parseClaim(raw) !== null },
+  { kind: "request", header: RH.request, match: isRequestRecord },
+  { kind: "ack", header: AH.ack, match: isAckRecord },
+  // Owned by `organizer-profile.ts` — see the registry's docblock.
+  { kind: "profile", header: "X-Ohmail-Profile", match: null },
+];
+
+/**
+ * WHICH KIND IS THIS RECORD, or `null` for one this build does not recognise.
+ *
+ * `null` is a real answer and the common one: somebody else's mail client may keep something in
+ * this folder, and a record we cannot name is not ours to parse, count or destroy.
+ */
+export function classifyMetaRecord(raw: string): MetaRecordKind | null {
+  for (const spec of META_RECORD_KINDS) {
+    if (spec.match !== null && spec.match(raw)) return spec.kind;
+  }
+  return null;
+}
+
 /** Every message in the folder that says it is a request, envelope-parsed. */
 export function requestEnvelopesIn(
   records: readonly RawMetaMessage[],
 ): RequestEnvelopeRecord[] {
   const out: RequestEnvelopeRecord[] = [];
   for (const m of records) {
-    if (!isRequestRecord(m.raw)) continue;
+    if (classifyMetaRecord(m.raw) !== "request") continue;
     const parsed = parseRequestEnvelope(m.raw, m.ref);
     if (parsed !== null) out.push(parsed);
   }
@@ -3337,7 +3600,7 @@ export function requestEnvelopesIn(
 export function acksIn(records: readonly RawMetaMessage[], key: string): AckRecord[] {
   const out: AckRecord[] = [];
   for (const m of records) {
-    if (!isAckRecord(m.raw)) continue;
+    if (classifyMetaRecord(m.raw) !== "ack") continue;
     const parsed = parseAck(m.raw, key, m.ref);
     if (parsed !== null) out.push(parsed);
   }
@@ -3384,38 +3647,24 @@ function makeMetaRecordsList(
     try {
       const lock = await client.getMailboxLock(at.path);
       try {
-        const out: RawMetaMessage[] = [];
-        const count = await selectedCount(client);
-        // A `FETCH 1:*` against an empty mailbox is refused by Dovecot and tolerated by GreenMail
-        // — `makeLeaseIo`'s own note records the exact error. An empty folder is a real answer, so
-        // it returns rather than throwing.
-        if (count === 0) return out;
-        for await (const m of client.fetch("1:*", { uid: true, headers: true }, { uid: false })) {
-          if (!m.headers) continue;
-          out.push({ ref: m.uid, raw: m.headers.toString("utf8") });
-          // ── AND THE READ ITSELF IS BOUNDED ────────────────────────────────────────────────
-          //
-          // `REQUEST_DRAIN_MAX_PER_CYCLE` bounds how many records are APPLIED. It does not bound
-          // how many are fetched, retained or header-parsed, and this loop had no ceiling at all —
-          // so a folder anyone with APPEND rights can write to decided how much work every cycle
-          // did, on every host, for ever. At a large enough N the FETCH itself times out, and the
-          // organizer lease then reads that as "the lease could not be read", which is exempted
-          // from the failure counter and retried indefinitely: the mailbox's MAIL stops syncing,
-          // not just its request channel.
-          //
-          // The cap is generous against every legitimate population — a claim or two, an
-          // acknowledgement per decision in flight, and the decisions themselves — so reaching it
-          // means something is wrong rather than something is busy. Nothing is deleted on the way
-          // past: this folder is the customer's, and a message this build does not recognise is
-          // not its to destroy.
-          if (out.length >= META_RECORDS_MAX_PER_FETCH) break;
-        }
-        return out;
+        // The shared bounded read — see {@link readMetaFolderWindow}. An empty folder is a real
+        // answer and comes back as one; a folder too full for a single window is not, and falls
+        // into the refusal below for the same reason an ABSENT folder does.
+        const read = await readMetaFolderWindow(client);
+        if (read.truncated) throw new MetaFolderTruncatedError(read.records.length, read.total);
+        return read.records;
       } finally {
         lock.release();
       }
     } catch (err) {
       if (err instanceof RequestUnavailableError) throw err;
+      // NAMED, not folded into the generic sentence: the count is the only thing that tells whoever
+      // reads the line what is wrong, and the two drains log this message verbatim. A caller that
+      // saw only "could not be read" would go looking at the mail server for a fault that is a full
+      // folder.
+      if (err instanceof MetaFolderTruncatedError) {
+        throw new RequestUnavailableError(err.message, { op, cause: err });
+      }
       throw new RequestUnavailableError(
         `the records in ${META_FOLDER} could not be read`, { op, cause: err },
       );
