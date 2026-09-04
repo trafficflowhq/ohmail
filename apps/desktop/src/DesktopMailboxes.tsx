@@ -1011,8 +1011,15 @@ export function DesktopMailboxes(
        next screen is the agreement, and putting "nothing organizes this" over it would be a
        sentence about a state it was never in. `claimable` keeps that rule. */
     const holder = Boolean(m.organizedBy && (m.organizedBy.kind || m.organizedBy.name));
+    /* THE LEGACY ARM IS TESTED BEFORE THE HOLDER, and getting that order wrong is not cosmetic.
+       A pre-role engine records a stand-down as `disabled` + a reason and carries NO holder
+       columns at all, so it looks exactly like a mailbox nobody organizes — and it is the
+       opposite: something else took it. Reading it as `released` would put "nothing organizes
+       this mailbox" over a row whose own state column says it was handed over, and would lose the
+       one sentence that says the frozen install is not even reading it. */
     const role: "organizer" | "reader" | "released" =
-      !claimable(m) ? "organizer" : holder ? "reader" : "released";
+      !claimable(m) ? "organizer"
+        : m.legacyStandDown === true || holder ? "reader" : "released";
     /* THE RELEASE IS A STANDALONE-DOOR CONTROL. On the hosted door these rows are a mirror of an
        account whose organizing is the service's, and the browser's own pane is where that is
        given up — offering it here would be a second door onto one decision, with this one unable
@@ -1168,10 +1175,16 @@ export function DesktopMailboxes(
         {/* WHAT THE ENGINE ANSWERED, kept until the row's own role moves. `reclaimed` and
             `released` are never cleared by this pane: the row is what ends them, and it does,
             because the gate writes the role on its next cycle and the poll brings it back. */}
+        {/* `off`, NEVER `wait`. A spinner claims something is in flight, and nothing is: the
+            route RECORDS a request and returns. The gate acts on it at its next tick, which may
+            be a minute away and is not this window's to watch. `wait` also never ends — the entry
+            is only ever added to — so it would spin for the life of the pane, including after the
+            poll confirmed the change and the banner above it had already moved on. And not `ok`
+            either: this window has not been told the mailbox moved, and a tick would say it had. */}
         {reclaimed.has(m.id) ? (
           reclaimed.get(m.id)!.outcome === "authorized" ? (
             <SettingsVerdict
-              state="wait"
+              state="off"
               headline={m.legacyStandDown === true ? t("organizeHereQueuedLegacy") : t("organizeHereQueued")}
             />
           ) : (
@@ -1180,7 +1193,7 @@ export function DesktopMailboxes(
         ) : null}
         {released.has(m.id) ? (
           released.get(m.id) === "requested"
-            ? <SettingsVerdict state="wait" headline={t("stopOrganizingQueued")} />
+            ? <SettingsVerdict state="off" headline={t("stopOrganizingQueued")} />
             : <SettingsNote>{t("stopOrganizingNot")}</SettingsNote>
         ) : null}
       </div>

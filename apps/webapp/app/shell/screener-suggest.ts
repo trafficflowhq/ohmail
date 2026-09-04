@@ -759,7 +759,7 @@ export function useScreenerSuggestions(opts: {
                did. */
             holder: null,
             ...(d.state !== undefined ? { state: d.state } : {}),
-            ...(d.reason !== undefined ? { reason: d.reason } : {}),
+            ...(d.refusedReason !== undefined ? { refusedReason: d.refusedReason } : {}),
           })),
         );
         // A NUMBER, not a truthy read of an optional field: an older server omits it entirely and

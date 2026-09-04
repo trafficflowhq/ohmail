@@ -292,8 +292,12 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     await act(async () => { confirmButton(el)!.click(); });
     const text = el.textContent ?? "";
     expect(text).toContain("takes over on its next pass");
-    expect(text, "the request was reported as a certainty the lease can refuse")
-      .toContain("it keeps the mailbox and this one goes on reading");
+    /* THE CAVEAT IS GONE WITH THE RACE. It read "if the other install renews its claim first it
+       keeps the mailbox and this one goes on reading" — the renewal race, which decided a press
+       against a live peer. A press outranks a claim carrying none now, so stating a condition the
+       engine no longer evaluates would be a hedge about nothing. */
+    expect(text, "the retired renewal race is back in the answer")
+      .not.toContain("it keeps the mailbox and this one goes on reading");
     // A spinner claims something is in flight. Nothing is: the request is written and done.
     expect(el.querySelector(".set-verdict.wait"), "a recorded request was drawn as a pending one")
       .toBeNull();
@@ -400,8 +404,12 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     await act(async () => { organizeButton(el)!.click(); });
     const text = el.textContent ?? "";
     expect(text).toContain("Quit and reopen ohmail and");
-    // A legacy row has no holder columns, so its sentence names nobody.
-    expect(text).toContain("unless the other install renews its claim first");
+    /* AND NO RENEWAL RACE ATTACHED TO IT. The relaunch is still this engine's mechanism — it
+       spends the stamp at its next process assembly — but the gate that then decides is this
+       build's, and it ranks an explicit press above a claim carrying none. A legacy row also has
+       no holder columns, so its sentence names nobody either way. */
+    expect(text, "the retired renewal race is back in the legacy ceremony")
+      .not.toContain("renews its claim first");
   });
 
   /**
@@ -428,94 +436,107 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     expect(text).toContain("takes over on its next pass");
     expect(text, "the modern engine was sent to restart for a stamp its gate re-reads")
       .not.toContain("Quit and reopen");
-    // A reader that loses the race keeps reading — that is what a reader IS, and it is the one
-    // thing the legacy row cannot say.
-    expect(text).toContain("this one goes on reading");
+    /* WHAT THE LOSER DOES IS STILL SAID — it is the other install that becomes a reader now,
+       because this one is the one taking the mailbox. The sentence changed sides with the rule. */
+    expect(text).toContain("becomes a reader and keeps its copy of your mail");
   });
 
   /**
-   * THE CONFIRMATION SAYS WHAT THE LEASE CAN ACTUALLY GRANT, AND THAT DEPENDS ON WHO HOLDS IT.
+   * ONE SENTENCE FOR EVERY HOLDER, AND THAT IS THE CHANGE.
    *
-   * `decideLease` ranks cloud > local > unknown and this install is local, so an authorized
-   * request DISPLACES a live local peer (rule 6) and is refused by a live cloud or unknown holder
-   * (rules 5 and 2) whatever was authorized. One universal sentence is therefore wrong in one
-   * direction or the other — and the copy here was wrong in BOTH in turn: it promised the takeover
-   * flat, and then, correcting that, promised a running holder always keeps the mailbox.
+   * The lease used to rank kinds — a live hosted claim beat a local one whatever was authorized —
+   * so the confirmation needed two sentences and the copy here was wrong in both directions in
+   * turn: it promised the takeover flat, and then, correcting that, promised a running holder
+   * always keeps the mailbox. Kind no longer ranks; an explicit press does. Every holder a reader
+   * can press against is one the press can take, so there is one sentence again and it names the
+   * consequence rather than a condition.
    */
-  it("promises the takeover against a live LOCAL peer, which the lease will displace", async () => {
+  it("promises the takeover against a live LOCAL peer, with no race attached", async () => {
     const el = await render(null);
     await act(async () => { organizeButton(el)!.click(); });
     const text = el.textContent ?? "";
     expect(text).toContain("on its next pass");
-    expect(text, "the renewal race is the only thing that saves the peer, and it is stated")
-      .toContain("unless zorin-9950 renews its claim first");
+    expect(text, "the retired renewal race is back in the ceremony")
+      .not.toContain("renews its claim first");
     expect(text, "a displaceable peer was described as unbeatable")
       .not.toContain("cannot take it yet");
+    expect(text, "the press was described as taking the mailbox rather than asking for it")
+      .toContain("does not take it");
   });
 
-  it("does not promise a takeover a live CLOUD holder will refuse", async () => {
+  it("PROMISES THE TAKEOVER against a live CLOUD holder, which it can now take", async () => {
+    /* THIS ROW IS THE INVERSE OF THE ONE IT REPLACES. It used to assert the confirmation said the
+       mailbox "cannot be taken yet" and named the order to do it in — true while a live hosted
+       claim outranked a local one whatever was authorized. An explicit press outranks a claim
+       carrying none now, on either machine, so the sentence that stood here would send somebody
+       to stop a machine they no longer have to touch.
+
+       HOW TO WATCH IT FAIL: restore `claimWouldBeRefused` and its branch in `organizerBlock`. */
     FACTS = [CLOUD_HELD];
     const el = await render(null);
     await act(async () => { organizeButton(el)!.click(); });
     const text = el.textContent ?? "";
-    expect(text, "the confirmation promised what rule 5 refuses even with authorization")
-      .toContain("cannot take it yet");
-    expect(text).toContain("Stop it organizing there first, then come back and ask again");
-    expect(text, "a request the running loop can clear was described as kept")
-      .not.toMatch(/kept until then|is kept/);
-    expect(text).not.toContain("unless zorin-9950 renews its claim first");
+    expect(text, "the confirmation still refuses a press this engine honours")
+      .not.toContain("cannot take it yet");
+    expect(text, "the retired instruction to go and stop the other organizer is back")
+      .not.toContain("Stop it organizing there first");
+    expect(text, "the consequence for the other install is not stated before the press")
+      .toContain("on its next pass");
+    expect(text, "the other install's copy of the mail was not accounted for")
+      .toContain("left alone either way");
 
-    /* AND THE PRESS IS STILL THERE. Withholding it depended on `organizerState` moving off `held`
-       once the other holder stopped — and if it does not, somebody who follows the sentence above
-       returns to a pane whose only control has disappeared, which is the dead end this surface
-       exists to close. Recording the request costs nothing and waits for the relaunch. */
-    expect(confirmButton(el), "the only way back vanished for a holder that may since have stopped")
-      .not.toBeNull();
+    /* AND THE PRESS IS THERE, which was true before this change for a different reason and is
+       true now for a simpler one: there is no state in which it cannot succeed. */
+    expect(confirmButton(el), "the only way to take the mailbox is missing").not.toBeNull();
     expect(buttonSaying(el, "Cancel")).not.toBeNull();
   });
 
   /**
-   * AND ITS ANSWER DOES NOT BORROW THE OTHER BRANCH'S CONDITION. Rules 5 and 2 reject this holder
-   * outright — the renewal race is the LOCAL peer's condition, and saying it here would tell
-   * somebody the holder wins only if it renews, when it wins regardless.
+   * ONE ANSWER, BECAUSE THERE IS ONE OUTCOME. This row used to pin a SECOND answer for a holder
+   * the lease would refuse — "keeps this mailbox for as long as it is still checking in" — which
+   * was the branch that existed because the takeover had a case it could not win. It has none, so
+   * a second answer would be a sentence about a state the engine cannot produce.
    */
-  it("answers a blocked request with the reason that actually applies", async () => {
+  it("answers a press over a live CLOUD holder the same way it answers any other", async () => {
     FACTS = [CLOUD_HELD];
     const el = await render(null);
     await act(async () => { organizeButton(el)!.click(); });
     await act(async () => { confirmButton(el)!.click(); });
     const text = el.textContent ?? "";
-    expect(text).toContain("keeps this mailbox for as long as it is still checking in");
-    expect(text).toContain("whatever was asked for here");
-    /* The reliable order. It used to end "and reopen ohmail", which was the running loop's
-       staleness expressed as an instruction; the gate re-reads the stamp now, so asking again
-       after the other organizer stops is the whole of it. */
-    expect(text).toContain("then ask again");
+    expect(text).toContain("takes over on its next pass");
+    expect(text, "the retired second answer is back")
+      .not.toContain("keeps this mailbox for as long as it is still checking in");
     expect(text, "the retired restart instruction is back").not.toContain("reopen ohmail");
-    expect(text, "a blocked request was answered with the local peer's renewal race")
+    expect(text, "the answer promised a renewal race the engine no longer runs")
       .not.toContain("renews its claim first");
   });
 
   /**
-   * AN UNOBSERVED STATE IS NOT A STOPPED ONE. `organizerState` is `null` until this install's first
-   * lease look, and stays null when that look fails — so a perfectly fresh cloud claim reports
-   * `null`, and treating it as beatable promised a takeover rules 5 and 2 refuse.
+   * AN UNOBSERVED STATE NEEDS NO SPECIAL SENTENCE ANY MORE, and that is the whole of what the
+   * ruling removed here. `organizerState` is `null` until this install's first lease look, and
+   * stays null when that look fails — which used to matter because a fresh hosted claim reported
+   * `null` and treating it as beatable promised a takeover the lease refused. Nothing is refused
+   * now, so an unlooked-at state gets the one sentence every other row gets.
    */
-  it("does not read an unobserved organizer state as a beatable one", async () => {
+  it("says the same thing about a holder nobody has looked at", async () => {
     FACTS = [{ ...CLOUD_HELD, id: "mbx-cloud-unlooked", organizerState: null }];
     const el = await render(null);
     await act(async () => { organizeButton(el)!.click(); });
-    expect(el.textContent, "a state nobody has looked at was treated as stopped")
-      .toContain("cannot take it yet");
+    const text = el.textContent ?? "";
+    expect(text, "a state nobody has looked at grew a refusal of its own")
+      .not.toContain("cannot take it yet");
+    expect(text).toContain("on its next pass");
   });
 
-  it("…and promises it again once that cloud holder has stopped checking in", async () => {
+  it("…and says it about a holder that has stopped checking in, exactly as before", async () => {
+    /* The counterweight, kept: this was the one state the takeover COULD win before, so it is
+       the row that proves the sentence did not simply move rather than being extended to every
+       holder. Both states say the same thing now, which is what the ruling asked for. */
     FACTS = [CLOUD_STOPPED];
     const el = await render(null);
     await act(async () => { organizeButton(el)!.click(); });
     const text = el.textContent ?? "";
-    expect(text, "a quiet holder is beatable and the confirmation withheld that")
-      .toContain("on its next pass");
+    expect(text).toContain("on its next pass");
     expect(text).not.toContain("cannot take it yet");
   });
 
@@ -540,8 +561,12 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     // copy of the mail survives whichever way the lease decides.
     expect(text).toContain("left alone either way");
     expect(text).toContain("does not take it");
-    expect(text, "a confirmation stated an outcome with no condition on it at all")
-      .toMatch(/unless .* renews its claim first/);
+    /* AND NO CONDITION IS ATTACHED, which is the half that inverted. This asserted the renewal
+       race — "unless it renews its claim first" — because that was the only thing that could
+       save a live peer from an authorized press. Nothing saves it now, so a hedge here would be
+       a condition about a comparison the gate does not make. */
+    expect(text, "the retired renewal race is back in the ceremony")
+      .not.toMatch(/renews its claim first/);
   });
 
   it("tells a legacy install to relaunch, which is the mechanism on that engine", async () => {
@@ -561,80 +586,39 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
 
 
   /**
-   * AND THE RETRY IS STILL THERE AFTERWARDS, because the answer tells somebody to use it.
+   * THE PRESS IS A ONE-SHOT, ON EVERY HOLDER — and the three rows this replaces existed because
+   * it was not.
    *
-   * `reclaimed` records that a request was made and is never cleared — correct for a request that
-   * can succeed, since the row's own role is what ends it. A blocked request can never succeed, so
-   * its entry hid the button for the life of the pane while the sentence beside it said "stop it
-   * organizing there, then ask again". That is the dead end this screen exists to close, reached
-   * through the one branch whose entire purpose is to send somebody back.
+   * They kept the retry reachable after a BLOCKED request, and across both transitions in and out
+   * of blocked-ness: a request the lease would refuse achieved nothing, so letting it consume the
+   * button left somebody at a dead end with a sentence telling them to ask again and no button to
+   * ask with. There is no blocked request any more — an explicit press outranks a claim carrying
+   * none — so every request can succeed, and `reclaimed` means what it says again: one was made,
+   * and the row's own role is what ends it.
+   *
+   * HOW TO WATCH IT FAIL: give `reclaimed` its `blocked` half back and gate the button on it.
    */
-  it("keeps the retry reachable after a blocked request, which its own answer tells you to use", async () => {
+  it("a request spends its button, whoever holds the mailbox", async () => {
+    for (const holder of [CLOUD_HELD, CLOUD_STOPPED]) {
+      FACTS = [holder];
+      const el = await render(null);
+      await act(async () => { organizeButton(el)!.click(); });
+      await act(async () => { confirmButton(el)!.click(); });
+      expect(organizeButton(el), "a spent one-shot request still offered its button").toBeNull();
+      expect(el.textContent, "the answer withheld what the press did").toContain("Asked for");
+    }
+  });
+
+  it("…and the answer never sends anybody away to stop another machine", async () => {
+    /* The instruction that made the retry load-bearing. It was the honest thing to say while a
+       hosted holder could not be displaced; it is now a detour with no destination. */
     FACTS = [CLOUD_HELD];
     const el = await render(null);
     await act(async () => { organizeButton(el)!.click(); });
     await act(async () => { confirmButton(el)!.click(); });
-    expect(el.textContent).toContain("then ask again");
-    expect(organizeButton(el),
-      "the answer said to ask again and the button it meant was gone")
-      .not.toBeNull();
-  });
-
-  /**
-   * THE TRANSITION THE INSTRUCTION SENDS SOMEBODY TO MAKE — and the case that was missing.
-   *
-   * The blocked answer says "stop it organizing there, then ask again". Doing that turns the row's
-   * `organizerState` from `held` to `stopped`, at which point the request could finally succeed —
-   * and a guard written against the row's CURRENT blocked-ness took the button away at exactly
-   * that moment, because the spent-request marker was still set. The earlier case could not see
-   * it: it asserted the button on the blocked row and never re-rendered with the stopped one.
-   */
-  it("keeps the retry across the very transition its answer tells you to make", async () => {
-    FACTS = [CLOUD_HELD];
-    const el = await render(null);
-    await act(async () => { organizeButton(el)!.click(); });
-    await act(async () => { confirmButton(el)!.click(); });
-    expect(organizeButton(el), "the retry was gone while the holder was still there").not.toBeNull();
-
-    // The user goes and stops it organizing there; the reader cycle refreshes the same row.
-    FACTS = [{ ...CLOUD_HELD, organizerState: "stopped" }];
-    await act(async () => { root!.render(await paneNode(null)); });
-    expect(organizeButton(el),
-      "the button vanished at the moment the retry would have worked, which is what the answer " +
-        "sent somebody away to bring about")
-      .not.toBeNull();
-  });
-
-  /**
-   * AND THE REVERSE TRANSITION, which the previous fix regressed.
-   *
-   * A holder that was quiet when the request went in can resume before this install is promoted.
-   * The lease then refuses the authorization and the running loop clears it — so the request no
-   * longer exists, while the marker recorded at press time still said "beatable" and went on
-   * suppressing the button for the life of the pane.
-   */
-  it("keeps the retry when a once-beatable request becomes blocked", async () => {
-    FACTS = [CLOUD_STOPPED];
-    const el = await render(null);
-    await act(async () => { organizeButton(el)!.click(); });
-    await act(async () => { confirmButton(el)!.click(); });
-    expect(organizeButton(el), "a request that can still succeed should spend its button").toBeNull();
-
-    // The holder wakes up again before this install is promoted.
-    FACTS = [{ ...CLOUD_STOPPED, organizerState: "held" }];
-    await act(async () => { root!.render(await paneNode(null)); });
-    expect(organizeButton(el),
-      "the lease refused the request and cleared it, and the pane kept suppressing the retry")
-      .not.toBeNull();
-  });
-
-  it("…and a request that CAN succeed still spends its button", async () => {
-    // The negative control: a beatable holder's request is one-shot, so the button goes and the
-    // acknowledgement stands in its place until the role confirms it.
-    const el = await render(null);
-    await act(async () => { organizeButton(el)!.click(); });
-    await act(async () => { confirmButton(el)!.click(); });
-    expect(organizeButton(el), "a spent one-shot request still offered its button").toBeNull();
+    const text = el.textContent ?? "";
+    expect(text).not.toContain("then ask again");
+    expect(text).not.toContain("Stop it organizing there");
   });
 
   it("is NOT offered on a TOMBSTONE — the handler refuses that row and so does the pane", async () => {

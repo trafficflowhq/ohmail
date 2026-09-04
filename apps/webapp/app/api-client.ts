@@ -1857,8 +1857,14 @@ export interface ScreenerWirePage {
     scope: "sender" | "domain";
     decidedAt: string;
     sent: boolean;
-    state?: string;
-    reason?: string | null;
+    /**
+     * `pending` and `sent` are outstanding; `refused` means the organizer answered no and the
+     * sender is back in the queue. A decision that was applied, or that expired, is not reported.
+     * Optional, because a server deployed before the field sends none.
+     */
+    state?: "pending" | "sent" | "refused";
+    /** The organizer's word for a refusal — `null` outside `refused`, and for one it did not explain. */
+    refusedReason?: string | null;
   }>;
 }
 

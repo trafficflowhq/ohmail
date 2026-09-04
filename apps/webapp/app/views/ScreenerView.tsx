@@ -28,6 +28,7 @@ import {
   Icon,
   Kbd,
   ListPane,
+  ListGroupLabel,
   ListRows,
   MessageRow,
   ProtectedBlock,
@@ -53,8 +54,8 @@ import { readColumnHidden, watchNarrow } from "../shell/narrow";
    it. See {@link useBodyStalled} for why the deadline is derived from the engine's rather than
    picked, and `HeldMail` below for why this pile needs it too. */
 import { useBodyStalled } from "../shell/message-chrome";
-import { goScreener, type ScreenerSegmentId } from "../shell/routing";
-import { APPLY_PILE_ORDER } from "../shell/screener-state";
+import { goScreener, goSettings, type ScreenerSegmentId } from "../shell/routing";
+import { APPLY_PILE_ORDER, type PendingDecision } from "../shell/screener-state";
 /* The one role answer, from the module that derives it — see `mail-state.ts#screenerMode`. */
 import type { ScreenerRole } from "../shell/mail-state";
 import type { HeldBodyStall, ScreenerState, SpamRow } from "../shell/screener-state";
@@ -759,7 +760,21 @@ export function ScreenerView({
 
   const idOf = (x: ScreenerSenderDTO | SpamRow) =>
     "pinned" in x ? x.sender.id : x.id;
-  const ids = junkActive ? junkItems.map(junkKeyOf) : items.map(idOf);
+  /**
+   * EVERY ROW ON SCREEN, IN THE ORDER IT IS DRAWN — which is what j/k and the selection walk.
+   *
+   * The decided senders are appended because they ARE rows: they sit under their own heading with
+   * the queue above them, and a row somebody can see and cannot reach is worse than one that is
+   * not there. They come last for the same reason they are drawn last — the question about them
+   * has been answered, so they are not part of the work in front of anybody.
+   *
+   * Empty in every mode but `pending`, so this is the queue's own list everywhere else.
+   */
+  const ids = junkActive
+    ? junkItems.map(junkKeyOf)
+    : segment === "waiting"
+      ? [...items.map(idOf), ...state.decided.map((d) => d.sender.id)]
+      : items.map(idOf);
   const activeId = (() => {
     const sel = selection[segment];
     // Exiting rows stay visible but are no longer selectable targets.
@@ -769,7 +784,20 @@ export function ScreenerView({
     return selectable[0] ?? null;
   })();
 
-  const current = items.find((x) => idOf(x) === activeId) ?? null;
+  /**
+   * THE SELECTED SENDER — and a DECIDED one is selectable, which is why this is not `items` alone.
+   *
+   * A sender whose decision is waiting on another install is out of the queue and still on screen,
+   * and their mail has not moved: opening them is how somebody reads what they decided about, and
+   * how they find out that the organizer refused it. A row that draws and opens nothing would be
+   * the one place on this pane where a press does nothing at all.
+   *
+   * `items` first, so nothing about the queue's own selection changes. `state.decided` is empty
+   * in every mode but `pending`, so this is the queue's own behaviour everywhere else.
+   */
+  const current = items.find((x) => idOf(x) === activeId)
+    ?? state.decided.find((d) => d.sender.id === activeId)?.sender
+    ?? null;
   /** The junk window's selected row — the read column's subject while the segment is live. */
   const junkCurrent = junkActive
     ? junkItems.find((i) => junkKeyOf(i) === activeId) ?? null
@@ -1141,6 +1169,31 @@ export function ScreenerView({
     if (readColumnHidden()) onFull(true);
   };
 
+  /**
+   * THIS SENDER'S OUTSTANDING DECISION, if any — matched the way the exclusion matches.
+   *
+   * The address for a sender-scope decision, the domain for a domain-scope one, so a sender
+   * covered by a decision about their whole domain carries it too. `screener-state.ts` owns the
+   * same rule for the queue's own exclusion; this is the view asking the answer it already has
+   * rather than re-deriving one, which is why it reads `state.decided` instead of `state.pending`.
+   */
+  const decisionFor = (x: ScreenerSenderDTO): PendingDecision | undefined =>
+    state.decided.find((d) => d.sender.id === x.id)?.decision
+    ?? notAppliedFor(x);
+
+  /**
+   * THE ORGANIZER'S REFUSAL FOR THIS SENDER, if there is one — and this sender is IN THE QUEUE.
+   *
+   * Separate from `decisionFor` because it answers a different question about a different kind of
+   * row: `decisionFor` asks "is anything outstanding or answered about this sender", which the
+   * preview uses to put a sentence under the bar; this asks "is this queue row here BECAUSE the
+   * organizer sent it back", which the row's own badge uses. Collapsing them would put the
+   * decided badge on a row whose question is open.
+   */
+  function notAppliedFor(x: ScreenerSenderDTO): PendingDecision | undefined {
+    return state.notApplied.find((d) => d.sender.id === x.id)?.decision;
+  }
+
   const row = (x: ScreenerSenderDTO | SpamRow) => {
     if (segment === "waiting") {
       const w = x as ScreenerSenderDTO;
@@ -1166,7 +1219,17 @@ export function ScreenerView({
              "where does this stand" slot, which is exactly the question here — and unlike the
              toast it is still on screen a minute later. Before this, a refused decision put the
              sender back in the queue looking untouched; see `ScreenerState.refused`. */
-          stateNote={state.refused(w.id) ? t("rowNotSaved") : undefined}
+          /* TWO MARKS, ONE SLOT, AND THEY ARE DIFFERENT FACTS. `refused` is "the wire would
+             not take your decision" — nothing left this machine. `notApplied` is "the organizer
+             took it and said no" — it travelled, was read and was declined. Both leave the sender
+             in the queue with the question open, and a person owed an explanation is owed the
+             right one. The wire's own refusal wins where somehow both are true: it is the nearer
+             failure and the one a retry addresses. */
+          stateNote={
+            state.refused(w.id)
+              ? t("rowNotSaved")
+              : notAppliedFor(w) !== undefined ? t("rowNotApplied") : undefined
+          }
           aiSuggestion={
             w.ai
               ? {
@@ -1324,6 +1387,24 @@ export function ScreenerView({
                 },
               ]}
             />
+            {/* ── WHERE A DECISION MADE HERE GOES, ABOVE THE QUEUE IT IS ABOUT ────────────────
+                The `pending` reader's standing fact, and it belongs in the list head rather than
+                where the verbs are: the verbs are unchanged and work, so putting a note in their
+                place would say the opposite of what is true. It is one running sentence whose
+                bold lead names the machine that will carry the decision out.
+
+                Only on the waiting segment. The other two offer MOVES, which no organizer takes
+                from a reader in any mode, and each says so in its own preview. */}
+            {segment === "waiting" && state.role.mode === "pending" ? (
+              <p className="scn-relay" role="note">
+                {state.role.name
+                  ? t.rich("pendingBarLead", {
+                    b: (chunks) => <b>{chunks}</b>,
+                    name: state.role.name,
+                  })
+                  : t.rich("pendingBarLeadUnknown", { b: (chunks) => <b>{chunks}</b> })}
+              </p>
+            ) : null}
             {/* THE STRIP APPEARS FOR THE BULK CONTROLS **OR** FOR THE ALLOWANCE LINE, and the
                 two conditions are genuinely different — which is what this wrapper used to get
                 wrong. `waitingCount > 0` is right for the buttons (a bulk control may not outlive
@@ -1432,9 +1513,34 @@ export function ScreenerView({
             <JunkRows junk={junk!} activeKey={activeId} onSelect={selectRow} />
           ) : items.length ? (
             items.map(row)
-          ) : (
+          ) : state.decided.length === 0 ? (
             <Empty segment={segment} settled={settled} />
-          )}
+          ) : null}
+          {/* ── DECIDED, NOT DONE ──────────────────────────────────────────────────────────
+              A sender whose decision is waiting on another install is out of the queue and not
+              finished, which is a third state this list has never had. Under the Ohbox's own
+              group label rather than above it: the question has been answered, so it is not part
+              of the work in front of somebody, and it is still on screen because the answer has
+              not taken effect and the mail has not moved.
+
+              The rows are the REAL rows — the mail is still in the mirror — so a decided sender
+              looks like what it is, with a badge saying where it is going or that the organizer
+              refused it. Never rendered outside `pending`: in the other two modes nothing can be
+              decided here, so the list is empty by construction. */}
+          {segment === "waiting" && state.decided.length > 0 ? (
+            <>
+              <ListGroupLabel group="decided">{t("pendingHeading")}</ListGroupLabel>
+              {state.decided.map(({ sender, decision }) => (
+                <DecidedRow
+                  key={sender.id}
+                  sender={sender}
+                  decision={decision}
+                  selected={sender.id === activeId}
+                  onSelect={() => selectRow(sender.id)}
+                />
+              ))}
+            </>
+          ) : null}
         </ListRows>
       </ListPane>
 
@@ -1469,6 +1575,9 @@ export function ScreenerView({
             remoteImages={remoteImages}
             onBack={() => onFull(false)}
             role={state.role}
+            {...(decisionFor(current as ScreenerSenderDTO) !== undefined
+              ? { decision: decisionFor(current as ScreenerSenderDTO)! }
+              : {})}
           />
         ) : segment === "screened" ? (
           <ScreenedPreview
@@ -1906,8 +2015,79 @@ function ReaderNote({
     <div className="scn-reader" role="note">
       <b>{copy.title}</b>
       <span>{copy.why}</span>
+      {/* THE ROUTE THE SENTENCE NAMES, AS A PRESS. Every one of these sentences ends by pointing
+          at Settings → Mailboxes, and on a phone that is a path to remember rather than a place
+          to go. The Ohbox notice's own quiet verb: it navigates and files nothing. */}
+      <button type="button" onClick={() => goSettings("mailboxes")}>
+        {t("readerBarOpenMailboxes")}
+      </button>
     </div>
   );
+}
+
+/**
+ * A SENDER WHOSE DECISION IS WAITING ON THE ORGANIZER — the same row, on the other side of the
+ * line.
+ *
+ * Only `pending` and `sent` reach here. A REFUSED decision puts the sender back in the queue,
+ * because the organizer answered no and the question is open again; its reason rides the queue row
+ * instead. Splitting the two is what keeps "decided" from meaning both "answered" and "declined".
+ */
+function DecidedRow({
+  sender,
+  decision,
+  selected,
+  onSelect,
+}: {
+  sender: ScreenerSenderDTO;
+  decision: PendingDecision;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const t = useTranslations("screener");
+  const newest = newestHeld(sender);
+  return (
+    <MessageRow
+      id={sender.id}
+      from={displayAddressee(sender.from.name, sender.from.address)}
+      address={displayAddressUnder(sender.from.name, sender.from.address)}
+      time={newest?.time ?? sender.time}
+      subject={newest?.subject ?? ""}
+      avatarInitial={sender.initial}
+      avatarHue={avatarHue(sender.from.address)}
+      /* `dull`, because the question has been answered and this is no longer work in front of
+         anybody. A REFUSED sender never reaches this component — the organizer said no, so the
+         question is open again and the sender is an ordinary queue row above the line. */
+      dull
+      selected={selected}
+      className="scn-decided"
+      stateNote={t("rowWaiting")}
+      onClick={onSelect}
+    />
+  );
+}
+
+/**
+ * THE ORGANIZER'S REFUSAL, in this build's words or in the one it keeps for words it has not got.
+ *
+ * The vocabulary is closed on the wire and deliberately open here. It can grow without a client
+ * release, and the two failures to avoid are a raw token on screen and a `MISSING_MESSAGE`
+ * rendering the dotted key — both of which say nothing to the person and hide that the decision
+ * did not land. A refusal with no reason at all is the same case: it happened, and why is not
+ * known.
+ *
+ * `t.has` rather than a `try`, because a missing key otherwise renders its own path and reports
+ * nothing anywhere the suite can see it.
+ */
+function refusalSentence(
+  t: ReturnType<typeof useTranslations<"screener">>,
+  reason: string | null | undefined,
+): string {
+  if (!reason) return t("pendingRefusedUnknown");
+  const key = `pendingReason_${reason}`;
+  return t.has(key as never)
+    ? t("pendingRefused", { reason: t(key as never) })
+    : t("pendingRefusedUnknown");
 }
 
 /**
@@ -1942,6 +2122,7 @@ function WaitingPreview({
   remoteImages,
   onBack,
   role,
+  decision,
 }: {
   sender: ScreenerSenderDTO;
   scope: DecisionScope;
@@ -1955,6 +2136,14 @@ function WaitingPreview({
    * about where the decision goes, the other takes the bar away and names the way out.
    */
   role: ScreenerRole;
+  /**
+   * THIS SENDER'S OWN OUTSTANDING DECISION, or `undefined` when there is none.
+   *
+   * Present only on a `pending` reader, and only for a sender somebody has already answered for.
+   * The bar stays either way — the person may open a decided sender to read the mail, and the
+   * mail has not moved — so this ADDS a sentence rather than replacing a control.
+   */
+  decision?: PendingDecision;
   /** Ask for one held message's body again. */
   onRetryBody: (id: string) => void;
   /** `ScreenerState.bodyStall`, per held id — see {@link HeldBodyStall}. */
@@ -2018,6 +2207,20 @@ function WaitingPreview({
         </>
       )}
       <div className="scn-mails">
+        {/* ── AND WHAT HAPPENED TO THIS ONE, if it has already been decided ─────────────────
+            Under the bar rather than in place of it: the bar still works for every other sender,
+            and this is a finding about the one on screen — the same slot and the same kind of
+            statement as the model's suggestion. A refusal is the one failure state on this pane
+            and the only louder thing; it says what the organizer said, or that it said nothing. */}
+        {decision ? (
+          <div className="scn-relay-state" role="status" data-state={decision.state === "refused" ? "refused" : undefined}>
+            {decision.state === "refused"
+              ? refusalSentence(t, decision.refusedReason)
+              : decision.holder
+                ? t.rich("pendingDecided", { b: (chunks) => <b>{chunks}</b>, name: decision.holder })
+                : t.rich("pendingDecidedUnknown", { b: (chunks) => <b>{chunks}</b> })}
+          </div>
+        ) : null}
         {/**
           * THE ABSENCE OF A SUGGESTION IS ITSELF SOMETHING TO SAY.
           *

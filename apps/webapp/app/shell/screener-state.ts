@@ -317,6 +317,24 @@ export interface ScreenerState {
    * put every waiting sender back in the queue and invite the decision again.
    */
   pending: PendingDecision[];
+  /**
+   * THE SAME DECISIONS AS ROWS, paired with the sender each is about — empty in every other
+   * mode.
+   *
+   * {@link pending} is the record and this is what a list can draw: the senders are still in
+   * the mirror, because the mail has not moved, so these are the rows the queue would have
+   * shown with the decision attached. A surface that rebuilt them from {@link pending} alone
+   * would have an address and nothing else.
+   */
+  decided: Array<{ sender: ScreenerSenderDTO; decision: PendingDecision }>;
+  /**
+   * SENDERS THE ORGANIZER REFUSED, still IN {@link waiting} — the reason, paired with the row.
+   *
+   * They are deliberately not excluded and deliberately not under the heading: the organizer
+   * answered no, so the question is open and belongs in front of the person again. This exists so
+   * the row can say what happened rather than reappearing as though nothing did.
+   */
+  notApplied: Array<{ sender: ScreenerSenderDTO; decision: PendingDecision }>;
 }
 
 /**
@@ -336,10 +354,29 @@ export interface PendingDecision {
   decidedAt: string;
   /** The organizer's name, for the sentence. `null` where this build has none. */
   holder: string | null;
-  /** `"refused"` is the one value this build acts on. Absent is "still waiting". */
+  /**
+   * WHERE THE DECISION STANDS — and the third value is the one that changes what the queue does.
+   *
+   * `pending` and `sent` are the same thing to this surface: the organizer has it and has not
+   * acted, so the sender is out of the queue and under the heading. `refused` is the opposite —
+   * the organizer answered no — so the sender comes BACK, because the question is open again and
+   * only the person can answer it. A decision that was carried out, or that expired, is not
+   * reported at all: there is nothing left to say about it.
+   *
+   * Read structurally rather than switched on. A state this build has never heard of is treated
+   * as outstanding, which is the safe reading of the two: a decision reported as refused that in
+   * fact landed would ask a question that has already been answered.
+   */
   state?: string;
-  /** Why it was not carried out, in the organizer's own vocabulary. */
-  reason?: string | null;
+  /**
+   * WHY IT WAS NOT CARRIED OUT, in the organizer's own word — `null` outside `refused`, and also
+   * `null` for a refusal it declined to explain.
+   *
+   * A closed vocabulary on the wire, and deliberately NOT a union here: the organizer's set can
+   * grow without a client release, and this build must render a word it has never seen as a
+   * refusal with no reason rather than as a raw token or a missing key.
+   */
+  refusedReason?: string | null;
 }
 
 const OUT_MS = 330;
@@ -1143,12 +1180,10 @@ export function useScreenerState(
   const pendingDecisions = [...pendingByKey.values()]
     .sort((a, b) => Date.parse(b.decidedAt) - Date.parse(a.decidedAt));
 
-  /* A DECIDED SENDER IS OUT OF THE QUEUE AND STAYS OUT. Their mail is still in the Screener
-     folder — only the organizer moves mail — so the projection goes on offering them, and
-     without this the press would appear to work and then undo itself on the next drain. Matched
-     on the address, and on the DOMAIN for a domain-scope decision: deciding a whole domain and
-     then being asked about the next sender at that domain is the same question twice. */
-  const decidedSubject = (address: string): PendingDecision | undefined => {
+  /* WHICH DECISION, IF ANY, COVERS THIS SENDER. Matched on the address, and on the DOMAIN for a
+     domain-scope decision: deciding a whole domain and then being asked about the next sender at
+     that domain is the same question twice. */
+  const decisionFor = (address: string): PendingDecision | undefined => {
     const direct = pendingByKey.get(senderKey(address));
     if (direct) return direct;
     const at = address.lastIndexOf("@");
@@ -1156,10 +1191,53 @@ export function useScreenerState(
     const domain = pendingByKey.get(senderKey(address.slice(at + 1)));
     return domain?.scope === "domain" ? domain : undefined;
   };
-  const notDecided = (x: ScreenerSenderDTO): boolean => decidedSubject(x.from.address) === undefined;
+  /* AN OUTSTANDING DECISION TAKES THE SENDER OUT OF THE QUEUE AND KEEPS THEM OUT. Their mail is
+     still in the Screener folder — only the organizer moves mail — so the projection goes on
+     offering them, and without this the press would appear to work and then undo itself on the
+     next drain.
+
+     A REFUSED ONE DOES NOT, and that inversion is the whole of what the third state changed here.
+     The organizer answered no: nothing was filed, no rule was written, and the question is open
+     again — so the sender belongs back in the queue where it can be answered a second time. The
+     entry survives to say what happened, beside them, and not to hide them. */
+  const outstandingFor = (address: string): PendingDecision | undefined => {
+    const d = decisionFor(address);
+    return d === undefined || d.state === "refused" ? undefined : d;
+  };
+  const notDecided = (x: ScreenerSenderDTO): boolean => outstandingFor(x.from.address) === undefined;
 
   const visibleWaiting = waiting.filter((x) => (!s.pending.has(x.id) || s.out.has(x.id)) && notDecided(x));
   const undecided = waiting.filter((x) => !s.pending.has(x.id) && notDecided(x));
+  /**
+   * THE DECIDED SENDERS, AS ROWS — the same rows the queue would have shown, on the other side
+   * of the line.
+   *
+   * Built from `waiting` rather than from the decisions alone, and that is what makes them REAL
+   * rows: the mail has not moved (only the organizer moves mail), so every one of these senders
+   * is still in the mirror with their subject, their time and their held bag. A list rebuilt from
+   * the decision records would carry an address and nothing else, and would have to invent the
+   * rest or show less than the row above it.
+   *
+   * They are out of {@link waiting} and not finished, which is a third state this queue has never
+   * had. Leaving them in would ask the same question twice; dropping them silently would make a
+   * press look like nothing happened.
+   */
+  const decided = waiting.flatMap((x) => {
+    const p = outstandingFor(x.from.address);
+    return p === undefined ? [] : [{ sender: x, decision: p }];
+  });
+  /**
+   * SENDERS THE ORGANIZER REFUSED — still in the queue, with the reason beside them.
+   *
+   * Not a separate list on screen and not a separate state of the queue: these are ordinary
+   * waiting rows that carry one more fact. What makes them worth naming here is that the fact
+   * would otherwise be invisible — the press happened, the sender left the queue, the organizer
+   * said no, and the sender came back looking exactly as they did before anybody pressed.
+   */
+  const notApplied = waiting.flatMap((x) => {
+    const p = decisionFor(x.from.address);
+    return p?.state === "refused" ? [{ sender: x, decision: p }] : [];
+  });
   const waitingCount = undecided.length;
   // Counted over the SAME set the bulk would act on — including the `hold` exclusion, which is
   // why this predicate must stay a copy of `applyAll`'s and not merely of "has a suggestion".
@@ -1765,5 +1843,7 @@ export function useScreenerState(
     flush,
     role,
     pending: pendingDecisions,
+    decided,
+    notApplied,
   };
 }

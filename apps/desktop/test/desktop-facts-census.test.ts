@@ -94,6 +94,14 @@ describe("the desktop mailbox-facts seam", () => {
       hostedMessageCount: 4200,
       inboundQuietSince: "2026-08-20T00:00:00.000Z",
       inboundQuietDismissedAt: null,
+      /* The organizer notice's pair, the release stamp and the holder's answer. The pair is a
+         COMPARISON, so both halves have to arrive or the line is derived from half a fact; the
+         other two decide a sentence and a set of controls. All four are the local engine's own
+         columns, and this row is the shape it answers with. */
+      organizerEventAt: "2026-09-02T11:00:00.000Z",
+      organizerEventSeenAt: null,
+      organizerReleasedAt: null,
+      organizerAcceptsRequests: false,
       createdAt: "2026-09-02T10:39:31.446Z",
     };
     // Every declared key must be answerable by the engine, or the census is testing a fiction.
@@ -115,6 +123,16 @@ describe("the desktop mailbox-facts seam", () => {
     expect(got!.pendingMoves).toBe(4);
     expect(got!.displayName).toBe("Someone");
     expect(got!.organizeConsentedAt).toBe("2026-09-02T09:00:00.000Z");
+    /* THE NOTICE IS A COMPARISON OF TWO INSTANTS, so a seam that forwarded one and defaulted the
+       other would derive a line from half a fact — and the half it would default is the one that
+       silences it. `null` must arrive as `null` and not become a stamp. */
+    expect(got!.organizerEventAt).toBe("2026-09-02T11:00:00.000Z");
+    expect(got!.organizerEventSeenAt).toBeNull();
+    /* And `false` must arrive as `false` rather than as absent, because the two mean the same
+       thing here only by accident: absent is "this engine cannot say" and false is "the holder
+       said no". Both withhold the controls; only one of them would survive a later change of
+       mind about the default. */
+    expect(got!.organizerAcceptsRequests).toBe(false);
   });
 
   it("exempts exactly one derived key, and it is the one with a reason", () => {
