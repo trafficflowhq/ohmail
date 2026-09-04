@@ -209,7 +209,14 @@ export function useBarDensity(): {
   const measureRef = useCallback(
     (el: HTMLDivElement | null) => {
       const prev = rowRef.current;
-      if (prev && roRef.current) roRef.current.unobserve(prev);
+      if (prev && roRef.current) {
+        roRef.current.unobserve(prev);
+        // The children were observed too (below); a detached row's children must not keep
+        // firing a measurement for a row that is no longer in the tree.
+        for (const child of prev.children) {
+          if (child instanceof HTMLElement) roRef.current.unobserve(child);
+        }
+      }
       rowRef.current = el;
       if (!el) return;
       // The copy is furniture: invisible to the tree and to the pointer, and inert to focus.
@@ -221,6 +228,26 @@ export function useBarDensity(): {
       roRef.current.observe(el);
       const container = el.closest(".msg-actions");
       if (container) roRef.current.observe(container); // observing twice de-duplicates
+      /**
+       * AND EVERY GROUP IN THE COPY, because the widths this hook reads are the CHILDREN's and
+       * those can change while neither the row's box nor the container's does.
+       *
+       * The measure row is `position: absolute` inside the pill with `overflow: hidden`, so in a
+       * constrained column its own box can stay put while a child grows. React also REUSES this
+       * row across message swaps. Put together, that was a live defect: at the 1024px German
+       * Triage width, moving from a resurfaced message (whose read slot says the short
+       * "Erledigt") to an ordinary read one (whose slot says "Als ungelesen markieren") grows the
+       * floor by the difference between two labels — and if neither observed box resized, the
+       * previous non-`compact` admission survived, the floor overflowed, and More was pushed past
+       * the column. That is precisely the overflow the compact floor exists to prevent,
+       * reintroduced through the one door the observer was not watching.
+       *
+       * Observing the children closes it for every cause rather than for that one: a label swap,
+       * a locale switch, a face switch, and a webfont finishing load all change a child's box.
+       */
+      for (const child of el.children) {
+        if (child instanceof HTMLElement) roRef.current.observe(child);
+      }
       // Ref callbacks run after the commit's DOM insertion — the row is laid out enough to
       // read, and the first measurement must not wait for a resize that may never come.
       measure();

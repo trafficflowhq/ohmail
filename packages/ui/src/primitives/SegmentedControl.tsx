@@ -138,15 +138,41 @@ export function SegmentedControl<T extends string = string>({
         return;
       }
       const natural = naturalRef.current;
-      // A non-finite reading is not a measurement: half a read would decide the form on a guess,
-      // and `NaN > x` is false — "the row fits", the overflow direction.
-      if (natural == null || !Number.isFinite(natural) || natural <= 0) return;
-      const next = shouldStack(natural, avail);
+      /**
+       * A non-finite reading is not a measurement — and the ANSWER to one is the stacked form,
+       * not a return.
+       *
+       * `shouldStack` maps a non-finite width to `true` deliberately: a stacked list cannot
+       * overflow, so it is the benign direction. But returning early here never reached it, and
+       * the control was left in whatever form it already had — which on a first measurement is
+       * the ROW, with `nowrap` `flex:none` segments painting outside the capsule. So the
+       * component contradicted the helper it delegates to, in the one direction both are written
+       * to avoid. `null` (nothing remembered yet) is genuinely "no answer available" and still
+       * returns; an unreadable NUMBER is an answer.
+       */
+      if (natural == null) return;
+      const next = !Number.isFinite(natural) || natural <= 0 ? true : shouldStack(natural, avail);
       setStack((prev) => (prev === next ? prev : next));
     };
     const ro = new ResizeObserver(measure);
     ro.observe(el.parentElement);
     ro.observe(el);
+    /**
+     * AND THE SEGMENTS THEMSELVES, because the width this control decides from is theirs and it
+     * can change while neither its own box nor its parent's does.
+     *
+     * The capsule is `width: max-content; max-width: 100%`. Once that cap is in force, a change
+     * in glyph widths — a face switch to the wider mono, a webfont finishing load — moves the
+     * segments without moving either observed box, so no callback fired and the control kept a
+     * decision made in the previous font. A row that exactly fitted in the narrow face then
+     * overflowed in the wide one, and a stacked list stayed stacked after switching narrower.
+     *
+     * Observing the buttons is what makes the font a real input rather than one the code merely
+     * checks for after something else has woken it.
+     */
+    for (const seg of el.children) {
+      if (seg instanceof HTMLElement) ro.observe(seg);
+    }
     measure();
     return () => {
       ro.disconnect();

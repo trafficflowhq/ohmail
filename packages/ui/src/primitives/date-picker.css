@@ -19,11 +19,25 @@
  * the shown month (`--ink3`, otherwise ordinary) · focused (the focus ring is the cursor — the
  * grid roves, one cell holds `tabindex=0`).
  */
+/* THE CARD NEVER EXCEEDS THE WINDOW, so the placement clamp can keep its promise.
+   `placeDatePicker` pins the card's near edge to a 10px inset — but a FIXED 256x268 card in a
+   window narrower or shorter than that plus two insets still had its far edge outside, and the
+   last week of the month could not be reached. The clamp was doing all it could; the card was
+   the thing that would not yield. Capping it here rather than in the component is deliberate:
+   the component measures `offsetWidth`/`offsetHeight` AFTER layout, so a capped card reports its
+   capped size and the existing arithmetic becomes correct with no second source of truth.
+   `overflow:auto` is the concession — on a window too small for a month, the grid scrolls
+   inside the card instead of hiding days outside it. `100dvh` follows a phone's shrinking
+   viewport where it is supported; `100vh` is the fallback for everything else. */
 .dp{
   position:fixed;z-index:var(--z-pal);width:256px;padding:10px;
+  max-width:calc(100vw - 20px);max-height:calc(100vh - 20px);overflow:auto;
   background:var(--float);border-radius:var(--r-card);box-shadow:var(--lift-3);
   animation:rise .2s var(--spring);
   font-size:12px;color:var(--ink);
+}
+@supports (max-height: 100dvh){
+  .dp{max-width:calc(100dvw - 20px);max-height:calc(100dvh - 20px)}
 }
 .dp-head{display:flex;align-items:center;gap:4px;margin:0 0 6px}
 .dp-month{flex:1;text-align:center;font-size:12.5px;font-weight:600;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

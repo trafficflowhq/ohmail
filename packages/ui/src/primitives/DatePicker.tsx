@@ -141,6 +141,12 @@ export function placeDatePicker(
   if (size.height <= below) top = anchor.bottom + DP_GAP;
   else if (size.height <= above) { top = anchor.top - DP_GAP - size.height; side = "above"; }
   else { top = anchor.bottom + DP_GAP; side = below >= above ? "below" : "above"; if (side === "above") top = anchor.top - DP_GAP - size.height; }
+  /* Clamp the NEAR edge to the inset, and never past it. The far edge is the card's own
+     business: `date-picker.css` caps it to the window (`max-width`/`max-height` with
+     `overflow: auto`), so by the time this reads `offsetWidth`/`offsetHeight` the size it is
+     given already fits — which is what lets one `Math.max`/`Math.min` pair hold the promise
+     instead of two sources disagreeing about who yields. A caller that hands in a size larger
+     than the window still gets the near edge pinned rather than a negative coordinate. */
   top = Math.max(DP_EDGE, Math.min(top, viewport.height - DP_EDGE - size.height));
   const left = Math.max(DP_EDGE, Math.min(anchor.left, viewport.width - DP_EDGE - size.width));
   return { top, left, side };
