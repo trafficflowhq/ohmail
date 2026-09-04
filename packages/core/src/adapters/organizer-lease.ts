@@ -1580,8 +1580,7 @@ export function makeLeasePeekIo(client: LeaseImapClient, toServerPath: (canonica
         // The same defensive read `makeLeaseIo.listClaims` documents at length: `1:*` is not a
         // valid messageset against an empty mailbox and Dovecot refuses the command outright,
         // while GreenMail tolerates it. Only a POSITIVELY KNOWN zero skips the fetch.
-        const selected = client.mailbox;
-        const count = typeof selected === "object" && selected !== null ? selected.exists : undefined;
+        const count = await selectedCount(client);
         if (count === 0) return out;
         for await (const m of client.fetch("1:*", { uid: true, headers: true }, { uid: false })) {
           if (!m.headers) continue;
@@ -1764,6 +1763,14 @@ export interface LeaseImapClient extends MetaFolderClient {
    * exactly as before, so absence means "unknown", never "empty".
    */
   readonly mailbox?: { exists?: number } | false;
+  /**
+   * A NOOP, which is how a long-lived connection LEARNS what changed under it.
+   *
+   * Optional, so every existing fake is unaffected and behaves exactly as it did. Where it IS
+   * present, {@link selectedCount} calls it before trusting a zero — see that function for the
+   * measurement that made it necessary.
+   */
+  noop?(): Promise<unknown>;
   mailboxCreate(path: string): Promise<unknown>;
   mailboxUnsubscribe(path: string): Promise<unknown>;
   getMailboxLock(path: string): Promise<{ release(): void }>;
@@ -1787,6 +1794,53 @@ export interface LeaseImapClient extends MetaFolderClient {
  * The claim is APPENDED with `\Seen` so a user who does subscribe to the folder in another
  * client is not shown an unread count for our bookkeeping.
  */
+/**
+ * THE SELECTED FOLDER'S MESSAGE COUNT — and why it is not simply `client.mailbox.exists`.
+ *
+ * Three reads in this module skip their `FETCH 1:*` when the selected mailbox holds zero
+ * messages, because `1:*` is not a valid messageset against an empty mailbox and Dovecot refuses
+ * the command outright. Each documented the rule as *"only a POSITIVELY KNOWN zero skips the
+ * fetch"*. The value they consulted does not meet that bar.
+ *
+ * ── WHAT WAS MEASURED, against a real Dovecot, 2026-09-04 ───────────────────────────────────
+ *
+ * `client.mailbox.exists` is a CACHE that a connection updates only from untagged responses. Two
+ * connections, one `ohmail/_meta`: B empties the folder (its cache reaches a true 0), then A
+ * appends a claim. B's cache stays 0 — and `getMailboxLock` does NOT re-SELECT a mailbox that is
+ * already selected, so taking the lock does not refresh it either. Observed still 0 after gaps of
+ * 1.5 s, 3 s, 6 s and 10 s; only by 20 s had imapflow's IDLE delivered the EXISTS. A forced
+ * `FETCH 1:*` in that window does not merely return nothing — the server refuses it outright.
+ *
+ * So a STALE zero was indistinguishable from a true one, and the consequences differed by caller:
+ *
+ *   · {@link makeLeaseIo}.listClaims — the gate reads an EMPTY folder while a live claim stands,
+ *     takes {@link decideLease}'s arm 4 ("nobody has ever organized this mailbox"), and claims it
+ *     with an EMPTY displacement. Two live claims, two organizers: the single-organizer invariant
+ *     this whole module exists to hold. It also spends the caller's one-shot takeover
+ *     authorization while leaving the beaten claim standing to win the next election — the exact
+ *     failure `removeClaims` already refuses to let a silently-failed EXPUNGE cause.
+ *   · the peek — a reader is told nobody organizes a mailbox that is held.
+ *   · the request read — the organizer's drain finds no requests, so a reader's decision is never
+ *     applied; and the reader's already-in-folder set comes back empty, so it appends duplicates.
+ *
+ * The window is bounded by an IDLE this module does not control, which is what made it look like
+ * flakiness rather than a defect. One NOOP removes the timing dependence entirely.
+ *
+ * A NOOP that FAILS leaves the cached value standing, which is exactly where the caller was
+ * before — so the failure is swallowed rather than turned into a lease fault.
+ */
+async function selectedCount(client: LeaseImapClient): Promise<number | undefined> {
+  if (typeof client.noop === "function") {
+    try {
+      await client.noop();
+    } catch {
+      /* see above: no worse than not asking */
+    }
+  }
+  const selected = client.mailbox;
+  return typeof selected === "object" && selected !== null ? selected.exists : undefined;
+}
+
 export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: string) => string): LeaseIo {
   // ONE resolution, shared with the APPEND-less peek. A writer and a reader that spell "where is
   // `_meta`" differently is exactly how each ends up renewing a claim the other cannot see.
@@ -1838,8 +1892,7 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
         // Read DEFENSIVELY: only a POSITIVELY KNOWN zero skips the fetch. An `exists` we cannot
         // see means "unknown", so the fetch still runs and every existing caller — including
         // every fake in the tests — behaves exactly as it did before.
-        const selected = client.mailbox;
-        const count = typeof selected === "object" && selected !== null ? selected.exists : undefined;
+        const count = await selectedCount(client);
         if (count === 0) return out;
         // HEADERS ONLY. A claim's body is one sentence for a human, and fetching sources here
         // would make the gate's cost scale with whatever else ends up in this folder.
@@ -3332,8 +3385,7 @@ function makeMetaRecordsList(
       const lock = await client.getMailboxLock(at.path);
       try {
         const out: RawMetaMessage[] = [];
-        const selected = client.mailbox;
-        const count = typeof selected === "object" && selected !== null ? selected.exists : undefined;
+        const count = await selectedCount(client);
         // A `FETCH 1:*` against an empty mailbox is refused by Dovecot and tolerated by GreenMail
         // — `makeLeaseIo`'s own note records the exact error. An empty folder is a real answer, so
         // it returns rather than throwing.
