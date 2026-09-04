@@ -5,7 +5,7 @@ import {
   adminWorkerInstances, adminBilling, adminCosts, adminFunnel,
   type AccountQuery, type AdminDb, type ApiHealth, type OverviewSnapshot,
 } from "@trafficflow/services";
-import { DEFAULT_ALERT_THRESHOLDS } from "@trafficflow/db/cloud";
+import { DEFAULT_ALERT_THRESHOLDS, alertSchemaReadable } from "@trafficflow/db/cloud";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
 import { resolveStaffSession } from "./admin-staff.js";
 import { API_VERSION } from "../version.js";
@@ -304,7 +304,21 @@ async function overview(ctx: StaffContext): Promise<OverviewSnapshot> {
   //
   // Gated rather than try/caught: a catch would still have run the queries and would swallow a
   // real fault as if it were skew. The health probe is the authority and it has already spoken.
-  const schemaReady = api.schemaOk;
+  // ── TWO QUESTIONS, AND `apiHealth()` ONLY ANSWERS ONE ────────────────────────────────
+  //
+  // `apiHealth()` probes the RUNTIME connection, so it says whether the migration landed. It
+  // says nothing about whether `harden-staff-role.sql` was re-run — and that is the ruling's
+  // first ranked risk, not a hypothetical: grants widened in code and the script not re-run in
+  // production leaves the migration applied, `schemaOk: true`, and the BLIND role still unable
+  // to read the new columns and tables. `adminAlerts` then raised 42501 and this route answered
+  // a generic 503, which is the same outage the schema gate above was added to remove, reached
+  // through a grant instead of through a migration.
+  //
+  // So the readiness question is asked OF THE BLIND HANDLE, with the same marker the alert
+  // preflight uses. `information_schema` shows a role only the objects it has privileges on, so
+  // one probe answers both halves: a missing column and an ungranted column are equally
+  // invisible to it, and both mean these reads must not run.
+  const schemaReady = api.schemaOk && await alertSchemaReadable(ctx.db);
   const alerts = schemaReady ? await adminAlerts(ctx.db, now) : [];
   // SEQUENTIAL, on the deadlock note above — these are two more reads on the same `max: 1` blind
   // pool and a `Promise.all` here would reintroduce exactly the circular wait that comment

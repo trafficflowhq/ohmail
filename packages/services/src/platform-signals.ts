@@ -206,6 +206,12 @@ const trimmed = (v: string | undefined): string => (v ?? "").trim();
 function parseStamp(v: unknown): number | null {
   if (typeof v === "number") return Number.isFinite(v) ? v : null;
   if (typeof v === "string") {
+    // AN EMPTY STRING IS NOT EPOCH ZERO, and the fall-through to `Number` made it one.
+    // `Date.parse("")` is NaN, so the old code reached `Number("")` — which is 0, finite, and
+    // accepted. A cursor set to epoch zero jumps behind the window's start and stops the walk
+    // while `hasMoreRows` still says otherwise, and the bucket is stored COMPLETE over whatever
+    // the first page happened to hold.
+    if (v.trim().length === 0) return null;
     const parsed = Date.parse(v);
     if (Number.isFinite(parsed)) return parsed;
     const asNumber = Number(v);
@@ -357,6 +363,19 @@ export function makePlatformSignalPort(
           if (typeof data.hasMoreRows !== "boolean") return { failed: "no_has_more_flag" };
 
           const batch = data.rows as Array<Record<string, unknown>>;
+          // A NON-EMPTY PAGE THAT YIELDS NOTHING COUNTABLE IS A REFUSAL, not a quiet zero.
+          //
+          // `requestId` IS the dedupe key. When every row on a page lacks one, each is skipped,
+          // the walk returns 0 requests and 0 errors, and — with `hasMoreRows: false` — stores
+          // that as a COMPLETE bucket: measured health, manufactured out of rows nobody could
+          // read. The reference script refuses exactly this case for exactly this reason
+          // ("they cannot be de-duplicated"), and skipping individual blank ids remains right:
+          // an approximate count over five minutes is still a usable rate. What is not right is
+          // treating a page NONE of whose rows are usable as evidence of a quiet deployment.
+          const usable = batch.filter((r) => typeof r.requestId === "string" && r.requestId !== "");
+          if (batch.length > 0 && usable.length === 0) {
+            return { failed: "page_without_request_ids" };
+          }
           let oldest = cursor;
           for (const r of batch) {
             const id = typeof r.requestId === "string" ? r.requestId : "";
@@ -375,6 +394,15 @@ export function makePlatformSignalPort(
             // detector — the failure this file exists to make unrepresentable. One malformed
             // row taking a single window to "not measured" is the safe direction, and the next
             // window recovers on its own.
+            // STRICT ABOUT THE SHAPE BEFORE COERCING IT, because `Number` is generous in
+            // exactly the directions that fabricate health: `Number(null)` is 0, `Number("")` is
+            // 0, `Number(false)` is 0 and `Number(true)` is 1 — all finite, all passing a
+            // `Number.isFinite` check, and all recorded as a successful non-5xx request. A
+            // private API that changed this field's shape would be logged as a healthy
+            // deployment rather than as a failure to measure one.
+            if (typeof r.statusCode !== "number" && typeof r.statusCode !== "string") {
+              return { failed: "unreadable_status" };
+            }
             const status = Number(r.statusCode);
             if (!Number.isFinite(status)) return { failed: "unreadable_status" };
             if (status >= 500 && status <= 599) errors5xx++;

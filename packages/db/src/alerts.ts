@@ -635,13 +635,21 @@ export function humanAge(seconds: number | null): string {
 /**
  * The column whose ABSENCE means this database is older than the bundle this host ships.
  *
- * `alert_state.cls` is chosen deliberately over any other: it is added by the newest cloud
- * migration AND it is a column {@link runAlertPass} itself writes on every observation, so if it
- * is missing the alert pass cannot function at all. A marker that the pass did not depend on
- * could go missing without the pass caring, which would make this rule report a fault that had
- * no consequence.
+ * THE **LAST** STATEMENT'S COLUMN, and the distinction is the whole correctness of this check.
+ *
+ * The first cut used `alert_state.cls` — the migration's FIRST additive statement — on the
+ * argument that the pass writes it on every observation. That argument is true and insufficient:
+ * statements inside a migration apply in order, so `cls` being present says nothing about the two
+ * TABLES and the heartbeat columns that come after it. A database interrupted part-way, or one
+ * whose operator ran statements by hand, satisfied the preflight and then threw 42703 or 42P01 on
+ * the very next read — the pass dying before it could deliver the finding that explains why,
+ * which is the exact failure the preflight was introduced to remove.
+ *
+ * `worker_heartbeats.degraded_since` is the migration's LAST statement, so its presence implies
+ * every object above it. `health-cloud.ts` reaches the same conclusion for the same reason where
+ * it picks its fourth marker; this is that sentence applied one file over, where it was missed.
  */
-const SCHEMA_BEHIND_MARKER = { table: "alert_state", column: "cls" } as const;
+const SCHEMA_BEHIND_MARKER = { table: "worker_heartbeats", column: "degraded_since" } as const;
 
 /**
  * IS THIS DATABASE OLDER THAN THE BUNDLE WE ARE RUNNING? — the alert pass's preflight.
@@ -669,6 +677,18 @@ const SCHEMA_BEHIND_MARKER = { table: "alert_state", column: "cls" } as const;
  * This runs first, on `information_schema` alone, and when it fires the caller stops: there is
  * nothing else this bundle can honestly read from a database it does not match.
  */
+export async function alertSchemaReadable(db: Tx): Promise<boolean> {
+  const raw = await db.execute(
+    sql`select count(*)::int as n from information_schema.columns
+        where table_schema = 'public'
+          and table_name = ${SCHEMA_BEHIND_MARKER.table}
+          and column_name = ${SCHEMA_BEHIND_MARKER.column}`,
+  ) as unknown;
+  const rows = (Array.isArray(raw) ? raw : (raw as { rows?: unknown })?.rows ?? []) as
+    Array<{ n: number | string }>;
+  return Number(rows[0]?.n ?? 0) > 0;
+}
+
 async function schemaBehindAlert(db: Tx, opts: EvaluateOptions): Promise<Alert | null> {
   if (!opts.driver) return null;
   const raw = await db.execute(
@@ -2835,6 +2855,91 @@ export function sinkHealthOf(
  * Never throws for a delivery failure; a DB failure does propagate, because a pass that
  * cannot read the database has not evaluated anything and must not report "all clear".
  */
+
+/**
+ * Advance the IN-MEMORY sink streak for one delivery attempt, and say what it escalated.
+ *
+ * ── WHY THIS IS A FUNCTION AND NOT INLINE, WHICH IT WAS ───────────────────────────────────
+ *
+ * Two paths deliver: the ordinary pass, and the schema-behind path that delivers WITHOUT
+ * persisting because the table it would persist into is the one missing a column. The second
+ * originally reported a zero streak and an undefined health, which made a sink that refuses
+ * those pages invisible — its attempts never advanced, no escalation ever fired, and `/health`
+ * kept publishing stale sink health while every page about a half-finished deploy was refused.
+ * A pager that cannot deliver the schema alert is exactly the pager somebody must be told about.
+ *
+ * Only the DATABASE write differs between the two paths; the delivery and its outcome are real
+ * in both, so the accounting is shared rather than copied. A second copy of this arithmetic is
+ * how the two paths would drift.
+ */
+function accountDelivery(
+  streak: DeliveryStreak | undefined,
+  sinks: readonly AlertSink[],
+  outcomes: readonly SinkOutcome[],
+  delivered: readonly string[],
+  failed: readonly string[],
+  errors: readonly string[],
+  now: Date,
+  opts: AlertPassOptions,
+): { escalate: SinkEscalation | null; sinkDegraded: SinkDegradation[] } {
+    let escalate: SinkEscalation | null = null;
+    const sinkDegraded: SinkDegradation[] = [];
+    const threshold = opts.escalateAfter ?? DEFAULT_SINK_FAILURE_ESCALATION;
+    if (streak && sinks.length > 0) {
+      // A streak object built before per-sink memory existed — a stale compiled `dist/` in
+      // another package is the reachable way to get one — would make every read below throw on
+      // `undefined`. An observability feature may never be the thing that breaks the pass.
+      if (!streak.sinks) streak.sinks = {};
+
+      // ── each ARM's own memory, kept whatever the aggregate did ────────────────────────────
+      for (const o of outcomes) {
+        const per = (streak.sinks[o.sink] ??= newSinkStreak());
+        per.attempts += 1;
+        per.lastOutcome = o.outcome;
+        if (o.ok) {
+          per.consecutiveFailures = 0;
+          per.escalated = false;
+          per.lastOkAt = now.toISOString();
+        } else {
+          per.consecutiveFailures += 1;
+        }
+      }
+
+      if (delivered.length > 0) {
+        // ANY success clears the AGGREGATE, including a success on a different sink than the one
+        // failing: the question this answers is "did an alert reach a human", not "is every sink
+        // well". That second question is the per-arm loop above, and it is asked here — a pass
+        // that delivered is exactly the pass on which a dead arm would otherwise be invisible.
+        streak.consecutiveFailures = 0;
+        streak.escalated = false;
+        for (const o of outcomes) {
+          if (o.ok) continue;
+          const per = streak.sinks[o.sink];
+          if (!per || per.escalated || per.consecutiveFailures < threshold) continue;
+          per.escalated = true;
+          sinkDegraded.push({
+            sink: o.sink,
+            consecutiveFailures: per.consecutiveFailures,
+            outcome: o.outcome,
+            error: o.error,
+            survivors: [...delivered],
+          });
+        }
+      } else {
+        streak.consecutiveFailures += 1;
+        if (streak.consecutiveFailures >= threshold && !streak.escalated) {
+          streak.escalated = true;
+          escalate = { consecutiveFailures: streak.consecutiveFailures, sinks: [...failed], errors: [...errors] };
+        }
+        // Per-arm reports are deliberately NOT emitted here — see {@link SinkDegradation}. The
+        // per-arm counters above still advanced, and their `escalated` flags are still false, so
+        // an arm that stayed dead is named on the first pass the other one recovers.
+      }
+    }
+
+  return { escalate, sinkDegraded };
+}
+
 export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise<AlertPassResult> {
   const now = opts.now ?? new Date();
   const repeatMs = opts.repeatMs ?? DEFAULT_ALERT_REPEAT_MS;
@@ -2863,6 +2968,11 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
       now,
     };
     const { delivered, failed, errors, outcomes } = await deliver(sinks, firing, ctx);
+    // The SAME accounting the ordinary path runs — only the database write is skipped here.
+    const behindStreak = opts.deliveryStreak;
+    const behindAcct = accountDelivery(
+      behindStreak, sinks, outcomes, delivered, failed, errors, now, opts,
+    );
     return {
       now: now.toISOString(),
       firing,
@@ -2876,13 +2986,20 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
       failedSinks: failed,
       sinkErrors: errors,
       undeliverable: sinks.length === 0,
-      // The streak lives in `alert_state`'s neighbourhood and is not readable here either, so
-      // this pass neither advances nor clears it.
-      sinkFailureStreak: 0,
-      escalate: null,
+      // ── THE STREAK IS STILL ACCOUNTED FOR, EVEN THOUGH NOTHING IS PERSISTED ────────
+      //
+      // Only the DATABASE write is skipped here; the delivery is real and its outcome is real.
+      // Reporting a zero streak and an undefined health made a sink that refuses these pages
+      // invisible: its attempts never advanced, no escalation ever fired, and `/health` kept
+      // publishing stale or zero sink health while every page about a half-finished deploy was
+      // being refused. A pager that cannot deliver the schema alert is precisely the pager
+      // somebody needs to know about, so the in-memory streak the caller handed us is advanced
+      // exactly as the ordinary path advances it.
+      sinkFailureStreak: behindStreak?.consecutiveFailures ?? 0,
+      escalate: behindAcct.escalate,
       sinkOutcomes: outcomes,
-      sinkDegraded: [],
-      sinkHealth: sinkHealthOf(sinks, undefined),
+      sinkDegraded: behindAcct.sinkDegraded,
+      sinkHealth: sinkHealthOf(sinks, behindStreak),
     };
   }
 
@@ -3193,60 +3310,9 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   // together would mean the no-sink alarm goes quiet after its first escalation. They are
   // deliberately disjoint alarms for two different faults: nothing configured, and
   // everything configured and refusing.
-  let escalate: SinkEscalation | null = null;
-  const sinkDegraded: SinkDegradation[] = [];
-  const threshold = opts.escalateAfter ?? DEFAULT_SINK_FAILURE_ESCALATION;
-  if (streak && sinks.length > 0) {
-    // A streak object built before per-sink memory existed — a stale compiled `dist/` in
-    // another package is the reachable way to get one — would make every read below throw on
-    // `undefined`. An observability feature may never be the thing that breaks the pass.
-    if (!streak.sinks) streak.sinks = {};
-
-    // ── each ARM's own memory, kept whatever the aggregate did ────────────────────────────
-    for (const o of outcomes) {
-      const per = (streak.sinks[o.sink] ??= newSinkStreak());
-      per.attempts += 1;
-      per.lastOutcome = o.outcome;
-      if (o.ok) {
-        per.consecutiveFailures = 0;
-        per.escalated = false;
-        per.lastOkAt = now.toISOString();
-      } else {
-        per.consecutiveFailures += 1;
-      }
-    }
-
-    if (delivered.length > 0) {
-      // ANY success clears the AGGREGATE, including a success on a different sink than the one
-      // failing: the question this answers is "did an alert reach a human", not "is every sink
-      // well". That second question is the per-arm loop above, and it is asked here — a pass
-      // that delivered is exactly the pass on which a dead arm would otherwise be invisible.
-      streak.consecutiveFailures = 0;
-      streak.escalated = false;
-      for (const o of outcomes) {
-        if (o.ok) continue;
-        const per = streak.sinks[o.sink];
-        if (!per || per.escalated || per.consecutiveFailures < threshold) continue;
-        per.escalated = true;
-        sinkDegraded.push({
-          sink: o.sink,
-          consecutiveFailures: per.consecutiveFailures,
-          outcome: o.outcome,
-          error: o.error,
-          survivors: [...delivered],
-        });
-      }
-    } else {
-      streak.consecutiveFailures += 1;
-      if (streak.consecutiveFailures >= threshold && !streak.escalated) {
-        streak.escalated = true;
-        escalate = { consecutiveFailures: streak.consecutiveFailures, sinks: [...failed], errors };
-      }
-      // Per-arm reports are deliberately NOT emitted here — see {@link SinkDegradation}. The
-      // per-arm counters above still advanced, and their `escalated` flags are still false, so
-      // an arm that stayed dead is named on the first pass the other one recovers.
-    }
-  }
+  const { escalate, sinkDegraded } = accountDelivery(
+    streak, sinks, outcomes, delivered, failed, errors, now, opts,
+  );
 
   // ── settle every claim: CONFIRM if something accepted, otherwise RELEASE ───────────────
   //
