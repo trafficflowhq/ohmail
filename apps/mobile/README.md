@@ -306,10 +306,34 @@ All 30 pairs clear 4.5:1 in both schemes.
 | icon set | `src/ui/Icon.tsx` | The design prototype's `<symbol>` paths, byte for byte, on the same 16×16 grid at stroke 1.3. Three new glyphs (`reads`, `receipts`, `more`) exist because a tab bar needs marks the typographic desktop rail never did; they are drawn on the same grid and marked in the file. |
 | `layout.rail`, `layout.split` | — | Dropped. A phone has no rail and no two-pane deck; the rail's contents live under the **More** tab. |
 
-App icon, splash and the Android adaptive/monochrome layers are generated from
-the product mark itself, not a redraw. The adaptive foreground keeps the mark
-inside Android's 66dp safe circle (launchers mask the 108dp canvas), so the
-icon renders at the size every other launcher icon does.
+App icon, splash and the Android adaptive/monochrome layers are drawn from the
+product mark itself, not a redraw. The adaptive foreground keeps the mark inside
+Android's 66dp safe circle (launchers mask the 108dp canvas), so the icon renders
+at the size every other launcher icon does.
+
+**There are two icon sources, and the second one exists because of what the iOS
+build does to the first.** `assets/icon.png` keeps its transparent rounded corners,
+which is what Android wants — the legacy launcher icon and the store listing both
+take transparency, and the adaptive icon composites its foreground over
+`#fbfaf9` anyway. The iOS pipeline instead flattens the icon and forces the
+background to pure white, so those transparent corners came out as four white
+wedges around a field that is `#fbfaf9` everywhere else, and Apple's own mask does
+not sit exactly where the baked-in rounding does. Driven through Expo's real icon
+generator, today's source produced ~45 000 pure-white pixels; `assets/icon-ios.png`
+— the same art with the corners filled to the icon's own ground and no alpha
+channel at all — produces none, and every opaque pixel is unchanged. The rounding
+is then applied once, by the platform, which is the only place it belongs.
+
+**The launch screen is not wired up on either platform, and `app.json` looks as
+though it is.** The `splash` block there is the pre-SDK-52 form: those keys now
+belong to the `expo-splash-screen` config plugin, which this app does not depend on,
+so nothing reads them. A regenerated Android project shows what actually ships —
+`splashscreen_background` is `#FFFFFF` rather than the configured `#fbfaf9`, the
+five `splashscreen_logo.png` densities are Expo's grey placeholder rather than the
+product mark, and there is no `values-night/` at all, so the dark variant is inert
+too. Fixing it is adding the dependency and moving the block into the plugin's
+config; it is called out here rather than papered over, because a configuration
+that looks applied is worse than one that is visibly absent.
 
 ### Two phone-only decisions the desktop never had to make
 

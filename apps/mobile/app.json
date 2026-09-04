@@ -21,6 +21,7 @@
     "ios": {
       "bundleIdentifier": "app.ohmail",
       "buildNumber": "2",
+      "icon": "./assets/icon-ios.png",
       "supportsTablet": false,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
