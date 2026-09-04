@@ -2008,9 +2008,11 @@ export async function lastSequence(client: SequenceProbeClient): Promise<number 
  * read-only peek, and the shared record list. They are one loop now. The module header has claimed
  * since the record channel shipped that the folder's kinds come off "the same headers FETCH", and
  * three copies of a loop is three places for the ceiling, the ordering and the empty-folder
- * defence to drift apart. `client.fetch(` appears exactly twice below — the WINDOW itself and the
- * one-message `*` probe that learns the folder's true count — and a census test pins both; the
- * per-kind parsing stays with each caller.
+ * defence to drift apart. `client.fetch(` appears exactly twice IN THIS MODULE — the WINDOW itself
+ * and the one-message `*` probe that learns the folder's true count — and a census test pins both;
+ * the per-kind parsing stays with each caller. (Not "below": the probe is declared above this
+ * docblock, and a spatial claim in a file that gets reordered is a claim that quietly stops being
+ * true.)
  *
  * ── WHY NEWEST FIRST, AND WHY IT IS NOT A PREFERENCE ────────────────────────────────────────
  *
