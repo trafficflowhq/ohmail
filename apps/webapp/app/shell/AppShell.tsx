@@ -2138,7 +2138,15 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * silent rather than guessing. Down the host's wire where there is one, for the reason
    * {@link awayTransport} gives.
    */
-  const awayNotice = useAwayNotice(!demo && awaySupported, awayTransport);
+  /* `resolvedDemo`, NOT `demo` — the same one-render-wide difference this file already records
+     for the wake registration above, found again by review on this gate. `useDemoMode` returns
+     the SERVER snapshot on the hydration render so the markup matches, and a prerendered route
+     bakes `searchParams = {}`; on a `?demo=1` page that snapshot is FALSE while the client answer
+     is true. Gated on `demo`, this hook began `GET /away-responder` on that commit — and the
+     effect's cleanup cannot retract a request already sent. The demo's promise is that nothing
+     leaves the tab, so one render of it is one too many. Effect-only gate, which is exactly what
+     `useResolvedDemoMode` is for; nothing here is rendered from it. */
+  const awayNotice = useAwayNotice(!resolvedDemo && awaySupported, awayTransport);
   /**
    * SETTINGS FOUND ON A MAILBOX — the portable profile's confirm moment, held by the shell.
    *
