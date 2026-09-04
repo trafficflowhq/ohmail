@@ -745,6 +745,31 @@ export function readerOutcomeFor(input: {
 }
 
 /**
+ * EXPIRE THE `pending` ROWS THIS INSTALL WILL NEVER HAND OVER, and return how many.
+ *
+ * Separate from the cycle because it must run on a path the cycle returns from early: a mailbox
+ * with no shared secret never reaches the append at all, and that is exactly where these rows
+ * collect. See the call site for the sequence that produces one.
+ */
+async function expireNeverSent(
+  db: WorkerDb,
+  rt: { mailboxId: string; accountId: string },
+  now: Date,
+  log: (event: string, detail: Record<string, unknown>) => void,
+): Promise<number> {
+  const cutoff = new Date(now.getTime() - REQUEST_STALE_AFTER_MS);
+  const pending = await db.transaction((tx) => listPendingRequests(tx, rt.mailboxId));
+  const ids = pending.filter((r) => r.decidedAt.getTime() < cutoff.getTime()).map((r) => r.id);
+  if (ids.length === 0) return 0;
+  await db.transaction((tx) => markRequestsExpired(tx, ids, now, { from: "pending" }));
+  log("outstanding_requests_never_sent", {
+    mailboxId: rt.mailboxId, accountId: rt.accountId, expired: ids.length,
+    reason: "queued but never handed over inside the window; the sender returns to the queue",
+  });
+  return ids.length;
+}
+
+/**
  * THE READER'S CYCLE. Appends what is `pending`, then settles what is `sent` against the acks.
  *
  * Gated on the account holding a request key, exactly as the organizer's drain is: a reader with
@@ -768,8 +793,26 @@ export async function driveOutstandingRequests(
     return EMPTY_DRIVE_RESULT;
   }
 
+  /* ── THE ROWS THAT COULD NOT BE HANDED OVER AGE OUT FIRST, KEY OR NO KEY ──────────────────
+   *
+   * Before the key check, deliberately. Every other expiry predicate requires `sent`, so a
+   * `pending` row used to be IMMORTAL — and immortal is worse than it sounds, because the Screener
+   * list EXCLUDES a sender with an outstanding decision: the sender disappeared from the person's
+   * queue for ever while nothing was coming.
+   *
+   * The case that reaches it is precisely the one that returns below. The door decides whether to
+   * queue from the HOLDER's advertised capability, which is copied out of a claim anyone with
+   * append rights on the folder can write; a forged claim on a mailbox this install has no shared
+   * secret for (OAuth) gets a row queued that no cycle will ever append. The signature makes that
+   * harmless for the ORGANIZER. This makes it harmless for the READER.
+   *
+   * Aged from `decidedAt` — when the person actually pressed, which is the clock they would
+   * measure by — on the same window as everything else in this file.
+   */
+  const expiredUnsent = await expireNeverSent(db, rt, now, log);
+
   const key = rt.requestKey;
-  if (key === null) return EMPTY_DRIVE_RESULT;
+  if (key === null) return { sent: 0, applied: 0, refused: 0, expired: expiredUnsent };
 
   /* ── THE FOLDER IS READ ONCE, BEFORE ANYTHING IS WRITTEN, AND BOTH HALVES USE IT ───────────
    *
@@ -808,8 +851,13 @@ export async function driveOutstandingRequests(
   for (const a of acksIn(records, key)) if (!ackById.has(a.requestId)) ackById.set(a.requestId, a);
 
   const pending = await db.transaction((tx) => listPendingRequests(tx, rt.mailboxId));
+
+  const stillQueued = pending.filter(
+    (r) => r.decidedAt.getTime() >= now.getTime() - REQUEST_STALE_AFTER_MS,
+  );
+
   let sentCount = 0;
-  for (const req of pending) {
+  for (const req of stillQueued) {
     // Only `screener.decide` has an appender today. A row of an unrecognised kind is left
     // `pending` rather than appended malformed — it is THIS install's own insert, so an
     // unrecognised kind here is a build mismatch to investigate, not evidence to act on.
@@ -885,7 +933,7 @@ export async function driveOutstandingRequests(
         mailboxId: rt.mailboxId, accountId: rt.accountId, sent: sentCount, applied: 0, refused: 0, expired: 0,
       });
     }
-    return { sent: sentCount, applied: 0, refused: 0, expired: 0 };
+    return { sent: sentCount, applied: 0, refused: 0, expired: expiredUnsent };
   }
 
   // `ackById` was built from the SAME read that answered the duplicate-append question above —
@@ -917,7 +965,7 @@ export async function driveOutstandingRequests(
 
   return {
     sent: sentCount, applied: appliedIds.length,
-    refused: refusedRows.length, expired: expiredIds.length,
+    refused: refusedRows.length, expired: expiredIds.length + expiredUnsent,
   };
 }
 
