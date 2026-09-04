@@ -113,13 +113,15 @@ you make it.
 
 ### A mailbox you only read says so, and says who to ask
 
-A mailbox this install reads rather than organizes shows the install that organizes it and refuses
-decisions here, before the press rather than after it; organizing it here instead is one press in
-Settings → Mailboxes. The Screener withholds its decision bar and its keyboard verbs on such a
-mailbox rather than offering controls that answer with a refusal, and the panes that release mail
-from Screened out or rescue it from Quarantine say that moving mail happens where the organizer
-runs. On a phone, a decision made on a mailbox the phone does not organize no longer reports itself
-as filed.
+A mailbox this install reads rather than organizes shows the install that organizes it. Where the
+organizing install can take your decisions — a mailbox signed in with a password — the Screener
+keeps its decision bar and a press travels as described above. Where it cannot — a mailbox signed
+in with Google or Microsoft, or an organizer on an older build — the Screener withholds its
+decision bar and its keyboard verbs rather than offering controls that answer with a refusal, and
+says so before the press, with who organizes and the one press in Settings → Mailboxes that
+organizes it here instead. The panes that release mail from Screened out or rescue it from
+Quarantine say that moving mail happens where the organizer runs. On a phone, a decision made on a
+mailbox the phone does not organize no longer reports itself as filed.
 
 ### German where the app used to speak half English
 
