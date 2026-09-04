@@ -62,11 +62,11 @@ import { META_FOLDER, makeMetaFolderRef, type MetaFolderClient } from "./organiz
  *     ],
  *     "awayResponder": {               // the single per-mailbox autoresponder, or null
  *       "enabled": false,
- *       "subject": "<string or null>",
  *       "body": "<string or null>",
  *       "startsAt": "<ISO 8601 or null>",
  *       "endsAt": "<ISO 8601 or null>",
- *       "audience": "screened_in" | "everyone"
+ *       "audience": "screened_in" | "everyone",
+ *       "throttle": "per_day" | …      // absent in a document written before 0087
  *     },
  *     "tagNames": ["<tag name>", …]    // the names of this mailbox's tags
  *   }
