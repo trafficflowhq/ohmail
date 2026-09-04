@@ -1892,18 +1892,35 @@ export class ScreenerService extends ScreenerReadService {
         mailboxId, await readRequestEligibility(asTx(ctx), ctx.accountId, mailboxId),
       );
     }
-    let lastIneligible: RequestEligibility | null = null;
+    /**
+     * WHETHER THERE WAS ANYTHING TO GATE, captured BEFORE the filter runs.
+     *
+     * `rep` is already empty when none of the named senders is still held — a stale Screener page,
+     * a sender the worker's own pass screened out a moment ago, another tab. That is an ordinary
+     * 200 with nothing to buy, and it has nothing to do with who organizes the mailbox. Reading
+     * the post-filter emptiness alone turned it into `409 organized_elsewhere` naming an EMPTY
+     * mailbox id and a holder of `null` — every clause false, on a request that used to succeed.
+     */
+    const hadCandidates = rep.size > 0;
+    let ineligibleMailboxId: string | null = null;
+    let ineligible: RequestEligibility | null = null;
     for (const [sender, row] of [...rep.entries()]) {
       const e = eligibilityByMailbox.get(row.mailboxId) ?? null;
       if (e && e.capable && e.status !== "disabled") continue;
-      if (e) lastIneligible = e;
+      // The id and the holder are taken from the SAME mailbox, so the sentence cannot name one
+      // mailbox's id beside another's holder — two iteration orders used to decide them apart.
+      ineligibleMailboxId ??= row.mailboxId;
+      ineligible ??= e;
       rep.delete(sender);
     }
-    if (rep.size === 0) {
+    if (hadCandidates && rep.size === 0) {
       throw new OrganizedElsewhereError(
-        [...eligibilityByMailbox.keys()][0] ?? "",
-        lastIneligible?.by ?? { kind: null, name: null, since: null },
-        lastIneligible?.by.kind === null ? "no_organizer" : "organizer_outdated",
+        ineligibleMailboxId ?? "",
+        ineligible?.by ?? { kind: null, name: null, since: null },
+        // `?? null` first: `ineligible?.by.kind` short-circuits to UNDEFINED when the eligibility
+        // read itself returned null, and `undefined === null` is false — so the `no_organizer` arm
+        // was unreachable in exactly the case it names.
+        (ineligible?.by.kind ?? null) === null ? "no_organizer" : "organizer_outdated",
       );
     }
 
