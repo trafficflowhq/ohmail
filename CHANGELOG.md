@@ -16,21 +16,44 @@ See [Status](README.md#status--read-this-first).
 ### Deciding on a mailbox another install is organizing
 
 Exactly one install organizes a mailbox at a time — that is what keeps two copies of ohmail from
-filing the same message to two different places. Every other install reads it. Until now, pressing
-a Screener decision on a mailbox you read rather than organize failed with a message that did not
-say much: it was answered for the whole account, so an account with one organized mailbox and one
-read-only mailbox got the same sentence for both.
+filing the same message to two different places. Every other install reads it. Pressing a Screener
+decision on a mailbox you read rather than organize used to fail, and the message did not say much:
+it was answered for the whole account, so an account with one organized mailbox and one read-only
+mailbox got the same sentence for both.
 
-The refusal is now about the ONE mailbox the message is in, and it says who to go to. It also
-distinguishes the two cases that used to look alike: nobody is organizing this mailbox at all, or
-somebody is but their copy of ohmail is too old to take a decision from another install.
+Now the decision travels. Press it on an install that reads the mailbox, and the install that
+organizes the mailbox carries it out on its next pass — the sender leaves your queue immediately,
+and the rule and the filing appear where they always would have.
 
-**Nothing is queued, and the decision is not applied later.** The record format a decision would
-travel in, and the pass that would apply it on the organizing install, are both in this release and
-both switched off. They stay off until a request can be signed with a per-account key: a record
-sitting in the mailbox is an ordinary message, any program with access to the mailbox can write
-one, and an organizer that acted on it unverified would file a stranger's mail on their say-so.
-Until then the honest answer to "decide from here" is no, with the name of the install that can.
+The decision is carried in the mailbox itself, which is the only thing two installs on different
+machines share. That folder is ordinary mail, so anything with access to the mailbox can write to
+it: an organizer that acted on whatever it found there would file a stranger's mail on their say-so,
+and a single forged message would be enough to whitelist a sender permanently. So every decision is
+signed with a key belonging to your account, and the organizing install verifies the signature
+**before** it reads the decision at all. A record it cannot verify is refused and never acted on.
+
+The organizing install also answers, which it could not before. A decision it carried out comes back
+as applied; one it declined comes back as declined, with the reason. Previously the only signal was
+the record disappearing from the mailbox — and it disappears either way, so a decision that had been
+thrown away was reported as done. A decision nobody answers is now reported as waiting until it
+times out, rather than quietly counted as a success.
+
+**One direction is not on yet in this release.** A mailbox organized by ohmail Cloud takes decisions
+from your other installs, and that is the common setup. **A mailbox organized by a desktop install
+still refuses a reader's press**, with the same honest message naming the install to go to. The
+reason is a deliberate part of how the desktop works: an install that organizes a mailbox itself
+talks only to your mail server, and never to our service — that separation is what makes a
+local-only install local-only, and it is enforced in the build rather than promised. It also means
+such an install has no way to receive the account key it would need to verify a decision, so it
+refuses rather than acting on something it cannot check. Closing that direction needs a way to hand
+the key over that does not weaken the separation, and it is not in this release.
+
+### Screener decisions from a reader no longer buy advice nobody can use
+
+Asking for an AI suggestion on a mailbox you only read used to spend credits whatever the state of
+the mailbox. If no install is organizing it, or the one that is cannot take decisions from
+elsewhere, the suggestion could never be applied — so it is refused now, before the model is
+called and before anything is charged, with the same sentence the decision itself would give.
 
 ### Any machine can take a mailbox over, and give it back
 

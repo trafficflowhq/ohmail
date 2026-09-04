@@ -2969,17 +2969,32 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         }
         /* ── WHAT THIS CLAIM OFFERS A READER, AND WHY THIS DOOR NEVER MINTS (mail 0090) ────────
          *
-         * A request key is per ACCOUNT, and the account lives in the hosted database. This install
-         * has its own PGlite store, so a key it generated locally would be a key the Cloud reader
-         * has never seen — every record either side wrote would then be refused by the other as
-         * `unauthenticated`, which is worse than having no channel at all. So this is a plain READ:
-         * the key is whatever the hosted API delivered to this install over an authenticated call,
-         * and nothing here creates one.
+         * A request key is per ACCOUNT, and the account's key lives in the HOSTED database. This
+         * install has its own PGlite store, so a key it generated locally would be a key the Cloud
+         * reader has never seen — every record either side wrote would then be refused by the
+         * other as `unauthenticated`, which is worse than having no channel at all. So this is a
+         * plain READ, and it is the ONLY correct shape for this door.
          *
-         * A STANDALONE install — no account, no hosted call, no key — therefore advertises no
-         * `requests` capability, for ever, by construction. That is not a gap: a standalone install
-         * has no readers to serve, because a reader is another install signed into the SAME hosted
-         * account. Advertising no capability is the correct and complete answer here.
+         * ── AND TODAY IT ALWAYS READS NULL, WHICH IS THE HONEST STATE RATHER THAN A BUG ───────
+         *
+         * Nothing delivers the account's key to a local install yet: this process makes no
+         * account-authenticated hosted call at takeover time (`cloud-auth.ts` and
+         * `cloud-engine.ts` have no organize/takeover request to ride), so the column below is
+         * never written on this side.
+         *
+         * The consequence is exact and deliberate: an install organizing a mailbox LOCALLY
+         * advertises no `requests` capability, and a Cloud reader of that mailbox is refused at
+         * its own door with `organizer_outdated` — truthfully, because this organizer genuinely
+         * cannot verify a record. The other direction is unaffected and fully live: when CLOUD
+         * organizes, both sides read the key from the account row.
+         *
+         * A STANDALONE install — no account at all — is the same picture and needs nothing more:
+         * it has no readers to serve, because a reader is another install signed into the SAME
+         * hosted account.
+         *
+         * Delivering the key to a local organizer is what would switch that direction on, and it
+         * needs a hosted call this build does not make. Until it exists, advertising nothing is
+         * the correct and complete answer.
          */
         let localRequestKey: string | null = null;
         try {

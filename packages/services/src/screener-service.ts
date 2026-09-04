@@ -752,11 +752,44 @@ export interface ScreenerPendingDecision {
   subject: string;
   scope: "sender" | "domain";
   decidedAt: string;
-  /** Has this install's own cycle appended it to the mailbox yet? */
+  /**
+   * Has this install's own cycle appended it to the mailbox yet?
+   *
+   * KEPT ALONGSIDE {@link state} rather than replaced by it: a client written against the 0.14.1
+   * shape reads this field, and `state === "sent"` is exactly what it always meant. Renaming it
+   * would have been a wire break for a rename's worth of benefit.
+   */
   sent: boolean;
+  /**
+   * WHERE THE DECISION ACTUALLY IS (mail 0090).
+   *
+   *  · `pending` — queued here, not yet handed to the mailbox.
+   *  · `sent`    — in the mailbox, waiting for the organizer.
+   *  · `refused` — the organizer answered, and said no. **The sender is back in the queue**; this
+   *    entry exists to explain why the decision the person made did not take effect.
+   *
+   * `applied` and `expired` never appear: the first needs no explaining and the second returns the
+   * sender to the queue with the ordinary "nobody is organizing this" notice.
+   */
+  state: "pending" | "sent" | "refused";
+  /**
+   * What the organizer said no to — a closed vocabulary this codebase defines (`unauthenticated`,
+   * `conflict`, `wrong_mailbox`, `invalid_payload`, `unhandled_kind`, `stale`, `account_erased`),
+   * never free text and never a stranger's. `null` outside `refused`, and also for a refusal whose
+   * named reason this build does not recognise — a newer organizer's vocabulary reaches an older
+   * reader as "refused, reason unknown" rather than as an unrendered string.
+   */
+  refusedReason: string | null;
 }
 
 interface ScreenerRow {
+  /**
+   * WHICH MAILBOX THIS MESSAGE IS IN. The role is asked per mailbox, never per account (an
+   * account may hold an organized mailbox and a read-only one at once), so anything that has to
+   * know whether a decision on this message could ever be APPLIED needs the mailbox it belongs
+   * to. `suggest` is the caller that does.
+   */
+  mailboxId: string;
   messageId: string;
   threadId: string | null;
   fromAddress: string;
@@ -795,15 +828,16 @@ const HELD_COLUMNS = {
   messageId: messages.id, threadId: messages.threadId, fromAddress: messages.fromAddress,
   subject: messages.subject, snippet: messages.snippet, date: messages.date,
   nativeLocator: messages.nativeLocator, observedFolder: folderState.observedFolder,
-  updatedAt: messages.updatedAt, unread: messages.unread,
+  updatedAt: messages.updatedAt, unread: messages.unread, mailboxId: messages.mailboxId,
 } as const;
 
 function toScreenerRow(r: {
   messageId: string; threadId: string | null; fromAddress: string; subject: string;
   snippet: string; date: Date | null; nativeLocator: unknown; observedFolder: string;
-  updatedAt: Date; unread: boolean;
+  updatedAt: Date; unread: boolean; mailboxId: string;
 }): ScreenerRow {
   return {
+    mailboxId: r.mailboxId,
     messageId: r.messageId,
     threadId: r.threadId ?? null,
     fromAddress: r.fromAddress,
@@ -915,16 +949,29 @@ export class ScreenerReadService {
     // account, drained within a cycle or two of being written. A `scope:"domain"` decision
     // excludes every held sender AT that domain, not only the one address the decision named —
     // the same "the whole bag follows the scope" rule `decide` itself enforces.
-    const outstanding = await listOutstandingForAccount(asTx(ctx), ctx.accountId);
-    const outstandingSenders = new Set(outstanding.filter((o) => o.scope === "sender").map((o) => o.match));
-    const outstandingDomains = new Set(outstanding.filter((o) => o.scope === "domain").map((o) => o.match));
+    const outstanding = await listOutstandingForAccount(asTx(ctx), ctx.accountId, ctx.now());
+    // ── A REFUSAL DOES NOT EXCLUDE, AND THAT IS THE WHOLE DIFFERENCE ────────────────────────
+    //
+    // `pending` and `sent` mean "the person has answered for this sender and we are carrying it
+    // out", so the sender leaves the queue. `refused` means the organizer said NO — the decision
+    // did not happen, so the sender must come BACK and be answerable again. Excluding it would
+    // hide a sender the person still has to deal with, which is the same class of lie as
+    // reporting a refusal as applied.
+    const stillWaiting = outstanding.filter((o) => o.state !== "refused");
+    const outstandingSenders = new Set(stillWaiting.filter((o) => o.scope === "sender").map((o) => o.match));
+    const outstandingDomains = new Set(stillWaiting.filter((o) => o.scope === "domain").map((o) => o.match));
     const isDecided = (address: string): boolean => {
       const lower = address.toLowerCase();
       return outstandingSenders.has(lower) || outstandingDomains.has(domainOf(lower));
     };
     const pageRows = unfiltered.filter((r) => !isDecided(r.fromAddress));
     const pendingDecisions: ScreenerPendingDecision[] = outstanding.map((o) => ({
-      subject: o.match, scope: o.scope, decidedAt: o.decidedAt.toISOString(), sent: o.state === "sent",
+      subject: o.match, scope: o.scope, decidedAt: o.decidedAt.toISOString(),
+      // KEPT, and kept meaning exactly what it always meant, so a client written against the
+      // 0.14.1 shape does not change behaviour: "this install has handed the decision over".
+      sent: o.state === "sent",
+      state: o.state,
+      refusedReason: o.refusedReason,
     }));
 
     // The account's posture, resolved the same way the worker and the API read it — NULL/absent ⇒
@@ -1763,20 +1810,25 @@ export class ScreenerService extends ScreenerReadService {
     const ohboxPolicy = resolveOhboxPolicy(pref.ohboxPolicy);
     const ohboxBar = pref.ohboxBar ?? undefined;
 
-    /* -- A READER BUYS SUGGESTIONS TOO, AS OF 0.14.1 (0.14.1) --------------------------------
+    /* -- A READER BUYS SUGGESTIONS TOO — BUT ONLY WHERE THE ANSWER COULD BE ACTED ON ---------
      *
-     * This used to refuse a reader here, before the model was ever called: a suggestion was
-     * bought so a person could act on it in the Screener, and `decide` — the only thing that
-     * acted on it — refused a reader one door over, so buying an answer nobody could use would
-     * spend somebody's money on nothing.
+     * This used to refuse a reader outright, before the model was ever called: a suggestion is
+     * bought so a person can act on it in the Screener, and `decide` — the only thing that acts on
+     * one — refused a reader one door over, so buying an answer nobody could use would spend
+     * somebody's money on nothing.
      *
-     * `decide` no longer refuses a reader outright — it turns the decision into a REQUEST for the
-     * install that organizes the mailbox to apply (`applyMetaRequests`, `apps/worker/src/
-     * request-drain.ts`). So a reader's suggestion is no longer a purchase with nothing to act on:
-     * pressing "apply" on it is exactly the decision path that now queues a request. The purchase
-     * itself is LOCAL COMPUTE — this door's own provider (a standalone install) or this account's
-     * own credits (Cloud) — and touches no organizer state, which is why it needs no role check at
-     * all: nothing here writes anything the organizer would have to contend with.
+     * `decide` no longer refuses a reader outright: it turns the decision into a REQUEST for the
+     * install that organizes the mailbox. So the blanket refusal is wrong now. But the reasoning
+     * BEHIND it survives intact, and the version of this comment that removed the check missed
+     * it — "a reader's suggestion is no longer a purchase with nothing to act on" is only true
+     * while some organizer will actually take the request. A reader whose holder is an older build
+     * (or whose mailbox has no holder at all) gets `409 organizer_outdated` from `decide`, so a
+     * suggestion for that mailbox is exactly the old case again: money spent, and first-contact
+     * subjects sent to a model, for advice that cannot be applied.
+     *
+     * So the gate is not "am I the organizer" but "could a decision here ever land", asked PER
+     * MAILBOX — which is the same question `decide` asks, through the same function. A mailbox
+     * this account organizes passes it trivially.
      */
 
     // ONE query for the whole set, and the representative per sender chosen by the SAME rule
@@ -1798,6 +1850,39 @@ export class ScreenerService extends ScreenerReadService {
       const p = prev?.date?.getTime() ?? 0;
       if (!prev || t > p || (t === p && r.messageId > prev.messageId)) rep.set(key, r);
     }
+
+    /* ── THE ELIGIBILITY GATE, BEFORE A SINGLE MODEL CALL ────────────────────────────────────
+     *
+     * One read per DISTINCT mailbox in the set, not one per sender: a set of forty senders in one
+     * mailbox asks once. Senders whose mailbox could never have the decision applied are dropped
+     * from the purchase entirely rather than answered and billed.
+     *
+     * REFUSED, not silently emptied, when nothing survives: a 200 carrying no suggestions is what
+     * a caller sees when the model had nothing to say, and "your other install is too old to apply
+     * this" is a different sentence that names something the person can fix. It is the same
+     * refusal `decide` gives for the same mailbox, so the two doors cannot disagree.
+     */
+    const eligibilityByMailbox = new Map<string, RequestEligibility | null>();
+    for (const mailboxId of new Set([...rep.values()].map((r) => r.mailboxId))) {
+      eligibilityByMailbox.set(
+        mailboxId, await readRequestEligibility(asTx(ctx), ctx.accountId, mailboxId),
+      );
+    }
+    let lastIneligible: RequestEligibility | null = null;
+    for (const [sender, row] of [...rep.entries()]) {
+      const e = eligibilityByMailbox.get(row.mailboxId) ?? null;
+      if (e && e.capable && e.status !== "disabled") continue;
+      if (e) lastIneligible = e;
+      rep.delete(sender);
+    }
+    if (rep.size === 0) {
+      throw new OrganizedElsewhereError(
+        [...eligibilityByMailbox.keys()][0] ?? "",
+        lastIneligible?.by ?? { kind: null, name: null, since: null },
+        lastIneligible?.by.kind === null ? "no_organizer" : "organizer_outdated",
+      );
+    }
+
     // What is already bought. Read ONCE for the set, and the reason it is read at all is that a
     // `duplicate` costs the user nothing and costs US a model call.
     const stored = await this.storedSuggestions(ctx, [...rep.values()].map((r) => r.messageId), ohboxPolicy);

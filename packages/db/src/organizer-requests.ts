@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, lt, or } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, lt, or } from "drizzle-orm";
 import { organizerRequests } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
 
@@ -104,6 +104,20 @@ export async function listSentRequests(tx: Tx, mailboxId: string): Promise<Organ
   return rows.map(toRow);
 }
 
+/**
+ * HOW LONG A REFUSAL IS WORTH SHOWING SOMEBODY.
+ *
+ * A `refused` row is terminal, so without a bound it would ride the Screener list for ever — a
+ * note about a decision the person made months ago, attached to a sender they have since dealt
+ * with. It is shown for as long as an outstanding decision could have taken anyway, which is the
+ * same day-long window both sides of the channel already use, and then it goes quiet.
+ *
+ * Spelled here rather than imported from the worker's `REQUEST_STALE_AFTER_MS`: this package must
+ * not depend on `apps/worker`, and the two answer different questions that happen to want the same
+ * number — "when does a reader give up waiting" and "when does a refusal stop being news".
+ */
+export const REFUSAL_VISIBLE_FOR_MS = 24 * 60 * 60 * 1000;
+
 /** One outstanding decision, as the Screener list's exclusion and `pendingDecisions[]` both need it. */
 export interface OutstandingMatch {
   id: string;
@@ -111,7 +125,14 @@ export interface OutstandingMatch {
   /** The address (sender scope) or the domain (domain scope) the decision covers, lower-cased. */
   match: string;
   decidedAt: Date;
-  state: "pending" | "sent";
+  /**
+   * `pending`/`sent` are still IN FLIGHT — the sender is excluded from the queue because the
+   * person has already answered for it. `refused` is NOT: the organizer said no, so the sender
+   * comes BACK to the queue and this entry exists only to carry the reason.
+   */
+  state: "pending" | "sent" | "refused";
+  /** What the organizer said no to. Non-null only when `state` is `refused`. */
+  refusedReason: string | null;
 }
 
 /**
@@ -134,11 +155,22 @@ export interface OutstandingMatch {
  * "the Screener you are looking at from the same install you decided on," which is what "the
  * sender leaves the reader's queue immediately" means in the ruling: immediately on THAT door.
  */
-export async function listOutstandingForAccount(tx: Tx, accountId: string): Promise<OutstandingMatch[]> {
+export async function listOutstandingForAccount(
+  tx: Tx, accountId: string, now?: Date,
+): Promise<OutstandingMatch[]> {
+  // A RECENT REFUSAL RIDES ALONG, and it is the one member of this set that is NOT outstanding.
+  // The caller excludes `pending`/`sent` senders from the queue and must NOT exclude a refused
+  // one — the organizer said no, so the person has to see the sender again. It is returned so the
+  // reason can be shown beside it rather than the decision simply appearing to have evaporated.
+  const refusedSince = new Date((now?.getTime() ?? Date.now()) - REFUSAL_VISIBLE_FOR_MS);
   const rows = await tx.select().from(organizerRequests)
     .where(and(
       eq(organizerRequests.accountId, accountId),
-      or(eq(organizerRequests.state, "pending"), eq(organizerRequests.state, "sent")),
+      or(
+        eq(organizerRequests.state, "pending"),
+        eq(organizerRequests.state, "sent"),
+        and(eq(organizerRequests.state, "refused"), gt(organizerRequests.resolvedAt, refusedSince)),
+      ),
     ));
   const out: OutstandingMatch[] = [];
   for (const r of rows) {
@@ -150,9 +182,12 @@ export async function listOutstandingForAccount(tx: Tx, accountId: string): Prom
     const scope = p?.scope;
     const match = p?.match;
     if ((scope !== "sender" && scope !== "domain") || typeof match !== "string" || match === "") continue;
-    const state = r.state === "pending" || r.state === "sent" ? r.state : null;
+    const state = r.state === "pending" || r.state === "sent" || r.state === "refused" ? r.state : null;
     if (state === null) continue;
-    out.push({ id: r.id, scope, match: match.toLowerCase(), decidedAt: r.decidedAt, state });
+    out.push({
+      id: r.id, scope, match: match.toLowerCase(), decidedAt: r.decidedAt, state,
+      refusedReason: state === "refused" ? r.refusedReason : null,
+    });
   }
   return out;
 }
