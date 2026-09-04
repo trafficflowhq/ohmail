@@ -898,6 +898,21 @@ async function platformSignalPass(req: Request, deps: ApiDeps): Promise<Response
       outcome: report.outcome, rows: report.rows, pruned: report.pruned,
       ...(report.code ? { code: report.code } : {}),
     });
+    // ── A SEMANTIC FAILURE MUST NOT BE A 200, BECAUSE THE CALLER READS ONLY THE STATUS ──
+    //
+    // The worker's cron driver discards this body and looks at `res.ok` alone. A poll that
+    // could not authenticate, could not resolve its project, or was refused by the log endpoint
+    // returns `outcome: "failed"` and wrote NOTHING — and answering 200 for that made the worker
+    // record the target healthy and RESET its failure streak. The clock would then report a
+    // perfectly running schedule while no signal data existed at all, which is this file's
+    // recurring failure in its purest form: the broken state rendering as the healthy one.
+    //
+    // `unconfigured` stays 200 and must: a deployment with no token has nothing to report and is
+    // not failing. That is the distinction the three-way outcome exists to carry, and it is why
+    // this is a branch on `outcome` rather than on whether any row was written.
+    if (report.outcome === "failed") {
+      return json(502, { now: deps.now().toISOString(), ...report });
+    }
     return json(200, { now: deps.now().toISOString(), ...report });
   } catch (err) {
     // `raw` means no error envelope above this handler; it must never throw. The pass absorbs

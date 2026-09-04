@@ -1889,7 +1889,15 @@ export async function adminPlatformSignals(
   db: AdminDb, now: Date,
 ): Promise<AdminPlatformSignal[]> {
   const rows = await platformSignalWindow(db, now, DEFAULT_ALERT_THRESHOLDS.api5xxWindowMs);
-  return rows.map((r) => ({
+  return rows
+    // A PROJECT WITH NOTHING COMPLETE IS NOT MEASURED, and must not be rendered as measured.
+    // Since sampled buckets are excluded from the sums, a window whose every bucket was sampled
+    // comes back with zeroed figures — and emitting that row put "0 5xx of 0 requests" on the
+    // board, which reads as a healthy measurement of a quiet deployment. It is the absence of
+    // one. Dropping the row returns the panel to its "not measured" branch, which is the honest
+    // rendering and the same one an unconfigured deployment gets.
+    .filter((r) => r.completeBuckets > 0)
+    .map((r) => ({
     provider: r.provider,
     project: r.project,
     requests: r.requests,

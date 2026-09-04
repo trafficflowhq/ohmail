@@ -125,10 +125,17 @@ export const VERCEL_REQUEST_LOGS_URL = "https://vercel.com/api/logs/request-logs
  * stayed empty, the board read "5xx: not measured", and that is indistinguishable from the
  * expected state of a deployment with no token, which is why nothing noticed.
  *
- * `scripts/vercel-errors.mjs` has always done this correctly — it resolves the name through this
- * same endpoint and passes `proj.id` — so this is that call, in the port that needed it.
+ * `scripts/vercel-errors.mjs` has always done this correctly — it resolves the name and passes
+ * `proj.id` — so this is that call, in the port that needed it.
+ *
+ * TWO DIFFERENT HOSTS, which is easy to get wrong and was: the versioned REST API lives on
+ * `api.vercel.com`, while the request-log endpoint above is on the DASHBOARD origin
+ * (`vercel.com/api/logs/...`). The reference script keeps them as two constants for exactly this
+ * reason. Resolving against the dashboard origin fails before any log is read, which lands in
+ * the same indistinguishable place as every other failure in this file — an empty table and a
+ * board that says "not measured".
  */
-export const VERCEL_PROJECT_URL = "https://vercel.com/api/v9/projects";
+export const VERCEL_PROJECT_URL = "https://api.vercel.com/v9/projects";
 
 /** The default project. See {@link PlatformSignalEnv.VERCEL_SIGNAL_PROJECTS}. */
 export const DEFAULT_SIGNAL_PROJECTS: readonly string[] = ["ohmail-api"];
