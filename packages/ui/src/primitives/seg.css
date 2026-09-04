@@ -1,7 +1,24 @@
-/* segmented control — the active segment floats on lift-0 */
-.seg{display:inline-flex;background:var(--tint2);border-radius:var(--r-pill);padding:2px}
+/* segmented control — the active segment floats on lift-0
+ *
+ * DESIGN REFERENCE (prototype). The control never exceeds the box it is given.
+ *
+ * Two forms, one component:
+ *   row    the capsule, as wide as its segments (`width:max-content`), never wider than its
+ *          container (`max-width:100%`). A segment's label never wraps inside the capsule —
+ *          a two-line pill is not a segment, and a label cut mid-word is not a label.
+ *   stack  `data-stack` — set by the component the moment the row form's natural width would
+ *          exceed the container. The same options, one per line, as a short list: the capsule
+ *          radius gives way to the card radius (a 99px radius on a four-line box is a blob),
+ *          each option is a full-width row, and labels may wrap because a list row is prose.
+ *
+ * The switch is measured, not guessed: the row form's width depends on the labels, the locale
+ * (German runs ~30% longer) and the face's font (ohmarchy's mono is wider still), so no static
+ * breakpoint is true for all eight places this control stands. `SegmentedControl.tsx` reads
+ * the segments' real widths against the parent's content box and flips the attribute. Tokens
+ * only: paper draws capsules and a rounded list, ohmarchy draws squares and a square list. */
+.seg{display:inline-flex;width:max-content;max-width:100%;box-sizing:border-box;background:var(--tint2);border-radius:var(--r-pill);padding:2px}
 .seg button{padding:4px 12px;font-size:11.5px;color:var(--ink3);border-radius:var(--r-pill);border:0;cursor:pointer;
-  background:none;font-family:inherit;line-height:1.5;
+  background:none;font-family:inherit;line-height:1.5;white-space:nowrap;flex:none;
   transition:background .18s,color .15s,box-shadow .2s}
 .seg button.on{background:var(--float);color:var(--ink);font-weight:600;box-shadow:var(--lift-0)}
 /* counted variant (Screener sections) */
@@ -10,3 +27,10 @@
 .seg button.on .scnt{color:var(--ink2)}
 /* scope variant (decision bar) */
 .seg.scope button{padding:3.5px 10px;font-size:11px}
+/* ── the stacked form ── one option per line; the list is as wide as its longest label and
+   never wider than the container. Off-band literals through ratios, never snapped: 10px and
+   8px under paper, 0 under ohmarchy. */
+.seg[data-stack]{display:flex;flex-direction:column;align-items:stretch;gap:1px;padding:3px;
+  border-radius:calc(var(--r-card) * 10 / 14)}
+.seg[data-stack] button{text-align:left;white-space:normal;border-radius:calc(var(--r-card) * 8 / 14);padding:6px 12px}
+.seg[data-stack].counted button{justify-content:space-between}

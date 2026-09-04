@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { FOLDER_OF_VIEW, isProtectedMessage, isResurfaced, type EngineMessage, type OhmailView, type TagDTO } from "@ohmail/client-engine";
-import { Button, Chip, Icon, InfoNote, Kbd, ProtectedBlock, ReadingPane } from "@ohmail/ui";
+import { Button, Chip, DatePicker, Icon, InfoNote, Kbd, ProtectedBlock, ReadingPane } from "@ohmail/ui";
 import { AttachmentStrip } from "../components/AttachmentStrip";
 import { isPreviewable } from "../components/AttachmentPreview";
 import { opensInSystemViewer } from "./open-attachment";
@@ -16,6 +16,7 @@ import { MessageBody } from "../components/MessageBody";
 import { ConversationPanels } from "./Conversation";
 import { MessageHeader } from "./MessageCard";
 import { PLACE_LABEL, dayNine, dayValue, hueOf, nextWeekNine, tagsOfMessage, tomorrowNine, withheldCopyKey } from "./format";
+import { activeFormatLocale } from "./locale";
 import { replyAllRecipients } from "./compose-from";
 import { useBarDensity } from "./bar-density";
 import { InlineReply } from "./InlineReply";
@@ -289,6 +290,9 @@ function ActionBar({
      second source of copy, and the two would drift the first time one of them was reworded. The
      cross-namespace read is the pattern the Screening button already uses (`tr("action")`). */
   const tm = useTranslations("message");
+  /* "today", for the date picker's cell label — the Screener's own word for it, read across the
+     namespace as `tr("action")` is, rather than a second copy of the same word. */
+  const ts = useTranslations("screener");
   const press = useKeyPress();
   const chrome = useMessageChrome();
   /** The runtime density measurement — which groups ACTUALLY fit; see `bar-density.ts`. */
@@ -368,6 +372,23 @@ function ActionBar({
 
   // A message swap must not leave a menu open over a different message's verbs.
   useEffect(() => setMenuOpen(false), [message.id]);
+
+  /**
+   * THE RESURFACE CHOOSER'S DATE PICKER — open, and the capsule it hangs from. DESIGN REFERENCE
+   * (prototype): a `DatePicker` (packages/ui) anchored to the "Pick a date" capsule replaces the
+   * native `<input type="date">`, whose calendar the operating system drew below the bar and off
+   * the display. Dismissing returns focus to the capsule, as the More menu returns it to More;
+   * a message swap or a panel change closes it.
+   */
+  const [dateOpen, setDateOpen] = useState(false);
+  const dateRef = useRef<HTMLButtonElement>(null);
+  const closeDate = (): void => {
+    setDateOpen(false);
+    dateRef.current?.focus();
+  };
+  useEffect(() => setDateOpen(false), [message.id, panel]);
+  /** The floor's one concession is in force: the read switch stands without its words. */
+  const compact = density.admit?.split(" ").includes("compact") ?? false;
 
   /**
    * MARK UNREAD — the read-state verb of a message that IS read.
@@ -561,16 +582,35 @@ function ActionBar({
           <button type="button" className="abar-b abar-solo" onClick={() => pick(nextWeek)}>
             {t("resurfaceNextWeek")}
           </button>
-          <label className="abar-b abar-solo abar-date">
+          <button
+            ref={dateRef}
+            type="button"
+            className="abar-b abar-solo abar-date-trigger"
+            aria-haspopup="dialog"
+            aria-expanded={dateOpen}
+            onClick={() => setDateOpen((open) => !open)}
+          >
             {t("resurfacePick")}
-            <input
-              type="date"
-              className="abar-date-input"
+          </button>
+          {dateOpen ? (
+            <DatePicker
+              locale={activeFormatLocale()}
+              today={dayValue(now.toISOString())}
               min={dayValue(tomorrow)}
-              aria-label={t("resurfacePick")}
-              onChange={(e) => e.currentTarget.value && pick(dayNine(e.currentTarget.value))}
+              anchor={dateRef.current}
+              labels={{
+                dialog: t("resurfacePick"),
+                prevMonth: t("datePrevMonth"),
+                nextMonth: t("dateNextMonth"),
+                today: ts("today"),
+              }}
+              onPick={(day) => {
+                setDateOpen(false);
+                pick(dayNine(day));
+              }}
+              onClose={closeDate}
             />
-          </label>
+          ) : null}
           <button type="button" className="abar-b" onClick={() => onPanel(null)}>
             {t("moveCancel")}
           </button>
@@ -873,30 +913,36 @@ function ActionBar({
             <button
               type="button"
               className="abar-b abar-solo abar-read abar-done"
+              aria-label={t("actionDone")}
+              title={compact ? t("actionDone") : undefined}
               onClick={() => onAction("resurface_done")}
             >
               <Icon name="check" size={13} className="abar-check" />
-              {t("actionDone")}
+              <span className="abar-read-lab">{t("actionDone")}</span>
               <Key chord="shift+i" />
             </button>
           ) : read ? (
             <button
               type="button"
               className="abar-b abar-solo abar-read"
+              aria-label={t("actionMarkUnread")}
+              title={compact ? t("actionMarkUnread") : undefined}
               onClick={markUnread}
             >
               <span className="abar-dot" aria-hidden="true" />
-              {t("actionMarkUnread")}
+              <span className="abar-read-lab">{t("actionMarkUnread")}</span>
               <Key chord="u" />
             </button>
           ) : (
             <button
               type="button"
               className="abar-b abar-solo abar-read"
+              aria-label={t("actionMarkRead")}
+              title={compact ? t("actionMarkRead") : undefined}
               onClick={markRead}
             >
               <span className="abar-dot abar-dot-off" aria-hidden="true" />
-              {t("actionMarkRead")}
+              <span className="abar-read-lab">{t("actionMarkRead")}</span>
               <Key chord="shift+i" />
             </button>
           )}

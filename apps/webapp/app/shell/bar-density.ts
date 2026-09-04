@@ -14,12 +14,16 @@
  * on exactly such a machine. The rungs' stated failure direction (fold early, never overflow)
  * held; the cost was verbs a wider row could have carried.
  *
- * So the pill now measures ITS OWN row: a hidden copy of every group the message could stand
+ * So the pill measures ITS OWN row: a hidden copy of every group the message could stand
  * (same markup, same classes, same font — rendered invisibly inside the pill) gives each
- * group's REAL width, and groups are admitted greedily, in the ladder's own row order, while
- * they actually fit. The CSS rungs stay untouched underneath as the no-JS/first-paint
- * fallback: until the first measurement lands, `data-admit` is absent and the rungs govern —
- * and they still only ever err toward folding early, which the measurement then corrects.
+ * group's REAL width, and groups are admitted greedily, in row order, while they actually fit.
+ *
+ * DESIGN REFERENCE (prototype): this is the ONLY mechanism now. The static rungs are gone from
+ * `action-bar.css` — two mechanisms deciding one question disagreed, and a rung's rule outranked
+ * the measurement's on the menu twin, so a folded group stood in NEITHER place. Until the first
+ * measurement lands, `data-admit` is absent and the row is its floor (Reply, the read switch,
+ * More) with every group behind More; the measurement runs in the commit that mounts the copy,
+ * before the browser paints.
  *
  * ── THE LAWS, KEPT ──────────────────────────────────────────────────────────────────────────
  *
@@ -31,8 +35,12 @@
  *    is never allowed past the width the pill actually has. Folding too early is the benign
  *    direction; painting a control outside the pill is the defect the ladder exists to prevent.
  *  · IN THE ROW OR BEHIND MORE, NEVER BOTH. The `data-admit` CSS (foot of `action-bar.css`)
- *    switches each group's row form and its `mm-*` menu row in the same rule pair, exactly as
- *    every rung does.
+ *    switches each group's row form and its `mm-*` menu row in the same rule pair — the only
+ *    rules that touch either half.
+ *  · THE FLOOR YIELDS ITS WORDS ONCE. When even the floor does not fit, the read switch's label
+ *    is dropped (`compact` in `data-admit`) and the floor is re-measured without it; the dot
+ *    and the keycap stay, and the verb moves to the button's name. Nothing below the compact
+ *    floor can fold — the measurement reports that state rather than hiding a control.
  *
  * The SELECTION bar (`.pick-bar`) is deliberately untouched: its verbs are a different label
  * set with its own geometry and its own rungs, and this hook arms only under `.msg-actions`.
@@ -49,6 +57,8 @@ export const FALLBACK_GAP_PX = 6;
 /** The density groups, in ROW ORDER — which is the ladder's rung order and the fold order. */
 export const BAR_GROUP_ORDER = ["rall", "fwd", "defer", "tag", "file"] as const;
 export type BarGroup = (typeof BAR_GROUP_ORDER)[number];
+/** The `data-admit` token for the floor's one concession — the read switch without its words. */
+export const COMPACT = "compact";
 
 export interface MeasuredGroup {
   name: BarGroup;
@@ -155,7 +165,23 @@ export function useBarDensity(): {
       else groups.push({ name, width: w });
     }
     if (base === 0) return;
-    const next = admitGroups(avail, base, groups, gap).join(" ");
+    /* THE COMPACT FLOOR — the read switch's words are the one thing the floor can give up.
+       Measured off the copy's own label span (same font, same size) plus the gap the button
+       closes when the span goes; the button's `gap` is read, not assumed, for the reason the
+       paddings are. */
+    const tokens: string[] = [];
+    let floor = base;
+    if (base > avail) {
+      const lab = row.querySelector<HTMLElement>(".abar-read .abar-read-lab");
+      const readBtn = lab?.closest<HTMLElement>(".abar-read") ?? null;
+      const labW = lab ? lab.getBoundingClientRect().width : 0;
+      const inner = readBtn ? parseFloat(getComputedStyle(readBtn).columnGap) || 0 : 0;
+      if (labW > 0) {
+        floor = base - labW - inner;
+        tokens.push(COMPACT);
+      }
+    }
+    const next = [...admitGroups(avail, floor, groups, gap), ...tokens].join(" ");
     setAdmit((prev) => (prev === next ? prev : next));
   }, []);
 

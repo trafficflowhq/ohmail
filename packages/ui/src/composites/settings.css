@@ -128,7 +128,10 @@
     flex-direction:column;align-items:stretch;gap:8px}
   .set-row:has(> .seg) > *,.set-row:has(> input) > *,.set-row:has(> textarea) > *,.set-row:has(> .set-tag-acts) > *,.set-row:has(> .set-row-acts) > *{
     flex:0 0 auto;margin-left:0;width:auto}
-  .set-row .seg{align-self:flex-start;flex-wrap:wrap}
+  /* DESIGN REFERENCE (prototype): no `flex-wrap` here any more — a wrapped capsule was a blob
+     under paper. The control's own stacked form (`seg.css`, `data-stack`) is what a segmented
+     control does when its row would overflow, at this width and at every other. */
+  .set-row .seg{align-self:flex-start}
   .set-row > :is(input,textarea,.set-tag-input){width:100%}
   .set-fields{grid-template-columns:1fr}
   .set-banner .btn{margin-left:0}

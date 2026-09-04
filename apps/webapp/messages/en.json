@@ -479,6 +479,8 @@
     "resurfaceTomorrow": "Tomorrow",
     "resurfaceNextWeek": "Next week",
     "resurfacePick": "Pick a date",
+    "datePrevMonth": "Previous month",
+    "dateNextMonth": "Next month",
     "actionMove": "Move",
     "actionDraftReply": "Draft reply",
     "toastQueued": "Queued in Answer Later",

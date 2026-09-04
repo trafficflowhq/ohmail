@@ -3865,14 +3865,22 @@ textarea.c-input:read-only {
   border-bottom: 1px solid var(--hair);
 }
 .mbx-row:last-of-type { border-bottom: 0; }
-/* 120px is the FLOOR under the address column, not a suggestion: with `min-width: 0` a wide
-   state column (an error sentence plus two buttons) presses this to nothing, and a long
-   address then breaks mid-word ("…@examp / le-company.ch") — which is why the address now
-   ellipsizes instead of wrapping (`title` carries the full value; see MailboxSection.tsx). */
-.mbx-main { display: flex; flex-direction: column; gap: 2px; min-width: 120px; flex: 1; }
+/* THE FLOOR UNDER THE ADDRESS COLUMN IS 120px OR THE WIDEST CONTROL STANDING IN IT, whichever is
+   wider. DESIGN REFERENCE (prototype). A bare `min-width: 120px` here let a wide state column
+   press this one to 120px, and a capsule inside it — stretched to the column by the column
+   flex's `align-items` and forbidden to wrap by `.mbx-btn` — was cut off mid-label (German
+   "Stattdessen hier organisieren" lost 50–110px of itself, by face). Now the column's minimum is
+   its content's (`min-content`): `contain: inline-size` keeps the ADDRESS out of that minimum —
+   it still ellipsizes at whatever width the column gets, and its own `min-width` carries the
+   120px floor — while every button counts toward it. A capsule in this column sizes to its
+   label (`align-self: flex-start`), never stretched, never cut; the state column beside it
+   wraps its words and buttons to make the room, which is what its `flex-wrap` is for. */
+.mbx-main { display: flex; flex-direction: column; gap: 2px; min-width: min-content; flex: 1; }
+.mbx-main > .mbx-btn { align-self: flex-start; }
 .mbx-addr {
   font-size: 14px; color: var(--ink);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  min-width: 120px; contain: inline-size;
 }
 .mbx-sub { font-size: 11.5px; color: var(--ink2); }
 /* The state may WRAP but its buttons may not: `min-width: 0` lets the column give space back

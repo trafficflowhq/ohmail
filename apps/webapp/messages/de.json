@@ -479,6 +479,8 @@
     "resurfaceTomorrow": "Morgen",
     "resurfaceNextWeek": "Nächste Woche",
     "resurfacePick": "Datum wählen",
+    "datePrevMonth": "Vormonat",
+    "dateNextMonth": "Nächster Monat",
     "actionMove": "Verschieben",
     "actionDraftReply": "Antwort entwerfen",
     "toastQueued": "In „Später antworten“ vorgemerkt",

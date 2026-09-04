@@ -56,6 +56,8 @@ export { Avatar } from "./primitives/Avatar.js";
 export type { AvatarProps } from "./primitives/Avatar.js";
 export { SegmentedControl } from "./primitives/SegmentedControl.js";
 export type { SegmentedControlProps, SegmentOption } from "./primitives/SegmentedControl.js";
+export { DatePicker } from "./primitives/DatePicker.js";
+export type { DatePickerProps, DatePickerLabels } from "./primitives/DatePicker.js";
 export { Switch } from "./primitives/Switch.js";
 export type { SwitchProps } from "./primitives/Switch.js";
 export { Spinner } from "./primitives/Spinner.js";

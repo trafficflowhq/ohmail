@@ -1,0 +1,64 @@
+/* ═══ DATE PICKER — a month, anchored to the control that asked for it ═══════════════════════
+ *
+ * DESIGN REFERENCE (prototype). A small floating card in the tag picker's family: `--float`
+ * ground, `--lift-3`, the card radius, `--z-pal`, and the `rise` entrance every popover here
+ * makes. Tokens only — paper draws round day cells and a rounded card, ohmarchy draws squares
+ * on a square card with the 2px ring, both from the same rules.
+ *
+ * It is `position:fixed` and placed by the component from the anchor's rectangle: BELOW the
+ * anchor when the whole card fits there, ABOVE it otherwise (the resurface strip stands at the
+ * foot of the reading column, so above is the usual case), and clamped inside the viewport on
+ * both axes. `data-side` records which way it opened; nothing here reads it except a test.
+ *
+ * The grid is seven columns and always six rows, so the card's height does not change as the
+ * month changes and a flip decided on one month holds on the next. Day numbers are tabular.
+ *
+ * States, per cell: rest · hover (`--tint`) · today (a small accent dot under the number, the
+ * mark the row's unread dot already uses) · selected (accent fill, on-accent number, the primary
+ * capsule's treatment) · disabled (before `min`: `--ink3`, quiet, no hover, no pointer) · outside
+ * the shown month (`--ink3`, otherwise ordinary) · focused (the focus ring is the cursor — the
+ * grid roves, one cell holds `tabindex=0`).
+ */
+.dp{
+  position:fixed;z-index:var(--z-pal);width:256px;padding:10px;
+  background:var(--float);border-radius:var(--r-card);box-shadow:var(--lift-3);
+  animation:rise .2s var(--spring);
+  font-size:12px;color:var(--ink);
+}
+.dp-head{display:flex;align-items:center;gap:4px;margin:0 0 6px}
+.dp-month{flex:1;text-align:center;font-size:12.5px;font-weight:600;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dp-nav{
+  width:28px;height:28px;display:inline-grid;place-items:center;flex:none;
+  border:0;background:none;cursor:pointer;color:var(--ink2);border-radius:var(--r-pill);
+  transition:background .15s var(--swift),color .15s var(--swift);
+}
+.dp-nav:hover{background:var(--tint);color:var(--ink)}
+.dp-nav:disabled{color:var(--ink3);opacity:.45;cursor:default;background:none}
+.dp-nav svg{width:12px;height:12px}
+.dp-nav-prev svg{transform:rotate(180deg)}
+.dp-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
+.dp-row{display:contents}
+.dp-wd{
+  font-size:10.5px;font-weight:550;color:var(--ink3);text-align:center;
+  padding:2px 0 4px;white-space:nowrap;overflow:hidden;
+}
+.dp-day{
+  position:relative;height:30px;min-width:0;border:0;background:none;cursor:pointer;
+  font:inherit;font-size:12px;font-variant-numeric:tabular-nums;color:var(--ink);
+  border-radius:var(--r-pill);display:grid;place-items:center;
+  transition:background .15s var(--swift),color .15s var(--swift);
+}
+.dp-day:hover{background:var(--tint)}
+.dp-day[data-outside]{color:var(--ink3)}
+.dp-day[data-today]{font-weight:650}
+.dp-day[data-today]::after{
+  content:"";position:absolute;left:50%;bottom:4px;width:3px;height:3px;margin-left:-1.5px;
+  border-radius:var(--r-avatar);background:var(--accent);
+}
+.dp-day[aria-selected="true"]{background:var(--accent);color:var(--on-accent)}
+.dp-day[aria-selected="true"]::after{background:var(--on-accent)}
+.dp-day[aria-disabled="true"]{color:var(--ink3);opacity:.45;cursor:default}
+.dp-day[aria-disabled="true"]:hover{background:none}
+/* The cursor: the app's focus ring, drawn 1px outside the cell — the grid's 2px gap is the
+   only room there is, so the shell's 3px offset would ride over the neighbour. */
+.dp-day:focus-visible{outline:var(--focus-w) solid var(--focus,var(--accent));outline-offset:1px}
