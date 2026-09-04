@@ -955,10 +955,14 @@ GRANT SELECT (created_at, invited_at) ON public.waitlist TO ohmail_admin;
 -- its current unbroken run of trips, or NULL while it is closed. A timestamp the worker computes
 -- from its own in-process fault counter: it names no mailbox, no account and no model call, and
 -- it is the only evidence anywhere in this database that mail is being filed rules-only.
+-- `degraded_since` (cloud 0030) is when the leader first reported itself degraded in its current
+-- unbroken run, NULL while healthy — the duration the degraded-worker rule measures, kept on the
+-- row so a leader change cannot reset the clock. A fact about the process, like its neighbour.
 REVOKE ALL ON public.worker_heartbeats FROM ohmail_admin;
 GRANT SELECT (
   shard_index, instance_id, leader, shards, mailboxes, expected, accounts,
-  quarantined, degraded, ai_circuit_open_since, last_cycle_at, started_at, beat_at
+  quarantined, degraded, ai_circuit_open_since, degraded_since,
+  last_cycle_at, started_at, beat_at
 ) ON public.worker_heartbeats TO ohmail_admin;
 
 -- `outbound_sends` — the stuck-send queue, which is a staff surface on the Worker and Actions

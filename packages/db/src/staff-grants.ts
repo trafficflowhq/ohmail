@@ -348,7 +348,12 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
     // in its current unbroken run of trips, NULL while closed. A timestamp the worker computes
     // from its own in-process fault counter — no mailbox, no account, no model call — and the
     // only evidence in this database that mail is being filed rules-only.
-    "quarantined", "degraded", "ai_circuit_open_since", "last_cycle_at", "started_at", "beat_at",
+    // `degraded_since` (cloud 0030): when the leader first reported itself degraded in the
+    // current unbroken run, NULL while healthy. A timestamp about the PROCESS, on its
+    // neighbour's exact terms — no mailbox, no account, nothing a message carried — and the
+    // console renders its age beside the flag so an operator can tell a boot from a fault.
+    "quarantined", "degraded", "ai_circuit_open_since", "degraded_since",
+    "last_cycle_at", "started_at", "beat_at",
   ],
   // NOT `idempotency_key` (the client's header, verbatim), NOT the two Message-IDs, NOT
   // `draft_id` (a handle onto draft content).

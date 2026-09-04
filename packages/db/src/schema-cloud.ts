@@ -578,6 +578,13 @@ export const workerHeartbeats = pgTable("worker_heartbeats", {
    * answers it. Cleared to NULL by the first success.
    */
   aiCircuitOpenSince: timestamp("ai_circuit_open_since", { withTimezone: true }),
+  /**
+   * When this worker FIRST reported itself degraded in the current unbroken run, NULL while
+   * healthy. The duration `worker_degraded` measures — a boolean can only answer "right now",
+   * and the rule's question is how long. On the ROW rather than in the process so a leader
+   * change does not reset the clock on a fault that outlived the worker that first saw it.
+   */
+  degradedSince: timestamp("degraded_since", { withTimezone: true }),
   lastCycleAt: timestamp("last_cycle_at", { withTimezone: true }),
   startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
   beatAt: timestamp("beat_at", { withTimezone: true }).defaultNow().notNull(),

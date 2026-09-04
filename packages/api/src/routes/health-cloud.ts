@@ -232,8 +232,11 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   ["platform_costs", "fetched_at"],
   ["ai_usage_daily", "cost_micro_usd"],
   ["billing_reconciliation_runs", "invoices_listed"],
-  // cloud 0030_heartbeat_signals_alert_runs — THREE markers, on 0028's rule again: three
-  // independent changes, and a database can hold some without the others.
+  // cloud 0030_heartbeat_signals_alert_runs — FOUR markers, on 0028's rule again: the migration
+  // makes five independent changes and a database can hold some without the others, so each
+  // marker below names one of them. The fifth (`worker_heartbeats.ai_circuit_open_since`) needs
+  // none of its own: it is a heartbeat column added BEFORE the one the fourth marker names, and
+  // statements inside a migration apply in order.
   //
   // `alert_state.cls` is the loud one, and its loudness is a particular kind. Every observation
   // the alert pass records INSERTS this column, so an API deployed ahead of the migration 42703s
@@ -253,6 +256,18 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   ["alert_state", "cls"],
   ["alert_pass_runs", "ran_at"],
   ["platform_signals", "errors_5xx"],
+  // `worker_heartbeats.degraded_since` — the FOURTH, and it is the LAST statement of the
+  // migration, which is what makes it worth having beyond its own rule. Statements inside one
+  // migration apply in order, so a database that has this column has every column above it too;
+  // the marker therefore covers the two heartbeat columns that carry no marker of their own
+  // (`ai_circuit_open_since` is the other) and closes the file's own remaining gap.
+  //
+  // Its own rule is the ordinary one: `worker_degraded` READS this column on every pass, and the
+  // API arm runs that pass. Without the marker an API deployed ahead of the migration 42703s
+  // inside `runAlertPass` — silently, because that pass swallows nothing and reports nowhere,
+  // and its whole job is to be the thing that notices. With it, the deploy answers
+  // `503 schema_incomplete` and names the reason.
+  ["worker_heartbeats", "degraded_since"],
 ] as const;
 
 /**

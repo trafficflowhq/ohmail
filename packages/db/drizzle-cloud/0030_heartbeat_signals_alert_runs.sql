@@ -180,3 +180,28 @@ CREATE INDEX IF NOT EXISTS "platform_signals_window_idx"
 -- been filed rules-only, and that is measured from the FIRST open, cleared by the first success.
 ALTER TABLE "worker_heartbeats" ADD COLUMN IF NOT EXISTS "ai_circuit_open_since"
   timestamp with time zone;
+--> statement-breakpoint
+
+-- ══ 5. HOW LONG THE LEADER HAS BEEN DEGRADED ═══════════════════════════════════════════════
+--
+-- When this worker FIRST reported itself degraded in the current unbroken run, or NULL while it is
+-- healthy. `ai_circuit_open_since`'s shape one statement up, and for the same reason: the rule's
+-- question is a DURATION, and a boolean can only answer "right now".
+--
+-- Without it the alert had no durable clock for the condition and measured UPTIME instead — "the
+-- process has been up ten minutes AND is degraded at this instant". That suppresses a boot, which
+-- is what it was written for, and suppresses nothing afterwards: a leader up for a day that flips
+-- degraded for a single beat (one roster churn, one mailbox re-attaching) satisfied both halves
+-- and paged as a critical. A pager that fires on routine churn is one an operator learns to skim,
+-- which is the failure the incident/signal split in this same migration exists to prevent.
+--
+-- STAMPED ON THE ROW, not held in the worker's memory, and that is the load-bearing part: a
+-- leader change must not reset the clock. The incoming leader writes the heartbeat for the same
+-- shard, reads the stamp that is already there, and leaves it alone while the condition holds —
+-- so a fault that outlives the process that first saw it keeps its true age.
+--
+-- NULL is both "healthy" and "predates this column", exactly as the circuit's stamp is, and the
+-- two must read identically: a worker that has not yet written a beat under this build is not
+-- degraded, it is unobserved, and neither state may page.
+ALTER TABLE "worker_heartbeats" ADD COLUMN IF NOT EXISTS "degraded_since"
+  timestamp with time zone;

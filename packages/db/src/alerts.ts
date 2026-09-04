@@ -654,6 +654,7 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
       lastCycleAt: workerHeartbeats.lastCycleAt,
       startedAt: workerHeartbeats.startedAt,
       aiCircuitOpenSince: workerHeartbeats.aiCircuitOpenSince,
+      degradedSince: workerHeartbeats.degradedSince,
     })
     .from(workerHeartbeats);
   const bySh = new Map(beats.map((b) => [Number(b.shardIndex), b]));
@@ -695,27 +696,30 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   // nothing cycled yet) and briefly whenever the roster churns, so the honest threshold is one
   // that a booting worker clears and a stuck one does not. Ten minutes is several roster passes.
   //
-  // ── WHAT THE THRESHOLD ACTUALLY MEASURES, WHICH IS **UPTIME**, NOT DEGRADED DURATION ──
+  // ── MEASURED FROM `degraded_since`, WHICH IS A DURATION AND NOT AN UPTIME ─────────────
   //
-  // Stated plainly because this comment previously said `beat_at` and the code has always read
-  // `started_at`, which is a different question with a different answer.
+  // This rule used to read `started_at` and ask "has the process been up longer than the
+  // threshold AND is it degraded right now". That suppresses a BOOT, which is what it was
+  // written for, and suppresses nothing afterwards: a leader up for a day that flipped
+  // `degraded` for a single beat — one roster churn, one mailbox re-attaching — satisfied both
+  // halves and paged as a CRITICAL. A pager that fires on routine churn is one an operator
+  // learns to skim, which is the failure this file's incident/signal split exists to prevent,
+  // arriving through the one rule whose threshold read as if it already prevented it.
   //
-  // The heartbeat has no `degraded_since` column — adding one would put a state machine in the
-  // hot path of a best-effort write — so the only durable clock available here is when the
-  // PROCESS started. The condition is therefore "up for longer than the threshold AND degraded
-  // at this instant", not "degraded for longer than the threshold".
+  // `degraded_since` (cloud 0030) is the durable clock that makes the real question answerable:
+  // when this worker FIRST reported itself degraded in the current unbroken run, cleared to NULL
+  // by the first healthy beat. THE BOOT SUPPRESSION FALLS OUT OF IT rather than being a second
+  // condition — a worker that has just started and is briefly degraded has a stamp seconds old,
+  // and one that has churned and recovered has no stamp at all.
   //
-  // THE LIMITATION THAT FOLLOWS, and it is real rather than theoretical: the threshold only
-  // suppresses a BOOT. Past the first ten minutes it suppresses nothing, so a leader that has
-  // been up for a day and flips `degraded` for a single beat — one roster churn, one mailbox
-  // re-attaching — satisfies both halves and pages as a CRITICAL immediately. That is the noisy
-  // page this file's whole incident/signal split exists to prevent, reached by the one rule
-  // whose threshold looks like it already prevents it.
+  // It lives on the ROW, not in the worker's memory, and that is the load-bearing choice: the
+  // incoming leader after a deploy finds the previous one's stamp and keeps it, so a fault that
+  // outlives the process which first saw it keeps its true age. An in-process clock would
+  // restart on every handover, and a ten-minute rule would then never fire on a deployment that
+  // restarts more often than that.
   //
-  // Closing it needs `degraded_since` stamped by the worker and read here; it is recorded as
-  // owed rather than fixed quietly, because changing when a critical fires is a decision and not
-  // a tidy-up. Until then the detail sentence says what was actually read, so an operator can
-  // see that the figure is uptime.
+  // NULL is both "healthy" and "wrote no beat under a build that stamps this", and neither may
+  // page — the same reading `ai_circuit_open_since` takes one rule down.
   for (const shard of shards) {
     const beat = bySh.get(shard);
     if (!beat || !beat.leader || !beat.degraded) continue;
@@ -723,8 +727,10 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
     // A stale beat is rule 1's subject, not this one's — reporting both about one shard would
     // page twice for one worker.
     if ((beatAgeSeconds ?? Infinity) * 1000 > t.leaderStaleMs) continue;
+    if (!beat.degradedSince) continue;
+    const degradedSeconds = secondsBetween(now, new Date(beat.degradedSince as unknown as string));
+    if ((degradedSeconds ?? 0) * 1000 <= t.workerDegradedMs) continue;
     const upSeconds = secondsBetween(now, beat.startedAt);
-    if ((upSeconds ?? 0) * 1000 <= t.workerDegradedMs) continue;
     alerts.push({
       key: `worker_degraded:${shard}`,
       kind: "worker_degraded",
@@ -732,9 +738,11 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
       title: `Sync worker (shard ${shard}) is running but degraded`,
       detail:
         `The leader for shard ${shard} (${beat.instanceId}) is beating normally ` +
-        `(${humanAge(beatAgeSeconds)} ago) and reporting itself DEGRADED, and has been up for ` +
-        `${humanAge(upSeconds)} — past the ${humanAge(Math.round(t.workerDegradedMs / 1000))} ` +
-        `boot allowance. It holds ${beat.mailboxes} of ${beat.expected} expected mailbox(es), ` +
+        `(${humanAge(beatAgeSeconds)} ago) and has been reporting itself DEGRADED for ` +
+        `${humanAge(degradedSeconds)} — past the ` +
+        `${humanAge(Math.round(t.workerDegradedMs / 1000))} allowance that lets a boot and a ` +
+        `roster churn settle. It has been up for ${humanAge(upSeconds)}, and holds ` +
+        `${beat.mailboxes} of ${beat.expected} expected mailbox(es), ` +
         `${beat.quarantined} quarantined, and its last successful cycle was ` +
         `${humanAge(secondsBetween(now, beat.lastCycleAt))} ago. A liveness check cannot see ` +
         `this: the process is alive and the work is not happening. The worker's /health names ` +
@@ -745,7 +753,9 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
       // hold the page for the whole unchanged interval however far the roster drifted. The
       // three numbers here are what an operator would notice changing.
       signature: `degraded|${beat.mailboxes}/${beat.expected}|${beat.quarantined}`,
-      oldestSeconds: upSeconds,
+      // THE AGE OF THE CONDITION, not of the process — they are different numbers and this
+      // field is the one an operator reads as "how long has this been broken".
+      oldestSeconds: degradedSeconds,
       cls: "incident",
       affectedAccounts: null,
       fixHref: "/worker",
@@ -3252,6 +3262,9 @@ export async function writeHeartbeat(db: Tx, input: HeartbeatInput, now: Date = 
       accounts: input.accounts,
       quarantined: input.quarantined,
       degraded: input.degraded,
+      // A row that did not exist has no earlier stamp to preserve, so the INSERT branch is the
+      // simple half. The `onConflictDoUpdate` below carries the case that matters.
+      degradedSince: input.degraded ? now : null,
       aiCircuitOpenSince: input.aiCircuitOpenSince,
       lastCycleAt: input.lastCycleAt,
       startedAt: input.startedAt,
@@ -3268,6 +3281,20 @@ export async function writeHeartbeat(db: Tx, input: HeartbeatInput, now: Date = 
         accounts: input.accounts,
         quarantined: input.quarantined,
         degraded: input.degraded,
+        // ── THE DEGRADED CLOCK, COMPUTED IN SQL AGAINST THE ROW THAT IS ALREADY THERE ──────
+        //
+        // Three cases in one expression, and the middle one is why this cannot be done in the
+        // worker: healthy clears the stamp; degraded with NO stamp starts it at this beat;
+        // degraded with a stamp LEAVES IT ALONE. The third case is what survives a leader
+        // change — the incoming instance writes this row for the same shard, finds the previous
+        // leader's stamp and keeps it, so a fault that outlives the process which first saw it
+        // keeps its true age. An in-memory clock would restart on every deploy, and a rule that
+        // fires after ten minutes would then never fire on a worker that restarts more often
+        // than that.
+        degradedSince: sql`case
+          when ${input.degraded} is not true then null
+          when ${workerHeartbeats.degradedSince} is null then ${now.toISOString()}::timestamptz
+          else ${workerHeartbeats.degradedSince} end`,
         aiCircuitOpenSince: input.aiCircuitOpenSince,
         lastCycleAt: input.lastCycleAt,
         startedAt: input.startedAt,
@@ -3327,6 +3354,14 @@ export async function refreshHeartbeat(
       accounts: input.accounts,
       quarantined: input.quarantined,
       degraded: input.degraded,
+      // The same three-case expression as the claiming write, and it has to be here too: a
+      // leader draining one long first sync refreshes for minutes without ever reaching the
+      // serial-queue write, so a fault that begins inside that window would otherwise go
+      // unstamped for as long as it lasts — which is exactly the window the rule cares about.
+      degradedSince: sql`case
+        when ${input.degraded} is not true then null
+        when ${workerHeartbeats.degradedSince} is null then ${now.toISOString()}::timestamptz
+        else ${workerHeartbeats.degradedSince} end`,
       aiCircuitOpenSince: input.aiCircuitOpenSince,
       lastCycleAt: input.lastCycleAt,
       beatAt: now,
