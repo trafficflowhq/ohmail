@@ -244,6 +244,7 @@ type OrganizerRow = Parameters<typeof readerStandDown>[0] & {
   organizedBy?: { kind: string | null; name: string | null; since: string | null } | null;
   organizerState?: "held" | "stopped" | null;
   organizerAcceptsRequests?: boolean;
+  authKind?: string;
   organizerEventAt?: string | null;
   organizerEventSeenAt?: string | null;
 };
@@ -312,10 +313,19 @@ export interface ScreenerRole {
   name: string | null;
   /** Only in `blocked`; `null` in the other two. See {@link ScreenerBlockReason}. */
   reason: ScreenerBlockReason | null;
+  /**
+   * EVERY live reader is signed in with OAuth — so the refusal is permanent for this release
+   * rather than a build somebody can update.
+   *
+   * ALL of them, not any: on a mixed roster the sentence would name a limitation that does not
+   * apply to some of these mailboxes, and a person reading it would conclude the wrong thing
+   * about the password one. `false` in the other two modes and wherever this build cannot tell.
+   */
+  oauthOnly: boolean;
 }
 
 export function screenerMode(facts: ReadonlyArray<OrganizerRow> | null): ScreenerRole {
-  const organizes: ScreenerRole = { mode: "organizer", name: null, reason: null };
+  const organizes: ScreenerRole = { mode: "organizer", name: null, reason: null, oauthOnly: false };
   if (facts === null) return organizes;
   const live = facts.filter((m) => m.status !== "disabled");
   if (live.length === 0) return organizes;
@@ -325,13 +335,19 @@ export function screenerMode(facts: ReadonlyArray<OrganizerRow> | null): Screene
   /* `=== true` and never a truthy read: absent is "this build cannot tell", and the whole point of
      the field is that it withholds rather than offers. */
   if (live.every((m) => m.organizerAcceptsRequests === true)) {
-    return { mode: "pending", name: named, reason: null };
+    return { mode: "pending", name: named, reason: null, oauthOnly: false };
   }
+  const oauthOnly = live.every((m) => m.authKind === "oauth");
   /* A HOLDER IS NAMED — the same test `readerStandDown` makes, and for the same reason: the object
      may exist with three nulls in it. Where no live row names anybody, nothing organizes these
      mailboxes at all, which is the other sentence and the other remedy. */
   const anyHolder = live.some((m) => Boolean(m.organizedBy && (m.organizedBy.kind || m.organizedBy.name)));
-  return { mode: "blocked", name: named, reason: anyHolder ? "organizer_outdated" : "no_organizer" };
+  return {
+    mode: "blocked",
+    name: named,
+    reason: anyHolder ? "organizer_outdated" : "no_organizer",
+    oauthOnly,
+  };
 }
 
 /**
@@ -590,6 +606,19 @@ export interface MailboxFacts {
    * a minute later.
    */
   organizerAcceptsRequests?: boolean;
+  /**
+   * HOW THIS MAILBOX IS SIGNED IN — and it decides one sentence rather than one control.
+   *
+   * A password mailbox lets both installs derive the same signing key from the credential they
+   * already share, so an organizer can tell a reader's decision from a stranger's. An OAuth
+   * mailbox has no such shared secret: there is no key, the organizer advertises no capability,
+   * and a decision made on a reader is refused however new both installs are. That is a property
+   * of the sign-in, not a version skew, so the pane says it plainly instead of implying a wait.
+   *
+   * ABSENT says nothing, which is right for a build that cannot tell: the refusal is already
+   * explained by who holds the mailbox, and this only adds why it will not change.
+   */
+  authKind?: "password" | "oauth";
   /**
    * HOW MANY OF THE USER'S OWN FILINGS THIS MAILBOX HAS NOT APPLIED YET.
    *

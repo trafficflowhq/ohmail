@@ -102,6 +102,10 @@ describe("the desktop mailbox-facts seam", () => {
       organizerEventSeenAt: null,
       organizerReleasedAt: null,
       organizerAcceptsRequests: false,
+      /* HOW the mailbox is signed in. On this door it is always a password — the local engine
+         has no OAuth ceremony — but the field is on the wire and the shell reads it, so the
+         seam has to forward it rather than drop it silently. */
+      authKind: "password",
       createdAt: "2026-09-02T10:39:31.446Z",
     };
     // Every declared key must be answerable by the engine, or the census is testing a fiction.

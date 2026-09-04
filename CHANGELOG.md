@@ -32,6 +32,63 @@ sitting in the mailbox is an ordinary message, any program with access to the ma
 one, and an organizer that acted on it unverified would file a stranger's mail on their say-so.
 Until then the honest answer to "decide from here" is no, with the name of the install that can.
 
+### Any machine can take a mailbox over, and give it back
+
+Which install organizes a mailbox used to depend on what kind of install it was: one running on
+your own computer could not take a mailbox over from a hosted one while that one was still checking
+in, whatever you pressed. If the machine you ran ohmail on became unreachable, the mailbox stayed
+where it was and there was nothing you could do about it from the machine in front of you.
+
+An explicit press now outranks a claim that carries none, whichever machine wrote it. Pressing
+"Organize here" takes the mailbox on the next pass — within a minute — and the install that had it
+becomes a reader: it keeps its copy of your mail and moves nothing. Your rules, the screening
+window and the away responder travel with the mailbox. No mail is moved and nothing is screened
+again.
+
+Every sentence that described the old rule is gone with it. The screens that told you to go and
+stop the other organizer first, and the ones that warned a running install would keep the mailbox
+whatever you asked for here, were true while a press could be refused; they would now send you to
+stop a machine you no longer have to touch.
+
+### Stop organizing here, and keep your mail
+
+The other direction had no control at all. To make an install let go of a mailbox you had to remove
+the mailbox, which deletes the password stored for it and stops the mail — so "leave whenever you
+like" was a promise with nothing behind it on the very screen that made it.
+
+Settings → Mailboxes now offers "Stop organizing here, keep the mail" on any mailbox this install
+organizes, on the desktop and in the browser. Your folders and everything in them stay exactly
+where they are, the password is kept, and any install can take the mailbox afterwards — including
+the one that just let it go. Like the takeover, it records a request: the claim lives in your own
+mailbox, so the install that holds it is the only thing that can give it up, and it does so on its
+next pass.
+
+### One line when a mailbox changes hands, and a permanent record of where it stands
+
+Reading a mailbox another machine organizes is a normal state, and often the one you chose — a
+phone and a laptop on one mailbox is the ordinary shape of this. So a banner that says so on every
+visit is a warning about a decision you already made.
+
+Instead, a change is announced once: a quiet line above the Ohbox saying who organizes the mailbox
+now, with "Mark read" that ends it for good. It is derived from the mailbox itself rather than
+remembered per app, so acknowledging it on your phone takes it off your laptop too, and a mailbox
+that changed hands twice while nobody was looking produces one line describing where it ended up.
+
+What does not disappear is the record. Settings → Mailboxes keeps a line under every mailbox saying
+whether this install organizes it, which one does and since when, or that nothing does — with the
+one button that changes it, and the sentence saying what that press costs the other machine before
+you make it.
+
+### A mailbox you only read says so, and says who to ask
+
+A mailbox this install reads rather than organizes shows the install that organizes it and refuses
+decisions here, before the press rather than after it; organizing it here instead is one press in
+Settings → Mailboxes. The Screener withholds its decision bar and its keyboard verbs on such a
+mailbox rather than offering controls that answer with a refusal, and the panes that release mail
+from Screened out or rescue it from Quarantine say that moving mail happens where the organizer
+runs. On a phone, a decision made on a mailbox the phone does not organize no longer reports itself
+as filed.
+
 ### German where the app used to speak half English
 
 With the language set to Deutsch, the one control that stayed in English was the one that

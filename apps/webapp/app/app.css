@@ -4144,6 +4144,20 @@ textarea.c-input:read-only {
   background: transparent;
   box-shadow: inset 0 0 0 1px var(--hair-soft);
 }
+/* ON A PHONE THE VERB TAKES ITS OWN LINE, WHOLE.
+   A settings banner's action is `white-space:nowrap; flex:none` — right for the one-word verbs
+   the shape was built for, and wrong for these two, which have to name what they keep as well as
+   what they stop ("Stop organizing here, keep the mail", and its German, which is longer again).
+   Held to one line it runs past a 320px pane. The banner already wraps, so the fix is to let the
+   capsule that lands on the second row use the whole of it and break its own text. Scoped to this
+   block: every other banner on the pane keeps the nowrap it was drawn for. */
+@media (max-width: 420px) {
+  .mbx-org .set-banner .btn {
+    flex: 1 1 100%;
+    margin-left: 0;
+    white-space: normal;
+  }
+}
 /* THE HANDOVER, AND WHAT IT COSTS, BEFORE IT IS CONFIRMED. The sentence here is the most
    important text on the pane — the one thing a person reads before handing a mailbox between
    machines — and it used to be set as the row's footnote, the smallest and greyest type the

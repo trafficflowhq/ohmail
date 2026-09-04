@@ -514,7 +514,7 @@ export function useScreenerState(
    * caller that can know (`AppShell`) computes it with `screenerMode` over the same polled rows
    * Settings → Mailboxes reads.
    */
-  role: ScreenerRole = { mode: "organizer", name: null, reason: null },
+  role: ScreenerRole = { mode: "organizer", name: null, reason: null, oauthOnly: false },
   /**
    * DECISIONS A PREVIOUS SESSION MADE THAT THE ORGANIZER HAS NOT CARRIED OUT YET.
    *

@@ -162,6 +162,8 @@ interface MailboxWire {
   organizerReleasedAt?: string | null;
   /** Whether a decision made here would be accepted by whoever organizes this mailbox. */
   organizerAcceptsRequests?: boolean;
+  /** How this mailbox is signed in — it decides one sentence about why a refusal is permanent. */
+  authKind?: "password" | "oauth";
   /** OUR filings this mailbox has not applied yet — the strip's `filing` arm reads it. */
   pendingMoves?: number;
   /**
@@ -278,6 +280,7 @@ export async function readMailboxFactsVia(
     ...("organizerEventSeenAt" in m ? { organizerEventSeenAt: m.organizerEventSeenAt } : {}),
     ...("organizerReleasedAt" in m ? { organizerReleasedAt: m.organizerReleasedAt } : {}),
     ...("organizerAcceptsRequests" in m ? { organizerAcceptsRequests: m.organizerAcceptsRequests } : {}),
+    ...("authKind" in m ? { authKind: m.authKind } : {}),
     ...("pendingMoves" in m ? { pendingMoves: m.pendingMoves } : {}),
     // THE FORWARDING-DETECTION PAIR (mail 0078), forwarded by the same `in` spread and for the
     // same reason as every optional field above: absent is an engine that predates the columns
@@ -1115,6 +1118,15 @@ export function DesktopMailboxes(
               )
           }
         />
+        {/* AND WHY A DECISION CANNOT BE MADE HERE, on the mailboxes where the answer is the
+            sign-in rather than a version somebody can update. A password mailbox lets both
+            installs derive the same signing key from the credential they already share; an OAuth
+            one has no such shared secret. Only on a reader row — on a mailbox this install
+            organizes there is no refusal to explain — and only where the field says so, so a
+            build that cannot tell says nothing. */}
+        {role !== "organizer" && m.authKind === "oauth" ? (
+          <SettingsNote>{t("oauthDecideElsewhere")}</SettingsNote>
+        ) : null}
         {/* ── THE HANDOVER, AND WHAT IT COSTS THE OTHER SIDE, BEFORE IT IS TAKEN ──────────────
             The other install is not killed: it becomes a reader on its next pass and keeps its
             copy of the mail. Saying so here is the difference between a button somebody presses

@@ -81,6 +81,10 @@ export function toMailboxFacts(m: MailboxDTO): MailboxFacts {
     // that matters most: it degrades to the state that offers NO decision controls and names
     // the way out, which is the honest screen for a server that cannot answer the question.
     organizerAcceptsRequests: m.organizerAcceptsRequests,
+    // HOW this mailbox is signed in. Forwarded untouched on the rule its neighbours carry:
+    // absent is a server that cannot say, and it withholds one sentence rather than guessing at
+    // a limitation that may not apply.
+    authKind: m.authKind,
     lastSyncAt: m.lastSyncAt,
     // WHEN the first import finished (mail 0038), or null while it has not. The ladder in
     // `mail-state.ts` reads it as a FLOOR — a null keeps the strip saying "still importing" past

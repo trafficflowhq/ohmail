@@ -1982,6 +1982,7 @@ function HeldMail({
 function ReaderNote({
   name,
   variant,
+  oauthOnly,
 }: {
   /** The holder's own name, or `null` where this build has none. */
   name: string | null;
@@ -1998,6 +1999,15 @@ function ReaderNote({
    *    decision bar is working on one segment over.
    */
   variant: "decide" | "none" | "move";
+  /**
+   * EVERY mailbox behind this note is signed in with OAuth, so the refusal will not change.
+   *
+   * A password mailbox lets both installs derive the same signing key from the credential they
+   * already share; an OAuth one has no such shared secret, so the organizer advertises nothing a
+   * reader could send a decision to, however new either install is. Saying so is the difference
+   * between "this build cannot yet" and "this sign-in cannot" — and only the second is true here.
+   */
+  oauthOnly?: boolean;
 }) {
   const t = useTranslations("screener");
   const copy = variant === "none"
@@ -2015,6 +2025,11 @@ function ReaderNote({
     <div className="scn-reader" role="note">
       <b>{copy.title}</b>
       <span>{copy.why}</span>
+      {/* WHY IT WILL NOT CHANGE, on the mailboxes where that is the answer. One more sentence and
+          only where it is true: on a password mailbox the same refusal is a version difference,
+          and printing this there would tell somebody their sign-in is the obstacle when it is
+          not. Withheld wherever this build cannot tell. */}
+      {oauthOnly ? <span>{t("oauthDecideElsewhere")}</span> : null}
       {/* THE ROUTE THE SENTENCE NAMES, AS A PRESS. Every one of these sentences ends by pointing
           at Settings → Mailboxes, and on a phone that is a path to remember rather than a place
           to go. The Ohbox notice's own quiet verb: it navigates and files nothing. */}
@@ -2191,6 +2206,7 @@ function WaitingPreview({
           <ReaderNote
             name={role.name}
             variant={role.reason === "no_organizer" ? "none" : "decide"}
+            oauthOnly={role.oauthOnly}
           />
         </div>
       ) : (
