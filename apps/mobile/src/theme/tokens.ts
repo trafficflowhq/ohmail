@@ -86,3 +86,25 @@ export const zLayer = {
 
 /** Minimum touch target. HIG 44pt, Material 48dp — take the larger. */
 export const HIT = 48;
+
+/** The floor `Tap` never goes below, whatever it measures. */
+export const MIN_SLOP = 6;
+
+/**
+ * `hitSlop` for a pressable of a measured height, so the press target really
+ * reaches `HIT`.
+ *
+ * A flat `hitSlop={6}` was the old answer and it was not true: a 34pt segment
+ * reached 46 and a 29pt chip 41, both under the 48 this file claims. Slop
+ * extends the target on every side, so `h + 2·slop` is the reachable height,
+ * and the slop that closes the gap is `(HIT − h) / 2` rounded up. Controls at
+ * or over `HIT` keep the floor — a big row still wants a little forgiveness at
+ * its edge.
+ *
+ * Nothing about this is visible: `hitSlop` grows the touch rectangle, never the
+ * layout box.
+ */
+export function hitSlopFor(height: number): number {
+  if (!Number.isFinite(height) || height <= 0) return MIN_SLOP;
+  return Math.max(MIN_SLOP, Math.ceil((HIT - height) / 2));
+}

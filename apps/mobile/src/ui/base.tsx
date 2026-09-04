@@ -17,7 +17,7 @@
  *   Tail      the completeness note         (`.tail-row`)
  *   Waterline the seen/unseen boundary      (`.waterline`)
  */
-import type { ReactNode } from "react";
+import { useCallback, useState, type ReactNode } from "react";
 import {
   Pressable,
   RefreshControl,
@@ -25,6 +25,7 @@ import {
   StyleSheet,
   Text,
   View,
+  type LayoutChangeEvent,
   type PressableProps,
   type StyleProp,
   type TextProps,
@@ -33,6 +34,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme, type Theme } from "../theme";
+import { MIN_SLOP, hitSlopFor } from "../theme/tokens";
 import { Icon, type IconName } from "./Icon";
 
 /* ------------------------------------------------------------------- text */
@@ -359,12 +361,34 @@ export function Button({
 }
 
 /**
- * The one Pressable in the app. Guarantees the 48pt target Material asks for
- * and HIG's 44pt, and gives every press the same tint feedback.
+ * The one Pressable in the app, and the reason every press target really
+ * reaches Material's 48dp and HIG's 44pt.
+ *
+ * The slop is MEASURED, not assumed. A flat `hitSlop={6}` used to stand here
+ * under a comment that claimed 48, and it was false wherever the control was
+ * shorter than 36: a segmented control (34pt) reached 46 and a chip (29pt)
+ * reached 41. So the layout height is read back from `onLayout` and
+ * `hitSlopFor` turns it into the slop that closes the gap. Nothing moves
+ * visually — `hitSlop` grows the touch rectangle, never the box — and a caller
+ * that passes its own `hitSlop` still wins.
  */
-export function Tap({ style, children, ...rest }: PressableProps) {
+export function Tap({ style, children, hitSlop, onLayout, ...rest }: PressableProps) {
+  const [height, setHeight] = useState(0);
+  const measure = useCallback(
+    (e: LayoutChangeEvent) => {
+      const next = e.nativeEvent.layout.height;
+      setHeight((prev) => (Math.abs(prev - next) < 0.5 ? prev : next));
+      onLayout?.(e);
+    },
+    [onLayout],
+  );
   return (
-    <Pressable hitSlop={6} {...rest} style={style}>
+    <Pressable
+      hitSlop={hitSlop ?? (height > 0 ? hitSlopFor(height) : MIN_SLOP)}
+      onLayout={measure}
+      {...rest}
+      style={style}
+    >
       {children as ReactNode}
     </Pressable>
   );

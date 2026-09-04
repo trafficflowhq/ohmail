@@ -9,7 +9,11 @@
  * TWO THINGS TRANSLATE EXACTLY, ONE DOES NOT.
  *
  *  · **Size** — RN's `fontSize` is density-independent points, CSS px at 1×.
- *    Every value below is the token's own number, half-points included.
+ *    Every value below is derived from `typography.size`, half-points
+ *    included, and the reading band carries the phone type step: this app is
+ *    always a phone, so the 10.5–15.5 roles are the token's number **plus
+ *    `PHONE_STEP`**, and nothing at 16 and above moves. `PHONE_STEP` below
+ *    states the rule and the reasoning.
  *  · **Leading** — CSS `line-height` is a multiplier of the font size and RN's
  *    `lineHeight` is the absolute line box, so `size × multiplier` is exact.
  *    (The retired macOS port had to subtract SF Pro's intrinsic 1.21× first; RN
@@ -37,26 +41,74 @@
  *    the compromise cannot quietly move.
  */
 import type { TextStyle } from "react-native";
+import { typography } from "@ohmail/tokens";
 
-/** Exact px sizes from `typography.size`, by role. */
+/** `typography.size` is authored as CSS strings; RN wants points. */
+const px = (v: string) => Number(v.replace("px", ""));
+const tSize = typography.size;
+
+/**
+ * THE PHONE TYPE STEP — the whole rule, stated here because this is the only
+ * place it is applied.
+ *
+ * The type scale is deliberately denser than either platform's default, and it
+ * was one notch too dense to read comfortably on a phone: rows set the sender
+ * at 13, the subject at 13.5, the preview at 12, and timestamps and addresses
+ * at 11, against an Android status-bar clock at 14sp, Material's body-medium at
+ * 14 and label-small at 11, and iOS's footnote at 13. So every reading role
+ * from 10.5 through 15.5 moves up EXACTLY ONE POINT, and the density is
+ * otherwise kept. One point, not two: at 13→14 that is +7.7% and at 11→12 it is
+ * +9%, which leaves every size on the half-point ladder this scale is built on
+ * and every hierarchy relation (sender over subject over preview) intact.
+ *
+ * The four rules that bound it:
+ *
+ *  · **Nothing at 16 and above moves.** Titles, the message subject, the
+ *    held-mail title, the reader subject and the protected verification code
+ *    are already at or above the platforms' body size; stepping them would be a
+ *    redesign of the hierarchy rather than a legibility fix.
+ *  · **The floor for information-bearing text is 12.** Timestamps, addresses,
+ *    the waterline and notes were the roles sitting under what both platforms
+ *    put on text a reader has to take a fact from; after the step they are 12.
+ *  · **Text inputs are 16 wherever a page can zoom.** That is a browser rule —
+ *    Safari zooms on focus of anything smaller — so it binds the web shell and
+ *    not this app, which has no page to zoom. Recorded here so the two surfaces
+ *    can be compared without going looking.
+ *  · **A mark is not text.** The wordmark sits inside the band and does not
+ *    step, because it is artwork at a fixed size rather than something read.
+ *
+ * The web shell reaches the same numbers from the same tokens through a
+ * width-driven custom property, so one phone sets the row sender at 14 in a
+ * browser and in this app alike.
+ *
+ * One constant, one place: set it to 0 and every size below is the token's own
+ * number again, which is what `test/theme.test.ts` watches.
+ */
+export const PHONE_STEP = 1;
+
+/**
+ * Px sizes derived from `typography.size`, by role — the reading band plus
+ * `PHONE_STEP`, the rest verbatim. The trailing comment on each line is the
+ * value this app renders today.
+ */
 export const size = {
-  /** kbd keycaps, badges, footers */ micro: 10.5,
-  /** tab labels, hints, timestamps, waterline */ caption: 11,
-  /** chips, meta labels, small controls */ label: 11.5,
-  /** decision buttons, view meta, notes */ bodyS: 12,
-  /** buttons, compose CTA, from-line */ control: 12.5,
-  /** rows (sender), body copy, settings labels */ body: 13,
-  /** subjects, stream/held bodies */ bodyL: 13.5,
-  /** root */ base: 14,
-  /** reading body, search input */ prose: 14.5,
-  /** wordmark */ wordmark: 15,
-  /** reader body — the exhale */ proseReader: 15.5,
-  /** focus-reply title, protected code */ h4: 16,
-  /** stream-card title */ cardTitle: 16.5,
-  /** held-mail title */ heldTitle: 17,
-  /** view h1 (mobile — this app's h1) */ h1: 22,
-  /** message subject h2 */ h2: 24,
-  /** reader subject */ readerTitle: 29,
+  /** badges, tag chips */ micro: px(tSize.micro) + PHONE_STEP, // 11.5
+  /** tab labels, hints, timestamps, waterline */ caption: px(tSize.caption) + PHONE_STEP, // 12
+  /** chips, meta labels, small controls */ label: px(tSize.label) + PHONE_STEP, // 12.5
+  /** decision buttons, view meta, notes */ bodyS: px(tSize.bodyS) + PHONE_STEP, // 13
+  /** buttons, compose CTA, from-line */ control: px(tSize.control) + PHONE_STEP, // 13.5
+  /** rows (sender), body copy, settings labels */ body: px(tSize.body) + PHONE_STEP, // 14
+  /** subjects, stream/held bodies */ bodyL: px(tSize.bodyL) + PHONE_STEP, // 14.5
+  /** root */ base: px(tSize.base) + PHONE_STEP, // 15
+  /** reading body, search input */ prose: px(tSize.prose) + PHONE_STEP, // 15.5
+  /** wordmark — a mark, not text */ wordmark: px(tSize.wordmark), // 15
+  /** reader body — the exhale */ proseReader: px(tSize.proseReader) + PHONE_STEP, // 16.5
+  /** focus-reply title, protected code */ h4: px(tSize.h4), // 16
+  /** stream-card title */ cardTitle: px(tSize.cardTitle), // 16.5
+  /** held-mail title */ heldTitle: px(tSize.heldTitle), // 17
+  /** view h1 (mobile — this app's h1) */ h1: px(tSize.h1Mobile), // 22
+  /** message subject h2 */ h2: px(tSize.h2), // 24
+  /** reader subject */ readerTitle: px(tSize.readerTitle), // 29
 } as const;
 
 /**
