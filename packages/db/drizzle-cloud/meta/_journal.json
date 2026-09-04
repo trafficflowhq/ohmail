@@ -211,6 +211,13 @@
       "when": 1791328043162,
       "tag": "0029_billing_invoices_platform_costs_ai_usage",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1791328104216,
+      "tag": "0030_heartbeat_signals_alert_runs",
+      "breakpoints": true
     }
   ]
 }

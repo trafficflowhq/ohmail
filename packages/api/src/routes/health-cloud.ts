@@ -232,6 +232,27 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   ["platform_costs", "fetched_at"],
   ["ai_usage_daily", "cost_micro_usd"],
   ["billing_reconciliation_runs", "invoices_listed"],
+  // cloud 0030_heartbeat_signals_alert_runs — THREE markers, on 0028's rule again: three
+  // independent changes, and a database can hold some without the others.
+  //
+  // `alert_state.cls` is the loud one, and its loudness is a particular kind. Every observation
+  // the alert pass records INSERTS this column, so an API deployed ahead of the migration 42703s
+  // inside `runAlertPass` — and that is the one pass whose failure is structurally silent,
+  // because being the thing that notices is its entire job. Without this marker the deploy that
+  // breaks the pager is also the deploy the pager cannot report.
+  //
+  // `alert_pass_runs` is quiet in the mirror-image way: the pass's own bookkeeping write is
+  // best-effort and swallows its errors by contract (a pass must outlive its bookkeeping), so a
+  // missing table costs nothing visible until the OTHER driver reports this one dark — a false
+  // page, hours later, naming the wrong fault.
+  //
+  // `platform_signals` is quiet in the third way, and it is the one the ruling names as a risk:
+  // without the table the 5xx poller's write 42P01s, no row is ever written, and an empty
+  // population is exactly what an UNCONFIGURED token also produces. The board would read "not
+  // measured" — which is true, and true for a reason nobody would look for.
+  ["alert_state", "cls"],
+  ["alert_pass_runs", "ran_at"],
+  ["platform_signals", "errors_5xx"],
 ] as const;
 
 /**
@@ -483,10 +504,18 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * from an 0029 one, and the failure it hides is a reconcile pass that does all of its work and
  * then cannot record that it ran.
  *
+ * `0030_heartbeat_signals_alert_runs` takes THREE column markers and nothing else, which is the
+ * ordinary case, and the entry is worth a sentence for what it is NOT. It adds three CHECKs, and
+ * none of them is a REPLACEMENT under an existing name — all three are new constraints on new
+ * columns or new tables — so the `0011`/`0029` problem does not arise and no CHECK-DEFINITION
+ * marker is owed. It adds one index, and unlike 0028's two that index is not silent when absent:
+ * `platform_signals_window_idx` serves a read over a table the same migration creates, so the
+ * table's own column marker already catches every database that lacks it.
+ *
  * The tag moves for its own reason: what this constant asserts is "the markers were reconciled
  * against the newest entry", and a stale tag beside an unchanged list is the state the assertion
  * exists to refuse — it cannot tell "nothing needed adding" from "nobody looked". */
-export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0029_billing_invoices_platform_costs_ai_usage";
+export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0030_heartbeat_signals_alert_runs";
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
 export const SCHEMA_MARKER_JOURNAL_TAG =

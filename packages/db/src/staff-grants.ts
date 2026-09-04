@@ -344,7 +344,11 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
   "public.waitlist": ["created_at", "invited_at"],
   "public.worker_heartbeats": [
     "shard_index", "instance_id", "leader", "shards", "mailboxes", "expected", "accounts",
-    "quarantined", "degraded", "last_cycle_at", "started_at", "beat_at",
+    // `ai_circuit_open_since` (cloud 0030): when this worker's classifier circuit first opened
+    // in its current unbroken run of trips, NULL while closed. A timestamp the worker computes
+    // from its own in-process fault counter — no mailbox, no account, no model call — and the
+    // only evidence in this database that mail is being filed rules-only.
+    "quarantined", "degraded", "ai_circuit_open_since", "last_cycle_at", "started_at", "beat_at",
   ],
   // NOT `idempotency_key` (the client's header, verbatim), NOT the two Message-IDs, NOT
   // `draft_id` (a handle onto draft content).
@@ -364,6 +368,49 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
     // nothing but "a page for this key is in flight until then". Same three-place decision,
     // same reason: the claim's SELECT and UPDATE both name it.
     "claimed_until",
+    // ── THE INCIDENT/SIGNAL SPLIT (cloud 0030) ───────────────────────────────────────────
+    //
+    // `cls` decides DELIVERY, so the blind role must read AND write it for the same reason
+    // `notified_signature` is here: the API driver runs the whole pass over exactly this role,
+    // and a grant list without the column is 42501 on every external pass — the pager's second
+    // arm dying the moment the column ships.
+    //
+    // `affected_accounts` is a COUNT and `fix_href` is an internal console path this repository
+    // composes (`/worker`, `/accounts/<uuid>`). Neither is derived from what any message says:
+    // the count comes from the same grouped queries the rules already run, and the path is a
+    // literal with an id interpolated into it. The console renders both, so both are granted.
+    "cls", "affected_accounts", "fix_href",
+  ],
+  // ── THE ALERTING'S OWN PULSE (cloud 0030) ─────────────────────────────────────────────────
+  //
+  // Granted WHOLE, and there is nothing on the table that could not be: a driver word from a
+  // two-value CHECK, a timestamp and four counts. No `account_id` and no possibility of one —
+  // the row is a fact about a PROCESS.
+  //
+  // The blind role writes this table as well as reading it, on `alert_state`'s exact argument:
+  // the API host's driver runs its pass over this role, and its pass is one of the two whose
+  // absence the paired rule exists to notice. A read-only grant would mean the arm that is
+  // hardest to observe is the one that never records itself.
+  //
+  // `failed_sinks` is a COUNT, deliberately not the names: a sink name is a vendor endpoint's
+  // identity, it belongs in the log line where a drain gates it, and no operator screen needs it
+  // to learn that the pager is being refused.
+  "public.alert_pass_runs": [
+    "driver", "ran_at", "firing", "delivered", "failed_sinks", "sink_failure_streak",
+  ],
+  // ── WHAT THE PLATFORM SERVED (cloud 0030) ─────────────────────────────────────────────────
+  //
+  // Granted whole for `platform_costs`'s reason one table over: this is what a VENDOR did, not
+  // what a customer did. `project` is a deployment name this repository chooses (`ohmail-api`);
+  // `requests` and `errors_5xx` are counts of HTTP requests to that deployment, with no path, no
+  // query string, no address and no request id — the poller's projection drops every one of
+  // those at the adapter, and none of them reaches a column here.
+  //
+  // No `account_id`, and there cannot be one: an HTTP request to the API host is not attributable
+  // to an account at the platform's log store, and this table would be the wrong place to make it
+  // so if it were.
+  "public.platform_signals": [
+    "provider", "project", "window_start", "requests", "errors_5xx", "truncated", "fetched_at",
   ],
   // The `security_barrier` view, and the ONLY route to `audit_log`. Four named scalars: no
   // `payload`, no `inverse`. The bags are never granted, in any shape.

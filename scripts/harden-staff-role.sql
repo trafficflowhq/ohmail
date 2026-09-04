@@ -951,10 +951,14 @@ REVOKE ALL ON public.waitlist FROM ohmail_admin;
 GRANT SELECT (created_at, invited_at) ON public.waitlist TO ohmail_admin;
 
 -- ── 10. Operations. ───────────────────────────────────────────────────────────────────────
+-- `ai_circuit_open_since` (cloud 0030) is when this worker's classifier circuit first opened in
+-- its current unbroken run of trips, or NULL while it is closed. A timestamp the worker computes
+-- from its own in-process fault counter: it names no mailbox, no account and no model call, and
+-- it is the only evidence anywhere in this database that mail is being filed rules-only.
 REVOKE ALL ON public.worker_heartbeats FROM ohmail_admin;
 GRANT SELECT (
   shard_index, instance_id, leader, shards, mailboxes, expected, accounts,
-  quarantined, degraded, last_cycle_at, started_at, beat_at
+  quarantined, degraded, ai_circuit_open_since, last_cycle_at, started_at, beat_at
 ) ON public.worker_heartbeats TO ohmail_admin;
 
 -- `outbound_sends` — the stuck-send queue, which is a staff surface on the Worker and Actions
@@ -1007,14 +1011,57 @@ GRANT SELECT (id, account_id, status, created_at) ON public.outbound_sends TO oh
 -- and count, the lease is a computed timestamp; neither carries content, and no staff
 -- RESPONSE projects either (`listOpenAlerts` names its own columns), so the console remains
 -- exactly as blind as before.
+-- `cls`, `affected_accounts` and `fix_href` (cloud 0030) are the eleventh, twelfth and
+-- thirteenth columns, each taking the same three-place decision. `cls` decides whether a firing
+-- condition reaches a sink at all, so the API driver's pass writes it on every observation; the
+-- other two are a count and an internal console path composed from a literal and an id. None is
+-- derived from what any message says, and `listOpenAlerts` names its own columns, so the console
+-- stays exactly as blind as before while gaining the two fields it renders.
 REVOKE ALL ON public.alert_state FROM ohmail_admin;
-GRANT SELECT (alert_key, kind, severity, opened_at, last_seen_at, notified_at, notify_count, detail, notified_signature, claimed_until)
+GRANT SELECT (alert_key, kind, severity, opened_at, last_seen_at, notified_at, notify_count, detail, notified_signature, claimed_until, cls, affected_accounts, fix_href)
   ON public.alert_state TO ohmail_admin;
-GRANT INSERT (alert_key, kind, severity, opened_at, last_seen_at, notified_at, notify_count, detail, notified_signature, claimed_until)
+GRANT INSERT (alert_key, kind, severity, opened_at, last_seen_at, notified_at, notify_count, detail, notified_signature, claimed_until, cls, affected_accounts, fix_href)
   ON public.alert_state TO ohmail_admin;
-GRANT UPDATE (alert_key, kind, severity, opened_at, last_seen_at, notified_at, notify_count, detail, notified_signature, claimed_until)
+GRANT UPDATE (alert_key, kind, severity, opened_at, last_seen_at, notified_at, notify_count, detail, notified_signature, claimed_until, cls, affected_accounts, fix_href)
   ON public.alert_state TO ohmail_admin;
 GRANT DELETE ON public.alert_state TO ohmail_admin;
+
+-- `alert_pass_runs` (cloud 0030) — the pulse of the thing that takes everyone else's pulse.
+--
+-- WRITTEN by this role, on `alert_state`'s exact argument: the API host's driver runs its whole
+-- pass over `ohmail_admin`, and this table records that the pass happened. A read-only grant
+-- would mean the arm hardest to observe is the one that never records itself, which is the
+-- failure the table exists for.
+--
+-- Every column is a driver word from a two-value CHECK, a timestamp or a count. `failed_sinks` is
+-- a COUNT and deliberately not the sink names — a sink name is a vendor endpoint's identity and
+-- belongs in the log line, where a drain gates it.
+--
+-- NO DELETE: the pass upserts one row per driver for ever. Nothing here is ever resolved and
+-- removed, so the verb `alert_state` needs has no caller here and is not granted.
+REVOKE ALL ON public.alert_pass_runs FROM ohmail_admin;
+GRANT SELECT (driver, ran_at, firing, delivered, failed_sinks, sink_failure_streak)
+  ON public.alert_pass_runs TO ohmail_admin;
+GRANT INSERT (driver, ran_at, firing, delivered, failed_sinks, sink_failure_streak)
+  ON public.alert_pass_runs TO ohmail_admin;
+GRANT UPDATE (driver, ran_at, firing, delivered, failed_sinks, sink_failure_streak)
+  ON public.alert_pass_runs TO ohmail_admin;
+
+-- `platform_signals` (cloud 0030) — request and error counts from the hosting platform's own log
+-- store, polled per project per five-minute window.
+--
+-- SELECT ONLY. The poller runs on the API host's RUNTIME connection, not this role: it writes a
+-- table the blind role only reads, exactly as `platform_costs` next door does. What this grant
+-- buys is the console rendering "5xx: 12 of 900 requests" and the alert rule reading its own
+-- population.
+--
+-- `platform_costs`'s isolation argument applies verbatim: this is what a VENDOR did, not what a
+-- customer did. No path, no query string, no address, no request id — the adapter drops all four
+-- before a row is formed — and no `account_id`, which an HTTP log store could not attribute
+-- anyway.
+REVOKE ALL ON public.platform_signals FROM ohmail_admin;
+GRANT SELECT (provider, project, window_start, requests, errors_5xx, truncated, fetched_at)
+  ON public.platform_signals TO ohmail_admin;
 
 -- ── 11. WHAT IS DELIBERATELY NOT GRANTED, and is enforced by the step-2 blanket revoke ────
 --

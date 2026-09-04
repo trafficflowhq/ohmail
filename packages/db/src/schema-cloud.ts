@@ -562,6 +562,22 @@ export const workerHeartbeats = pgTable("worker_heartbeats", {
   accounts: integer("accounts").notNull().default(0),
   quarantined: integer("quarantined").notNull().default(0),
   degraded: boolean("degraded").notNull().default(false),
+  /**
+   * When this worker's CLASSIFIER CIRCUIT first opened in its current unbroken run of trips
+   * (cloud 0030), or NULL while it is closed.
+   *
+   * The breaker is in-process state (`apps/worker/src/ai-circuit.ts`) and nothing about it
+   * reached this database before, so "the model provider has been unavailable for ten minutes"
+   * — which means every customer's mail is being filed rules-only — was unreportable. It rides
+   * the heartbeat because it is exactly what the heartbeat already is: a fact about one worker
+   * process, written by that process, keyed by its shard, overwritten every beat.
+   *
+   * FIRST open, not last: the cooldown doubles per trip and the breaker half-opens between them,
+   * so a provider down for an hour produces a series of opens whose newest is always minutes old.
+   * The question the rule asks is how long mail has been degraded, and only the first open
+   * answers it. Cleared to NULL by the first success.
+   */
+  aiCircuitOpenSince: timestamp("ai_circuit_open_since", { withTimezone: true }),
   lastCycleAt: timestamp("last_cycle_at", { withTimezone: true }),
   startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
   beatAt: timestamp("beat_at", { withTimezone: true }).defaultNow().notNull(),
@@ -611,7 +627,109 @@ export const alertState = pgTable("alert_state", {
    * encoded there, and the changed-condition arm misread a live lease as an old confirm.
    */
   claimedUntil: timestamp("claimed_until", { withTimezone: true }),
+  /**
+   * INCIDENT or SIGNAL (cloud 0030) — the class that decides DELIVERY, not merely presentation.
+   *
+   * An incident is a real application problem and goes to the sinks. A signal is an
+   * informational observation: it is recorded here, it renders on the board, and it never wakes
+   * anybody. Severity could not express this — `storage_at_cap` and `sync_lag` are both warnings
+   * and only one of them is a customer being wronged — and the difference is not a matter of
+   * degree, because the two want different behaviour from the pager.
+   *
+   * DEFAULTED to `'incident'`, which is the safe direction: a row written by a driver that
+   * predates this column, or a rule whose author forgot the field, pages. The other default turns
+   * a new incident into a row that fires, renders, and reaches no human — the exact silence the
+   * alert subsystem exists to refuse.
+   */
+  cls: text("cls").notNull().default("incident"),
+  /**
+   * How many ACCOUNTS this condition affects, or NULL when the rule does not measure a
+   * population. A COUNT and never a list: the console sizes the incident from it, and the
+   * accounts themselves are reached through {@link fixHref}'s surface under that surface's own
+   * projection rules. NULL is deliberately distinguishable from 0 — "this rule is one
+   * deployment-wide fact" is a different statement from "this rule counted, and found none".
+   */
+  affectedAccounts: integer("affected_accounts"),
+  /**
+   * The INTERNAL CONSOLE PATH an operator should open to act on this — `/worker`, `/billing`,
+   * `/accounts/<uuid>`. Written by the rule that fires, rendered as a link, never fetched
+   * server-side. It carries no query string derived from mail and no external origin.
+   */
+  fixHref: text("fix_href"),
 }, (t) => ({ ixLastSeen: index("alert_state_last_seen_idx").on(t.lastSeenAt) }));
+
+/**
+ * ONE ROW PER ALERT DRIVER (cloud 0030) — the pulse of the thing that takes everyone else's pulse.
+ *
+ * The alert pass has two drivers: the worker's in-process timer and the API host's cron route.
+ * Until this table, neither left a record that it had run, so both could stop and the only
+ * evidence would be an ABSENCE of pages — indistinguishable from a healthy deployment, and the
+ * exact failure the alerting subsystem was built to prevent, reproduced one level up.
+ *
+ * `driver` IS the primary key, so there is at most one row per arm by construction and no history
+ * accumulates for a table nobody queries historically — `worker_heartbeats` makes the same choice
+ * for the same reason. What a reader needs is "when did each arm last complete a pass".
+ *
+ * The rule built on it (`alert_driver_dark`) is evaluated by the OTHER driver, never by itself: a
+ * dead driver cannot report its own death, which is why there are two of them.
+ *
+ * CONTENT: counts and one timestamp. `failed_sinks` is a COUNT rather than the sink names —
+ * a sink name is a vendor endpoint's identity, it belongs in the log line where a drain gates it,
+ * and no operator screen needs it to know the pager is being refused.
+ */
+export const alertPassRuns = pgTable("alert_pass_runs", {
+  /** `'worker'` or `'api'`. CHECK-constrained — see the migration for why the set is closed. */
+  driver: text("driver").primaryKey(),
+  ranAt: timestamp("ran_at", { withTimezone: true }).defaultNow().notNull(),
+  /** Conditions firing on this pass, both classes. */
+  firing: integer("firing").notNull().default(0),
+  /** Sinks that ACCEPTED on this pass. 0 on a pass with nothing to deliver. */
+  delivered: integer("delivered").notNull().default(0),
+  /** Sinks that REFUSED on this pass. */
+  failedSinks: integer("failed_sinks").notNull().default(0),
+  /** Consecutive passes in which no sink accepted — `AlertPassResult.sinkFailureStreak`. */
+  sinkFailureStreak: integer("sink_failure_streak").notNull().default(0),
+});
+
+/**
+ * WHAT THE HOSTING PLATFORM SERVED (cloud 0030) — request and error counts per project per window.
+ *
+ * It exists because the API host's 5xx rate is invisible from inside the API host: a serverless
+ * invocation that returns a 502 and dies writes nothing to this database, and the only surface
+ * that knows is the platform's own request-log store. A five-minute cron polls it; the rule reads
+ * three windows.
+ *
+ * TWO COUNTS, never a stored rate: three five-minute rows must add up to the fifteen minutes the
+ * rule is written against, and a stored percentage cannot be re-summed — averaging three
+ * percentages is wrong whenever the windows carry different traffic.
+ *
+ * `window_start` is the window's own start instant; `fetched_at` is when the poll answered. The
+ * two differ by however long the poll took, which is exactly the freshness the board reports.
+ *
+ * No `account_id`, and there cannot be one: this is a count of HTTP requests to a deployment.
+ */
+export const platformSignals = pgTable("platform_signals", {
+  /** CHECK-constrained to the platforms this deployment can poll. */
+  provider: text("provider").notNull(),
+  /** The platform's own project name (`ohmail-api`) — an identifier this repository chooses. */
+  project: text("project").notNull(),
+  windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
+  requests: integer("requests").notNull().default(0),
+  errors5xx: integer("errors_5xx").notNull().default(0),
+  /**
+   * TRUE when the poll hit its page budget before reaching the start of the window, so both
+   * counts are LOWER BOUNDS over the window's most-recent slice. The walk runs backwards from the
+   * window's end, so that slice is contiguous and real — which makes under-reporting the only
+   * direction this can be wrong in, and a rule that fires on "≥ 10 errors AND ≥ 2%" can never
+   * invent a page from it. The column exists so the board says "sampled" instead of implying a
+   * count it does not have.
+   */
+  truncated: boolean("truncated").notNull().default(false),
+  fetchedAt: timestamp("fetched_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.provider, t.project, t.windowStart], name: "platform_signals_pk" }),
+  ixWindow: index("platform_signals_window_idx").on(t.windowStart),
+}));
 
 /**
  * ONE ROW PER BILLING-RECONCILIATION PASS (cloud 0023) — the run ledger of the scheduled
@@ -1386,7 +1504,7 @@ export const setupGrantSpends = pgTable("setup_grant_spends", {
  * install passes THIS one and nothing else — see `apps/sidecar/src/db.ts`.
  */
 export const cloudSchema = {
-  credentials, webauthnCredentials, webauthnChallenges, totpSecrets, recoveryCodes, loginTokens, oauthAuthCodes, authEvents, authThrottle, pushSubscriptions, billingCustomers, billingSubscriptions, billingReconciliationRuns, billingInvoices, platformCosts, aiUsageDaily, creditBalances, creditLedger, creditUsageDaily, creditUsageTotals, creditRollupRuns, billingEvents, workerHeartbeats, alertState, waitlist, staffUsers, staffSessions, accountSuspensions,
+  credentials, webauthnCredentials, webauthnChallenges, totpSecrets, recoveryCodes, loginTokens, oauthAuthCodes, authEvents, authThrottle, pushSubscriptions, billingCustomers, billingSubscriptions, billingReconciliationRuns, billingInvoices, platformCosts, aiUsageDaily, creditBalances, creditLedger, creditUsageDaily, creditUsageTotals, creditRollupRuns, billingEvents, workerHeartbeats, alertState, alertPassRuns, platformSignals, waitlist, staffUsers, staffSessions, accountSuspensions,
   mailboxOauthCeremonies, mailboxOauthDeviceCeremonies,
   oauthProviderConfig, attachmentStaging, invites, aiAttemptClaims,
   setupGrants, setupGrantSpends,
