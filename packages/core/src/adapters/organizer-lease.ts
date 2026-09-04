@@ -2788,13 +2788,27 @@ export function formatRequest(r: RequestInput): string {
  */
 export function isRequestRecord(raw: string): boolean {
   const headerBlock = raw.split(/\r?\n\r?\n/, 1)[0] ?? "";
+  let seen = 0;
+  let anyIsOne = false;
   for (const line of headerBlock.replace(/\r?\n[ \t]+/g, " ").split(/\r?\n/)) {
     const at = line.indexOf(":");
     if (at <= 0) continue;
     if (line.slice(0, at).trim().toLowerCase() !== RH.request.toLowerCase()) continue;
-    return line.slice(at + 1).trim() === "1";
+    seen += 1;
+    if (line.slice(at + 1).trim() === "1") anyIsOne = true;
   }
-  return false;
+  // ── IT MUST NOT DISAGREE WITH THE PARSER ABOUT WHAT IS A REQUEST ─────────────────────────
+  //
+  // This returned on the FIRST occurrence while {@link parseRequestEnvelope} refuses DUPLICATES
+  // outright. So `X-Ohmail-Request: 0` followed by `X-Ohmail-Request: 1` answered `false` here,
+  // the message never reached the parser, and the `malformed` disposition — the only thing that
+  // would have put its ref on the removal list — was unreachable. One APPEND bought a message
+  // that every drain, every reader cycle and both lease reads re-fetch and re-parse for ever,
+  // with no log line and no way to get rid of it.
+  //
+  // A REPEATED header is therefore always handed on, whatever its values, so the parser can
+  // refuse it and the drain can remove it. A single occurrence still has to say `1`.
+  return seen > 1 || anyIsOne;
 }
 
 export function parseRequestEnvelope(raw: string, ref?: unknown): RequestEnvelopeRecord | null {
@@ -2948,6 +2962,7 @@ export function decodeRequestPayload(e: RequestEnvelope): RequestMessageRecord {
 const AH = {
   ack: "X-Ohmail-Ack",
   requestId: "X-Ohmail-Request-Id",
+  mailboxId: "X-Ohmail-Request-Mailbox",
   outcome: "X-Ohmail-Ack-Outcome",
   reason: "X-Ohmail-Ack-Reason",
   ackedAt: "X-Ohmail-Ack-At",
@@ -2989,6 +3004,8 @@ export type AckOutcome = (typeof ACK_OUTCOMES)[number];
 
 export interface AckInput {
   requestId: string;
+  /** The mailbox this answer belongs to. Signed, so an ack cannot be moved between mailboxes. */
+  mailboxId: string;
   outcome: AckOutcome;
   /** Required for `refused`, and meaningless for `applied` — the formatter writes `""` for it. */
   reason?: RequestRefusalReason;
@@ -2999,6 +3016,7 @@ export interface AckInput {
 
 export interface AckRecord {
   requestId: string;
+  mailboxId: string;
   outcome: AckOutcome;
   /** `null` on an `applied` ack, and on a `refused` one whose reason this build does not know. */
   reason: RequestRefusalReason | null;
@@ -3019,10 +3037,20 @@ export function isAckRecord(raw: string): boolean {
   return false;
 }
 
+/**
+ * THE ACK COVERS ITS MAILBOX TOO, for the reason the request does.
+ *
+ * Without it an acknowledgement was portable between an account's mailboxes: copy a genuine record
+ * for request X into mailbox A, let A's organizer refuse it `wrong_mailbox` and sign an ack for X,
+ * then copy that ack into mailbox B's folder — where it verifies (same account key) and, arriving
+ * at a lower uid than B's own answer, wins the reader's first-wins match. The person is shown a
+ * refusal for a decision that WAS applied, presses again, and a second rule is written.
+ */
 function canonicalAck(f: {
-  requestId: string; outcome: string; reason: string; ackedAt: string; protocol: number;
+  requestId: string; mailboxId: string; outcome: string; reason: string;
+  ackedAt: string; protocol: number;
 }): string {
-  return [f.requestId, f.outcome, f.reason, f.ackedAt, String(f.protocol)]
+  return [f.requestId, f.mailboxId, f.outcome, f.reason, f.ackedAt, String(f.protocol)]
     .map(canonicalField).join("");
 }
 
@@ -3040,14 +3068,16 @@ export function formatAck(a: AckInput): string {
   }
   const protocol = a.protocol ?? REQUEST_PROTOCOL;
   const requestId = headerSafe(a.requestId);
+  const mailboxId = headerSafe(a.mailboxId);
   const reason = a.outcome === "refused" ? (a.reason ?? "malformed") : "";
   const ackedAt = a.ackedAt.toISOString();
   const sig = createHmac("sha256", a.key)
-    .update(canonicalAck({ requestId, outcome: a.outcome, reason, ackedAt, protocol }), "utf8")
+    .update(canonicalAck({ requestId, mailboxId, outcome: a.outcome, reason, ackedAt, protocol }), "utf8")
     .digest("base64url");
   const lines = [
     `${AH.ack}: 1`,
     `${AH.requestId}: ${requestId}`,
+    `${AH.mailboxId}: ${mailboxId}`,
     `${AH.outcome}: ${a.outcome}`,
     `${AH.reason}: ${reason}`,
     `${AH.ackedAt}: ${ackedAt}`,
@@ -3093,13 +3123,19 @@ export function parseAck(raw: string, key: string, ref?: unknown): AckRecord | n
   const get = (k: string): string => headers.get(k.toLowerCase()) ?? "";
   const count = (k: string): number => seen.get(k.toLowerCase()) ?? 0;
 
-  if (get(AH.ack) !== "1") return null;
-  for (const f of [AH.ack, AH.requestId, AH.outcome, AH.reason, AH.ackedAt, AH.protocol, AH.sig]) {
+  // DUPLICATES FIRST, then the discriminator — the order `parseClaim` and
+  // `parseRequestEnvelope` both use. Reading the discriminator first meant a message carrying two
+  // `X-Ohmail-Ack` headers resolved last-wins instead of being refused, so a record that
+  // contradicts itself could still be read as an outcome.
+  for (const f of [AH.ack, AH.requestId, AH.mailboxId, AH.outcome, AH.reason, AH.ackedAt, AH.protocol, AH.sig]) {
     if (count(f) > 1) return null;
   }
+  if (get(AH.ack) !== "1") return null;
 
   const requestId = get(AH.requestId);
   if (!requestId || requestId.length > 128) return null;
+  const mailboxId = get(AH.mailboxId);
+  if (!mailboxId || mailboxId.length > 128) return null;
   const outcome = get(AH.outcome);
   if (outcome !== "applied" && outcome !== "refused") return null;
   const reason = get(AH.reason);
@@ -3118,7 +3154,7 @@ export function parseAck(raw: string, key: string, ref?: unknown): AckRecord | n
   try {
     expected = Buffer.from(
       createHmac("sha256", key)
-        .update(canonicalAck({ requestId, outcome, reason, ackedAt: ackedAtRaw, protocol }), "utf8")
+        .update(canonicalAck({ requestId, mailboxId, outcome, reason, ackedAt: ackedAtRaw, protocol }), "utf8")
         .digest("base64url"),
       "base64url",
     );
@@ -3131,6 +3167,7 @@ export function parseAck(raw: string, key: string, ref?: unknown): AckRecord | n
 
   const record: AckRecord = {
     requestId,
+    mailboxId,
     outcome,
     // An unrecognised reason becomes `null` rather than being carried through as a string: it
     // would otherwise reach a person's screen, and this vocabulary is the product's own.

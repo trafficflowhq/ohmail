@@ -283,7 +283,7 @@ export async function applyMetaRequests(
   }
 
   const envelopes = requestEnvelopesIn(records);
-  const existingAcks = acksIn(records, key);
+  const existingAcks = acksIn(records, key).filter((a) => a.mailboxId === rt.mailboxId);
   const staleAckRefs = existingAcks
     .filter((a) => now.getTime() - a.ackedAt.getTime() > REQUEST_STALE_AFTER_MS)
     .map((a) => a.ref)
@@ -624,7 +624,8 @@ export async function applyMetaRequests(
   for (const a of toAck) {
     try {
       await io.ack(formatAck({
-        requestId: a.requestId, outcome: a.outcome, reason: a.reason, ackedAt: now, key,
+        requestId: a.requestId, mailboxId: rt.mailboxId,
+        outcome: a.outcome, reason: a.reason, ackedAt: now, key,
       }));
     } catch (err) {
       ackFailures++;
@@ -842,13 +843,39 @@ export async function driveOutstandingRequests(
     return EMPTY_DRIVE_RESULT;
   }
 
+  /* ── AND THE SET IS VERIFIED, NOT MERELY PARSED ───────────────────────────────────────────
+   *
+   * This decides whether a queued row is treated as already handed over. Built from unverified
+   * envelopes it was a suppression primitive: an attacker who can read the shared folder learns a
+   * request id, waits for the genuine record to go, and appends an UNSIGNED message carrying that
+   * id. The next cycle would take the already-in-folder branch, mark the row `sent`, and never
+   * append the real record — and since an unverifiable record earns no acknowledgement, the row
+   * would sit until the window reported "nobody took this". The decision is discarded silently.
+   *
+   * So the id must come off a record that verifies under this mailbox's key AND names this
+   * install: another install's genuine record is no reason for THIS one to stop appending its own.
+   */
   const alreadyInFolder = new Set(
     requestEnvelopesIn(records)
       .filter((e): e is RequestEnvelope => !isMalformedRequest(e))
+      .filter((e) => verifyRequestEnvelope(e, key)
+        && e.mailboxId === rt.mailboxId
+        && e.installId === self.installId)
       .map((e) => e.requestId),
   );
+  /* ── AN ACK IS ONLY AN ANSWER FOR THE MAILBOX IT NAMES ────────────────────────────────────
+   *
+   * The mailbox is inside the ack's signed body, so an acknowledgement genuinely produced for one
+   * of the account's mailboxes cannot be copied into another's folder and read as an answer there.
+   * Without this filter it could: the signature verifies (same account key), and arriving at a
+   * lower uid than the real answer it would win the first-wins match below — showing a person a
+   * refusal for a decision that was applied, and inviting a second press that writes a second rule.
+   */
   const ackById = new Map<string, AckRecord>();
-  for (const a of acksIn(records, key)) if (!ackById.has(a.requestId)) ackById.set(a.requestId, a);
+  for (const a of acksIn(records, key)) {
+    if (a.mailboxId !== rt.mailboxId) continue;
+    if (!ackById.has(a.requestId)) ackById.set(a.requestId, a);
+  }
 
   const pending = await db.transaction((tx) => listPendingRequests(tx, rt.mailboxId));
 
