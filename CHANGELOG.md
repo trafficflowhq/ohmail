@@ -326,6 +326,57 @@ in, whoever they are addressed to.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.14.1] — 2026-09-04
+
+**This one is the phone.** The desktop apps are unchanged and still on 0.14.0; their next
+release carries the work listed under Unreleased above. The Android APK is attached to this
+release, and iOS is not — there is still no sideload path on that platform and no Apple
+Developer Program membership behind a store build.
+
+### The app has its final name, and an existing install will not update into it
+
+The application identifier is **`app.ohmail`** on both platforms, the reverse-DNS form of the
+product's domain, replacing the earlier `app.ohmail.preview`.
+
+**If you are holding one of those preview builds, uninstall it before installing this one.**
+Android and iOS both treat the identifier as the app's identity, so a package with a different
+identifier is a different app, and this one will not update over the old one. Nothing is
+migrated across that boundary and nothing needs to be: a phone holds only a copy of what is on
+the server, so the new install pairs again — one scan, or one pairing token — and syncs the
+same mail back down. The old app's copy goes with it when it is removed, which is what an
+uninstall has always done here.
+
+### Type sized for a phone rather than inherited from a desktop
+
+The reading band steps up one point. Sender lines are 14, subjects 14.5, previews and other
+secondary text 13 — a notch larger than the desktop scale the phone had been using, which was
+set for a screen you sit further away from. Nothing that was already at 16 points or more moves,
+and no information-bearing text is left below 12. The wordmark does not step, because a mark is
+artwork at a fixed size rather than something you read.
+
+Small controls got the other half. The minimum touch target has always been documented as 48
+points, but the padding that was supposed to deliver it was a flat 6 on everything, so a 34-point
+segmented control reached 46 and a 29-point chip reached 41. Each control now measures its own
+height and takes exactly the padding that closes the gap. Nothing moves on screen — the press
+area grows, not the layout.
+
+### The launch screen is the product's own, in both faces
+
+Opening the app used to show a white screen with the framework's grey placeholder on it, in
+light and dark alike — the configuration for it had moved and the app had not followed. The
+first frame is now `#fbfaf9` with the product mark in light, and `#0e0b08` with the light-ink
+mark in dark, at every screen density.
+
+### What the app asks the system for
+
+The iOS build no longer asks for a **microphone** or **Face ID**. Neither is used by anything
+in the app — the strings came from defaults in two libraries, and a purpose string for a
+capability an app does not use is a claim about that app that is false. Android had already
+kept `RECORD_AUDIO` out of the manifest; iOS was the half still missing.
+
+The iOS app icon is also flattened for Apple's pipeline rather than left to acquire four white
+corners where the transparent rounding met the platform's own mask.
+
 ## [0.14.0] — 2026-09-03
 
 A desktop install can hold more than one mailbox. Each one gets its own connection,
