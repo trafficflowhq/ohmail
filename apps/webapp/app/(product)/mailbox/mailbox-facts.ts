@@ -65,6 +65,22 @@ export function toMailboxFacts(m: MailboxDTO): MailboxFacts {
     // second into the first and offer "Organize here instead" on every row of every older
     // deployment.
     organizeConsentedAt: m.organizeConsentedAt,
+    // ── THE ONCE-ONLY NOTICE'S TWO INSTANTS, AND WHAT THE PANE STILL SHOWS AFTERWARDS ────
+    //
+    // FORWARDED UNTOUCHED, on the rule the three fields below carry: absent is "this server
+    // cannot say", and the notice is derived from a COMPARISON of the two. A `?? null` here
+    // would turn an older deployment's silence into "changed, never acknowledged" and put a
+    // sentence about a machine handover over every mailbox on it.
+    organizerEventAt: m.organizerEventAt,
+    organizerEventSeenAt: m.organizerEventSeenAt,
+    // WHEN this install let the mailbox go, for the pane's permanent line. Untouched for the
+    // same reason: absent is an older server, `null` is "not released", and only the second is
+    // a fact about this mailbox.
+    organizerReleasedAt: m.organizerReleasedAt,
+    // WOULD A DECISION MADE HERE BE ACCEPTED. Untouched, and here the absent case is the one
+    // that matters most: it degrades to the state that offers NO decision controls and names
+    // the way out, which is the honest screen for a server that cannot answer the question.
+    organizerAcceptsRequests: m.organizerAcceptsRequests,
     lastSyncAt: m.lastSyncAt,
     // WHEN the first import finished (mail 0038), or null while it has not. The ladder in
     // `mail-state.ts` reads it as a FLOOR — a null keeps the strip saying "still importing" past

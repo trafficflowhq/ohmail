@@ -60,6 +60,10 @@ import {
   type ScreenerSenderDTO,
 } from "@ohmail/client-engine";
 import type { SuggestionOverlay } from "./screener-suggest";
+/* THE ONE ROLE ANSWER, imported rather than restated. `mail-state.ts` owns the derivation the
+   mailbox pane renders its own state line from, and a second rule shaped like it here is how two
+   surfaces come to describe one mailbox differently. */
+import type { ScreenerRole } from "./mail-state";
 import {
   armScreenerIntent,
   disarmScreenerIntent,
@@ -261,14 +265,20 @@ export interface ScreenerState {
   /** Commit every pending decision now (route/segment changes). */
   flush: () => void;
   /**
-   * SOMEBODY ELSE ORGANIZES THIS MAILBOX, so NOTHING HERE FILES — and who they are, by name.
+   * WHAT THIS INSTALL MAY DO WITH A DECISION — the three-way answer, not a boolean.
    *
-   * `null` is the ordinary case: this install organizes the mailbox and every verb above works.
-   * Non-null carries the holder for the copy, with `name: null` for a holder this build has no
-   * name for (a claim written by a version that recorded none) — three states, the same shape
-   * `mailboxes.readerLabel` / `readerLabelLegacy` already render.
+   * `organizer` is the ordinary case: this install organizes the mailbox and every verb above
+   * works exactly as it always has.
    *
-   * ── WHAT IT WAS MEASURED DOING, AND WHY THE GUARD IS HERE RATHER THAN IN THE VIEW ─────────
+   * `pending` is a reader whose organizer can take a decision. The verbs still work — the press
+   * is real — but the mail does not move here; the decision travels to the organizer and lands on
+   * its next pass. The sender leaves the queue at once and appears under {@link pending} instead,
+   * so a press is never shown as filed before it is.
+   *
+   * `blocked` is a reader with nowhere to send a decision, and it is the state this whole shape
+   * exists for.
+   *
+   * ── WHAT `blocked` WAS MEASURED DOING, AND WHY THE WALL IS HERE RATHER THAN IN THE VIEW ────
    *
    * On the released 0.13.7, on a standalone install reading a mailbox ohmail Cloud holds: the
    * Screener drew the full decision bar, `o` toasted *"Ohbox — filed. Future mail from … files
@@ -285,10 +295,51 @@ export interface ScreenerState {
    * makes it structural — a surface that forgets, a key that was missed, a row menu, the bulk
    * buttons and the boot replay all meet the same wall.
    *
+   * `pending` passes THROUGH that wall on purpose. The press has somewhere to go, so refusing it
+   * would be the mirror-image lie: a control withheld from somebody whose decision would in fact
+   * be carried out.
+   *
    * It is derived from {@link readerStandDown} in `mail-state.ts`, the predicate Settings →
    * Mailboxes already renders its banner from, and never from a second rule shaped like it.
    */
-  readOnly: { name: string | null } | null;
+  role: ScreenerRole;
+  /**
+   * SENDERS DECIDED HERE THAT THE ORGANIZER HAS NOT CARRIED OUT YET — empty in every other mode.
+   *
+   * They are OUT of {@link waiting} and not finished, which is a third state the queue has never
+   * had before and must not be collapsed into either neighbour: leaving them in the queue would
+   * ask the same question twice, and dropping them silently would make a press look like nothing
+   * happened. The mail is still in the Screener folder on the server, truthfully, until the
+   * organizer's own pass moves it.
+   *
+   * Two sources, merged on the address: the ones this session pressed, and the ones a previous
+   * session pressed that the server still reports outstanding. Without the second a reload would
+   * put every waiting sender back in the queue and invite the decision again.
+   */
+  pending: PendingDecision[];
+}
+
+/**
+ * ONE SENDER DECIDED ON A MAILBOX THIS INSTALL DOES NOT ORGANIZE.
+ *
+ * `state` and `reason` are OPTIONAL and are read structurally rather than switched on, so an
+ * organizer that starts answering with an outcome this build has never heard of renders the
+ * generic sentence instead of a raw token or a crash. What this build knows is that a `refused`
+ * state means the decision was not carried out; anything else it has not been told about is
+ * still waiting, which is the safe reading — a decision reported as refused that in fact landed
+ * would be the worse of the two errors.
+ */
+export interface PendingDecision {
+  /** The address (sender scope) or the domain (domain scope) the decision covers, lower-cased. */
+  subject: string;
+  scope: "sender" | "domain";
+  decidedAt: string;
+  /** The organizer's name, for the sentence. `null` where this build has none. */
+  holder: string | null;
+  /** `"refused"` is the one value this build acts on. Absent is "still waiting". */
+  state?: string;
+  /** Why it was not carried out, in the organizer's own vocabulary. */
+  reason?: string | null;
 }
 
 const OUT_MS = 330;
@@ -418,15 +469,24 @@ export function useScreenerState(
    */
   autoUnsubscribe = true,
   /**
-   * WHO ORGANIZES THIS MAILBOX, when it is not this install — see {@link ScreenerState.readOnly}.
+   * WHAT THIS INSTALL MAY DO WITH A DECISION — see {@link ScreenerState.role}.
    *
-   * OPTIONAL, and absent means "this install organizes it", which is what every caller meant
-   * before this parameter existed and is the safe default in the only direction that matters
-   * here: the dangerous value would refuse decisions on a mailbox this install DOES organize.
-   * The one caller that can know (`AppShell`) computes it from `readerStandDown` over the same
-   * polled row Settings → Mailboxes reads.
+   * OPTIONAL, and absent means `organizer`, which is what every caller meant before this
+   * parameter existed and is the safe default in the only direction that matters here: the
+   * dangerous value would refuse decisions on a mailbox this install DOES organize. The one
+   * caller that can know (`AppShell`) computes it with `screenerMode` over the same polled rows
+   * Settings → Mailboxes reads.
    */
-  readOnly: { name: string | null } | null = null,
+  role: ScreenerRole = { mode: "organizer", name: null, reason: null },
+  /**
+   * DECISIONS A PREVIOUS SESSION MADE THAT THE ORGANIZER HAS NOT CARRIED OUT YET.
+   *
+   * The durable half of {@link ScreenerState.pending}: this session's own presses are recorded
+   * here as they happen, and these are the ones the server still reports outstanding. Absent is
+   * "none known", which is right for the demo, for an organizer, and for a server that does not
+   * report them — in every one of those cases there is nothing to exclude.
+   */
+  outstanding: readonly PendingDecision[] = [],
 ): ScreenerState {
   const t = useTranslations("screener");
   /* The five pile names as the catalogue has them, so a toast naming a destination uses the
@@ -445,6 +505,18 @@ export function useScreenerState(
     hidden: new Set<string>(),
     /** See {@link ScreenerState.refused} — rows whose decision the wire would not take. */
     refused: new Set<string>(),
+    /**
+     * SENDERS THIS SESSION DECIDED ON A MAILBOX SOMEBODY ELSE ORGANIZES, keyed by
+     * {@link senderKey} — the address, because that is the identity that survives a drain.
+     *
+     * Keyed on the ADDRESS and not the row id, which is the difference between an exclusion that
+     * holds and one that lasts eight seconds. The optimistic overlay is keyed by the
+     * representative message's id and is dropped when the mutation confirms; the mail has not
+     * moved on the server (only the organizer moves mail), so the very next projection puts the
+     * same sender back in the queue under a NEW representative id. Keyed by address, this
+     * exclusion survives that and the sender stays where the press put it.
+     */
+    queued: new Map<string, PendingDecision>(),
     bulkBusy: false,
     /** See {@link ScreenerState.applying}. Guarded by `bulkBusy`, so only one run ever owns it. */
     applying: null as { done: number; total: number } | null,
@@ -611,6 +683,29 @@ export function useScreenerState(
       t("toastDecideFailed", { sender: displayAddressee(d.from.name, d.from.address) }),
       { duration: UNDO_MS },
     );
+  };
+
+  /**
+   * THE DECISION LANDED WITH THE ORGANIZER AND NOT ON THIS MACHINE — record it and say so.
+   *
+   * NOT a refusal, and it must not travel through {@link refuse}: `s.refused` means "the wire
+   * would not take your decision", and the wire took this one. What has not happened is the
+   * FILING, and the sentence that replaces the row says exactly that and names who owes it.
+   *
+   * The key is the address for a sender-scope decision and the DOMAIN for a domain-scope one, so
+   * a decision about a whole domain excludes the domain rather than one of its senders — which
+   * is what the organizer is going to apply, and therefore what the queue must stop asking about.
+   */
+  const markQueued = (d: ScreenerIntent, holder: string | null) => {
+    const at = d.from.address.lastIndexOf("@");
+    const subject = d.scope === "domain" && at >= 0 ? d.from.address.slice(at + 1) : d.from.address;
+    s.queued.set(senderKey(subject), {
+      subject,
+      scope: d.scope,
+      decidedAt: new Date(d.at).toISOString(),
+      holder,
+    });
+    bump();
   };
 
   /**
@@ -798,7 +893,21 @@ export function useScreenerState(
         scope: d.scope,
       }).then((res) => {
         done();
-        if (res.status === "rolled_back") refuse(d);
+        if (res.status === "rolled_back") { refuse(d); return; }
+        /* ── THE ORGANIZER TOOK IT, AND WILL CARRY IT OUT LATER ────────────────────────────
+         *
+         * `pendingWith` is present only where the server queued the decision instead of applying
+         * it: nothing moved, no rule was written, and the mail is still in the Screener folder.
+         * Recording it here is what stops the sender coming back.
+         *
+         * Without this the press undoes itself, and it does so on the CONFIRM rather than on a
+         * refusal, which is the harder failure to read: the engine drops the optimistic overlay
+         * when the mutation succeeds and pulls the authoritative delta, that delta carries no
+         * move — because there was none to carry — and the projection offers the same sender
+         * again a moment later. A person would see the press work and then unwind itself with
+         * nothing anywhere saying why. The mark is on the ADDRESS for that reason: the row id
+         * the overlay used is gone by then. */
+        if (res.pendingWith) markQueued(d, res.pendingWith.name);
       }, () => { done(); refuse(d); });
     } else {
       // ── PAST THE GATE: a rule, not a decide (#116) ──────────────────────────────────────────
@@ -1020,8 +1129,37 @@ export function useScreenerState(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [segments, version, s.overrides.size, suggestions]);
 
-  const visibleWaiting = waiting.filter((x) => !s.pending.has(x.id) || s.out.has(x.id));
-  const undecided = waiting.filter((x) => !s.pending.has(x.id));
+  /**
+   * DECIDED HERE, NOT CARRIED OUT YET — this session's presses over the server's own record.
+   *
+   * Merged rather than concatenated, and this session wins a tie: the server's copy is a poll
+   * behind, so a sender pressed a moment ago is in one list and stale in the other, and showing
+   * both would list one decision twice. The server's copy is what survives a reload; this
+   * session's is what makes the press feel like it happened.
+   */
+  const pendingByKey = new Map<string, PendingDecision>();
+  for (const p of outstanding) pendingByKey.set(senderKey(p.subject), p);
+  for (const [k, p] of s.queued) pendingByKey.set(k, p);
+  const pendingDecisions = [...pendingByKey.values()]
+    .sort((a, b) => Date.parse(b.decidedAt) - Date.parse(a.decidedAt));
+
+  /* A DECIDED SENDER IS OUT OF THE QUEUE AND STAYS OUT. Their mail is still in the Screener
+     folder — only the organizer moves mail — so the projection goes on offering them, and
+     without this the press would appear to work and then undo itself on the next drain. Matched
+     on the address, and on the DOMAIN for a domain-scope decision: deciding a whole domain and
+     then being asked about the next sender at that domain is the same question twice. */
+  const decidedSubject = (address: string): PendingDecision | undefined => {
+    const direct = pendingByKey.get(senderKey(address));
+    if (direct) return direct;
+    const at = address.lastIndexOf("@");
+    if (at < 0) return undefined;
+    const domain = pendingByKey.get(senderKey(address.slice(at + 1)));
+    return domain?.scope === "domain" ? domain : undefined;
+  };
+  const notDecided = (x: ScreenerSenderDTO): boolean => decidedSubject(x.from.address) === undefined;
+
+  const visibleWaiting = waiting.filter((x) => (!s.pending.has(x.id) || s.out.has(x.id)) && notDecided(x));
+  const undecided = waiting.filter((x) => !s.pending.has(x.id) && notDecided(x));
   const waitingCount = undecided.length;
   // Counted over the SAME set the bulk would act on — including the `hold` exclusion, which is
   // why this predicate must stay a copy of `applyAll`'s and not merely of "has a suggestion".
@@ -1498,8 +1636,13 @@ export function useScreenerState(
        decisions the engine will not make — the exact rollback-with-no-reason this slice closes,
        arriving through the durable path instead of a keypress. Nothing is consumed: the entries
        stay in the journal for the next boot, and age out on {@link INTENT_TTL_MS} if this install
-       never gets the mailbox back. */
-    if (readOnly !== null) return;
+       never gets the mailbox back.
+
+       `blocked` ONLY, on the same argument the live guard makes: a decision restored onto a
+       mailbox whose organizer WILL carry it out is a decision the person made and the product
+       kept, which is what the journal is for. Only the state with nowhere to send it withholds
+       the replay. */
+    if (role.mode === "blocked") return;
     if (restoredIntents.current === null) {
       restoredIntents.current = takeScreenerIntents(Date.now())
         .filter((r) => !s.pending.has(r.id));
@@ -1552,12 +1695,41 @@ export function useScreenerState(
    * nothing was armed, nothing was dispatched, no overlay moved, and the queue does not flicker.
    */
   const refuseReadOnly = (): void => {
-    toast(readOnly?.name
-      ? t("readerRefused", { name: readOnly.name })
+    toast(role.name
+      ? t("readerRefused", { name: role.name })
       : t("readerRefusedUnknown"));
   };
+  /**
+   * WHAT A READER MAY NOT DO WHATEVER ITS ORGANIZER OFFERS — a MOVE, and the sentence says so.
+   *
+   * Releasing a screened-out sender, rescuing mail out of Quarantine and deleting it are folder
+   * moves against mail another install is organizing. They are refused for EVERY reader, in both
+   * modes, because the channel a decision travels carries a decision and nothing else: there is
+   * no vocabulary for "move this mail" in it, and inventing one here would put two installs on
+   * the same folder at once, which is the invariant the whole organizer lease exists to hold.
+   *
+   * Its own sentence, and not the decide refusal's: on a `pending` reader "this computer does
+   * not decide about senders" is FALSE — it does, and the press works. What it does not do is
+   * move mail, which is a different thing to be told.
+   */
+  const refuseMove = (): void => {
+    toast(role.name
+      ? t("readerMoveRefused", { name: role.name })
+      : t("readerMoveRefusedUnknown"));
+  };
+  const guardMove = <A extends unknown[]>(verb: (...args: A) => void) =>
+    (role.mode === "organizer" ? verb : ((..._args: A) => refuseMove()));
+  /**
+   * A DECIDING VERB — walled in `blocked` ONLY, and that is the whole of what the mode split
+   * changed here.
+   *
+   * `pending` goes THROUGH: the press has an organizer to travel to, so refusing it would be the
+   * mirror image of the defect this guard exists for — a control withheld from somebody whose
+   * decision would in fact be carried out. What `pending` changes is the sentence AFTERWARDS,
+   * which is `markQueued`'s business and not this one's.
+   */
   const guard = <A extends unknown[]>(verb: (...args: A) => void) =>
-    (readOnly === null ? verb : ((..._args: A) => refuseReadOnly()));
+    (role.mode === "blocked" ? ((..._args: A) => refuseReadOnly()) : verb);
 
   return {
     waiting: visibleWaiting,
@@ -1572,17 +1744,26 @@ export function useScreenerState(
     isExiting: (id) => s.pending.has(id),
     refused: (id) => s.refused.has(id),
     bodyStall,
-    /* THE SEVEN VERBS THAT WRITE, every one behind the same wall. `flush` is deliberately NOT
-       among them — it commits decisions ALREADY armed, and on a reader none can be, so wrapping
-       it would only make a route change raise a sentence about nothing. */
+    /* THE SEVEN VERBS THAT WRITE, every one behind a wall — but not the SAME wall, and the split
+       is the point rather than an inconsistency.
+
+       The first three express a DECISION about a sender, which is the one thing a reader's
+       organizer will carry out on its behalf, so they are open wherever there is an organizer to
+       carry it out. The last four MOVE MAIL — a release out of Screened, a rescue out of
+       Quarantine, a delete — and no organizer takes those from a reader in any mode.
+
+       `flush` is deliberately outside both. It commits decisions ALREADY armed, so on a blocked
+       reader there are none and wrapping it would only make a route change raise a sentence about
+       nothing; on a pending one the armed decisions are exactly the ones that should be sent. */
     decide: guard(decide),
     applyAll: guard(applyAll),
     markAllSpam: guard(markAllSpam),
-    allowScreened: guard(allowScreened),
-    notSpamToWaiting: guard(notSpamToWaiting),
-    notSpamToOhbox: guard(notSpamToOhbox),
-    deleteSpam: guard(deleteSpam),
+    allowScreened: guardMove(allowScreened),
+    notSpamToWaiting: guardMove(notSpamToWaiting),
+    notSpamToOhbox: guardMove(notSpamToOhbox),
+    deleteSpam: guardMove(deleteSpam),
     flush,
-    readOnly,
+    role,
+    pending: pendingDecisions,
   };
 }

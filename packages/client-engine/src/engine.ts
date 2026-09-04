@@ -78,6 +78,16 @@ export interface MutationResult {
    * that was refused has no id to adopt.
    */
   entityId?: string;
+  /**
+   * THE DECISION WAS ACCEPTED FOR ANOTHER INSTALL TO CARRY OUT — see
+   * {@link MutationOutcome.pendingWith}.
+   *
+   * Present only on a confirmed `screener_decide` against a mailbox somebody else organizes, and
+   * it is the ONLY evidence such a press ever produces: nothing moved, so no delta describes it,
+   * and the overlay that made the row look filed is dropped the moment the mutation confirms. A
+   * caller that ignores this shows the press undoing itself a second later.
+   */
+  pendingWith?: { name: string | null } | null;
 }
 
 interface PendingMutation {
@@ -3604,9 +3614,14 @@ export class OhmailEngine {
       // server row to name, and handing back an id for one would be the worst kind of wrong
       // answer here — a compose surface would adopt it and go on PATCHing a draft that is not
       // there, or send it.
+      // `pendingWith` rides the same way, and for the reason it exists: the server took the
+      // decision and did NOT act on it, and this result is the only thing that can say so. It is
+      // on the CONFIRMED result because the mutation genuinely succeeded — a queued or
+      // rolled-back one has no answer from the organizer to report.
       return {
         id: p.id, key: p.key, status: "confirmed", seq: outcome.seq,
         ...(outcome.entityId ? { entityId: outcome.entityId } : {}),
+        ...(outcome.pendingWith ? { pendingWith: outcome.pendingWith } : {}),
       };
     } catch (err) {
       const rejection = err instanceof MutationRejectedError

@@ -54,6 +54,24 @@ export interface MutationOutcome {
    * exactly the FixturesAdapter's answer (the demo has no server to mint an id).
    */
   providerMessageId?: string | null;
+  /**
+   * THE DECISION WAS ACCEPTED FOR SOMEBODY ELSE TO CARRY OUT — who, by name.
+   *
+   * `screener_decide` alone carries it, and only where the mailbox is organized by another
+   * install: the server records the decision and answers 202 instead of filing anything. Nothing
+   * moved, no rule was written, and the mail is still in the Screener folder — so this is NOT a
+   * confirmation that the decision took effect, and a surface that treats it as one would be
+   * making the claim this whole path exists to stop making.
+   *
+   * It has to travel back to the caller because the mirror cannot say it. A queued decision emits
+   * no `change_log` row anywhere, so the reconciling drain carries nothing, the optimistic overlay
+   * is dropped on confirm, and the sender reappears in the queue as though the press had never
+   * happened. This is the only evidence that it did.
+   *
+   * `name` is `null` where the holder is real but unnamed — a claim written by a version that
+   * recorded none — which is the same three-state shape every other holder sentence renders.
+   */
+  pendingWith?: { name: string | null } | null;
 }
 
 /**

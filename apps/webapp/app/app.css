@@ -945,6 +945,33 @@ body.reading .shell {
   }
 }
 
+/* ============ the organizer notice: the same quiet line, once per change ================
+   The Ohbox notice's second tenant. Which install organizes a mailbox can change — a press on
+   another machine, a machine that stopped — and this is where that is said, once, on the pane
+   its owner reads: one sentence and "Mark read", which makes it go for good. It borrows
+   `.ohx-notice` whole because it is the same kind of statement: ambient, never an alert — the
+   change it names is normal and usually wanted. Several mailboxes can change at once; each gets
+   a line of its own, in the roster's order, so nothing is folded into a count and nothing waits
+   unseen behind a line already on screen. */
+.ohx-notice + .ohx-notice {
+  /* Two lines in the slot read as one quiet block, not as two announcements. */
+  margin-top: 4px;
+}
+.ohx-organizer > span {
+  /* The address is the one word here that cannot hyphenate, and on a phone it is wider than a
+     third of the line. It breaks rather than push the pane; nothing here ellipsizes. */
+  overflow-wrap: anywhere;
+}
+/* NOBODY IS FILING THE MAILBOX. Of the five things this line can say, this is the one open
+   condition rather than a finished change, so the fact takes the reading ink and its weight —
+   the one step the Screener's reader note takes — and nothing else: no colour, no mark, no
+   background. It is something to know, not something that went wrong. The way to act on it is
+   a second quiet verb beside the sentence, and "Mark read" still ends the line. */
+.ohx-organizer[data-state="stopped"] b {
+  font-weight: 600;
+  color: var(--ink);
+}
+
 /* ============ settings found on a mailbox: the restore card ============================
    The portable profile's confirm moment (shell/ProfileImportCard.tsx). A floating card over
    the stage rather than a strip inside one view: the offer must be visible whichever pile is
@@ -1401,6 +1428,74 @@ body.reading .shell {
   font-size: 11px;
   color: var(--ink3);
   line-height: 1.45;
+}
+/* The way to the control, in the note itself. The sentence names Settings → Mailboxes; on a
+   phone that is a route to remember, so the note carries the press — the Ohbox notice's own
+   quiet verb (`.ohx-notice button`), which navigates and files nothing. */
+.scn-reader button {
+  align-self: flex-start;
+  margin-top: 2px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--accent-ink);
+  border-radius: var(--r-pill);
+  padding: 2px 9px;
+}
+.scn-reader button:hover {
+  background: var(--accent-soft);
+}
+/* ── DECIDING ON A MAILBOX ANOTHER INSTALL ORGANIZES, WHEN THAT INSTALL TAKES THE DECISION ──
+   The opposite of `.scn-reader`, and it must never be mistaken for it. There the verbs are GONE
+   and a two-line note stands in their place; here the verbs are present and work — a press is
+   sent to the organizer, which files the sender on its next pass — so what changes is not the
+   bar but where a decided sender goes: out of the queue and under a waterline, the Ohbox's own
+   device for "dealt with, not gone", until the organizer applies it and the mirror moves the
+   sender on.
+
+   Three statements, each made once. The standing fact sits ABOVE THE QUEUE in the list head —
+   a running sentence whose bold lead says what a press does here — never where the verbs would
+   be. The per-sender state sits under the bar, in the AI line's place, because it is the same
+   kind of thing: a finding about this sender. The refusal is the one failure state and the only
+   louder thing: its lead takes the accent's ink and the row's badge is the one outlined badge
+   in the list. The palette has no red, and nothing here is anyone's fault — the organizer
+   answered, and said no — so it is set apart by shape, not by alarm. */
+.scn-relay {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink2);
+  max-width: 62ch;
+}
+.scn-relay b {
+  color: var(--ink);
+  font-weight: 600;
+}
+/* `display: block`, not `.scn-why`'s flex: the bold lead and the sentence are one line of prose
+   and must flow as one, or a narrow preview puts the lead in a column of its own beside a
+   wrapped sentence. */
+.scn-relay-state {
+  display: block;
+  margin: 0 0 14px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink2);
+  max-width: 62ch;
+}
+.scn-relay-state b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.scn-relay-state[data-state="refused"] b {
+  color: var(--accent-ink);
+}
+/* The refused row's badge — `MessageRow`'s `stateNote`, on a row wearing `scn-refused`: the
+   accent's ink inside a hairline of the same hue, on no fill. Distinct from the filled AI badge
+   beside it (a model's suggestion) and from the quiet "Not saved" place badge (a write that did
+   not land here), because it is neither. */
+.row.scn-refused .badge.place {
+  color: var(--accent-ink);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--accent-hair);
 }
 /* The Junk window's footnotes — the per-mailbox degrades and the digit-free retention
    sentence — quiet lines under the rows, in the caption's own voice, padded to the row gutter. */
@@ -4016,6 +4111,65 @@ textarea.c-input:read-only {
   /* Wrap is inherited from the base rule, which is what makes this work at a 320px pane:
      the status sentence takes a line, the buttons take the next, and no capsule squishes. */
   .mbx-state { width: 100%; justify-content: space-between; }
+}
+/* ── WHO ORGANIZES THIS MAILBOX, UNDER ITS ROW — AND THE HANDOVER ───────────────────────────
+   The row answers "is my mail coming down?"; this block answers the other question a person
+   with two machines has — "which one files it?" — and it never disappears: it is the row's
+   standing record, with the one verb that changes it. One shape for the three answers
+   (`SettingsBanner`: the fact, since when, the verb), told apart by how loud the surface is:
+
+     organizing here   a hairline ring on no fill — the ordinary state, and a tint under every
+                       row would mean nothing;
+     organized there   the banner's own accent wash — the exception, worth a tint;
+     nobody            the same wash — an open condition, carried by the words.
+
+   The verb follows the same ladder. Stopping here is a ghost: rare, deliberate, and not
+   destructive — nothing about the mail changes. Taking over from a live organizer is a plain
+   capsule: a real button, not the happy path, because that state is usually wanted. Claiming
+   back a mailbox nobody files is primary, because there the press is the remedy.
+
+   The browser's pane wraps each mailbox in `.mbx-entry` so the block can stand under the whole
+   row rather than inside its address column; the rule between mailboxes moves to the wrapper
+   with it. */
+.mbx-entry {
+  border-bottom: 1px solid var(--hair);
+}
+.mbx-entry:last-of-type {
+  border-bottom: 0;
+}
+.mbx-entry > .mbx-row {
+  border-bottom: 0;
+}
+.mbx-org[data-role="organizer"] .set-banner {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--hair-soft);
+}
+/* THE HANDOVER, AND WHAT IT COSTS, BEFORE IT IS CONFIRMED. The sentence here is the most
+   important text on the pane — the one thing a person reads before handing a mailbox between
+   machines — and it used to be set as the row's footnote, the smallest and greyest type the
+   pane has. It is a question with its verbs now, in the construction this product already uses
+   for one (the settings verdict, the Screener's ask): a flat well on the tint with an inset
+   hairline, the sentence in the reading ink at body size, the confirm and the cancel under it.
+   It sits close under the banner whose verb opened it, so the fact and the question read as one
+   object, and the banner's own verb is withheld while the well is open, so there is one place to
+   answer. No heading: the confirm's label is the question. Nothing here is red — the act is
+   reversible from either machine, and both sentences say so. */
+.mbx-handover {
+  margin: 2px 0 6px;
+  padding: 12px 14px 6px;
+  border-radius: var(--r-card);
+  background: var(--tint);
+  box-shadow: inset 0 0 0 1px var(--hair-soft);
+}
+.mbx-handover-what {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink);
+  max-width: 62ch;
+}
+.mbx-handover .set-actions {
+  padding: 10px 0 4px;
 }
 
 /* ================= Settings → Subscription ================= */

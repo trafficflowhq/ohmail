@@ -662,12 +662,11 @@ export function FirstRun({
   /**
    * WHICH CHOICE THE PERSON MADE, or `null` while they have not touched the control.
    *
-   * `null` rather than a seeded value, because the default is a FACT and the fact arrives late.
-   * The holder columns are filled by a PEEK — an IMAP round trip that lands after this component
-   * mounts — so a `useState` initializer reading them would compute the default against facts
-   * that had not arrived yet and keep it for the life of the run. The effective value is derived
-   * below, where `claimRefusedHere` is in hand, and switches to what the person picked the
-   * instant they pick anything.
+   * `null` rather than a seeded value, and the reason survives the predicate it used to serve.
+   * The default is derived below and this is what OVERRIDES it: a seeded `"here"` would be
+   * indistinguishable from a press, so a later change to how the default is computed could not
+   * tell an untouched screen from an answered one. `null` keeps "nobody has chosen yet" a state
+   * the screen can still see.
    */
   const [elsewhereChoicePicked, setElsewhereChoice] = useState<"here" | "read" | null>(null);
   /** A claim has been authorized in this run — the "on its next pass" verdict, not a success. */
@@ -693,25 +692,25 @@ export function FirstRun({
   const remaining = pullRemaining(serverMessageCount, mirrorCount);
   const etaMs = pullEtaMs(remaining, rate);
 
-  /** Whether the claim choice on the elsewhere screen would be declined. See the function. */
-  const claimRefusedHere = claimRefusedOnThisDoor(facts);
   /**
-   * THE PRE-SELECTED CHOICE IS THE ONE THAT CAN SUCCEED — and it used to be the refused one.
+   * THE DEFAULT IS THE CHOICE A FIRST RUN IS ABOUT, AND IT IS NO LONGER WITHHELD.
    *
-   * `here` was hard-coded as the default on the reasoning that a first run is somebody setting
-   * ohmail up to organize their mail. That reasoning holds on a door where the claim can be
-   * taken. It does not hold here: `claimRefusedHere` is the state in which the block directly
-   * under this control says, before any press, that the takeover cannot be taken — and the
-   * default sat on exactly that option, so ↵ on an untouched screen pressed the refused thing.
+   * It used to follow a predicate — would the lease decline this press? — because a hosted claim
+   * outranked a local one and a standalone install had no path over a live one whatever was
+   * authorized. On those rows the pre-selected option would have been the refused one, so the
+   * default moved to "just read it" and a block under the control said why.
    *
-   * So the default follows the facts, and only until the person answers: any press writes
-   * `elsewhereChoicePicked` and that wins from then on, including a deliberate "Organize here
-   * instead" over a live holder — the screen states the refusal, it does not remove the choice.
-   * Where the claim CAN succeed (the hosted door, a stopped holder) `here` is still the default,
-   * unchanged, because there the choice promises nothing the next pass declines.
+   * An explicit press outranks a claim that carries none now, whichever machine wrote it, so
+   * there is no refused case left. `here` is the default again on every door — somebody running
+   * this flow is setting ohmail up to organize their mail — and any press still writes
+   * `elsewhereChoicePicked`, which wins from then on.
+   *
+   * What the screen owes instead is the CONSEQUENCE, and it is stated on the choice itself
+   * (`elsewhereChoiceHereWhy`): the install holding the mailbox stops organizing within a minute
+   * and goes on reading it, keeping its copy of the mail. That sentence is what makes this a
+   * decision rather than a discovery, and it is the half that has to be there before the press.
    */
-  const elsewhereChoice: "here" | "read" =
-    elsewhereChoicePicked ?? (claimRefusedHere ? "read" : "here");
+  const elsewhereChoice: "here" | "read" = elsewhereChoicePicked ?? "here";
   /**
    * IS THIS INSTALL THE ORGANIZER — the one fact the summary is allowed to report work on.
    *
@@ -1096,35 +1095,13 @@ export function FirstRun({
                   running install is honoured on the next poll with no relaunch. The premise the
                   branch stood on is gone, and the branch goes with it rather than surviving as a
                   vaguer sentence on one door — which would understate what that door does. */}
-              {/* ── AND WHERE THE LEASE WILL REFUSE, THE SCREEN SAYS SO BEFORE THE PRESS ───
-                  `decideLease` ranks kinds cloud > local > unknown, and a STANDALONE install is
-                  `local`: rule 5 gives it no path over a live Cloud (or over a live kind this
-                  build cannot rank) whatever was authorized — the honest action is to stop the
-                  organizer there first. Without this the choice promised a takeover that the
-                  very next pass refuses: agree, stand down on that pass, and read a summary
-                  claiming the organizing.
-
-                  The sentence is `mailboxes.organizeHereWhatBlocked`, the SAME one Settings →
-                  Mailboxes prints for the same state — one vocabulary for one refusal, so the
-                  two surfaces cannot drift into describing it differently.
-
-                  Withheld on the other two doors rather than made vaguer: a Cloud claim outranks
-                  a local holder, so there the promise the choice makes is true.
-
-                  IT NO LONGER WAITS FOR "ORGANIZE HERE INSTEAD" TO BE SELECTED, and that is the
-                  other half of moving the default off the refused option. Gated on the selection
-                  it would be invisible in exactly the state it describes — the person arrives on
-                  "Just read it here" and is never told why that is where they landed. The
-                  sentence is about the MAILBOX, not about a selection, so it is said whenever it
-                  is true. */}
-              {claimRefusedHere ? (
-                <SettingsVerdict
-                  state="off"
-                  headline={tm("organizeHereWhatBlocked", {
-                    name: holderName(facts) ?? tm("readerHolderUnknown"),
-                  })}
-                />
-              ) : null}
+              {/* THE BLOCK THAT PRINTED A REFUSAL IS GONE, WITH THE REFUSAL.
+                  It said the press could not take the mailbox while the holder was checking in,
+                  and named the order to do it in. That was true while a hosted claim outranked a
+                  local one; it is not true now, and a screen that still said it would be telling
+                  somebody to go and stop a machine they do not have to touch. The consequence of
+                  the press is stated on the choice above instead, which is where a person reads
+                  before choosing rather than after. */}
               {claimed ? <SettingsVerdict state="wait" headline={t("elsewhereQueued")} /> : null}
               {problem ? <SettingsVerdict state="bad" headline={problem} /> : null}
               {foot({ back: true, primary: next(t("continue")) })}
@@ -1546,29 +1523,4 @@ function holderName(facts: OnboardingFacts): string | null {
   const by = facts.mailbox?.organizedBy;
   if (!by) return null;
   return by.name && by.name.trim() ? by.name : null;
-}
-
-/**
- * WOULD "ORGANIZE HERE INSTEAD" BE REFUSED BY THE LEASE, on the facts this screen can see?
- *
- * `decideLease` (`organizer-lease.ts`) ranks kinds cloud > local > unknown, and rule 5 refuses a
- * takeover of a LIVE holder that outranks us "even with authorization" — §4 gives a standalone
- * install no path over a live Cloud on purpose. So on the `local` door the claim choice promises
- * something the very next pass declines. The measured cost of not saying so was the confusion
- * this screen exists to prevent: agree, stand down on the next pass, and read a summary
- * reporting the organizing that was refused.
- *
- * `organizerState !== "stopped"` and not `=== "held"`, on the desktop pane's rule verbatim: the
- * column is `null` when this install has not LOOKED, which is not evidence the holder went away.
- * Treating unknown as beatable promises a takeover against a claim that may be perfectly fresh;
- * the cost of the cautious direction is a sentence pointing at an action that also works.
- *
- * Exported because it is the branch this screen's honesty rests on and it has rows.
- */
-export function claimRefusedOnThisDoor(facts: OnboardingFacts): boolean {
-  if (facts.door !== "local") return false;
-  const mb = facts.mailbox;
-  if (!mb || mb.organizerState === "stopped") return false;
-  const kind = mb.organizedBy?.kind;
-  return kind === "cloud" || kind === "unknown";
 }

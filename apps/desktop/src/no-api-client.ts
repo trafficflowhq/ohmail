@@ -115,6 +115,10 @@ export interface MailboxDTO {
     organizedBy?: { kind: string | null; name: string | null; since: string | null } | null;
     organizerState?: "held" | "stopped" | null;
     organizeConsentedAt?: string | null;
+    organizerEventAt?: string | null;
+    organizerEventSeenAt?: string | null;
+    organizerReleasedAt?: string | null;
+    organizerAcceptsRequests?: boolean;
     errorCode?: "auth" | "connect" | "tls" | "timeout" | "storage" | "sync" | "unknown" | null;
     errorDetail?: string | null;
     failedAt?: string | null;
@@ -290,6 +294,8 @@ export const mailboxes: {
     update: (id: string, b: UpdateMailboxBody) => Promise<MailboxDTO>;
     organizer: (id: string) => Promise<OrganizerPeek>;
     takeover: (id: string) => Promise<MailboxTakeover>;
+    release: (id: string) => Promise<MailboxRelease>;
+    dismissOrganizerNotice: (id: string) => Promise<MailboxDTO>;
     oauthStart: (b?: {
         mailboxId?: string;
         returnTo?: string;
@@ -328,6 +334,14 @@ export type MailboxTakeover = {
     previousReason: string;
 } | {
     outcome: "already_organizing";
+} | {
+    outcome: "disconnected";
+};
+
+export type MailboxRelease = {
+    outcome: "requested";
+} | {
+    outcome: "not_organizing";
 } | {
     outcome: "disconnected";
 };

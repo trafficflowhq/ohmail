@@ -36,7 +36,7 @@ import type { LocalAiStatus } from "./local-ai.js";
    why the predicate is the shared one. `useMailboxFacts` is the NON-throwing accessor,
    so a pane mounted without the provider keeps the sentence it always had. */
 import { useMailboxFacts } from "../../webapp/app/shell/MailStateProvider";
-import { screenerReadOnly } from "../../webapp/app/shell/mail-state";
+import { readerHolder, screenerMode } from "../../webapp/app/shell/mail-state";
 import { mailboxRowWhy } from "./install-role.js";
 
 /**
@@ -256,7 +256,7 @@ export function DesktopSettings({
   const credential = credentialLine(status, session);
   /* "organizes" or "reads" — see `install-role.ts`. This pane said the first on an install that
      did the second, beside a Mailboxes pane saying the truth on the same machine. */
-  const readOnly = screenerReadOnly(useMailboxFacts());
+  const readOnly = readerHolder(screenerMode(useMailboxFacts()));
 
   const signOut = async (): Promise<void> => {
     if (busy) return;

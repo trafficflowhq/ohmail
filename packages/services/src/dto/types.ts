@@ -463,6 +463,45 @@ export interface MailboxDTO {
    */
   organizerEventAt: ISODateTime | null;
   organizerEventSeenAt: ISODateTime | null;
+  /**
+   * CAN THE HOLDER OF THIS MAILBOX ACCEPT A DECISION FROM A READER? (0.14.1)
+   *
+   * `true` only where a reader's press has somewhere to go: the holder is still renewing its
+   * claim AND that claim advertises the request capability. `false` everywhere else, including
+   * on a mailbox this install organizes — an organizer needs no request, so the honest answer to
+   * "would a request be accepted here" is that the question does not arise.
+   *
+   * ── WHY THIS IS ON THE WIRE AT ALL ────────────────────────────────────────────────────────
+   *
+   * Because the client has to withhold a control BEFORE the press, not explain a refusal after
+   * it. A reader whose holder is an older build has no path for a decision, and a decision bar
+   * wired to a refusal is worse than an absent one: it is the shape that let a released build
+   * say "filed" and take it back forty-five seconds later. The two reader states want opposite
+   * screens — one says presses work with a delay, the other says presses do nothing here — and
+   * nothing else on this DTO can tell them apart.
+   *
+   * ── AND WHY IT IS A DERIVED BOOLEAN AND NOT THE CAPABILITY SET ────────────────────────────
+   *
+   * The set is a holder's self-description, written from a header another install produced. It is
+   * bounded and validated, but it is still somebody else's vocabulary, and putting it on a
+   * customer-facing DTO would invite a client to branch on tokens this build has never heard of.
+   * One question is asked here and one answer is given, computed by the same rule the door itself
+   * applies, so a client cannot arrive at a different verdict than the request door would.
+   */
+  organizerAcceptsRequests: boolean;
+  /**
+   * WHEN THIS INSTALL LAST GAVE THIS MAILBOX UP DELIBERATELY, or `null`.
+   *
+   * Written by the release path and cleared by the next claim, so it is a statement about the
+   * CURRENT tenure rather than a history: a mailbox that was released and then taken back reports
+   * null again, because "released" is no longer what it is.
+   *
+   * It exists on the wire so the mailbox pane can date its own permanent line. The three reader
+   * shapes are otherwise indistinguishable from the outside — a mailbox nobody has ever organized,
+   * one whose holder vanished, and one this install let go on purpose all read as a reader with no
+   * holder — and only the third is something the person here did.
+   */
+  organizerReleasedAt: ISODateTime | null;
   id: string;
   provider: string;              // 'imap' today; 'exchange' planned
   address: string;

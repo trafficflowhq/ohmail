@@ -305,6 +305,36 @@ export interface MailboxDTO {
    */
   organizeConsentedAt?: string | null;
   /**
+   * WHEN THE ORGANIZING SITUATION LAST CHANGED, AND WHEN IT WAS LAST ACKNOWLEDGED.
+   *
+   * The pair the once-only notice is derived from — `organizerEventAt > organizerEventSeenAt`,
+   * with an unset `seenAt` meaning "never acknowledged". Two instants and not a flag, so every
+   * door computes the same answer from the same facts and an acknowledgement made on one of them
+   * reaches the others on their next poll.
+   *
+   * OPTIONAL, and absent withholds the line. A build that cannot tell must not announce that a
+   * mailbox changed hands.
+   */
+  organizerEventAt?: string | null;
+  organizerEventSeenAt?: string | null;
+  /**
+   * WHEN this install last gave this mailbox up deliberately, or `null`. Cleared by the next
+   * claim, so it describes the current tenure rather than a history.
+   *
+   * It is the only thing separating a mailbox somebody released from one whose holder vanished:
+   * both are readers with no holder, and only the first is something the person here did.
+   */
+  organizerReleasedAt?: string | null;
+  /**
+   * WOULD A DECISION MADE HERE BE ACCEPTED BY WHOEVER ORGANIZES THIS MAILBOX?
+   *
+   * `true` only where a press has somewhere to go — the holder is still renewing and its build
+   * can take a decision from a reader. OPTIONAL, and absent means the same as `false`: withhold
+   * the controls and say why. The dangerous default is the other one, which draws a decision bar
+   * whose every press ends in a refusal.
+   */
+  organizerAcceptsRequests?: boolean;
+  /**
    * WHY a mailbox is in `error` (mail 0023). Null unless `status === "error"`.
    *
    * A stable KEY, not a sentence — the server never ships English, so the copy stays in
@@ -986,6 +1016,35 @@ export const mailboxes = {
     api<MailboxTakeover>(`/mailboxes/${id}/organize`, { method: "POST", body }),
 
   /**
+   * STOP ORGANIZING THIS MAILBOX HERE, AND KEEP THE MAIL.
+   *
+   * The mirror of {@link organize}, and NOT step-up-gated, which is the asymmetry worth stating
+   * rather than smoothing over. A second factor guards the direction that TAKES CONTROL of
+   * somebody's mail; this direction gives it up, keeps every credential and every message, and is
+   * reversible with one press of the button beside it. Gating it would mean a person who has lost
+   * their second factor cannot stop a machine from filing their mail.
+   *
+   * It records the request and does not perform it: the claim lives in the mailbox itself, so only
+   * the process holding that connection can give it up. `requested` is answered 202 for that
+   * reason — the ceasing happens on the organizer's next pass, within a minute.
+   */
+  release: (id: string) =>
+    api<MailboxRelease>(`/mailboxes/${id}/release`, { method: "POST", body: {} }),
+
+  /**
+   * ACKNOWLEDGE THE ORGANIZER NOTICE ON ONE MAILBOX — the "Mark read" press.
+   *
+   * Stamps one instant on the caller's own row, and the line is gone from every door on its next
+   * poll because every door derives it from the same comparison. Idempotent by construction: a
+   * repeat press re-stamps the same acknowledgement, which only makes it more durable.
+   *
+   * Returns the updated row, so the pressing client settles at once instead of waiting a poll to
+   * see its own press take.
+   */
+  dismissOrganizerNotice: (id: string) =>
+    api<MailboxDTO>(`/mailboxes/${id}/organizer-notice/dismiss`, { method: "POST", body: {} }),
+
+  /**
    * BEGIN the Microsoft consent ceremony. Returns the URL to navigate to at TOP LEVEL.
    *
    * It is a URL and not a redirect this call follows, and that is not a style choice: a `fetch`
@@ -1099,6 +1158,18 @@ export interface OrganizerPeek {
 export type MailboxTakeover =
   | { outcome: "authorized"; previousReason: string }
   | { outcome: "already_organizing" }
+  | { outcome: "disconnected" };
+
+/**
+ * What "stop organizing here" answered.
+ *
+ * `not_organizing` is a SUCCESS and not a refusal: a request to stop organizing a mailbox this
+ * install does not organize has already got what it asked for, and it is also where a second
+ * press lands, because the first one's gate demotes the row within a cycle.
+ */
+export type MailboxRelease =
+  | { outcome: "requested" }
+  | { outcome: "not_organizing" }
   | { outcome: "disconnected" };
 
 // ── Saved settings found on a mailbox (the portable organizer profile) ───────────────────
@@ -1767,6 +1838,28 @@ export interface ScreenerWirePage {
    * set about to be posted.
    */
   suggestable: { senders: string[]; credits: number; maxPerRequest: number };
+  /**
+   * SENDERS THIS INSTALL HAS DECIDED ON THAT ITS ORGANIZER HAS NOT CARRIED OUT YET.
+   *
+   * They are ALREADY EXCLUDED from {@link items}, which is what makes this field load-bearing
+   * rather than informational: without it the exclusion is a disappearance, and a sender who left
+   * the queue on a press a person made yesterday has nothing on screen accounting for them.
+   *
+   * OPTIONAL, and absent means "none known" — a server deployed before the field, and every
+   * install that organizes its own mailboxes. Both want the same thing, which is nothing shown.
+   *
+   * `state` and `reason` are read structurally rather than switched on: an organizer that starts
+   * answering with an outcome this build has never heard of should render the generic sentence,
+   * not a raw token.
+   */
+  pendingDecisions?: Array<{
+    subject: string;
+    scope: "sender" | "domain";
+    decidedAt: string;
+    sent: boolean;
+    state?: string;
+    reason?: string | null;
+  }>;
 }
 
 /**

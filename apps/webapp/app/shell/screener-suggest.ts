@@ -39,6 +39,9 @@ import {
   ApiError, apiConfigured, screener as screenerApi,
   type ScreenerSkipReason, type ScreenerSuggestWire, type ScreenerWirePage,
 } from "../api-client";
+/* The decided-and-waiting shape, owned by the module that renders it. Type-only, so this does not
+   close a runtime cycle with `screener-state.ts`, which reads this file's overlay type. */
+import type { PendingDecision } from "./screener-state";
 
 /**
  * One sender's suggestion, in the vocabulary the rows already speak.
@@ -232,6 +235,19 @@ export interface AutoOptInControl {
 
 export interface ScreenerSuggestions {
   suggestions: SuggestionOverlay;
+  /**
+   * DECISIONS THIS INSTALL HAS MADE THAT ITS ORGANIZER HAS NOT CARRIED OUT YET — the durable half.
+   *
+   * It rides this hook because this hook already makes the ONE `GET /screener` a session makes,
+   * and a second fetch of the same page to read one more field of it would be a round trip bought
+   * to avoid a seam. What it is NOT is a suggestion: nothing here is bought, priced or spent, and
+   * no control on the suggest surface reads it. `useScreenerState` is the only consumer.
+   *
+   * Empty until that read lands, and empty for ever where it fails or where the server does not
+   * send the field. Both are right: the live half of the same state — a press made in THIS
+   * session — is recorded by `useScreenerState` itself and needs nothing from here.
+   */
+  outstandingDecisions: readonly PendingDecision[];
   /**
    * PUT ANSWERS INTO THE OVERLAY FROM SOMEWHERE THAT IS NOT THIS HOOK.
    *
@@ -552,6 +568,8 @@ export function useScreenerSuggestions(opts: {
   /** See {@link SuggestBatchControl.progress}. Written beside `notice`, never derived from it. */
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [maxPerRequest, setMaxPerRequest] = useState(ASSUMED_MAX_PER_REQUEST);
+  /** See {@link ScreenerSuggestions.outstandingDecisions} — read off the one page fetch below. */
+  const [outstanding, setOutstanding] = useState<readonly PendingDecision[]>([]);
   /**
    * The server's own recommended request size, or `null` until one has said — see
    * {@link SUGGEST_CHUNK_SIZE}. `null` and not a default, so "this server has not told me" is
@@ -723,6 +741,27 @@ export function useScreenerSuggestions(opts: {
         const page = await link.current.wire.list({ limit: HYDRATE_LIMIT });
         if (cancelled) return;
         if (page.suggestable?.maxPerRequest) setMaxPerRequest(page.suggestable.maxPerRequest);
+        /* THE SENDERS THIS PAGE LEFT OUT, and why. `list()` excludes a sender whose decision is
+           waiting on another install, so without this field the exclusion is a disappearance: a
+           press made in a previous session takes the sender out of the queue and nothing on
+           screen accounts for them. Read off the SAME page rather than fetched separately —
+           it is a property of this response, and a second request for it would be a round trip
+           bought to avoid a seam. An older server sends nothing and the surface shows nothing. */
+        setOutstanding(
+          (page.pendingDecisions ?? []).map((d) => ({
+            subject: d.subject,
+            scope: d.scope,
+            decidedAt: d.decidedAt,
+            /* THE PAGE DOES NOT NAME THE HOLDER — it is a property of the MAILBOX and this is a
+               list of senders. The unnamed sentence is what renders, which is the honest one:
+               this install knows a decision is outstanding and not which machine owes it. A
+               press made in THIS session carries the name, because the answer to that press
+               did. */
+            holder: null,
+            ...(d.state !== undefined ? { state: d.state } : {}),
+            ...(d.reason !== undefined ? { reason: d.reason } : {}),
+          })),
+        );
         // A NUMBER, not a truthy read of an optional field: an older server omits it entirely and
         // must leave the fallback standing, and a nonsense value must not become a chunk size.
         const rec = (page.suggestable as { recommendedPerRequest?: unknown } | undefined)?.recommendedPerRequest;
@@ -1193,7 +1232,7 @@ export function useScreenerSuggestions(opts: {
   };
 
   // `merge` is the whole of `absorb`, exposed rather than reimplemented — see the interface.
-  return { suggestions, absorb: merge, forSenders, autoOptIn };
+  return { suggestions, absorb: merge, forSenders, autoOptIn, outstandingDecisions: outstanding };
 }
 
 /**

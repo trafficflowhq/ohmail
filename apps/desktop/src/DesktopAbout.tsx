@@ -26,11 +26,11 @@ import { DesktopUpdate } from "./DesktopUpdate.js";
    why the predicate is the shared one. `useMailboxFacts` is the NON-throwing accessor,
    so a pane mounted without the provider keeps the sentence it always had. */
 import { useMailboxFacts } from "../../webapp/app/shell/MailStateProvider";
-import { screenerReadOnly } from "../../webapp/app/shell/mail-state";
+import { readerHolder, screenerMode } from "../../webapp/app/shell/mail-state";
 import { mailboxRowWhy } from "./install-role.js";
 
 export function DesktopAbout({ status }: { status: EngineStatus }) {
-  const readOnly = screenerReadOnly(useMailboxFacts());
+  const readOnly = readerHolder(screenerMode(useMailboxFacts()));
   /* What the two doors are called on screen — the same words the Desktop pane uses. Resolved
      inside the render rather than held as a module constant, because both halves are catalogue
      reads now and a constant would freeze whichever locale happened to be set when this module

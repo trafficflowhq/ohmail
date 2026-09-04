@@ -1,7 +1,7 @@
 import { closeSync, fsyncSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { and, asc, desc, eq, gt, isNull, ne, notInArray, sql } from "drizzle-orm";
-import { recordChange, recordChanges, accountSettings,
+import { recordChange, recordChanges, accountSettings, CAPABILITY_REQUESTS,
 } from "@trafficflow/db";
 import {
   approvals, attachments, drafts, flagState, folderState, mailboxCredentials, mailboxFolders,
@@ -892,6 +892,30 @@ function mailboxRow(world: LocalWorld, m: MailboxDTO, now: Date) {
      * pull brings the answer back. */
     organizerEventAt: asDate(m.organizerEventAt),
     organizerEventSeenAt: asDate(m.organizerEventSeenAt),
+    /* ── AND SO DO THE TWO FACTS THE PANE READS BESIDE THEM ─────────────────────────────────
+     *
+     * Same argument as the pair above, applied to the two columns the mailbox pane and the
+     * Screener derive their controls from.
+     *
+     * `organizerReleasedAt` separates a mailbox this account let go on purpose from one whose
+     * holder simply vanished. Both are readers with no holder; only the first has a sentence
+     * about something the person did, and a mirror that dropped it would show the wrong one.
+     *
+     * The holder's capabilities decide whether a decision made in this window has anywhere to
+     * go. Dropping them is not neutral: it degrades to "nothing can be decided here", which is
+     * the safe screen while no organizer offers the channel and the WRONG one the day some do —
+     * the window would withhold controls the hosted account would have accepted. The hosted row
+     * is the authority for both; this install writes neither of its own while it is a Cloud
+     * client.
+     *
+     * The capability travels as the DERIVED ANSWER and is stored back in the column the local
+     * read derives from, because the hosted DTO carries the answer rather than the holder's raw
+     * token set — one question is asked on the wire and one is answered. The re-encode is the
+     * honest shape of that: this row exists to make `GET /mailboxes` on this door say what the
+     * hosted account says, and the local projection reads the column. `false` writes NULL, which
+     * is the same thing the column holds for every holder that advertises nothing. */
+    organizerReleasedAt: asDate(m.organizerReleasedAt),
+    organizedByCapabilities: m.organizerAcceptsRequests === true ? CAPABILITY_REQUESTS : null,
     organizeConsentedAt: asDate(m.organizeConsentedAt),
     smtpMaxSizeBytes: m.smtpMaxSizeBytes ?? null,
     // NOT decoration: `compose-from.ts` orders the From options by `createdAt` ascending and calls

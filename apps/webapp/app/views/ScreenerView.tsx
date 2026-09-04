@@ -55,6 +55,8 @@ import { readColumnHidden, watchNarrow } from "../shell/narrow";
 import { useBodyStalled } from "../shell/message-chrome";
 import { goScreener, type ScreenerSegmentId } from "../shell/routing";
 import { APPLY_PILE_ORDER } from "../shell/screener-state";
+/* The one role answer, from the module that derives it — see `mail-state.ts#screenerMode`. */
+import type { ScreenerRole } from "../shell/mail-state";
 import type { HeldBodyStall, ScreenerState, SpamRow } from "../shell/screener-state";
 import type { SuggestBatchControl } from "../shell/screener-suggest";
 import type { RemoteImagesChrome } from "../shell/remote-images";
@@ -979,7 +981,7 @@ export function ScreenerView({
        organize, so advancing here would take the person off the sender they pressed about and
        onto the next one — the queue behaving exactly as it does after a decision that landed,
        which is the shape of the defect this closes rather than a smaller version of it. */
-    if (state.readOnly !== null) return;
+    if (state.role.mode === "blocked") return;
     onSelect("waiting", next[0] ?? null);
   };
 
@@ -1196,7 +1198,7 @@ export function ScreenerView({
              install does not organize, so leaving the control here would put a five-destination
              menu on every row whose every entry answers with the same sentence. The pane's
              `readerBar` note says it once instead. */
-          actions={state.readOnly !== null ? undefined : (
+          actions={state.role.mode === "blocked" ? undefined : (
             <RowActions
               exiting={state.isExiting(w.id)}
               accept={acceptDestOf(w)}
@@ -1350,7 +1352,7 @@ export function ScreenerView({
                       While a run is on, the button carries it (`data-run`, the Send verb's
                       dress) and refuses a second press — `applyAll` already drops one on
                       `bulkBusy`, so this is the refusal made visible, not a new one. */}
-                  {state.suggestedCount > 0 && state.readOnly === null ? (
+                  {state.suggestedCount > 0 && state.role.mode !== "blocked" ? (
                     <Button
                       kbdHint="a"
                       disabled={state.applying !== null}
@@ -1374,7 +1376,7 @@ export function ScreenerView({
                       about senders, and a reader who wants to know what a model thinks before
                       taking the mailbox over is asking a question this install can answer. */}
                   {suggestNode ?? (suggest ? <SuggestControl control={suggest} /> : null)}
-                  {state.readOnly === null ? (
+                  {state.role.mode !== "blocked" ? (
                     <Button variant="ghost" kbdHint="s" onClick={() => state.markAllSpam(scopeOf)}>
                       {t("markAllSpam")}
                     </Button>
@@ -1466,7 +1468,7 @@ export function ScreenerView({
             bodyStall={state.bodyStall}
             remoteImages={remoteImages}
             onBack={() => onFull(false)}
-            readOnly={state.readOnly}
+            role={state.role}
           />
         ) : segment === "screened" ? (
           <ScreenedPreview
@@ -1483,7 +1485,7 @@ export function ScreenerView({
             remoteImages={remoteImages}
             onUnsubscribe={onUnsubscribe}
             onBack={() => onFull(false)}
-            readOnly={state.readOnly}
+            reader={state.role.mode === "organizer" ? null : { name: state.role.name }}
           />
         ) : (
           <SpamPreview
@@ -1505,7 +1507,7 @@ export function ScreenerView({
             remoteImages={remoteImages}
             onUnsubscribe={onUnsubscribe}
             onBack={() => onFull(false)}
-            readOnly={state.readOnly}
+            reader={state.role.mode === "organizer" ? null : { name: state.role.name }}
           />
         )}
       </div>
@@ -1868,14 +1870,64 @@ function HeldMail({
  * standing condition of the pane, present before any press, which is the whole point — the
  * released build said it AFTER the press, in a toast, and the toast was not true.
  */
-function ReaderNote({ readOnly }: { readOnly: { name: string | null } }) {
+function ReaderNote({
+  name,
+  variant,
+}: {
+  /** The holder's own name, or `null` where this build has none. */
+  name: string | null;
+  /**
+   * WHICH WITHHOLDING THIS IS — three, and collapsing them was the temptation worth refusing.
+   *
+   *  · `decide` — somebody holds the mailbox and their build cannot take a decision from a
+   *    reader. Nothing here files, and taking the mailbox over is the way out.
+   *  · `none` — NOBODY holds it. The remedy is the same button and the sentence is not: there is
+   *    no other install to stop, and mail is piling up unfiled, which is worth knowing.
+   *  · `move` — the reader CAN decide (its organizer takes decisions) but this particular verb
+   *    releases or rescues mail, which is a folder move and stays the organizer's alone. Saying
+   *    "this computer does not decide about senders" here would be false on the same screen the
+   *    decision bar is working on one segment over.
+   */
+  variant: "decide" | "none" | "move";
+}) {
   const t = useTranslations("screener");
+  const copy = variant === "none"
+    ? { title: t("readerBarNoneTitle"), why: t("readerBarNoneWhy") }
+    : variant === "move"
+      ? {
+        title: t("moveBarTitle"),
+        why: name ? t("moveBarWhy", { name }) : t("moveBarWhyUnknown"),
+      }
+      : {
+        title: t("readerBarTitle"),
+        why: name ? t("readerBarWhy", { name }) : t("readerBarWhyUnknown"),
+      };
   return (
     <div className="scn-reader" role="note">
-      <b>{t("readerBarTitle")}</b>
-      <span>
-        {readOnly.name ? t("readerBarWhy", { name: readOnly.name }) : t("readerBarWhyUnknown")}
-      </span>
+      <b>{copy.title}</b>
+      <span>{copy.why}</span>
+    </div>
+  );
+}
+
+/**
+ * WHERE A DECISION MADE HERE GOES, AND HOW LONG IT TAKES — the `pending` reader's standing line.
+ *
+ * The mirror image of {@link ReaderNote} and deliberately its own component rather than a fourth
+ * variant of it: that one explains a control that is NOT on screen, this one explains a control
+ * that is. Sharing a component would put "this computer does not screen this mailbox" one prop
+ * away from a pane whose decision bar is working, which is the confusion most worth preventing
+ * here — the two states look similar and mean opposite things.
+ *
+ * `role="note"` and not `alert`, on the same rule: nothing has gone wrong. What it adds to a
+ * press is a delay and an owner, and both are stated before the press rather than after it.
+ */
+function PendingNote({ name }: { name: string | null }) {
+  const t = useTranslations("screener");
+  return (
+    <div className="scn-pending" role="note">
+      <b>{name ? t("pendingBarTitle", { name }) : t("pendingBarTitleUnknown")}</b>
+      <span>{t("pendingBarWhy")}</span>
     </div>
   );
 }
@@ -1889,14 +1941,20 @@ function WaitingPreview({
   bodyStall,
   remoteImages,
   onBack,
-  readOnly,
+  role,
 }: {
   sender: ScreenerSenderDTO;
   scope: DecisionScope;
   onScopeChange: (scope: DecisionScope) => void;
   onDecide: Parameters<typeof DecisionBar>[0]["onDecide"];
-  /** `ScreenerState.readOnly` — the bar's place is taken by a sentence. See the render. */
-  readOnly: { name: string | null } | null;
+  /**
+   * `ScreenerState.role` — and the bar is withheld on ONE of the three. See the render.
+   *
+   * The whole role rather than a boolean, because `pending` and `blocked` want opposite screens
+   * from one another and neither wants the organizer's: one keeps the bar and adds a sentence
+   * about where the decision goes, the other takes the bar away and names the way out.
+   */
+  role: ScreenerRole;
   /** Ask for one held message's body again. */
   onRetryBody: (id: string) => void;
   /** `ScreenerState.bodyStall`, per held id — see {@link HeldBodyStall}. */
@@ -1923,9 +1981,16 @@ function WaitingPreview({
           which is the rule the first-run flow's elsewhere step already keeps for the same state:
           the released build let the press happen, said "Ohbox — filed", and took it back
           forty-five seconds later with no reason. The keys refuse too (`keys`, below), and the
-          state refuses under both (`screener-state.ts` → `readOnly`) — three layers, because the
-          only one a person meets is this one and the only one that is structural is the last. */}
-      {readOnly ? (
+          state refuses under both (`screener-state.ts` → `role`) — three layers, because the
+          only one a person meets is this one and the only one that is structural is the last.
+
+          ── AND `pending` IS THE OPPOSITE CASE, WHICH IS WHY THIS IS NOT A BOOLEAN ───────────
+          A reader whose organizer accepts decisions KEEPS the bar. Withholding it there would be
+          the same defect with its sign flipped: a control taken away from somebody whose press
+          would in fact be carried out, on a pane that then explains a refusal that never
+          happened. What that state gets instead is a standing line saying where the decision
+          goes and how long it takes, above the bar rather than in place of it. */}
+      {role.mode === "blocked" ? (
         /* The bar's own chrome, minus its verbs — the sticky panel and the narrow-width Back,
            which is the only way out of a full-screen preview on a phone and has nothing to do
            with deciding. Same shape the screened and spam previews take, so the three segments
@@ -1934,17 +1999,23 @@ function WaitingPreview({
           <button type="button" className="scn-back" onClick={onBack}>
             <Icon name="chev" className="chev" /> {t("back")}
           </button>
-          <ReaderNote readOnly={readOnly} />
+          <ReaderNote
+            name={role.name}
+            variant={role.reason === "no_organizer" ? "none" : "decide"}
+          />
         </div>
       ) : (
-        <DecisionBar
-          aiDest={aiDest}
-          scope={scope}
-          onScopeChange={onScopeChange}
-          copy={barCopy}
-          onDecide={onDecide}
-          onBack={onBack}
-        />
+        <>
+          {role.mode === "pending" ? <PendingNote name={role.name} /> : null}
+          <DecisionBar
+            aiDest={aiDest}
+            scope={scope}
+            onScopeChange={onScopeChange}
+            copy={barCopy}
+            onDecide={onDecide}
+            onBack={onBack}
+          />
+        </>
       )}
       <div className="scn-mails">
         {/**
@@ -2046,7 +2117,7 @@ function ScreenedPreview({
   remoteImages,
   onUnsubscribe,
   onBack,
-  readOnly,
+  reader,
 }: {
   sender: ScreenerSenderDTO;
   choosing: boolean;
@@ -2059,8 +2130,11 @@ function ScreenedPreview({
   remoteImages?: RemoteImagesChrome;
   onUnsubscribe?: (id: string) => Promise<UnsubscribeResult | null>;
   onBack: () => void;
-  /** `ScreenerState.readOnly` — the release verb is a MOVE, so a reader is not offered it. */
-  readOnly: { name: string | null } | null;
+  /**
+   * NON-NULL ON EVERY READER, in BOTH modes — the release verb is a MOVE, and no organizer takes
+   * a move from a reader whatever else it offers. See `screener-state.ts`'s `guardMove`.
+   */
+  reader: { name: string | null } | null;
 }) {
   const t = useTranslations("screener");
   return (
@@ -2072,7 +2146,7 @@ function ScreenedPreview({
         {/* "Allow" moves the sender's held mail and writes a rule, which is exactly what a
             reader install cannot do. Withheld rather than shown refusing, on the bulk strip's
             rule; the note says once why. */}
-        {readOnly ? <ReaderNote readOnly={readOnly} /> : (
+        {reader ? <ReaderNote name={reader.name} variant="move" /> : (
         <div className="d-btns">
           {choosing ? (
             <>
@@ -2142,7 +2216,7 @@ function SpamPreview({
   remoteImages,
   onUnsubscribe,
   onBack,
-  readOnly,
+  reader,
 }: {
   row: SpamRow;
   choosing: boolean;
@@ -2157,8 +2231,11 @@ function SpamPreview({
   remoteImages?: RemoteImagesChrome;
   onUnsubscribe?: (id: string) => Promise<UnsubscribeResult | null>;
   onBack: () => void;
-  /** `ScreenerState.readOnly` — the rescue is a MOVE, so a reader is not offered it. */
-  readOnly: { name: string | null } | null;
+  /**
+   * NON-NULL ON EVERY READER, in BOTH modes — the rescue is a MOVE, and no organizer takes a
+   * move from a reader whatever else it offers. See `screener-state.ts`'s `guardMove`.
+   */
+  reader: { name: string | null } | null;
 }) {
   const t = useTranslations("screener");
   const held = row.sender.held;
@@ -2173,7 +2250,7 @@ function SpamPreview({
             is the demo's own affordance and reaches no endpoint at all. Neither is offered on a
             mailbox this install does not organize. The mail stays viewable, which is the half of
             this segment a reader keeps. */}
-        {readOnly ? <ReaderNote readOnly={readOnly} /> : (
+        {reader ? <ReaderNote name={reader.name} variant="move" /> : (
         <div className="d-btns">
           {choosing ? (
             <>

@@ -83,7 +83,7 @@
  * door could perform. The control is below, beside the resync, on the local door alone.
  */
 
-import { Fragment, useEffect, useState, type ReactNode } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { Button, SettingsActions, SettingsBanner, SettingsNote, SettingsRow, SettingsSection, SettingsVerdict } from "@ohmail/ui";
 
@@ -91,7 +91,7 @@ import {
   deviceHoldings, holdingsSpeak, readerStandDown, showInboundQuiet, type MailboxFacts,
 } from "../../webapp/app/shell/mail-state";
 import { addressKey } from "../../webapp/app/shell/address-key";
-import { agoStamp, dayStamp } from "../../webapp/app/shell/format";
+import { agoStamp } from "../../webapp/app/shell/format";
 import { activeFormatLocale, activeFormatZone } from "../../webapp/app/shell/locale";
 import { useMailState } from "../../webapp/app/shell/MailStateProvider";
 import { goFirstRun } from "../../webapp/app/shell/routing";
@@ -162,8 +162,6 @@ interface MailboxWire {
   organizerReleasedAt?: string | null;
   /** Whether a decision made here would be accepted by whoever organizes this mailbox. */
   organizerAcceptsRequests?: boolean;
-  /** How this mailbox is signed in — it decides one sentence about why a refusal is permanent. */
-  authKind?: "password" | "oauth";
   /** OUR filings this mailbox has not applied yet — the strip's `filing` arm reads it. */
   pendingMoves?: number;
   /**
@@ -175,63 +173,6 @@ interface MailboxWire {
   inboundQuietSince?: string | null;
   inboundQuietDismissedAt?: string | null;
   createdAt?: string;
-}
-
-/** Whether this install can reach one mailbox's server right now. Row id → the answer. */
-export interface MailboxReach {
-  reachable: boolean;
-  /** The server answered and refused the sign-in — a different fact with a different remedy. */
-  signInRefused: boolean;
-  /** ISO instant of the FIRST observation of death in the current outage; null while reachable. */
-  unreachableSince: string | null;
-}
-
-/**
- * CAN THIS MACHINE REACH ITS MAILBOXES RIGHT NOW — a desktop-only read, on purpose.
- *
- * It is NOT part of `MailboxFacts`, and that is not tidiness. Those facts are the shared shell's,
- * served by `GET /mailboxes` on both doors and consumed by the hosted client too, where "our
- * socket to your provider" is a fact about a worker on a shard that no user is sitting at. The
- * liveness of THIS process's own connections has a reader on exactly one surface, so it has a
- * route on exactly one door.
- *
- * ── AN EMPTY ANSWER IS "CANNOT TELL", NEVER "UNREACHABLE" ─────────────────────────────────────
- *
- * Three ways this legitimately returns nothing: an engine older than the route (a desktop updates
- * on its own schedule), the served host transport, which does not carry the local routes at all,
- * and any transport failure. All three mean the same thing to a reader — no answer — and the
- * ladder's fallback for an absent id is the state it had before this existed. The dangerous
- * default is the other one: a pane that read silence as "unreachable" would tell somebody their
- * mail had stopped every time an update landed.
- */
-export async function readMailboxReachVia(
-  fetchImpl: (url: string, init?: unknown) => Promise<Response>,
-): Promise<Record<string, MailboxReach>> {
-  let body: {
-    items?: Array<{
-      mailboxId?: unknown; reachable?: unknown; unreachableSince?: unknown; signInRefused?: unknown;
-    }>;
-  };
-  try {
-    const res = await fetchImpl("/local/mailboxes/connections");
-    if (!res.ok) return {};
-    body = (await res.json()) as typeof body;
-  } catch {
-    return {};
-  }
-  const out: Record<string, MailboxReach> = {};
-  for (const it of body.items ?? []) {
-    if (typeof it.mailboxId !== "string" || typeof it.reachable !== "boolean") continue;
-    out[it.mailboxId] = {
-      reachable: it.reachable,
-      unreachableSince: typeof it.unreachableSince === "string" ? it.unreachableSince : null,
-      /* ABSENT READS AS `false`, on this file's standing rule: an engine older than the field
-         cannot have refused a sign-in, and the dangerous default is the other one — telling
-         somebody their password was rejected because their app is out of date. */
-      signInRefused: it.signInRefused === true,
-    };
-  }
-  return out;
 }
 
 /**
@@ -337,7 +278,6 @@ export async function readMailboxFactsVia(
     ...("organizerEventSeenAt" in m ? { organizerEventSeenAt: m.organizerEventSeenAt } : {}),
     ...("organizerReleasedAt" in m ? { organizerReleasedAt: m.organizerReleasedAt } : {}),
     ...("organizerAcceptsRequests" in m ? { organizerAcceptsRequests: m.organizerAcceptsRequests } : {}),
-    ...("authKind" in m ? { authKind: m.authKind } : {}),
     ...("pendingMoves" in m ? { pendingMoves: m.pendingMoves } : {}),
     // THE FORWARDING-DETECTION PAIR (mail 0078), forwarded by the same `in` spread and for the
     // same reason as every optional field above: absent is an engine that predates the columns
@@ -431,12 +371,13 @@ function when(iso: string | null | undefined): string {
  * timestamp in it ("since 8/31/2026, 3:28:43 AM") makes it look like an event log and invites
  * watching, which is the same reason the DTO deliberately carries when an install BECAME the
  * organizer rather than when it was last seen: a heartbeat on a screen is a thing people stare at.
- *
- * The rule itself moved to the shared shell (`format.ts#dayStamp`) when the browser's Mailboxes
- * pane grew the same released sentence: one catalogue key rendered on two panes must not be able
- * to carry two different dates. This name stays because the call sites below read better with it.
  */
-const day = dayStamp;
+function day(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return "—";
+  return at.toLocaleDateString(activeFormatLocale(), { dateStyle: "medium", timeZone: activeFormatZone() });
+}
 
 /**
  * SETTINGS → MAILBOXES, on the desktop.
@@ -570,47 +511,6 @@ export function DesktopMailboxes(
   /* What can go wrong here: the engine refuses a resync (offline, most often), or the operating
      system refuses to open a browser. One line, rendered where the press happened. */
   const [problem, setProblem] = useState<string | null>(null);
-  /**
-   * WHICH MAILBOXES THIS MACHINE CAN REACH — its own poll, and it has to be its own.
-   *
-   * The facts poller reads `GET /mailboxes`, which is the shared route and carries no answer to
-   * this question; see `readMailboxReachVia`. Fifteen seconds is the engine's own poll interval,
-   * so the pane converges within one cycle of the engine noticing, and the first read runs
-   * immediately rather than after a delay — a person opening Settings during an outage is
-   * exactly who this line is for.
-   */
-  const [reach, setReach] = useState<Record<string, MailboxReach>>({});
-  useEffect(() => {
-    /* ── LOCAL DOOR ONLY ──────────────────────────────────────────────────────────────────
-     *
-     * `/local/mailboxes/connections` exists on the local engine and nowhere else. Mounted
-     * unconditionally, this asked for it on the CLOUD door too, where it falls through the cloud
-     * engine's catch-all proxy and becomes a hosted round trip — four a minute, for a route that
-     * does not exist, for as long as the pane is open. The state it would fill is meaningless
-     * there anyway: a Cloud mailbox's connection belongs to a worker on a shard, not to this
-     * machine. `door` is in the dependency list, so switching doors starts or stops it. */
-    if (door !== "local") { setReach({}); return; }
-    let live = true;
-    /* THE SEQUENCE GUARD. Two reads are in flight whenever one takes longer than the interval —
-       an engine mid-reconnect is exactly when it will — and promises settle in whatever order
-       they finish, not the order they started. Without this a slow read that started first can
-       land second and overwrite a newer answer, so the row flips back to "reachable" during an
-       outage (or back to unreachable after it ended) and stays wrong until the next tick. Only a
-       strictly newer response is allowed to write. */
-    let issued = 0;
-    let shown = 0;
-    const read = (): void => {
-      const seq = ++issued;
-      void readMailboxReachVia(bridgeFetch).then((r) => {
-        if (!live || seq <= shown) return;
-        shown = seq;
-        setReach(r);
-      });
-    };
-    read();
-    const id = setInterval(read, 15_000);
-    return () => { live = false; clearInterval(id); };
-  }, [door]);
   /** Mailboxes whose resync this pane has queued, so the row can say so until it lands. */
   const [queued, setQueued] = useState<ReadonlySet<string>>(() => new Set());
   /** Mailboxes whose quiet-notice dismissal is in flight, so the button debounces (mail 0078). */
@@ -862,27 +762,6 @@ export function DesktopMailboxes(
           method: "DELETE",
         });
         if (!res.ok) throw new Error(await reasonOf(res));
-        /* ── THE MAILBOX IS GONE; ITS CLAIM ON THE MAIL SERVER MAY NOT BE ────────────────────
-         *
-         * The route releases this install's organizer claim out of `ohmail/_meta` before it stops
-         * the runtime, and that release can fail on its own — the mail server can refuse the
-         * search that finds our own records in that folder. When it does the claim STAYS, and
-         * until it goes stale any other install connecting this mailbox stands itself down and
-         * says only that something else organizes it. That is a wait with no visible cause, about
-         * a machine the person has just removed the mailbox from.
-         *
-         * The route reports the outcome because it is the only thing that knows it, and this is
-         * the pane that can say it. Same shape as the sign-out failure below: the removal
-         * committed, what is being reported is the tidying that did not.
-         *
-         * THREE STATES, NOT TWO, and the middle one is why this reads `=== false` rather than
-         * falsy. `true` is released; `false` is a release that was attempted and could not be
-         * completed; ABSENT is an engine that predates the field and cannot answer — which is not
-         * a claim left behind and must not be announced as one. The shell and the engine ship
-         * together, so absent means "older engine", not "unknowable".
-         */
-        const outcome = await res.json().catch(() => null) as { claimReleased?: boolean } | null;
-        if (outcome?.claimReleased === false) setProblem(t("desktopRemovedClaimLeftBehind"));
         /* ── THE SINGLE-MAILBOX SIGN-OUT STOOD HERE, AND ITS OWN NOTE ASKED FOR THIS ──────────
          *
          * It read: *"the multi-mailbox version of this is a roster-aware decision … and it
@@ -1086,31 +965,6 @@ export function DesktopMailboxes(
     if (m.status === "disabled") {
       return m.disabledReason ? t("desktopStateHandedOver") : t("desktopStateDisconnected");
     }
-    /* ── UNREACHABLE OUTRANKS BOTH THE ROLE AND THE PROGRESS ───────────────────────────────
-     *
-     * Above the reader arm and above every progress arm, because all of them describe mail
-     * MOVING and none of it is. "Reading only" over a dead socket reads nothing; "Up to date" is
-     * true of a mirror that stopped growing an hour ago. It stays BELOW `error` and `disabled`,
-     * which are durable statements about the row that a live socket would not contradict.
-     *
-     * It says a fact and nothing else — no "signed out", no "check your connection", no advice.
-     * The mailbox is untouched, the password is untouched, and the engine re-dials on its own;
-     * a sentence implying the person must act would be asking for work that is not theirs. */
-    const r = reach[m.id];
-    /* THE SERVER ANSWERED AND SAID NO — above the unreachable arm, because it is a MORE specific
-       answer to the same question and the generic one would send somebody to check a network
-       that is working perfectly. */
-    if (r?.signInRefused) return t("desktopStateSignInRefused");
-    if (r && !r.reachable) {
-      /* `agoStamp(...).rel` AND NOT `day(...)`: an outage is a DURATION, and the neighbouring
-         `day` stamp is deliberately date-only because the sentences it serves are standing facts
-         somebody reads once. "Unreachable since 5 Sep 2026" tells a person nothing about an
-         outage that began twenty minutes ago; "unreachable since 20 minutes ago" is the whole
-         answer. It is the same stamp the quiet-mailbox line already uses on this pane. */
-      return r.unreachableSince
-        ? t("desktopStateUnreachableSince", { when: agoStamp(r.unreachableSince, Date.now()).rel })
-        : t("desktopStateUnreachable");
-    }
     if (m.organizerRole === "reader") return t("stateReading");
     if (m.syncBlockedSince) return t("desktopStatePaused");
     if (m.lastSyncAt === null) return t("desktopStateFirstOpen");
@@ -1157,15 +1011,8 @@ export function DesktopMailboxes(
        next screen is the agreement, and putting "nothing organizes this" over it would be a
        sentence about a state it was never in. `claimable` keeps that rule. */
     const holder = Boolean(m.organizedBy && (m.organizedBy.kind || m.organizedBy.name));
-    /* THE LEGACY ARM IS TESTED BEFORE THE HOLDER, and getting that order wrong is not cosmetic.
-       A pre-role engine records a stand-down as `disabled` + a reason and carries NO holder
-       columns at all, so it looks exactly like a mailbox nobody organizes — and it is the
-       opposite: something else took it. Reading it as `released` would put "nothing organizes
-       this mailbox" over a row whose own state column says it was handed over, and would lose the
-       one sentence that says the frozen install is not even reading it. */
     const role: "organizer" | "reader" | "released" =
-      !claimable(m) ? "organizer"
-        : m.legacyStandDown === true || holder ? "reader" : "released";
+      !claimable(m) ? "organizer" : holder ? "reader" : "released";
     /* THE RELEASE IS A STANDALONE-DOOR CONTROL. On the hosted door these rows are a mirror of an
        account whose organizing is the service's, and the browser's own pane is where that is
        given up — offering it here would be a second door onto one decision, with this one unable
@@ -1261,15 +1108,6 @@ export function DesktopMailboxes(
               )
           }
         />
-        {/* AND WHY A DECISION CANNOT BE MADE HERE, on the mailboxes where the answer is the
-            sign-in rather than a version somebody can update. A password mailbox lets both
-            installs derive the same signing key from the credential they already share; an OAuth
-            one has no such shared secret. Only on a reader row — on a mailbox this install
-            organizes there is no refusal to explain — and only where the field says so, so a
-            build that cannot tell says nothing. */}
-        {role !== "organizer" && m.authKind === "oauth" ? (
-          <SettingsNote>{t("oauthDecideElsewhere")}</SettingsNote>
-        ) : null}
         {/* ── THE HANDOVER, AND WHAT IT COSTS THE OTHER SIDE, BEFORE IT IS TAKEN ──────────────
             The other install is not killed: it becomes a reader on its next pass and keeps its
             copy of the mail. Saying so here is the difference between a button somebody presses
@@ -1330,16 +1168,10 @@ export function DesktopMailboxes(
         {/* WHAT THE ENGINE ANSWERED, kept until the row's own role moves. `reclaimed` and
             `released` are never cleared by this pane: the row is what ends them, and it does,
             because the gate writes the role on its next cycle and the poll brings it back. */}
-        {/* `off`, NEVER `wait`. A spinner claims something is in flight, and nothing is: the
-            route RECORDS a request and returns. The gate acts on it at its next tick, which may
-            be a minute away and is not this window's to watch. `wait` also never ends — the entry
-            is only ever added to — so it would spin for the life of the pane, including after the
-            poll confirmed the change and the banner above it had already moved on. And not `ok`
-            either: this window has not been told the mailbox moved, and a tick would say it had. */}
         {reclaimed.has(m.id) ? (
           reclaimed.get(m.id)!.outcome === "authorized" ? (
             <SettingsVerdict
-              state="off"
+              state="wait"
               headline={m.legacyStandDown === true ? t("organizeHereQueuedLegacy") : t("organizeHereQueued")}
             />
           ) : (
@@ -1348,7 +1180,7 @@ export function DesktopMailboxes(
         ) : null}
         {released.has(m.id) ? (
           released.get(m.id) === "requested"
-            ? <SettingsVerdict state="off" headline={t("stopOrganizingQueued")} />
+            ? <SettingsVerdict state="wait" headline={t("stopOrganizingQueued")} />
             : <SettingsNote>{t("stopOrganizingNot")}</SettingsNote>
         ) : null}
       </div>

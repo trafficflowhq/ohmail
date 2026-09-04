@@ -928,7 +928,29 @@ export class HttpAdapter implements EngineAdapter {
         if (!res.ok) throw await this.rejectionOf(res);
         // Response is { messageId, appliedFolder, createdRuleId } — the moved
         // held mail + promoted rule arrive authoritatively via /sync.
-        return { changes: [], seq: this.noteSeq(res) };
+        //
+        // ── EXCEPT ON A MAILBOX THIS ACCOUNT DOES NOT ORGANIZE ────────────────────────────
+        //
+        // There the server answers `202 { pending: true, requestId, holder }`: the decision is
+        // recorded for the install that DOES organize the mailbox, and nothing has been filed.
+        // That answer has to reach the caller, because nothing else will ever mention it — a
+        // queued decision writes no `change_log` row, so the drain below carries nothing, the
+        // optimistic overlay is dropped on confirm, and the sender comes back looking undecided.
+        //
+        // READ DEFENSIVELY, and a body this code cannot parse is simply not a queued decision:
+        // the shapes that reach here are a 200 with a decision result, a 200 from an older
+        // server, and this. Guessing `pending` from anything less than the flag itself would
+        // withhold a filing that did happen.
+        const decided = await res.json().catch(() => null) as
+          { pending?: unknown; holder?: { name?: unknown } | null } | null;
+        const seq = this.noteSeq(res);
+        if (decided && decided.pending === true) {
+          const name = typeof decided.holder?.name === "string" && decided.holder.name.trim()
+            ? decided.holder.name
+            : null;
+          return { changes: [], seq, pendingWith: { name } };
+        }
+        return { changes: [], seq };
       }
 
       case "feed_mark_seen": {

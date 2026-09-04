@@ -148,9 +148,12 @@ import { ShortcutSheet } from "./ShortcutSheet";
 import { SyncBar } from "./SyncBar";
 import { UpdateNotice } from "./UpdateNotice";
 import { MailStateProvider, useMailState, type FreshnessProbe, type MailboxProbe } from "./MailStateProvider";
-/* The ONE stand-down predicate, aggregated over the roster: does this install organize anything?
-   Settings → Mailboxes renders its banner from the same `readerStandDown` underneath. */
-import { screenerReadOnly } from "./mail-state";
+/* The ONE stand-down predicate, aggregated over the roster: what may the Screener do here, and
+   what changed about who organizes these mailboxes that nobody has acknowledged? Settings →
+   Mailboxes renders its own state line from the same `readerStandDown` underneath. */
+import { organizerNotices, screenerMode } from "./mail-state";
+/* The once-per-change line above the Ohbox, and the shape of the press that ends it. */
+import { OrganizerNotice, type OrganizerNoticeTransport } from "./OrganizerNotice";
 /* The OS-answer seam, threaded to `SettingsView` for the hosts that must inject one. */
 import type { NotificationHost } from "./notification-settings";
 import { ViewBoundary } from "./ViewBoundary";
@@ -668,6 +671,7 @@ export function AppShell({
   engine,
   resolveOwner,
   mailboxFacts,
+  organizerNoticeTransport,
   mirrorFreshness,
   sendSurfaceMaxTotalBytes,
   accountSection,
@@ -717,6 +721,17 @@ export function AppShell({
    * because an empty array is a claim about the account.
    */
   mailboxFacts?: MailboxProbe;
+  /**
+   * "Acknowledge the organizer notice on this mailbox" — the eighth injected prop, on
+   * `mailboxFacts`'s rule and for its reason: the publish DENYs `app/api-client` here, so this
+   * shell cannot reach `POST /mailboxes/:id/organizer-notice/dismiss` on either door.
+   *
+   * ABSENT WITHHOLDS THE NOTICE ENTIRELY, and that is the design rather than a fallback. A line
+   * saying a mailbox changed hands, with no way to acknowledge it, is a warning that stands for
+   * ever — the one thing this notice may never become. Settings -> Mailboxes keeps the permanent
+   * state line and the controls on every door regardless.
+   */
+  organizerNoticeTransport?: OrganizerNoticeTransport;
   /**
    * "How old is the mail this window renders?", answered by the HOST's own mirror — the
    * desktop's seam and nobody else's, `mailboxFacts`'s shape for `mailboxFacts`'s reason. The
@@ -1104,6 +1119,7 @@ export function AppShell({
         <MailStateHost probe={mailboxFacts} freshnessProbe={mirrorFreshness}>
           <ShellInner
             mailboxFacts={mailboxFacts}
+            organizerNoticeTransport={organizerNoticeTransport}
             sendSurfaceMaxTotalBytes={sendSurfaceMaxTotalBytes}
             accountSection={accountSection}
             mailboxSection={mailboxSection}
@@ -1172,9 +1188,11 @@ function MailStateHost({ probe, freshnessProbe, children }: { probe?: MailboxPro
   );
 }
 
-function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, billingSection, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, notificationHost, screeningSection, screenerSuggest, awayTransport, awayIsLocal, profileImportTransport, consentTransport, olderBodyWire, junkWire, suggestWire, aiCredits, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
+function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, billingSection, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, notificationHost, screeningSection, screenerSuggest, awayTransport, awayIsLocal, profileImportTransport, consentTransport, olderBodyWire, junkWire, suggestWire, aiCredits, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
   /** The pull settle watch's read — the same probe `MailStateHost` above provides the strip. */
   mailboxFacts?: MailboxProbe;
+  /** See `AppShell`'s prop of this name — absent withholds the organizer notice. */
+  organizerNoticeTransport?: OrganizerNoticeTransport;
   /** The host's surface declaration for the attach ceiling — see `AppShell`'s prop of this name. */
   sendSurfaceMaxTotalBytes?: number | null;
   accountSection?: ReactNode;
@@ -1890,17 +1908,51 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
    */
   const autoUnsubscribeDiscloses = consent.autoUnsubscribe && !consent.standalone;
   /**
-   * DOES THIS INSTALL ORGANIZE ANY MAILBOX AT ALL — the Screener's read-only answer.
+   * WHAT THE SCREENER MAY DO HERE — organizer, pending, or blocked.
    *
-   * The rule is `screenerReadOnly` in `mail-state.ts`, beside the `readerStandDown` it is built
-   * on — the same predicate Settings → Mailboxes renders its banner from, so the two surfaces
-   * cannot come to describe one state differently. Memoised on the polled facts and nothing
-   * else; the function is pure and has its own table test.
+   * The rule is `screenerMode` in `mail-state.ts`, beside the `readerStandDown` it is built on —
+   * the same predicate Settings → Mailboxes renders its banner from, so the two surfaces cannot
+   * come to describe one state differently. Memoised on the polled facts and nothing else; the
+   * function is pure and has its own table test.
    */
-  const readOnlyScreener = useMemo(() => screenerReadOnly(facts), [facts]);
+  const screenerRole = useMemo(() => screenerMode(facts), [facts]);
+  /**
+   * WHAT CHANGED ABOUT WHO ORGANIZES THESE MAILBOXES, AND HAS NOT BEEN ACKNOWLEDGED.
+   *
+   * `organizerNotices` in `mail-state.ts` is the rule, memoised on the polled rows. The list is
+   * usually empty — a change is a rare event — so this costs a filter over the roster per poll.
+   */
+  const organizerChanges = useMemo(() => organizerNotices(facts), [facts]);
+  /**
+   * HOW "Mark read" REACHES THE ROW, or `null` where nothing can — and `null` WITHHOLDS the line.
+   *
+   * A notice that cannot be acknowledged is the standing warning this design exists not to be, so
+   * the absence of a way to write the stamp is the absence of the notice. That is the honest
+   * degraded state: Settings → Mailboxes still keeps the permanent line and the controls.
+   *
+   * INJECTED AND NEVER IMPORTED, on `mailboxFacts`'s own rule: `scripts/publish-desktop.mjs`
+   * DENYs `app/api-client` to this shared shell, so it may not call the route itself on either
+   * door. One route (`POST /mailboxes/:id/organizer-notice/dismiss`, served on both) and two
+   * transports — the browser's Cloud client from `(product)/mailbox/CloudShell`, the desktop
+   * window's over its own pipe — with the sentence, the gate and the once-per-change rule shared.
+   *
+   * `refreshFacts` on success, so the line leaves on the answer rather than on the poller's
+   * slower clock; the component's own optimistic set covers the gap between the two. A REJECTION
+   * is passed through rather than swallowed — the component puts the line back, because the
+   * acknowledgement did not happen.
+   */
+  const acknowledgeOrganizerNotice = useMemo<OrganizerNoticeTransport | null>(() => {
+    const wire = organizerNoticeTransport;
+    if (wire === undefined) return null;
+    return async (id: string) => {
+      const answer = await wire(id);
+      refreshFacts();
+      return answer;
+    };
+  }, [organizerNoticeTransport, refreshFacts]);
   const screener = useScreenerState(
     engine, version, toast, suggestions.suggestions, presented, autoUnsubscribeDiscloses,
-    readOnlyScreener,
+    screenerRole, suggestions.outstandingDecisions,
   );
   /**
    * The opt-in's quote, bound to the SAME list the automatic batch will slice.
@@ -6500,7 +6552,26 @@ function ShellInner({ mailboxFacts, sendSurfaceMaxTotalBytes, accountSection, ma
                       && !route.firstRun
                       ? <OhmarchyOffer apply={applyFaceAllDevices} onDone={faceOffer.dismiss} />
                       : null;
-                    return offer === null && away === null ? undefined : <>{offer}{away}</>;
+                    /* ── AND THE ORGANIZER NOTICE, WHICH IS THE SLOT'S THIRD TENANT ────
+                       ABOVE the away line and below the offer, and the order is the amount
+                       of decision each one asks for: the offer proposes something, this
+                       reports something that already happened, the away line states a
+                       standing setting. Its own gate is inside the component (it renders
+                       nothing without an unacknowledged change), so the only thing decided
+                       here is whether there is any way to acknowledge — see
+                       `acknowledgeOrganizerNotice`. Withheld on the demo, which has no row
+                       to stamp and no other install to change hands with. */
+                    const organizer = demo || acknowledgeOrganizerNotice === null
+                      ? null
+                      : (
+                        <OrganizerNotice
+                          notices={organizerChanges}
+                          onAcknowledge={acknowledgeOrganizerNotice}
+                        />
+                      );
+                    return offer === null && away === null && organizer === null
+                      ? undefined
+                      : <>{offer}{organizer}{away}</>;
                   })()
                 }
                 resurfaced={ohbox.resurfaced}

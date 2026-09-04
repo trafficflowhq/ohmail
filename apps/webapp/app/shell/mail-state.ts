@@ -230,44 +230,211 @@ export function readerStandDown(m: {
 }
 
 /**
- * DOES THIS INSTALL ORGANIZE ANY MAILBOX AT ALL — and if not, who has them?
+/**
+ * ONE ROW, AS BOTH DERIVATIONS BELOW NEED TO SEE IT.
  *
- * `null` means at least one live mailbox is this install's to organize, which is the ordinary
- * case and the one in which the Screener works exactly as it always has. Non-null means every
- * live mailbox belongs to somebody else, and carries a NAME for the copy — `name: null` where
- * the holder is real but this build has no name for it, the same three-state shape
- * `mailboxes.readerLabel` / `readerLabelLegacy` already render.
+ * Structural rather than `MailboxFacts`, on this file's standing rule: a derivation may consult
+ * exactly the fields it names, so what a sentence is entitled to assert is readable from the
+ * signature. Every member is optional because every one of them is a column some deployment
+ * predates, and absent has an answer in each case that is stated where it is read.
+ */
+type OrganizerRow = Parameters<typeof readerStandDown>[0] & {
+  id?: string;
+  address?: string;
+  organizedBy?: { kind: string | null; name: string | null; since: string | null } | null;
+  organizerState?: "held" | "stopped" | null;
+  organizerAcceptsRequests?: boolean;
+  organizerEventAt?: string | null;
+  organizerEventSeenAt?: string | null;
+};
+
+/**
+ * WHAT THE SCREENER CAN DO ON THIS INSTALL — three answers, and they are not two.
+ *
+ *  · `organizer` — this install organizes at least one live mailbox. Every verb works exactly as
+ *    it always has, and nothing on the pane changes.
+ *  · `pending` — every live mailbox belongs to somebody else, AND that somebody can take a
+ *    decision made here and apply it on their own next pass. The decision bar stays: a press is
+ *    real, it just does not land immediately, and the pane says who is going to land it.
+ *  · `blocked` — every live mailbox belongs to somebody else and no decision made here has
+ *    anywhere to go. The bar is WITHHELD and the pane names the way out.
+ *
+ * ── WHY THE THIRD STATE IS NOT A DISABLED VERSION OF THE SECOND ───────────────────────────────
+ *
+ * Because a control wired to a refusal is worse than an absent one, and this product has the
+ * receipt. A released build drew the full decision bar on a mailbox it did not organize: the press
+ * said "filed", the sender left the list and the count dropped — while nothing had happened on the
+ * server. Forty-five seconds later the sender was back, marked "Not saved", with no sentence
+ * saying why. The refusal has to be visible BEFORE the press, or it is not a refusal but a
+ * rollback with an explanation nobody reads.
  *
  * ── WHY THE WHOLE ROSTER RATHER THAN ONE MAILBOX ──────────────────────────────────────────────
  *
- * `ONBOARDING-RULINGS.md` boundary 1(b): account-scoped configuration is permitted iff the
- * account holds at least one `organizer_role = 'organizer'` mailbox, and *"on a one-mailbox
- * standalone that collapses to 'all refused'"*. A Screener decision writes a rule and moves mail,
- * so it is inside that set. This is that rule, and it is also the SAFE direction of the two: with
- * an organizer present nothing is refused, so a decision that could have succeeded never is.
+ * The Screener's queue does not say which mailbox each sender belongs to, so a per-mailbox answer
+ * has nothing to key on. Account-scoped configuration is permitted where the account holds at
+ * least one organized mailbox, and a Screener decision writes a rule, so it is inside that set.
+ * That is also the SAFE direction: with an organizer present nothing is refused, so a decision
+ * that could have succeeded never is.
  *
- * The per-mailbox version — a mixed roster in which a decision about one sender would land and
- * about another would not — needs the queue to say which mailbox each sender belongs to, and is
- * deliberately not invented here.
+ * The aggregation FLIPS for `pending`, and deliberately: every live reader must accept decisions
+ * before the bar is offered, because one that does not is a sender whose press would be refused.
+ * Permissive where refusing would cost a decision that works; conservative where offering would
+ * cost a decision that does not.
  *
- * ── AND `live` FIRST, WHICH IS NOT COSMETIC ──────────────────────────────────────────────────
+ * ── AND `live` FIRST, WHICH IS NOT COSMETIC ───────────────────────────────────────────────────
  *
  * A `disabled` row is a tombstone and KEEPS whatever role it had ({@link readerStandDown}'s own
  * first line). Counting it would let a mailbox somebody removed last week decide whether the
- * Screener works today. An empty roster answers `null` for the same reason a missing field does
- * everywhere on this surface: "we cannot see" is not "somebody else has it".
+ * Screener works today. An empty roster answers `organizer` for the same reason a missing field
+ * does everywhere on this surface: "we cannot see" is not "somebody else has it".
  */
-export function screenerReadOnly(
-  facts: ReadonlyArray<Parameters<typeof readerStandDown>[0] & {
-    organizedBy?: { kind: string | null; name: string | null; since: string | null } | null;
-  }> | null,
-): { name: string | null } | null {
-  if (facts === null) return null;
+export type ScreenerMode = "organizer" | "pending" | "blocked";
+
+/**
+ * WHY A DECISION HAS NOWHERE TO GO — the finer answer under {@link ScreenerMode} `blocked`.
+ *
+ *  · `organizer_outdated` — somebody holds the mailbox and their build cannot take a decision
+ *    from a reader. The way out is to take the mailbox over, or to update that install.
+ *  · `no_organizer` — nobody holds it at all. Nothing is filing this mailbox, which is a
+ *    different sentence and a different remedy.
+ *
+ * The same two words the decision door answers with, so the pane and the refusal cannot come to
+ * describe one state differently.
+ */
+export type ScreenerBlockReason = "organizer_outdated" | "no_organizer";
+
+export interface ScreenerRole {
+  mode: ScreenerMode;
+  /**
+   * The holder's own name for the copy, or `null` where the holder is real but this build has no
+   * name for it — a claim written by a version that recorded none. `null` in `organizer`.
+   */
+  name: string | null;
+  /** Only in `blocked`; `null` in the other two. See {@link ScreenerBlockReason}. */
+  reason: ScreenerBlockReason | null;
+}
+
+export function screenerMode(facts: ReadonlyArray<OrganizerRow> | null): ScreenerRole {
+  const organizes: ScreenerRole = { mode: "organizer", name: null, reason: null };
+  if (facts === null) return organizes;
   const live = facts.filter((m) => m.status !== "disabled");
-  if (live.length === 0) return null;
-  if (live.some((m) => readerStandDown(m) === null)) return null;
-  const named = live.map((m) => m.organizedBy?.name).find((n) => n && n.trim());
-  return { name: named ?? null };
+  if (live.length === 0) return organizes;
+  if (live.some((m) => readerStandDown(m) === null)) return organizes;
+
+  const named = live.map((m) => m.organizedBy?.name).find((n) => n && n.trim()) ?? null;
+  /* `=== true` and never a truthy read: absent is "this build cannot tell", and the whole point of
+     the field is that it withholds rather than offers. */
+  if (live.every((m) => m.organizerAcceptsRequests === true)) {
+    return { mode: "pending", name: named, reason: null };
+  }
+  /* A HOLDER IS NAMED — the same test `readerStandDown` makes, and for the same reason: the object
+     may exist with three nulls in it. Where no live row names anybody, nothing organizes these
+     mailboxes at all, which is the other sentence and the other remedy. */
+  const anyHolder = live.some((m) => Boolean(m.organizedBy && (m.organizedBy.kind || m.organizedBy.name)));
+  return { mode: "blocked", name: named, reason: anyHolder ? "organizer_outdated" : "no_organizer" };
+}
+
+/**
+ * THE HOLDER, FOR A SURFACE THAT ASKS A TWO-WAY QUESTION — `null` where this install organizes.
+ *
+ * Several panes ask only "does this install organize these mailboxes, or read them?": the
+ * install's own About and Desktop rows, and the screening preferences, whose stored values take
+ * effect on a takeover and take effect on nothing before one. Both reader modes answer that
+ * question identically — a `pending` reader still moves no mail here — so narrowing at the read
+ * is the honest shape rather than a lossy one.
+ *
+ * It exists so the narrowing is written ONCE. A surface that wrote `role.mode !== "organizer"`
+ * inline would be one edit away from accidentally treating `pending` as organizing on the day
+ * somebody adds a fourth mode.
+ */
+export function readerHolder(role: ScreenerRole): { name: string | null } | null {
+  return role.mode === "organizer" ? null : { name: role.name };
+}
+
+/**
+ * WHAT CHANGED ABOUT WHO ORGANIZES THESE MAILBOXES, AND HAS NOT BEEN ACKNOWLEDGED YET.
+ *
+ * One entry per mailbox whose `organizerEventAt` is newer than its `organizerEventSeenAt`. The
+ * comparison is the whole mechanism, and it is deliberately two instants rather than a flag:
+ *
+ *  · ONCE PER CHANGE, ON EVERY DOOR. Every client computes the same predicate from the same two
+ *    instants, so an acknowledgement on the phone removes the line in the browser on its next
+ *    poll. A per-client flag shows one change once per client, which is the same sentence three
+ *    times.
+ *  · TWO CHANGES BETWEEN TWO READS COLLAPSE TO ONE LINE. There is no queue to drain, so a mailbox
+ *    that changed hands twice while nobody looked produces one line describing where it ended up
+ *    — the only statement still true.
+ *  · AN ACKNOWLEDGEMENT CANNOT SUPPRESS A LATER CHANGE. It answers the change that stood when the
+ *    press happened, and nothing after it.
+ *
+ * ── WHAT IS WITHHELD, AND WHY EACH ────────────────────────────────────────────────────────────
+ *
+ * A tombstone: a mailbox somebody removed is not news about organizing. An absent or unparseable
+ * instant: "this build cannot tell" must not become a sentence about a machine that never changed
+ * hands. And a reader with no holder that nobody has ever agreed to organize — that is an ordinary
+ * freshly connected mailbox, and its next screen is the agreement, not a notice.
+ *
+ * Ordered newest change first, so a slot with room for one line carries the most recent.
+ */
+export type OrganizerNoticeKind = "elsewhere" | "stopped" | "here" | "released";
+
+export interface OrganizerNotice {
+  /** The mailbox the line is about — the id the acknowledgement is sent for. */
+  id: string;
+  /** Its address: the line names the mailbox, and a roster may hold several. */
+  address: string;
+  kind: OrganizerNoticeKind;
+  /** The holder's name, on the two kinds that have one. `null` otherwise. */
+  name: string | null;
+  /** `organizerEventAt`, so a caller can order or date the line. */
+  at: string;
+}
+
+export function organizerNotices(facts: ReadonlyArray<OrganizerRow> | null): OrganizerNotice[] {
+  if (facts === null) return [];
+  const out: OrganizerNotice[] = [];
+  for (const m of facts) {
+    if (m.status === "disabled") continue;
+    const at = m.organizerEventAt;
+    if (at === null || at === undefined) continue;
+    const when = Date.parse(at);
+    if (!Number.isFinite(when)) continue;
+    /* A NULL OR ABSENT `seenAt` IS "NEVER ACKNOWLEDGED", which shows the line. An UNPARSEABLE one
+       is not: a stamp this build cannot read is no evidence the change was never seen, and
+       treating it as such would re-show a line somebody has already dismissed, on every poll. */
+    const seenRaw = m.organizerEventSeenAt;
+    if (seenRaw !== null && seenRaw !== undefined) {
+      const seen = Date.parse(seenRaw);
+      if (!Number.isFinite(seen)) continue;
+      if (when <= seen) continue;
+    }
+    const kind = noticeKind(m);
+    if (kind === null) continue;
+    out.push({
+      id: m.id ?? "",
+      address: m.address ?? "",
+      kind,
+      name: kind === "elsewhere" || kind === "stopped"
+        ? (m.organizedBy?.name && m.organizedBy.name.trim() ? m.organizedBy.name : null)
+        : null,
+      at,
+    });
+  }
+  return out.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+}
+
+/** Which of the four sentences one row is in, or `null` for a row with nothing to announce. */
+function noticeKind(m: OrganizerRow): OrganizerNoticeKind | null {
+  /* ABSENT READS AS ORGANIZER, the same default the role carries everywhere on this surface: a
+     host that does not send the column has not demoted anybody. */
+  if (m.organizerRole !== "reader") return "here";
+  const holder = Boolean(m.organizedBy && (m.organizedBy.kind || m.organizedBy.name));
+  if (holder) return m.organizerState === "stopped" ? "stopped" : "elsewhere";
+  /* NO HOLDER. Consented means this install had the mailbox and gave it up — the release. Not
+     consented means nobody has ever organized it, which is not a change to announce. `=== null`
+     and not `== null`, so an absent stamp (a build that cannot tell) says nothing rather than
+     announcing a release that never happened. */
+  return m.organizeConsentedAt !== null && m.organizeConsentedAt !== undefined ? "released" : null;
 }
 
 /**
@@ -387,6 +554,42 @@ export interface MailboxFacts {
    * an absent field would offer a claim on every mailbox of every older deployment.
    */
   organizeConsentedAt?: string | null;
+  /**
+   * WHEN THE ORGANIZING SITUATION LAST CHANGED, AND WHEN SOMEBODY LAST ACKNOWLEDGED IT.
+   *
+   * Two instants rather than a flag, and the notice is `eventAt > seenAt` computed here. That is
+   * what makes the line appear ONCE for a change rather than once per client: a phone, a browser
+   * and a desktop window reading one row agree about whether it has been seen, and a dismissal on
+   * any of them travels to the others on their next poll. Two changes between two reads collapse
+   * to the later one, which is the only statement still true.
+   *
+   * ABSENT is "this build cannot tell", and it withholds the notice. That is the safe direction:
+   * the cost of missing one is a line nobody reads, and the cost of inventing one is a claim about
+   * a machine that never changed hands.
+   */
+  organizerEventAt?: string | null;
+  organizerEventSeenAt?: string | null;
+  /**
+   * WHEN THIS INSTALL LET THIS MAILBOX GO ON PURPOSE, or `null`.
+   *
+   * The one thing that separates a mailbox somebody released from a mailbox whose holder simply
+   * vanished — both are readers with no holder, and only one of them is something the person at
+   * this screen did. Read for the pane's permanent line and for nothing else.
+   */
+  organizerReleasedAt?: string | null;
+  /**
+   * WOULD A DECISION MADE HERE BE ACCEPTED BY WHOEVER ORGANIZES THIS MAILBOX?
+   *
+   * `true` only where a press has somewhere to go. ABSENT and `false` both mean it has not, and
+   * they are deliberately not distinguished: an older server that cannot answer and a holder that
+   * cannot accept produce the same screen, because in both cases the honest thing to do is to
+   * withhold the controls and name the way out.
+   *
+   * The dangerous default is the other one. A `true` here draws a decision bar whose every press
+   * ends in a refusal, which is the shape that once let this product say "filed" and take it back
+   * a minute later.
+   */
+  organizerAcceptsRequests?: boolean;
   /**
    * HOW MANY OF THE USER'S OWN FILINGS THIS MAILBOX HAS NOT APPLIED YET.
    *

@@ -78,6 +78,7 @@ import {
 } from "./doors.js";
 import { DesktopDevices } from "./DesktopDevices.js";
 import { awayOverBridge } from "./local-away.js";
+import { organizerNoticeOverBridge } from "./local-organizer-notice.js";
 import { profileImportOverBridge } from "./local-profile-import.js";
 import { consentOverBridge, consentOverBridgeStandalone } from "./local-consent.js";
 import { olderBodyOverBridge } from "./local-older-body.js";
@@ -840,6 +841,13 @@ export function DesktopGate() {
         {...(awayDoorFor(status, hostedSession) !== null
           ? { awayTransport: awayOverBridge, awayIsLocal: awayDoorFor(status, hostedSession) === "local" }
           : {})}
+        /* ACKNOWLEDGING THE ORGANIZER NOTICE — on BOTH doors, and with no door rule of its
+           own, unlike the two seams around it. Those need one because what the route DOES
+           differs between a standalone install and a Cloud-connected one; this one stamps an
+           instant on the caller's own mailbox row, and it is mounted on both doors — served
+           locally on the standalone one, forwarded to the account on the hosted one. The
+           window presses the same path either way, so there is nothing to branch on. */
+        organizerNoticeTransport={organizerNoticeOverBridge}
         /* SETTINGS FOUND ON A MAILBOX — the profile-import card, on BOTH doors, and this is the
            desktop-standalone tier gaining the flow's flagship case: a mailbox that arrives
            carrying another ohmail's settings (leave Cloud, install the app) is asked before

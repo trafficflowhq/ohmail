@@ -4,6 +4,7 @@ import {
   mailboxes, mailboxCredentials, mailboxFolders, folderState, messages, accountSettings,
   isMailboxDisabledReason, isMailboxSyncBlockReason,
   isOrganizerRole, isOrganizerKind, isOrganizerState,
+  hasCapability, CAPABILITY_REQUESTS,
   standDownMemory,
   closeRemovedMailboxAppointments,
   type LedgerTx, type MailboxErrorCode, type Tx,
@@ -3031,6 +3032,27 @@ export class MailboxService {
        */
       organizerEventAt: m.organizerEventAt ? m.organizerEventAt.toISOString() : null,
       organizerEventSeenAt: m.organizerEventSeenAt ? m.organizerEventSeenAt.toISOString() : null,
+      /* WOULD A READER'S DECISION BE ACCEPTED HERE — the same rule the request door applies,
+       * projected so a client can withhold a control before the press rather than explain a
+       * refusal after it.
+       *
+       * `state === "held" && hasCapability(...)` and NOT the capability alone: a claim left
+       * behind by an install that has stopped renewing still advertises whatever it advertised
+       * on its last pass, and a decision handed to it would sit in the mailbox until it expired.
+       * An ORGANIZER row answers false, which is not a refusal — it is that the question does not
+       * arise, and a client asking it about a mailbox it organizes is asking the wrong question.
+       *
+       * The false direction is the safe one on every axis: an older API omits the field, an
+       * unrecognised capability string is not the token, and a row this build cannot read
+       * degrades to the state that offers nothing and says why. */
+      organizerAcceptsRequests:
+        m.organizerRole === "reader"
+        && m.organizerState === "held"
+        && hasCapability(m.organizedByCapabilities, CAPABILITY_REQUESTS),
+      /* WHEN THIS INSTALL LET THE MAILBOX GO — projected raw, on the same unconditional rule as
+       * its four neighbours. The pane needs the instant, not a flag: "you stopped organizing this
+       * here" without a date is a sentence about an event nobody can place. */
+      organizerReleasedAt: m.organizerReleasedAt ? m.organizerReleasedAt.toISOString() : null,
       // WHAT THIS MAILBOX'S SUBMISSION SERVER SAID IT WILL ACCEPT (mail 0055). UNCONDITIONAL, for
       // the reason the two lines above are: it is meaningful in every lifecycle state, and it is
       // read by the compose surface rather than by any error copy. `null` is "not known" — no

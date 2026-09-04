@@ -179,6 +179,13 @@ export function CloudShell({ demo }: { demo: boolean }) {
         demo={demo}
         resolveOwner={resolveOwner}
         mailboxFacts={mailboxFacts}
+        /* ACKNOWLEDGING THE ORGANIZER NOTICE, which the shared shell cannot do for itself: the
+           publish denies it `app/api-client`, so the route is reached from here on this door and
+           from the window's own pipe on the desktop. One route, two transports, one sentence.
+
+           `demo` keeps its own gate inside the shell — a fixture world has no row to stamp — so
+           this is handed over unconditionally, exactly as `mailboxFacts` above is. */
+        organizerNoticeTransport={(id) => mailboxApi.dismissOrganizerNotice(id)}
         /* WHAT A SEND FROM THIS WINDOW RIDES — the staging bucket's per-object ceiling.
 
            This used to declare nothing, which `composeAttachCap` resolves to the 3 MB constant,
