@@ -333,6 +333,30 @@ release carries the work listed under Unreleased above. The Android APK is attac
 release, and iOS is not — there is still no sideload path on that platform and no Apple
 Developer Program membership behind a store build.
 
+### Messages open with the whole message again
+
+Opening a message could leave it showing nothing but the preview line, under *"Only the preview
+could be loaded. Reopen to try again."* — and reopening did not help. Every message on the phone
+was affected.
+
+The mail was never missing and the server was never refusing; the phone had already been handed
+the full text and lost it on the way into its own copy. Writing that copy went through a second
+connection to the same database file, so two writes that overlapped were two writers competing for
+one file — and the loser aborted. Opening an unread message is exactly that case, because the open
+fetches the body while marking the message read at the same moment. The failure then stuck: the
+aborted write left the message recorded as unfetchable, which is what the notice was reporting on
+every later open.
+
+Writes now go through one lane per database file, so they queue instead of colliding.
+
+### The About block says which build you are looking at
+
+Settings → About now ends with a line like **Version 0.14.1 (2)** — the marketing version and the
+build number. Nothing in the app used to state a version anywhere, so anyone holding an APK sent
+to them had no way to tell, from inside ohmail, which build it was. The numbers come from the
+config embedded in the artifact, and a test holds them equal to the generated Android project's
+own version fields, so the line cannot drift from the thing it describes.
+
 ### The app has its final name, and an existing install will not update into it
 
 The application identifier is **`app.ohmail`** on both platforms, the reverse-DNS form of the
@@ -376,6 +400,12 @@ kept `RECORD_AUDIO` out of the manifest; iOS was the half still missing.
 
 The iOS app icon is also flattened for Apple's pipeline rather than left to acquire four white
 corners where the transparent rounding met the platform's own mask.
+
+### The phone speaks English
+
+The app ships one language. The German copy the desktop and web clients gained is not on the
+phone, and no part of this app is translated yet — stated here because the same changelog records
+that work for the other clients and a reader should not have to infer which ones it reached.
 
 ## [0.14.0] — 2026-09-03
 
