@@ -291,13 +291,27 @@ async function overview(ctx: StaffContext): Promise<OverviewSnapshot> {
   // purpose — see §3. Everything else on this page reads through the blind one.
   const api = await ctx.apiHealth();
   const instances = await adminWorkerInstances(ctx.db, now);
-  const alerts = await adminAlerts(ctx.db, now);
+
+  // ── THE SCHEMA-SKEW READS ARE GATED, BECAUSE THIS PAGE IS THE ONE THAT DIAGNOSES IT ──
+  //
+  // `apiHealth()` has already answered whether this host's expected schema is present. When it
+  // is NOT — an API deployed ahead of its migration, which is exactly what the Reliability page
+  // exists to show — every read below touches something that migration adds: `adminAlerts`
+  // selects the new heartbeat columns, and the two after it query tables that do not exist yet.
+  // The first of them raised 42703 or 42P01 and the whole route answered a generic 503, so the
+  // page that would have NAMED the fault was the page the fault took down, and an operator saw
+  // an outage with no explanation on the surface built to explain it.
+  //
+  // Gated rather than try/caught: a catch would still have run the queries and would swallow a
+  // real fault as if it were skew. The health probe is the authority and it has already spoken.
+  const schemaReady = api.schemaOk;
+  const alerts = schemaReady ? await adminAlerts(ctx.db, now) : [];
   // SEQUENTIAL, on the deadlock note above — these are two more reads on the same `max: 1` blind
   // pool and a `Promise.all` here would reintroduce exactly the circular wait that comment
   // records. Both are bounded: two rows from `alert_pass_runs` by primary key, and one grouped
   // aggregate over fifteen minutes of `platform_signals` on its own index.
-  const alertDrivers = await adminAlertDrivers(ctx.db, now);
-  const platformSignals = await adminPlatformSignals(ctx.db, now);
+  const alertDrivers = schemaReady ? await adminAlertDrivers(ctx.db, now) : [];
+  const platformSignals = schemaReady ? await adminPlatformSignals(ctx.db, now) : [];
   return {
     now: now.toISOString(),
     environment: ctx.environment,

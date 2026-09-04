@@ -116,6 +116,20 @@ export interface PlatformSignalEnv {
  */
 export const VERCEL_REQUEST_LOGS_URL = "https://vercel.com/api/logs/request-logs";
 
+/**
+ * Where a project NAME is exchanged for the id the log endpoint actually wants.
+ *
+ * THE POLL NEVER WORKED WITHOUT THIS. `projectId` on the request-log endpoint is Vercel's
+ * internal project id, not the name — and this port was passing the configured name
+ * (`ohmail-api`) straight into it, so every poll either failed or matched nothing. The table
+ * stayed empty, the board read "5xx: not measured", and that is indistinguishable from the
+ * expected state of a deployment with no token, which is why nothing noticed.
+ *
+ * `scripts/vercel-errors.mjs` has always done this correctly — it resolves the name through this
+ * same endpoint and passes `proj.id` — so this is that call, in the port that needed it.
+ */
+export const VERCEL_PROJECT_URL = "https://vercel.com/api/v9/projects";
+
 /** The default project. See {@link PlatformSignalEnv.VERCEL_SIGNAL_PROJECTS}. */
 export const DEFAULT_SIGNAL_PROJECTS: readonly string[] = ["ohmail-api"];
 
@@ -233,6 +247,28 @@ export function makePlatformSignalPort(
 
       const projects = resolvedProjects;
 
+      // NAME → ID, once per pass, before any log query. A name that does not resolve fails the
+      // whole poll rather than being walked as an id: querying the log endpoint with a name is
+      // what produced an empty, confident-looking result for this port's entire life.
+      const ids = new Map<string, string>();
+      for (const name of projects) {
+        let res: Response;
+        try {
+          res = await doFetch(
+            `${VERCEL_PROJECT_URL}/${encodeURIComponent(name)}?teamId=${encodeURIComponent(team)}`,
+            { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(timeoutMs) },
+          );
+        } catch (err) {
+          return { failed: `project_transport:${String((err as Error)?.name ?? "unknown")}` };
+        }
+        if (!res.ok) return { failed: `project_http_${res.status}` };
+        let body: unknown;
+        try { body = await res.json(); } catch { return { failed: "project_unparseable" }; }
+        const id = (body as { id?: unknown })?.id;
+        if (typeof id !== "string" || id.length === 0) return { failed: "project_no_id" };
+        ids.set(name, id);
+      }
+
       // ONE DEADLINE FOR THE WHOLE POLL, not one per project: what has to fit inside the
       // invocation is every project's walk plus the write, so a per-project budget would
       // multiply by the project count — which is the shape of the problem, not a bound on it.
@@ -280,7 +316,9 @@ export function makePlatformSignalPort(
           }
           pages++;
           const q = new URLSearchParams({
-            projectId: project,
+            // THE ID, not the name — see `VERCEL_PROJECT_URL`. The row below keeps the NAME,
+            // because that is what an operator recognises on the board and what the config sets.
+            projectId: ids.get(project) ?? project,
             ownerId: team,
             startDate: String(window.start.getTime()),
             endDate: String(cursor),

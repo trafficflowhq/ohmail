@@ -1811,12 +1811,36 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   // without rows, the panel reads "5xx: not measured", and `platformSignalWindow` below is the one
   // function both of them go through so the two cannot disagree.
   //
-  // TRUNCATED ROWS still count, and the direction is why. The poller walks the log backwards from
-  // the window's end and stops at its budget, so a truncated row is a real count over a real,
-  // contiguous, most-recent slice — both numbers are lower bounds. A lower-bound numerator can
-  // only fail to reach the floor, never exceed it, so a truncated window cannot invent a page.
+  // ── THE RULE GATES ITSELF ON HAVING BEEN MEASURED, AND THE GATE IS THE DATA ──────────
+  //
+  // It judges only projects with at least one COMPLETE bucket in the window. Nothing else turns
+  // it on: no registration flag, no environment check, nothing a person has to remember to flip
+  // once the platform token exists. The first real poll that lands a complete bucket makes the
+  // rule live; until then it is silent and the board says "5xx: not measured", which is the
+  // truthful state of a deployment with no token AND of one whose poller has never successfully
+  // run. Neither of those is a rate of zero and neither may page.
+  //
+  // SAMPLED BUCKETS ARE EXCLUDED FROM THE SUMS, replacing the argument that used to sit here —
+  // that a truncated row is safe because both counts are lower bounds. Both counts are; their
+  // RATIO is not, and the rate threshold is a ratio. Twenty errors in a sampled thousand crosses
+  // both floors while ninety-nine thousand unseen successes put the true rate two orders of
+  // magnitude below it. A lower bound is safe in a numerator and unsafe in a quotient.
+  //
+  // ── WHICH HALF ACTUALLY ENFORCES THIS, STATED BECAUSE THE TWO LOOK INTERCHANGEABLE ────
+  //
+  // The enforcing half is the `filter (where not truncated)` inside `platformSignalWindow`:
+  // remove it and the sampled bucket's thousand requests re-enter the denominator and the rule
+  // pages, which the suite catches. The `completeBuckets` test below is DELIBERATELY REDUNDANT
+  // with the `requests <= 0` line beneath it — because the sums are filtered, a project with no
+  // complete bucket already sums to zero, so removing this line changes no outcome and no test
+  // goes red. It is kept as the statement of INTENT, so that a future change to those sums has
+  // to confront the word "measured" rather than silently restoring a rate over sampled data.
+  // Recorded plainly rather than dressed up as a second guard: a line nobody can watch fail is
+  // not evidence, and claiming otherwise here would be the same overclaim this rule exists to
+  // refuse.
   const signalWindow = await platformSignalWindow(db, now, t.api5xxWindowMs);
   for (const w of signalWindow) {
+    if (w.completeBuckets <= 0) continue;
     if (w.requests <= 0) continue;
     const rate = w.errors5xx / w.requests;
     if (w.errors5xx < t.api5xxMinErrors || rate < t.api5xxMinRate) continue;
@@ -1829,9 +1853,10 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
         `${w.errors5xx} of ${w.requests} request(s) to ${w.project} returned 5xx in the last ` +
         `${humanAge(Math.round(t.api5xxWindowMs / 1000))} — past both floors ` +
         `(${t.api5xxMinErrors} errors AND ${(t.api5xxMinRate * 100).toFixed(0)}%). ` +
-        (w.truncated
-          ? "The counts are a LOWER BOUND: the poller hit its page budget, so this window was " +
-            "sampled from its most recent slice and the real figures are at least these. "
+        (w.sampledBuckets > 0
+          ? `${w.sampledBuckets} further bucket(s) in this window were SAMPLED and are excluded ` +
+            "from these figures: their counts are lower bounds, and a lower bound cannot be " +
+            "divided into a rate. The figures above are from complete buckets only. "
           : "") +
         `Newest platform read ${humanAge(secondsBetween(now, w.fetchedAt))} ago.`,
       count: w.errors5xx,
@@ -2058,10 +2083,30 @@ export const CLOUD_JOURNAL_HEAD_WHEN = 1791328104216;
 export interface PlatformSignalWindow {
   provider: string;
   project: string;
+  /**
+   * Requests and 5xx summed over the COMPLETE buckets only — never over sampled ones.
+   *
+   * A sampled bucket's two counts are each a lower bound, but their RATIO is not, and the rate
+   * threshold divides one by the other. Twenty errors in a sampled thousand crosses both floors
+   * while ninety-nine thousand unseen successes put the true rate two orders of magnitude below
+   * it, so a sampled window could page for a deployment having an ordinary day. Lower bounds are
+   * safe in a numerator and unsafe in a quotient; the quotient is what this rule is.
+   */
   requests: number;
   errors5xx: number;
-  /** True when ANY contributing row was sampled rather than counted — see the table's header. */
+  /** True when ANY row in the window was sampled — the panel says so, the rule ignores them. */
   truncated: boolean;
+  /**
+   * How many COMPLETE buckets contributed. **Zero means this project has never been measured in
+   * this window**, and it is what gates the rule: with no complete bucket there is no rate to
+   * judge, so the rule stays silent and the board says "not measured". That covers a deployment
+   * with no platform token, a poller that has never successfully run, and one whose every read
+   * was sampled — three states that must not be distinguishable from a rate of zero, because
+   * none of them is a measurement.
+   */
+  completeBuckets: number;
+  /** How many buckets were excluded as sampled. Rendered, never summed into the rate. */
+  sampledBuckets: number;
   /** The newest `fetched_at` among the contributing rows — the panel's freshness stamp. */
   fetchedAt: Date;
 }
@@ -2111,9 +2156,14 @@ export async function platformSignalWindow(
     .select({
       provider: platformSignals.provider,
       project: platformSignals.project,
-      requests: sql<number>`sum(${platformSignals.requests})::int`,
-      errors5xx: sql<number>`sum(${platformSignals.errors5xx})::int`,
+      // FILTERED to complete buckets — see the field's own note. `coalesce` because a project
+      // whose every bucket was sampled sums to NULL here, and that project must read as zero
+      // complete buckets rather than as a zero rate.
+      requests: sql<number>`coalesce(sum(${platformSignals.requests}) filter (where not ${platformSignals.truncated}), 0)::int`,
+      errors5xx: sql<number>`coalesce(sum(${platformSignals.errors5xx}) filter (where not ${platformSignals.truncated}), 0)::int`,
       truncated: sql<boolean>`bool_or(${platformSignals.truncated})`,
+      completeBuckets: sql<number>`count(*) filter (where not ${platformSignals.truncated})::int`,
+      sampledBuckets: sql<number>`count(*) filter (where ${platformSignals.truncated})::int`,
       fetchedAt: sql<Date>`max(${platformSignals.fetchedAt})`,
     })
     .from(platformSignals)
@@ -2125,6 +2175,8 @@ export async function platformSignalWindow(
     requests: Number(r.requests ?? 0),
     errors5xx: Number(r.errors5xx ?? 0),
     truncated: r.truncated === true,
+    completeBuckets: Number(r.completeBuckets ?? 0),
+    sampledBuckets: Number(r.sampledBuckets ?? 0),
     fetchedAt: new Date(r.fetchedAt as unknown as string),
   }));
 }
@@ -2924,6 +2976,18 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
             then null else ${alertState.notifiedSignature} end`,
           notifyCount: sql`case when ${alertState.cls} = 'incident' and ${alertClass(alert)} = 'signal'
             then 0 else ${alertState.notifyCount} end`,
+          // ── AND THE LEASE GOES WITH THEM, WHICH IS THE CONCURRENT HALF ──────────────
+          //
+          // Clearing the history alone is not enough while two drivers overlap. The settle that
+          // follows a delivery is guarded ONLY by `claimed_until = <the lease this pass took>`,
+          // so an incident sender still in flight when the condition demotes will match that
+          // guard afterwards and write its OLD INCIDENT SIGNATURE back onto the row that is now
+          // a signal — restoring exactly the suppression the lines above just removed, with no
+          // pass having done anything wrong. Dropping the lease makes that settle match nothing,
+          // which is the outcome it should have: it is confirming a page for a condition that
+          // has since stopped being one.
+          claimedUntil: sql`case when ${alertState.cls} = 'incident' and ${alertClass(alert)} = 'signal'
+            then null else ${alertState.claimedUntil} end`,
         },
       });
   }
