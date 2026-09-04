@@ -13,8 +13,10 @@
  * and one sentence with no control when it does not. Which of the two appears is
  * a fact read from the device, never a build-time assumption.
  */
+import Constants from "expo-constants";
 import { useState } from "react";
-import { View } from "react-native";
+import { Platform, View } from "react-native";
+import { buildLabel } from "../src/build-info";
 import { Copy } from "../src/copy";
 import { type WakeState } from "../src/net/push";
 import { useWake } from "../src/state/wake";
@@ -64,6 +66,20 @@ function SettingsBody() {
   const w = useWorld();
   const { themePref, setTheme, facePin, setFacePin } = usePrefs();
   const wake = useWake();
+  /*
+   * The build's own name, read once. `expoConfig` is the config `expo prebuild` embedded in this
+   * artifact — the same source `android/app/build.gradle` and `Info.plist` are generated from,
+   * held equal to them by `build-info.test.ts`. The narrowing (and why an absent version renders
+   * NOTHING rather than "unknown") is `buildLabel`'s; this line only hands it the platform.
+   */
+  const version = buildLabel(
+    {
+      version: Constants.expoConfig?.version,
+      androidVersionCode: Constants.expoConfig?.android?.versionCode,
+      iosBuildNumber: Constants.expoConfig?.ios?.buildNumber,
+    },
+    Platform.OS,
+  );
 
   return (
     <Screen>
@@ -182,6 +198,15 @@ function SettingsBody() {
         <Panel style={{ paddingVertical: 18, marginBottom: 10 }}>
           <View style={{ paddingHorizontal: 20, gap: 6 }}>
             <Txt variant="settingsLabel">{Copy.about}</Txt>
+            {/* WHICH build. The block was headed "About this build" and named no version, so a
+                tester holding a sideloaded APK could not say which one they had. The numbers are
+                the embedded app config's, which `build-info.test.ts` holds equal to the package
+                manifest's. `null` only where there is no version to state — see `buildLabel`. */}
+            {version !== null ? (
+              <Txt variant="note" tone="ink2">
+                {version}
+              </Txt>
+            ) : null}
             <Txt variant="note" tone="ink2">
               {Copy.aboutLive(w.account.name)}
             </Txt>

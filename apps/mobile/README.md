@@ -138,6 +138,12 @@ as *generated* values: `expo prebuild` writes them from the three fields above, 
 prebuild, not a second source of truth — regenerate rather than edit it, because an
 edit there is deleted by the next prebuild.
 
+The app shows it too. The About block under Settings renders `Version <version>
+(<build number>)` from the config the artifact embeds — Android's version code,
+iOS's build number — so a tester holding a sideloaded APK can name the build they
+are looking at without a shell. `test/build-info.test.ts` holds that line equal to
+the generated `build.gradle` wherever a prebuild has produced one.
+
 To confirm what the current configuration actually resolves to, without building
 anything:
 
@@ -240,7 +246,7 @@ the two builds should not have to infer it:
 | --- | --- |
 | **Expo SDK 57** (React Native 0.86, React 19), managed workflow | No committed `ios/` or `android/` directory whose contents nobody reads; `expo prebuild` generates them when a native build needs them. |
 | **Expo Router** | File-based routes give deep links (`ohmail://…`), which reach every screen. |
-| **`@ohmail/client-engine` consumed live**, over an injected `SqlExecutor` | The engine is not forked for React Native. `src/engine/boot.ts` composes the same `OhmailEngine` every other client runs — `SqlMirrorStore` over expo-sqlite, uuid from expo-crypto, RN's own `fetch`, no EventSource (this build polls) — and a sqlite failure surfaces as a refusal, never a silent in-memory fallback. |
+| **`@ohmail/client-engine` consumed live**, over an injected `SqlExecutor` | The engine is not forked for React Native. `src/engine/boot.ts` composes the same `OhmailEngine` every other client runs — `SqlMirrorStore` over expo-sqlite, uuid from expo-crypto, RN's own `fetch`, no EventSource (this build polls) — and a sqlite failure surfaces as a refusal, never a silent in-memory fallback. Writes to one mirror file are **serialised** (`src/engine/sql-queue.ts`): expo's `withExclusiveTransactionAsync` runs on a second connection to the same database, so two overlapping writes are two writers and the loser aborts with `database is locked`. |
 | **`@ohmail/ui` NOT reused** | It is DOM and CSS. Nothing in it survives translation to React Native, and pretending otherwise would produce a `react-native-web` shim, not a native app. |
 | **`@ohmail/tokens` translated, not re-typed** | `src/theme/` holds the authored OKLCH values verbatim and converts them at load. Documented below. |
 | **No state library** | State is the engine's own mirror behind `src/state/live.ts`; `src/state/model.ts` is the row vocabulary; app-local preference is one small provider. |
@@ -378,7 +384,7 @@ edge — the desktop dock's shape, at thumb height.
 | `/more` | The desktop rail's lower half: piles, the Folders group while "Use folders" is on, settings, the pairing door — and one honest sentence about search arriving later. |
 | `/folder/[id]` | One of the mailbox's own folders: New / Earlier over the mirror's rows, with a tail that states what is on this phone rather than claiming the folder is empty. |
 | `/triage` **Piles** | Answer Later · Parked · Resurface, counts derived from the items. |
-| `/settings` | Appearance, the Use-folders switch (the server-confirmed answer, never an optimistic one), and an About block that states what is live on this build and names what is not. |
+| `/settings` | Appearance, the Use-folders switch (the server-confirmed answer, never an optimistic one), and an About block that names the build — `Version 0.14.1 (2)`, read from the app config the artifact embeds — then states what is live on this build and what is not. |
 
 Light and dark throughout; reduced motion honoured; 44/48 pt touch targets;
 every row and control carries an accessibility label.
@@ -416,6 +422,15 @@ publication. What they hold:
   a second client's, mark-read round-trips, decisions and releases rewrite
   the holding rules rather than issuing bare moves, sweep geometry never
   marks off-screen mail read.
+- **body-hydration** — opening a message renders the message. The loopback
+  server answers both body routes in the API's own shapes, and every case runs
+  twice: over `node:sqlite`, whose batches are synchronous and can never
+  interleave, and over a database with expo-sqlite's transaction semantics — a
+  second connection per transaction, which is the one that can fail. The body
+  has to be stored, not merely on screen: a case reopens the mirror in a new
+  session and reads it back.
+- **build-info** — the version line, per platform, and its agreement with the
+  generated native project.
 
 ---
 
