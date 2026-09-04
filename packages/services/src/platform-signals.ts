@@ -261,6 +261,17 @@ export function makePlatformSignalPort(
   return {
     projects: resolvedProjects,
     async fetch(window) {
+      // ── THE DEADLINE STARTS HERE, BEFORE ANY REQUEST — INCLUDING THE LOOKUPS ──────────
+      //
+      // It used to start after project resolution, so the lookups' time was spent OUTSIDE the
+      // budget: a slow lookup plus the full walk plus a final near-timeout request could pass
+      // seventy seconds against a sixty-second invocation ceiling, and the pass was killed
+      // before a single row was written. Every request below is also capped by what remains,
+      // because a page begun just inside the deadline used to receive the full per-request
+      // timeout and could run well past it.
+      const deadline = nowMs() + wallClockMs;
+      /** What one request may take: its own ceiling, or the rest of the poll's, whichever is less. */
+      const budgetFor = (): number => Math.max(0, Math.min(timeoutMs, deadline - nowMs()));
       const token = trimmed(env.VERCEL_TOKEN);
       const team = trimmed(env.VERCEL_TEAM_ID);
       // BOTH are required, and the team id is not optional here even though a personal account
@@ -281,7 +292,7 @@ export function makePlatformSignalPort(
         try {
           res = await doFetch(
             `${VERCEL_PROJECT_URL}/${encodeURIComponent(name)}?teamId=${encodeURIComponent(team)}`,
-            { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(timeoutMs) },
+            { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(budgetFor()) },
           );
         } catch (err) {
           return { failed: `project_transport:${String((err as Error)?.name ?? "unknown")}` };
@@ -294,10 +305,6 @@ export function makePlatformSignalPort(
         ids.set(name, id);
       }
 
-      // ONE DEADLINE FOR THE WHOLE POLL, not one per project: what has to fit inside the
-      // invocation is every project's walk plus the write, so a per-project budget would
-      // multiply by the project count — which is the shape of the problem, not a bound on it.
-      const deadline = nowMs() + wallClockMs;
       const rows: PlatformSignalRow[] = [];
       for (const project of projects) {
         const walked = await walk(project);
@@ -352,7 +359,7 @@ export function makePlatformSignalPort(
           try {
             res = await doFetch(`${VERCEL_REQUEST_LOGS_URL}?${q}`, {
               headers: { Authorization: `Bearer ${token}` },
-              signal: AbortSignal.timeout(timeoutMs),
+              signal: AbortSignal.timeout(budgetFor()),
             });
           } catch (err) {
             // The NAME only, never the message: a fetch error's message carries the URL, and this
@@ -542,14 +549,36 @@ export async function runPlatformSignalPass(
   const expected = opts.port.projects.length > 0
     ? opts.port.projects
     : [...DEFAULT_SIGNAL_PROJECTS];
-  const target = candidates.find((end) => !expected.every((p) => held.has(`${p}@${end - windowMs}`)));
+  const missing = candidates.filter(
+    (end) => !expected.every((p) => held.has(`${p}@${end - windowMs}`)));
+
+  // ── EVERY MISSING BUCKET, NEWEST FIRST, UNDER THE PORT'S ONE SHARED DEADLINE ──────────
+  //
+  // One fetch per pass could not CATCH UP. The cron rearms after completion, so every
+  // invocation finds a newly closed bucket; a newest-first single fetch spent the pass on that
+  // one and an older gap was never reached, ageing out of the fifteen-minute window without
+  // ever being repaired. The rule then undercounted for ever, quietly.
+  //
+  // Looping is safe NOW and was not before: the earlier version gave each bucket its own
+  // wall-clock budget, so three slow buckets could spend three times the invocation's. The
+  // port's deadline is established once per `fetch` and every request inside it is capped by
+  // what remains, so a walk that runs long simply returns fewer buckets rather than overrunning
+  // the host. Newest first, so the freshest data lands even when the budget stops the loop
+  // early; the remaining gaps are the next pass's work.
+  const answers: PlatformSignalFetch[] = [];
+  for (const end of missing) {
+    const a = await opts.port.fetch({ start: new Date(end - windowMs), end: new Date(end) });
+    answers.push(a);
+    // A FAILURE STOPS THE LOOP rather than being collected past: one refusal is almost always
+    // the token or the endpoint, and walking the remaining buckets would spend the budget
+    // learning the same thing three times.
+    if ("failed" in a || "unconfigured" in a) break;
+  }
 
   // NOTHING MISSING IS NOT A FAILURE — the healthy steady state on a deployment whose clock has
   // not drifted. The prune still runs below; a pass with no gap to fill must not spend a walk
   // saying so, and must not report one.
-  const answer: PlatformSignalFetch | null = target === undefined
-    ? null
-    : await opts.port.fetch({ start: new Date(target - windowMs), end: new Date(target) });
+  const answer: PlatformSignalFetch | null = answers[0] ?? null;
 
   // PRUNE ON EVERY PASS, including an unconfigured one, and that is deliberate: a deployment that
   // had a token and lost it must not keep a week of rows for ever, and the sweep is one indexed
@@ -557,10 +586,17 @@ export async function runPlatformSignalPass(
   const pruned = await prune(db, new Date(now.getTime() - retentionMs));
 
   if (answer === null) return { outcome: "written", rows: 0, pruned };
-  if ("unconfigured" in answer) return { outcome: "unconfigured", rows: 0, pruned };
-  if ("failed" in answer) return { outcome: "failed", code: answer.failed, rows: 0, pruned };
+  // ANY failure in the batch is the pass's outcome, not just the first bucket's — a partial
+  // window written while a later bucket was refused would report success over data it knows is
+  // incomplete.
+  const failed = answers.find((a) => "failed" in a) as { failed: string } | undefined;
+  const unconfigured = answers.some((a) => "unconfigured" in a);
+  if (unconfigured) return { outcome: "unconfigured", rows: 0, pruned };
+  if (failed) return { outcome: "failed", code: failed.failed, rows: 0, pruned };
 
-  for (const row of answer.rows) {
+  const written: PlatformSignalRow[] = [];
+  for (const a of answers) if (!("failed" in a) && !("unconfigured" in a)) written.push(...a.rows);
+  for (const row of written) {
     await db
       .insert(platformSignals)
       .values({
@@ -591,7 +627,7 @@ export async function runPlatformSignalPass(
       });
   }
 
-  return { outcome: "written", rows: answer.rows.length, pruned };
+  return { outcome: "written", rows: written.length, pruned };
 }
 
 /** Delete rows older than the cut. Returns how many went. */
