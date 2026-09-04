@@ -1859,17 +1859,31 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   //
   // The enforcing half is the `filter (where not truncated)` inside `platformSignalWindow`:
   // remove it and the sampled bucket's thousand requests re-enter the denominator and the rule
-  // pages, which the suite catches. The `completeBuckets` test below is DELIBERATELY REDUNDANT
-  // with the `requests <= 0` line beneath it — because the sums are filtered, a project with no
-  // complete bucket already sums to zero, so removing this line changes no outcome and no test
-  // goes red. It is kept as the statement of INTENT, so that a future change to those sums has
-  // to confront the word "measured" rather than silently restoring a rate over sampled data.
-  // Recorded plainly rather than dressed up as a second guard: a line nobody can watch fail is
-  // not evidence, and claiming otherwise here would be the same overclaim this rule exists to
-  // refuse.
+  // pages, which the suite catches. The bucket test below USED TO BE deliberately redundant with
+  // the `requests <= 0` line beneath it — filtered sums mean a project with no complete bucket
+  // already sums to zero — and was kept only as a statement of intent, marked in this comment as
+  // a line nobody could watch fail. It is a real guard now, for a reason that is the same
+  // argument one level up:
+  //
+  // ── A QUOTIENT OVER PART OF THE WINDOW IS NOT THE WINDOW'S RATE ───────────────────────
+  //
+  // A sampled bucket is excluded because its counts are lower bounds and their RATIO is not one.
+  // A MISSING bucket is the same defect with the evidence removed instead of marked: if one poll
+  // fails, two complete buckets remain, and their quotient was published as the fifteen-minute
+  // rate this alert's threshold is calibrated for. Errors clustering in the five minutes that
+  // were measured, while the unmeasured ten carried the successes, then crosses 2% on a
+  // deployment whose true rate is well under it — a critical page manufactured out of the part
+  // of the window that happened to survive.
+  //
+  // So the rule needs the population it advertises: every bucket of the window, complete. Short
+  // of that the project reads as NOT MEASURED, which is the same answer it gives before the
+  // first poll lands, and the panel says so rather than showing a number nobody can stand
+  // behind. The cost is that a failed poll takes this rule dark for one window; the alternative
+  // is a rate computed over whatever fraction of it survived.
   const signalWindow = await platformSignalWindow(db, now, t.api5xxWindowMs);
+  const expectedBuckets = Math.round(t.api5xxWindowMs / SIGNAL_BUCKET_MS);
   for (const w of signalWindow) {
-    if (w.completeBuckets <= 0) continue;
+    if (w.completeBuckets < expectedBuckets) continue;
     if (w.requests <= 0) continue;
     const rate = w.errors5xx / w.requests;
     if (w.errors5xx < t.api5xxMinErrors || rate < t.api5xxMinRate) continue;
@@ -3579,7 +3593,16 @@ export interface AlertDriverStatus {
    * other field on this row can say so: an arm that never attempts a delivery never fails one,
    * so `sinkFailureStreak` sits at zero and reads exactly like a healthy arm.
    */
-  sinksConfigured: number;
+  /**
+   * How many sinks the driver's last pass saw configured — NULL when it has never run.
+   *
+   * Zero and unknown are different diagnoses and were rendered as one. A driver with no
+   * `alert_pass_runs` row had this fabricated to 0, so the panel said "no sinks" — a
+   * misconfiguration you would go and fix — about an arm whose scheduler had simply never fired,
+   * which is a dead cron and a different repair entirely. Zero is now reserved for a pass that
+   * ran and counted none.
+   */
+  sinksConfigured: number | null;
 }
 
 /**
@@ -3615,7 +3638,8 @@ export async function alertDriverStatuses(db: Tx): Promise<AlertDriverStatus[]> 
       delivered: Number(r?.delivered ?? 0),
       failedSinks: Number(r?.failedSinks ?? 0),
       sinkFailureStreak: Number(r?.sinkFailureStreak ?? 0),
-      sinksConfigured: Number(r?.sinksConfigured ?? 0),
+      // NULL, not zero, when the driver has never written a row: see the field's own note.
+      sinksConfigured: r ? Number(r.sinksConfigured ?? 0) : null,
     };
   });
 }
@@ -3713,7 +3737,30 @@ export async function writeHeartbeat(db: Tx, input: HeartbeatInput, now: Date = 
           when ${input.degraded} is not true then null
           when ${workerHeartbeats.degradedSince} is null then ${now.toISOString()}::timestamptz
           else ${workerHeartbeats.degradedSince} end`,
-        aiCircuitOpenSince: input.aiCircuitOpenSince,
+        // ── THE CIRCUIT'S AGE IS A PROPERTY OF THE OUTAGE, NOT OF THE PROCESS ────────────
+        //
+        // The rule above says it measures "from the FIRST trip of the current run", and this
+        // write did not implement that: it overwrote the stamp with whatever the beating worker
+        // held in memory. A replacement worker holds NOTHING — its circuit starts closed and
+        // reports null before it has made a single provider call — so a deploy in the middle of
+        // a provider outage cleared the stamp, and the ten-minute clock restarted from the next
+        // trip. A deployment that restarts more often than the threshold could never page for a
+        // continuous outage, which is the failure `degraded_since` was added to fix, arriving
+        // through the column beside it.
+        //
+        // Three cases, and the third is the one that matters. Both stamps present: keep the
+        // EARLIER, so a handover mid-outage keeps the outage's true age. Only the incoming one:
+        // take it. Incoming NULL: a closed circuit is proof of recovery only from the process
+        // that reported it open — from a REPLACEMENT it is the absence of evidence, so the row's
+        // stamp stands until the instance that owns it says otherwise.
+        aiCircuitOpenSince: sql`case
+          when ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz is not null
+           and ${workerHeartbeats.aiCircuitOpenSince} is not null
+            then least(${workerHeartbeats.aiCircuitOpenSince}, ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz)
+          when ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz is not null
+            then ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz
+          when ${workerHeartbeats.instanceId} = ${input.instanceId} then null
+          else ${workerHeartbeats.aiCircuitOpenSince} end`,
         lastCycleAt: input.lastCycleAt,
         startedAt: input.startedAt,
         beatAt: now,
@@ -3780,7 +3827,15 @@ export async function refreshHeartbeat(
         when ${input.degraded} is not true then null
         when ${workerHeartbeats.degradedSince} is null then ${now.toISOString()}::timestamptz
         else ${workerHeartbeats.degradedSince} end`,
-      aiCircuitOpenSince: input.aiCircuitOpenSince,
+      // The refresh is pinned to ONE instance by its `where`, so a null here is that process
+      // reporting its own circuit closed — real recovery, and it clears. What it must still not
+      // do is move the stamp FORWARD: the rule measures from the first trip of the run, so a
+      // later trip within the same run keeps the earlier stamp.
+      aiCircuitOpenSince: sql`case
+        when ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz is null then null
+        when ${workerHeartbeats.aiCircuitOpenSince} is null
+          then ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz
+        else least(${workerHeartbeats.aiCircuitOpenSince}, ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz) end`,
       lastCycleAt: input.lastCycleAt,
       beatAt: now,
     })

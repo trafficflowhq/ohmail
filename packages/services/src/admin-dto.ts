@@ -202,11 +202,18 @@ export interface AdminAlertDriver {
   failedSinks: number;
   sinkFailureStreak: number;
   /**
-   * How many sinks this arm had. ZERO means it cannot page anybody — the worst state this
-   * subsystem has, and the one that read greenest, because an arm that never attempts a
-   * delivery never fails one and its failure streak stays at zero.
+   * How many sinks this arm had, or NULL if it has never run.
+   *
+   * ZERO means it cannot page anybody — the worst state this subsystem has, and the one that
+   * read greenest, because an arm that never attempts a delivery never fails one and its failure
+   * streak stays at zero.
+   *
+   * NULL is a DIFFERENT diagnosis and used to be flattened into that zero: a driver with no pass
+   * on record had this reported as 0, so the panel said "no sinks" — go and configure one — about
+   * an arm whose scheduler had simply never fired, where the repair is the cron and not the sink
+   * list. Zero is now reserved for a pass that ran and counted none; unknown says unknown.
    */
-  sinksConfigured: number;
+  sinksConfigured: number | null;
 }
 
 /**

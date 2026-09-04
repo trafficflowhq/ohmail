@@ -337,6 +337,9 @@ export function makePlatformSignalPort(
       ): Promise<{ row: PlatformSignalRow } | { failed: string }> {
         let requests = 0;
         let errors5xx = 0;
+        // Set when any page hands back a row whose request id cannot be read: the counts below
+        // become a floor rather than a population, and the row says so. See the mixed-page note.
+        let sampled = false;
         let cursor = window.end.getTime();
         let pages = 0;
         // `requestId` dedupes the boundary: the cursor is inclusive and two requests can share a
@@ -408,6 +411,20 @@ export function makePlatformSignalPort(
           if (batch.length > 0 && usable.length === 0) {
             return { failed: "page_without_request_ids" };
           }
+          // ── A PAGE THAT IS PART UNREADABLE MAKES THE BUCKET A SAMPLE ────────────────────
+          //
+          // The all-blank case above is refused. The MIXED case used to pass silently: the
+          // readable rows were counted, the blank ones dropped, and the bucket was still stored
+          // as complete. That is the sampled-bucket defect with the marking removed — the rows
+          // that went missing may have been the successes, so the surviving quotient can cross a
+          // rate threshold the true population never approaches, and it does it on a bucket the
+          // rule believes it measured in full.
+          //
+          // The counts stay (a lower bound is still worth recording); what changes is the claim
+          // made about them. `truncated` already means exactly "these numbers are a floor, do not
+          // divide them", and the window read already excludes such buckets from its sums, so the
+          // honest fix is to say so rather than to invent a second kind of doubt.
+          if (usable.length < batch.length) sampled = true;
           let oldest = cursor;
           for (const r of batch) {
             const id = typeof r.requestId === "string" ? r.requestId : "";
@@ -472,7 +489,12 @@ export function makePlatformSignalPort(
         }
 
         return {
-          row: { provider: "vercel", project, windowStart: window.start, requests, errors5xx, truncated: false },
+          row: {
+            provider: "vercel", project, windowStart: window.start, requests, errors5xx,
+            // Not `false` — a page with unreadable rows in it made this window a sample, and the
+            // walk finishing does not make the population whole again.
+            truncated: sampled,
+          },
         };
       }
     },
