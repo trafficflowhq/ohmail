@@ -381,7 +381,18 @@ export async function applyMetaRequests(
 
     // ── (3) THE SIGNATURE, BEFORE ANY DECODE ─────────────────────────────────────────────────
     if (!verifyRequestEnvelope(e, key)) {
-      settle(e, "refused", "unauthenticated");
+      // ── REMOVED, BUT NOT ACKNOWLEDGED, AND THE ASYMMETRY IS DELIBERATE ────────────────────
+      //
+      // Every other refusal answers, because every other refusal is about a record this account's
+      // own reader wrote and is waiting on. This one is not: a record that does not verify did not
+      // come from a holder of the key, so there is no reader to answer TO — and writing one ack
+      // per forged record would hand a flooder an amplifier, making this organizer APPEND once for
+      // every message the attacker appends.
+      //
+      // The one honest case that lands here is our own reader's record after a key rotation. It
+      // gets no ack and expires on the reader's own window instead, which is the behaviour
+      // rotation is documented to have: old records refuse and expire.
+      if (e.ref !== undefined) toRemove.push(e.ref);
       refused++;
       log("organizer_request_refused", {
         mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: e.requestId,
@@ -478,11 +489,26 @@ export async function applyMetaRequests(
           seq: null,
           now,
         });
-        // Lost the claim to a CONCURRENT drain that committed between the read above and here.
-        // Whether that was the same content or different content is a question the winner already
-        // answered by writing its own hash, so this transaction simply steps aside — it applies
-        // nothing, and the record's cleanup is owed either way.
-        if (!claimed) throw new AlreadyAppliedError(e.requestId);
+        // ── LOST THE CLAIM TO A CONCURRENT DRAIN, AND THE CONTENT STILL HAS TO BE COMPARED ──
+        //
+        // This used to step aside here, reasoning that "the winner already answered whether the
+        // content matched". It does not follow, and REAL POSTGRES CAUGHT IT: the read above and
+        // this claim are two statements, so two cycles can both see no key and then race the
+        // unique index. The loser learns only that it lost — not what it lost TO. Stepping aside
+        // reported the loser's record as `applied` when the winner may have applied entirely
+        // different content under the same id, which is the substitution attack succeeding by
+        // timing alone, and it is invisible under PGlite.
+        //
+        // So the loser re-reads. Under READ COMMITTED this statement takes a fresh snapshot and
+        // therefore sees the winner's committed row: same hash is a genuine replay, a different
+        // hash is the `conflict` the sequential path already refuses.
+        if (!claimed) {
+          const winner = await readIdempotencyKey(tx, rt.accountId, idemKey, now);
+          if (winner !== null && winner.requestHash !== hash) {
+            throw new RequestConflictError(e.requestId);
+          }
+          throw new AlreadyAppliedError(e.requestId);
+        }
 
         await applyScreenerDecision(tx, {
           accountId: rt.accountId,
