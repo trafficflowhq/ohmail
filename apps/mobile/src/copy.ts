@@ -688,6 +688,19 @@ export const Copy = {
   liveSaveFailed: "That change could not be saved. Try it again.",
   liveDecided: (dest: string, target: string) =>
     `${dest} — future mail from ${target} files there automatically.`,
+  /**
+   * THE SAME PRESS ON A MAILBOX THIS PHONE DOES NOT ORGANIZE — and it must not say "files".
+   *
+   * A phone is never the organizer, so a decision made here is recorded for the install that is
+   * and applied on its next pass. Nothing has moved and no rule has been written at the moment
+   * this is said, which is why it names the machine that owes the work and when rather than
+   * reporting a filing. `liveDecided`'s sentence would be a claim about an act that has not
+   * happened — the defect this vocabulary exists to keep out of every door.
+   */
+  liveDecidedElsewhere: (name: string, target: string) =>
+    `Decided — ${name} files ${target} on its next pass.`,
+  liveDecidedElsewhereUnknown: (target: string) =>
+    `Decided — the install that organizes this mailbox files ${target} on its next pass.`,
   liveDecideFailed: (sender: string) =>
     `That decision could not be saved — ${sender} is still waiting.`,
   liveReleased: (n: number, dest: string) =>

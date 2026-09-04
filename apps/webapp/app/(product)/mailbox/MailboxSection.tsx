@@ -58,7 +58,10 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslations } from "next-intl";
-import { Button, SettingsNote, SettingsRow, SettingsSection, SettingsVerdict, Spinner } from "@ohmail/ui";
+import {
+  Button, SettingsActions, SettingsBanner, SettingsNote, SettingsRow, SettingsSection,
+  SettingsVerdict, Spinner,
+} from "@ohmail/ui";
 /* The first-run flow's route helper. The pane NAVIGATES rather than rendering the stage: the
    stage lives in the shared shell above every pane, so a person who opens it from here keeps the
    app behind it and lands back in this pane when they leave. */
@@ -821,6 +824,47 @@ export function MailboxSection() {
    * is spent with it. So the copy says "will start organizing on its next pass" and never "has
    * taken over".
    */
+  /** Which mailbox's release is asking whether you meant it, or `null` when none is. */
+  const [releaseFor, setReleaseFor] = useState<string | null>(null);
+  /** Mailboxes whose release is in flight, so the confirm debounces. */
+  const [releasing, setReleasing] = useState<ReadonlySet<string>>(() => new Set());
+
+  /**
+   * STOP ORGANIZING THIS MAILBOX HERE, AND KEEP THE MAIL — the mirror of {@link confirmTakeover}.
+   *
+   * It records a request and does not perform it. The claim lives in the customer's own IMAP
+   * folder, so only the process holding that connection can give it up: the worker honours the
+   * request at its next gate, which is why the copy says "within a minute" rather than reporting
+   * it done, and why the answer is a statement rather than a spinner.
+   *
+   * NOT step-up-gated, and the asymmetry with the takeover is worth stating rather than smoothing
+   * over. A second factor guards the direction that TAKES CONTROL of somebody's mail; this gives
+   * it up, keeps every credential and every message, and is reversible with the button beside it.
+   * Gating it would mean somebody who has lost their second factor cannot stop a machine from
+   * filing their mail.
+   */
+  const confirmRelease = useCallback(async (id: string): Promise<void> => {
+    setError(null);
+    setReleasing((q) => new Set(q).add(id));
+    try {
+      const result = await mailboxApi.release(id);
+      if (!alive.current) return;
+      setReleaseFor(null);
+      setNotice(
+        result.outcome === "requested" ? t("stopOrganizingQueued")
+          : result.outcome === "not_organizing" ? t("stopOrganizingNot")
+            : t("organizerDisconnected"),
+      );
+      // The row's role moves at the worker's gate, not here, so the pane re-reads rather than
+      // guessing — the same reason the takeover refreshes instead of writing a local role.
+      await refresh();
+    } catch (err) {
+      if (alive.current) { setReleaseFor(null); setError(messageOf(err)); }
+    } finally {
+      if (alive.current) setReleasing((q) => { const n = new Set(q); n.delete(id); return n; });
+    }
+  }, [refresh, t]);
+
   const confirmTakeover = useCallback(async (id: string): Promise<void> => {
     setError(null);
     try {
@@ -2032,6 +2076,55 @@ export function MailboxSection() {
                   a lie. Two keys because "the last mail came {when}" is false for a mailbox
                   that never received any — the pass stamps `createdAt` there, and the DTO's own
                   `createdAt` tells the two apart by identity. */}
+              {/* ── WHO ORGANIZES THIS ONE, AND THE VERB THAT CHANGES IT ────────────────
+                  The row above answers "is my mail coming down?"; this answers the other question
+                  somebody with two machines has — which one files it — and it never disappears.
+                  That is the division of labour with the quiet line above the Ohbox: that one says
+                  what CHANGED, once, and goes; this is the standing record with the control.
+
+                  Offered only where this account IS the organizer. On a reader row the block
+                  above already names the holder and offers the takeover, and a "stop organizing"
+                  button there would act on a machine this pane does not speak for. */}
+              {standDown === null && m.status === "connected" && m.organizerRole !== "reader"
+                && m.organizeConsentedAt ? (
+                <div className="mbx-org" data-role="organizer">
+                  <SettingsBanner
+                    label={t("stateOrganizing")}
+                    description={t("stateOrganizingHere")}
+                    action={releaseFor === m.id ? undefined : (
+                      <Button
+                        variant="ghost"
+                        className="mbx-btn"
+                        onClick={() => setReleaseFor(m.id)}
+                      >
+                        {t("stopOrganizing")}
+                      </Button>
+                    )}
+                  />
+                  {/* WHAT IT COSTS, BEFORE IT IS DONE — and the sentence's whole job is to say
+                      that this is not a removal: the folders and everything in them stay exactly
+                      where they are, the password is kept, and any install can take the mailbox
+                      afterwards including this one. Nothing here is destructive and nothing here
+                      is red. */}
+                  {releaseFor === m.id ? (
+                    <div className="mbx-handover">
+                      <p className="mbx-handover-what">{t("stopOrganizingWhat")}</p>
+                      <SettingsActions>
+                        <Button
+                          variant="primary"
+                          disabled={releasing.has(m.id)}
+                          onClick={() => { void confirmRelease(m.id); }}
+                        >
+                          {t("stopOrganizingConfirm")}
+                        </Button>
+                        <Button variant="ghost" onClick={() => setReleaseFor(null)}>
+                          {t("cancel")}
+                        </Button>
+                      </SettingsActions>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               {showInboundQuiet(m, now) ? (
                 <>
                   <span className="mbx-sub">

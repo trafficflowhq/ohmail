@@ -1348,17 +1348,31 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const decision: "yes" | "no" = dest === "screened" || dest === "spam" ? "no" : "yes";
     const target = scope === "domain" ? `@${domainOf(row.address)}` : row.address;
 
+    /**
+     * THE QUEUED ANSWER, kept rather than collapsed — see `liveDecidedElsewhere`.
+     *
+     * `watched` reduces a result to landed-or-not, which is right for every other verb here and
+     * loses the one fact this one needs: on a mailbox another install organizes the server
+     * RECORDS the decision and files nothing, and the toast has to say so. Resolved before the
+     * sentence is chosen, so the optimistic toast below is the truthful one from the start rather
+     * than a correction a second later.
+     */
+    let queuedWith: { name: string | null } | null = null;
     let landed: Promise<boolean>;
     if (physicalFolderOf(rep) === FOLDER_OF_VIEW.screener) {
-      landed = watched(
-        engine.mutate({
-          kind: "screener_decide",
-          senderId: row.id,
-          decision,
-          dest: dest as ScreenDest,
-          ...(decision === "yes" ? { read: readFlag } : {}),
-          scope,
-        }),
+      landed = engine.mutate({
+        kind: "screener_decide",
+        senderId: row.id,
+        decision,
+        dest: dest as ScreenDest,
+        ...(decision === "yes" ? { read: readFlag } : {}),
+        scope,
+      }).then(
+        (r) => {
+          queuedWith = r.pendingWith ?? null;
+          return r.status !== "rolled_back";
+        },
+        () => false,
       );
     } else {
       // PAST THE GATE (mirrored from the webapp's shape): this sender's mail is only
@@ -1387,9 +1401,25 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         void engine.mutate({ kind: "mark_seen", messageIds: ids.slice(i, i + MARK_SEEN_MAX), unread: false });
       }
     }
-    toast(Copy.liveDecided(destDone(dest), target));
+    /* THE SENTENCE WAITS FOR THE ANSWER, and only this verb's does. Everywhere else the
+       optimistic toast is raised first because the act is this machine's and the only question is
+       whether the wire took it. Here the answer decides WHICH TRUE SENTENCE to say — filed, or
+       recorded for another machine — and saying the wrong one first and correcting it is the
+       shape of the defect rather than a smaller version of it. The wait is one round trip on a
+       press that already blocks on nothing else. */
     const ok = await landed;
-    if (!ok) toast(Copy.liveDecideFailed(row.address));
+    if (!ok) {
+      toast(Copy.liveDecideFailed(row.address));
+      return ok;
+    }
+    const queued = queuedWith as { name: string | null } | null;
+    toast(
+      queued === null
+        ? Copy.liveDecided(destDone(dest), target)
+        : queued.name
+          ? Copy.liveDecidedElsewhere(queued.name, target)
+          : Copy.liveDecidedElsewhereUnknown(target),
+    );
     return ok;
   };
 
