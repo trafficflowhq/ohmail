@@ -80,8 +80,13 @@ declare module "./deps.js" {
      * operator has no interest in our hosting bill) answers `200 {skipped}` and writes nothing.
      *
      * That is DIFFERENT from a port that answers `unconfigured`, and the console must be able to
-     * tell them apart: the second one asked and found no key, which is production's state today
-     * and the thing the board renders as "not configured". The first was never asked.
+     * tell them apart: the second one asked and found no key, which is the thing the board
+     * renders as "not configured". The first was never asked.
+     *
+     * The hosted composition (`apps/api-vercel/src/deps.ts`) therefore fills this member
+     * UNCONDITIONALLY, credentials or not. It did not for the whole of this route's first life,
+     * which meant the pass answered `{ skipped }` on every invocation and the board could not
+     * have shown a figure however the environment was configured.
      */
     platformCosts?: PlatformCostPort;
     /**

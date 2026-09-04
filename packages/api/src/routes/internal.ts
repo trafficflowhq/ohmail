@@ -223,7 +223,7 @@ export const BILLING_INVOICE_RECONCILE_CRON_PATH = "/internal/billing/invoices/r
  * Six hours rather than daily, and the reason is the CURRENT month: every one of these providers
  * reports usage-to-date, so the open month's figure moves all day and a once-a-day read makes
  * the board's projection up to 24 hours behind on the number an operator is watching precisely
- * because it is moving. Six hours is four reads a day for three cheap GETs, and it is what
+ * because it is moving. Six hours is four reads a day for two cheap reads, and it is what
  * `COST_STALE_AFTER_MS` (24 h) is written against — four cadences of slack, so one missed pass on
  * a deploy does not read as a provider that stopped answering.
  *
@@ -808,7 +808,7 @@ async function invoiceReconcilePass(req: Request, deps: ApiDeps): Promise<Respon
  *
  * THE DEPARTURE: there is no "unconfigured" skip. The other passes answer `200 {skipped}` when
  * billing is not wired, because a deployment without billing has nothing to reconcile. This one
- * RUNS on a deployment with no provider keys, deliberately, and records `unconfigured` per
+ * RUNS on a deployment with no provider keys at all, deliberately, and records `unconfigured` per
  * provider — which is the whole design. An absent key is a STATE the board has to be able to
  * render ("not configured"), and it is a different state from "nobody asked", which is what a
  * skipped pass would leave behind.

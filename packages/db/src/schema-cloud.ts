@@ -886,9 +886,9 @@ export const billingInvoices = pgTable("billing_invoices", {
 /**
  * INFRASTRUCTURE COST (cloud 0029) — what the vendors charge, per provider, per window.
  *
- * **A zero is only ever a row that says zero.** None of the three provider keys exists in
- * production today, so the likely state of this table for its first weeks is EMPTY — and the
- * dangerous branch is exactly the one an absent key selects: an adapter answering `0` when it
+ * **A zero is only ever a row that says zero.** Three of the five providers publish no billing
+ * API at all, so a large part of this table is permanently EMPTY by design — and the dangerous
+ * branch is exactly the one an unmeasurable provider selects: an adapter answering `0` when it
  * could not ask, rendered in the same typeface as a measurement. The table's half of the defence
  * is that an unmeasured window has NO ROW: no placeholder, no zero, no null cost pretending to
  * be a figure. `costCents` is NOT NULL so that "we don't know" is unrepresentable here and has
@@ -896,7 +896,7 @@ export const billingInvoices = pgTable("billing_invoices", {
  *
  * `source` is part of the PRIMARY KEY, so an API row and a hand-entered row for one window
  * COEXIST and the reader picks the manual one. A person reading a figure off an invoice is
- * better evidence than an API reporting usage-to-date, and two of the five providers have no
+ * better evidence than an API reporting usage-to-date, and three of the five providers have no
  * usable billing API at all — keeping both rows is what makes the override auditable.
  *
  * `enteredBy` follows `oauthProviderConfig.updatedBy` exactly, for its stated reason:

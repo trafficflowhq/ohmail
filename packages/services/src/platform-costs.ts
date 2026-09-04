@@ -9,12 +9,13 @@ import type { Db } from "./context.js";
  *
  * ## The risk this module is shaped around
  *
- * None of the three provider keys exists in production. Not one. So the overwhelmingly likely
- * state of `platform_costs` for its first weeks is EMPTY, and every decision here is about what
- * happens then — because the failure is not a missing feature, it is a margin somebody believes:
- * an adapter that answers `0` when it could not ask, a DTO that defaults `cents: 0`, and a
- * console rendering "$0.00 infrastructure cost this month" in the same typeface it would render
- * a measurement.
+ * This module was written before any provider key existed, when the likely state of
+ * `platform_costs` for its first weeks was EMPTY. Two of the five providers can be measured now
+ * and the other three cannot ever be — so the empty state is still the one every decision here
+ * is about, because the failure it guards is not a missing feature, it is a margin somebody
+ * believes: an adapter that answers `0` when it could not ask, a DTO that defaults `cents: 0`,
+ * and a console rendering "$0.00 infrastructure cost this month" in the same typeface it would
+ * render a measurement.
  *
  * So the port has THREE outcomes and not two, and the third is the whole point:
  *
@@ -30,36 +31,73 @@ import type { Db } from "./context.js";
  *
  * ## THE ADAPTERS REFUSE SHAPES THEY DO NOT RECOGNISE, and that is not defensiveness
  *
- * These three request shapes have never been exercised against a live key, because there is no
- * live key to exercise them against — and they cannot be, until one is minted. That makes
- * a wrong guess about an endpoint or a response field a live possibility, and it decides how the
- * parsing is written: every adapter validates the shape it expects and answers `failed` for
- * anything else, so the worst outcome of a wrong guess is a board that says "not measured"
- * rather than a board that says a number nobody produced.
+ * Every adapter validates the shape it expects and answers `failed` for anything else, so the
+ * worst outcome of a vendor changing a field is a board that says "not measured" rather than a
+ * board that says a number nobody produced.
  *
- * The endpoints, named here so a first verification is one curl each:
+ * That rule was written when none of these request shapes had ever been exercised against a live
+ * key. Two of them have now, and BOTH GUESSES WERE PARTLY WRONG — which is the whole argument
+ * for the rule, and the reason the endpoints below are stated with what a live call returns
+ * rather than with what a document says it should:
  *
- *  · **vercel** — `GET https://api.vercel.com/v1/usage?teamId=…&from=…&to=…`, bearer
- *    `VERCEL_TOKEN`; the team is `VERCEL_TEAM_ID`.
- *  · **supabase** — `GET https://api.supabase.com/v1/projects/{ref}/billing/usage`, bearer
- *    `SUPABASE_ACCESS_TOKEN`; the project is `SUPABASE_PROJECT_REF`.
- *  · **anthropic** — `GET https://api.anthropic.com/v1/organizations/cost_report`, header
+ *  · **anthropic** — `GET https://api.anthropic.com/v1/organizations/cost_report`
+ *    `?starting_at=YYYY-MM-DD&ending_at=YYYY-MM-DD&bucket_width=1d&limit=31`, header
  *    `x-api-key: ANTHROPIC_ADMIN_API_KEY` (an ADMIN-scoped key, not the inference key this
  *    product spends on — a different credential with a different blast radius, which is why it
- *    has its own variable name rather than reusing `ANTHROPIC_API_KEY`).
+ *    has its own variable name rather than reusing `ANTHROPIC_API_KEY`). Answers
+ *    `{ data: [{ starting_at, ending_at, results: [{ amount, currency, … }] }], has_more,
+ *    next_page }`, one bucket per day.
  *
- * `railway` and `resend` have no adapter at all and are MANUAL ONLY: there is no usable billing
- * API for either, and inventing one would be the fabricated-figure failure wearing a friendlier
- * face. They arrive through `POST /admin/platform-costs`, typed by a person off an invoice, and
- * a manual row is FIRST-CLASS rather than a fallback — `source` is part of the primary key, so
- * an API row and a hand-entered row for one window coexist and the reader picks the manual one.
+ *    **`limit` IS NOT OPTIONAL AND ITS DEFAULT IS SEVEN.** A month-long range asked without it
+ *    answers 200 with the first SEVEN days and `has_more: true`, and an adapter that reads
+ *    `data` and stops has just reported one week's spend as the month's bill — a wrong figure,
+ *    which is the exact failure the three-outcome design above exists to make impossible. So the
+ *    adapter asks for the maximum page (31, the API's own ceiling) AND follows `next_page` until
+ *    `has_more` is false, and a page budget it cannot finish inside is `failed`, never a partial
+ *    total. Measured 2026-09-04 against the live organization.
+ *
+ *  · **vercel** — `GET https://api.vercel.com/v1/billing/charges?teamId=…&from=…&to=…`, bearer
+ *    `VERCEL_TOKEN`; the team is `VERCEL_TEAM_ID`. Answers FOCUS v1.3 newline-delimited JSON,
+ *    one record per (day × service × region), each carrying `BilledCost` — the amount that is
+ *    the basis for invoicing — beside `ServiceName`, `ConsumedQuantity` and `ConsumedUnit`.
+ *
+ *    **`GET /v1/usage` IS NOT THIS ENDPOINT AND IS NOT TO BE REACHED FOR AGAIN.** It is what
+ *    this adapter was first written against, from a plausible guess. It exists, it authenticates,
+ *    and it refuses every range: epoch milliseconds and `YYYY-MM-DD` fail its format check, full
+ *    ISO-8601-with-milliseconds passes the format check and then fails `invalid_time_range` for
+ *    a day, a week, thirty days, ninety days, the calendar month, and the team's own billing
+ *    period read off `/v2/teams/{id}`. It appears nowhere in Vercel's published OpenAPI document
+ *    (296 paths), i.e. it is an undocumented dashboard endpoint with no contract to hold it to.
+ *    `/v1/billing/charges` is in that document, is a supported product surface, and answered on
+ *    the first call. Measured 2026-09-04.
+ *
+ * `supabase`, `railway` and `resend` have no adapter at all and are MANUAL ONLY: there is no
+ * usable billing API for any of them, and inventing one would be the fabricated-figure failure
+ * wearing a friendlier face. Supabase joined the other two on evidence rather than on a hunch —
+ * its published Management API is 115 paths and holds no usage, invoice, spend or cost surface;
+ * the single billing path, `/v1/projects/{ref}/billing/addons`, returns the RATE CARD (which
+ * compute add-on is selected, and what it lists at per hour) and no charged amount at all.
+ * Deriving a month's bill from a rate would mean multiplying it by an assumed number of hours,
+ * which is this module's forbidden move performed in arithmetic. Measured 2026-09-04.
+ *
+ * Manual figures arrive through `POST /admin/platform-costs`, typed by a person off an invoice,
+ * and a manual row is FIRST-CLASS rather than a fallback — `source` is part of the primary key,
+ * so an API row and a hand-entered row for one window coexist and the reader picks the manual
+ * one.
  */
 
 /** The five providers `platform_costs.provider` admits. A sixth is an adapter and a review. */
 export type CostProvider = "vercel" | "supabase" | "anthropic" | "railway" | "resend";
 
-/** Which providers have an adapter at all. The other two are manual by design — see the header. */
-export const API_COST_PROVIDERS: readonly CostProvider[] = ["vercel", "supabase", "anthropic"];
+/**
+ * Which providers have an adapter at all. The other THREE are manual by design — see the header.
+ *
+ * `supabase` was in this list and is not any more: the adapter it named could never answer,
+ * because the surface it called does not exist. Leaving an adapter in place for a vendor with no
+ * billing API is worse than having none, because `failed` reads on the board as "the vendor is
+ * having a bad day" when the truth is "nobody can ever measure this one from here".
+ */
+export const API_COST_PROVIDERS: readonly CostProvider[] = ["vercel", "anthropic"];
 
 /** One measured line of somebody's bill. */
 export interface PlatformCostRow {
@@ -88,12 +126,19 @@ export interface PlatformCostPort {
   fetch(provider: CostProvider, window: { start: Date; end: Date }): Promise<PlatformCostFetch>;
 }
 
-/** The env this port reads. Injected rather than read from `process.env` so a test can be honest. */
+/**
+ * The credentials this port reads, under the variable names a host holds them under.
+ *
+ * Injected rather than read from `process.env` so a test can be honest, and so the ONE place
+ * that names an environment variable for costs is the host's own configuration loader
+ * (`apps/api-vercel/src/config.ts#loadPlatformCostCredentials`) rather than a module three
+ * layers down. `SUPABASE_ACCESS_TOKEN` and `SUPABASE_PROJECT_REF` were members here and are
+ * gone: a variable a deployment can set that changes nothing is the reassuring half-sentence
+ * that becomes a support question.
+ */
 export interface PlatformCostEnv {
   VERCEL_TOKEN?: string | undefined;
   VERCEL_TEAM_ID?: string | undefined;
-  SUPABASE_ACCESS_TOKEN?: string | undefined;
-  SUPABASE_PROJECT_REF?: string | undefined;
   ANTHROPIC_ADMIN_API_KEY?: string | undefined;
 }
 
@@ -107,8 +152,49 @@ function num(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
-/** `YYYY-MM-DD`, the form all three vendors' range parameters take. */
+/** `YYYY-MM-DD` — what Anthropic's cost report accepts for `starting_at`/`ending_at`. */
 const isoDay = (d: Date): string => d.toISOString().slice(0, 10);
+
+/**
+ * The biggest page Anthropic's cost report will serve, and the API's own ceiling: `limit=32`
+ * answers 400 `Input should be less than or equal to 31`. One page therefore covers any
+ * calendar month in a single request, and the paging loop below is what happens when that stops
+ * being true rather than the ordinary path.
+ */
+const ANTHROPIC_PAGE_LIMIT = 31;
+
+/**
+ * How many pages the cost report may be followed for before the answer is `failed`.
+ *
+ * A month of daily buckets is ONE page at the limit above, so this is pure slack against a
+ * vendor changing its page size. It is a refusal and not a truncation on purpose: a partial
+ * total is a wrong figure, and a wrong figure is the one thing this module may not produce.
+ */
+const ANTHROPIC_MAX_PAGES = 12;
+
+/**
+ * The most JSONL a billing-charges response may be before this adapter refuses to parse it.
+ *
+ * Vercel emits one record per (day × service × region) for every day in the requested range —
+ * INCLUDING days with nothing on them, so the size is set by the length of the range and not by
+ * how much was spent. Measured 2026-09-04: 932 records ≈ 480 KB per day, so a full 31-day month
+ * is ≈ 14 MB and does not grow with traffic. 64 MB is four months of that; a response past it is
+ * a vendor whose shape has changed, and spending a serverless invocation's whole budget parsing
+ * it would cost the pass the OTHER provider it could have measured.
+ */
+const MAX_CHARGES_BYTES = 64 * 1024 * 1024;
+
+/**
+ * How far past "now" the charges range is allowed to reach.
+ *
+ * The window this port is asked about is the whole calendar month, and asking Vercel for days
+ * that have not happened yet returns a zero record per service per region for each of them —
+ * real bytes for no information. Clamping the REQUEST to just past the present keeps an
+ * early-in-the-month pass small; it changes no figure, because a day that has not happened
+ * cannot have been billed. The rows this adapter returns are still stamped with the calendar
+ * month, which is the window the board reads and the key the upsert replaces on.
+ */
+const CHARGES_LOOKAHEAD_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Build the live port.
@@ -119,10 +205,14 @@ const isoDay = (d: Date): string => d.toISOString().slice(0, 10);
  */
 export function makePlatformCostPort(
   env: PlatformCostEnv,
-  opts: { fetchImpl?: typeof fetch; timeoutMs?: number } = {},
+  opts: { fetchImpl?: typeof fetch; timeoutMs?: number; now?: () => Date } = {},
 ): PlatformCostPort {
   const doFetch = opts.fetchImpl ?? globalThis.fetch;
   const timeoutMs = opts.timeoutMs ?? 15_000;
+  // Injected for the same reason `fetchImpl` is: the charges range is clamped to the present
+  // (see CHARGES_LOOKAHEAD_MS) and a test that could not move the clock would have to assert
+  // against whatever day the suite happens to run on.
+  const now = opts.now ?? ((): Date => new Date());
 
   /** One bounded GET. Every failure — transport, status, non-JSON — is a CODE, never a throw. */
   const get = async (
@@ -144,6 +234,36 @@ export function makePlatformCostPort(
     }
   };
 
+  /**
+   * The same GET for a NEWLINE-DELIMITED body, which `res.json()` cannot read at all.
+   *
+   * Vercel's billing charges stream as `application/jsonl`, so the whole response is not a JSON
+   * document and asking for one would answer `non_json` on a perfectly good bill. Every failure
+   * is a CODE here too, on the same rule and for the same reason: the string reaches an operator
+   * surface, and a fetch error's message carries the URL.
+   */
+  const getLines = async (
+    url: string, headers: Record<string, string>,
+  ): Promise<{ ok: true; lines: string[] } | { ok: false; code: string }> => {
+    let res: Response;
+    try {
+      res = await doFetch(url, { headers, signal: AbortSignal.timeout(timeoutMs) });
+    } catch (err) {
+      return { ok: false, code: `transport:${String((err as Error)?.name ?? "unknown")}` };
+    }
+    if (!res.ok) return { ok: false, code: `http_${res.status}` };
+    let text: string;
+    try {
+      text = await res.text();
+    } catch (err) {
+      return { ok: false, code: `transport:${String((err as Error)?.name ?? "unknown")}` };
+    }
+    // REFUSED, not truncated. See MAX_CHARGES_BYTES: a body past the ceiling is a vendor whose
+    // shape changed, and half of a bill is a wrong number rather than a partial one.
+    if (text.length > MAX_CHARGES_BYTES) return { ok: false, code: "response_too_large" };
+    return { ok: true, lines: text.split("\n") };
+  };
+
   return {
     async fetch(provider, window) {
       switch (provider) {
@@ -154,35 +274,62 @@ export function makePlatformCostPort(
           // a number that belongs to somebody's own account, which is a wrong figure rather than
           // a missing one — strictly the worse of the two.
           if (!token || !team) return { unconfigured: true };
-          const url = `https://api.vercel.com/v1/usage?teamId=${encodeURIComponent(team)}`
-            + `&from=${window.start.getTime()}&to=${window.end.getTime()}`;
-          const res = await get(url, { authorization: `Bearer ${token}` });
+          // ISO-8601 with milliseconds, which is what the endpoint's own documented example is
+          // (`2025-01-01T00:00:00.000Z`) and what `Date.prototype.toISOString` produces. `to` is
+          // exclusive and clamped to just past the present — see CHARGES_LOOKAHEAD_MS.
+          const askedTo = new Date(Math.min(
+            window.end.getTime(), now().getTime() + CHARGES_LOOKAHEAD_MS,
+          ));
+          const url = `https://api.vercel.com/v1/billing/charges?teamId=${encodeURIComponent(team)}`
+            + `&from=${window.start.toISOString()}&to=${askedTo.toISOString()}`;
+          const res = await getLines(url, { authorization: `Bearer ${token}` });
           if (!res.ok) return { failed: res.code };
-          return parseVercel(res.body, window);
-        }
-        case "supabase": {
-          const token = trimmed(env.SUPABASE_ACCESS_TOKEN);
-          const ref = trimmed(env.SUPABASE_PROJECT_REF);
-          if (!token || !ref) return { unconfigured: true };
-          const url = `https://api.supabase.com/v1/projects/${encodeURIComponent(ref)}/billing/usage`;
-          const res = await get(url, { authorization: `Bearer ${token}` });
-          if (!res.ok) return { failed: res.code };
-          return parseSupabase(res.body, window);
+          return parseVercelCharges(res.lines, window);
         }
         case "anthropic": {
           const key = trimmed(env.ANTHROPIC_ADMIN_API_KEY);
           if (!key) return { unconfigured: true };
-          const url = "https://api.anthropic.com/v1/organizations/cost_report"
-            + `?starting_at=${isoDay(window.start)}&ending_at=${isoDay(window.end)}`;
-          const res = await get(url, { "x-api-key": key, "anthropic-version": "2023-06-01" });
-          if (!res.ok) return { failed: res.code };
-          return parseAnthropic(res.body, window);
+          const headers = { "x-api-key": key, "anthropic-version": "2023-06-01" };
+          const base = "https://api.anthropic.com/v1/organizations/cost_report"
+            + `?starting_at=${isoDay(window.start)}&ending_at=${isoDay(window.end)}`
+            + `&bucket_width=1d&limit=${ANTHROPIC_PAGE_LIMIT}`;
+          // THE PAGING LOOP IS THE ADAPTER. Reading `data` from the first response and stopping
+          // is what this code used to do, and against a month-long range with the API's default
+          // page size that reports the first SEVEN DAYS as the month's bill. See the module
+          // header: the failure is a wrong figure, not a missing one, so nothing here may return
+          // a total it knows is partial.
+          const buckets: unknown[] = [];
+          let page: string | null = null;
+          for (let asked = 0; asked < ANTHROPIC_MAX_PAGES; asked += 1) {
+            const url = page === null ? base : `${base}&page=${encodeURIComponent(page)}`;
+            const res = await get(url, headers);
+            if (!res.ok) return { failed: res.code };
+            const body = res.body as
+              { data?: unknown; has_more?: unknown; next_page?: unknown } | null;
+            if (!body || typeof body !== "object" || !Array.isArray(body.data)) {
+              return { failed: "unrecognised_shape" };
+            }
+            buckets.push(...body.data);
+            if (body.has_more !== true) return parseAnthropic(buckets, window);
+            const next = typeof body.next_page === "string" && body.next_page ? body.next_page : null;
+            // `has_more` with no cursor, or a cursor that repeats, is an answer this adapter
+            // cannot finish. Reporting the buckets it has would be the partial total again.
+            if (next === null || next === page) return { failed: "paging_stalled" };
+            page = next;
+          }
+          return { failed: "too_many_pages" };
         }
+        case "supabase":
         case "railway":
         case "resend":
           // MANUAL ONLY, and `unconfigured` is the honest word for it: there is no key to add and
           // no endpoint to call, so the board should say "not configured" until somebody types
           // the figure off an invoice. A `failed` here would page about a decision.
+          //
+          // `supabase` sits here rather than above because its Management API has no billing
+          // surface to call — see the module header for what 115 published paths do and do not
+          // contain. It reached this arm by deleting an adapter, which is the honest direction:
+          // an adapter that can only ever answer `failed` teaches an operator to ignore the word.
           return { unconfigured: true };
       }
     },
@@ -190,108 +337,165 @@ export function makePlatformCostPort(
 }
 
 /**
- * Vercel's usage response → rows.
+ * Vercel's FOCUS billing charges → one row per SERVICE, for the whole calendar month.
  *
- * Written against the documented `/v1/usage` shape and NEVER exercised against a live token, for
- * the reason the header gives. So it validates rather than trusts: anything it does not
- * recognise is `unrecognised_shape`, which the pass records as a failure and the board renders
- * as "not measured". A wrong guess here costs a missing number and can never produce a wrong one.
+ * The response is newline-delimited JSON, one record per (day × service × region), each holding
+ * `BilledCost` — FOCUS v1.3's "charge amount serving as the basis for invoicing", i.e. what the
+ * invoice will say, which is the question the board asks. `EffectiveCost` sits beside it and is
+ * the amortized figure including committed-spend draw-down; it is deliberately not used, because
+ * a board headed "what the vendors charge" that reported an amortized number would disagree with
+ * the invoice it is meant to predict.
+ *
+ * ── WHY PER SERVICE PER MONTH, AND NOT PER DAY ────────────────────────────────────────────
+ *
+ * The grain that reaches the board is the month: `costsForMonth` sums every metric a provider
+ * has in one month and hands the total to one tile. So the day grain buys nothing that is
+ * rendered, costs thirty times the writes on a pass that runs four times a day — and, worse, it
+ * cannot be written honestly. Vercel's charge buckets are 24 hours offset by the billing
+ * timezone (`2026-08-31T07:00:00.000Z → 2026-09-01T07:00:00.000Z` is the first bucket a
+ * September query returns), and `costsForMonth` selects on `period_start >= monthStart`. Day
+ * rows carrying the vendor's own boundaries would therefore drop the first bucket of every month
+ * out of both months' sums — a silent understatement of one day in thirty, which is precisely
+ * the class of error this module is built to refuse. The SERVICE breakdown is the part an
+ * operator actually reads (a $19 plan fee is a different fact from $1.50 of function time), and
+ * `metric` carries it with no boundary to get wrong.
+ *
+ * Every row is stamped with the calendar month it was asked for, so re-asking the open month
+ * replaces the same primary key and `fetched_at` moves with it.
  */
-function parseVercel(body: unknown, window: { start: Date; end: Date }): PlatformCostFetch {
-  const b = body as Record<string, unknown> | null;
-  if (!b || typeof b !== "object") return { failed: "unrecognised_shape" };
+function parseVercelCharges(
+  lines: string[], window: { start: Date; end: Date },
+): PlatformCostFetch {
+  const totals = new Map<string, { usd: number; quantity: number | null; unit: string | null }>();
+  // A RECOGNISED record is one carrying the four FOCUS fields this parser reads. Counting them
+  // is what separates "the vendor reported nothing charged" from "this parser did not understand
+  // the answer" — the two must never produce the same thing. See the module header.
+  let recognised = 0;
+  let currency = "usd";
+
+  for (const line of lines) {
+    const text = line.trim();
+    if (text === "") continue;
+    let record: Record<string, unknown>;
+    try {
+      record = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      // ONE unreadable line is skipped rather than failing the response: a JSONL stream is a
+      // sequence of independent records. A response where NO line parses lands on `recognised
+      // === 0` below and is refused as a whole.
+      continue;
+    }
+    const service = typeof record.ServiceName === "string" ? record.ServiceName : null;
+    const billed = num(record.BilledCost);
+    // `ChargePeriodStart`/`ChargePeriodEnd` are required in FOCUS v1.3. Requiring them here is
+    // what stops an unrelated JSON object that happens to carry a `BilledCost` from counting as
+    // a bill.
+    const periodShaped = typeof record.ChargePeriodStart === "string"
+      && typeof record.ChargePeriodEnd === "string";
+    if (service === null || billed === null || !periodShaped) continue;
+    recognised += 1;
+    if (typeof record.BillingCurrency === "string" && record.BillingCurrency) {
+      currency = record.BillingCurrency.toLowerCase();
+    }
+    const acc = totals.get(service) ?? { usd: 0, quantity: null, unit: null };
+    acc.usd += billed;
+    const quantity = num(record.ConsumedQuantity);
+    if (quantity !== null) acc.quantity = (acc.quantity ?? 0) + quantity;
+    if (acc.unit === null && typeof record.ConsumedUnit === "string" && record.ConsumedUnit) {
+      acc.unit = record.ConsumedUnit;
+    }
+    totals.set(service, acc);
+  }
+
+  // NOT A ZERO BILL. A response with no record this parser recognises is a response it could not
+  // read, and the one thing this module may never do is decide that means nothing was spent.
+  if (recognised === 0) return { failed: "unrecognised_shape" };
+
   const rows: PlatformCostRow[] = [];
-  for (const [metric, raw] of Object.entries(b)) {
-    const cell = raw as Record<string, unknown> | null;
-    if (!cell || typeof cell !== "object") continue;
-    const price = num(cell.price);
-    const quantity = num(cell.quantity ?? cell.total);
-    if (price === null) continue;
-    const costCents = dollarsToCents(price);
-    // A NEGATIVE line — a discount or a credit note in the vendor's own response — is SKIPPED
-    // rather than written. The migration's `cost_cents >= 0` CHECK would refuse it anyway; the
-    // guard is here so a discount line does not cost this provider its WHOLE month's write (the
-    // insert loop's own try/catch is the belt, this is the suspenders). Skipping under-reports by
-    // the credited amount rather than crashing, which is the direction this module always errs.
-    if (costCents < 0) continue;
+  for (const [metric, acc] of totals) {
+    // A service the account has never touched contributes an exact 0 on every day in the range —
+    // fifty-five of the sixty-five service names in a live response are that. Writing them would
+    // fill the table with rows that say nothing, and it is safe to leave them out precisely
+    // because a month-to-date total only ever grows: a service that starts costing money gets
+    // its row on the next pass. A SUB-CENT service (`0.0001` USD) is NOT this case and is
+    // written, at zero cents, because it was genuinely used.
+    if (acc.usd === 0) continue;
     rows.push({
       provider: "vercel", metric,
       periodStart: window.start, periodEnd: window.end,
-      value: quantity, unit: typeof cell.unit === "string" ? cell.unit : null,
-      costCents, currency: "usd",
+      value: acc.quantity, unit: acc.unit,
+      // FLOORED, on the same reasoning as `parseAnthropic`'s total: this is a SUM over a month
+      // of that service's charges, so a credit inside the month legitimately reduces it, and
+      // dropping the credit would overstate the bill. The migration's `cost_cents >= 0` CHECK
+      // still has to be satisfied.
+      costCents: Math.max(0, dollarsToCents(acc.usd)),
+      currency,
     });
   }
-  // AN EMPTY PARSE IS A FAILURE, not a zero bill. The one thing this module may never do is
-  // decide that a response it could not read means nothing was spent.
-  return rows.length === 0 ? { failed: "unrecognised_shape" } : { rows };
-}
 
-/** Supabase's billing usage → rows. The same validate-or-refuse rule; see {@link parseVercel}. */
-function parseSupabase(body: unknown, window: { start: Date; end: Date }): PlatformCostFetch {
-  const b = body as Record<string, unknown> | null;
-  if (!b || typeof b !== "object") return { failed: "unrecognised_shape" };
-  const list = Array.isArray(b.usage) ? b.usage : Array.isArray(b) ? b : null;
-  if (!list) return { failed: "unrecognised_shape" };
-  const rows: PlatformCostRow[] = [];
-  for (const entry of list as Array<Record<string, unknown>>) {
-    if (!entry || typeof entry !== "object") continue;
-    const metric = typeof entry.metric === "string" ? entry.metric
-      : typeof entry.name === "string" ? entry.name : null;
-    const cents = num(entry.cost_cents) ?? (num(entry.cost) !== null ? dollarsToCents(num(entry.cost)!) : null);
-    if (metric === null || cents === null) continue;
-    // See `parseVercel`'s identical guard: a credit line is skipped, never written negative.
-    if (cents < 0) continue;
+  // Recognised records, and every one of them zero: a real month in which nothing was charged.
+  // It gets a row that SAYS zero — the distinction the whole module is built on — under a metric
+  // name that is the vendor's own word for the response rather than a service that was invented.
+  if (rows.length === 0) {
     rows.push({
-      provider: "supabase", metric,
+      provider: "vercel", metric: "charges",
       periodStart: window.start, periodEnd: window.end,
-      value: num(entry.usage) ?? num(entry.quantity),
-      unit: typeof entry.unit === "string" ? entry.unit : null,
-      costCents: cents, currency: "usd",
+      value: null, unit: null, costCents: 0, currency,
     });
   }
-  return rows.length === 0 ? { failed: "unrecognised_shape" } : { rows };
+  return { rows };
 }
 
 /**
- * Anthropic's organization cost report → rows.
+ * Anthropic's organization cost report → one row.
  *
- * The one adapter whose response shape is documented in a form this code can state: `data` is a
- * list of time buckets, each with `results` carrying an `amount` and a `currency`. Summed into a
- * single `tokens` row per window, because the board's question is "what did the model cost this
- * month" and the per-bucket detail is the Console's job.
+ * Takes the buckets ALREADY COLLECTED ACROSS PAGES rather than one response body, because a
+ * single body is not the month: the API's default page is seven daily buckets and the caller
+ * follows `next_page` until `has_more` is false. A parser that took one body would make the
+ * partial-total bug expressible again.
  *
- * `amount` is a STRING of dollars in that report, so it is parsed rather than read — and a value
- * that does not parse is skipped rather than treated as zero.
+ * Summed into a single `tokens` row per window, because the board's question is "what did the
+ * model cost this month" and the per-bucket detail is the Console's job.
+ *
+ * `amount` is a STRING of dollars in that report (`"70.7614"`), so it is parsed rather than read
+ * — and a value that does not parse is skipped rather than treated as zero.
  */
-function parseAnthropic(body: unknown, window: { start: Date; end: Date }): PlatformCostFetch {
-  const b = body as { data?: unknown } | null;
-  if (!b || !Array.isArray(b.data)) return { failed: "unrecognised_shape" };
+function parseAnthropic(
+  buckets: unknown[], window: { start: Date; end: Date },
+): PlatformCostFetch {
   let cents = 0;
-  let seen = 0;
+  // A RECOGNISED bucket is the shape a live report returns: a time window carrying a `results`
+  // array. Requiring `starting_at` is what makes an arbitrary object with a `results` key fail
+  // rather than count — and counting these, rather than counting readable amounts, is what lets
+  // a genuinely quiet month be told apart from an answer this parser did not understand.
+  let recognised = 0;
   let currency = "usd";
-  for (const bucket of b.data as Array<Record<string, unknown>>) {
-    const results = Array.isArray(bucket?.results) ? bucket.results : [];
-    for (const r of results as Array<Record<string, unknown>>) {
+  for (const raw of buckets) {
+    const bucket = raw as Record<string, unknown> | null;
+    if (!bucket || typeof bucket !== "object") continue;
+    if (typeof bucket.starting_at !== "string" || !Array.isArray(bucket.results)) continue;
+    recognised += 1;
+    for (const r of bucket.results as Array<Record<string, unknown>>) {
       const amount = typeof r?.amount === "string" ? Number(r.amount) : num(r?.amount);
       if (amount === null || !Number.isFinite(amount)) continue;
       cents += dollarsToCents(amount);
-      seen += 1;
       if (typeof r?.currency === "string" && r.currency) currency = r.currency.toLowerCase();
     }
   }
-  // A report with buckets but NO readable result is a shape this parser does not understand.
-  // A report with buckets that genuinely total zero has `seen > 0` and lands as a real zero row,
-  // which is the distinction the whole module is built on.
-  if (seen === 0) return { failed: "unrecognised_shape" };
+  // No bucket of the shape this parser knows ⇒ a report it cannot read, which is `failed`. A
+  // report whose buckets ARE that shape and carry no results is a month in which nothing was
+  // charged, and it lands as a real zero row below — a live August report holds two such days
+  // beside twenty-nine that cost money, so this is the ordinary case and not a hypothetical.
+  if (recognised === 0) return { failed: "unrecognised_shape" };
   return {
     rows: [{
       provider: "anthropic", metric: "tokens",
       periodStart: window.start, periodEnd: window.end,
-      // FLOORED AT ZERO, unlike the per-line skip in `parseVercel`/`parseSupabase`. This total is
-      // a SUM across every result in the window, so a credit note legitimately reduces it — that
-      // is real, and dropping the entry would overstate the bill by the credited amount. The
-      // migration's `cost_cents >= 0` CHECK still has to be satisfied, so a window whose credits
-      // outweigh its usage reports as zero rather than failing the whole provider for one period.
+      // FLOORED AT ZERO. This total is a SUM across every result in the window, so a credit note
+      // legitimately reduces it — that is real, and dropping the entry would overstate the bill
+      // by the credited amount. The migration's `cost_cents >= 0` CHECK still has to be
+      // satisfied, so a window whose credits outweigh its usage reports as zero rather than
+      // failing the whole provider for one period.
       value: null, unit: null, costCents: Math.max(0, cents), currency,
     }],
   };

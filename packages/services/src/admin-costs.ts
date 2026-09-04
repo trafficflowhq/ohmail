@@ -114,9 +114,11 @@ export async function adminCosts(db: Db, now: Date): Promise<AdminCostSnapshot> 
     ? null
     : measured.reduce((sum, p) => sum + (p.cents ?? 0), 0);
   // FLAT vs USAGE-TO-DATE, for the projection below and for no other figure on this snapshot.
-  // A `manual` row exists precisely for vendors billed a fixed amount for the month — Railway
-  // and Resend have no adapter at all, and an operator typing a Vercel seat fee on day 3 is
-  // typing the WHOLE month's charge, not three days of it. Pro-rating it the way a usage-to-date
+  // A `manual` row exists precisely for vendors billed a fixed amount for the month — three of
+  // the five providers publish no billing API at all, so a person reading their invoice is the
+  // only figure there will ever be for them (`API_COST_PROVIDERS` names the two that can be
+  // asked). An operator typing a flat monthly platform fee on day 3 is typing the WHOLE month's
+  // charge, not three days of it. Pro-rating it the way a usage-to-date
   // API reading is pro-rated would multiply a flat fee by (days-in-month ÷ days-elapsed): a $20
   // flat charge entered on day 3 of 30 would project as ~$200. `api` and `stale` readings ARE
   // usage-to-date (a `stale` row is simply an old one of those) and scale correctly.

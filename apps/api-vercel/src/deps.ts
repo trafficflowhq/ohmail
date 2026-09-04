@@ -33,6 +33,7 @@ import {
   workflowsService, proposalsService,
   makeEntitlementsService, makeBillingPlaneClient,
   MailService, ResendMailer, mailAlertSink, dbRecipientLimiter, makeWaitlistService,
+  makePlatformCostPort,
   type ServiceContext,
   makePlatformSignalPort,
 } from "@trafficflow/services";
@@ -527,6 +528,26 @@ function buildServices(cfg: HostConfig): ApiServices {
   // `customerMailerFor` cannot throw (see its doc), so an unusable `MAIL_APP_URL` costs the
   // waitlist its confirmation mail and costs the deployment nothing else.
   lazily(bag, "waitlist", () => makeWaitlistService({ mail: customerMailerFor(cfg) ?? undefined }));
+
+  // ── WHAT THE VENDORS CHARGE. THIS HOST ANSWERED `skipped` UNTIL NOW ────────────────────
+  //
+  // `GET /internal/platform-costs/run` has been mounted, scheduled every six hours by the
+  // worker's clock, and unreachable since the pass landed: the route reads
+  // `deps.services.platformCosts`, no composition ever set it, and the route's own
+  // `{ skipped: "cost_port_unconfigured" }` arm answered every invocation. The board therefore
+  // read "not configured" for every provider whatever the environment held, and would have kept
+  // reading it after the keys were added — the pass was not failing, it was never being asked.
+  //
+  // UNCONDITIONAL, unlike `billingPlane` above, and the difference is the point. An absent
+  // billing environment means `/billing/*` has no surface to serve. An absent cost credential
+  // means something the board must be able to SAY: the port is composed, the pass asks, and each
+  // adapter answers `unconfigured` without making a request. The skip arm the route keeps is for
+  // a host that does not do costs at all — the desktop engine — and this host is never that.
+  //
+  // Lazy like the rest: a closure and a timeout policy a `GET /health` cold start need not pay
+  // for. The credentials come off `cfg`, resolved once by `loadPlatformCostCredentials`; nothing
+  // in the port or the route reads `process.env`.
+  lazily(bag, "platformCosts", () => makePlatformCostPort(cfg.platformCosts));
 
   return bag as unknown as ApiServices;
 }

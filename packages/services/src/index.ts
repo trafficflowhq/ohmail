@@ -318,9 +318,10 @@ export { reserveIpSlot } from "./ip-throttle.js";
 
 export {
   // WHAT THE VENDORS CHARGE (cloud 0029). The port has THREE outcomes and the third is the
-  // point: `unconfigured` writes NOTHING and the DTO answers `cents: null`, because none of the
-  // three provider keys exists in production and an adapter that answered 0 when it could not
-  // ask would be a margin somebody believes.
+  // point: `unconfigured` writes NOTHING and the DTO answers `cents: null`. Three of the five
+  // providers have no billing API to ask at all and a fourth may have no key on a given
+  // deployment, so an adapter that answered 0 when it could not ask would be a margin somebody
+  // believes.
   makePlatformCostPort, runPlatformCostPass, recordManualPlatformCost, costsForMonth,
   API_COST_PROVIDERS, COST_STALE_AFTER_MS, MANUAL_COST_MIN_NOTE,
   type CostProvider, type PlatformCostPort, type PlatformCostFetch, type PlatformCostRow,

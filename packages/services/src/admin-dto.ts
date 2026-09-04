@@ -831,9 +831,10 @@ export type AdminCostProvider = "vercel" | "supabase" | "anthropic" | "railway" 
 /**
  * ONE PROVIDER'S FIGURE, AND HOW MUCH OF A FIGURE IT IS.
  *
- * `cents: null` is the state this whole panel is designed around, because it is the state
- * production is in: none of the three provider keys exists, so the honest answer for every one of
- * them today is "not measured". A `0` here would be a margin somebody believes.
+ * `cents: null` is the state this whole panel is designed around: three of the five providers
+ * have no billing API that can ever be asked, and a fourth is only measurable where a key is
+ * configured, so "not measured" is the honest answer for most of this table most of the time. A
+ * `0` here would be a margin somebody believes.
  *
  * `source` is what separates the four ways a number can be on this row:
  *
@@ -843,7 +844,8 @@ export type AdminCostProvider = "vercel" | "supabase" | "anthropic" | "railway" 
  *  · `stale`        — an API row nobody has been able to refresh. The FIGURE stands and the word
  *                     says how old it is; a provider that stopped answering must not read as one
  *                     that reported the same number again.
- *  · `unconfigured` — no key, or no adapter at all (`railway`/`resend` are manual by design).
+ *  · `unconfigured` — no key, or no adapter at all (`supabase`/`railway`/`resend` are manual by
+ *                     design — none of the three publishes a billing API to ask).
  *                     `cents` is null and the board says "not configured".
  */
 export interface ProviderCostView {

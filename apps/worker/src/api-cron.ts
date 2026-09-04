@@ -229,10 +229,10 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
     timeoutMs: 120 * 1000,
   },
   {
-    // WHAT THE VENDORS CHARGE (cloud 0029) — three cheap GETs, four times a day.
+    // WHAT THE VENDORS CHARGE (cloud 0029) — two vendors asked, four times a day.
     //
-    // SIX HOURS rather than daily, and the reason is the CURRENT month: every one of these
-    // providers reports usage-to-date, so the open month's figure moves all day and a
+    // SIX HOURS rather than daily, and the reason is the CURRENT month: both providers with an
+    // adapter report usage-to-date, so the open month's figure moves all day and a
     // once-a-day read makes the board's projection up to 24 hours behind on the one number an
     // operator is watching precisely because it is moving. It is also what the staleness word
     // is written against — `COST_STALE_AFTER_MS` is 24 h, four cadences, so a pass missed on a
@@ -241,6 +241,11 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
     // A deployment that has configured no provider credential gets `unconfigured` from every
     // adapter, so this clock writes nothing and SAYS SO — which the board renders as "not
     // configured", and which is deliberately distinguishable from a clock that never fired.
+    //
+    // The three providers with no adapter (there is no billing API to call for any of them) are
+    // never asked at all: `API_COST_PROVIDERS` is the list, and a provider on it with no
+    // reachable endpoint would report `failed` four times a day for ever, which is how a real
+    // outage becomes background noise.
     target: "platform_costs",
     route: "/internal/platform-costs/run",
     everyMs: 6 * 60 * 60 * 1000,
