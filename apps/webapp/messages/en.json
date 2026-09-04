@@ -755,7 +755,7 @@
     "pendingBarLeadUnknown": "<b>The install that organizes this mailbox files what you decide here.</b> Your decision is sent to it and applied on its next pass.",
     "rowWaiting": "Waiting",
     "rowNotApplied": "Not applied",
-    "readerBarOpenMailboxes": "Open Mailboxes",
+    "readerBarOpenMailboxes": "Mailboxes",
     "pendingReason_unauthenticated": "it could not tell the decision came from you",
     "pendingReason_conflict": "a different decision for the same sender arrived first",
     "pendingReason_account_erased": "the account it belonged to is gone",

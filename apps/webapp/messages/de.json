@@ -755,7 +755,7 @@
     "pendingBarLeadUnknown": "<b>Die Installation, die dieses Postfach organisiert, führt aus, was du hier entscheidest.</b> Deine Entscheidung wird dorthin geschickt und beim nächsten Durchlauf ausgeführt.",
     "rowWaiting": "Wartet",
     "rowNotApplied": "Nicht ausgeführt",
-    "readerBarOpenMailboxes": "Postfächer öffnen",
+    "readerBarOpenMailboxes": "Postfächer",
     "pendingReason_unauthenticated": "es konnte nicht erkennen, dass die Entscheidung von dir kam",
     "pendingReason_conflict": "für denselben Absender kam zuerst eine andere Entscheidung an",
     "pendingReason_account_erased": "das zugehörige Konto gibt es nicht mehr",

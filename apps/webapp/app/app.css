@@ -1434,6 +1434,12 @@ body.reading .shell {
    quiet verb (`.ohx-notice button`), which navigates and files nothing. */
 .scn-reader button {
   align-self: flex-start;
+  /* The note sits in the decision bar's own padded panel, and this capsule is the one thing in it
+     that does not wrap. A label longer than the panel is wide would sit in the gutter rather than
+     break — seven pixels of it, on the narrowest face in German, before the label was shortened.
+     The ceiling keeps that from returning the next time a language is longer than English. */
+  max-width: 100%;
+  white-space: normal;
   margin-top: 2px;
   font-size: 11.5px;
   font-weight: 600;
