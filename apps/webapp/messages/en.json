@@ -2936,7 +2936,7 @@
     "failed": "That did not save. Nothing changed.",
     "incomplete": "Add a message before turning this on.",
     "unreachable": "Your away settings could not be read just now. Nothing here has changed.",
-    "notice": "Away responder is on — {audience, select, everyone {everyone who writes} other {people you've let in}} {throttle, select, always {gets a reply to every message} per_message {gets one reply, until you change the text} per_week {gets a reply at most once a week} other {gets a reply at most once a day}}.",
+    "notice": "Away responder is on — {audience, select, everyone {everyone who writes gets} other {people you've let in get}} {throttle, select, always {a reply to every message} per_message {one reply, until you change the text} per_week {a reply at most once a week} other {a reply at most once a day}}.",
     "noticeSettings": "Away settings"
   },
   "profileImport": {

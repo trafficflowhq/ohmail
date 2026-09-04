@@ -49,6 +49,14 @@ off mid-word. It was worst in German, where up to half the label was missing. Th
 room for whatever stands in it, the button is as wide as its own label, and the status text beside it
 wraps instead.
 
+### The away responder's notice reads as a notice
+
+The line in your Ohbox that says the away responder is on now stands in a quiet box of its own
+rather than as another line of small grey text above the pile descriptions. Nothing is wrong when it
+appears — it is a standing fact about your mail, and it stays until you turn the responder off — so
+it is tinted rather than alarming. Its sentence also reads correctly in English for every
+combination of audience and rate; one of them did not agree with its subject.
+
 ### Deciding on a mailbox another install is organizing
 
 Exactly one install organizes a mailbox at a time — that is what keeps two copies of ohmail from

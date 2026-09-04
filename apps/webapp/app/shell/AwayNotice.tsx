@@ -62,10 +62,20 @@ type Throttle = AwayResponderWire["throttle"];
  * about the responder in one place.
  */
 export const AWAY_NOTICE_COPY = {
+  /**
+   * THE VERB LIVES WITH ITS SUBJECT, and that is the whole reason this sentence is shaped the
+   * way it is. "gets" used to sit in the THROTTLE arm, where it cannot know which audience it
+   * is agreeing with — so one of the two combinations was always ungrammatical ("people you've
+   * let in gets a reply"). The verb is in the AUDIENCE arm now, inflected per branch, and the
+   * throttle arms are noun phrases that read after either one. That is also how the German
+   * catalogue has always carried it, so the two are now the same shape.
+   *
+   * Eight combinations, all grammatical, and a test walks every one of them in both languages.
+   */
   notice:
-    "Away responder is on — {audience, select, everyone {everyone who writes} other {people you've let in}} "
-    + "{throttle, select, always {gets a reply to every message} per_message {gets one reply, until you change the text} "
-    + "per_week {gets a reply at most once a week} other {gets a reply at most once a day}}.",
+    "Away responder is on — {audience, select, everyone {everyone who writes gets} other {people you've let in get}} "
+    + "{throttle, select, always {a reply to every message} per_message {one reply, until you change the text} "
+    + "per_week {a reply at most once a week} other {a reply at most once a day}}.",
   noticeSettings: "Away settings",
 } as const;
 
@@ -161,11 +171,17 @@ function openAwaySettings(): void {
  *
  * `role="status"`: the responder being on is exactly the kind of ambient fact a screen reader
  * should hear once and not be interrupted by.
+ *
+ * IT IS A STANDING PANE, NOT A SUBLINE (`ohx-standing`). Every other line in this slot
+ * announces a CHANGE and can be made to go — the organizer notice keeps a "Mark read" that
+ * ends it. This one states a condition that holds until its owner ends it, and it was reported
+ * from real use as reading like one more pile description, which is the one thing it is not.
+ * The box is the difference; the words are unchanged.
  */
 export function AwayNotice({ audience, throttle }: { audience: Audience; throttle: Throttle }) {
   const t = useTranslations("away");
   return (
-    <div className="ohx-notice" role="status">
+    <div className="ohx-notice ohx-standing" role="status">
       <span>{t("notice", { audience, throttle })}</span>
       <button type="button" onClick={openAwaySettings}>
         {t("noticeSettings")}
