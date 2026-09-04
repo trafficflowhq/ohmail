@@ -5,7 +5,7 @@ import "./date-picker.css";
 /**
  * DATE PICKER — a month grid anchored to the control that opened it.
  *
- * DESIGN REFERENCE (prototype). The resurface chooser used a native `<input type="date">`: the
+ * The resurface chooser used a native `<input type="date">`: the
  * operating system drew the calendar in its own look, opened it downward from a control that
  * stands at the foot of the reading column, and let it run off the bottom of the display. This
  * is the same choice — a calendar day — drawn in the product's own tokens, placed where it fits,

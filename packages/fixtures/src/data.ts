@@ -331,6 +331,17 @@ export const ohbox: MessageFixture[] = [
     id: "jonas",
     folder: "ohbox",
     from: { name: "Jonas Halter", address: "jonas@lichtgrat.studio" },
+    /* THE ONE MESSAGE HERE WITH AN AUDIENCE, and it is deliberate: a question put to the whole
+       studio is what "reply to all" is for. It is also the shape that makes the action bar's
+       widest row — Reply, Reply all, Forward, the horizons, Tag, filing, the read switch and
+       More — so it is the case the row's measurement has to seat, and it sits in the pile that
+       is read in the narrowest column the product has (Answer later, in the split view). Every
+       other fixture is 1:1 and stands the row without a Reply-all group. */
+    to: [
+      { name: "Mila Brunner", address: "mila@lichtgrat.studio" },
+      { name: "Rahel Beck", address: "rahel@lichtgrat.studio" },
+    ],
+    cc: [{ name: "Tobias Frei", address: "tobias@lichtgrat.studio" }],
     subject: "Open studio in October — which weekend?",
     time: "Fri",
     unread: false,

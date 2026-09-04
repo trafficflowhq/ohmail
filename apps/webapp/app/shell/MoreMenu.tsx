@@ -21,11 +21,13 @@
  * anchor rectangle, and copying that here would have been wrong twice over. `.abar` is a
  * container-query CONTAINER, which makes it a containing block for positioned descendants — so a
  * `fixed` child would be positioned against the bar anyway, but by an accident of containment
- * rather than by intent. And the density rules that decide which verbs are folded ARE container
- * queries on `.abar`: an element outside it cannot be asked which groups are standing in the
- * row, so the "in the row or in the menu, never both" rule would have needed a second copy of
- * the breakpoints, in JavaScript, kept in step by hand. Inside the container, one set of numbers
- * governs both halves — see the density ladder in `action-bar.css`.
+ * rather than by intent. And the rules that decide which verbs are folded hang off the BAR: the
+ * measurement publishes its answer as `data-admit` on `.abar`, and one rule pair per group
+ * switches the row half on and the menu half off under that same predicate. An element outside
+ * the bar could not be asked which groups are standing, so "in the row or in the menu, never
+ * both" would have needed a second copy of the decision, in JavaScript, kept in step by hand —
+ * which is precisely the two-mechanism defect the static breakpoints were retired for. See the
+ * admission block at the foot of `action-bar.css`.
  *
  * ── WHAT IT DOES NOT DO ──────────────────────────────────────────────────────────────────
  *
@@ -44,7 +46,7 @@ export interface MoreMenuItem {
   /**
    * WHICH DENSITY GROUP THIS ITEM BELONGS TO, or absent for one that is only ever in the menu.
    *
-   * Rendered as a class the container queries switch off when the same group is standing in the
+   * Rendered as a class the admission rule switches off when the same group is standing in the
    * row. Absent means "no row position at all" — Draft reply has never had one.
    */
   group?: "defer" | "file" | "rall" | "tag" | "fwd";
@@ -73,9 +75,9 @@ export function MoreMenu({
    * The items that are actually on screen, in order.
    *
    * Read from the DOM rather than filtered from `items`, because WHICH of them are visible is
-   * decided by container queries — the same rules that decide whether the group is standing in
-   * the row. A roving focus computed from the props would step onto a `display: none` item and
-   * appear to do nothing.
+   * decided by the stylesheet's admission rules — the same rules that decide whether the group
+   * is standing in the row. A roving focus computed from the props would step onto a
+   * `display: none` item and appear to do nothing.
    */
   const live = useCallback(
     (): HTMLButtonElement[] =>

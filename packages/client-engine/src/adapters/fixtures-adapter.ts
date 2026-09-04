@@ -163,8 +163,10 @@ export class FixturesAdapter implements EngineAdapter {
       messageIdHeader: null,
       subject: f.subject,
       from: f.from,
-      to: [],
-      cc: [],
+      /* Recipients where the fixture states them, and empty where it does not — the shape a
+         surface reads to decide whether "all" is more people than "reply". */
+      to: f.to ?? [],
+      cc: f.cc ?? [],
       date: parseFixtureTime(f.time, index, this.now()),
       folder: FIXTURE_FOLDER[f.folder],
       snippet: f.snippet ?? (isProtected ? "" : (f.body ?? "").split("\n")[0] ?? ""),

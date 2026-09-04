@@ -4,36 +4,38 @@
  * THE ACTION PILL'S RUNTIME DENSITY — fold on ACTUAL overflow, not on a reference font's idea
  * of it.
  *
- * ── WHY THE RUNGS ALONE WERE WRONG ON SOME MACHINES ─────────────────────────────────────────
+ * ── WHY STATIC WIDTHS WERE WRONG ON SOME MACHINES ───────────────────────────────────────────
  *
- * The density ladder in `action-bar.css` folds verb groups behind More at static container
- * widths, each derived from label widths measured in one reference font. That font does not
- * resolve everywhere — the ladder's own comments record readings drifting per string on a
- * machine without it — and on a system whose UI font renders NARROWER, every rung fires early:
- * the pill folds verbs behind More with visible room left beside them. Reported from real use
- * on exactly such a machine. The rungs' stated failure direction (fold early, never overflow)
- * held; the cost was verbs a wider row could have carried.
+ * This bar used to fold its verb groups behind More at static container widths, each derived
+ * from label widths measured in one reference font. That font does not resolve everywhere, and
+ * on a system whose UI font renders NARROWER every such width fires early: the pill folds verbs
+ * behind More with visible room left beside them. Reported from real use on exactly such a
+ * machine. That failure direction (fold early, never overflow) was the benign one; the cost was
+ * verbs a wider row could have carried. The direction it could NOT survive was a font that
+ * renders WIDER than the reference — then the static width admits a group the row cannot hold.
  *
  * So the pill measures ITS OWN row: a hidden copy of every group the message could stand
  * (same markup, same classes, same font — rendered invisibly inside the pill) gives each
  * group's REAL width, and groups are admitted greedily, in row order, while they actually fit.
  *
- * DESIGN REFERENCE (prototype): this is the ONLY mechanism now. The static rungs are gone from
- * `action-bar.css` — two mechanisms deciding one question disagreed, and a rung's rule outranked
- * the measurement's on the menu twin, so a folded group stood in NEITHER place. Until the first
- * measurement lands, `data-admit` is absent and the row is its floor (Reply, the read switch,
- * More) with every group behind More; the measurement runs in the commit that mounts the copy,
- * before the browser paints.
+ * THIS IS THE ONLY MECHANISM. The static widths are gone from `action-bar.css` — two mechanisms
+ * deciding one question disagreed, and the static rule outranked the measurement's on the menu
+ * twin, so a folded group stood in NEITHER place: Later, Park and Resurface were reachable from
+ * nowhere on the messages where the two disagreed. Until the first measurement lands,
+ * `data-admit` is absent and the row is its floor (Reply, the read switch, More) with every
+ * group behind More; the measurement runs in the commit that mounts the copy, before the
+ * browser paints.
  *
  * ── THE LAWS, KEPT ──────────────────────────────────────────────────────────────────────────
  *
  *  · ROW ORDER IS FOLD ORDER. Admission is a greedy PREFIX over the groups in row order
  *    (reply-all · forward · horizons · tag · filing): the walk stops at the first group that
- *    does not fit, so a later verb can never stand while an earlier one is folded — the same
- *    law `action-bar.test.ts` pins over the rungs ("the rungs ascend in ROW ORDER").
+ *    does not fit, so a later verb can never stand while an earlier one is folded. Pinned as a
+ *    property over random rows in `bar-density.test.ts`.
  *  · NO OVERFLOW. The admitted row's width — base + every admitted group + the gaps between —
  *    is never allowed past the width the pill actually has. Folding too early is the benign
- *    direction; painting a control outside the pill is the defect the ladder exists to prevent.
+ *    direction; painting a control outside the pill is the defect this measurement exists to
+ *    prevent.
  *  · IN THE ROW OR BEHIND MORE, NEVER BOTH. The `data-admit` CSS (foot of `action-bar.css`)
  *    switches each group's row form and its `mm-*` menu row in the same rule pair — the only
  *    rules that touch either half.
@@ -43,7 +45,8 @@
  *    floor can fold — the measurement reports that state rather than hiding a control.
  *
  * The SELECTION bar (`.pick-bar`) is deliberately untouched: its verbs are a different label
- * set with its own geometry and its own rungs, and this hook arms only under `.msg-actions`.
+ * set with its own geometry and its own two container rungs, and this hook arms only under
+ * `.msg-actions`.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -54,7 +57,7 @@ export const PILL_PADDING_PX = 12;
 /** The row's gap between groups, when the computed style cannot be read (jsdom). */
 export const FALLBACK_GAP_PX = 6;
 
-/** The density groups, in ROW ORDER — which is the ladder's rung order and the fold order. */
+/** The density groups, in ROW ORDER — which is the admission order and the fold order. */
 export const BAR_GROUP_ORDER = ["rall", "fwd", "defer", "tag", "file"] as const;
 export type BarGroup = (typeof BAR_GROUP_ORDER)[number];
 /** The `data-admit` token for the floor's one concession — the read switch without its words. */
@@ -101,14 +104,14 @@ function groupNameOf(el: Element): BarGroup | null {
  *
  * Returns the space-joined admitted names for `data-admit` — or `null` before the first
  * measurement (and wherever `ResizeObserver` does not exist, jsdom included), which leaves the
- * attribute off and the CSS rungs in charge. The measure row is found by ref; its children are
+ * attribute off and the row at its floor. The measure row is found by ref; its children are
  * classified by their own `abar-*` classes, so the hook needs no markers and no ordering
  * contract beyond the DOM order the row already renders in.
  */
 export function useBarDensity(): {
   /** Ref for the hidden measure row (`.abar-measure`). */
   measureRef: (el: HTMLDivElement | null) => void;
-  /** The `data-admit` value, or null while unmeasured (rungs govern). */
+  /** The `data-admit` value, or null while unmeasured (the row stands at its floor). */
   admit: string | null;
   /**
    * Render the measure row at all? False on the server, on the hydration render (so the two
@@ -145,7 +148,7 @@ export function useBarDensity(): {
     const padR = abarStyle ? parseFloat(abarStyle.paddingRight) : NaN;
     // The fallback fires on ANY unreadable read: half a measurement is not a measurement,
     // and an unreadable side silently contributing zero would grant phantom pixels to the
-    // admission walk — the overflow direction, the one the ladder exists to prevent.
+    // admission walk — the overflow direction, the one this measurement exists to prevent.
     const pillPad =
       Number.isFinite(padL) && Number.isFinite(padR) ? padL + padR : PILL_PADDING_PX;
     const avail =

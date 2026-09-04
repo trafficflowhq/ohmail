@@ -85,6 +85,15 @@ export interface MessageFixture {
   id: string;
   folder: Folder;
   from: Address;
+  /**
+   * WHO ELSE THE MESSAGE WAS ADDRESSED TO. Optional, and absent on most fixtures because most
+   * mail is 1:1 — but a message with a second recipient is a DIFFERENT SHAPE on every surface
+   * that reads it: the action bar stands a Reply-all group, which is one more group for the
+   * row's measurement to seat. Without a fixture that carries recipients there is no way to
+   * render that shape at all, so the widths it is read at could only be reasoned about.
+   */
+  to?: Address[];
+  cc?: Address[];
   subject: string;
   /** One-line preview (list rows). Absent on protected messages. */
   snippet?: string;

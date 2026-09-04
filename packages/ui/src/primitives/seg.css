@@ -1,6 +1,6 @@
 /* segmented control — the active segment floats on lift-0
  *
- * DESIGN REFERENCE (prototype). The control never exceeds the box it is given.
+ * The control never exceeds the box it is given.
  *
  * Two forms, one component:
  *   row    the capsule, as wide as its segments (`width:max-content`), never wider than its

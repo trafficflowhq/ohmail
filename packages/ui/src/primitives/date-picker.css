@@ -1,6 +1,6 @@
 /* ═══ DATE PICKER — a month, anchored to the control that asked for it ═══════════════════════
  *
- * DESIGN REFERENCE (prototype). A small floating card in the tag picker's family: `--float`
+ * A small floating card in the tag picker's family: `--float`
  * ground, `--lift-3`, the card radius, `--z-pal`, and the `rise` entrance every popover here
  * makes. Tokens only — paper draws round day cells and a rounded card, ohmarchy draws squares
  * on a square card with the 2px ring, both from the same rules.

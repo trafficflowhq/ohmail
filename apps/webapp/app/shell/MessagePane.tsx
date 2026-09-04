@@ -57,9 +57,9 @@ export type MessageAction =
    * be reachable only from a panel's ⋯ menu.
    *
    * Reported from real use: *"fwd message / Forward in general should be within our main
-   * pill-shaped UI besides Reply etc."* It is a row verb on the bar now (`.abar-fwd`, with the
-   * rung `action-bar.css` derives for it) and a `mm-fwd` item behind More below that rung, so it
-   * obeys the same in-the-row-or-in-the-menu rule as every other group.
+   * pill-shaped UI besides Reply etc."* It is a row verb on the bar now (`.abar-fwd`, admitted
+   * whenever the measured row has room for it) and a `mm-fwd` item behind More whenever it has
+   * not, so it obeys the same in-the-row-or-in-the-menu rule as every other group.
    *
    * The shell answers it with `openForward` — the reply dock in forward mode, docked to THIS
    * message — which is the same seam the panel menus have always dispatched. NOT a toggle, and
@@ -346,12 +346,10 @@ function ActionBar({
    * offered. Absent chrome reads as "holds" (`!== false`), which is the bare-test/desktop default
    * every other consumer of this field uses.
    *
-   * THE DENSITY LADDER DELIBERATELY IGNORES BOTH. `action-bar.css` derives its rungs with the
-   * Forward group PRESENT, which is the worst case for width; a message that gets no Forward then
-   * has a row NARROWER than the rung assumed, so a later group folds into More one tier early —
-   * the ladder's own benign failure mode — instead of a control being painted outside the pill. A
-   * second `data-*` predicate beside `data-rall` would double every chain in that file to describe
-   * message classes the reader rarely opens.
+   * THE DENSITY MEASUREMENT NEEDS NO PREDICATE FOR EITHER. It measures the groups this message
+   * actually renders, so a message that gets no Forward simply has one fewer group to admit —
+   * there is no assumed worst case to be wrong about, and no `data-*` chain to keep in step with
+   * the message classes a reader rarely opens. That is the whole reason the static rungs went.
    */
   const canForward =
     message.sensitivity?.no_forward !== true && chrome.mirrorHolds?.(message.id) !== false;
@@ -374,10 +372,10 @@ function ActionBar({
   useEffect(() => setMenuOpen(false), [message.id]);
 
   /**
-   * THE RESURFACE CHOOSER'S DATE PICKER — open, and the capsule it hangs from. DESIGN REFERENCE
-   * (prototype): a `DatePicker` (packages/ui) anchored to the "Pick a date" capsule replaces the
-   * native `<input type="date">`, whose calendar the operating system drew below the bar and off
-   * the display. Dismissing returns focus to the capsule, as the More menu returns it to More;
+   * THE RESURFACE CHOOSER'S DATE PICKER — open, and the capsule it hangs from. A `DatePicker`
+   * (packages/ui) anchored to the "Pick a date" capsule replaces the native
+   * `<input type="date">`, whose calendar the operating system drew below the bar and off the
+   * display. Dismissing returns focus to the capsule, as the More menu returns it to More;
    * a message swap or a panel change closes it.
    */
   const [dateOpen, setDateOpen] = useState(false);
@@ -505,8 +503,8 @@ function ActionBar({
    *
    * Its own `.abar-g`, not a member of the filing segment: Screening and Move both answer "where
    * does this mail live", and a tag is the reader's own mark on mail that lives where it lives.
-   * `.abar-tag` is the density-ladder group — see `action-bar.css` for the tier and for why it
-   * outranks Reply all.
+   * `.abar-tag` is a density group of its own, admitted after the horizons and before filing —
+   * see the admission order at the foot of `action-bar.css`.
    */
   const tag = onTag ? (
     <div className="abar-g abar-tag">
@@ -717,8 +715,8 @@ function ActionBar({
       : []),
     /**
      * FORWARD — the folded half of the row group, mirroring its row position: second, beside the
-     * two verbs it stands with. `group: "fwd"` is what makes the 342/443/478/621 tiers hide it
-     * here exactly where `.abar-fwd` stands there, keeping "a verb is in the row or in the menu,
+     * two verbs it stands with. `group: "fwd"` is what makes the admission rule hide it here
+     * exactly where `.abar-fwd` stands there, keeping "a verb is in the row or in the menu,
      * never both". Gated on the SAME `canForward` the row button is, so a `no_forward` message
      * offers the verb in neither place rather than in one of them.
      */
@@ -739,20 +737,20 @@ function ActionBar({
      * While tagging's always-visible entry point was the `+ Tag` chip under the title, this row
      * was a convenience with no row position at all: it carried no group class, like Draft reply,
      * and no query could switch it off. The chip is gone and the verb stands in the bar, so this
-     * is now a LADDER DUPLICATE — `group: "tag"` is what lets the 519px tier hide it exactly where
-     * `.abar-tag` stands, keeping "a verb is in the row or in the menu, never both".
+     * is now the FOLDED HALF — `group: "tag"` is what lets the admission rule hide it exactly
+     * where `.abar-tag` stands, keeping "a verb is in the row or in the menu, never both".
      *
      * Placed between the horizons and filing, mirroring the row: a reader who has seen Tag there
      * on a wide bar looks for it there on a narrow one. Anchored on More (`moreRef`), like
      * Screening, so the picker opens where the press was rather than under a menu that has closed.
      * Only where the surface can tag (`onTag` present) — the stream bar cannot.
      *
-     * **THIS IS NOT A SECOND ENTRY POINT, and that was checked rather than argued.** Rendered in
-     * Chrome with both halves present and the container stepped through every tier, the row and
-     * the menu are exactly complementary — row hidden / menu shown at 242, 350, 455, 456 and 518;
-     * row shown / menu hidden at 519, 572 and 576. Never both, never neither. Deleting this row to
-     * make the move "a move" would instead make tagging UNREACHABLE from an open message in the
-     * split column and on a phone, which are the first five of those widths.
+     * **THIS IS NOT A SECOND ENTRY POINT, and that is checked rather than argued.** Rendered in
+     * Chrome with both halves present, at every container width the bar is given in both locales
+     * and on both faces, the row and the menu are exactly complementary: never both, never
+     * neither. Deleting this row to make the move "a move" would instead make tagging
+     * UNREACHABLE from an open message in the split column and on a phone, which are the
+     * narrowest of those widths.
      */
     ...(onTag
       ? [{
@@ -774,7 +772,7 @@ function ActionBar({
     /**
      * DELETE — last, menu-only, and flag-gated (FOLDERS-SPEC.md §16.3/§16.7): the verb ships
      * behind "Use folders", and with the flag off this reader is the pre-verb reader. The item
-     * carries NO `group`, like Draft reply, so no bar tier ever surfaces it as a row button —
+     * carries NO `group`, like Draft reply, so no admission rule can surface it as a row button —
      * a destructive verb does not belong where a stray click can land. It opens the CONFIRM
      * strip; only the strip dispatches (the one-dispatch-site rule the mobile parity test pins
      * on its side).
@@ -810,13 +808,14 @@ function ActionBar({
         {/* REPLY ALL — the same question as Reply, answered to everyone, so it stands beside
             the accent verb and NOT inside it: a segment would dilute the one primary capsule.
             Rendered only when `canReplyAll` (see above), and its own `.abar-g` so the row gap
-            applies. `.abar-rall` is the ladder's FIRST rung, which is not the same claim as
-            "always": the two reply verbs stand together at the three widths a message is read
-            at on a DESKTOP — reading column 572, stream card 576, conversation 628 — and this
-            group still folds into More below its rung: the 242px split column in both
-            locales, and the 350px phone reader in German, where `Allen antworten` needs 478.
-            `mm-rall` is the other half of "in the row or in the menu, never both". The exact
-            widths are per-locale because the label's width is; see `action-bar.css`. */}
+            applies. `.abar-rall` is FIRST in the admission order, which is not the same claim
+            as "always": the two reply verbs are the first thing the measurement seats after the
+            floor, so they stand together at every width a message is read at on a desktop, and
+            this group is also the LAST to fold — where the row cannot hold it (the 242px split
+            column, or a narrow reader in German) it goes behind More and everything after it
+            has gone already. `mm-rall` is the other half of "in the row or in the menu, never
+            both"; which widths those are depends on the locale and the face, which is why no
+            number is written here. */}
         {canReplyAll ? (
           <div className="abar-g abar-rall">
             <button
@@ -841,12 +840,12 @@ function ActionBar({
             answers a different question from both — not "what do I say back" but "who else needs
             to see this".
 
-            `.abar-fwd` is the ladder's SECOND rung, directly after Reply all, so the three answer
-            verbs stand together at every width a message is read at on a desktop. What pays for it
-            is the three horizons and Tag, which fold into More earlier than they used to — the
-            full arithmetic, and the trade stated as a trade, is at the Forward rung in
-            `action-bar.css`. `mm-fwd` is the other half of "in the row or in the menu, never
-            both". */}
+            `.abar-fwd` is SECOND in the admission order, directly after Reply all, so the three
+            answer verbs are seated before anything else and stand together at every width a
+            message is read at on a desktop. What pays for it is the three horizons and Tag,
+            which fold into More earlier than they used to — the trade is stated as a trade with
+            the admission order at the foot of `action-bar.css`. `mm-fwd` is the other half of
+            "in the row or in the menu, never both". */}
         {canForward ? (
           <div className="abar-g abar-fwd">
             <button
@@ -905,9 +904,9 @@ function ActionBar({
            * that key performs the same release on the open message. A check instead of the dot:
            * the outcome being previewed is "finished", not a read mark.
            *
-           * IT REPLACES THE SLOT AT EVERY WIDTH AND FOLDS NOWHERE — the slot always stands in the
-           * ladder, and "Done" plus the check is NARROWER than either label it replaces, so no
-           * tier moves. Re-measure per the ladder's rule if this label ever grows.
+           * IT REPLACES THE SLOT AT EVERY WIDTH AND FOLDS NOWHERE — the read switch is part of
+           * the floor, and "Done" plus the check is NARROWER than either label it replaces, so
+           * it can only leave the measurement more room, never less.
            */}
           {isResurfaced(message) ? (
             <button
@@ -980,26 +979,29 @@ function ActionBar({
   );
 
   return (
-    /* `data-rall` IS THE DENSITY LADDER'S ONE PREDICATE IT CANNOT MEASURE — see the rungs in
-       `action-bar.css`. A container query knows the pill's width and nothing about what is in
-       it, and the Reply-all group's 95.7px is present on some messages and absent on others,
-       so defer and Tag are admitted at two different widths depending on whether this bar
-       carries it. The attribute is set from the SAME `canReplyAll` that renders the group, so
-       the row the ladder is measuring and the row on screen are the same row. */
+    /* `data-rall` DECLARES THE BAR'S SHAPE: this message has an audience, so the row carries a
+       Reply-all group and the admission walk has one more group at the head of its prefix.
+       No stylesheet reads it — the measurement needs no predicate, which is why the per-chain
+       rungs it used to select are gone. It stays because it makes the shape ASSERTABLE from
+       outside: it is what lets a test and the rendered width check pair a row with the group
+       set it should have, and hold the rule that `data-admit` never names a group this bar does
+       not render. Set from the SAME `canReplyAll` that renders the group, or it would describe
+       a row that is not on screen. */
     <div
       className="abar"
       data-rall={canReplyAll ? "" : undefined}
       /* `data-admit` IS THE MEASUREMENT'S ANSWER — the groups that actually fit, measured off
          the hidden copy below in the machine's real font. Absent until the first measurement
-         (and under jsdom/no-JS), which leaves the static rungs in charge as the fallback; the
-         rules that obey it close `action-bar.css`. `bar-density.ts` carries the whole argument. */
+         (and under jsdom/no-JS), which is the FLOOR — Reply, the read switch and More, with
+         every group behind More; the rules that obey it close `action-bar.css`.
+         `bar-density.ts` carries the whole argument. */
       data-admit={density.admit ?? undefined}
     >
       <div className="abar-row">{rowGroups(false)}</div>
       {/* THE MEASURE ROW — the same groups rendered again, invisible and inert, so the density
           measurement reads each group's REAL rendered width (same markup, same classes, same
           font) instead of trusting a reference font's figures. Position-absolute, so it adds
-          nothing to the pill's own fit-content width — and rendered only once `armed` (an
+          nothing to the pill's own width — and rendered only once `armed` (an
           effect, post-hydration, ResizeObserver present), so the server tree, the hydration
           tree and every environment that cannot measure keep the exact markup they had. */}
       {density.armed ? (

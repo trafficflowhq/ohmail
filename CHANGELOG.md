@@ -13,6 +13,42 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Controls fit the width they are given
+
+Four things in the app decided their own width from something other than the room they had, and
+each of them broke out of it somewhere. They are fixed together, because they were one fault.
+
+**The message action bar keeps every verb reachable, and uses its row.** Which verbs stand in the
+bar and which move into the More menu is now decided one way: the bar measures the row it actually
+has, in the font your system is actually drawing, and seats what fits. Before, that measurement ran
+alongside a set of fixed widths worked out from one reference font, and where the two disagreed a
+verb could be hidden by one and hidden by the other — Answer later, Park and Resurface were, on some
+messages, in neither the bar nor the menu. Every verb is now in exactly one of the two places at
+every width. The bar also fills the row it stands in rather than shrinking to its contents, so the
+space beside a folded verb is space the next verb can use. Where even the essentials do not fit — a
+narrow reading column in German — the read control keeps its dot and its shortcut and drops its
+words, rather than anything being pushed out of sight.
+
+**The date picker is the app's own, and stays on screen.** Choosing "Pick a date" for a resurface
+used to hand you the operating system's calendar: drawn in its look, opened downward from a control
+that sits at the foot of the reading column, and often running off the bottom of the display. It is
+now a month grid in the app's own shapes, on both faces, with month and weekday names in your
+language. It opens below the button when there is room and above it when there is not, and is never
+placed outside the window. It works from the keyboard — arrows by day and week, Page Up and Page
+Down by month, Enter to choose, Escape to close — and days before tomorrow cannot be chosen.
+
+**Settings controls fit their cards.** A row of choices — the away responder's reply rate, with the
+longest labels in the app — used to run out of the card holding it, and at narrow widths the choices
+wrapped inside their own capsule. A row of choices now becomes a short list when the row would not
+fit, and goes back to a row when the width returns. It measures its own labels, so it behaves the
+same in German, where the words are longer, and on the ohmarchy face, where they are drawn wider.
+
+**Mailbox rows no longer cut their buttons.** In the mailboxes list, a button under an address —
+"Organize here instead", and its neighbours — was stretched to a fixed-width column and its label cut
+off mid-word. It was worst in German, where up to half the label was missing. The column now makes
+room for whatever stands in it, the button is as wide as its own label, and the status text beside it
+wraps instead.
+
 ### Deciding on a mailbox another install is organizing
 
 Exactly one install organizes a mailbox at a time — that is what keeps two copies of ohmail from

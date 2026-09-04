@@ -54,7 +54,7 @@ export function shouldStack(naturalPx: number, availPx: number): boolean {
 /**
  * Capsule segmented control; the active segment floats on lift-0.
  *
- * DESIGN REFERENCE (prototype). The control measures its own row form against the room its
+ * The control measures its own row form against the room its
  * parent gives it and switches to a stacked list (`data-stack`) when the row would overflow — see
  * `seg.css` for the two forms. The measurement is a ResizeObserver on the parent and on the
  * control itself; where none exists (a server render, a DOM without layout) the row form stands,

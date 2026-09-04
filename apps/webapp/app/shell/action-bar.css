@@ -18,27 +18,29 @@
  *   · 390px phone → the reader sheet pads 20px a side: **350px**. Wider than the split
  *     column, which is why the phone is not the width that defeats this layout.
  *
- * ── WHY THIS IS A CONTAINER QUERY AND NOT A MEDIA QUERY ───────────────────────────────
+ * ── WHY THE BAR ASKS ITS OWN WIDTH AND NEVER THE VIEWPORT'S ───────────────────────────
  *
  * 242px and 350px are the same bar in the same product at the SAME viewport class — the
  * first is a 1000px desktop, the second a 390px phone. A viewport media query cannot tell
- * them apart and would dress the roomier surface as the tighter one. The bar therefore
- * asks its OWN width, and a `container` named `abar` is what answers — `.msg-actions` for a
- * message's bar, `.abar` itself for a selection's. See the two blocks below.
+ * them apart and would dress the roomier surface as the tighter one. So the width a bar
+ * decides from is always its own. A MESSAGE bar reads it by measuring the row it actually
+ * has (`bar-density.ts`, and the admission block at the foot of this file); the SELECTION
+ * bar reads it through a `container` named `abar` on `.abar` itself. Two surfaces, two
+ * label sets, and — since the message bar's static rungs were retired — one mechanism each.
  *
  * ── THE STRUCTURAL FIX, WHICH IS NOT A BREAKPOINT ─────────────────────────────────────
  *
  * `.abar-row` is `flex-wrap:nowrap` and every `.abar-g` is `flex:none;white-space:nowrap`.
  * So a group CANNOT break internally and the row CANNOT wrap: "breaks mid-group" is
- * removed by construction, not by having picked good numbers. What the breakpoints below
- * decide is only WHICH groups stand in the row; anything not standing there is in the
- * More panel, and the same queries hide it there so it is never in both places at once.
- * That is the one rule to keep if these numbers are ever re-tuned.
+ * removed by construction, not by having picked good numbers. All that is left to decide
+ * is WHICH groups stand in the row; anything not standing there is in the More panel, and
+ * the same predicate hides it there so it is never in both places at once. That is the one
+ * rule to keep, whatever decides the width.
  */
 
 /* ── THE BAR IS A FLOATING PILL THAT FILLS THE ROW IT IS GIVEN ─────────────────────────
  *
- * DESIGN REFERENCE (prototype). The pill was `width: fit-content; margin-inline: auto` — as wide
+ * The pill was `width: fit-content; margin-inline: auto` — as wide
  * as the verbs it happened to stand, centred in the message's measure — so a bar that folded a
  * group also shrank, and the room it gave up stood empty on both sides while the group sat
  * behind More. Reported from real use: "the action pill should use its available width". It is
@@ -79,9 +81,9 @@
  *
  * `.pick-bar` (app.css, not ours to edit) is `display:flex;flex-wrap:wrap` with a count
  * before the bar and Clear after it. Giving the bar its own full-width line is the same
- * move `.msg-actions > .abar` makes above and for the same reason: the density ladder at
- * the foot of this file is a CONTAINER query, so the bar must be the thing that owns the
- * width, not one flex item competing with two labels for it.
+ * move `.msg-actions > .abar` makes above and for the same reason: the selection bar's own
+ * two rungs at the foot of this file are a CONTAINER query, so the bar must be the thing
+ * that owns the width, not one flex item competing with two labels for it.
  *
  * The three overrides below are `.pick-bar`'s own button and span rules reaching into the
  * bar — it styles `button` and `span` bare, which is correct for the two controls it was
@@ -196,10 +198,10 @@
 }
 
 /* "Pick a date" in the resurface panel — a capsule BUTTON that opens the product's own date
-   picker (`DatePicker`, packages/ui), anchored to itself. DESIGN REFERENCE (prototype): this
-   replaces a native `<input type="date">`, whose calendar the operating system drew in its own
-   look, downward, and off the bottom of the display. While the picker is open the trigger
-   reads pressed — the same `--tint2` the horizon that holds a message uses. */
+   picker (`DatePicker`, packages/ui), anchored to itself. It replaces a native
+   `<input type="date">`, whose calendar the operating system drew in its own look, downward,
+   and off the bottom of the display. While the picker is open the trigger reads pressed —
+   the same `--tint2` the horizon that holds a message uses. */
 .abar-date-trigger[aria-expanded="true"] { background: var(--tint2); }
 
 .abar-b.primary {
@@ -268,8 +270,8 @@
 }
 /* The slot's THIRD face — "Done" on a resurfaced message (see `ActionBar`). The check wears the
    accent for the reason the dot does: it previews the outcome, and the outcome here is the one
-   affirmative act on the bar. Narrower than either read label, so the density ladder is
-   untouched. */
+   affirmative act on the bar. Narrower than either read label, so it can only make the
+   floor easier to seat, never harder. */
 .abar-done .abar-check {
   color: var(--accent);
   flex: none;
@@ -401,7 +403,7 @@
 
 /* ── THE DENSITY LAW — ONE MECHANISM: MEASURED ADMISSION ─────────────────────────────────
  *
- * DESIGN REFERENCE (prototype). This block replaces the static density ladder — four chains of
+ * This block replaced the static density ladder — four chains of
  * container-query rungs per locale, each derived from label widths read in one reference font.
  * Two mechanisms decided the same question, and they disagreed: when the measurement folded a
  * group the rungs still admitted, the rung's higher-specificity rule also hid the group's menu
