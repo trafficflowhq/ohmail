@@ -96,6 +96,25 @@ import { WATCHED_FOLDERS, type ImapAuth } from "./imap-types.js";
  * | both record DRAINS | REFUSE — skip the cycle, expunge nothing, append nothing | the reader's state machine reads "my record is not in the folder" as "the organizer took it", so a partial view tells a person a decision nobody ever saw was applied. Refusing costs one cycle |
  * | the lease GATE | ACTS on the newest-first window, and logs the count | refusing raises {@link LeaseUnavailableError}, which the sync loop exempts by class and answers by NOT SYNCING THE MAILBOX. A gate that refused would let anyone with APPEND rights stop a customer's MAIL — readers included, since the refusal comes before the role is decided — the moment the folder holds one record more than the ceiling, with no self-healing path, because the folder never shrinks on its own |
  *
+ * ── AND IT APPLIES AGAIN INSIDE THE GATE, BETWEEN ITS OWN THREE READS ───────────────────────
+ *
+ * The gate reads this folder three times, and "acts on the window" is right for only one of them.
+ *
+ * | the gate's read | a truncated read | why |
+ * | --- | --- | --- |
+ * | the ELECTION | ACTS on the window | it is CHOOSING between what it can see, and refusing stops the mail |
+ * | the VERIFY after a renew | acts — safely | the only absence it tests is of the claim this gate JUST APPENDED, which is the newest record in the folder and therefore inside a newest-first window by construction |
+ * | the handover CONFIRM | acts only where the window COVERS the ref | it asks whether specific OLD refs are gone, and old is exactly what a newest-first window drops |
+ *
+ * The distinction is between choosing and CUSTODY. An election over a partial folder picks the best
+ * of what it can see and is bounded by the next cycle. A custody check asks "is the claim I
+ * displaced really gone", and a ref outside the window is absent from the read for the same reason
+ * a successfully expunged one is — so reading that absence as success confirms a handover that
+ * never landed, spending the caller's one-shot authorization while the beaten claim stands to win
+ * the next election. UIDs ascend with arrival, so the window covers the highest of them and a ref
+ * below its floor is one the read could not have seen; such a ref is treated exactly as a survivor
+ * is, because "still there" and "I could not look" have the same correct answer here.
+ *
  * **The asymmetry follows from what being wrong COSTS at each reader, not from tidiness.** The peek
  * and the drains fail into a false sentence, which a person acts on; the gate fails into lost mail,
  * which is the product. Where the two conflict, mail wins.
@@ -1673,6 +1692,12 @@ export interface ReadLeasePeekInput {
   io: LeasePeekIo;
   now: Date;
   staleAfterMs?: number;
+  /**
+   * Optional, because it reports rather than guards: a peek with no logger answers exactly as it
+   * did before. What it carries is the one fault here that does not clear on its own — see the
+   * call below.
+   */
+  log?: (event: string, detail: Record<string, unknown>) => void;
 }
 
 /**
@@ -1688,11 +1713,21 @@ export async function readLeasePeek(input: ReadLeasePeekInput): Promise<LeasePee
   try {
     messages = await input.io.listClaims();
   } catch (err) {
-    // THE COUNTS SURVIVE INTO THE MESSAGE, for {@link MetaFolderTruncatedError}'s own reason: of
-    // everything that lands here, a folder too full to read is the only one that does not clear on
-    // its own, and folding it into the generic sentence sends whoever reads the line to the mail
-    // server for a fault that is a full folder. Every other failure keeps the general wording,
-    // because for those the operation is what matters and the cause carries the rest.
+    /* A FULL FOLDER GETS ITS OWN LINE HERE TOO, and not only its own sentence.
+     *
+     * The counts survive into the message for {@link MetaFolderTruncatedError}'s own reason: of
+     * everything that lands here, a folder too full to read is the only one that does not clear on
+     * its own, and folding it into the generic wording sends whoever reads it to the mail server
+     * for a fault that is a full folder.
+     *
+     * But a thrown message reaches somebody only if the caller renders it, and this refusal is
+     * usually rendered as "we could not check" — a sentence a person reads as a blip. The gate emits
+     * `lease_meta_truncated` on the same condition; the peek was silent, so the same mailbox
+     * reported the fault from one door and not from the other. Same event name, same fields,
+     * because it is the same fact. */
+    if (err instanceof MetaFolderTruncatedError) {
+      input.log?.("lease_meta_truncated", { read: err.read, limit: err.limit, total: err.total });
+    }
     throw new LeaseUnavailableError(
       err instanceof MetaFolderTruncatedError
         ? err.message
@@ -2011,7 +2046,13 @@ export class MetaFolderTruncatedError extends Error {
    * own catch. The peek and both drains cannot, do not, and never touch this field.
    */
   readonly records: readonly RawMetaMessage[];
-  constructor(read: number, total: number | null, records: readonly RawMetaMessage[] = []) {
+  /**
+   * REQUIRED, with no default. A default of `[]` is the shape where a construction site that forgot
+   * the window silently hands the gate an EMPTY election — which is `decideLease`'s "nobody has
+   * ever organized this mailbox" arm, over a folder that is demonstrably full. The one field whose
+   * absence would be worst is the one an optional parameter makes easiest to omit.
+   */
+  constructor(read: number, total: number | null, records: readonly RawMetaMessage[]) {
     super(
       `${META_FOLDER} holds more than the ${META_RECORDS_MAX_PER_FETCH} records one read may take` +
       `${total === null ? "" : ` (${total} present)`}, so what is in it is not fully known and ` +
@@ -2069,14 +2110,27 @@ export async function readMetaFolderWindow(client: LeaseImapClient): Promise<Met
   // up in this folder.
   for await (const m of client.fetch(`${from}:*`, { uid: true, headers: true }, { uid: false })) {
     if (!m.headers) continue;
-    // The one message past the ceiling: proof there are more, then stop. Nothing is deleted on the
-    // way past — this folder is the customer's, and a message this build does not recognise is not
-    // its to destroy.
-    if (records.length >= META_RECORDS_MAX_PER_FETCH) {
-      truncated = true;
-      break;
-    }
     records.push({ ref: m.uid, raw: m.headers.toString("utf8") });
+    // ── PAST THE CEILING, DROP FROM THE FRONT — NEVER STOP AT IT ─────────────────────────────
+    //
+    // This used to `break`, and on the `1:*` path — an `exists` the client will not report — that
+    // silently INVERTED the newest-first guarantee this whole read is built on: the range starts at
+    // the oldest record, so stopping at the ceiling keeps the OLDEST window, which is the defect
+    // being fixed wearing the fix's own clothes. Nothing announced it, because the count that would
+    // have revealed it is exactly the count that was missing.
+    //
+    // Shifting keeps memory bounded at the ceiling either way. It does read the whole folder over
+    // the wire on that path, and that is the honest cost of a server that will not say how many
+    // messages it holds — a real connection reports `exists`, so the range is computed and this
+    // branch never runs. Correctness first: a bound that quietly returns the wrong half is worse
+    // than a bound that costs a round trip.
+    //
+    // Nothing is deleted on the way past. This folder is the customer's, and a message this build
+    // does not recognise is not its to destroy.
+    if (records.length > META_RECORDS_MAX_PER_FETCH) {
+      records.shift();
+      truncated = true;
+    }
   }
   return { records, truncated, total };
 }
@@ -2209,6 +2263,12 @@ export interface LeaseGateResult {
  * `stand_down` can be constructed and it is {@link decideLease}, from a parsed fresh foreign
  * claim — §3.4's "exactly one path to stand-down".
  */
+/** One of the gate's three reads of the folder, and whether it covered the whole of it. */
+interface GateRead {
+  records: RawClaimMessage[];
+  truncated: boolean;
+}
+
 export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResult> {
   const { io, self, now } = input;
   const log = input.log ?? ((): void => undefined);
@@ -2247,13 +2307,13 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
    * this family that does not clear on its own and somebody has to be able to find the folder — and
    * the newest records it did cover are used. Every OTHER failure still refuses.
    */
-  const readClaims = async (op: () => Promise<RawClaimMessage[]>): Promise<RawClaimMessage[]> => {
+  const readClaims = async (op: () => Promise<RawClaimMessage[]>): Promise<GateRead> => {
     try {
-      return await op();
+      return { records: await op(), truncated: false };
     } catch (err) {
       if (err instanceof MetaFolderTruncatedError) {
         log("lease_meta_truncated", { read: err.read, limit: err.limit, total: err.total });
-        return [...err.records];
+        return { records: [...err.records], truncated: true };
       }
       throw err;
     }
@@ -2261,7 +2321,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
 
   let messages: RawClaimMessage[];
   try {
-    messages = await readClaims(() => io.listClaims());
+    messages = (await readClaims(() => io.listClaims())).records;
   } catch (err) {
     throw new LeaseUnavailableError(
       `the organizer lease in ${META_FOLDER} could not be read; this mailbox cannot be organized safely`,
@@ -2458,9 +2518,22 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
    */
   let verifyClaims: readonly ClaimRecord[];
   try {
-    // Through `readClaims` for the same reason as the election above: a full folder must not turn a
-    // renew that already landed into a mailbox that stops syncing.
-    const after = await readClaims(() => io.listClaims());
+    /* Through `readClaims` for the same reason as the election above: a full folder must not turn a
+     * renew that already landed into a mailbox that stops syncing.
+     *
+     * ── AND THE ABSENCE THIS BLOCK TESTS IS SAFE UNDER A TRUNCATED WINDOW, WHICH THE CONFIRM'S
+     *    IS NOT ─────────────────────────────────────────────────────────────────────────────
+     *
+     * The guard below asks whether the claim THIS GATE JUST APPENDED came back. That record is the
+     * newest message in the folder, and the window is the newest N — so it is covered by
+     * construction and its absence is a real absence, not a gap in the read.
+     *
+     * If a server ever broke that (a reorder, a non-ascending sequence), the guard degrades to
+     * "our claim is missing" — a lost race, which releases and retries. That is the safe direction,
+     * so the invariant is load-bearing for correctness and not for safety. The confirm below tests
+     * the absence of OLD refs, which a newest-first window genuinely can miss, and it carries its
+     * own coverage check for exactly that reason. */
+    const after = (await readClaims(() => io.listClaims())).records;
     verifyClaims = after
       .map((m) => parseClaim(m.raw, m.ref))
       .filter((c): c is ClaimRecord => c !== null);
@@ -2628,9 +2701,9 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
     // `list_claims`, rolls nothing back, and the next gate's election sorts the folder out from
     // whatever actually survived.
     if (verdict.displace.length > 0) {
-      let after: RawClaimMessage[];
+      let read: GateRead;
       try {
-        after = await readClaims(() => io.listClaims());
+        read = await readClaims(() => io.listClaims());
       } catch (err) {
         throw new LeaseUnavailableError(
           `the organizer lease in ${META_FOLDER} could not be re-read after the handover was ` +
@@ -2638,13 +2711,34 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
           { op: "list_claims", cause: err },
         );
       }
+      const after = read.records;
       const afterClaims = after
         .map((m) => parseClaim(m.raw, m.ref))
         .filter((c): c is ClaimRecord => c !== null);
       const ownStanding = afterClaims
         .filter((c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId && c.nonce === nonce);
       const stillRefs = new Set(after.map((m) => m.ref));
-      const survivor = verdict.displace.find((r) => stillRefs.has(r));
+      /* ── AN ABSENCE IS ONLY EVIDENCE FOR A REF THE WINDOW ACTUALLY COVERED ──────────────────
+       *
+       * This is a CUSTODY check — "is the claim I displaced really gone" — and it is the one place
+       * in the gate where a truncated read cannot simply be worked with. The election can act on the
+       * newest N because it is choosing between what it can see. This is asking about SPECIFIC OLD
+       * REFS, and old is exactly what a newest-first window drops: a displaced claim outside the
+       * window is absent from `stillRefs` for the same reason a successfully expunged one is, and
+       * reading that as success would confirm a handover that never landed — spending the caller's
+       * one-shot authorization while the beaten claim stands to win the next election.
+       *
+       * UIDs ascend with arrival, so the newest-N window covers the HIGHEST uids: a ref below the
+       * window's own floor is one this read could not have seen. Such a ref is treated exactly as a
+       * SURVIVOR is — the handover is not confirmed this cycle — because "still there" and "I could
+       * not look" have the same correct answer here, even though they are different facts. */
+      const coveredFloor = read.truncated
+        ? after.reduce<number>((lo, m) => (typeof m.ref === "number" && m.ref < lo ? m.ref : lo), Infinity)
+        : -Infinity;
+      const unprovable = verdict.displace.find(
+        (r) => !stillRefs.has(r) && !(typeof r === "number" && r >= coveredFloor),
+      );
+      const survivor = verdict.displace.find((r) => stillRefs.has(r)) ?? unprovable;
 
       if (ownStanding.length === 0) {
         // Our claim did not survive the cleanup — a racing release under our id, or the shared

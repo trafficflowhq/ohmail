@@ -648,9 +648,15 @@ export function makeProfileIo(client: ProfileImapClient, toServerPath: (canonica
         const from = typeof count === "number" && count > PROFILE_MESSAGES_MAX_PER_FETCH
           ? count - PROFILE_MESSAGES_MAX_PER_FETCH + 1
           : 1;
+        // BOTH AXES. `bytes` is not a second thought about the same bound: the count ceiling
+        // stops many small messages and this stops a few enormous ones, and an attacker with
+        // APPEND rights picks whichever is cheaper. See both constants.
+        let bytes = 0;
         for await (const m of client.fetch(`${from}:*`, { uid: true, source: true }, { uid: false })) {
           if (!m.source) continue;
           if (out.length >= PROFILE_MESSAGES_MAX_PER_FETCH) break;
+          bytes += m.source.byteLength;
+          if (bytes > PROFILE_BYTES_MAX_PER_FETCH) break;
           out.push({ ref: m.uid, raw: m.source.toString("utf8") });
         }
         return out;
@@ -755,6 +761,22 @@ export const PROFILE_DOC_MAX_BYTES = 64 * 1024 * 1024;
  * numbers to keep in step for no benefit.
  */
 export const PROFILE_MESSAGES_MAX_PER_FETCH = 500;
+
+/**
+ * THE OTHER AXIS OF THE SAME READ — and a count ceiling alone does not bound it.
+ *
+ * This read asks for FULL SOURCES. A ceiling on the NUMBER of messages therefore bounds the count
+ * and says nothing about the bytes: at {@link PROFILE_DOC_MAX_BYTES} apiece, a window's worth of
+ * documents is measured in gigabytes, all of it buffered into one array before any of it is parsed.
+ * Whoever can append to the folder chooses which of the two ceilings to spend, so both have to
+ * exist — the count stops many small messages, this stops a few enormous ones.
+ *
+ * Generous against the legitimate population, which is ONE current document plus whatever has not
+ * been collected yet, and far below anything that threatens the process. A read that reaches this
+ * has already found the newest document — it is walking backwards through the folder by then — so
+ * stopping is a bound on waste rather than a refusal.
+ */
+export const PROFILE_BYTES_MAX_PER_FETCH = 128 * 1024 * 1024;
 
 /** A `MalformedProfile`, with `ref` omitted rather than set to `undefined` (the parser's rule). */
 function malformedProfile(reason: string, ref: unknown): MalformedProfile {
