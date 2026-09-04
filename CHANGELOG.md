@@ -118,6 +118,13 @@ Microsoft rather than a password, each install holds its own token and there is 
 to compute the same key from. For those mailboxes decisions can only be made on the install that
 organizes the mailbox; pressing from another one is refused, naming the install to go to.
 
+The folder the decisions travel in is ordinary mail, so it can fill up with ordinary mail — and a
+full folder used to hide the newest things in it, silently: enough messages and a decision, an
+answer, or the record of which install is organizing the mailbox could sit there unread for good.
+Now the newest records are the ones that are read, and a folder too full to read in one go is
+treated as a folder nobody could look at rather than as an empty one, so no decision is reported as
+taken, refused or dropped on the strength of a look that did not finish.
+
 ### Screener decisions from a reader no longer buy advice nobody can use
 
 Asking for an AI suggestion on a mailbox you only read used to spend credits whatever the state of
