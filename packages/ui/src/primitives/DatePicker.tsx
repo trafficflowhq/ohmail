@@ -166,8 +166,12 @@ export function DatePicker({
   const start = weekStart ?? localeWeekStart(locale);
   const enabled = useCallback((d: Day) => !minDay || compareDays(d, minDay) >= 0, [minDay]);
 
-  // The cursor: the chosen day, else the first pickable day, else today.
-  const initial = valueDay ?? (minDay && compareDays(minDay, todayDay) > 0 ? minDay : todayDay);
+  /* The cursor: the chosen day, else today — and never before `min` in EITHER branch. A host
+     that passes a `value` older than its own floor (a resurface day that has since passed) would
+     otherwise open with the tab stop on a disabled cell, where Enter does nothing and says
+     nothing about why. */
+  const wanted = valueDay ?? todayDay;
+  const initial = minDay && compareDays(wanted, minDay) < 0 ? minDay : wanted;
   const [cursor, setCursor] = useState<Day>(initial);
   const [view, setView] = useState<{ y: number; m: number }>({ y: initial.y, m: initial.m });
   const rootRef = useRef<HTMLDivElement>(null);
@@ -197,13 +201,25 @@ export function DatePicker({
     return () => window.removeEventListener("resize", place);
   }, [anchor, view.y, view.m]);
 
-  // Focus follows the cursor — into the grid once the card is placed (a hidden element cannot
-  // take focus, and the card is hidden until its first placement), then onto the new cell
-  // after every move.
+  /**
+   * Focus follows the cursor — into the grid once the card is placed (a hidden element cannot
+   * take focus, and the card is hidden until its first placement), then onto the new cell after
+   * every move.
+   *
+   * BUT ONLY WHILE THE GRID HAS FOCUS. A press on a month arrow moves the cursor too, and this
+   * effect would then yank focus off the arrow and into the new month's grid — so the arrow
+   * could be used exactly once from the keyboard and every further step needed a Shift+Tab back.
+   * The same applies to a re-place on resize, which changes `pos` and would otherwise pull focus
+   * out of whatever the reader had reached. So: if something inside this card already holds
+   * focus and it is not a day cell, leave it alone.
+   */
   useEffect(() => {
     if (!pos) return;
-    const el = rootRef.current?.querySelector<HTMLButtonElement>(`[data-day="${dayKey(cursor)}"]`);
-    el?.focus();
+    const root = rootRef.current;
+    if (!root) return;
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && root.contains(active) && !active.hasAttribute("data-day")) return;
+    root.querySelector<HTMLButtonElement>(`[data-day="${dayKey(cursor)}"]`)?.focus();
   }, [pos, cursor, view.y, view.m]);
 
   // An outside press dismisses — `mousedown`, so the press that opened this cannot close it.
@@ -231,6 +247,19 @@ export function DatePicker({
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     const claim = () => { e.preventDefault(); e.stopPropagation(); e.nativeEvent.stopImmediatePropagation(); };
+    /* Escape closes from anywhere in the dialog — including from a month arrow, which is where a
+       reader who has just stepped a month is standing. */
+    if (e.key === "Escape") { claim(); onClose(); return; }
+    /**
+     * EVERY OTHER KEY BELONGS TO THE GRID'S ROVING CURSOR, and this guard is the difference
+     * between a working month arrow and a booby-trapped one. This handler sits on the dialog
+     * ROOT, so a keydown on `.dp-nav` bubbles to it; without the guard, `claim()` would
+     * `preventDefault()` the button's own activation and the `Enter` arm would then pick the
+     * cursor's day — so pressing Enter on "Next month" scheduled a resurface for a day the
+     * reader never chose, and closed the picker to prove it.
+     */
+    const target = e.target as HTMLElement | null;
+    if (!target || !target.hasAttribute("data-day")) return;
     switch (e.key) {
       case "ArrowLeft": claim(); return move(addDays(cursor, -1));
       case "ArrowRight": claim(); return move(addDays(cursor, 1));
@@ -242,7 +271,6 @@ export function DatePicker({
       case "PageDown": claim(); return move(addMonths(cursor, 1));
       case "Enter":
       case " ": claim(); if (enabled(cursor)) onPick(dayKey(cursor)); return;
-      case "Escape": claim(); onClose(); return;
       default: return;
     }
   };
@@ -299,7 +327,12 @@ export function DatePicker({
                   aria-label={label}
                   tabIndex={isCursor ? 0 : -1}
                   onClick={() => { if (ok) onPick(key); }}
-                  onFocus={() => { if (!isCursor) setCursor(d); }}
+                  /* `move`, not a bare `setCursor`: a cell from a neighbouring month is
+                     `aria-disabled` rather than `disabled`, so it can still take focus — and a
+                     cursor left outside the shown month would then be stepped by `showMonth`
+                     into a month the grid is not rendering, leaving NO cell with `tabIndex=0`
+                     and the whole calendar unreachable by Tab. */
+                  onFocus={() => { if (!isCursor) move(d); }}
                 >
                   {d.d}
                 </button>

@@ -545,9 +545,10 @@ function ActionBar({
      * THE HORIZON CHOOSER — three ways to say when, feeding a concrete instant into the action.
      *
      * Tomorrow and next week are computed from `now` at 09:00 UTC (the hour every stored
-     * `bubbleUpAt` uses, so the label reads back the same). "Pick a date" is the native date
-     * input, floored at tomorrow so the picker cannot choose a horizon in the past. Each choice
-     * closes the panel and dispatches `resurface:<iso>`; the shell mutates and states the day.
+     * `bubbleUpAt` uses, so the label reads back the same). "Pick a date" opens the product's own
+     * `DatePicker` (below), floored at tomorrow through its `min` so no horizon in the past can
+     * be chosen. Each choice closes the panel and dispatches `resurface:<iso>`; the shell mutates
+     * and states the day.
      *
      * FOUR NOW, and the fourth is first because it is the only one that costs nothing to change
      * your mind about. "Now" dispatches `resurface_now` — a state, not a date; see
