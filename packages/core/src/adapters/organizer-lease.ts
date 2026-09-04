@@ -2214,13 +2214,16 @@ export async function readMetaFolderWindow(client: LeaseImapClient): Promise<Met
   const from = total !== null && total > META_RECORDS_MAX_PER_FETCH
     ? total - META_RECORDS_MAX_PER_FETCH + 1
     : 1;
-  let truncated = from > 1;
-
-  const records: RawMetaMessage[] = [];
   // HEADERS ONLY. A claim's body is one sentence for a human, a decision's payload rides in its
   // headers, and fetching sources here would make every cycle's cost scale with whatever else ends
   // up in this folder.
-  for await (const m of client.fetch(`${from}:*`, { uid: true, headers: true }, { uid: false })) {
+  //
+  // A function rather than a loop in place, because the shift check below has to be able to run it
+  // AGAIN with a wider range.
+  const readFrom = async (start: number): Promise<{ records: RawMetaMessage[]; evicted: boolean }> => {
+  const records: RawMetaMessage[] = [];
+  let evicted = false;
+  for await (const m of client.fetch(`${start}:*`, { uid: true, headers: true }, { uid: false })) {
     if (!m.headers) continue;
     records.push({ ref: m.uid, raw: m.headers.toString("utf8") });
     // ── PAST THE CEILING, DROP FROM THE FRONT — NEVER STOP AT IT ─────────────────────────────
@@ -2241,10 +2244,51 @@ export async function readMetaFolderWindow(client: LeaseImapClient): Promise<Met
     // does not recognise is not its to destroy.
     if (records.length > META_RECORDS_MAX_PER_FETCH) {
       records.shift();
-      truncated = true;
+      evicted = true;
     }
   }
-  return { records, truncated, total };
+    return { records, evicted };
+  };
+
+  const first = await readFrom(from);
+
+  /* ── THE NUMBERING CAN SHIFT BETWEEN THE COUNT AND THE FETCH, AND EXPUNGE DOES IT SILENTLY ──
+   *
+   * `from` is a SEQUENCE number computed from a count taken one round trip earlier. Sequence
+   * numbers are not stable: when another connection expunges a message, every message above it is
+   * renumbered DOWNWARD immediately. So between the count and this FETCH the window can slide out
+   * from under the range, and the range is the only thing that did not move.
+   *
+   * The renumbering guard the gate already carries does not see this. That one compares
+   * UIDVALIDITY, and **an EXPUNGE does not change UIDVALIDITY** — it is not a renumbering of uids
+   * at all, only of sequence numbers, which is precisely the coordinate this range is written in.
+   *
+   * Mild case: enough messages go that the window covers fewer records than it asked for, and the
+   * read quietly returns a shorter tail than the ceiling it is entitled to. Severe case: enough go
+   * that `from` is now past the end, and the unordered-range rule turns `501:*` into `400:501` —
+   * ONE record, still flagged truncated, and the gate elects on it. That is the same one-record
+   * election window the unconfirmed-count fix closed, reached by a race instead of a stale cache.
+   *
+   * Both are visible in one number. A capped window asks for exactly the ceiling; anything less
+   * means the folder moved while we were reading it, so the answer is thrown away and the folder
+   * read whole. `1:*` needs no such check — it is anchored at both ends and cannot slide.
+   *
+   * Appends are the other direction and are already safe: they only make `*` larger, and the
+   * eviction below keeps the newest.
+   */
+  if (from > 1 && first.records.length < META_RECORDS_MAX_PER_FETCH) {
+    const wide = await readFrom(1);
+    // The count that produced `from` is now known to be wrong, so it is not reported. When the
+    // wide read evicted nothing it counted the folder itself, which is a better answer than the
+    // one the server gave a round trip ago.
+    return {
+      records: wide.records,
+      truncated: wide.evicted,
+      total: wide.evicted ? null : wide.records.length,
+    };
+  }
+
+  return { records: first.records, truncated: from > 1 || first.evicted, total };
 }
 
 export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: string) => string): LeaseIo {

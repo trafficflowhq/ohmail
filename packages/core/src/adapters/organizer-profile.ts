@@ -123,6 +123,23 @@ const H = {
   installId: "X-Ohmail-Install-Id",
 } as const;
 
+/**
+ * DOES THIS MESSAGE CLAIM TO BE A PROFILE AT ALL — the cheap pre-filter the bounded read retains on.
+ *
+ * Deliberately OVER-inclusive and deliberately not a parser. It answers "could this be one of ours"
+ * so that the read's ceilings can be spent on profile records instead of on whatever else shares the
+ * folder; {@link parseProfileMessage} remains the only thing that decides what a record MEANS.
+ * Retaining a message this says yes to and the parser then rejects costs one slot. Dropping one the
+ * parser would have accepted would be a document lost, so the two must not disagree in that
+ * direction — hence the header block only, matched case-insensitively, with no other condition.
+ */
+function looksLikeProfile(raw: string): boolean {
+  // The header block ends at the first blank line; a mention in the BODY is not a discriminator.
+  const sep = /\r?\n\r?\n/.exec(raw);
+  const head = sep ? raw.slice(0, sep.index) : raw;
+  return head.toLowerCase().includes(`${H.profile.toLowerCase()}:`);
+}
+
 /** A sender this mailbox has screened IN. `address` is the natural key. */
 export interface ProfileScreenerEntry {
   address: string;
@@ -530,8 +547,15 @@ export interface RawProfileMessage {
 export interface ProfileIo {
   /** Create `ohmail/_meta` if absent and unsubscribe it. Idempotent — the lease's semantics. */
   ensureMetaFolder(): Promise<void>;
-  /** Every message in the meta folder, full source. Claims ride along and are filtered by parse. */
-  listProfileMessages(): Promise<RawProfileMessage[]>;
+  /**
+   * The meta folder's PROFILE messages, full source.
+   *
+   * Bounded and newest-first by default, which is what a read wants: the newest document is the
+   * current one. `complete` reads the whole folder instead, and exists for {@link
+   * writeOrganizerProfile} — its `newer`/`foreign` results are REFUSALS, and a refusal made from a
+   * window cannot tell "no such document" apart from "did not look that far back".
+   */
+  listProfileMessages(opts?: { complete?: boolean }): Promise<RawProfileMessage[]>;
   /** APPEND one profile message. */
   appendProfile(raw: string): Promise<void>;
   /** STORE `\Deleted` + EXPUNGE the given messages. */
@@ -631,7 +655,7 @@ export function makeProfileIo(client: ProfileImapClient, toServerPath: (canonica
      * connection appended. Three reads in the lease were corrected for this; this was the fourth
      * and was missed. A stale zero here reads as "nobody has published settings for this mailbox".
      */
-    async listProfileMessages(): Promise<RawProfileMessage[]> {
+    async listProfileMessages(opts?: { complete?: boolean }): Promise<RawProfileMessage[]> {
       const lock = await client.getMailboxLock(await meta.path());
       try {
         const out: RawProfileMessage[] = [];
@@ -696,21 +720,76 @@ export function makeProfileIo(client: ProfileImapClient, toServerPath: (canonica
          * ceiling: a document too large to be worth reading is the PARSER's refusal to make
          * ({@link PROFILE_DOC_MAX_BYTES}), and silently returning nothing for it would be the same
          * "no settings published" lie by another route. */
-        const win: Array<{ rec: RawProfileMessage; size: number }> = [];
-        let bytes = 0;
-        for await (const m of client.fetch(`${from}:*`, { uid: true, source: true }, { uid: false })) {
-          if (!m.source) continue;
-          const size = m.source.byteLength;
-          win.push({ rec: { ref: m.uid, raw: m.source.toString("utf8") }, size });
-          bytes += size;
-          while (
-            win.length > PROFILE_MESSAGES_MAX_PER_FETCH
-            || (bytes > PROFILE_BYTES_MAX_PER_FETCH && win.length > 1)
-          ) {
-            bytes -= win.shift()!.size;
+        /* ── THE CEILINGS ARE SPENT ON PROFILE RECORDS, NOT ON WHATEVER SHARES THE FOLDER ─────
+         *
+         * `ohmail/_meta` also holds the lease's claims, and anyone with APPEND rights can put
+         * anything else in it. Counting those against these ceilings meant five hundred later
+         * newsletters could evict the current document — and this list is not only what a READ
+         * returns. {@link writeOrganizerProfile} makes its `newer` and `foreign` refusals from it,
+         * and those refusals are the whole reason a build that cannot represent a v2 document will
+         * not overwrite one. An evicted v2 is not a document missing from a read; it is an older
+         * organizer appending v1 over settings it never saw, with every later read then agreeing
+         * that the rollback is current. Silent, durable, and in the customer's own mailbox.
+         *
+         * So the retention test is applied AFTER the discriminator. A flood of non-profile messages
+         * now costs transfer and nothing else. */
+        const readFrom = async (start: number): Promise<{
+          win: Array<{ rec: RawProfileMessage; size: number }>; seen: number;
+        }> => {
+          const win: Array<{ rec: RawProfileMessage; size: number }> = [];
+          let bytes = 0;
+          let seen = 0;
+          for await (const m of client.fetch(`${start}:*`, { uid: true, source: true }, { uid: false })) {
+            if (!m.source) continue;
+            seen++;
+            const raw = m.source.toString("utf8");
+            if (!looksLikeProfile(raw)) continue;
+            const size = m.source.byteLength;
+            win.push({ rec: { ref: m.uid, raw }, size });
+            bytes += size;
+            while (
+              win.length > PROFILE_MESSAGES_MAX_PER_FETCH
+              || (bytes > PROFILE_BYTES_MAX_PER_FETCH && win.length > 1)
+            ) {
+              bytes -= win.shift()!.size;
+            }
           }
-        }
-        for (const w of win) out.push(w.rec);
+          return { win, seen };
+        };
+
+        /* ── A REFUSAL CANNOT BE MADE FROM A WINDOW ───────────────────────────────────────────
+         *
+         * Filtering the ceilings to profile records keeps a flood from EVICTING the document, but
+         * it cannot put back one the RANGE never delivered. A newest-first window starts partway
+         * down the folder, so a document with more than a ceiling's worth of messages appended
+         * after it is not merely dropped — it is never fetched, and no amount of retention policy
+         * changes that.
+         *
+         * For a read that is fine: the newest document is the current one, and that is what a read
+         * wants. For {@link writeOrganizerProfile} it is not, because its `newer` and `foreign`
+         * checks are refusals — they must be made against EVERY document in the folder, and a
+         * refusal that silently did not look is indistinguishable from one that looked and found
+         * nothing. That is the difference between "we did not overwrite the v2 settings" and "we
+         * overwrote settings we never saw".
+         *
+         * So the write asks for a complete scan. The cost is transfer of one folder on a settings
+         * write — rare, and never on the per-cycle path the bound was introduced to protect —
+         * while retention stays bounded by the ceilings above, which is where the memory risk was.
+         */
+        let read = await readFrom(opts?.complete ? 1 : from);
+
+        /* ── AND THE SEQUENCE WINDOW CAN SLIDE OUT FROM UNDER THE RANGE ───────────────────────
+         *
+         * The same hazard as the lease's read, for the same reason: `from` is a SEQUENCE number
+         * from a count taken a round trip ago, and an EXPUNGE on another connection renumbers
+         * everything above it downward without touching UIDVALIDITY. A capped window asks for
+         * exactly the ceiling's worth of MESSAGES, so `seen` short of it means the folder moved
+         * while it was being read — and far enough, `from` lands past the end and the unordered
+         * range returns a single message. Throw that away and read the folder whole; `1:*` is
+         * anchored at both ends and cannot slide. */
+        if (!opts?.complete && from > 1 && read.seen < PROFILE_MESSAGES_MAX_PER_FETCH) read = await readFrom(1);
+
+        for (const w of read.win) out.push(w.rec);
         return out;
       } finally {
         lock.release();
@@ -957,7 +1036,11 @@ export async function writeOrganizerProfile(input: WriteProfileInput): Promise<W
   }
   let messages: RawProfileMessage[];
   try {
-    messages = await io.listProfileMessages();
+    // COMPLETE, not the bounded read. Both refusals below are made from this list, and a refusal
+    // that quietly did not look far enough is the failure they exist to prevent: an older organizer
+    // appending v1 over a v2 document it never fetched, with every later read then agreeing the
+    // rollback is current.
+    messages = await io.listProfileMessages({ complete: true });
   } catch (err) {
     throw new ProfileUnavailableError(
       `the organizer profile in ${META_FOLDER} could not be read before writing`,
