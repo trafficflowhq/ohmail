@@ -693,6 +693,19 @@ export interface ScreenerSuggestResult {
  * `senders` is exactly the set the control should POST back, so the thing that was priced and
  * the thing that is bought are the same list rather than two computations that agree today.
  */
+/**
+ * ── A PAGE CAN COME BACK EMPTY WITH A CURSOR STILL SET, AND THAT MEANS "KEEP GOING" ──────────
+ *
+ * Stated as a contract because it stopped being theoretical when reader decisions started
+ * queueing. `nextCursor` is anchored to the last row the QUERY consumed, never to the last row the
+ * page RETURNS — anchoring it to the returned rows would re-offer or skip rows the next call has
+ * already passed. But the returned rows are the query's rows MINUS every sender with a decision in
+ * flight, and if a whole page's worth of senders were decided on another door, `items` is empty
+ * while there is plenty more queue behind it.
+ *
+ * So a caller must stop on `nextCursor === null`, never on `items.length === 0`. A client that
+ * stops on empty shows an empty Screener to somebody whose queue is not empty.
+ */
 export interface ScreenerPage extends Page<ScreenerItem> {
   suggestable: {
     /** Page senders that are held, AI-eligible, and have no stored suggestion yet. */
