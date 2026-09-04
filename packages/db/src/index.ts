@@ -76,11 +76,19 @@ export {
 // `organizer_requests` — the reader's own bookkeeping. See the module's own header for why it is
 // here: the worker's reader cycle writes these rows every poll and may not import services.
 export {
-  REQUEST_STATES, insertOrganizerRequest, listPendingRequests, listSentRequests,
-  listOutstandingForAccount, markRequestsSent, markRequestsApplied,
-  markRequestsExpired, listStaleSentRequests,
+  REQUEST_STATES, TERMINAL_REQUEST_STATES, insertOrganizerRequest, listPendingRequests,
+  listSentRequests, listOutstandingForAccount, markRequestsSent, markRequestsApplied,
+  markRequestsExpired, markRequestsRefused, listStaleSentRequests,
   type RequestState, type OrganizerRequestRow, type OutstandingMatch,
 } from "./organizer-requests.js";
+
+// The per-account request key (mail 0090) — what makes a reader's decision provable rather than
+// merely plausible. Here for `organizer-requests.js`'s reason exactly: the worker's own cycles
+// read and mint it every poll and may not import services at runtime.
+export {
+  readRequestKey, readOrMintRequestKey, rotateRequestKey, clearRequestKey, generateRequestKey,
+  REQUEST_KEY_BYTES, REQUEST_KEY_ENCODED_LENGTH,
+} from "./request-key.js";
 
 // The ONE spelling of "a stand-down closes the appointments it can no longer keep" — same
 // argument as the line above, four call sites (the sidecar's lease gate and its launch catch-up,

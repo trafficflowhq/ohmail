@@ -19,9 +19,20 @@ import type { Tx } from "./change-log.js";
  * import `@trafficflow/services` at runtime.
  */
 
-/** The closed set the migration's CHECK carries. */
-export const REQUEST_STATES = ["pending", "sent", "applied", "expired"] as const;
+/**
+ * The closed set the migration's CHECK carries.
+ *
+ * `refused` joined in mail 0090 and it is the state that made the other four honest. Before it, a
+ * reader inferred `applied` from its record's ABSENCE from the mailbox — and an organizer removes
+ * a record both when it applies one and when it REFUSES one, so "applied" was being reported for
+ * decisions that had been thrown away. The organizer now says which, on a signed ack record, and
+ * this is where the answer lands.
+ */
+export const REQUEST_STATES = ["pending", "sent", "applied", "expired", "refused"] as const;
 export type RequestState = (typeof REQUEST_STATES)[number];
+
+/** A state a row will never leave. What the Screener list may stop excluding a sender for. */
+export const TERMINAL_REQUEST_STATES = ["applied", "expired", "refused"] as const;
 
 export interface OrganizerRequestRow {
   id: string;
@@ -33,16 +44,19 @@ export interface OrganizerRequestRow {
   state: RequestState;
   sentAt: Date | null;
   resolvedAt: Date | null;
+  /** Why the organizer said no. Non-null only in `refused`. A closed vocabulary — see the column. */
+  refusedReason: string | null;
   createdAt: Date;
 }
 
 function toRow(r: {
   id: string; accountId: string; mailboxId: string; kind: string; payload: unknown;
-  decidedAt: Date; state: string; sentAt: Date | null; resolvedAt: Date | null; createdAt: Date;
+  decidedAt: Date; state: string; sentAt: Date | null; resolvedAt: Date | null;
+  refusedReason: string | null; createdAt: Date;
 }): OrganizerRequestRow {
   return {
     id: r.id, accountId: r.accountId, mailboxId: r.mailboxId, kind: r.kind, payload: r.payload,
-    decidedAt: r.decidedAt,
+    decidedAt: r.decidedAt, refusedReason: r.refusedReason,
     // Coerced, never trusted — the column is NOT NULL with a CHECK behind it, so an unrecognised
     // value is unreachable from this tree, and the direction it must fail in if it ever happens is
     // the one that gets a HUMAN looked at again rather than silently vanished: `pending` is where
@@ -151,11 +165,46 @@ export async function markRequestsSent(tx: Tx, ids: readonly string[], sentAt: D
     .where(and(inArray(organizerRequests.id, [...ids]), eq(organizerRequests.state, "pending")));
 }
 
-/** `sent` → `applied`: its id is no longer in the mailbox, so the organizer took it. */
-export async function markRequestsApplied(tx: Tx, ids: readonly string[], resolvedAt: Date): Promise<void> {
+/**
+ * `sent` → `applied`: the organizer ACKNOWLEDGED it as applied.
+ *
+ * Not "its id is no longer in the mailbox", which is what this used to mean and was wrong: a
+ * refused record is equally absent, so absence reported success for decisions that were thrown
+ * away. The evidence is now a signed ack (`AckRecord`), and this function only records what that
+ * ack said.
+ *
+ * `from` exists for the ROLE FLIP. An install that becomes the organizer settles its own leftover
+ * `pending` rows by applying them directly — they were never handed to anyone, so they move
+ * `pending` → `applied` without ever being `sent`. Every other caller leaves it at the default and
+ * gets the guarded `sent` → `applied` transition.
+ */
+export async function markRequestsApplied(
+  tx: Tx, ids: readonly string[], resolvedAt: Date,
+  opts: { from?: "sent" | "pending" } = {},
+): Promise<void> {
   if (ids.length === 0) return;
   await tx.update(organizerRequests)
     .set({ state: "applied", resolvedAt })
+    .where(and(
+      inArray(organizerRequests.id, [...ids]),
+      eq(organizerRequests.state, opts.from ?? "sent"),
+    ));
+}
+
+/**
+ * `sent` → `refused`: the organizer acknowledged it and said no, and this is what it said.
+ *
+ * The reason is stored so the person can be told something better than "it did not happen" —
+ * `pendingDecisions[]` carries it to the client. A `null` reason is a refusal whose named cause
+ * this build does not recognise (a newer organizer's vocabulary), which is still a refusal and
+ * must still leave the queue.
+ */
+export async function markRequestsRefused(
+  tx: Tx, ids: readonly string[], reason: string | null, resolvedAt: Date,
+): Promise<void> {
+  if (ids.length === 0) return;
+  await tx.update(organizerRequests)
+    .set({ state: "refused", resolvedAt, refusedReason: reason })
     .where(and(inArray(organizerRequests.id, [...ids]), eq(organizerRequests.state, "sent")));
 }
 

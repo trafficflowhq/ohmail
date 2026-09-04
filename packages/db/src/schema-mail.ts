@@ -2144,12 +2144,26 @@ export const organizerRequests = pgTable("organizer_requests", {
    * in the order the IMAP server happens to list them.
    */
   decidedAt: timestamp("decided_at", { withTimezone: true }).notNull(),
-  /** One of the four above. Closed by `organizer_requests_state_closed`. */
+  /** One of the FIVE states. Closed by `organizer_requests_state_closed`. */
   state: text("state").notNull().default("pending"),
   /** When it was appended to the mailbox. NULL while `pending`. */
   sentAt: timestamp("sent_at", { withTimezone: true }),
-  /** When it became `applied` or `expired`. NULL before that. */
+  /** When it became `applied`, `refused` or `expired`. NULL before that. */
   resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  /**
+   * WHAT THE ORGANIZER SAID NO TO, carried back on its ack record and shown to the person (mail
+   * 0090). NULL in every state but `refused`.
+   *
+   * It exists because 0088's four states could not tell a person the one thing they need after
+   * pressing: a reader inferred `applied` from the record's ABSENCE from the folder, and a record
+   * the organizer REFUSED and expunged is absent in exactly the same way. The two mean opposite
+   * things, so absence stopped being evidence and an ack carries the outcome instead.
+   *
+   * A CLOSED VOCABULARY THIS INSTALL DEFINES, not free text and not a stranger's: the value is
+   * chosen by the drain from `RequestRefusal` and travels back through a header the same drain
+   * writes. It is never a sentence a payload supplied.
+   */
+  refusedReason: text("refused_reason"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
   // THE DRAIN'S OWN READ — "what of mine is still outstanding on this mailbox", once per cycle.
@@ -2157,6 +2171,10 @@ export const organizerRequests = pgTable("organizer_requests", {
   // per cycle: no query is wrong and every test stays green, which is why the index census lists
   // it rather than trusting the shape.
   ixMailboxState: index("organizer_requests_mailbox_state_idx").on(t.mailboxId, t.state),
+  // THE SCREENER LIST'S OWN READ (mail 0090). `listOutstandingForAccount` runs on every
+  // `GET /screener` and asks by ACCOUNT, so the index above does not serve it — a different
+  // leading column is a different index, and the miss is invisible to every test.
+  ixAccountState: index("organizer_requests_account_state_idx").on(t.accountId, t.state),
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2840,6 +2858,40 @@ export const accountSettings = pgTable("account_settings", {
    * three-valued read from two cutline implementations.
    */
   screeningScope: text("screening_scope").notNull().default("window"),
+  /**
+   * THE PER-ACCOUNT REQUEST KEY — what makes a reader's decision provable rather than merely
+   * plausible (mail 0090, 0.14.1). 32 random bytes, base64url, 43 characters; the length is
+   * closed by `account_settings_request_key_len`.
+   *
+   * `ohmail/_meta` is an ordinary IMAP folder, so the request records in it are messages ANY
+   * process with APPEND rights could have written — a shared-folder ACL, a sieve `fileinto`, a
+   * leaked device credential. Nothing in the wire format distinguishes this account's own reader
+   * from a stranger, and an organizer that cannot distinguish them files a stranger's mail on
+   * their say-so. This key is the thing that distinguishes them: a record carries
+   * `X-Ohmail-Request-Sig`, an HMAC over its own fields under this key, and the organizer
+   * verifies it BEFORE it decodes the payload.
+   *
+   * **A NULL here is not a degraded signature — it is NO CHANNEL.** An organizer holding no key
+   * advertises no `requests` capability, so a reader is refused honestly at the door rather than
+   * queueing a decision nobody can verify. That is the safe resting state and it is where every
+   * account starts; the key is minted on first need, never at signup, so an account that never
+   * uses two installs never grows one.
+   *
+   * **NEVER LEAVES THE SERVER EXCEPT TO AN INSTALL THAT PROVED IT HOLDS A SESSION**, and never
+   * reaches any admin surface, log line or DTO. It is a bearer secret: whoever holds it can make
+   * this account's organizer apply screener decisions.
+   */
+  requestKey: text("request_key"),
+  /**
+   * WHEN {@link requestKey} was last replaced. Rotation is an overwrite — a password change and a
+   * consent reset both mint a fresh key — so records signed with the old one stop verifying and
+   * expire on the reader's own cycle.
+   *
+   * Kept because the refusal it causes is INDISTINGUISHABLE, in the log, from the attack the
+   * signature exists to stop: both read `unauthenticated`. An operator looking at a run of them
+   * needs to know whether a rotation happened first, and this is the only place that answers.
+   */
+  requestKeyRotatedAt: timestamp("request_key_rotated_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
