@@ -86,7 +86,7 @@ import {
 } from "./oauth-return";
 import { hostsFor, providerById, providerLabel, type ProviderPreset } from "../../shell/providers";
 import { ProviderPicker } from "../../shell/ProviderPicker";
-import { AGO_COPY, agoStamp } from "../../shell/format";
+import { AGO_COPY, agoStamp, dayStamp } from "../../shell/format";
 import { isSyncBlockReason, readerStandDown, showInboundQuiet } from "../../shell/mail-state";
 import { useMailState } from "../../shell/MailStateProvider";
 import { displayAddress } from "../../shell/idn";
@@ -830,6 +830,23 @@ export function MailboxSection() {
   const [releasing, setReleasing] = useState<ReadonlySet<string>>(() => new Set());
 
   /**
+   * MAILBOXES THIS PANE HAS ALREADY ASKED FOR — the released row's one press, spent.
+   *
+   * The ceremony's confirm needs no such thing: it lives inside a panel that `setOrganizer(null)`
+   * removes on the way out, so the control cannot survive its own press. The released row's
+   * button has no panel around it and the ROW DOES NOT MOVE when the press lands — the worker
+   * changes the role on its next pass, up to a minute later, and the poll brings it back after
+   * that. So without this the sentence and the button both sit there beside the "asked for"
+   * answer, inviting a second press that authorizes the same takeover again.
+   *
+   * NEVER CLEARED ON SUCCESS, deliberately: what ends this is the row's own role changing, which
+   * the poll delivers. Clearing it when the request returned would re-arm the button during
+   * exactly the window the answer under it says to wait through. A FAILED request is removed
+   * again, because then nothing was asked for and the way back has to stay reachable.
+   */
+  const [takingOver, setTakingOver] = useState<ReadonlySet<string>>(() => new Set());
+
+  /**
    * STOP ORGANIZING THIS MAILBOX HERE, AND KEEP THE MAIL — the mirror of {@link confirmTakeover}.
    *
    * It records a request and does not perform it. The claim lives in the customer's own IMAP
@@ -867,6 +884,7 @@ export function MailboxSection() {
 
   const confirmTakeover = useCallback(async (id: string): Promise<void> => {
     setError(null);
+    setTakingOver((q) => new Set(q).add(id));
     try {
       const result = await mailboxApi.organize(id);
       if (!alive.current) return;
@@ -880,7 +898,11 @@ export function MailboxSection() {
       // new one — a local guess would be a second source of truth for `status`.
       await refresh();
     } catch (err) {
-      if (alive.current) { setOrganizer(null); setError(messageOf(err)); }
+      if (!alive.current) return;
+      setOrganizer(null);
+      setError(messageOf(err));
+      // Nothing was asked for, so the way back must stay reachable — see `takingOver`.
+      setTakingOver((q) => { const n = new Set(q); n.delete(id); return n; });
     }
   }, [refresh, t]);
 
@@ -2039,7 +2061,36 @@ export function MailboxSection() {
                   opens one short-lived connection, reads the claim, and reports what is there —
                   and only then is anybody asked to decide. Confirming writes an authorization and
                   nothing else: the worker reads the claim again on its next pass and decides. */}
-              {standDown ? (
+              {/* ── AND THE MAILBOX YOU LET GO IS NOT ONE SOMEBODY TOOK ─────────────────────
+                  FIRST, ahead of the ceremony above, because everything the ceremony describes is
+                  false here. Nobody holds this mailbox — this account released it — so there is
+                  no claim worth opening a connection to inspect and no install to displace. The
+                  check would answer "no other ohmail install is organizing this mailbox", which
+                  is a question this row already knows the answer to.
+
+                  `mbx-sub` AND NOT `mbx-bad`. Nothing is broken and nothing failed: a person
+                  pressed "stop organizing here" and this is that, still true. Alarm styling would
+                  make the sentence itself a lie, the same argument the forwarding notice below
+                  makes for the same class.
+
+                  ONE PRESS, and it is the same authorization the confirm step writes — the second
+                  step of the ceremony exists to follow the first, and with the first gone there is
+                  nothing to confirm. The row's role moves at the worker's next pass, which is what
+                  the answer under the button says. */}
+              {standDown === "released" ? (
+                <>
+                  <span className="mbx-sub">
+                    {t("stateReleased", { when: dayStamp(m.organizerReleasedAt) })}
+                  </span>
+                  <Button
+                    className="mbx-btn"
+                    disabled={takingOver.has(m.id)}
+                    onClick={() => { void confirmTakeover(m.id); }}
+                  >
+                    {t("organizeHere")}
+                  </Button>
+                </>
+              ) : standDown ? (
                 <>
                   <span className="mbx-bad">{t(`standDown_${standDown}`)}</span>
                   {organizer?.id === m.id ? (

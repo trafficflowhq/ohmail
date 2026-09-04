@@ -725,3 +725,29 @@ export function agoStamp(iso: string, now: number): { rel: string; abs: string }
   if (secs < 86400) return { rel: rtf.format(-Math.round(secs / 3600), "hour"), abs };
   return { rel: rtf.format(-Math.round(secs / 86400), "day"), abs };
 }
+
+/**
+ * THE DAY SOMETHING BECAME TRUE — a DATE, with no clock on it.
+ *
+ * "You stopped organizing this here on 3 Sep 2026" is a standing fact somebody reads once.
+ * Putting a timestamp in it ("on 03/09/2026, 15:28:43") makes it look like an event log and
+ * invites watching — the same reason the mailbox row carries when an install BECAME the
+ * organizer rather than when it was last seen. That is why this is not `agoStamp(…).abs`,
+ * which is built for a tooltip answering "when exactly".
+ *
+ * It lives here, not in a pane, because the desktop's Mailboxes pane and the browser's render
+ * the SAME sentence from the same catalogue key. Two copies of the rule would be two dates for
+ * one fact the day either one is touched.
+ *
+ * An absent or unparseable instant renders an em dash rather than "Invalid Date": the callers
+ * interpolate this into a sentence, and a sentence with a dash in it is still readable.
+ */
+export function dayStamp(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return "—";
+  return at.toLocaleDateString(activeFormatLocale(), {
+    dateStyle: "medium",
+    timeZone: activeFormatZone(),
+  });
+}

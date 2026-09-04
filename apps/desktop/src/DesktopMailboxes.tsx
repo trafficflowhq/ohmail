@@ -91,7 +91,7 @@ import {
   deviceHoldings, holdingsSpeak, readerStandDown, showInboundQuiet, type MailboxFacts,
 } from "../../webapp/app/shell/mail-state";
 import { addressKey } from "../../webapp/app/shell/address-key";
-import { agoStamp } from "../../webapp/app/shell/format";
+import { agoStamp, dayStamp } from "../../webapp/app/shell/format";
 import { activeFormatLocale, activeFormatZone } from "../../webapp/app/shell/locale";
 import { useMailState } from "../../webapp/app/shell/MailStateProvider";
 import { goFirstRun } from "../../webapp/app/shell/routing";
@@ -374,13 +374,12 @@ function when(iso: string | null | undefined): string {
  * timestamp in it ("since 8/31/2026, 3:28:43 AM") makes it look like an event log and invites
  * watching, which is the same reason the DTO deliberately carries when an install BECAME the
  * organizer rather than when it was last seen: a heartbeat on a screen is a thing people stare at.
+ *
+ * The rule itself moved to the shared shell (`format.ts#dayStamp`) when the browser's Mailboxes
+ * pane grew the same released sentence: one catalogue key rendered on two panes must not be able
+ * to carry two different dates. This name stays because the call sites below read better with it.
  */
-function day(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const at = new Date(iso);
-  if (Number.isNaN(at.getTime())) return "—";
-  return at.toLocaleDateString(activeFormatLocale(), { dateStyle: "medium", timeZone: activeFormatZone() });
-}
+const day = dayStamp;
 
 /**
  * SETTINGS → MAILBOXES, on the desktop.

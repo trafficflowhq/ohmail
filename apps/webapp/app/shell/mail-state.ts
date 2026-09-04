@@ -197,14 +197,34 @@ export function standDownToken(wire: string | null): StandDownReason | null {
  * the mailbox pane's own row, which is what this serves, and to the phone's banner
  * (`apps/mobile/src/state/live.ts#phoneOrganizer`), which is the same call one client over.
  * `deriveMailState`'s `disabled`+reason arm stays as the LEGACY path it now is.
+ *
+ * ── AND WHY `released` IS A FOURTH ANSWER RATHER THAN A FOURTH `STAND_DOWN_REASONS` ───────────
+ *
+ * {@link STAND_DOWN_REASONS} is the WIRE vocabulary: three members reconciled against the
+ * server-owned `disabled_reason` set by the suite, one copy key each. `released` is on no wire
+ * and never will be — it is DERIVED here from the role row (a reader with nobody holding it and
+ * a release marker on it), which is a fact no `disabled_reason` can carry because those rows
+ * predate the role entirely. Adding it to the array would break the reconciliation for a token
+ * the server cannot send, so the union widens at the return type and the array stays exactly
+ * what it says it is.
  */
+export type ReaderStandDown = StandDownReason | "released";
+
 export function readerStandDown(m: {
   status?: string;
   disabledReason?: string | null;
   organizerRole?: "organizer" | "reader";
   organizedBy?: { kind: string | null; name: string | null; since: string | null } | null;
   organizeConsentedAt?: string | null;
-}): StandDownReason | null {
+  /**
+   * THE RELEASE MARKER — the only column that separates "this account let the mailbox go" from
+   * "the install that held it vanished". See the `released` arm below for why nothing else can.
+   *
+   * Optional like every other member: a host that predates it sends no marker, and absent reads
+   * as NOT RELEASED, which keeps the stand-down sentence rather than inventing a release.
+   */
+  organizerReleasedAt?: string | null;
+}): ReaderStandDown | null {
   // THE LEGACY WIRE FIRST, unchanged: `disabled` with a reason is what an engine older than the
   // role column reports, and it is still the only thing those rows can say.
   if (m.status === "disabled") return standDownToken(m.disabledReason ?? null);
@@ -224,6 +244,33 @@ export function readerStandDown(m: {
      Losing an explanation costs a sentence; inventing one costs a false claim. */
   const consented = m.organizeConsentedAt !== null && m.organizeConsentedAt !== undefined;
   if (!holder && !consented) return null;
+  /* ── THE RELEASE IS ITS OWN ANSWER, AND THE MARKER IS WHAT NAMES IT ───────────────────────
+   *
+   * A reader that consented and has nobody holding it used to report `organized_elsewhere_unknown`
+   * — "another ohmail organizer has claimed this mailbox … it will not start again on its own",
+   * over a mailbox nobody held, above a check that then answered "no other ohmail install is
+   * organizing this mailbox". A row arguing with its own button, and the wrong remedy under it:
+   * the check-then-confirm ceremony exists to displace a LIVE competing holder, and there is none
+   * to displace.
+   *
+   * THE DISCRIMINATOR IS THE MARKER, NOT THE ABSENT HOLDER, and that correction is the whole of
+   * why this arm is three lines instead of one. The holder columns are not written once at the
+   * stand-down: the per-cycle peek rewrites all of them, and it writes them ALL NULL whenever it
+   * finds an empty claim folder — which is exactly what a stood-down reader sees the moment the
+   * install that beat it is removed. So a genuine stand-down DECAYS into the holder-less shape on
+   * its own, with nothing having released anything, and keying on the absence would put "you
+   * stopped organizing this here" over a handover this account never made. `organizer_released_at`
+   * is written by the release and by nothing else, and every promotion clears it.
+   *
+   * `standDownMemory` (`packages/db/src/organizer-role.ts`) reached the same conclusion on the
+   * server, through a review round, for the same reason — this is that rule, one client over.
+   *
+   * A HOST TOO OLD TO SEND THE MARKER keeps the stand-down sentence. That is the cheaper error of
+   * the two: an explanation that is out of date costs a sentence, and a release announced for a
+   * handover that never happened costs a false claim about something the person did. */
+  if (!holder && m.organizerReleasedAt !== null && m.organizerReleasedAt !== undefined) {
+    return "released";
+  }
   return standDownToken(
     m.organizedBy?.kind ? `organized_elsewhere:${m.organizedBy.kind}` : "organized_elsewhere:unknown",
   );
@@ -329,6 +376,9 @@ export function screenerMode(facts: ReadonlyArray<OrganizerRow> | null): Screene
   if (facts === null) return organizes;
   const live = facts.filter((m) => m.status !== "disabled");
   if (live.length === 0) return organizes;
+  /* `=== null` IS "THIS INSTALL ORGANIZES IT", and a RELEASED row is deliberately not that. It
+     answers `released` — non-null — so a mailbox this account let go does not turn the Screener
+     back on. Nothing files that mailbox, which is precisely what `no_organizer` below says. */
   if (live.some((m) => readerStandDown(m) === null)) return organizes;
 
   const named = live.map((m) => m.organizedBy?.name).find((n) => n && n.trim()) ?? null;
@@ -446,11 +496,30 @@ function noticeKind(m: OrganizerRow): OrganizerNoticeKind | null {
   if (m.organizerRole !== "reader") return "here";
   const holder = Boolean(m.organizedBy && (m.organizedBy.kind || m.organizedBy.name));
   if (holder) return m.organizerState === "stopped" ? "stopped" : "elsewhere";
-  /* NO HOLDER. Consented means this install had the mailbox and gave it up — the release. Not
-     consented means nobody has ever organized it, which is not a change to announce. `=== null`
-     and not `== null`, so an absent stamp (a build that cannot tell) says nothing rather than
-     announcing a release that never happened. */
-  return m.organizeConsentedAt !== null && m.organizeConsentedAt !== undefined ? "released" : null;
+  /* NO HOLDER, AND NOBODY EVER AGREED — an ordinary freshly connected mailbox, whose next screen
+     is the agreement rather than a notice about a handover that never happened. `=== null` and
+     not `== null`, so an absent stamp (a build that cannot tell) says nothing. */
+  if (m.organizeConsentedAt === null || m.organizeConsentedAt === undefined) return null;
+  /* ── NO HOLDER, CONSENTED: TWO STATES, AND ONLY THE MARKER TELLS THEM APART ────────────────
+   *
+   * This line answered `released` for both of them, and one of the two is not a release. The
+   * per-cycle peek rewrites all four holder columns and writes them ALL NULL when it finds an
+   * empty claim folder — so a stand-down whose winner was removed DECAYS into this exact shape,
+   * with nobody having released anything. Worse, the same write stamps `organizer_event_at` on a
+   * flip in either direction INCLUDING to and from NULL, so the decayed row arrives here with a
+   * fresh unacknowledged event and the line fires on it: "You stopped organizing … here", about
+   * something the person never did.
+   *
+   * So `released` needs the marker `readerStandDown` keys on, and the decayed row gets the
+   * sentence that is true of it — organizing here has stopped and nobody known holds it, which is
+   * `stopped` with no name. That is the ONE open condition of the four: nothing files this
+   * mailbox, and mail accumulates unsorted while it is true, which is precisely the decayed row's
+   * situation and worth the emphasis the sentence carries. `organizerNotices` withholds the name
+   * for a row with no named holder already, so the unknown-holder wording is reached by the same
+   * rule that serves a stopped holder whose claim recorded no name. */
+  return m.organizerReleasedAt !== null && m.organizerReleasedAt !== undefined
+    ? "released"
+    : "stopped";
 }
 
 /**

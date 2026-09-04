@@ -123,6 +123,11 @@ organizes it here instead. The panes that release mail from Screened out or resc
 Quarantine say that moving mail happens where the organizer runs. On a phone, a decision made on a
 mailbox the phone does not organize no longer reports itself as filed.
 
+A mailbox you stopped organizing yourself is no longer described as one another install claimed:
+Settings → Mailboxes says you released it and on what day, and offers a single press to organize it
+here again, instead of the check-then-confirm handover written for taking a mailbox back from an
+install that is still running.
+
 ### German where the app used to speak half English
 
 With the language set to Deutsch, the one control that stayed in English was the one that
