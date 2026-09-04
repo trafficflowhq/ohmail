@@ -232,11 +232,11 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   ["platform_costs", "fetched_at"],
   ["ai_usage_daily", "cost_micro_usd"],
   ["billing_reconciliation_runs", "invoices_listed"],
-  // cloud 0030_heartbeat_signals_alert_runs — FOUR markers, on 0028's rule again: the migration
-  // makes five independent changes and a database can hold some without the others, so each
-  // marker below names one of them. The fifth (`worker_heartbeats.ai_circuit_open_since`) needs
-  // none of its own: it is a heartbeat column added BEFORE the one the fourth marker names, and
-  // statements inside a migration apply in order.
+  // cloud 0030_heartbeat_signals_alert_runs — FIVE markers, on 0028's rule again: the migration
+  // makes six independent changes and a database can hold some without the others, so each
+  // marker below names one of them. `worker_heartbeats.ai_circuit_open_since` needs none of its
+  // own: it is a heartbeat column added BEFORE one that IS marked, and statements inside a
+  // migration apply in order.
   //
   // `alert_state.cls` is the loud one, and its loudness is a particular kind. Every observation
   // the alert pass records INSERTS this column, so an API deployed ahead of the migration 42703s
@@ -268,6 +268,15 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // and its whole job is to be the thing that notices. With it, the deploy answers
   // `503 schema_incomplete` and names the reason.
   ["worker_heartbeats", "degraded_since"],
+  // `alert_pass_runs.sinks_configured` — the FIFTH, and now the migration's LAST statement.
+  //
+  // The fourth marker above was chosen because it was last, and then a statement was APPENDED
+  // after it. That quietly voided the only property the choice rested on, so this list has to
+  // move whenever 0030 grows — the same obligation `SCHEMA_BEHIND_MARKER` in `alerts.ts` carries,
+  // and for the same reason. Both are kept in step deliberately rather than one deriving from
+  // the other, because the alert preflight must not import an API route to answer a question
+  // about the database.
+  ["alert_pass_runs", "sinks_configured"],
 ] as const;
 
 /**

@@ -645,11 +645,20 @@ export function humanAge(seconds: number | null): string {
  * the very next read — the pass dying before it could deliver the finding that explains why,
  * which is the exact failure the preflight was introduced to remove.
  *
- * `worker_heartbeats.degraded_since` is the migration's LAST statement, so its presence implies
+ * `alert_pass_runs.sinks_configured` is the migration's LAST statement, so its presence implies
  * every object above it. `health-cloud.ts` reaches the same conclusion for the same reason where
- * it picks its fourth marker; this is that sentence applied one file over, where it was missed.
+ * it picks its final marker; this is that sentence applied one file over, where it was missed.
+ *
+ * ── AND THE MARKER MOVES WHEN THE MIGRATION GROWS, WHICH IS THE EASY HALF TO FORGET ──────
+ *
+ * This pointed at `worker_heartbeats.degraded_since` until a later statement was APPENDED after
+ * it. That silently broke the only property the choice rests on: the blind role could see
+ * `degraded_since` and not the newly-appended column, so this preflight reported ready and the
+ * overview then failed selecting a column it had just declared readable — and a migration
+ * interrupted between the two passed both this check and the matching `/health` marker. Adding a
+ * statement to 0030 means moving this constant and that marker together, every time.
  */
-const SCHEMA_BEHIND_MARKER = { table: "worker_heartbeats", column: "degraded_since" } as const;
+const SCHEMA_BEHIND_MARKER = { table: "alert_pass_runs", column: "sinks_configured" } as const;
 
 /**
  * IS THIS DATABASE OLDER THAN THE BUNDLE WE ARE RUNNING? — the alert pass's preflight.
@@ -1959,7 +1968,23 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   const [lastRollup] = await db
     .select({ ranAt: creditRollupRuns.ranAt })
     .from(creditRollupRuns)
-    .where(isNull(creditRollupRuns.error))
+    // ── A COMPLETED RUN IS NOT ENOUGH: IT MUST BE ONE THAT DID THE NIGHTLY WORK ────────
+    //
+    // Two shapes write this table. An HOURLY pass recomputes the last couple of days, and a
+    // NIGHTLY one additionally runs the divergence check and prunes the setup-spend rows. Only
+    // the nightly one refreshes lifetime totals, and only it can find a ledger that has drifted.
+    //
+    // Taking the newest COMPLETED row of either shape made this rule structurally unable to
+    // report the failure that matters: the nightly pass could be missed or failing for a week
+    // while the hourly passes kept succeeding, so the clock always looked fresh and the alert
+    // never fired — while the totals, the divergence verdict and the prune all went stale. The
+    // rule existed to notice figures that quietly stop moving, and it was reading the one signal
+    // that keeps moving when they stop.
+    //
+    // `divergent_accounts` is the proof, and it is a natural one rather than a flag invented for
+    // this: it is NULL unless the pass actually ran the divergence check, which only the nightly
+    // shape does. A zero there is a real answer — no account diverged — and is not null.
+    .where(and(isNull(creditRollupRuns.error), isNotNull(creditRollupRuns.divergentAccounts)))
     .orderBy(sql`${creditRollupRuns.ranAt} desc`)
     .limit(1);
   if (lastRollup) {
