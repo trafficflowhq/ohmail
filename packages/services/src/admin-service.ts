@@ -23,6 +23,8 @@ import {
   workerHeartbeats,
   evaluateAlerts,
   alertClass,
+  alertDriverStatuses,
+  platformSignalWindow,
   listFailedBillingEvents,
   listStuckSends,
   DEFAULT_ALERT_THRESHOLDS,
@@ -33,7 +35,8 @@ import {
 import type { Db } from "./context.js";
 import type {
   AccountDetail, AccountPage, AccountQuery, AccountSummary, AccountUsage, ActionCatalog, ActionSpec,
-  AdminLedgerReason, AdminPlan, AdminSubscriptionStatus, AlertSummary, AuditEntry,
+  AdminAlertDriver, AdminLedgerReason, AdminPlan, AdminPlatformSignal, AdminSubscriptionStatus,
+  AlertSummary, AuditEntry,
   BillingRevenue, BillingSnapshot, CashRevenue, CreditLiability, FunnelSnapshot, FunnelStage,
   InvoiceReconciliationView, LedgerDay, LedgerEntry, MailboxHealth, SecurityEvent, SetupPoolView,
   StaleSend, UsageDay, WorkerInstanceHealth, WorkerSnapshot,
@@ -1848,6 +1851,52 @@ export async function adminWorkerInstances(db: AdminDb, now: Date): Promise<Work
  * clear" while an operator's phone is buzzing. `alert_state` supplies the two facts an
  * evaluation cannot have — when the fault STARTED and whether a human was actually told.
  */
+/**
+ * Both alert drivers' last recorded pass — the panel that answers "is the pair still a pair".
+ *
+ * A thin pass-through over `alertDriverStatuses`, which always returns BOTH arms so an arm that
+ * has never run is present and says so. It is a separate read from {@link adminAlerts} because it
+ * answers a different question: that one is "what is wrong", this one is "is the thing that
+ * would tell me still running".
+ */
+export async function adminAlertDrivers(db: AdminDb, now: Date): Promise<AdminAlertDriver[]> {
+  void now;
+  const rows = await alertDriverStatuses(db);
+  return rows.map((r) => ({
+    driver: r.driver,
+    ranAt: iso(r.ranAt),
+    firing: r.firing,
+    delivered: r.delivered,
+    failedSinks: r.failedSinks,
+    sinkFailureStreak: r.sinkFailureStreak,
+  }));
+}
+
+/**
+ * What the platform served over the 5xx rule's own window.
+ *
+ * READ THROUGH THE SAME FUNCTION THE RULE USES (`platformSignalWindow`), which is the point: the
+ * panel says "12 of 900 requests" and the rule pages on those two numbers, so the surface an
+ * operator reads and the condition that wakes them cannot drift apart.
+ *
+ * AN EMPTY ARRAY IS THE UNCONFIGURED STATE and the console must render it as "not measured". It
+ * is not a failure and it is not a zero: a deployment with no platform token writes no rows, so
+ * there is no row here saying 0 to be mistaken for a measurement.
+ */
+export async function adminPlatformSignals(
+  db: AdminDb, now: Date,
+): Promise<AdminPlatformSignal[]> {
+  const rows = await platformSignalWindow(db, now, DEFAULT_ALERT_THRESHOLDS.api5xxWindowMs);
+  return rows.map((r) => ({
+    provider: r.provider,
+    project: r.project,
+    requests: r.requests,
+    errors5xx: r.errors5xx,
+    truncated: r.truncated,
+    fetchedAt: r.fetchedAt.toISOString(),
+  }));
+}
+
 export async function adminAlerts(db: AdminDb, now: Date): Promise<AlertSummary[]> {
   const firing = await evaluateAlerts(db, { now });
   const stateRows = await db

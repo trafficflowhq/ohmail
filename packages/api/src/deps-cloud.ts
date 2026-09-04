@@ -1,6 +1,6 @@
 import type {
   AdminDb, AuthService, ProposalsService, BillingPlanePort, EntitlementsService, WaitlistService,
-  PlatformCostPort,
+  PlatformCostPort, PlatformSignalPort,
 } from "@trafficflow/services";
 import type { AlertSink, AlertThresholds, MsOAuthBootstrap } from "@trafficflow/db/cloud";
 import type { FetchLike, MicrosoftDeviceClient } from "@trafficflow/core";
@@ -84,6 +84,22 @@ declare module "./deps.js" {
      * and the thing the board renders as "not configured". The first was never asked.
      */
     platformCosts?: PlatformCostPort;
+    /**
+     * WHAT THE PLATFORM SERVED — the read port behind `GET /internal/platform-signals/run`.
+     *
+     * OPTIONAL on `platformCosts`' exact terms one line up, and the three-way distinction it
+     * preserves is the whole reason this slot exists rather than the pass reading `process.env`:
+     *
+     *  · **no port** — nobody wired the question. The desktop engine, a self-host box. `200
+     *    {skipped}`, nothing written.
+     *  · **a port answering `unconfigured`** — we asked and there is no platform token. This is
+     *    production's state today, and it is what the board renders as "5xx: not measured".
+     *  · **a port answering `rows`** — a real measurement, and a `0` in it is a real zero.
+     *
+     * The first two both write nothing, so only a typed seam can tell them apart — and the third
+     * is the only one that may ever put a number on a screen.
+     */
+    platformSignals?: PlatformSignalPort;
   }
   interface ApiDeps {
     /**

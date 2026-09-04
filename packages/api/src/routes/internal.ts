@@ -10,7 +10,7 @@ import {
   runAwayResponderPass,
   reapStaleWebSessions, reconcileBillingMirror, recordReconcileFailure,
   reconcileBillingInvoices, recordInvoiceReconcileFailure, INVOICE_RECONCILE_MODE,
-  runPlatformCostPass,
+  runPlatformCostPass, runPlatformSignalPass,
   runScheduledSendPass, runSendReconcilePass, SEND_RECONCILE_NET_TIMEOUTS,
   TransientDialRefusal, type AdminDb,
 } from "@trafficflow/services";
@@ -209,6 +209,31 @@ export const BILLING_INVOICE_RECONCILE_CRON_PATH = "/internal/billing/invoices/r
  * Driven by the worker's `api-cron.ts`, and a census text-matches this literal against that table.
  */
 export const PLATFORM_COSTS_CRON_PATH = "/internal/platform-costs/run";
+
+/**
+ * The PATH the PLATFORM SIGNAL poll is scheduled at — what the hosting platform actually SERVED,
+ * asked for every five minutes.
+ *
+ * ── WHY IT IS A ROUTE ON THIS HOST AND NOT A WORKER PASS ──────────────────────────────────
+ *
+ * The subject is THIS host's error rate, and the token that can read it is an env var on THIS
+ * deployment (`VERCEL_TOKEN`) — the same one `scripts/vercel-errors.mjs` uses. Putting the poll on
+ * the sync worker would mean provisioning the platform credential onto a second host to measure
+ * the first one.
+ *
+ * ── WHY FIVE MINUTES, WHICH IS FINER THAN EVERY OTHER TARGET ON THAT CLOCK ────────────────
+ *
+ * The rule reads a fifteen-minute window, and a window is only as trustworthy as the number of
+ * independent samples inside it. Three five-minute rows mean a single missed poll still leaves two
+ * windows of evidence rather than none — and one poll is one aligned window, so a coarser cadence
+ * would not make bigger windows, it would make GAPS.
+ *
+ * A deployment with no platform token writes NO ROW, deliberately, and that absence is what the
+ * board renders as "5xx: not measured". It is a different state from a zero and must stay one.
+ *
+ * Driven by the worker's `api-cron.ts`, and a census text-matches this literal against that table.
+ */
+export const PLATFORM_SIGNALS_CRON_PATH = "/internal/platform-signals/run";
 
 /**
  * The PATH the SCHEDULED-SEND pass is scheduled at (Send later, mail 0077) — exported for the
@@ -504,6 +529,10 @@ async function alertPass(
       source: "api",
       environment: cfg.environment ?? "production",
       deliveryStreak: apiDeliveryStreak,
+      // THE DRIVER'S OWN NAME — see the worker's call site for the argument. This arm is the
+      // only observer of `worker_down`, and it is now also the only observer of the worker
+      // driver's own silence; the worker's pass watches this one in return.
+      driver: "api",
     });
 
     for (const alert of result.firing) {
@@ -801,6 +830,62 @@ async function platformCostPass(req: Request, deps: ApiDeps): Promise<Response> 
     // per-provider faults itself, so this catches only a database refusal.
     log.error("platform_cost_pass_failed", { err });
     return json(503, { error: { code: "platform_cost_pass_failed" } });
+  }
+}
+
+/**
+ * One PLATFORM SIGNAL poll. `platformCostPass`'s shape above, property for property — 404 on an
+ * unarmed surface, either shared secret in constant time, and the same deliberate absence of an
+ * "unconfigured" skip.
+ *
+ * THE ONE THING WORTH READING TWICE is what an unconfigured deployment does here, because it is
+ * the ruling's second ranked risk and it is settled by an ABSENCE rather than by a value. With no
+ * platform token the port answers `unconfigured`, the pass writes NO ROW, and
+ * `platformSignalWindow` therefore returns nothing for that project — so the rule cannot fire and
+ * the board says "not measured". At no point does a `0` exist to be rendered. A pass that wrote
+ * `requests: 0, errors_5xx: 0` on an unconfigured deployment would satisfy every test about the
+ * rule not firing, and would put a measured-looking zero on an operator's screen for a figure
+ * nobody has ever asked the platform for.
+ *
+ * It runs on `deps.db`, the runtime connection: it writes `platform_signals`, and the blind staff
+ * handle holds SELECT on that table and must not gain more.
+ */
+async function platformSignalPass(req: Request, deps: ApiDeps): Promise<Response> {
+  const log = (deps.logger ?? silentLogger).child({ route: PLATFORM_SIGNALS_CRON_PATH });
+  const cfg = deps.alerts;
+  if (!cfg || cfg.secret.trim().length === 0) {
+    return json(404, { error: { code: "not_found" } });
+  }
+  const cron = cfg.cronSecret?.trim();
+  const authorized = presentsSecret(req, cfg.secret)
+    || (cron !== undefined && cron.length > 0 && presentsSecret(req, cron));
+  if (!authorized) {
+    log.warn("platform_signals_unauthorized", {});
+    return json(401, { error: { code: "unauthorized" } });
+  }
+  const port = deps.services?.platformSignals;
+  if (!port) {
+    // A host that composed no port at all — the desktop engine's shape. DISTINCT from a port that
+    // answers `unconfigured`: that one asked and found no token. Both write nothing; only this
+    // one means nobody wired the question.
+    return json(200, { skipped: "signal_port_unconfigured" });
+  }
+  try {
+    const report = await runPlatformSignalPass(deps.db, { port, now: deps.now });
+    // INFO on every pass rather than only on a change, `platformCostPass`'s reason verbatim: this
+    // is a surface where "nothing was written" is the expected answer for as long as no token
+    // exists, and a log line that appeared only on success would make the healthy unconfigured
+    // state look exactly like a dead clock.
+    log.info("platform_signal_pass", {
+      outcome: report.outcome, rows: report.rows, pruned: report.pruned,
+      ...(report.code ? { code: report.code } : {}),
+    });
+    return json(200, { now: deps.now().toISOString(), ...report });
+  } catch (err) {
+    // `raw` means no error envelope above this handler; it must never throw. The pass absorbs
+    // fetch faults itself, so this catches only a database refusal.
+    log.error("platform_signal_pass_failed", { err });
+    return json(503, { error: { code: "platform_signal_pass_failed" } });
   }
 }
 
@@ -1289,5 +1374,20 @@ export const internalRoutes: Route[] = [
     cost: "unauthenticated",
     options: { public: true, anonymous: true, raw: true },
     handler: async (req, deps) => platformCostPass(req, deps),
+  },
+  {
+    /**
+     * `GET /internal/platform-signals/run` — what the platform SERVED, every five minutes.
+     *
+     * The cost pass's shape verbatim, each borrowed property load-bearing for the reasons stated
+     * there: GET because a cron issues GET and only GET; either shared secret in constant time;
+     * 404 on a deployment that armed no internal surface — which does mean the 5xx rate is NOT
+     * measured there, and that is the honest state of a host nobody armed a clock on.
+     */
+    method: "GET",
+    pattern: PLATFORM_SIGNALS_CRON_PATH,
+    cost: "unauthenticated",
+    options: { public: true, anonymous: true, raw: true },
+    handler: async (req, deps) => platformSignalPass(req, deps),
   },
 ];

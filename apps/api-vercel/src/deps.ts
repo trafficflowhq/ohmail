@@ -34,6 +34,7 @@ import {
   makeEntitlementsService, makeBillingPlaneClient,
   MailService, ResendMailer, mailAlertSink, dbRecipientLimiter, makeWaitlistService,
   type ServiceContext,
+  makePlatformSignalPort,
 } from "@trafficflow/services";
 import { makeProbeHostGuard, apiAlertSinkSummary } from "@trafficflow/api";
 import type { AiCreditGateFactory, ApiDeps, ApiServices, ChangeWakeHub } from "@trafficflow/api";
@@ -464,6 +465,28 @@ function buildServices(cfg: HostConfig): ApiServices {
     }));
     lazily(bag, "entitlements", () => makeEntitlementsService({ alert: billingAlert }));
   }
+
+  // WHAT THE PLATFORM SERVED — the 5xx poller's read port (cloud 0030).
+  //
+  // COMPOSED UNCONDITIONALLY, and the unconditional part is the decision. The port itself decides
+  // whether it is configured, and it answers `unconfigured` when the platform token is absent —
+  // which is production's state today. Gating the composition on the token instead would collapse
+  // the two states this seam exists to separate: a host with no port answers `skipped` ("nobody
+  // wired the question"), and a host whose port says `unconfigured` answers "we asked, there is
+  // no token" — and only the second can be rendered honestly as "5xx: not measured".
+  //
+  // It reads `process.env` directly rather than taking a `HostConfig` field, deliberately and
+  // narrowly: the platform token is not a value this host's config validates or refuses at cold
+  // start (`config.ts` has no opinion about an observability credential), and adding one would
+  // make an absent token a boot-time concern for a host that must boot fine without it.
+  //
+  // Lazy, like every other constructed service: a `GET /health` cold start has no reason to build
+  // a closure it will not call.
+  lazily(bag, "platformSignals", () => makePlatformSignalPort({
+    VERCEL_TOKEN: process.env.VERCEL_TOKEN,
+    VERCEL_TEAM_ID: process.env.VERCEL_TEAM_ID,
+    VERCEL_SIGNAL_PROJECTS: process.env.VERCEL_SIGNAL_PROJECTS,
+  }));
 
   // THE LIVE DRAFTER. `POST /messages/:id/draft` calls this; absent, the route 500s
   // cleanly, which is the state this host shipped in until now.

@@ -1,6 +1,7 @@
 import { silentLogger, type Logger } from "@trafficflow/core";
 import {
-  adminAccountDetail, adminAccountLedgerDay, adminAccounts, adminActions, adminAlerts, adminWorker,
+  adminAccountDetail, adminAccountLedgerDay, adminAccounts, adminActions, adminAlerts,
+  adminAlertDrivers, adminPlatformSignals, adminWorker,
   adminWorkerInstances, adminBilling, adminCosts, adminFunnel,
   type AccountQuery, type AdminDb, type ApiHealth, type OverviewSnapshot,
 } from "@trafficflow/services";
@@ -291,6 +292,12 @@ async function overview(ctx: StaffContext): Promise<OverviewSnapshot> {
   const api = await ctx.apiHealth();
   const instances = await adminWorkerInstances(ctx.db, now);
   const alerts = await adminAlerts(ctx.db, now);
+  // SEQUENTIAL, on the deadlock note above — these are two more reads on the same `max: 1` blind
+  // pool and a `Promise.all` here would reintroduce exactly the circular wait that comment
+  // records. Both are bounded: two rows from `alert_pass_runs` by primary key, and one grouped
+  // aggregate over fifteen minutes of `platform_signals` on its own index.
+  const alertDrivers = await adminAlertDrivers(ctx.db, now);
+  const platformSignals = await adminPlatformSignals(ctx.db, now);
   return {
     now: now.toISOString(),
     environment: ctx.environment,
@@ -301,6 +308,8 @@ async function overview(ctx: StaffContext): Promise<OverviewSnapshot> {
       leaderStaleAfterSeconds: Math.round(DEFAULT_ALERT_THRESHOLDS.leaderStaleMs / 1000),
     },
     alerts,
+    alertDrivers,
+    platformSignals,
   };
 }
 

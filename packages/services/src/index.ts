@@ -303,7 +303,7 @@ export {
 export {
   adminAccounts, adminAccountDetail, adminAccountLedgerDay,
   adminBilling, adminFunnel, adminWorker, adminWorkerInstances,
-  adminAlerts, adminActions, adminAttentionRank,
+  adminAlerts, adminAlertDrivers, adminPlatformSignals, adminActions, adminAttentionRank,
   ADMIN_LIST_LIMIT, ADMIN_DEFAULT_PAGE_SIZE, ADMIN_MAX_PAGE_SIZE, ADMIN_OPTIONS_LIMIT,
   ADMIN_ROSTER_LIMIT, ADMIN_SUBSCRIPTION_ORDER,
   ADMIN_LEDGER_DAY_LIMIT, ADMIN_USAGE_DAYS,

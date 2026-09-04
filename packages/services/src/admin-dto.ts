@@ -198,6 +198,25 @@ export interface AdminAlertDriver {
   sinkFailureStreak: number;
 }
 
+/**
+ * WHAT THE PLATFORM SERVED over the 5xx rule's own window, per project.
+ *
+ * AN EMPTY LIST IS THE UNCONFIGURED STATE and the console renders it as "5xx: not measured". It
+ * is neither a failure nor a zero: a deployment with no platform token writes no rows at all, so
+ * there is no row here saying 0 that could be mistaken for a measurement. That distinction is the
+ * ruling's second ranked risk, and it is preserved by this being a list of what EXISTS rather
+ * than a figure per known project.
+ */
+export interface AdminPlatformSignal {
+  provider: string;
+  project: string;
+  requests: number;
+  errors5xx: number;
+  /** The counts are a lower bound over the window's newest slice — the panel says "sampled". */
+  truncated: boolean;
+  fetchedAt: string;
+}
+
 export interface OverviewSnapshot {
   now: string;
   environment: string;
@@ -207,6 +226,10 @@ export interface OverviewSnapshot {
     leaderStaleAfterSeconds: number;
   };
   alerts: AlertSummary[];
+  /** Both alert drivers' last pass — ALWAYS two entries. See {@link AdminAlertDriver}. */
+  alertDrivers: AdminAlertDriver[];
+  /** The 5xx window per project. EMPTY = unconfigured — see {@link AdminPlatformSignal}. */
+  platformSignals: AdminPlatformSignal[];
 }
 
 /* ── accounts ──────────────────────────────────────────────────────────────────────────── */
