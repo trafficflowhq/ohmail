@@ -92,7 +92,20 @@ export interface PlatformSignalPort {
    * bucket looked finished.
    */
   readonly projects: readonly string[];
-  fetch(window: { start: Date; end: Date }): Promise<PlatformSignalFetch>;
+  /**
+   * Read one window.
+   *
+   * `deadlineMs` is an ABSOLUTE epoch millisecond, supplied by the caller, and it exists because
+   * the alternative was measured twice and was wrong twice: a deadline established inside this
+   * method is recreated on every call, so a caller filling three missing buckets got three full
+   * budgets and could spend triple the invocation's ceiling. The pass that owns the invocation is
+   * the only thing that knows when it must be finished, so it says so. Omitted ⇒ this call makes
+   * its own, which is right for a one-shot caller and is what a test uses.
+   */
+  fetch(
+    window: { start: Date; end: Date },
+    opts?: { deadlineMs?: number },
+  ): Promise<PlatformSignalFetch>;
 }
 
 /** The env this port reads. Injected rather than read from `process.env` so a test can be honest. */
@@ -260,16 +273,16 @@ export function makePlatformSignalPort(
 
   return {
     projects: resolvedProjects,
-    async fetch(window) {
-      // ── THE DEADLINE STARTS HERE, BEFORE ANY REQUEST — INCLUDING THE LOOKUPS ──────────
+    async fetch(window, callOpts) {
+      // ── THE DEADLINE IS THE CALLER'S WHEN IT HAS ONE, AND STARTS BEFORE ANY REQUEST ───
       //
-      // It used to start after project resolution, so the lookups' time was spent OUTSIDE the
-      // budget: a slow lookup plus the full walk plus a final near-timeout request could pass
-      // seventy seconds against a sixty-second invocation ceiling, and the pass was killed
-      // before a single row was written. Every request below is also capped by what remains,
-      // because a page begun just inside the deadline used to receive the full per-request
-      // timeout and could run well past it.
-      const deadline = nowMs() + wallClockMs;
+      // Two defects met here. It used to start AFTER project resolution, so lookup time was
+      // spent outside the budget entirely; and it was established per CALL, so a caller filling
+      // three missing buckets received three full budgets and could spend triple the sixty-second
+      // invocation ceiling — with no write happening until the loop finished, so the pass
+      // produced nothing at all. Taking the caller's absolute deadline fixes the second for good:
+      // a loop cannot reset a number it did not create.
+      const deadline = callOpts?.deadlineMs ?? nowMs() + wallClockMs;
       /** What one request may take: its own ceiling, or the rest of the poll's, whichever is less. */
       const budgetFor = (): number => Math.max(0, Math.min(timeoutMs, deadline - nowMs()));
       const token = trimmed(env.VERCEL_TOKEN);
@@ -481,6 +494,14 @@ export interface PlatformSignalPassOptions {
   now?: () => Date;
   windowMs?: number;
   retentionMs?: number;
+  /**
+   * The whole pass's wall-clock budget, shared across every bucket the backfill fills.
+   *
+   * Here rather than on the port because the PASS is what an invocation kills, and because a
+   * budget the port re-creates per call is not a budget: filling three buckets once bought three
+   * full ones. Injectable so a test can drive the boundary without waiting.
+   */
+  wallClockMs?: number;
 }
 
 /**
@@ -565,9 +586,15 @@ export async function runPlatformSignalPass(
   // what remains, so a walk that runs long simply returns fewer buckets rather than overrunning
   // the host. Newest first, so the freshest data lands even when the budget stops the loop
   // early; the remaining gaps are the next pass's work.
+  // ONE deadline for the whole backfill, created here and handed to every bucket — see the
+  // port's `deadlineMs`. Created by the pass because the pass is what the invocation kills.
+  const passDeadline = Date.now() + (opts.wallClockMs ?? SIGNAL_WALL_CLOCK_MS);
   const answers: PlatformSignalFetch[] = [];
   for (const end of missing) {
-    const a = await opts.port.fetch({ start: new Date(end - windowMs), end: new Date(end) });
+    const a = await opts.port.fetch(
+      { start: new Date(end - windowMs), end: new Date(end) },
+      { deadlineMs: passDeadline },
+    );
     answers.push(a);
     // A FAILURE STOPS THE LOOP rather than being collected past: one refusal is almost always
     // the token or the endpoint, and walking the remaining buckets would spend the budget
@@ -586,14 +613,20 @@ export async function runPlatformSignalPass(
   const pruned = await prune(db, new Date(now.getTime() - retentionMs));
 
   if (answer === null) return { outcome: "written", rows: 0, pruned };
-  // ANY failure in the batch is the pass's outcome, not just the first bucket's — a partial
-  // window written while a later bucket was refused would report success over data it knows is
-  // incomplete.
+
+  // ── WHAT SUCCEEDED IS PERSISTED FIRST, AND ONLY THEN IS THE FAILURE REPORTED ──────────
+  //
+  // Returning the failure before the upserts threw away every measurement the pass HAD made.
+  // The shape that makes it bite: the newest bucket succeeds and an older gap keeps failing, so
+  // each run discarded a fresh, complete reading on account of a stale one — and the detector
+  // stayed dark for as long as the old gap persisted, which is exactly the state a persistent
+  // failure produces. A measurement that was taken is evidence; another bucket's refusal does
+  // not un-take it.
+  //
+  // The pass's OUTCOME is still the failure, so the caller's cron target goes red and the log
+  // carries the code. What changes is that the rows already read are kept.
   const failed = answers.find((a) => "failed" in a) as { failed: string } | undefined;
   const unconfigured = answers.some((a) => "unconfigured" in a);
-  if (unconfigured) return { outcome: "unconfigured", rows: 0, pruned };
-  if (failed) return { outcome: "failed", code: failed.failed, rows: 0, pruned };
-
   const written: PlatformSignalRow[] = [];
   for (const a of answers) if (!("failed" in a) && !("unconfigured" in a)) written.push(...a.rows);
   for (const row of written) {
@@ -627,6 +660,11 @@ export async function runPlatformSignalPass(
       });
   }
 
+  // The outcome reflects the WORST thing that happened, over rows that are already persisted.
+  // `unconfigured` outranks `failed` for the reason the three-way union exists: a deployment
+  // that was never asked to measure anything is not failing.
+  if (unconfigured) return { outcome: "unconfigured", rows: written.length, pruned };
+  if (failed) return { outcome: "failed", code: failed.failed, rows: written.length, pruned };
   return { outcome: "written", rows: written.length, pruned };
 }
 

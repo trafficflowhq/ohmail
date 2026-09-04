@@ -2209,7 +2209,16 @@ export async function platformSignalWindow(
       truncated: sql<boolean>`bool_or(${platformSignals.truncated})`,
       completeBuckets: sql<number>`count(*) filter (where not ${platformSignals.truncated})::int`,
       sampledBuckets: sql<number>`count(*) filter (where ${platformSignals.truncated})::int`,
-      fetchedAt: sql<Date>`max(${platformSignals.fetchedAt})`,
+      // FILTERED like the sums above it, and for the same reason. A sampled bucket contributes
+      // no requests and no errors, so letting its `fetched_at` win the max reported figures as
+      // freshly read whose newest CONTRIBUTING data was older — the stamp describing a row that
+      // was deliberately excluded from the numbers beside it. `coalesce` to the unfiltered max
+      // so a project whose every bucket was sampled still has a timestamp to render; its
+      // `completeBuckets` is zero, so the board says "not measured" rather than trusting it.
+      fetchedAt: sql<Date>`coalesce(
+        max(${platformSignals.fetchedAt}) filter (where not ${platformSignals.truncated}),
+        max(${platformSignals.fetchedAt})
+      )`,
     })
     .from(platformSignals)
     .where(sql`${platformSignals.windowStart} >= ${cut.toISOString()}::timestamptz`)
