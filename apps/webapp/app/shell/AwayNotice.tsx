@@ -116,6 +116,18 @@ export function useAwayNotice(active: boolean, transport?: AwayTransport): AwayN
   const held = useRef(transport);
   held.current = transport;
 
+  /**
+   * SET ONCE THE SETTINGS ROW HAS TOLD US THE TRUTH, so the initial read cannot undo it.
+   *
+   * The one-shot GET and the row's save echo are two writers with no order between them. `alive`
+   * only stops a write after unmount. So: the shell starts its read, the reader opens Away
+   * settings and saves, `update()` installs what the server answered — and then the OLDER read
+   * resolves and overwrites it. Because the design deliberately never refetches, the notice then
+   * states the wrong rate or audience for the rest of the tab's life, which is a sentence about
+   * mail leaving the account unprompted. The newer fact wins, whichever arrives second.
+   */
+  const superseded = useRef(false);
+
   useEffect(() => {
     /* `active` FIRST, and this order is load-bearing rather than tidy: an inactive shell must not
        so much as NAME the Cloud client. On a standalone install that binding is a stub whose every
@@ -129,7 +141,8 @@ export function useAwayNotice(active: boolean, transport?: AwayTransport): AwayN
     void (async () => {
       try {
         const loaded = await via.state();
-        if (alive) {
+        // `superseded` as well as `alive`: a save that landed while this was in flight is NEWER.
+        if (alive && !superseded.current) {
           setState({ on: loaded.enabled, audience: loaded.audience, throttle: loaded.throttle });
         }
       } catch {
@@ -141,6 +154,8 @@ export function useAwayNotice(active: boolean, transport?: AwayTransport): AwayN
   }, [active]);
 
   const update = useCallback((next: { enabled: boolean; audience: Audience; throttle: Throttle }) => {
+    // This is the server's own answer to a write, so it outranks any read still in flight.
+    superseded.current = true;
     setState({ on: next.enabled, audience: next.audience, throttle: next.throttle });
   }, []);
 

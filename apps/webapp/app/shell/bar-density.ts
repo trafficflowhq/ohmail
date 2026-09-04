@@ -206,16 +206,58 @@ export function useBarDensity(): {
     });
   }, [measure]);
 
+  /**
+   * THE SET OF OBSERVED CHILDREN, held explicitly rather than re-derived from the DOM.
+   *
+   * `unobserve` needs the elements that WERE observed. Reading `row.children` at teardown gives
+   * the ones that are there NOW, so a group React had already removed was never unobserved and
+   * went on firing measurements for a row it had left.
+   */
+  const watchedRef = useRef<Set<Element>>(new Set());
+
+  /**
+   * Re-sync which children are watched, and say whether the set changed.
+   *
+   * THE CHILDREN SET IS NOT FIXED FOR THE LIFE OF THE ROW. `canReplyAll` and `canForward` add and
+   * remove a direct child, and React REUSES the measure row when it does — so the ref callback,
+   * which fires only on mount and unmount, never runs. Observing "the children present at mount"
+   * therefore missed every group that appeared later: switching in place from a 1:1 message to
+   * one with an audience inserted a Reply-all group that nothing watched, neither the row's own
+   * box nor the container's had to resize, and the previous `data-admit` survived — admitting a
+   * LATER group while the newly inserted earlier one stayed folded, which breaks the greedy
+   * prefix the whole admission rests on.
+   */
+  const syncWatched = useCallback((row: HTMLDivElement): boolean => {
+    const ro = roRef.current;
+    if (!ro) return false;
+    const next = new Set<Element>();
+    for (const child of row.children) if (child instanceof HTMLElement) next.add(child);
+    let changed = false;
+    for (const gone of watchedRef.current) {
+      if (!next.has(gone)) { ro.unobserve(gone); changed = true; }
+    }
+    for (const added of next) {
+      if (!watchedRef.current.has(added)) { ro.observe(added); changed = true; }
+    }
+    watchedRef.current = next;
+    return changed;
+  }, []);
+
   const measureRef = useCallback(
     (el: HTMLDivElement | null) => {
       const prev = rowRef.current;
       if (prev && roRef.current) {
         roRef.current.unobserve(prev);
-        // The children were observed too (below); a detached row's children must not keep
-        // firing a measurement for a row that is no longer in the tree.
-        for (const child of prev.children) {
-          if (child instanceof HTMLElement) roRef.current.unobserve(child);
-        }
+        /* The children that were ACTUALLY observed, not the ones still in the DOM.
+           Given the after-every-render re-sync below, these two are the same list by the time a
+           row unmounts — so this is belt-and-braces rather than the fix for anything, and it is
+           written down as such because a mutation of this line does NOT go red. Before that
+           re-sync existed, reading the live children here was a real leak: a group React had
+           already removed was absent from `children` and so was never unobserved. The set is
+           kept explicitly anyway, because it is the honest record of what was observed and does
+           not depend on the effect below still being there. */
+        for (const child of watchedRef.current) roRef.current.unobserve(child);
+        watchedRef.current = new Set();
       }
       rowRef.current = el;
       if (!el) return;
@@ -245,15 +287,28 @@ export function useBarDensity(): {
        * Observing the children closes it for every cause rather than for that one: a label swap,
        * a locale switch, a face switch, and a webfont finishing load all change a child's box.
        */
-      for (const child of el.children) {
-        if (child instanceof HTMLElement) roRef.current.observe(child);
-      }
+      syncWatched(el);
       // Ref callbacks run after the commit's DOM insertion — the row is laid out enough to
       // read, and the first measurement must not wait for a resize that may never come.
       measure();
     },
-    [measure, onResize],
+    [measure, onResize, syncWatched],
   );
+
+  /**
+   * AND AGAIN AFTER EVERY RENDER, because that is when a group can appear or vanish.
+   *
+   * No dependency list: the thing being watched for is a change in the row's children, and no
+   * value this hook can see tells it that. The work is a set comparison over at most six
+   * elements. When the set really did change the row is re-measured immediately rather than
+   * waiting for the observer, since the newly observed child may already be at its final size
+   * and produce no resize of its own.
+   */
+  useEffect(() => {
+    const row = rowRef.current;
+    if (!row || !roRef.current) return;
+    if (syncWatched(row)) measure();
+  });
 
   /** Teardown with the BAR, not with the row — the row's own cycles are handled above. */
   useEffect(
