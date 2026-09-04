@@ -107,6 +107,29 @@ export interface RouteOptions {
    * `withSession` owns that decision; no handler may re-implement it.
    */
   enrollmentOk?: boolean;
+  /**
+   * PATH PARAMETERS THAT ARE **NOT** UUIDS — the opt-out from the shape check
+   * `createApp.handle` applies to every `:param` before any pipeline runs.
+   *
+   * **Absent means validated**, and that direction is the whole point. A path parameter is a
+   * caller-chosen string that reaches a `uuid` column verbatim, so the default has to be the safe
+   * one: a new `:id` route is covered by code nobody has to remember to call. The inverted
+   * spelling — an opt-IN list of routes to check — is the shape that leaves the next route
+   * uncovered, which is exactly how `GET /drafts/:id` answered 500 to `/drafts/not-a-uuid` for its
+   * whole life while a 1 679-line input census stayed green.
+   *
+   * **It ships EMPTY, and that is a measured claim rather than a default.** All 78 `:id` patterns
+   * in the table resolve to a `uuid` column — including the three that looked like exceptions:
+   * `attachments.id` IS a uuid (its live 502 came from that route's own blanket catch, not from a
+   * non-uuid id), `mailbox_folders.id` is one, and `/screener/:id` reads `messages.id`. So there is
+   * no entry to make today, and the option exists for the `:token` or `:name` route somebody adds
+   * later — which then has to SAY so here, visibly, instead of silently widening the door.
+   *
+   * Named per parameter, not per route, so a route with two params can declare one opaque and keep
+   * the other checked. `input-bounds-census.test.ts` holds the frozen cross-check in both
+   * directions, so an entry added here without an argument there is a red test.
+   */
+  opaqueParams?: readonly string[];
   /** Honors `Idempotency-Key` (`withIdempotency`). */
   idempotent?: boolean;
   /** SSE / oauth-redirect: reduced pipeline — no JSON envelope, no CSRF, no idempotency. */

@@ -56,6 +56,23 @@ rather than as another line of small grey text above the pile descriptions. Noth
 appears — it is a standing fact about your mail, and it stays until you turn the responder off — so
 it is tinted rather than alarming. Its sentence also reads correctly in English for every
 combination of audience and rate; one of them did not agree with its subject.
+### A malformed address in a request is answered, not swallowed
+
+Every address in this app's API — the identifier in `/drafts/<id>`, `/messages/<id>`, and about
+seventy-five more — is now checked for shape before anything else happens. One that could not name
+anything, because it was truncated, or carried a stray space or newline picked up from a copy and
+paste, used to reach the database and come back as `internal error` with a 500. That answer was
+wrong twice over: it reported a fault in the server for what was a bad request, and it told the
+caller nothing it could act on.
+
+Such a request now gets `400` and a plain sentence naming the field. The check runs in the one place
+every request passes through, so it covers the file-download and administrative paths that sit
+outside the normal request chain as well.
+
+Requests carrying a well-formed identifier are unchanged, including one naming something that does
+not exist or is not yours — that is still an ordinary "not found", and the shape check makes no
+judgement about who may see what.
+
 
 ### Deciding on a mailbox another install is organizing
 

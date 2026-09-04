@@ -80,6 +80,23 @@ export const attachmentRoutes: Route[] = [
         });
       } catch (err) {
         if (err instanceof ServiceError) return errorResponse(err.code, err.httpStatus, err.message, err.details);
+        /**
+         * ── "UPSTREAM" IS A CLAIM ABOUT THE USER'S MAIL SERVER, AND THIS ARM CANNOT KNOW IT ───
+         *
+         * A non-`ServiceError` reaching here is not evidence of anything upstream. It is an
+         * unclassified throw, and the most likely author of one is this process. Until 2026-09-04
+         * the commonest cause was a malformed `:id`: the segment reached a `uuid` column, Postgres
+         * answered 22P02, and this line reported it as `502 upstream_unavailable` — telling the
+         * operator that somebody's IMAP server was unreachable when the truth was an unvalidated
+         * path parameter. `createApp.handle` now refuses that shape with a 400 before the route
+         * runs, so the 22P02 case is gone; the MISLABEL is not, and it will name the next
+         * programming fault the same wrong way.
+         *
+         * Deliberately left as-is in this slice rather than fixed in passing: separating a genuine
+         * IMAP failure from an internal fault means classifying what the open path can throw, which
+         * is its own change with its own tests. Recorded as a gap so the wording does not read as
+         * settled. The comment is the correction until then.
+         */
         return errorResponse("upstream_unavailable", 502, "attachment fetch failed");
       }
     },
