@@ -545,6 +545,12 @@ export interface ProfileIo {
  */
 export interface ProfileImapClient extends MetaFolderClient {
   readonly mailbox?: { exists?: number } | false;
+  /**
+   * A NOOP, which is how a long-lived connection LEARNS what changed under it. Optional, so every
+   * existing fake behaves exactly as it did. See {@link listProfileMessages} for why a cached
+   * `exists` of zero is not proof of an empty folder.
+   */
+  noop?(): Promise<unknown>;
   mailboxCreate(path: string): Promise<unknown>;
   mailboxUnsubscribe(path: string): Promise<unknown>;
   getMailboxLock(path: string): Promise<{ release(): void }>;
@@ -587,18 +593,64 @@ export function makeProfileIo(client: ProfileImapClient, toServerPath: (canonica
       if (!found || found.subscribed) await client.mailboxUnsubscribe(await meta.path());
     },
 
+    /**
+     * ══════════════════════════════════════════════════════════════════════════════════════════
+     *  THE SAME FOLDER, THE SAME BOUND — and this read is the expensive one
+     * ══════════════════════════════════════════════════════════════════════════════════════════
+     *
+     * `ohmail/_meta` is shared with the lease, whose own read is bounded newest-first
+     * (`organizer-lease.ts#readMetaFolderWindow`). This one was NOT, and it is the costlier of the
+     * two on both axes: it asks for FULL SOURCES rather than headers, buffers them into an array,
+     * and runs on the organizer's hot paths — once per attach for the hold, once per cycle for the
+     * routing question. So a folder anyone with APPEND rights can write to decided how much work
+     * every cycle did AND how much memory it took, which is precisely the defect the lease's bound
+     * removed, with bodies instead of headers. The per-document ceiling is checked by the PARSER,
+     * after the bytes are already in hand, so it never bounded this.
+     *
+     * It is a second loop rather than a call to the shared one because the shared one fetches
+     * HEADERS and this needs SOURCES — the two ask the server for different things. What is shared
+     * is the rule, and it is spelled the same way on purpose: newest-first, one ceiling, and the
+     * empty-folder defence.
+     *
+     * NEWEST-FIRST is not a preference here either. The profile is a document the organizer
+     * APPENDS, newest wins, so everything this read is about is at the END of the folder — a
+     * ceiling that kept the oldest records would hide the current document behind whatever else
+     * accumulated after it, and the caller would read "no settings have been published" for a
+     * mailbox that has some.
+     *
+     * TRUNCATION IS NOT REFUSED HERE, unlike the record drains. The question this read answers is
+     * "what is the newest document", and the newest-first window answers it by construction
+     * whenever the document is inside the window. The residual is the lease's: a document older
+     * than the last {@link PROFILE_MESSAGES_MAX_PER_FETCH} appends is not seen.
+     *
+     * ── AND A CACHED ZERO IS NOT A KNOWN ZERO ────────────────────────────────────────────────
+     *
+     * This read consulted `client.mailbox.exists` directly. That is a CACHE a connection updates
+     * only from untagged responses, and `getMailboxLock` does not re-SELECT a folder that is
+     * already selected — measured against a real server, it stayed 0 for ten seconds after another
+     * connection appended. Three reads in the lease were corrected for this; this was the fourth
+     * and was missed. A stale zero here reads as "nobody has published settings for this mailbox".
+     */
     async listProfileMessages(): Promise<RawProfileMessage[]> {
       const lock = await client.getMailboxLock(await meta.path());
       try {
         const out: RawProfileMessage[] = [];
-        // The lease's empty-mailbox defence, verbatim: `1:*` is not a valid messageset against
-        // an empty mailbox and Dovecot refuses the command outright, while GreenMail tolerates
-        // it. Only a POSITIVELY KNOWN zero skips the fetch.
+        // A NOOP that FAILS leaves the cached value standing, which is exactly where this was
+        // before — so the failure is swallowed rather than turned into a fault.
+        if (typeof client.noop === "function") {
+          try { await client.noop(); } catch { /* no worse than not asking */ }
+        }
         const selected = client.mailbox;
         const count = typeof selected === "object" && selected !== null ? selected.exists : undefined;
+        // `1:*` is not a valid messageset against an empty mailbox and Dovecot refuses the command
+        // outright, while GreenMail tolerates it. Only a POSITIVELY KNOWN zero skips the fetch.
         if (count === 0) return out;
-        for await (const m of client.fetch("1:*", { uid: true, source: true }, { uid: false })) {
+        const from = typeof count === "number" && count > PROFILE_MESSAGES_MAX_PER_FETCH
+          ? count - PROFILE_MESSAGES_MAX_PER_FETCH + 1
+          : 1;
+        for await (const m of client.fetch(`${from}:*`, { uid: true, source: true }, { uid: false })) {
           if (!m.source) continue;
+          if (out.length >= PROFILE_MESSAGES_MAX_PER_FETCH) break;
           out.push({ ref: m.uid, raw: m.source.toString("utf8") });
         }
         return out;
@@ -689,6 +741,20 @@ export type ProfileReadResult =
  * be tight rather than generous) are still owed by the unbounded-read work this does not close.
  */
 export const PROFILE_DOC_MAX_BYTES = 64 * 1024 * 1024;
+
+/**
+ * THE CEILING ON ONE READ OF `ohmail/_meta` FOR PROFILE DOCUMENTS — a different bound from the one
+ * above, and the difference is the whole reason both exist.
+ *
+ * {@link PROFILE_DOC_MAX_BYTES} bounds ONE DOCUMENT and is checked by the parser, after the bytes
+ * are in hand. It therefore says nothing about how many messages are fetched and buffered, which is
+ * what an attacker with APPEND rights on the folder actually chooses. This bounds that.
+ *
+ * Deliberately the same number as the lease's own ceiling: it is one folder, the legitimate
+ * population is the same handful of records, and two different ceilings on one folder is two
+ * numbers to keep in step for no benefit.
+ */
+export const PROFILE_MESSAGES_MAX_PER_FETCH = 500;
 
 /** A `MalformedProfile`, with `ref` omitted rather than set to `undefined` (the parser's rule). */
 function malformedProfile(reason: string, ref: unknown): MalformedProfile {

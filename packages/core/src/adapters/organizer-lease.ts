@@ -81,7 +81,37 @@ import { WATCHED_FOLDERS, type ImapAuth } from "./imap-types.js";
  * The rule underneath all eight cells: **an unreadable record is evidence, never permission.** A
  * build that cannot understand something in this folder must leave both the record and the mailbox
  * alone, because "I do not understand this" and "there is nothing here" have to stay
- * distinguishable — the same rule the folder-level read holds for a truncated fetch.
+ * distinguishable.
+ *
+ * ── AND THE FOLDER-LEVEL RULE IS NOT THE SAME AT EVERY READER — a DECISION, not an oversight ─
+ *
+ * One record this build cannot read is one record. A folder too full to read in one window is a
+ * different question, and the three readers of `ohmail/_meta` deliberately answer it differently.
+ * This paragraph is here rather than buried at the implementation because it is the kind of thing a
+ * later reader "tidies" into consistency, and consistency is the wrong answer.
+ *
+ * | reader | a truncated read | why |
+ * | --- | --- | --- |
+ * | the read-only PEEK | REFUSES — reports the mailbox unknown, never unheld | it exists to tell a person who holds their mailbox; being wrong prints a false sentence and invites a takeover of a mailbox somebody is actively organizing |
+ * | both record DRAINS | REFUSE — skip the cycle, expunge nothing, append nothing | the reader's state machine reads "my record is not in the folder" as "the organizer took it", so a partial view tells a person a decision nobody ever saw was applied. Refusing costs one cycle |
+ * | the lease GATE | ACTS on the newest-first window, and logs the count | refusing raises {@link LeaseUnavailableError}, which the sync loop exempts by class and answers by NOT SYNCING THE MAILBOX. A gate that refused would let anyone with APPEND rights stop a customer's MAIL — readers included, since the refusal comes before the role is decided — the moment the folder holds one record more than the ceiling, with no self-healing path, because the folder never shrinks on its own |
+ *
+ * **The asymmetry follows from what being wrong COSTS at each reader, not from tidiness.** The peek
+ * and the drains fail into a false sentence, which a person acts on; the gate fails into lost mail,
+ * which is the product. Where the two conflict, mail wins.
+ *
+ * It is also the better trade against the attacker, which is the half that makes it a decision
+ * rather than a concession. **A claim is not authenticated.** Anyone with APPEND rights on this
+ * folder can write one, and {@link decideLease}'s ranking is what bounds the damage — so burying a
+ * claim under five hundred appends is a strictly harder route to an outcome that is already
+ * available directly. Refusing the gate would trade a hard attack for a soft outage.
+ *
+ * What acting costs is written down rather than left to be discovered: the window is the newest
+ * {@link META_RECORDS_MAX_PER_FETCH} records, so a claim renewed inside that span is always seen,
+ * and missing a LIVE one needs that many appends inside a single heartbeat interval. In that window
+ * the election can reach "nobody has ever organized this mailbox" over a folder that holds one —
+ * bounded, like every other overlap here, by the next cycle's election once the burst stops, and
+ * never silent, because the truncation is logged on the cycle it happens.
  *
  * ── THREE LAYERS, AND THE SPLIT IS THE POINT ──────────────────────────────────────────────
  *
@@ -1630,7 +1660,7 @@ export function makeLeasePeekIo(client: LeaseImapClient, toServerPath: (canonica
         // {@link LeaseUnavailableError}: this surface exists to tell a person who holds their
         // mailbox, and "I could not see all of it" must render as unknown rather than as nobody.
         const read = await readMetaFolderWindow(client);
-        if (read.truncated) throw new MetaFolderTruncatedError(read.records.length, read.total);
+        if (read.truncated) throw new MetaFolderTruncatedError(read.records.length, read.total, read.records);
         return read.records;
       } finally {
         lock.release();
@@ -1658,8 +1688,15 @@ export async function readLeasePeek(input: ReadLeasePeekInput): Promise<LeasePee
   try {
     messages = await input.io.listClaims();
   } catch (err) {
+    // THE COUNTS SURVIVE INTO THE MESSAGE, for {@link MetaFolderTruncatedError}'s own reason: of
+    // everything that lands here, a folder too full to read is the only one that does not clear on
+    // its own, and folding it into the generic sentence sends whoever reads the line to the mail
+    // server for a fault that is a full folder. Every other failure keeps the general wording,
+    // because for those the operation is what matters and the cause carries the rest.
     throw new LeaseUnavailableError(
-      `the organizer lease in ${META_FOLDER} could not be read`,
+      err instanceof MetaFolderTruncatedError
+        ? err.message
+        : `the organizer lease in ${META_FOLDER} could not be read`,
       { op: "list_claims", cause: err },
     );
   }
@@ -1906,12 +1943,34 @@ async function selectedCount(client: LeaseImapClient): Promise<number | undefine
  *
  * ── AND A TRUNCATED READ SAYS SO ────────────────────────────────────────────────────────────
  *
- * `truncated` is the whole point of returning a record rather than an array. Every caller treats it
- * as "I could not look", never as "there is nothing there": the gate writes nothing at all, the
- * peek reports the mailbox as unknown rather than unheld, and the record drain skips its cycle and
- * expunges nothing. That is the same rule the absent-folder case already follows, for the same
- * reason — a decision taken on a partial view of this folder is how a mailbox ends up with two
- * organizers, or a person is told a decision was applied that nobody ever saw.
+ * `truncated` is the whole point of returning a record rather than an array — and the three callers
+ * do NOT all answer it the same way, which took a review round to get right.
+ *
+ * The PEEK and both DRAINS treat it as "I could not look", never as "there is nothing there": the
+ * peek reports the mailbox as unknown rather than unheld, and a drain skips its cycle and expunges
+ * nothing. Their cost of being wrong is telling a person something FALSE — that nobody organizes
+ * their mailbox, or that a decision nobody ever saw was applied — and their cost of refusing is a
+ * cycle's delay. So they refuse.
+ *
+ * **The GATE acts on the window, and the first cut of this had it refuse.** That was wrong, and the
+ * way it was wrong is worth keeping: refusing at the gate raises `LeaseUnavailableError`, which the
+ * sync loop exempts by class and answers by not syncing the mailbox at all — so a folder holding one
+ * record more than the ceiling would have stopped a customer's MAIL, for readers as well as
+ * organizers, with no
+ * self-healing path, because the folder never shrinks on its own. That is the very failure this
+ * bound was written to remove, reached at a far lower threshold than the timeout it replaced.
+ *
+ * Acting is also the better trade against the attacker. A claim is NOT authenticated — anyone with
+ * APPEND rights can write one, and the election's ranking is what bounds the damage — so hiding a
+ * claim behind five hundred appends is a strictly harder route to an outcome that is already
+ * available directly. Refusing buys almost nothing against them and costs everything against
+ * ordinary folder junk.
+ *
+ * What acting costs, stated rather than discovered: the window is the newest 500 records, so a claim
+ * renewed within the last 500 appends is always seen, and missing a LIVE claim requires 500 appends
+ * inside one heartbeat interval. In that window the election can reach "nobody has ever organized
+ * this mailbox" over a folder that holds a claim, which is the two-organizer fault — bounded, as
+ * every other overlap here is, by the next cycle's election once the burst stops.
  *
  * One message beyond the ceiling is read and discarded rather than kept, so "the folder holds more
  * than the window" is a fact off the wire instead of an inference from a full window: a folder
@@ -1943,7 +2002,16 @@ export class MetaFolderTruncatedError extends Error {
   readonly limit: number;
   /** The folder's message count, where the server reported one. */
   readonly total: number | null;
-  constructor(read: number, total: number | null) {
+  /**
+   * THE NEWEST RECORDS THE WINDOW DID COVER — carried so a caller that can act on a partial view
+   * may, without a second round trip.
+   *
+   * An error carrying a payload is a smell and this one is deliberate: exactly one caller can act
+   * on a partial view of this folder and it is the ELECTION, for the reason written at the gate's
+   * own catch. The peek and both drains cannot, do not, and never touch this field.
+   */
+  readonly records: readonly RawMetaMessage[];
+  constructor(read: number, total: number | null, records: readonly RawMetaMessage[] = []) {
     super(
       `${META_FOLDER} holds more than the ${META_RECORDS_MAX_PER_FETCH} records one read may take` +
       `${total === null ? "" : ` (${total} present)`}, so what is in it is not fully known and ` +
@@ -1953,6 +2021,7 @@ export class MetaFolderTruncatedError extends Error {
     this.read = read;
     this.limit = META_RECORDS_MAX_PER_FETCH;
     this.total = total;
+    this.records = records;
   }
 }
 
@@ -2060,7 +2129,7 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
         // reach here plainly exists — so "no claim is appended, nothing is expunged" is the exact
         // guarantee rather than "no command is sent".)
         const read = await readMetaFolderWindow(client);
-        if (read.truncated) throw new MetaFolderTruncatedError(read.records.length, read.total);
+        if (read.truncated) throw new MetaFolderTruncatedError(read.records.length, read.total, read.records);
         return read.records;
       } finally {
         lock.release();
@@ -2162,22 +2231,38 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
       { op: "ensure_meta", cause: err },
     );
   }
+  /**
+   * ── A FOLDER TOO FULL TO READ IS REPORTED AND THEN WORKED WITH, NOT REFUSED ────────────────
+   *
+   * The gate is the one reader of `ohmail/_meta` that must not answer a full folder by refusing.
+   * `LeaseUnavailableError` is exempted by class in the sync loop and answered by NOT SYNCING THE
+   * MAILBOX — so a gate that refused here would let one record more than the ceiling, in a folder
+   * anyone with APPEND rights can write to, stop a customer's mail, readers as well as organizers,
+   * with no
+   * self-healing path. That is the failure this bound exists to remove, reached at a far lower
+   * threshold than the FETCH timeout it replaced. {@link readMetaFolderWindow}'s header carries the
+   * whole argument, including what acting on a partial election costs.
+   *
+   * So the truncation is LOGGED — once per read, with the counts, because it is the one fault in
+   * this family that does not clear on its own and somebody has to be able to find the folder — and
+   * the newest records it did cover are used. Every OTHER failure still refuses.
+   */
+  const readClaims = async (op: () => Promise<RawClaimMessage[]>): Promise<RawClaimMessage[]> => {
+    try {
+      return await op();
+    } catch (err) {
+      if (err instanceof MetaFolderTruncatedError) {
+        log("lease_meta_truncated", { read: err.read, limit: err.limit, total: err.total });
+        return [...err.records];
+      }
+      throw err;
+    }
+  };
+
   let messages: RawClaimMessage[];
   try {
-    messages = await io.listClaims();
+    messages = await readClaims(() => io.listClaims());
   } catch (err) {
-    /* ── A FOLDER TOO FULL TO READ GETS ITS OWN LINE, BECAUSE IT IS THE ONE FAULT HERE SOMEBODY
-     *    CAN ACT ON ────────────────────────────────────────────────────────────────────────────
-     *
-     * Everything else that lands here is a transport fault: the connection dropped, the server
-     * refused, the folder went away. This one is a fact about the mailbox — `ohmail/_meta` holds
-     * more records than a single read may take — and it does not clear on its own. Nothing is
-     * written on this path: no claim is appended, nothing is expunged, and the install keeps
-     * whatever role it already had, which is the safe direction when the election cannot be seen
-     * whole. The line carries the counts so the folder can be found and emptied. */
-    if (err instanceof MetaFolderTruncatedError) {
-      log("lease_meta_truncated", { read: err.read, limit: err.limit, total: err.total });
-    }
     throw new LeaseUnavailableError(
       `the organizer lease in ${META_FOLDER} could not be read; this mailbox cannot be organized safely`,
       { op: "list_claims", cause: err },
@@ -2373,7 +2458,9 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
    */
   let verifyClaims: readonly ClaimRecord[];
   try {
-    const after = await io.listClaims();
+    // Through `readClaims` for the same reason as the election above: a full folder must not turn a
+    // renew that already landed into a mailbox that stops syncing.
+    const after = await readClaims(() => io.listClaims());
     verifyClaims = after
       .map((m) => parseClaim(m.raw, m.ref))
       .filter((c): c is ClaimRecord => c !== null);
@@ -2543,7 +2630,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
     if (verdict.displace.length > 0) {
       let after: RawClaimMessage[];
       try {
-        after = await io.listClaims();
+        after = await readClaims(() => io.listClaims());
       } catch (err) {
         throw new LeaseUnavailableError(
           `the organizer lease in ${META_FOLDER} could not be re-read after the handover was ` +
@@ -3651,7 +3738,7 @@ function makeMetaRecordsList(
         // answer and comes back as one; a folder too full for a single window is not, and falls
         // into the refusal below for the same reason an ABSENT folder does.
         const read = await readMetaFolderWindow(client);
-        if (read.truncated) throw new MetaFolderTruncatedError(read.records.length, read.total);
+        if (read.truncated) throw new MetaFolderTruncatedError(read.records.length, read.total, read.records);
         return read.records;
       } finally {
         lock.release();

@@ -3862,7 +3862,16 @@ export async function startWorkerWithLock(
            * and expunging records out from under whoever took over. So the channel runs for an
            * ORDINARY fault and never for this one, and the arms below still see exactly the error
            * they saw before. */
-          const cycleMayStillWrite = !(cycleError instanceof LeaderFencedError);
+          const cycleMayStillWrite = !(cycleError instanceof LeaderFencedError)
+            // ── AND A SHARED-DATABASE FAULT IS NOT SOMETHING TO DRAIN THROUGH EITHER ─────────
+            //
+            // The arm below reads this class and sets `stopPass` — the whole point being to take
+            // NO new mailbox while Postgres is down. A drain reached on that path cannot succeed:
+            // every record it handles opens a transaction that fails and is swallowed, so the only
+            // effects are one IMAP FETCH of `_meta` per mailbox and a burst of error logs, on
+            // exactly the path that exists to stop doing work. It costs the shard a round trip per
+            // mailbox to learn what the first mailbox already knew.
+            && !isSharedDatabaseFault(cycleError);
 
           /* ══ THE REQUEST CHANNEL, AFTER THE MAIL — AND THE ORDER IS THE SECURITY PROPERTY ══
            *

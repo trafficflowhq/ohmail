@@ -11,6 +11,7 @@ import {
   markMailboxStoodDown, stampMailboxSyncNow, type LeaderFence,
 } from "./mailboxes.js";
 import { LeaderFencedError, runSyncCycle, type SyncDeps } from "./sync.js";
+import { isSharedDatabaseFault } from "./dead-letter.js";
 import { applyMetaRequests } from "./request-drain.js";
 import { OrganizerProfileSync } from "./profile.js";
 import { makeStorageCapResolver } from "./storage-cap.js";
@@ -544,7 +545,12 @@ export async function runReconcileCron(
       // be a write into a mailbox that has just been taken away — the very thing the permit and the
       // fence exist to stop. Both are handed on unchanged to the arms below.
       const mayStillWrite = !(cycleError instanceof OrganizerStandDownError)
-        && !(cycleError instanceof LeaderFencedError);
+        && !(cycleError instanceof LeaderFencedError)
+        // A shared-database fault is the third: this drain is database work end to end, so on a
+        // Postgres outage it can only spend one IMAP round trip per mailbox to fail in a way the
+        // first mailbox already established. The always-on worker's twin excludes it for the same
+        // reason.
+        && !isSharedDatabaseFault(cycleError);
       if (mayStillWrite) {
         try {
           await applyMetaRequests(
