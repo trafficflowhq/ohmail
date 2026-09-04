@@ -30,12 +30,24 @@ import { learnMissingSmtpSizes } from "../smtp-size.js";
  *
  * ## Why this endpoint exists at all
  *
- * The worker runs the same alert pass every minute, and for three of the four rules that is
- * enough. It cannot run the fourth. "No leader lock held for > 2 minutes" is a statement
- * ABOUT the worker, and a dead process reports nothing — so the rule needs an observer on a
- * different machine, on a different platform, with a different failure mode. That is this
+ * The worker runs the same alert pass every minute, and for most of the rules that is enough:
+ * they are facts about the deployment that either arm reads out of the same Postgres. A handful
+ * are statements ABOUT AN ARM, and a dead process reports nothing — so those need an observer on
+ * a different machine, on a different platform, with a different failure mode. That is this
  * host: the API deployment watching the worker from a different platform, both reading one
  * Postgres.
+ *
+ * `worker_down` ("no leader lock held for > 2 minutes") is the original one and the reason this
+ * endpoint exists. `worker_degraded` joins it — alive, holding the lock, not doing the work — and
+ * so does `alert_driver_dark`, which each arm evaluates about THE OTHER for the same reason one
+ * level up: a process cannot testify to its own death, which is why there are two. `schema_behind`
+ * is the inverse shape, host-local by construction: each arm reports its OWN journal against the
+ * database, because "the worker is ahead" and "the API is ahead" are two different bad deploys.
+ *
+ * The count deliberately is not written here. `AlertKind` in `packages/db/src/alerts.ts` is the
+ * authoritative list and a census test holds it to what the evaluator emits; a number in this
+ * comment would be a second claim with nothing keeping it honest, and it was wrong here for as
+ * long as it stood.
  *
  * The remaining hole — every platform down at once — is covered by the scheduler itself:
  * `.github/workflows/alerts.yml` runs on GitHub's infrastructure, and a failed scheduled
@@ -91,11 +103,17 @@ import { learnMissingSmtpSizes } from "../smtp-size.js";
  *
  * `/internal/alerts*` is a STAFF SURFACE — the same audience, the same shared-secret shape and
  * the same cross-account reach as `/admin/*` — so it reads and writes through `deps.adminDb`,
- * the handle authenticated as `ohmail_admin`. That role holds SELECT on the four rules' inputs
- * (`worker_heartbeats`, `billing_events`, `outbound_sends`, `mailboxes`,
- * `billing_subscriptions`) and it is the ONE table this role writes: `alert_state`, which it
- * may INSERT, UPDATE and DELETE because the pass opens a row, claims the notification and
- * deletes the row when the condition clears.
+ * the handle authenticated as `ohmail_admin`. That role holds SELECT on every input the rules
+ * read — `worker_heartbeats`, `billing_events`, `outbound_sends`, `mailboxes` and
+ * `billing_subscriptions` were the first of them, and the authoritative list is
+ * `STAFF_SELECT_GRANTS` in `packages/db/src/staff-grants.ts`, which a census holds equal to the
+ * grants the database actually carries. Naming the tables here instead is how this paragraph
+ * came to describe a rule set several times smaller than the one that shipped.
+ *
+ * It writes exactly two: `alert_state`, which it may INSERT, UPDATE and DELETE because the pass
+ * opens a row, claims the notification and deletes the row when the condition clears; and
+ * `alert_pass_runs`, one row per arm, because the arm that is hardest to observe from anywhere
+ * else must be able to record that it ran.
  *
  * **The one thing that is NOT on the blind handle, stated because the sentence above used to
  * claim otherwise.** The mail SINK — the second delivery path, not the pass — claims a

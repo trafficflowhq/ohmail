@@ -76,7 +76,7 @@ export const TELEGRAM_API_ORIGIN = "https://api.telegram.org";
  * Telegram refuses a `sendMessage` whose text exceeds 4096 characters with a 400.
  *
  * A cap rather than a hope: {@link renderAlertText} renders every firing alert with its full
- * detail sentence, and the four rules' details are long enough that three or four firing at
+ * detail sentence, and those details are long enough that three or four firing at
  * once clears 4096 comfortably. Uncapped, the push arm would fail EXACTLY during a multi-rule
  * incident — the one it exists for — and the failure would read as a vendor refusal.
  */
