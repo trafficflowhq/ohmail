@@ -1882,6 +1882,15 @@ export interface LeaseImapClient extends MetaFolderClient {
    * measurement that made it necessary.
    */
   noop?(): Promise<unknown>;
+  /**
+   * SEARCH over the selected folder — how this module asks the SERVER how many messages a folder
+   * holds. Optional: a client without it falls back to reading the folder whole. See
+   * {@link lastSequence} for why the count cannot be asked for with a `*` fetch.
+   */
+  search?(
+    query: { all?: boolean },
+    options?: { uid?: boolean },
+  ): Promise<number[] | false | undefined>;
   mailboxCreate(path: string): Promise<unknown>;
   mailboxUnsubscribe(path: string): Promise<unknown>;
   getMailboxLock(path: string): Promise<{ release(): void }>;
@@ -1968,32 +1977,59 @@ async function selectedCount(
  * implementations of "how many messages are in it".
  */
 export interface SequenceProbeClient {
-  fetch(
-    range: string,
-    query: { uid?: boolean },
+  /**
+   * SEARCH over the SELECTED folder. Optional, because a client that does not offer it simply
+   * falls back to reading the folder whole — see {@link lastSequence} for why this is the only
+   * form of the question this module now asks.
+   */
+  search?(
+    query: { all?: boolean },
     options?: { uid?: boolean },
-  ): AsyncIterableIterator<{ uid: number; seq?: number }>;
+  ): Promise<number[] | false | undefined>;
 }
 
 /**
- * ASK THE SERVER FOR THE LAST SEQUENCE NUMBER — one round trip, and the only reliable answer.
+ * ASK THE SERVER HOW MANY MESSAGES THE FOLDER HOLDS — and ask it in a form the CLIENT cannot
+ * answer out of its own cache.
  *
- * `*` is the highest existing sequence number, so a fetch of exactly that message carries the
- * folder's true message count in its own `seq`. It costs one round trip and it is asked only when
- * the cheap answer is missing or untrustworthy — see {@link readMetaFolderWindow}.
+ * ── WHY NOT `FETCH *`, WHICH IS WHAT THIS USED TO DO ─────────────────────────────────────────
  *
- * `undefined` on anything unexpected: a server that will not answer, or a client whose fetch does
- * not report `seq` (every fake predating this). The caller then falls back to the sliding window,
- * which is bounded in memory and correct about WHICH records it keeps, and merely costs the whole
- * folder over the wire. Never a throw: this is an optimisation of a read that already works.
+ * `*` is the highest existing sequence number, so fetching exactly that message should carry the
+ * folder's true count in its own `seq`. Against a real server that is true. It never reached a
+ * real server. ImapFlow rewrites the range BEFORE issuing the command (`imap-flow.js`, 1.5.0):
+ *
+ *     if (range === '*') {
+ *         if (!this.mailbox.exists) { return false; }
+ *         range = this.mailbox.exists.toString();
+ *     }
+ *
+ * — so the probe was answered with `mailbox.exists`, WHICH IS THE CACHED COUNT IT EXISTS TO
+ * DISTRUST. It returned the stale number with extra steps, and on a cached zero it returned
+ * `false` rather than an async iterable, which the loop then threw on. The whole mechanism was a
+ * no-op wearing a round trip's clothes, and the fake hid it by resolving `*` server-side the way
+ * a server does rather than the way THIS CLIENT does.
+ *
+ * SEARCH is not rewritten. It is issued against the selected folder and answered by the server,
+ * and `ALL` returns every sequence number in it — so the highest is the count, and an empty
+ * answer is an empty folder rather than an unknown one. It carries no message data, only
+ * integers.
+ *
+ * `undefined` on anything unexpected — no `search` at all, a server that will not answer, a
+ * non-array reply. The caller then falls back to the sliding window, which is bounded in memory
+ * and correct about WHICH records it keeps and merely costs the whole folder over the wire. Never
+ * a throw: this is an optimisation of a read that already works without it.
  */
 export async function lastSequence(client: SequenceProbeClient): Promise<number | undefined> {
+  if (typeof client.search !== "function") return undefined;
   try {
-    let last: number | undefined;
-    for await (const m of client.fetch("*", { uid: true }, { uid: false })) {
-      if (typeof m.seq === "number") last = m.seq;
-    }
-    return last;
+    const found = await client.search({ all: true }, { uid: false });
+    if (!Array.isArray(found)) return undefined;
+    // The HIGHEST sequence number is the count. Not `found.length`: a server is not required to
+    // answer in order, and a gap would make the length disagree with the range arithmetic that
+    // uses it. An empty folder answers `[]`, which is a KNOWN zero.
+    let max = 0;
+    for (const n of found) if (typeof n === "number" && n > max) max = n;
+    return max;
   } catch {
     return undefined;
   }

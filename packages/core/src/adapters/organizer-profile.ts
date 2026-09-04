@@ -575,6 +575,15 @@ export interface ProfileImapClient extends MetaFolderClient {
    * `exists` of zero is not proof of an empty folder.
    */
   noop?(): Promise<unknown>;
+  /**
+   * SEARCH over the selected folder — how this module asks the SERVER how many messages a folder
+   * holds. Optional: a client without it falls back to reading the folder whole. See
+   * {@link lastSequence} for why the count cannot be asked for with a `*` fetch.
+   */
+  search?(
+    query: { all?: boolean },
+    options?: { uid?: boolean },
+  ): Promise<number[] | false | undefined>;
   mailboxCreate(path: string): Promise<unknown>;
   mailboxUnsubscribe(path: string): Promise<unknown>;
   getMailboxLock(path: string): Promise<{ release(): void }>;
