@@ -2184,7 +2184,29 @@ export async function readMetaFolderWindow(client: LeaseImapClient): Promise<Met
    * the case where even that answer does not come.
    */
   const probed = count === undefined || !refreshed ? await lastSequence(client) : undefined;
-  const total = probed ?? (typeof count === "number" ? count : null);
+
+  /* ── AND WHEN THE SERVER DOES NOT ANSWER EITHER, DO NOT COUNT BACK FROM THE STALE VALUE ───
+   *
+   * The line above asks precisely because the cached count cannot be trusted. So the fallback may
+   * not be that same count: if the probe also comes back empty, the only honest answer is that the
+   * length of this folder is UNKNOWN, and `null` is how this function says so.
+   *
+   * The failure it removes is not a smaller window, it is a wrong one, and it is silent. A count
+   * cached at 1000 against a folder another connection has since cut to 400 yields `501:*`, and a
+   * messageset is a RANGE whose endpoints are unordered (RFC 3501 §9): `*` is 400, so the server
+   * reads `501:400` as `400:501` and returns the single message 400. The read then reports
+   * `truncated` — because `from > 1` — for a folder holding 400 records against a ceiling of 500.
+   * Every consumer is misled in the direction that costs the most: the drains refuse a folder that
+   * is comfortably under the limit, and the gate elects on a one-record window in which a live
+   * claim at any lower sequence is simply absent. Two organizers on one mailbox is the outcome
+   * that whole path exists to prevent.
+   *
+   * With `null` the range is `1:*` and the sliding eviction below keeps the newest — the same
+   * guarantee by the other route, at the cost of reading the folder rather than a window of it.
+   * That is the right trade when the alternative is arithmetic on a number known to be wrong: the
+   * bound holds on what is RETAINED either way, and only the transfer is larger.
+   */
+  const total = probed ?? (refreshed && typeof count === "number" ? count : null);
   if (total === 0) return { records: [], truncated: false, total: 0 };
 
   // The window's start. Above the ceiling this deliberately skips the oldest records — see the

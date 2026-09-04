@@ -663,8 +663,14 @@ export function makeProfileIo(client: ProfileImapClient, toServerPath: (canonica
          * answers to "how many messages are in it", and a copy here with a comment pointing at the
          * original is exactly how the two come to disagree — which is the defect this whole read was
          * bounded to fix, one level up. */
+        /* And when the probe does not answer either, the length is UNKNOWN — never the cached
+         * value the line above just declared untrustworthy. A count that is wrong HIGH is worse
+         * than no count at all: messageset endpoints are unordered (RFC 3501 §9), so a `501:*`
+         * derived from a stale 1000 against a folder of 400 is read as `400:501` and returns one
+         * message, which here is "no settings have been published" for a mailbox that has some.
+         * `undefined` falls through to `1:*`, where the sliding window below keeps the newest. */
         const probed = count === undefined || !refreshed ? await lastSequence(client) : undefined;
-        const total = probed ?? (typeof count === "number" ? count : undefined);
+        const total = probed ?? (refreshed && typeof count === "number" ? count : undefined);
         if (total === 0) return out;
         const from = typeof total === "number" && total > PROFILE_MESSAGES_MAX_PER_FETCH
           ? total - PROFILE_MESSAGES_MAX_PER_FETCH + 1
