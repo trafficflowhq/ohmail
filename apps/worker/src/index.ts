@@ -3862,7 +3862,22 @@ export async function startWorkerWithLock(
            * and expunging records out from under whoever took over. So the channel runs for an
            * ORDINARY fault and never for this one, and the arms below still see exactly the error
            * they saw before. */
+          /* ── AND AN UNREADABLE LEASE IS AN UNANSWERED QUESTION, NOT AN ORDINARY FAULT ──────
+           *
+           * `LeaseUnavailableError` does not say somebody else organizes this mailbox; it says
+           * this cycle could not find out. The channel below APPENDS acknowledgements and
+           * EXPUNGES records, and its standing to do either comes from the lease alone. A fence
+           * is a NO; this is a question with no answer, and a write must not proceed on one —
+           * that is how a process keeps writing into a mailbox another organizer already holds.
+           *
+           * It does not contradict the gate's rule one layer down, where a partial read of the
+           * folder is ACTED on rather than refused. That is a read deciding what it knows; this
+           * is a write claiming standing it failed to establish, and being wrong costs opposite
+           * things — a refused read strands a mailbox nobody organizes, an unproven write breaks
+           * the one-organizer invariant. Skipping costs a delay: the records remain, and the next
+           * pass drains them once the lease reads again. */
           const cycleMayStillWrite = !(cycleError instanceof LeaderFencedError)
+            && !(cycleError instanceof LeaseUnavailableError)
             // ── AND A SHARED-DATABASE FAULT IS NOT SOMETHING TO DRAIN THROUGH EITHER ─────────
             //
             // The arm below reads this class and sets `stopPass` — the whole point being to take

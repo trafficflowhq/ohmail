@@ -3893,14 +3893,30 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // else having happened. One call site, deliberately: a second copy inside a catch is how
           // a decision gets applied twice.
           //
-          // NO FAILURE IS EXCLUDED HERE, and the hosted twin excludes one — which is a difference
-          // in the doors rather than an oversight. There, a pass can fail because the instance lost
-          // the shard it leads, and draining after that would be a write into a mailbox another
-          // instance has already taken over. This door leads nothing and shares nothing: one
-          // process, one store, one mailbox. The gate above has already decided whether this
-          // install may write to this mailbox at all, and a cycle that throws does not change that
-          // answer.
-          try {
+          // ONE FAILURE IS EXCLUDED, and it is not the one the hosted twin excludes for. That one
+          // can lose the shard it leads; this door leads nothing and shares nothing — one process,
+          // one store, one mailbox — so a fence has no meaning here.
+          //
+          // What this door CAN lose is the lease itself. The mailbox is the master, and a mailbox
+          // this install organizes today can be taken over from elsewhere: the takeover is written
+          // into the shared folder, and this install discovers it and stands down on a later pass.
+          // So "may this install write" is only ever as fresh as the last lease read that
+          // SUCCEEDED.
+          //
+          // `LeaseUnavailableError` is that read failing. It does not say another organizer holds
+          // the mailbox; it says this pass could not find out. The channel below appends
+          // acknowledgements and expunges records, and its standing to do either comes from the
+          // lease and nothing else — so it is exactly the work that must not proceed on an
+          // unanswered question. Skipping costs a delay: the records stay where they are and the
+          // next pass drains them once the lease can be read again.
+          //
+          // This is not the same rule as the one the bounded folder read follows one layer down,
+          // where a partial read is acted on rather than refused. That is a read deciding what it
+          // knows; this is a write claiming standing it failed to establish, and being wrong costs
+          // opposite things — a refused read strands a mailbox nobody organizes, an unproven write
+          // puts two organizers on one.
+          const cycleMayStillWrite = !(cycleError instanceof LeaseUnavailableError);
+          if (cycleMayStillWrite) try {
             if (organizing) {
               await applyMetaRequests(
                 db, {

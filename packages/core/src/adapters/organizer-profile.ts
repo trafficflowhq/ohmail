@@ -733,6 +733,7 @@ export function makeProfileIo(client: ProfileImapClient, toServerPath: (canonica
          *
          * So the retention test is applied AFTER the discriminator. A flood of non-profile messages
          * now costs transfer and nothing else. */
+        const complete = opts?.complete === true;
         const readFrom = async (start: number): Promise<{
           win: Array<{ rec: RawProfileMessage; size: number }>; seen: number;
         }> => {
@@ -751,6 +752,30 @@ export function makeProfileIo(client: ProfileImapClient, toServerPath: (canonica
               win.length > PROFILE_MESSAGES_MAX_PER_FETCH
               || (bytes > PROFILE_BYTES_MAX_PER_FETCH && win.length > 1)
             ) {
+              /* ── ON A COMPLETE SCAN, EVICTING IS NOT AN OPTION — REFUSE INSTEAD ───────────
+               *
+               * Reading the whole folder fixed the RANGE; this is the other half. The ceilings
+               * still evict, and on the complete path evicting is the same defect wearing the
+               * fix's clothes: enough profile-looking records — 500 of them, or 128 MiB of
+               * retained source — and the protected document is dropped from the very list the
+               * refusal is computed from, so the write proceeds and appends over it. Anyone able
+               * to add messages to the folder can produce that, and it costs them only the
+               * discriminator header.
+               *
+               * A caller that must not be wrong is given an ERROR rather than a short list. This
+               * is the reader-asymmetry rule at its sharpest: what the write does with "I could
+               * not see all of it" is refuse, and a refusal it can act on is worth incomparably
+               * more than a plausible answer it cannot check. The read path keeps evicting,
+               * because for a read the newest document IS the answer.
+               */
+              if (complete) {
+                throw new ProfileUnavailableError(
+                  `the settings in ${META_FOLDER} could not be read completely: the folder holds more `
+                  + `than ${PROFILE_MESSAGES_MAX_PER_FETCH} settings records or ${PROFILE_BYTES_MAX_PER_FETCH} `
+                  + "bytes of them, and a write must see every one before it may replace any",
+                  { op: "list_profiles" },
+                );
+              }
               bytes -= win.shift()!.size;
             }
           }
@@ -776,7 +801,7 @@ export function makeProfileIo(client: ProfileImapClient, toServerPath: (canonica
          * write — rare, and never on the per-cycle path the bound was introduced to protect —
          * while retention stays bounded by the ceilings above, which is where the memory risk was.
          */
-        let read = await readFrom(opts?.complete ? 1 : from);
+        let read = await readFrom(complete ? 1 : from);
 
         /* ── AND THE SEQUENCE WINDOW CAN SLIDE OUT FROM UNDER THE RANGE ───────────────────────
          *
@@ -787,7 +812,7 @@ export function makeProfileIo(client: ProfileImapClient, toServerPath: (canonica
          * while it was being read — and far enough, `from` lands past the end and the unordered
          * range returns a single message. Throw that away and read the folder whole; `1:*` is
          * anchored at both ends and cannot slide. */
-        if (!opts?.complete && from > 1 && read.seen < PROFILE_MESSAGES_MAX_PER_FETCH) read = await readFrom(1);
+        if (!complete && from > 1 && read.seen < PROFILE_MESSAGES_MAX_PER_FETCH) read = await readFrom(1);
 
         for (const w of read.win) out.push(w.rec);
         return out;

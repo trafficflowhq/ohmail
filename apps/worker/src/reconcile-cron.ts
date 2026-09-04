@@ -544,8 +544,26 @@ export async function runReconcileCron(
       // and `LeaderFencedError` (this instance no longer leads its shard). Draining on either would
       // be a write into a mailbox that has just been taken away — the very thing the permit and the
       // fence exist to stop. Both are handed on unchanged to the arms below.
+      // ── AND AN UNREADABLE LEASE IS A THIRD, BECAUSE IT IS AN UNANSWERED QUESTION ─────────
+      //
+      // `LeaseUnavailableError` is not "somebody else organizes this mailbox" — it is "this pass
+      // could not find out". The drain below APPENDS acknowledgements and EXPUNGES records, and
+      // the standing to do that comes from the lease and nothing else. A stand-down is a NO and a
+      // fence is a NO; an unreadable lease is a question with no answer, and a write is exactly
+      // the thing that must not proceed on one. Treating it as an ordinary fault is how this pass
+      // would keep writing into a mailbox another organizer had already taken.
+      //
+      // This does NOT contradict the gate's rule one layer down, where a partial read is acted on
+      // rather than refused. That is a READ deciding what it knows; this is a WRITE claiming a
+      // standing it failed to establish. The cost of being wrong runs opposite ways: refusing to
+      // read strands a mailbox nobody organizes, while writing unproven breaks the one-organizer
+      // invariant this whole channel exists to hold.
+      //
+      // Skipping costs a delay and nothing else — the records are still there, and the next sweep
+      // or the always-on worker drains them once the lease can be read again.
       const mayStillWrite = !(cycleError instanceof OrganizerStandDownError)
         && !(cycleError instanceof LeaderFencedError)
+        && !(cycleError instanceof LeaseUnavailableError)
         // A shared-database fault is the third: this drain is database work end to end, so on a
         // Postgres outage it can only spend one IMAP round trip per mailbox to fail in a way the
         // first mailbox already established. The always-on worker's twin excludes it for the same
