@@ -82,6 +82,16 @@ export type PlatformSignalFetch =
   | { failed: string };
 
 export interface PlatformSignalPort {
+  /**
+   * The projects this port polls, in the order it polls them.
+   *
+   * The PASS needs them, not just the port: a bucket is only complete once EVERY expected
+   * project has a row in it, and the table's primary key includes the project. Keying completion
+   * on the window alone meant one project's row suppressed polling for all of them, so adding a
+   * project — or any partial write — left the newcomer's window permanently unrepaired while the
+   * bucket looked finished.
+   */
+  readonly projects: readonly string[];
   fetch(window: { start: Date; end: Date }): Promise<PlatformSignalFetch>;
 }
 
@@ -205,7 +215,12 @@ export function makePlatformSignalPort(
   // only trigger is "wait forty seconds" is a guard nobody watches fail.
   const nowMs = opts.nowMs ?? (() => Date.now());
 
+  const resolvedProjects = trimmed(env.VERCEL_SIGNAL_PROJECTS).length > 0
+    ? trimmed(env.VERCEL_SIGNAL_PROJECTS).split(",").map((p) => p.trim()).filter(Boolean)
+    : [...DEFAULT_SIGNAL_PROJECTS];
+
   return {
+    projects: resolvedProjects,
     async fetch(window) {
       const token = trimmed(env.VERCEL_TOKEN);
       const team = trimmed(env.VERCEL_TEAM_ID);
@@ -216,9 +231,7 @@ export function makePlatformSignalPort(
       // for a deployment that simply has not been asked to measure anything.
       if (token.length === 0 || team.length === 0) return { unconfigured: true };
 
-      const projects = trimmed(env.VERCEL_SIGNAL_PROJECTS).length > 0
-        ? trimmed(env.VERCEL_SIGNAL_PROJECTS).split(",").map((p) => p.trim()).filter(Boolean)
-        : [...DEFAULT_SIGNAL_PROJECTS];
+      const projects = resolvedProjects;
 
       // ONE DEADLINE FOR THE WHOLE POLL, not one per project: what has to fit inside the
       // invocation is every project's walk plus the write, so a per-project budget would
@@ -309,8 +322,17 @@ export function makePlatformSignalPort(
             if (id.length === 0 || seen.has(id)) continue;
             seen.add(id);
             requests++;
+            // AN UNREADABLE STATUS FAILS THE WALK, on the timestamp's exact argument one line
+            // down. This is the field the entire rule is about: counting a row whose status
+            // cannot be read as a REQUEST and implicitly as a non-error means a response shape
+            // we do not understand is recorded as measured health. A schema change touching
+            // every row would then persist a confident healthy zero and silently disable the
+            // detector — the failure this file exists to make unrepresentable. One malformed
+            // row taking a single window to "not measured" is the safe direction, and the next
+            // window recovers on its own.
             const status = Number(r.statusCode);
-            if (Number.isFinite(status) && status >= 500 && status <= 599) errors5xx++;
+            if (!Number.isFinite(status)) return { failed: "unreadable_status" };
+            if (status >= 500 && status <= 599) errors5xx++;
             const ts = parseStamp(r.timestamp);
             if (ts === null) return { failed: "unparseable_timestamp" };
             if (ts < oldest) oldest = ts;
@@ -389,50 +411,57 @@ export async function runPlatformSignalPass(
   const windowMs = opts.windowMs ?? SIGNAL_WINDOW_MS;
   const retentionMs = opts.retentionMs ?? SIGNAL_RETENTION_MS;
 
-  // ── EVERY CLOSED BUCKET IN RANGE, NOT JUST THE NEWEST ────────────────────────────────
+  // ── ONE BUCKET PER PASS: THE NEWEST THAT IS NOT COMPLETE ─────────────────────────────
   //
-  // Polling only `floor(now)` and rearming five minutes AFTER completion drifts: the clock is
-  // cadence + jitter + the walk's own duration, so the aligned end advances by more than one
-  // bucket whenever that sum crosses a boundary — 12:04:59 becomes 12:10:20, and the 12:00
-  // bucket is skipped PERMANENTLY, because nothing ever looks at a closed bucket twice. The rule
-  // then divides a numerator formed over two buckets by a window advertised as three.
+  // Polling only `floor(now)` and never looking back drifts: the clock is cadence + jitter +
+  // the walk's own duration, so the aligned end advances by more than one bucket whenever that
+  // sum crosses a boundary — 12:04:59 becomes 12:10:20 — and the skipped bucket is skipped for
+  // ever, because nothing ever looked at a closed bucket twice. The rule then divides a
+  // numerator formed over two buckets by a window it advertises as three.
   //
-  // So the pass fills any of the last few closed buckets that has NO row yet, newest first. In
-  // the ordinary case exactly one is missing and this costs exactly what it did before; after a
-  // drift, a missed run or a deploy, the gap heals itself on the next pass instead of standing
-  // for ever. Re-polling is safe by construction — the primary key is
-  // `(provider, project, window_start)` and the write is an upsert — but buckets that already
-  // have a row are skipped anyway, because reading them again would spend the walk budget on
-  // data already held.
+  // ONE FETCH, NOT A LOOP, and that is the correction that matters. Filling every missing bucket
+  // in one pass gave each `fetch` its OWN wall-clock budget, so three slow buckets could spend
+  // three times the budget inside an invocation the platform kills at sixty seconds — and none
+  // of the writes happen until every fetch returns, so the whole pass produced nothing. It also
+  // hid failures: only the first answer was inspected, so an older bucket failing was silently
+  // dropped while the pass reported success over an incomplete window.
+  //
+  // The NEWEST incomplete bucket is chosen so the rule always gets the freshest data first; an
+  // older gap fills on the following passes. A three-bucket hole closes in fifteen minutes,
+  // which is the width of the window it is repairing.
   const newestEnd = Math.floor(now.getTime() / windowMs) * windowMs;
   const candidates: number[] = [];
   for (let i = 0; i < SIGNAL_BACKFILL_BUCKETS; i++) candidates.push(newestEnd - i * windowMs);
+  const oldestStart = candidates[candidates.length - 1]! - windowMs;
   const haveRows = await db
-    .select({ windowStart: platformSignals.windowStart })
+    .select({ project: platformSignals.project, windowStart: platformSignals.windowStart })
     .from(platformSignals)
-    .where(sql`${platformSignals.windowStart} >= ${new Date(candidates[candidates.length - 1]! - windowMs).toISOString()}::timestamptz`);
-  const have = new Set(haveRows.map((r) => new Date(r.windowStart as unknown as string).getTime()));
-  const toPoll = candidates.filter((end) => !have.has(end - windowMs));
+    .where(sql`${platformSignals.windowStart} >= ${new Date(oldestStart).toISOString()}::timestamptz`);
+  const held = new Set(
+    haveRows.map((r) => `${r.project}@${new Date(r.windowStart as unknown as string).getTime()}`),
+  );
+  // COMPLETE MEANS EVERY EXPECTED PROJECT, not "somebody wrote something here". The table's key
+  // includes the project, so one project's row used to mark the bucket finished for all of them.
+  const expected = opts.port.projects;
+  const target = candidates.find((end) => !expected.every((p) => held.has(`${p}@${end - windowMs}`)));
 
-  const answers = [] as Array<Awaited<ReturnType<typeof opts.port.fetch>>>;
-  for (const end of toPoll) {
-    answers.push(await opts.port.fetch({ start: new Date(end - windowMs), end: new Date(end) }));
-  }
-  // NOTHING MISSING IS NOT A FAILURE. Every bucket in range already has a row, which is the
-  // healthy steady state on a deployment whose clock has not drifted.
-  const answer = answers[0] ?? { rows: [] as PlatformSignalRow[] };
+  // NOTHING MISSING IS NOT A FAILURE — the healthy steady state on a deployment whose clock has
+  // not drifted. The prune still runs below; a pass with no gap to fill must not spend a walk
+  // saying so, and must not report one.
+  const answer: PlatformSignalFetch | null = target === undefined
+    ? null
+    : await opts.port.fetch({ start: new Date(target - windowMs), end: new Date(target) });
 
   // PRUNE ON EVERY PASS, including an unconfigured one, and that is deliberate: a deployment that
   // had a token and lost it must not keep a week of rows for ever, and the sweep is one indexed
   // range delete over a table with a few thousand rows.
   const pruned = await prune(db, new Date(now.getTime() - retentionMs));
 
+  if (answer === null) return { outcome: "written", rows: 0, pruned };
   if ("unconfigured" in answer) return { outcome: "unconfigured", rows: 0, pruned };
   if ("failed" in answer) return { outcome: "failed", code: answer.failed, rows: 0, pruned };
 
-  const written: PlatformSignalRow[] = [];
-  for (const a of answers) if (!("unconfigured" in a) && !("failed" in a)) written.push(...a.rows);
-  for (const row of written) {
+  for (const row of answer.rows) {
     await db
       .insert(platformSignals)
       .values({

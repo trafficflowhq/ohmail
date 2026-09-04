@@ -2901,6 +2901,29 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
           cls: alertClass(alert),
           affectedAccounts: alert.affectedAccounts ?? null,
           fixHref: alert.fixHref ?? null,
+          // ── A DEMOTION CLEARS THE DELIVERY HISTORY, AND THE SENTENCE ABOVE NEEDED IT ──
+          //
+          // The comment one block up says the class is in the promoting rules' signatures "so
+          // the promotion re-pages rather than inheriting the signal's confirmation". That was
+          // half true and the missing half suppressed a real outage.
+          //
+          // `notified_signature` is written ONLY by a confirmed delivery, and a signal never
+          // delivers. So a key that pages as an incident, drops to a signal, and comes back is
+          // compared against the signature of the LAST INCIDENT — which is identical, because it
+          // is the same condition. `storage_at_cap` going 5 → 4 → 5 is the ordinary shape of it:
+          // the return to five reads as UNCHANGED and is held for the renotify interval, so the
+          // second outage pages nobody for up to a day.
+          //
+          // Demoting to a signal therefore ENDS the occurrence: the stamp, the signature and the
+          // count all go, so a later promotion is a first observation again and the claim pages
+          // it at once. Promotions leave the history alone — that direction was never broken,
+          // and clearing it there would re-page every pass a population wobbled upward.
+          notifiedAt: sql`case when ${alertState.cls} = 'incident' and ${alertClass(alert)} = 'signal'
+            then null else ${alertState.notifiedAt} end`,
+          notifiedSignature: sql`case when ${alertState.cls} = 'incident' and ${alertClass(alert)} = 'signal'
+            then null else ${alertState.notifiedSignature} end`,
+          notifyCount: sql`case when ${alertState.cls} = 'incident' and ${alertClass(alert)} = 'signal'
+            then 0 else ${alertState.notifyCount} end`,
         },
       });
   }
