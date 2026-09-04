@@ -8,16 +8,6 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#fbfaf9",
-      "dark": {
-        "image": "./assets/splash-icon-dark.png",
-        "resizeMode": "contain",
-        "backgroundColor": "#0e0b08"
-      }
-    },
     "ios": {
       "bundleIdentifier": "app.ohmail",
       "buildNumber": "2",
