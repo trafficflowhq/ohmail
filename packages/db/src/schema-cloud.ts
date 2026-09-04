@@ -663,6 +663,15 @@ export const alertState = pgTable("alert_state", {
    * server-side. It carries no query string derived from mail and no external origin.
    */
   fixHref: text("fix_href"),
+  /**
+   * What the rule SAID, persisted so a reader never has to invent it.
+   *
+   * Nullable on purpose: a row from a driver that predates these columns has no title, and a
+   * reader must say so rather than fabricate one out of the detail's first sentence — which is
+   * what every surface reading this table used to do, alongside a hardcoded count of 1.
+   */
+  title: text("title"),
+  count: integer("count"),
 }, (t) => ({ ixLastSeen: index("alert_state_last_seen_idx").on(t.lastSeenAt) }));
 
 /**

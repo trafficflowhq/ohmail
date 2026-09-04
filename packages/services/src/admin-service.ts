@@ -1991,9 +1991,20 @@ export async function adminAlerts(db: AdminDb, now: Date): Promise<AlertSummary[
       key: r.alertKey,
       kind: r.kind as AlertSummary["kind"],
       severity: r.severity === "critical" ? "bad" : "warn",
-      title: r.detail?.split(". ")[0] ?? r.alertKey,
+      // ── PROJECTED, NEVER RECONSTRUCTED ────────────────────────────────────────────────
+      //
+      // These two used to be invented here: the count was a hardcoded 1 and the title was the
+      // detail's FIRST SENTENCE. So a refusal burst of forty connections rendered as "1", under
+      // a heading that was really the opening clause of a paragraph — and this branch is not the
+      // exceptional path, it is the ONLY path for the two driver-keyed rules and the role-scoped
+      // one, because a console read names no driver and runs on the content-blind handle.
+      //
+      // `alert_state` now persists what the rule said, so both are read. A null means the row
+      // predates those columns — a driver mid-deploy — and the fallback SAYS that rather than
+      // fabricating a sentence, which is the whole difference between projecting and guessing.
+      title: r.title ?? `${r.kind} — recorded by the other alert driver`,
       detail: r.detail ?? "Recorded by the other alert driver; this read cannot evaluate it.",
-      count: 1,
+      count: r.count ?? 0,
       openedAt: r.openedAt.toISOString(),
       notifiedAt: r.notifiedAt ? r.notifiedAt.toISOString() : null,
       cls: r.cls,

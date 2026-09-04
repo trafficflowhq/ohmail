@@ -3085,6 +3085,12 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
         cls: alertClass(alert),
         affectedAccounts: alert.affectedAccounts ?? null,
         fixHref: alert.fixHref ?? null,
+        // WHAT THE RULE SAID, so no reader has to invent it. Every surface that reads this table
+        // rather than evaluating — a driverless console read, the two driver-keyed rules, the
+        // role-scoped one — used to reconstruct these two: the count as a hardcoded 1, the title
+        // as the detail's first sentence.
+        title: alert.title,
+        count: alert.count,
       })
       .onConflictDoUpdate({
         target: alertState.alertKey,
@@ -3104,6 +3110,8 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
           cls: alertClass(alert),
           affectedAccounts: alert.affectedAccounts ?? null,
           fixHref: alert.fixHref ?? null,
+          title: alert.title,
+          count: alert.count,
           // ── A DEMOTION CLEARS THE DELIVERY HISTORY, AND THE SENTENCE ABOVE NEEDED IT ──
           //
           // The comment one block up says the class is in the promoting rules' signatures "so
@@ -3834,6 +3842,8 @@ export async function listOpenAlerts(db: Tx): Promise<Array<{
   alertKey: string; kind: string; severity: string; openedAt: Date;
   lastSeenAt: Date; notifiedAt: Date | null; notifyCount: number; detail: string | null;
   cls: AlertClass; affectedAccounts: number | null; fixHref: string | null;
+  /** What the rule said. NULL only for a row written before these columns existed. */
+  title: string | null; count: number | null;
 }>> {
   const rows = await db
     .select({
@@ -3851,6 +3861,8 @@ export async function listOpenAlerts(db: Tx): Promise<Array<{
       cls: alertState.cls,
       affectedAccounts: alertState.affectedAccounts,
       fixHref: alertState.fixHref,
+      title: alertState.title,
+      count: alertState.count,
     })
     .from(alertState)
     .where(isNotNull(alertState.alertKey))
@@ -3870,5 +3882,7 @@ export async function listOpenAlerts(db: Tx): Promise<Array<{
     cls: r.cls === "signal" ? "signal" : "incident",
     affectedAccounts: r.affectedAccounts === null ? null : Number(r.affectedAccounts),
     fixHref: r.fixHref,
+    title: r.title,
+    count: r.count === null ? null : Number(r.count),
   }));
 }

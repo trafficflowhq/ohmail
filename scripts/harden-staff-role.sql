@@ -1022,11 +1022,11 @@ GRANT SELECT (id, account_id, status, created_at) ON public.outbound_sends TO oh
 -- derived from what any message says, and `listOpenAlerts` names its own columns, so the console
 -- stays exactly as blind as before while gaining the two fields it renders.
 REVOKE ALL ON public.alert_state FROM ohmail_admin;
-GRANT SELECT (alert_key, kind, severity, opened_at, last_seen_at, notified_at, notify_count, detail, notified_signature, claimed_until, cls, affected_accounts, fix_href)
+GRANT SELECT (alert_key, kind, severity, opened_at, last_seen_at, notified_at, notify_count, detail, notified_signature, claimed_until, cls, affected_accounts, fix_href, title, "count")
   ON public.alert_state TO ohmail_admin;
-GRANT INSERT (alert_key, kind, severity, opened_at, last_seen_at, notified_at, notify_count, detail, notified_signature, claimed_until, cls, affected_accounts, fix_href)
+GRANT INSERT (alert_key, kind, severity, opened_at, last_seen_at, notified_at, notify_count, detail, notified_signature, claimed_until, cls, affected_accounts, fix_href, title, "count")
   ON public.alert_state TO ohmail_admin;
-GRANT UPDATE (alert_key, kind, severity, opened_at, last_seen_at, notified_at, notify_count, detail, notified_signature, claimed_until, cls, affected_accounts, fix_href)
+GRANT UPDATE (alert_key, kind, severity, opened_at, last_seen_at, notified_at, notify_count, detail, notified_signature, claimed_until, cls, affected_accounts, fix_href, title, "count")
   ON public.alert_state TO ohmail_admin;
 GRANT DELETE ON public.alert_state TO ohmail_admin;
 

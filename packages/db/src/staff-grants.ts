@@ -384,7 +384,12 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
     // composes (`/worker`, `/accounts/<uuid>`). Neither is derived from what any message says:
     // the count comes from the same grouped queries the rules already run, and the path is a
     // literal with an id interpolated into it. The console renders both, so both are granted.
-    "cls", "affected_accounts", "fix_href",
+    // `title` and `count` (cloud 0030) are what the RULE said — a sentence this repository
+    // composes from counts and ages in `alerts.ts`, and an integer. Granted because the console
+    // renders both, and persisted because two rules are driver-keyed and one role-keyed, so a
+    // blind read can only ever get them from the row. Neither is derived from anything a message
+    // carried; the table's own header rules mail content out of every field.
+    "cls", "affected_accounts", "fix_href", "title", "count",
   ],
   // ── THE ALERTING'S OWN PULSE (cloud 0030) ─────────────────────────────────────────────────
   //

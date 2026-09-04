@@ -108,6 +108,31 @@ ALTER TABLE "alert_state" ADD COLUMN IF NOT EXISTS "affected_accounts" integer;
 ALTER TABLE "alert_state" ADD COLUMN IF NOT EXISTS "fix_href" text;
 --> statement-breakpoint
 
+-- ══ 3b. WHAT THE RULE ACTUALLY SAID ════════════════════════════════════════════════════════
+--
+-- `title` and `count` are the two fields a reader had to INVENT. Everything else a firing alert
+-- carries was already persisted — the detail sentence, the class, the affected-account count, the
+-- deep link — but these two were not, so any surface reading `alert_state` instead of evaluating
+-- had to reconstruct them: the count became a hardcoded 1, and the title became the detail's first
+-- sentence. A refusal burst of forty connections rendered as "1", under a heading that was really
+-- the opening clause of a paragraph.
+--
+-- That mattered because reading the row is not the exceptional path. Two rules are keyed by DRIVER
+-- and one by ROLE, so a console read — which names no driver and runs on the content-blind handle —
+-- can only ever get them from here.
+--
+-- NULLABLE, and the null is honest rather than defaulted: a row written by a driver that predates
+-- these columns has no title to project, and a reader must say "recorded by the other driver"
+-- rather than fabricate one. A DEFAULT would put an invented sentence in the database.
+--
+-- PLACED HERE, not appended, and that is deliberate: `alert_pass_runs.sinks_configured` is the
+-- migration's LAST statement and both the alert preflight and the health endpoint name it on the
+-- strength of being last. Appending would have voided that a second time.
+ALTER TABLE "alert_state" ADD COLUMN IF NOT EXISTS "title" text;
+--> statement-breakpoint
+ALTER TABLE "alert_state" ADD COLUMN IF NOT EXISTS "count" integer;
+--> statement-breakpoint
+
 -- ══ 2. THE ALERTING'S OWN PULSE ════════════════════════════════════════════════════════════
 --
 -- `driver` IS the primary key — see the header. `firing`/`delivered` are this pass's counts, and
