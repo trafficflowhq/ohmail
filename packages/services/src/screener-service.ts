@@ -1201,12 +1201,23 @@ export class ScreenerReadService {
     // what the row actually says.
     if (eligibility.status === "disabled") throw new MailboxNotFoundError(v.target.mailboxId);
 
-    // `&& eligibility.capable`, not `role === "organizer"` alone: `capable` is FALSE for a
-    // disabled (tombstoned) mailbox even when its `organizer_role` column still reads
-    // `"organizer"` — a removal retires the mailbox rather than demoting it , so the
-    // stale role column alone is not proof this install may still write to it. See
-    // `readRequestEligibility`'s own header in `@trafficflow/db#organizer-role.ts`.
-    if (eligibility.role === "organizer" && eligibility.capable) {
+    /* ── THE ROLE ALONE DECIDES THIS BRANCH. `capable` MUST NOT APPEAR HERE ──────────────────
+     *
+     * `capable` answers a question a READER asks about the install that HOLDS its mailbox: will
+     * that holder take a decision made somewhere else. It says nothing about whether THIS install
+     * may write to a mailbox it organizes itself, and reading it that way puts a header an
+     * ATTACKER can write (a claim is a message anyone with append rights can leave in the folder)
+     * in front of the organizer's own press — the highest-traffic decide in the product, and the
+     * whole of a standalone install's Screener.
+     *
+     * It was `role === "organizer" && capable`, which was not wrong TODAY only because `capable`
+     * happens to reduce to `status !== "disabled"` whenever the role is `organizer`. That is a
+     * coincidence of one boolean's current definition, not a property anybody stated, and the
+     * tombstone half of it is already checked on the line above — so the conjunct bought nothing
+     * and would have started refusing every organizer's own decision the day `capable` grew a
+     * requirement. Removed rather than left as a trap with a comment on it.
+     */
+    if (eligibility.role === "organizer") {
       return this.applyAsOrganizer(ctx, id, v, opts);
     }
     return this.requestAsReader(ctx, id, v, eligibility, opts);
