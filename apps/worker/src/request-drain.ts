@@ -7,7 +7,7 @@ import {
   type Tx,
 } from "@trafficflow/db";
 import {
-  parseRequestEnvelope, isMalformedRequest, formatRequest, formatAck,
+  parseRequestEnvelope, isMalformedRequest, formatRequest, formatAck, canonicalRequest,
   requestEnvelopesIn, acksIn, verifyRequestEnvelope, decodeRequestPayload,
   REQUEST_PROTOCOL,
   type RequestReaderIo, type RequestOrganizerIo, type RawMetaMessage,
@@ -176,9 +176,16 @@ const EMPTY_RESULT: ApplyMetaRequestsResult = { applied: 0, refused: 0, deferred
  * everything the signature covers, so "the same request" means the same request.
  */
 function requestContentHash(e: RequestEnvelope): string {
-  return createHash("sha256")
-    .update([e.requestId, e.kind, e.mailboxId, e.installId, e.decidedAtRaw, String(e.protocol), e.encodedPayload].join(""))
-    .digest("hex");
+  // `canonicalRequest` rather than a join of the same fields: it is the EXACT byte string the
+  // signature is taken over, so "the same content" here cannot drift from "the same content" there
+  // — and it is length-prefixed, so no field's content can impersonate a separator and make two
+  // different records hash alike. A hand-rolled join needs a separator that cannot appear in any
+  // field, and the obvious choice (a NUL) makes this source file binary, at which point `grep`
+  // silently skips it.
+  return createHash("sha256").update(canonicalRequest({
+    requestId: e.requestId, kind: e.kind, mailboxId: e.mailboxId, installId: e.installId,
+    decidedAt: e.decidedAtRaw, protocol: e.protocol, encodedPayload: e.encodedPayload,
+  }), "utf8").digest("hex");
 }
 
 /** A refusal decided before any database work — carries the reason its ack will name. */
@@ -688,6 +695,42 @@ export async function driveOutstandingRequests(
   const key = await db.transaction((tx) => readRequestKey(tx, rt.accountId));
   if (key === null) return EMPTY_DRIVE_RESULT;
 
+  /* ── THE FOLDER IS READ ONCE, BEFORE ANYTHING IS WRITTEN, AND BOTH HALVES USE IT ───────────
+   *
+   * It feeds two questions that would otherwise each cost a round trip: which of this install's
+   * records are ALREADY in the folder (so a re-append is skipped), and which acks are waiting.
+   *
+   * READING FIRST IS ALSO WHAT MAKES THE APPEND SAFE TO RETRY. A cycle that appended a record and
+   * then failed to mark its row `sent` leaves the row `pending` with its record already in the
+   * mailbox; without this read the next cycle would append the same signed decision AGAIN, and the
+   * one after that, for ever — a growing pile of genuine records the organizer would dutifully
+   * apply. So a `pending` row whose id is already present is not re-appended; it is simply marked.
+   *
+   * A read that FAILS stops the cycle before it writes. Appending without being able to check for
+   * a duplicate is exactly the loop above, so "I could not look" must not be a reason to write.
+   */
+  let records: RawMetaMessage[];
+  try {
+    records = await io.listMetaRecords();
+  } catch (err) {
+    // An ABSENT FOLDER lands here too, by design: `listMetaRecords` raises rather than answering
+    // `[]`, because a missing folder used to read as "every record is gone" and therefore as
+    // "everything was applied".
+    log("outstanding_requests_list_failed", {
+      mailboxId: rt.mailboxId, accountId: rt.accountId,
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return EMPTY_DRIVE_RESULT;
+  }
+
+  const alreadyInFolder = new Set(
+    requestEnvelopesIn(records)
+      .filter((e): e is RequestEnvelope => !isMalformedRequest(e))
+      .map((e) => e.requestId),
+  );
+  const ackById = new Map<string, AckRecord>();
+  for (const a of acksIn(records, key)) if (!ackById.has(a.requestId)) ackById.set(a.requestId, a);
+
   const pending = await db.transaction((tx) => listPendingRequests(tx, rt.mailboxId));
   let sentCount = 0;
   for (const req of pending) {
@@ -701,15 +744,28 @@ export async function driveOutstandingRequests(
       continue;
     }
 
-    // ── THE APPEND AND THE BOOKKEEPING ARE SEPARATE TRIES, AND THAT IS THE WHOLE POINT ────────
+    // ── THE APPEND AND THE BOOKKEEPING ARE SEPARATE TRIES, AND THE READ ABOVE IS WHAT MAKES
+    //    THE SPLIT SAFE ────────────────────────────────────────────────────────────────────────
     //
     // One try around both meant a database failure AFTER a successful APPEND was caught as "the
-    // append failed": the row stayed `pending`, and the next cycle appended the SAME decision
-    // again, and the cycle after that, for ever — a growing pile of duplicate records in a shared
-    // folder, each one a real signed request the organizer would dutifully apply. Splitting them
-    // makes the two failures say different things, and the second one recoverable: the record is
-    // out there, so the row must be marked `sent` or nothing will ever settle it.
-    let appended = false;
+    // append failed", and the row stayed `pending`. Splitting them lets the two failures say
+    // different things — but splitting ALONE does not fix the loop, because a `pending` row is
+    // still a row the next cycle wants to append. `alreadyInFolder` is the half that closes it:
+    // the record is out there, so this cycle skips straight to the bookkeeping.
+    if (alreadyInFolder.has(req.id)) {
+      try {
+        await db.transaction((tx) => markRequestsSent(tx, [req.id], now));
+        sentCount++;
+      } catch (err) {
+        log("outstanding_request_mark_sent_failed", {
+          mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: req.id,
+          err: err instanceof Error ? err.message : String(err),
+          reason: "the record is already in the folder; the row is retried next cycle",
+        });
+      }
+      continue;
+    }
+
     try {
       const raw = formatRequest({
         requestId: req.id,
@@ -722,7 +778,6 @@ export async function driveOutstandingRequests(
         key,
       });
       await io.append(raw);
-      appended = true;
     } catch (err) {
       log("outstanding_request_append_failed", {
         mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: req.id,
@@ -732,19 +787,17 @@ export async function driveOutstandingRequests(
       continue;
     }
 
-    if (!appended) continue;
     try {
       await db.transaction((tx) => markRequestsSent(tx, [req.id], now));
       sentCount++;
     } catch (err) {
-      // The record IS in the folder. Losing the row update means this cycle cannot count it, but
-      // the next one must not append a second copy — `markRequestsSent` is guarded on the row
-      // still being `pending`, so the retry is safe and idempotent, and the duplicate-append loop
-      // above is what this branch exists to make visible rather than silent.
+      // The record IS in the folder now. The row stays `pending`, and the NEXT cycle finds its id
+      // in `alreadyInFolder` and marks it rather than appending a second copy. That is the whole
+      // reason this branch can afford to do nothing but log.
       log("outstanding_request_mark_sent_failed", {
         mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: req.id,
         err: err instanceof Error ? err.message : String(err),
-        reason: "the record was appended; the row is retried next cycle",
+        reason: "the record was appended; the next cycle marks the row without re-appending",
       });
     }
   }
@@ -759,24 +812,9 @@ export async function driveOutstandingRequests(
     return { sent: sentCount, applied: 0, refused: 0, expired: 0 };
   }
 
-  let acks: AckRecord[];
-  try {
-    acks = acksIn(await io.listMetaRecords(), key);
-  } catch (err) {
-    // Could not look — leave every `sent` row exactly as it is. "I could not look" and "the
-    // organizer answered" must not be reachable from one another. An ABSENT FOLDER lands here
-    // too, by design: `listMetaRecords` raises rather than answering `[]`, because a missing
-    // folder used to read as "every record is gone" and therefore as "everything was applied".
-    log("outstanding_requests_list_failed", {
-      mailboxId: rt.mailboxId, accountId: rt.accountId,
-      err: err instanceof Error ? err.message : String(err),
-    });
-    return { sent: sentCount, applied: 0, refused: 0, expired: 0 };
-  }
-
-  const ackById = new Map<string, AckRecord>();
-  for (const a of acks) if (!ackById.has(a.requestId)) ackById.set(a.requestId, a);
-
+  // `ackById` was built from the SAME read that answered the duplicate-append question above —
+  // one FETCH serves both halves of this cycle. A second list here would be a second round trip
+  // per poll per mailbox for an answer already in hand, and it is what this shape replaced.
   const appliedIds: string[] = [];
   const expiredIds: string[] = [];
   const refusedRows: Array<{ id: string; reason: RequestRefusalReason | null }> = [];
