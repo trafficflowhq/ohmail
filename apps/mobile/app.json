@@ -3,7 +3,7 @@
     "name": "ohmail",
     "slug": "ohmail",
     "scheme": "ohmail",
-    "version": "0.14.0",
+    "version": "0.14.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -19,11 +19,13 @@
       }
     },
     "ios": {
-      "bundleIdentifier": "app.ohmail.preview",
+      "bundleIdentifier": "app.ohmail",
+      "buildNumber": "2",
       "supportsTablet": true
     },
     "android": {
-      "package": "app.ohmail.preview",
+      "package": "app.ohmail",
+      "versionCode": 2,
       "adaptiveIcon": {
         "backgroundColor": "#fbfaf9",
         "foregroundImage": "./assets/android-icon-foreground.png",

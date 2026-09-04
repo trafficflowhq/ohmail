@@ -107,6 +107,45 @@ The generated `android/` directory is build output and is not committed.
 
 ---
 
+## Identity and version
+
+The application identifier is **`app.ohmail`** on both platforms — the reverse-DNS
+form of the product's domain. It is the iOS `bundleIdentifier` and the Android
+`applicationId`/`namespace`, and it is written once, in `app.json`.
+
+Earlier builds used `app.ohmail.preview`. **An install of one of those will not
+update in place**, because Android and iOS both treat the identifier as the app's
+identity: a package with a different identifier is a different app. A tester
+holding a `.preview` build has to uninstall it and install the new one. Nothing is
+migrated across that boundary and nothing needs to be — a phone holds only a copy
+of what is on the server, so the new install pairs again (one scan per server) and
+syncs the same mail back down. The `.preview` app's own data goes with it when it
+is removed, which is the same take-back an uninstall has always been here.
+
+### `app.json` is the only place a version is written
+
+| What | Where it is authored | What it becomes |
+| --- | --- | --- |
+| `version` | `expo.version` | iOS `CFBundleShortVersionString`, Android `versionName` |
+| iOS build number | `expo.ios.buildNumber` | `CFBundleVersion` |
+| Android version code | `expo.android.versionCode` | Gradle `versionCode` |
+
+`android/app/build.gradle` carries `applicationId`, `versionCode` and `versionName`
+as *generated* values: `expo prebuild` writes them from the three fields above, and
+`android/` is not committed. So a number that looks wrong in that file is a stale
+prebuild, not a second source of truth — regenerate rather than edit it, because an
+edit there is deleted by the next prebuild.
+
+To confirm what the current configuration actually resolves to, without building
+anything:
+
+```bash
+cd apps/mobile
+npx expo config --type public   # ids, version, buildNumber, versionCode
+```
+
+---
+
 ## Stack, and why
 
 | Decision | Reason |
