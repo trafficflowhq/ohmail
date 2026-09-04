@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { META_FOLDER, makeMetaFolderRef, type MetaFolderClient } from "./organizer-lease.js";
+import { META_FOLDER, makeMetaFolderRef, lastSequence, type MetaFolderClient } from "./organizer-lease.js";
 
 /**
  * THE PORTABLE ORGANIZER PROFILE — how a mailbox carries its own organizer configuration.
@@ -558,7 +558,7 @@ export interface ProfileImapClient extends MetaFolderClient {
     range: string,
     query: { uid?: boolean; source?: boolean },
     options?: { uid?: boolean },
-  ): AsyncIterableIterator<{ uid: number; source?: Buffer }>;
+  ): AsyncIterableIterator<{ uid: number; seq?: number; source?: Buffer }>;
   append(path: string, content: string | Buffer, flags?: string[]): Promise<unknown>;
   messageDelete(range: number[], options?: { uid?: boolean }): Promise<unknown>;
 }
@@ -636,17 +636,38 @@ export function makeProfileIo(client: ProfileImapClient, toServerPath: (canonica
       try {
         const out: RawProfileMessage[] = [];
         // A NOOP that FAILS leaves the cached value standing, which is exactly where this was
-        // before — so the failure is swallowed rather than turned into a fault.
+        // before — so the failure is swallowed rather than turned into a fault. Whether it
+        // SUCCEEDED is kept, because the arithmetic below cares: see the probe.
+        let refreshed = false;
         if (typeof client.noop === "function") {
-          try { await client.noop(); } catch { /* no worse than not asking */ }
+          try {
+            await client.noop();
+            refreshed = true;
+          } catch { /* no worse than not asking — but the count below is known to be unrefreshed */ }
         }
         const selected = client.mailbox;
         const count = typeof selected === "object" && selected !== null ? selected.exists : undefined;
         // `1:*` is not a valid messageset against an empty mailbox and Dovecot refuses the command
-        // outright, while GreenMail tolerates it. Only a POSITIVELY KNOWN zero skips the fetch.
+        // outright, while GreenMail tolerates it. Only a POSITIVELY KNOWN zero skips the fetch —
+        // and it skips the probe below too, which is a FETCH and would be refused for the same
+        // reason at every fresh mailbox's empty folder.
         if (count === 0) return out;
-        const from = typeof count === "number" && count > PROFILE_MESSAGES_MAX_PER_FETCH
-          ? count - PROFILE_MESSAGES_MAX_PER_FETCH + 1
+        /* ── THE SAME RULE AS THE LEASE'S READ, THROUGH THE SAME FUNCTION ────────────────────
+         *
+         * `from` counts BACK from the end, so a count that is wrong LOW walks the window toward the
+         * start of the folder and gives back the oldest-first read this bound exists to replace.
+         * Two ways to get one and neither announces itself: no `exists` at all, or a NOOP that could
+         * not refresh a stale value.
+         *
+         * `lastSequence` is imported rather than reimplemented. One folder should not have two
+         * answers to "how many messages are in it", and a copy here with a comment pointing at the
+         * original is exactly how the two come to disagree — which is the defect this whole read was
+         * bounded to fix, one level up. */
+        const probed = count === undefined || !refreshed ? await lastSequence(client) : undefined;
+        const total = probed ?? (typeof count === "number" ? count : undefined);
+        if (total === 0) return out;
+        const from = typeof total === "number" && total > PROFILE_MESSAGES_MAX_PER_FETCH
+          ? total - PROFILE_MESSAGES_MAX_PER_FETCH + 1
           : 1;
         /* ── BOTH AXES, AND BOTH EVICT FROM THE FRONT ──────────────────────────────────────
          *

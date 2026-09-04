@@ -1962,6 +1962,20 @@ async function selectedCount(
 }
 
 /**
+ * The narrowest client this probe needs. Structural rather than {@link LeaseImapClient} so the
+ * PROFILE read of the same folder calls the same function: the two clients ask for different things
+ * (headers against sources) and agree about exactly this, and one folder should not have two
+ * implementations of "how many messages are in it".
+ */
+export interface SequenceProbeClient {
+  fetch(
+    range: string,
+    query: { uid?: boolean },
+    options?: { uid?: boolean },
+  ): AsyncIterableIterator<{ uid: number; seq?: number }>;
+}
+
+/**
  * ASK THE SERVER FOR THE LAST SEQUENCE NUMBER — one round trip, and the only reliable answer.
  *
  * `*` is the highest existing sequence number, so a fetch of exactly that message carries the
@@ -1973,7 +1987,7 @@ async function selectedCount(
  * which is bounded in memory and correct about WHICH records it keeps, and merely costs the whole
  * folder over the wire. Never a throw: this is an optimisation of a read that already works.
  */
-async function lastSequence(client: LeaseImapClient): Promise<number | undefined> {
+export async function lastSequence(client: SequenceProbeClient): Promise<number | undefined> {
   try {
     let last: number | undefined;
     for await (const m of client.fetch("*", { uid: true }, { uid: false })) {
@@ -1994,8 +2008,9 @@ async function lastSequence(client: LeaseImapClient): Promise<number | undefined
  * read-only peek, and the shared record list. They are one loop now. The module header has claimed
  * since the record channel shipped that the folder's kinds come off "the same headers FETCH", and
  * three copies of a loop is three places for the ceiling, the ordering and the empty-folder
- * defence to drift apart. `client.fetch(` appears exactly once below, and a census test keeps it
- * that way; the per-kind parsing stays with each caller.
+ * defence to drift apart. `client.fetch(` appears exactly twice below — the WINDOW itself and the
+ * one-message `*` probe that learns the folder's true count — and a census test pins both; the
+ * per-kind parsing stays with each caller.
  *
  * ── WHY NEWEST FIRST, AND WHY IT IS NOT A PREFERENCE ────────────────────────────────────────
  *
@@ -2213,6 +2228,23 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
   // `_meta`" differently is exactly how each ends up renewing a claim the other cannot see.
   const meta = makeMetaFolderRef(client, toServerPath);
 
+  /**
+   * THE UID GENERATION AS OF THE LAST READ, SAMPLED UNDER THAT READ'S OWN LOCK.
+   *
+   * The gate compares refs between two reads and refuses when the folder was renumbered between
+   * them. Reading `client.mailbox.uidValidity` when the gate ASKS — after the lock is released —
+   * would sample a generation that is not the one the records came from, so a renumbering landing in
+   * that gap would be attributed to the wrong read and the check would look at two values that
+   * matched while the refs it is guarding did not. Sampled beside the records instead, which is the
+   * only moment the two are known to belong together.
+   */
+  let generationAtLastRead: number | bigint | null = null;
+  const sampleGeneration = (): void => {
+    const selected = client.mailbox;
+    const v = typeof selected === "object" && selected !== null ? selected.uidValidity : undefined;
+    generationAtLastRead = typeof v === "number" || typeof v === "bigint" ? v : null;
+  };
+
   return {
     async ensureMetaFolder(): Promise<void> {
       const at = await meta.locate();
@@ -2256,6 +2288,9 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
         // reach here plainly exists — so "no claim is appended, nothing is expunged" is the exact
         // guarantee rather than "no command is sent".)
         const read = await readMetaFolderWindow(client);
+        // BESIDE THE RECORDS, INSIDE THE LOCK — see `generationAtLastRead`. Sampled before the
+        // truncation throw as well, because the gate acts on that window too.
+        sampleGeneration();
         if (read.truncated) throw new MetaFolderTruncatedError(read.records.length, read.total, read.records);
         return read.records;
       } finally {
@@ -2264,10 +2299,7 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
     },
 
     uidValidity(): number | bigint | null {
-      const selected = client.mailbox;
-      if (typeof selected !== "object" || selected === null) return null;
-      const v = selected.uidValidity;
-      return typeof v === "number" || typeof v === "bigint" ? v : null;
+      return generationAtLastRead;
     },
 
     async appendClaim(raw: string): Promise<void> {
@@ -3781,7 +3813,8 @@ export class RequestUnavailableError extends Error {
  * this one, the lease gate's and the read-only peek's — still stood in the module, each with its
  * own copy of the ceiling and the empty-folder defence, and two of the three keeping the OLDEST
  * records when the ceiling bit. They are one function now ({@link readMetaFolderWindow}), and a
- * census test asserts there is exactly one `client.fetch(` here to keep the claim honest.
+ * census test pins the two `client.fetch(` calls that remain — the window and the `*` count probe,
+ * both inside the shared read — to keep the claim honest.
  *
  * ── AND TWO OBJECTS, BECAUSE A READER MUST NOT BE ABLE TO EXPUNGE ───────────────────────────
  *
