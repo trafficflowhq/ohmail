@@ -1,3 +1,4 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { WATCHED_FOLDERS } from "./imap-types.js";
 
 /**
@@ -653,10 +654,21 @@ const H = {
 
 /**
  * The one capability there is today: this organizer drains decision records out of the meta
- * folder. Exported because both writers and the reader's door name the same string, and two
- * spellings of a capability are a capability that is never detected.
+ * folder. Re-exported here because both writers and the reader's door name the same string, and
+ * two spellings of a capability are a capability that is never detected.
+ *
+ * ── IT WAS TWO LITERALS UNTIL 0090, HELD EQUAL BY A TEST ────────────────────────────────────
+ *
+ * The argument for duplicating it was a dependency direction: `@trafficflow/db` must never import
+ * `@trafficflow/core`, so `organizer-role.ts` could not reach a constant defined here. That half
+ * is true and still is. The half that was wrong is the conclusion — the edge runs the OTHER way
+ * and always has (`packages/core/package.json` names `@trafficflow/db`, and
+ * `drizzle-repo.ts`, `pipeline.ts`, `husk-restore.ts` and `organizer-profile-store.ts` all import
+ * from it), so THIS module can import the constant from THERE. One definition, in the package that
+ * cannot reach the other, and the equality test it used to need is deleted along with the second
+ * literal: there is nothing left for it to compare.
  */
-export const CAPABILITY_REQUESTS = "requests";
+export { CAPABILITY_REQUESTS } from "@trafficflow/db";
 
 /** Strip CR/LF so a display name can never inject a header. */
 function headerSafe(v: string): string {
@@ -2411,11 +2423,20 @@ const RH = {
   request: "X-Ohmail-Request",
   requestId: "X-Ohmail-Request-Id",
   requestKind: "X-Ohmail-Request-Kind",
+  /**
+   * WHICH MAILBOX THE DECISION IS ABOUT, and it is inside the signed body deliberately. An
+   * organizer applies a record only when this equals the mailbox whose folder it
+   * read the record FROM — so a record lifted out of one mailbox's `_meta` and appended to
+   * another's is refused rather than applied to whichever mailbox happened to be draining.
+   */
+  mailboxId: "X-Ohmail-Request-Mailbox",
   installId: "X-Ohmail-Install-Id",
   organizerKind: "X-Ohmail-Organizer-Kind",
   decidedAt: "X-Ohmail-Decided-At",
   protocol: "X-Ohmail-Protocol",
   payload: "X-Ohmail-Request-Payload",
+  /** HMAC-SHA256 over {@link canonicalRequest}, base64url. The whole of the record's authenticity. */
+  sig: "X-Ohmail-Request-Sig",
 } as const;
 
 /** The request record's own protocol — independent of {@link CLAIM_PROTOCOL}, additive the same way. */
@@ -2431,6 +2452,100 @@ export const REQUEST_PROTOCOL = 1;
  * because a truncated payload is a payload that decodes to something the sender never decided.
  */
 export const REQUEST_PAYLOAD_MAX_BYTES = 4096;
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  ORIGIN AUTHENTICATION — the signature, and the canonical bytes it is taken over
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * A request record is a message in a shared IMAP folder. Anyone with APPEND rights on the mailbox
+ * can write one; nothing in the wire format distinguishes this account's own reader from a
+ * stranger, because a forger writes the wire format too. The ONLY thing that distinguishes them is
+ * a secret the two installs share and a forger does not: `account_settings.request_key`
+ * (`@trafficflow/db#request-key.ts`), 32 bytes handed only to an install that proved it holds a
+ * session for the account.
+ *
+ * ── THE CANONICAL FORM IS LENGTH-PREFIXED, AND THAT IS NOT FUSSINESS ────────────────────────
+ *
+ * The obvious canonical form is `fields.join("|")`. It is forgeable. `installId` and `kind` are
+ * attacker-influenced strings, so a joined form lets one field's content impersonate the boundary
+ * between two others: a record with `installId = "a|screener.decide"` and an empty next field can
+ * produce the SAME joined string as a different, legitimate record — and one signature then
+ * verifies both. The attack needs no key, only a collision in the encoding.
+ *
+ * Each field is therefore written as `<byte length>:<field>`, concatenated. That mapping is
+ * INJECTIVE for arbitrary field content — the length prefix says exactly how far the field runs,
+ * so no content can be read as a delimiter — which is the property "canonical" has to mean here.
+ *
+ * ── IT SIGNS THE ENCODED PAYLOAD, NOT THE DECODED OBJECT ────────────────────────────────────
+ *
+ * The payload component is the base64url TEXT exactly as it appears in the header, never the
+ * parsed JSON. That is what makes "verify before you decode" possible at all: the organizer
+ * checks the signature over bytes it has only read, and reaches `JSON.parse` on a hostile string
+ * only after the record has proved it came from a holder of the key. Signing the decoded object
+ * would invert that order and require parsing untrusted input to decide whether to trust it.
+ */
+function canonicalField(v: string): string {
+  return `${Buffer.byteLength(v, "utf8")}:${v}`;
+}
+
+/** The exact fields a signature covers. `payload` is the ENCODED text — see the header above. */
+export interface RequestSignatureFields {
+  requestId: string;
+  kind: string;
+  mailboxId: string;
+  installId: string;
+  /** ISO-8601, exactly as the header carries it — the string, never a re-formatted `Date`. */
+  decidedAt: string;
+  protocol: number;
+  /** base64url, exactly as `X-Ohmail-Request-Payload` carries it. */
+  encodedPayload: string;
+}
+
+/**
+ * THE BYTES THE HMAC IS TAKEN OVER. Injective in every field (see the header): a change to any
+ * one of them, including a change that only moves a character from one field into the next,
+ * produces different bytes and therefore a different signature.
+ */
+export function canonicalRequest(f: RequestSignatureFields): string {
+  return [
+    f.requestId, f.kind, f.mailboxId, f.installId,
+    f.decidedAt, String(f.protocol), f.encodedPayload,
+  ].map(canonicalField).join("");
+}
+
+/** HMAC-SHA256 of {@link canonicalRequest} under the account's request key, base64url. */
+export function signRequest(key: string, f: RequestSignatureFields): string {
+  return createHmac("sha256", key).update(canonicalRequest(f), "utf8").digest("base64url");
+}
+
+/**
+ * DOES THIS SIGNATURE BELONG TO THESE FIELDS UNDER THIS KEY?
+ *
+ * Constant-time in the comparison, through `timingSafeEqual` — a byte-at-a-time `===` on an HMAC
+ * leaks how much of a guess was right, and an attacker who can append records to the folder can
+ * measure the drain's response by watching which records survive a cycle. The length check before
+ * it is not a leak: `timingSafeEqual` THROWS on unequal lengths rather than returning false, so
+ * the guard is required for correctness, and an HMAC-SHA256's length is a constant that carries no
+ * information about the key.
+ *
+ * Returns FALSE for every failure — a bad signature, a malformed one, an empty key — and never
+ * throws. A caller must not be able to turn "this record is forged" into an exception that some
+ * enclosing `catch` treats as a transient IO fault and retries.
+ */
+export function verifyRequestSignature(key: string, f: RequestSignatureFields, sig: string): boolean {
+  if (key === "" || sig === "") return false;
+  let expected: Buffer;
+  let given: Buffer;
+  try {
+    expected = Buffer.from(signRequest(key, f), "base64url");
+    given = Buffer.from(sig, "base64url");
+  } catch {
+    return false;
+  }
+  if (expected.length !== given.length || expected.length === 0) return false;
+  return timingSafeEqual(expected, given);
+}
 
 /**
  * WHAT AN ORGANIZER DRAINS. Closed by `organizer_requests_kind_closed` in Postgres — the same
@@ -2449,6 +2564,8 @@ export interface RequestInput {
   /** Also the row id in `organizer_requests` — the two identities are one, by design. */
   requestId: string;
   kind: RequestKind;
+  /** THE MAILBOX THIS DECISION IS ABOUT. Signed, and checked against the folder it is read from. */
+  mailboxId: string;
   installId: string;
   /** This install's own kind, so the organizer's drain can log who asked without a second lookup. */
   organizerKind: OrganizerKind;
@@ -2457,19 +2574,57 @@ export interface RequestInput {
   protocol?: number;
   /** The decision itself. Bounded and encoded by this function; never trust it unvalidated. */
   payload: unknown;
+  /**
+   * THE ACCOUNT'S REQUEST KEY — required, with no unsigned path past it.
+   *
+   * A caller that has no key has no business writing a record: the organizer would refuse it
+   * `unauthenticated`, and a reader that appends one anyway has put an unverifiable message into
+   * a shared folder for nothing. `ScreenerService` and the reader's cycle both check for the key
+   * BEFORE they get here — this type is what makes forgetting that a compile error rather than a
+   * silent downgrade to the pre-0090 behaviour.
+   */
+  key: string;
 }
 
-/** A request record, parsed. `kind` is NOT narrowed to {@link RequestKind} — see {@link parseRequest}. */
-export interface RequestRecord {
+/**
+ * A REQUEST RECORD'S HEADERS, READ AND BOUNDED, WITH THE PAYLOAD STILL ENCODED.
+ *
+ * This is the halfway state that makes "verify before you decode" expressible. Every field here
+ * has been length-checked, but NOTHING has been base64-decoded and no JSON has been parsed — so an
+ * organizer can compute the signature over {@link encodedPayload} and refuse a forgery having
+ * spent nothing on it but a header read.
+ *
+ * `kind` is NOT narrowed to {@link RequestKind}: an unrecognised kind is a record for a FUTURE
+ * build, and the disposition for one is to leave it standing rather than refuse or destroy it,
+ * which requires reading it far enough to know that is what it is.
+ */
+export interface RequestEnvelope {
   requestId: string;
   kind: string;
+  /** The mailbox the decision names, from inside the signed body. */
+  mailboxId: string;
   installId: string;
   organizerKind: OrganizerKind | "unknown";
   decidedAt: Date;
+  /**
+   * The `X-Ohmail-Decided-At` header VERBATIM. The signature covers this string, not
+   * `decidedAt.toISOString()` — a `Date` round-trip normalises (`+00:00` becomes `Z`, fractional
+   * seconds are re-rendered), and a normalised re-render is different bytes and therefore a
+   * different HMAC. Verifying against the parsed date would refuse records this codebase wrote.
+   */
+  decidedAtRaw: string;
   protocol: number;
+  /** base64url, UNDECODED and bounded. The signature is taken over exactly this text. */
+  encodedPayload: string;
+  /** `X-Ohmail-Request-Sig`, base64url. Absent reads as `""`, which never verifies. */
+  sig: string;
+  ref?: unknown;
+}
+
+/** A request record, envelope plus the decoded payload. See {@link decodeRequestPayload}. */
+export interface RequestRecord extends RequestEnvelope {
   /** Decoded JSON. STILL UNTRUSTED — the organizer's drain validates it before applying anything. */
   payload: unknown;
-  ref?: unknown;
 }
 
 /** A message that says it is a request and then is not parseable as one. See {@link MalformedClaim}. */
@@ -2479,9 +2634,15 @@ export interface MalformedRequestRecord {
   ref?: unknown;
 }
 
+/** What {@link parseRequestEnvelope} answers: headers read and bounded, or evidence of a broken record. */
+export type RequestEnvelopeRecord = RequestEnvelope | MalformedRequestRecord;
+
+/** What {@link decodeRequestPayload} answers: a whole record, or a payload that would not decode. */
 export type RequestMessageRecord = RequestRecord | MalformedRequestRecord;
 
-export function isMalformedRequest(r: RequestMessageRecord): r is MalformedRequestRecord {
+export function isMalformedRequest(
+  r: RequestEnvelopeRecord | RequestMessageRecord,
+): r is MalformedRequestRecord {
   return (r as MalformedRequestRecord).malformed === true;
 }
 
@@ -2513,15 +2674,36 @@ export function formatRequest(r: RequestInput): string {
       + `${REQUEST_PAYLOAD_MAX_BYTES}-byte ceiling — refused rather than truncated`,
     );
   }
+  if (r.key === "") {
+    throw new Error(
+      `request ${r.requestId} cannot be written without the account's request key — an unsigned `
+      + `record is refused by every organizer, so writing one would leave an unverifiable message `
+      + `in a shared folder for nothing`,
+    );
+  }
+  // SIGNED OVER THE HEADER-SAFE VALUES, not the raw inputs. `headerSafe` strips CR/LF and trims,
+  // so a value that changes under it would be signed as one string and READ as another, and the
+  // organizer would refuse a record this install itself wrote. The two must see identical bytes,
+  // so the transformation happens once, here, and both the signature and the header use its output.
+  const requestId = headerSafe(r.requestId);
+  const kind = headerSafe(r.kind);
+  const mailboxId = headerSafe(r.mailboxId);
+  const installId = headerSafe(r.installId);
+  const decidedAt = r.decidedAt.toISOString();
+  const sig = signRequest(r.key, {
+    requestId, kind, mailboxId, installId, decidedAt, protocol, encodedPayload: encoded,
+  });
   const lines = [
     `${RH.request}: 1`,
-    `${RH.requestId}: ${headerSafe(r.requestId)}`,
-    `${RH.requestKind}: ${headerSafe(r.kind)}`,
-    `${RH.installId}: ${headerSafe(r.installId)}`,
+    `${RH.requestId}: ${requestId}`,
+    `${RH.requestKind}: ${kind}`,
+    `${RH.mailboxId}: ${mailboxId}`,
+    `${RH.installId}: ${installId}`,
     `${RH.organizerKind}: ${r.organizerKind}`,
-    `${RH.decidedAt}: ${r.decidedAt.toISOString()}`,
+    `${RH.decidedAt}: ${decidedAt}`,
     `${RH.protocol}: ${protocol}`,
     `${RH.payload}: ${encoded}`,
+    `${RH.sig}: ${sig}`,
     `Subject: ohmail organizer request`,
     `Date: ${r.decidedAt.toUTCString()}`,
     `MIME-Version: 1.0`,
@@ -2544,10 +2726,11 @@ export function formatRequest(r: RequestInput): string {
  * Does this message CLAIM to be a request record? A header test, and deliberately nothing more.
  *
  * `ohmail/_meta` is shared with the lease's claims and the portable profile, so a caller that
- * counts messages is not counting requests. This is the negative {@link makeRequestIo}'s
- * `listRequests` uses to keep that promise; {@link parseRequest} — which re-reads the same header
- * and returns `null` for anything that is not a request — stays the authority on whether one is
- * WELL FORMED. A record this returns `true` for can still be malformed, and must still be parsed.
+ * counts messages is not counting requests. This is the negative {@link requestEnvelopesIn} uses
+ * to sort one shared read into its kinds; {@link parseRequestEnvelope} — which re-reads the same
+ * header and returns `null` for anything that is not a request — stays the authority on whether
+ * one is WELL FORMED. A record this returns `true` for can still be malformed, and must still be
+ * parsed.
  */
 export function isRequestRecord(raw: string): boolean {
   const headerBlock = raw.split(/\r?\n\r?\n/, 1)[0] ?? "";
@@ -2560,7 +2743,7 @@ export function isRequestRecord(raw: string): boolean {
   return false;
 }
 
-export function parseRequest(raw: string, ref?: unknown): RequestMessageRecord | null {
+export function parseRequestEnvelope(raw: string, ref?: unknown): RequestEnvelopeRecord | null {
   const headerBlock = raw.split(/\r?\n\r?\n/, 1)[0] ?? "";
   const headers = new Map<string, string>();
   const seen = new Map<string, number>();
@@ -2580,7 +2763,8 @@ export function parseRequest(raw: string, ref?: unknown): RequestMessageRecord |
   if (get(RH.request) !== "1") return null; // not a request — a claim, a profile record, or a stray
 
   for (const field of [
-    RH.requestId, RH.requestKind, RH.installId, RH.organizerKind, RH.decidedAt, RH.protocol, RH.payload,
+    RH.requestId, RH.requestKind, RH.mailboxId, RH.installId, RH.organizerKind, RH.decidedAt,
+    RH.protocol, RH.payload, RH.sig,
   ]) {
     if (count(field) > 1) return malformed(`duplicate ${field}`);
   }
@@ -2597,6 +2781,12 @@ export function parseRequest(raw: string, ref?: unknown): RequestMessageRecord |
   const kind = get(RH.requestKind);
   if (!kind || kind.length > 64) return malformed("no or oversized request kind");
 
+  // Bounded like its neighbours even though a legitimate value is always a 36-character uuid: this
+  // is a stranger's input until the signature says otherwise, and the comparison the drain makes
+  // against its own mailbox id must not be handed an unbounded string to walk.
+  const mailboxId = get(RH.mailboxId);
+  if (!mailboxId || mailboxId.length > 128) return malformed("no or oversized mailbox id");
+
   const installId = get(RH.installId);
   if (!installId || installId.length > 256) return malformed("no or oversized install id");
 
@@ -2608,7 +2798,8 @@ export function parseRequest(raw: string, ref?: unknown): RequestMessageRecord |
   const protocol = Number(protocolRaw);
   if (!protocolRaw || !Number.isFinite(protocol) || protocol < 1) return malformed("unreadable protocol");
 
-  const decidedAt = new Date(get(RH.decidedAt) ?? "");
+  const decidedAtRaw = get(RH.decidedAt) ?? "";
+  const decidedAt = new Date(decidedAtRaw);
   if (Number.isNaN(decidedAt.getTime())) return malformed("unreadable decided-at");
 
   const encoded = get(RH.payload);
@@ -2619,21 +2810,281 @@ export function parseRequest(raw: string, ref?: unknown): RequestMessageRecord |
   // spend a base64 decode plus a `JSON.parse` over an attacker-chosen number of bytes — the read
   // side must not trust that every writer honours `formatRequest`'s own refusal to write past it.
   if (encoded.length > REQUEST_PAYLOAD_MAX_BYTES) return malformed("payload exceeds the byte ceiling");
+
+  // ── AND THIS IS WHERE THE READ STOPS ────────────────────────────────────────────────────────
+  //
+  // No `b64urlDecode`, no `JSON.parse`. The payload is still exactly the text the header carried,
+  // which is the text the signature covers, and the caller's next move is to VERIFY — see
+  // {@link decodeRequestPayload}, which is the only way past this point and takes a verified
+  // envelope to get there. An absent signature reads as `""` rather than as a malformation,
+  // because "no signature" is not a broken record: it is an UNAUTHENTICATED one, and the refusal
+  // it earns says so by name.
+  const sig = get(RH.sig) ?? "";
+  const envelope: RequestEnvelope = {
+    requestId, kind, mailboxId, installId, organizerKind,
+    decidedAt, decidedAtRaw, protocol, encodedPayload: encoded, sig,
+  };
+  return ref === undefined ? envelope : { ...envelope, ref };
+}
+
+/**
+ * IS THIS ENVELOPE SIGNED BY A HOLDER OF THE ACCOUNT'S KEY? The one question that stands between
+ * a message in a shared folder and somebody's mail being filed.
+ *
+ * Split from {@link parseRequestEnvelope} rather than folded into it because the two have
+ * different inputs and different failure meanings: parsing needs only the message, verification
+ * needs the account's secret, and a record that parses but does not verify is a FORGERY rather
+ * than a malformation. Keeping them apart is also what lets the reader's own cycle read a folder
+ * without ever being handed a decode of someone else's payload.
+ */
+export function verifyRequestEnvelope(e: RequestEnvelope, key: string): boolean {
+  return verifyRequestSignature(key, {
+    requestId: e.requestId, kind: e.kind, mailboxId: e.mailboxId, installId: e.installId,
+    decidedAt: e.decidedAtRaw, protocol: e.protocol, encodedPayload: e.encodedPayload,
+  }, e.sig);
+}
+
+/**
+ * DECODE THE PAYLOAD OF AN ENVELOPE THAT HAS ALREADY BEEN VERIFIED.
+ *
+ * **The caller owes the verification; this function cannot check it and does not pretend to.** It
+ * is separate so that the ORDER is visible at the call site — an organizer's drain reads
+ * `verify… then decode…` in sequence, and a future edit that removes the first line leaves an
+ * obviously unguarded second one rather than a silently weakened single call.
+ *
+ * The result is STILL UNTRUSTED CONTENT. A verified signature proves the record came from a
+ * holder of this account's key; it proves nothing about whether the decoded object is a decision
+ * this build knows how to apply. `validateRequestPayload` is what answers that, after this.
+ */
+export function decodeRequestPayload(e: RequestEnvelope): RequestMessageRecord {
+  const malformed = (reason: string): MalformedRequestRecord =>
+    e.ref === undefined ? { malformed: true, reason } : { malformed: true, reason, ref: e.ref };
   let payload: unknown;
   try {
-    payload = JSON.parse(b64urlDecode(encoded));
+    payload = JSON.parse(b64urlDecode(e.encodedPayload));
   } catch {
     return malformed("unreadable payload");
   }
-
-  const record: RequestRecord = { requestId, kind, installId, organizerKind, decidedAt, protocol, payload };
-  return ref === undefined ? record : { ...record, ref };
+  return { ...e, payload };
 }
 
-/** One message in the meta folder, as the request IO layer sees it. Mirrors {@link RawClaimMessage}. */
-export interface RawRequestMessage {
-  ref: unknown;
-  raw: string;
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+//  LAYER 4b: ACKS — WHAT THE ORGANIZER SAID, CARRIED BACK (0.14.1)
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+//
+// ── ABSENCE WAS THE BUG, AND IT WAS A BUG ABOUT TRUTH RATHER THAN ABOUT PLUMBING ─────────────
+//
+// 0088's reader inferred `applied` from a record's ABSENCE from the folder. But an organizer
+// removes a record for two opposite reasons — it applied it, or it REFUSED it — and expunges in
+// both cases. So a person who screened a sender out was told "done" whether their decision had
+// been carried out or thrown away for being malformed, stale, or about the wrong mailbox. Absence
+// is not evidence, and no amount of care on the reader's side could make it into evidence.
+//
+// An ack is the evidence. The organizer appends one naming the request and the OUTCOME, and the
+// reader moves its row only on an ack it can read: `applied`, or `refused` with a reason it can
+// show the person. A `sent` row with no ack at all stays `sent` until the stale window expires it.
+//
+// ── THE ACK IS SIGNED, FOR THE SAME REASON THE REQUEST IS ────────────────────────────────────
+//
+// A forged ack is not a harmless lie. `applied` on a decision nobody applied tells a person their
+// Screener rule exists when it does not, and the mail keeps arriving where they told it not to;
+// `refused` on one that WAS applied invites them to press again. Both installs already hold the
+// account's key, so signing this direction too costs one HMAC and closes the return path.
+
+const AH = {
+  ack: "X-Ohmail-Ack",
+  requestId: "X-Ohmail-Request-Id",
+  outcome: "X-Ohmail-Ack-Outcome",
+  reason: "X-Ohmail-Ack-Reason",
+  ackedAt: "X-Ohmail-Ack-At",
+  protocol: "X-Ohmail-Protocol",
+  sig: "X-Ohmail-Ack-Sig",
+} as const;
+
+/**
+ * WHY AN ORGANIZER SAID NO — a CLOSED set this codebase defines, never a sentence a payload
+ * supplied. It reaches a person's screen through `pendingDecisions[]`, so an open vocabulary here
+ * would be a stranger's text rendered in the product's own voice.
+ */
+export const REQUEST_REFUSAL_REASONS = [
+  /** No signature, or one that does not verify under this account's key. A forgery, or a rotation. */
+  "unauthenticated",
+  /** The id is already spent by a record with DIFFERENT content — a reused id never applies. */
+  "conflict",
+  /** The record names a mailbox other than the one whose folder it was read from. */
+  "wrong_mailbox",
+  /** Verified, decoded, and not a decision this build can apply. */
+  "invalid_payload",
+  /** The wire format itself is broken — it says it is a request and then is not one. */
+  "malformed",
+  /** A kind with no applier here. Distinct from `malformed`: the record is well formed. */
+  "unhandled_kind",
+  /** Older than the window a reader would itself have expired it at. */
+  "stale",
+  /** The account has been erased; there is nothing left to apply it to. */
+  "account_erased",
+] as const;
+export type RequestRefusalReason = (typeof REQUEST_REFUSAL_REASONS)[number];
+
+export function isRequestRefusalReason(v: unknown): v is RequestRefusalReason {
+  return typeof v === "string" && (REQUEST_REFUSAL_REASONS as readonly string[]).includes(v);
+}
+
+export const ACK_OUTCOMES = ["applied", "refused"] as const;
+export type AckOutcome = (typeof ACK_OUTCOMES)[number];
+
+export interface AckInput {
+  requestId: string;
+  outcome: AckOutcome;
+  /** Required for `refused`, and meaningless for `applied` — the formatter writes `""` for it. */
+  reason?: RequestRefusalReason;
+  ackedAt: Date;
+  protocol?: number;
+  key: string;
+}
+
+export interface AckRecord {
+  requestId: string;
+  outcome: AckOutcome;
+  /** `null` on an `applied` ack, and on a `refused` one whose reason this build does not know. */
+  reason: RequestRefusalReason | null;
+  ackedAt: Date;
+  protocol: number;
+  ref?: unknown;
+}
+
+/** Does this message CLAIM to be an ack? The cheap negative, mirroring {@link isRequestRecord}. */
+export function isAckRecord(raw: string): boolean {
+  const headerBlock = raw.split(/\r?\n\r?\n/, 1)[0] ?? "";
+  for (const line of headerBlock.replace(/\r?\n[ \t]+/g, " ").split(/\r?\n/)) {
+    const at = line.indexOf(":");
+    if (at <= 0) continue;
+    if (line.slice(0, at).trim().toLowerCase() !== AH.ack.toLowerCase()) continue;
+    return line.slice(at + 1).trim() === "1";
+  }
+  return false;
+}
+
+function canonicalAck(f: {
+  requestId: string; outcome: string; reason: string; ackedAt: string; protocol: number;
+}): string {
+  return [f.requestId, f.outcome, f.reason, f.ackedAt, String(f.protocol)]
+    .map(canonicalField).join("");
+}
+
+/**
+ * ONE RFC822 MESSAGE SAYING WHAT BECAME OF ONE REQUEST. Carries no payload and no copy of the
+ * decision: a reader looking one up already holds the row, and repeating the decision here would
+ * put a second copy of a customer's content in the folder for no reader that needs it.
+ */
+export function formatAck(a: AckInput): string {
+  if (a.key === "") {
+    throw new Error(
+      `ack for ${a.requestId} cannot be written without the account's request key — an unsigned `
+      + `ack is refused by every reader, so writing one would tell nobody anything`,
+    );
+  }
+  const protocol = a.protocol ?? REQUEST_PROTOCOL;
+  const requestId = headerSafe(a.requestId);
+  const reason = a.outcome === "refused" ? (a.reason ?? "malformed") : "";
+  const ackedAt = a.ackedAt.toISOString();
+  const sig = createHmac("sha256", a.key)
+    .update(canonicalAck({ requestId, outcome: a.outcome, reason, ackedAt, protocol }), "utf8")
+    .digest("base64url");
+  const lines = [
+    `${AH.ack}: 1`,
+    `${AH.requestId}: ${requestId}`,
+    `${AH.outcome}: ${a.outcome}`,
+    `${AH.reason}: ${reason}`,
+    `${AH.ackedAt}: ${ackedAt}`,
+    `${AH.protocol}: ${protocol}`,
+    `${AH.sig}: ${sig}`,
+    `Subject: ohmail organizer acknowledgement`,
+    `Date: ${a.ackedAt.toUTCString()}`,
+    `MIME-Version: 1.0`,
+    `Content-Type: text/plain; charset=utf-8`,
+    "",
+    "The install that organizes this mailbox has answered a decision another install made. This",
+    "message is bookkeeping and is cleaned up automatically.",
+    "",
+  ];
+  return lines.join("\r\n");
+}
+
+/**
+ * READ AND VERIFY AN ACK IN ONE STEP — deliberately unlike the request path, and the asymmetry is
+ * the point.
+ *
+ * A request is split into parse-then-verify because the ORGANIZER must not decode a hostile
+ * payload before it trusts the record. An ack carries no payload: there is nothing to decode and
+ * therefore no expensive or dangerous second half to protect. Folding verification in means the
+ * reader's state machine cannot be handed an unverified ack at all — the type it receives has
+ * already been checked, so there is no order for a later edit to get wrong.
+ *
+ * Returns `null` for "not an ack" and for "an ack that does not verify" alike. A reader treats
+ * both as silence, which is the correct disposition: an unverifiable ack is not evidence, and the
+ * `sent` row it names simply waits for a real one or for the stale window.
+ */
+export function parseAck(raw: string, key: string, ref?: unknown): AckRecord | null {
+  const headerBlock = raw.split(/\r?\n\r?\n/, 1)[0] ?? "";
+  const headers = new Map<string, string>();
+  const seen = new Map<string, number>();
+  for (const line of headerBlock.replace(/\r?\n[ \t]+/g, " ").split(/\r?\n/)) {
+    const at = line.indexOf(":");
+    if (at <= 0) continue;
+    const name = line.slice(0, at).trim().toLowerCase();
+    headers.set(name, line.slice(at + 1).trim());
+    seen.set(name, (seen.get(name) ?? 0) + 1);
+  }
+  const get = (k: string): string => headers.get(k.toLowerCase()) ?? "";
+  const count = (k: string): number => seen.get(k.toLowerCase()) ?? 0;
+
+  if (get(AH.ack) !== "1") return null;
+  for (const f of [AH.ack, AH.requestId, AH.outcome, AH.reason, AH.ackedAt, AH.protocol, AH.sig]) {
+    if (count(f) > 1) return null;
+  }
+
+  const requestId = get(AH.requestId);
+  if (!requestId || requestId.length > 128) return null;
+  const outcome = get(AH.outcome);
+  if (outcome !== "applied" && outcome !== "refused") return null;
+  const reason = get(AH.reason);
+  if (reason.length > 64) return null;
+  const ackedAtRaw = get(AH.ackedAt);
+  const ackedAt = new Date(ackedAtRaw);
+  if (Number.isNaN(ackedAt.getTime())) return null;
+  const protocolRaw = get(AH.protocol);
+  const protocol = Number(protocolRaw);
+  if (!protocolRaw || !Number.isFinite(protocol) || protocol < 1) return null;
+
+  const sig = get(AH.sig);
+  if (key === "" || sig === "") return null;
+  let expected: Buffer;
+  let given: Buffer;
+  try {
+    expected = Buffer.from(
+      createHmac("sha256", key)
+        .update(canonicalAck({ requestId, outcome, reason, ackedAt: ackedAtRaw, protocol }), "utf8")
+        .digest("base64url"),
+      "base64url",
+    );
+    given = Buffer.from(sig, "base64url");
+  } catch {
+    return null;
+  }
+  if (expected.length !== given.length || expected.length === 0) return null;
+  if (!timingSafeEqual(expected, given)) return null;
+
+  const record: AckRecord = {
+    requestId,
+    outcome,
+    // An unrecognised reason becomes `null` rather than being carried through as a string: it
+    // would otherwise reach a person's screen, and this vocabulary is the product's own.
+    reason: isRequestRefusalReason(reason) ? reason : null,
+    ackedAt,
+    protocol,
+  };
+  return ref === undefined ? record : { ...record, ref };
 }
 
 /**
@@ -2652,98 +3103,163 @@ export class RequestUnavailableError extends Error {
 }
 
 /**
- * The narrow IO a decision request needs: APPEND, FETCH-headers, STORE `\Deleted` + EXPUNGE — the
- * same three IMAP capabilities {@link LeaseIo} needs, on the same folder, through the same
- * resolution ({@link makeMetaFolderRef}). A separate object rather than three more methods on
- * {@link LeaseIo}, because the two are held by different installs for different reasons: a READER
- * calls `appendRequest` and never `removeRequests` (its two IMAP write verbs are `setFlags` and
- * this APPEND — see the lease module header); an ORGANIZER calls `removeRequests` after draining
- * and never `appendRequest`. Folding them into one object would make both capabilities reachable
- * from a reader's own accessor, which is exactly the kind of widening
- * {@link ImapAdapter.leasePeekIo}'s docblock warns against one seam over.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  THE FOLDER, READ ONCE — and the two ROLES that read it
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * ── ONE FETCH, THREE PARSERS ────────────────────────────────────────────────────────────────
+ *
+ * `ohmail/_meta` holds three kinds of record — claims, requests and acks — and the module header
+ * has claimed since 0.14.1 that they come off "the same headers FETCH in one round trip". They did
+ * not: {@link makeLeaseIo.listClaims} and the old `makeRequestIo.listRequests` each ran their own
+ * `FETCH 1:*` against the same folder in the same cycle, because the two objects did not share a
+ * cursor. {@link listMetaRecords} is that shared read, and the claim, request and ack parsers all
+ * run over ITS output — so the sentence is now true rather than aspirational, and a fourth record
+ * type costs no round trip at all.
+ *
+ * ── AND TWO OBJECTS, BECAUSE A READER MUST NOT BE ABLE TO EXPUNGE ───────────────────────────
+ *
+ * The IMAP verbs split cleanly by role: a READER appends its own decisions and never removes
+ * anything (its whole write surface on this folder is one APPEND); an ORGANIZER removes what it
+ * has handled and appends acks, and never writes a request. Holding both sets on one object made
+ * the organizer's expunge reachable from the reader's own accessor — separated only by which
+ * function the caller happened to call, which is not a boundary. These are two types, so a
+ * reader's object does not HAVE a remove to reach for and the compiler says so.
  */
-export interface RequestIo {
-  /** Every message in the meta folder that carries `X-Ohmail-Request: 1`. */
-  listRequests(): Promise<RawRequestMessage[]>;
-  /** APPEND one decision. Does NOT create `ohmail/_meta` — see the header below. */
-  appendRequest(raw: string): Promise<void>;
-  /** STORE `\Deleted` + EXPUNGE the given messages. */
-  removeRequests(refs: readonly unknown[]): Promise<void>;
+export interface RawMetaMessage {
+  ref: unknown;
+  raw: string;
+}
+
+/** The shared read. One `FETCH 1:*` of the folder's headers, unfiltered — the parsers sort it out. */
+export interface MetaRecordsIo {
+  listMetaRecords(): Promise<RawMetaMessage[]>;
+}
+
+/** WHAT A READER MAY DO to `ohmail/_meta`: look, and append its own decisions. Nothing else. */
+export interface RequestReaderIo extends MetaRecordsIo {
+  /** APPEND one decision. Does NOT create `ohmail/_meta` — see {@link makeRequestReaderIo}. */
+  append(raw: string): Promise<void>;
+}
+
+/** WHAT AN ORGANIZER MAY DO: look, acknowledge what it handled, and remove what it is done with. */
+export interface RequestOrganizerIo extends MetaRecordsIo {
+  /** APPEND one ack record saying what became of one request. */
+  ack(raw: string): Promise<void>;
+  /** STORE `\Deleted` + EXPUNGE the given messages, in ONE round trip. */
+  remove(refs: readonly unknown[]): Promise<void>;
+}
+
+/** Every message in the folder that says it is a request, envelope-parsed. */
+export function requestEnvelopesIn(
+  records: readonly RawMetaMessage[],
+): RequestEnvelopeRecord[] {
+  const out: RequestEnvelopeRecord[] = [];
+  for (const m of records) {
+    if (!isRequestRecord(m.raw)) continue;
+    const parsed = parseRequestEnvelope(m.raw, m.ref);
+    if (parsed !== null) out.push(parsed);
+  }
+  return out;
+}
+
+/** Every message in the folder that says it is an ack AND verifies under this account's key. */
+export function acksIn(records: readonly RawMetaMessage[], key: string): AckRecord[] {
+  const out: AckRecord[] = [];
+  for (const m of records) {
+    if (!isAckRecord(m.raw)) continue;
+    const parsed = parseAck(m.raw, key, m.ref);
+    if (parsed !== null) out.push(parsed);
+  }
+  return out;
 }
 
 /**
- * A {@link RequestIo} bound to a live connection.
+ * THE SHARED READ — one `FETCH 1:*` of `ohmail/_meta`'s headers, unfiltered.
+ *
+ * Unfiltered on purpose: the folder's three record types (claims, requests, acks) are told apart
+ * by a header the caller's own parser reads, and filtering here would mean a second round trip the
+ * moment a caller wants two of them. {@link requestEnvelopesIn} and {@link acksIn} are the cheap
+ * negatives that sort one read into its kinds.
+ *
+ * ── AN ABSENT FOLDER THROWS, AND THAT IS A CORRECTNESS FIX RATHER THAN STRICTNESS ────────────
+ *
+ * The version this replaces answered `[]` when `ohmail/_meta` did not exist. For the organizer's
+ * drain that was harmless — nothing to drain. For the READER it was not: its state machine reads
+ * "my record is not in the folder" as "the organizer took it", so an absent folder told a person
+ * that every decision they had made was applied, at the exact moment the evidence was that nobody
+ * was organizing the mailbox at all. "I could not look" and "there is nothing there" must not be
+ * reachable from one another, so this raises {@link RequestUnavailableError} and the reader
+ * transitions nothing.
+ */
+function makeMetaRecordsList(
+  client: LeaseImapClient,
+  meta: MetaFolderRef,
+  op: RequestOp,
+): () => Promise<RawMetaMessage[]> {
+  return async (): Promise<RawMetaMessage[]> => {
+    let at: MetaFolderLocation;
+    try {
+      at = await meta.locate();
+    } catch (err) {
+      throw new RequestUnavailableError(
+        `${META_FOLDER} could not be located`, { op, cause: err },
+      );
+    }
+    if (at.row === null) {
+      throw new RequestUnavailableError(
+        `${META_FOLDER} does not exist, so nothing in it can be read`, { op },
+      );
+    }
+    try {
+      const lock = await client.getMailboxLock(at.path);
+      try {
+        const out: RawMetaMessage[] = [];
+        const selected = client.mailbox;
+        const count = typeof selected === "object" && selected !== null ? selected.exists : undefined;
+        // A `FETCH 1:*` against an empty mailbox is refused by Dovecot and tolerated by GreenMail
+        // — `makeLeaseIo`'s own note records the exact error. An empty folder is a real answer, so
+        // it returns rather than throwing.
+        if (count === 0) return out;
+        for await (const m of client.fetch("1:*", { uid: true, headers: true }, { uid: false })) {
+          if (!m.headers) continue;
+          out.push({ ref: m.uid, raw: m.headers.toString("utf8") });
+        }
+        return out;
+      } finally {
+        lock.release();
+      }
+    } catch (err) {
+      if (err instanceof RequestUnavailableError) throw err;
+      throw new RequestUnavailableError(
+        `the records in ${META_FOLDER} could not be read`, { op, cause: err },
+      );
+    }
+  };
+}
+
+/**
+ * THE READER'S HALF — look, and append its own decisions.
  *
  * ── IT NEVER CREATES `ohmail/_meta` ─────────────────────────────────────────────────────────
  *
  * A request is offered to a reader ONLY while a holder's claim advertises
  * {@link CAPABILITY_REQUESTS} and `organizer_state='held'` (the HTTP door's own gate, in
  * `packages/db`) — which is only ever true once an organizer has already run `ensureMetaFolder()`
- * at least once. So by the time `appendRequest` is ever called, the folder is guaranteed to
- * exist, and creating it here — the way {@link makeLeaseIo} does for a claim — would be a write
- * this object has no standing to make: a reader that could conjure the organizer's own folder
- * into existence is a reader one step from conjuring a claim into it.
+ * at least once. So by the time `append` is ever called, the folder is guaranteed to exist, and
+ * creating it here — the way {@link makeLeaseIo} does for a claim — would be a write this object
+ * has no standing to make: a reader that could conjure the organizer's own folder into existence
+ * is a reader one step from conjuring a claim into it.
  *
- * `listRequests` does its OWN `FETCH 1:*`, independent of {@link LeaseIo.listClaims} /
- * {@link LeasePeekIo.listClaims} — a second round trip per cycle rather than the theoretical one
- * the module header's opening paragraph describes, because the two IO objects do not share a
- * cursor. Correct, not optimal: a mailbox is polled every 15–60 s, and the folder this reads is
- * unsubscribed bookkeeping holding at most a handful of small messages.
+ * **There is no `remove` on this object and that is the point.** See {@link RequestReaderIo}.
  */
-export function makeRequestIo(client: LeaseImapClient, toServerPath: (canonical: string) => string): RequestIo {
+export function makeRequestReaderIo(
+  client: LeaseImapClient, toServerPath: (canonical: string) => string,
+): RequestReaderIo {
   const meta = makeMetaFolderRef(client, toServerPath);
   return {
-    async listRequests(): Promise<RawRequestMessage[]> {
-      let at: MetaFolderLocation;
-      try {
-        at = await meta.locate();
-      } catch (err) {
-        throw new RequestUnavailableError(
-          `the requests in ${META_FOLDER} could not be located`,
-          { op: "list_requests", cause: err },
-        );
-      }
-      if (at.row === null) return [];
-      try {
-        const lock = await client.getMailboxLock(at.path);
-        try {
-          const out: RawRequestMessage[] = [];
-          const selected = client.mailbox;
-          const count = typeof selected === "object" && selected !== null ? selected.exists : undefined;
-          if (count === 0) return out;
-          for await (const m of client.fetch("1:*", { uid: true, headers: true }, { uid: false })) {
-            if (!m.headers) continue;
-            const raw = m.headers.toString("utf8");
-            // ── THE FOLDER IS SHARED, SO THE FILTER IS NOT AN OPTIMISATION ────────────────────
-            //
-            // `ohmail/_meta` holds three kinds of record: the organizer's own CLAIM (always at
-            // least one, for the whole of a tenure), the portable profile, and these requests.
-            // `listClaims` fetches the same `1:*` and lets `parseClaim` sort them out, which is
-            // right for a reader whose next step is a parse. It is NOT right here, because a
-            // caller counts what this returns before parsing any of it — the drain's own
-            // suppression line reports `raw.length` as "records waiting", and without this test
-            // that number is one-or-more on every organized mailbox for ever, on a channel where
-            // no request has ever been written. A permanent count is not a signal.
-            //
-            // `parseRequest` remains the authority on what a request IS and re-reads the same
-            // header; this is the cheap negative, and it is exactly the sentence this method's
-            // own interface doc already promised.
-            if (!isRequestRecord(raw)) continue;
-            out.push({ ref: m.uid, raw });
-          }
-          return out;
-        } finally {
-          lock.release();
-        }
-      } catch (err) {
-        throw new RequestUnavailableError(
-          `the requests in ${META_FOLDER} could not be read`,
-          { op: "list_requests", cause: err },
-        );
-      }
-    },
-
-    async appendRequest(raw: string): Promise<void> {
+    listMetaRecords: makeMetaRecordsList(client, meta, "list_requests"),
+    async append(raw: string): Promise<void> {
       try {
         await client.append(await meta.path(), raw, ["\\Seen"]);
       } catch (err) {
@@ -2753,8 +3269,36 @@ export function makeRequestIo(client: LeaseImapClient, toServerPath: (canonical:
         );
       }
     },
+  };
+}
 
-    async removeRequests(refs: readonly unknown[]): Promise<void> {
+/**
+ * THE ORGANIZER'S HALF — look, acknowledge, and remove what it has handled.
+ *
+ * `ack` and `append` are the same IMAP verb on the same folder and are deliberately NOT one
+ * method: what may be written differs by role, and a single `append(raw)` shared by both objects
+ * would make a reader's accessor capable of writing an organizer's acknowledgement. The name is
+ * the boundary the type system can actually hold.
+ */
+export function makeRequestOrganizerIo(
+  client: LeaseImapClient, toServerPath: (canonical: string) => string,
+): RequestOrganizerIo {
+  const meta = makeMetaFolderRef(client, toServerPath);
+  return {
+    listMetaRecords: makeMetaRecordsList(client, meta, "list_requests"),
+
+    async ack(raw: string): Promise<void> {
+      try {
+        await client.append(await meta.path(), raw, ["\\Seen"]);
+      } catch (err) {
+        throw new RequestUnavailableError(
+          `an acknowledgement could not be appended to ${META_FOLDER}`,
+          { op: "append_request", cause: err },
+        );
+      }
+    },
+
+    async remove(refs: readonly unknown[]): Promise<void> {
       const uids = refs.filter((r): r is number => typeof r === "number");
       // A ref this cannot address is NOT a no-op to report as done. The caller reads a clean
       // resolve as "expunged" and counts the record handled; the record is still in the folder,
@@ -2763,7 +3307,7 @@ export function makeRequestIo(client: LeaseImapClient, toServerPath: (canonical:
       // answer that reaches anyone.
       if (uids.length !== refs.length) {
         throw new RequestUnavailableError(
-          `${refs.length - uids.length} request record(s) in ${META_FOLDER} have no addressable ref`,
+          `${refs.length - uids.length} record(s) in ${META_FOLDER} have no addressable ref`,
           { op: "remove_requests" },
         );
       }
@@ -2776,16 +3320,19 @@ export function makeRequestIo(client: LeaseImapClient, toServerPath: (canonical:
           // `meta-request:<id>` exists to make safe to retry, and swallowing it would leave a
           // request applied AND still sitting in the folder, re-read (and re-refused-to-reapply,
           // harmlessly) on every cycle for ever.
+          //
+          // ONE round trip for the whole batch: refusals are collected and removed in a single
+          // STORE+EXPUNGE, so a flooded folder cannot become one IMAP command per hostile record.
           const done = await client.messageDelete(uids, { uid: true });
           if (done === false) {
-            throw new Error(`the server refused to expunge ${uids.length} request message(s) from ${META_FOLDER}`);
+            throw new Error(`the server refused to expunge ${uids.length} message(s) from ${META_FOLDER}`);
           }
         } finally {
           lock.release();
         }
       } catch (err) {
         throw new RequestUnavailableError(
-          `${uids.length} request message(s) in ${META_FOLDER} could not be removed`,
+          `${uids.length} message(s) in ${META_FOLDER} could not be removed`,
           { op: "remove_requests", cause: err },
         );
       }

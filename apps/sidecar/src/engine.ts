@@ -21,6 +21,8 @@ import {
   // Mail 0083 — the role vocabulary and the machine-name bound. One spelling for the sidecar's
   // gate, the worker's gate and the eleven service write doors; see `db/src/organizer-role.ts`.
   organizerDisplayName, isOrganizerRole, capabilitiesColumn,
+  // Mail 0090 — READ only. This door never mints a request key; see the call site for why.
+  readRequestKey,
   type MailboxDisabledReason, type OrganizerRole, type Tx,
 } from "@trafficflow/db";
 import {
@@ -2963,10 +2965,36 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           await notePeekedHolder(null);
           return false;
         }
+        /* ── WHAT THIS CLAIM OFFERS A READER, AND WHY THIS DOOR NEVER MINTS (mail 0090) ────────
+         *
+         * A request key is per ACCOUNT, and the account lives in the hosted database. This install
+         * has its own PGlite store, so a key it generated locally would be a key the Cloud reader
+         * has never seen — every record either side wrote would then be refused by the other as
+         * `unauthenticated`, which is worse than having no channel at all. So this is a plain READ:
+         * the key is whatever the hosted API delivered to this install over an authenticated call,
+         * and nothing here creates one.
+         *
+         * A STANDALONE install — no account, no hosted call, no key — therefore advertises no
+         * `requests` capability, for ever, by construction. That is not a gap: a standalone install
+         * has no readers to serve, because a reader is another install signed into the SAME hosted
+         * account. Advertising no capability is the correct and complete answer here.
+         */
+        let localRequestKey: string | null = null;
+        try {
+          localRequestKey = await readRequestKey(db as unknown as Tx, world.accountId);
+        } catch (err) {
+          // Advertise nothing rather than guess. Mail keeps flowing either way.
+          log("organizer_request_key_unreadable", {
+            accountId: world.accountId,
+            err: err instanceof Error ? err.message : String(err),
+          });
+        }
+
         const outcome = await readMailboxLease({
           adapter,
           self: { installId, kind: "local", displayName: machineName, lastNonce: leaseNonce },
           now: now(),
+          hasRequestKey: localRequestKey !== null,
           // An explicit human choice, and the ONLY thing that distinguishes "this mailbox's last
           // organizer went quiet" from "the user wants this machine to have it". Without it the
           // lease reports such a mailbox as available and declines to take it, which is the right

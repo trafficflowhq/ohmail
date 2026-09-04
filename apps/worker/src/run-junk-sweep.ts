@@ -24,7 +24,7 @@ import { loadMailboxCreds } from "./mailboxes.js";
 import { junkSweepPass } from "./junk-sweep.js";
 import {
   CLOUD_DISPLAY_NAME, LeaseUnavailableError, OrganizerStandDownError, acquireLeasePermit,
-  assertNoLiveTwin, cloudInstallId, type LeasePermit,
+  assertNoLiveTwin, cloudInstallId, hostedRequestKeyHeld, type LeasePermit,
 } from "./lease.js";
 
 const argv = process.argv.slice(2);
@@ -129,6 +129,10 @@ try {
 
       permit = await acquireLeasePermit({
         adapter,
+        // The SAME set the worker and the backstop advertise, for the same reason the install id
+        // below is the same one: this command RENEWS that shared claim, so a different capability
+        // set here would make `requests` blink out for readers for the length of a sweep.
+        hasRequestKey: await hostedRequestKeyHeld(db, mb.accountId, new Date()),
         self: {
           // The SAME identity the always-on worker and the reconcile backstop claim with. A
           // per-process id here would read as a new organizer arriving and stand the worker down

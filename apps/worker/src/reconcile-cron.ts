@@ -15,7 +15,7 @@ import { OrganizerProfileSync } from "./profile.js";
 import { makeStorageCapResolver } from "./storage-cap.js";
 import {
   CLOUD_DISPLAY_NAME, LeaseUnavailableError, OrganizerStandDownError, acquireLeasePermit,
-  cloudInstallId, type LeasePermit,
+  cloudInstallId, hostedRequestKeyHeld, type LeasePermit,
 } from "./lease.js";
 import { isCliEntry } from "./entry.js";
 import { cronEvent, runCronCli } from "./cron-log.js";
@@ -362,6 +362,12 @@ export async function runReconcileCron(
     try {
       permit = await acquireLeasePermit({
         adapter,
+        // The SAME set the always-on worker advertises, for the same reason the install id is the
+        // same one: this pass RENEWS the worker's claim rather than writing its own, so a
+        // different capability set here would make `requests` appear and disappear under readers
+        // depending on which process last renewed. See `hostedRequestKeyHeld`.
+        hasRequestKey: await hostedRequestKeyHeld(db as unknown as Tx, row.accountId, new Date(),
+          (event, detail) => log.warn(event, { ...detail, mailboxId })),
         self: {
           // The SAME identity the always-on worker claims with — a per-process id here would make
           // every backstop run look like a new organizer arriving and stand the worker down. See

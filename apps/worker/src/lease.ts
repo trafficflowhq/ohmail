@@ -1,12 +1,11 @@
 import {
-  // CAPABILITY_REQUESTS is commented out along with its use below — see
-  // `ORGANIZER_CAPABILITIES`'s own header for the containment it is part of.
+  CAPABILITY_REQUESTS,
   DEFAULT_STALE_AFTER_MS, LeaseUnavailableError, META_FOLDER, isMalformed, parseClaim, runLeaseGate,
   type LeaseIo, type LeaseOp, type LeaseSelf, type LeaseVerdict, type OrganizerClaim,
   type TakeoverAuthorization,
 } from "@trafficflow/core/adapters/organizer-lease";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
-import type { MailboxDisabledReason } from "@trafficflow/db";
+import { readOrMintRequestKey, type MailboxDisabledReason, type Tx } from "@trafficflow/db";
 
 /**
  * THE WORKER'S HALF OF THE ORGANIZER LEASE — composition, and nothing else.
@@ -80,25 +79,86 @@ export const CLOUD_DISPLAY_NAME = "ohmail Cloud";
  *
  * It is deliberately not injectable. A caller that could narrow it PER-CALL could quietly
  * advertise less than the build actually supports — invisibly, and inconsistently across
- * mailboxes on the SAME install. That failure mode is what "not injectable" guards against; it is
- * a different question from what this ONE constant is set to, which is the paragraph below.
+ * mailboxes on the SAME install. That failure mode is what "not injectable" guards against.
  *
- * ── CURRENTLY EMPTY — THE REQUEST-AUTHENTICITY RULE CONTAINMENT (0.14.1) ─────────────────────────────
+ * ── WHAT THE BUILD SUPPORTS, WHICH IS NOT THE SAME AS WHAT AN ACCOUNT CAN USE (0090) ────────
  *
- * `CAPABILITY_REQUESTS` is commented OUT rather than deleted: the request channel is BUILT
- * (`apps/worker/src/request-drain.ts`, `packages/db/src/organizer-requests.ts`,
- * `packages/db/src/screener-apply.ts`) but its authenticity is NOT. A request record has to be
- * signed with a per-account key before an organizer may trust something it reads out of
- * `ohmail/_meta`, and that work is owed, not done. Advertising nothing here means a reader's `readRequestEligibility` never
- * reports this organizer `capable`, so `ScreenerService.decide` answers 409 `organizer_outdated`
- * BEFORE a request is ever queued — exactly the *"the readers would say so"* sentence above,
- * now describing the intended degraded state rather than a failure. `request-drain.ts`'s own
- * `REQUEST_AUTHENTICITY_IMPLEMENTED` guard is the SECOND half of this containment (this constant
- * alone does not stop a record some other process wrote directly into the folder from being
- * applied) — see that file's header for the full argument. Restore
- * `[CAPABILITY_REQUESTS]` only once the signature work lands and is reviewed as an untrusted-input boundary.
+ * This constant answers "can this code drain a request record". Since mail 0090 there is a second,
+ * genuinely per-account question — "does this account have a request key" — and the two are
+ * different facts that must not be collapsed into one constant. A build with the drain but an
+ * account with no key cannot verify anything, so advertising `requests` would invite readers to
+ * queue decisions this organizer will refuse `unauthenticated` for ever.
+ *
+ * {@link organizerCapabilitiesFor} is where the two meet, and it is the ONLY way this set reaches
+ * a claim. The per-call input it takes is a FACT about the account (read from the database), not a
+ * preference a caller may express — which keeps the guarantee the paragraph above is about while
+ * letting the honest degraded mode exist.
  */
-export const ORGANIZER_CAPABILITIES: readonly string[] = [];
+export const ORGANIZER_CAPABILITIES: readonly string[] = [CAPABILITY_REQUESTS];
+
+/**
+ * WHAT THIS ORGANIZER ADVERTISES FOR THIS ACCOUNT — no key means no capability, and this is the
+ * one place that rule is applied.
+ *
+ * An organizer with no `account_settings.request_key` advertises NOTHING. A reader then reads
+ * `organizer_outdated` off the row and refuses the press honestly at its own door, which is the
+ * correct and complete degraded mode: no request is queued, no record is written, and nothing
+ * waits for a drain that could never verify it.
+ *
+ * **The capability header is advisory and is never the gate.** It is copied from a claim, and a
+ * claim is a message anyone with APPEND rights on the mailbox can write — so an attacker can make
+ * a reader BELIEVE an organizer is capable. What that buys them is nothing: the reader appends a
+ * record signed with a key it holds, and the organizer either holds the same key (in which case
+ * the channel is genuinely available) or refuses it. The header speeds up the honest case; the
+ * SIGNATURE is what makes the dishonest one harmless.
+ */
+export function organizerCapabilitiesFor(o: { hasRequestKey: boolean }): readonly string[] {
+  return o.hasRequestKey ? ORGANIZER_CAPABILITIES : [];
+}
+
+/**
+ * DOES THIS HOSTED PROCESS HAVE A REQUEST KEY FOR THIS ACCOUNT — minting one if not.
+ *
+ * ── ONE IMPLEMENTATION BECAUSE FOUR PROCESSES RENEW THE SAME CLAIM ──────────────────────────
+ *
+ * The always-on worker, the reconcile backstop, the junk sweep and the redacted restore all claim
+ * with the SAME `installId` (`cloudInstallId`) deliberately — a per-process id would read as a new
+ * organizer arriving and stand the worker down. Because they share the claim, they must also share
+ * what it ADVERTISES: a backstop that renewed the claim without `requests` while the worker
+ * renewed it with would make the capability appear and disappear under readers, and a reader's
+ * answer to "will this holder take my decision" would depend on which process happened to renew
+ * last. So this decision is made once, here, and every hosted claim writer calls it.
+ *
+ * MINTS, and only the HOSTED processes may: the account's key lives in the hosted database, so
+ * this is where one can be created. A local install must never mint — it would generate a key the
+ * Cloud reader has never seen, and every record either side wrote would be refused by the other.
+ *
+ * ── A FAILURE HERE ADVERTISES NOTHING RATHER THAN THROWING ──────────────────────────────────
+ *
+ * The request channel is secondary to reading mail, so a database that cannot answer must not stop
+ * a mailbox syncing. Advertising nothing is the fail-safe direction: readers are refused honestly
+ * at their own door, no record is written, and nothing waits on a drain that could not verify it.
+ * The opposite default — advertise, and hope a key turns up — is an absent fact selecting the
+ * dangerous branch, which is the failure this whole gate exists to avoid.
+ */
+export async function hostedRequestKeyHeld(
+  db: Tx,
+  accountId: string,
+  now: Date,
+  log?: (event: string, detail: Record<string, unknown>) => void,
+): Promise<boolean> {
+  try {
+    await db.transaction((tx) => readOrMintRequestKey(tx, accountId, now));
+    return true;
+  } catch (err) {
+    log?.("organizer_request_key_unavailable", {
+      accountId,
+      err: err instanceof Error ? err.message : String(err),
+      reason: "this claim advertises no request capability; readers are refused at their door",
+    });
+    return false;
+  }
+}
 
 /**
  * An adapter that can hand out the lease's IO.
@@ -182,6 +242,17 @@ export interface MailboxLeaseInput {
   adapter: MailboxAdapter;
   self: LeaseSelf;
   now: Date;
+  /**
+   * DOES THIS ACCOUNT HOLD A REQUEST KEY (mail 0090)? Decides whether the claim this call renews
+   * advertises `requests` — see {@link organizerCapabilitiesFor}.
+   *
+   * REQUIRED, with no default, because absent config must not select a branch on its own. An
+   * optional field defaulting to `true` would make every
+   * caller that forgot it advertise a capability the account may not have; defaulting to `false`
+   * would silently disable the channel for callers that simply had not been updated. Neither
+   * failure announces itself, so the type demands an answer and every call site has to have one.
+   */
+  hasRequestKey: boolean;
   /** The press, with its instant, or `null` when nobody asked for this install. */
   takeover?: TakeoverAuthorization | null;
   staleAfterMs?: number;
@@ -220,7 +291,7 @@ export async function readMailboxLease(input: MailboxLeaseInput): Promise<Mailbo
     io: adapter.leaseIo(),
     self,
     now,
-    capabilities: ORGANIZER_CAPABILITIES,
+    capabilities: organizerCapabilitiesFor({ hasRequestKey: input.hasRequestKey }),
     ...(input.takeover !== undefined ? { takeover: input.takeover } : {}),
     ...(input.staleAfterMs !== undefined ? { staleAfterMs: input.staleAfterMs } : {}),
     ...(input.log !== undefined ? { log: input.log } : {}),

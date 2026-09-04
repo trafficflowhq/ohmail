@@ -66,7 +66,9 @@ import {
 import { acquireLeaderLock, leaderLockKeyFor, LockLostError, type LeaderLock } from "./leader-lock.js";
 import { startApiCron, type ApiCronHandle, type ApiCronTargetHealth } from "./api-cron.js";
 import { runSyncCycle, LeaderFencedError, type SyncDeps } from "./sync.js";
-import { applyMetaRequests, driveOutstandingRequests } from "./request-drain.js";
+import {
+  applyMetaRequests, driveOutstandingRequests, settleOwnOutstandingRequests,
+} from "./request-drain.js";
 import {
   adoptSweepWindow, junkSweepPass, sweepStateForPress, SWEEP_SCAN_START,
   type SweepScanState,
@@ -119,6 +121,7 @@ import {
 import { OrganizerProfileSync } from "./profile.js";
 import {
   readMailboxLease, releaseMailboxClaim, cloudInstallId, CLOUD_DISPLAY_NAME, LeaseUnavailableError,
+  hostedRequestKeyHeld,
   type LeaseSelf, type LeasePeekCapableAdapter,
 } from "./lease.js";
 // The APPEND-less read of `ohmail/_meta` — see `LeasePeekCapableAdapter`. A reader LOOKS at the
@@ -1653,10 +1656,39 @@ export async function startWorkerWithLock(
         });
         return false;
       }
+      /* ── WHAT THIS CLAIM WILL OFFER A READER (mail 0090) ─────────────────────────────────
+       *
+       * `requests` is advertised only while this account HOLDS a request key, because that key is
+       * the only thing that lets this organizer tell a genuine reader's decision from a message
+       * anyone with APPEND rights on the mailbox wrote. No key, no capability, and a reader is
+       * refused honestly at its own door instead of queueing a decision nothing can verify.
+       *
+       * MINTED here, not merely read, and only on THIS door: the hosted database is where an
+       * account's key lives, so the hosted worker is the one process entitled to create one. A
+       * LOCAL install must never mint its own — it would generate a key the Cloud reader has never
+       * seen, and every record either side wrote would be refused by the other. It receives the
+       * account's key over an authenticated call instead, and holds no key at all until it does.
+       *
+       * So on this door the answer is unconditionally YES once the mint returns, and the `catch` is
+       * where the interesting case lives: a key this process could not read or create means the
+       * claim advertises NOTHING and readers are refused honestly, while mail keeps flowing. That
+       * is the fail-safe direction — the request channel is secondary to reading mail, and a claim
+       * advertising a capability with no key behind it would leave readers queueing decisions this
+       * organizer can never verify.
+       *
+       * Read AFTER the reader peek-only return above, so a mailbox this install merely reads never
+       * mints a key it has no use for.
+       */
+      const hasRequestKey = await hostedRequestKeyHeld(
+        db, mb.accountId, new Date(),
+        (event, detail) => { log.warn(event, { ...detail, mailboxId: mb.mailboxId }); },
+      );
+
       const outcome = await readMailboxLease({
         adapter,
         self: leaseSelfFor(nonce),
         now: new Date(),
+        hasRequestKey,
         // The no-seize-back rule. The stamp is what tells "the user just added this
         // mailbox to Cloud" apart from "the subscription lapsed and came back", which are
         // otherwise identical to the gate.
@@ -3743,51 +3775,8 @@ export async function startWorkerWithLock(
             await refreshReaderHolder(
               { mailboxId: rt.mailboxId, accountId: rt.accountId }, rt.adapter, rt.holderSeen,
             );
-            /**
-             * ── THE READER'S OWN CYCLE, AFTER THE PEEK (0.14.1) ────────────────────
-             *
-             * "The reader's cycle (both doors, after the peek): APPEND each pending → sent…" —
-             * the ruling, verbatim. This install's two IMAP write verbs stay exactly `setFlags`
-             * and this APPEND; it never expunges — see `request-drain.ts`'s own header.
-             */
-            try {
-              await driveOutstandingRequests(
-                db, { mailboxId: rt.mailboxId, accountId: rt.accountId, adapter: rt.adapter },
-                { installId: organizerInstallId, kind: "cloud" }, new Date(),
-                (event, detail) => log.info(event, { mailboxId: rt.mailboxId, accountId: rt.accountId, ...detail }),
-              );
-            } catch (err) {
-              log.error("outstanding_requests_drive_failed", {
-                mailboxId: rt.mailboxId, accountId: rt.accountId, err,
-                reason: "this cycle reads mail regardless; the next cycle tries again",
-              });
-            }
           } else {
             leaseBlocked.delete(rt.mailboxId);
-            /**
-             * ── THE REQUEST DRAIN — a reader's decision, applied before this cycle organizes
-             * anything else (0.14.1) ─────────────────────────────────────────────────
-             *
-             * ONLY an organizer drains: a reader never reaches this branch, and never expunges a
-             * request record — its two IMAP write verbs stay exactly `setFlags` and APPEND. BEFORE
-             * `runSyncCycle`, so a promoted rule this creates governs mail this very pass ingests,
-             * and so the `folder_state` rows it writes (`reconcile_status: 'pending'`) are picked
-             * up by THIS pass's own `reconcileMailbox` → `reconcileFolders` — see
-             * `request-drain.ts`'s own header for why nothing here performs a physical IMAP move
-             * of its own. A failure here never blocks the cycle: it is logged and retried the
-             * cheap way, on the next pass, exactly as the reader-side peek above is.
-             */
-            try {
-              await applyMetaRequests(
-                db, { mailboxId: rt.mailboxId, accountId: rt.accountId, adapter: rt.adapter }, new Date(),
-                (event, detail) => log.info(event, { mailboxId: rt.mailboxId, accountId: rt.accountId, ...detail }),
-              );
-            } catch (err) {
-              log.error("organizer_requests_drain_failed", {
-                mailboxId: rt.mailboxId, accountId: rt.accountId, err,
-                reason: "this cycle organizes mail regardless; the next cycle's drain tries again",
-              });
-            }
           }
           // The classifier is resolved HERE, once per cycle, from the circuit — not stored on
           // `rt.deps`. That is what lets an outage degrade this mailbox to rules-only between
@@ -3832,6 +3821,57 @@ export async function startWorkerWithLock(
             importDecisionOpen: rt.role === "organizer" ? await rt.profile.importDecisionOpenNow() : false,
           });
           rt.failures = 0;
+
+          /* ══ THE REQUEST CHANNEL, AFTER THE MAIL — AND THE ORDER IS THE SECURITY PROPERTY ══
+           *
+           * This ran BEFORE `runSyncCycle` until mail 0090, so a decision would govern mail
+           * arriving in the same pass. That is a real benefit and it is not worth what it costs:
+           * `ohmail/_meta` is a folder anyone with APPEND rights on the mailbox can write to, so a
+           * drain that runs FIRST lets a flood of records delay — or, with a slow enough database,
+           * indefinitely postpone — the pass that reads somebody's mail. Reading mail is the
+           * product. A queued decision landing one cycle later is not a regression anybody can
+           * perceive, and the `folder_state` rows the drain writes are picked up by the NEXT
+           * pass's reconciler, which was always going to run anyway.
+           *
+           * Both halves live here, and both are bounded inside `request-drain.ts`
+           * (`REQUEST_DRAIN_MAX_PER_CYCLE`, `REQUEST_DRAIN_TIME_BUDGET_MS`). A failure in either
+           * never blocks the cycle: the mail is already synced by the time this runs.
+           */
+          if (!organize) {
+            try {
+              await driveOutstandingRequests(
+                db, { mailboxId: rt.mailboxId, accountId: rt.accountId, adapter: rt.adapter },
+                { installId: organizerInstallId, kind: "cloud" }, new Date(),
+                (event, detail) => log.info(event, { mailboxId: rt.mailboxId, accountId: rt.accountId, ...detail }),
+              );
+            } catch (err) {
+              log.error("outstanding_requests_drive_failed", {
+                mailboxId: rt.mailboxId, accountId: rt.accountId, err,
+                reason: "this cycle reads mail regardless; the next cycle tries again",
+              });
+            }
+          } else {
+            try {
+              await applyMetaRequests(
+                db, { mailboxId: rt.mailboxId, accountId: rt.accountId, adapter: rt.adapter }, new Date(),
+                (event, detail) => log.info(event, { mailboxId: rt.mailboxId, accountId: rt.accountId, ...detail }),
+              );
+              // THE ROLE FLIP'S OWN DEBT. Rows this install queued while it was a READER are
+              // stranded the moment it becomes the organizer: nothing appends them any more, and
+              // no ack will ever arrive because the organizer they are waiting for is this
+              // process. Settled here, where the flip has demonstrably happened.
+              await settleOwnOutstandingRequests(
+                db, { mailboxId: rt.mailboxId, accountId: rt.accountId }, new Date(),
+                (event, detail) => log.info(event, { mailboxId: rt.mailboxId, accountId: rt.accountId, ...detail }),
+              );
+            } catch (err) {
+              log.error("organizer_requests_drain_failed", {
+                mailboxId: rt.mailboxId, accountId: rt.accountId, err,
+                reason: "this cycle organizes mail regardless; the next cycle's drain tries again",
+              });
+            }
+          }
+
           // …and the shard-wide database condition, on the ONLY evidence strong enough to end it:
           // a cycle that completed wrote mail, so the database is accepting writes again. See
           // `clearDatabaseFault` for why a heartbeat or a roster pass is not enough.

@@ -108,8 +108,10 @@ import {
 import { pinnedLookup } from "../net/pinned-fetch.js";
 import {
   AmbiguousMetaFolderError,
-  makeLeaseIo, makeLeasePeekIo, makeRequestIo, personalNamespacesOf, resolveOhmailFolder,
-  type LeaseImapClient, type LeaseIo, type LeasePeekIo, type MetaNamespaceSource, type RequestIo,
+  makeLeaseIo, makeLeasePeekIo, makeRequestReaderIo, makeRequestOrganizerIo, personalNamespacesOf,
+  resolveOhmailFolder,
+  type LeaseImapClient, type LeaseIo, type LeasePeekIo, type MetaNamespaceSource,
+  type RequestReaderIo, type RequestOrganizerIo,
 } from "./organizer-lease.js";
 import { makeProfileIo, type ProfileImapClient, type ProfileIo } from "./organizer-profile.js";
 // The HARD per-message ceiling `normalizeMime` enforces after a download — imported so
@@ -2240,23 +2242,34 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   }
 
   /**
-   * A READER'S DECISION, WAITING FOR THE ORGANIZER — the IO both sides of a request drive, bound
-   * to THIS adapter's live login (0.14.1).
+   * A READER'S DECISION, WAITING FOR THE ORGANIZER — the reader's half of the request channel,
+   * bound to THIS adapter's live login (0.14.1).
    *
    * A FOURTH accessor beside {@link leaseIo}, {@link leasePeekIo} and {@link profileIo}, for the
    * same reason each of those is its own method rather than a flag on another: the capability has
-   * to be visible at the call site. A reader calls `appendRequest`; an organizer calls
-   * `listRequests` and `removeRequests` after applying. Neither ever calls the other's half, and
-   * this object does not distinguish — the caller's OWN role, checked before this is ever reached,
-   * is what keeps a reader from expunging an organizer's drained requests.
+   * to be visible at the call site.
+   *
+   * **AND IT IS A PAIR, NOT ONE OBJECT.** Until 0090 a single `requestIo()` handed out list,
+   * append AND expunge together, so a reader's own accessor could reach the organizer's remove —
+   * separated only by which method the caller happened to call, which is not a boundary. The two
+   * roles now get two types: this one has no `remove` to reach for, and the compiler says so.
    */
-  requestIo(): RequestIo {
+  requestReaderIo(): RequestReaderIo {
     // The lease, profile and request reads all run BEFORE the cycle and on the raw client, so
     // without this a retired adapter's next visit would reach for a destroyed connection here —
     // and that failure would be wrapped as a request fault, which is deliberately not this
     // mailbox's fault. Refuse with the breach instead, so the cause survives the trip.
     this.assertUsable();
-    return makeRequestIo(this.client as unknown as LeaseImapClient, (c) => this.toServerPath(c));
+    return makeRequestReaderIo(this.client as unknown as LeaseImapClient, (c) => this.toServerPath(c));
+  }
+
+  /**
+   * THE ORGANIZER'S HALF — look, acknowledge what was handled, and remove it. See
+   * {@link requestReaderIo} for why the two are separate objects rather than one.
+   */
+  requestOrganizerIo(): RequestOrganizerIo {
+    this.assertUsable();
+    return makeRequestOrganizerIo(this.client as unknown as LeaseImapClient, (c) => this.toServerPath(c));
   }
 
   /**

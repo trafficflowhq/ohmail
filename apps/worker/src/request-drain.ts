@@ -1,14 +1,18 @@
 import { createHash } from "node:crypto";
 import {
   applyScreenerDecision, AccountErasedError, validateRequestPayload, claimIdempotencyKey,
-  readAccountErasedAt,
+  readIdempotencyKey, IDEMPOTENCY_TTL_MS, readAccountErasedAt, readRequestKey,
   listPendingRequests, listSentRequests, markRequestsSent, markRequestsApplied,
-  listStaleSentRequests, markRequestsExpired,
+  listStaleSentRequests, markRequestsExpired, markRequestsRefused,
   type Tx,
 } from "@trafficflow/db";
 import {
-  parseRequest, isMalformedRequest, formatRequest,
-  type RequestIo, type RequestMessageRecord, type RequestRecord, type OrganizerKind,
+  parseRequestEnvelope, isMalformedRequest, formatRequest, formatAck,
+  requestEnvelopesIn, acksIn, verifyRequestEnvelope, decodeRequestPayload,
+  REQUEST_PROTOCOL,
+  type RequestReaderIo, type RequestOrganizerIo, type RawMetaMessage,
+  type RequestEnvelope, type RequestRecord, type AckRecord, type OrganizerKind,
+  type RequestRefusalReason,
 } from "@trafficflow/core/adapters/organizer-lease";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 
@@ -27,121 +31,183 @@ type WorkerDb = Tx;
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  THE ORGANIZER'S DRAIN — apply what a reader decided, or refuse it (0.14.1)
+ *  THE ORGANIZER'S DRAIN — apply what a reader decided, or refuse it and SAY SO (0.14.1)
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
- * `applyMetaRequests` runs in `visitMailbox`, AFTER the lease gate said `organize` and BEFORE
- * `runSyncCycle` — the ordering is load-bearing twice over:
+ * ── THE PAYLOAD IS UNTRUSTED, AND SO IS THE RECORD ITSELF ───────────────────────────────────
  *
- *  · a reader's decision must land BEFORE this cycle's own classification runs, so a promoted
- *    rule this call creates governs mail arriving in the same pass;
- *  · this call writes `folder_state` rows with `reconcile_status: 'pending'`, exactly the shape
- *    `applyScreenerDecision`'s HTTP twin (`ScreenerService.applyAsOrganizer`) leaves for the
- *    worker's own reconciler — and `reconcileFolders` (`sync.ts`), called from `runSyncCycle`
- *    UNCONDITIONALLY every cycle via `reconcileMailbox`, is what actually MOVES the mail on IMAP.
- *    So this function performs NO physical move of its own: it writes the database exactly as
- *    the HTTP door does, and the cycle that follows it in the SAME pass is the reconciler that
- *    was always going to run anyway. There is nothing to duplicate.
+ * A request record is an RFC822 message another install appended to a folder this process now
+ * reads. Until 0090 the drain trusted that the message came from a reader of the same ohmail
+ * account, and nothing established that: `ohmail/_meta` is an ordinary IMAP folder, so anyone with
+ * APPEND rights on the mailbox — a shared-folder ACL, a sieve `fileinto`, a leaked device
+ * credential, any mail client the person ever signed into — could write one, and this drain would
+ * have applied it. A forged record buys a `promoted` rule, a `contacts` whitelist (a permanent
+ * Screener bypass) and a mark-read pushed to the server, all indistinguishable in the product from
+ * the account owner's own press.
  *
- * ── THE PAYLOAD IS UNTRUSTED ────────────────────────
+ * So the ORDER of the checks below is the security property, not an implementation detail:
  *
- * A request record is an RFC822 message another INSTALL appended to a folder this process now
- * reads. `parseRequest` is defensive about the WIRE FORMAT (malformed base64url, an unreadable
- * instant, a duplicate header); `validateRequestPayload` (`@trafficflow/db`) is defensive about
- * the DECODED CONTENT (a scope that is not `"sender"|"domain"`, a folder outside the decidable
- * five, a `dest`/`decision` disagreement, an address with no `@`). A record that fails either is
- * REFUSED — expunged from the folder and logged `organizer_request_refused` — never coerced into
- * a guess and never left standing silently.
+ *   1. read the headers and BOUND them            (`parseRequestEnvelope`, no decode yet)
+ *   2. refuse a protocol or kind this build does not know   — LEAVE STANDING, never expunge
+ *   3. VERIFY THE SIGNATURE                       (`verifyRequestEnvelope`, before any decode)
+ *   4. check the record names THIS mailbox        (inside the signed body, so it cannot be moved)
+ *   5. refuse a decision older than the stale window
+ *   6. only now DECODE the payload                (`decodeRequestPayload`)
+ *   7. validate the decoded content               (`validateRequestPayload`)
+ *   8. apply, under a content-bound idempotency key
  *
- * ── IDEMPOTENCY: A DUPLICATE DRAIN PRODUCES ONE RULE, NOT TWO ────────────────────────────────
+ * Nothing between steps 1 and 3 parses base64 or JSON, so a hostile record costs a header read and
+ * an HMAC and no more.
  *
- * `claimIdempotencyKey` (`packages/db/src/idempotency.ts`), keyed `meta-request:<request id>`,
- * is claimed INSIDE the same transaction as `applyScreenerDecision` — before the effect, so a
- * lost claim means a concurrent or REPLAYED apply already committed and this one does nothing
- * further. The record is expunged EITHER WAY: a request whose apply this cycle skipped (because
- * an earlier cycle already claimed the key) is exactly as done as one this cycle just applied.
- * If the expunge itself fails — a driver refusal, a network drop — the record is left standing
- * and the NEXT cycle's drain sees it again: it re-attempts the claim, loses it (the key is
- * already spent), skips the apply, and tries the expunge again. That is what makes "a failed
- * expunge replays next cycle and the key refuses the duplicate" a safe loop rather than a
- * double-effect risk.
+ * ── NO KEY MEANS NO CHANNEL, AND THAT IS THE OFF-SWITCH ─────────────────────────────────────
+ *
+ * An organizer that holds no `account_settings.request_key` applies nothing and advertises no
+ * `requests` capability, so readers are refused honestly at their own door. There is no separate
+ * feature flag any more: the containment 0.14.1 shipped with (`REQUEST_AUTHENTICITY_IMPLEMENTED`)
+ * was a stand-in for exactly this condition, and a stand-in for a real precondition is worse than
+ * the precondition, because it can be true when the precondition is false.
+ *
+ * ── AFTER `runSyncCycle`, UNDER A TIME BUDGET ───────────────────────────────────────────────
+ *
+ * This ran BEFORE the sync cycle in 0.14.1's first cut, so a decision would govern mail arriving
+ * in the same pass. That ordering is inverted deliberately: the folder is attacker-writable, and a
+ * drain that runs first lets anyone who can append to `ohmail/_meta` starve a mailbox's MAIL by
+ * flooding it with records. Reading mail is the product; applying a queued decision one cycle
+ * later is not a regression anybody can perceive. At most {@link REQUEST_DRAIN_MAX_PER_CYCLE}
+ * records are handled per pass, oldest decision first, and the rest wait for the next one.
+ *
+ * ── IT PERFORMS NO PHYSICAL MOVE ────────────────────────────────────────────────────────────
+ *
+ * `applyScreenerDecision` writes `folder_state` rows with `reconcile_status: 'pending'`, exactly
+ * the shape its HTTP twin (`ScreenerService.applyAsOrganizer`) leaves for the worker's own
+ * reconciler. `reconcileFolders` is what actually MOVES the mail, and it runs unconditionally
+ * every cycle. So this function writes the database exactly as the HTTP door does and lets the
+ * pass that was always going to run do the rest — now the NEXT one, given the ordering above.
+ *
+ * ── IDEMPOTENCY IS BOUND TO THE CONTENT, NOT JUST THE ID ────────────────────────────────────
+ *
+ * `claimIdempotencyKey`, keyed `meta-request:<request id>`, is claimed inside the same transaction
+ * as the apply. A LOST claim used to mean "already done, clean up" — but the id is a header a
+ * forger chooses, so a second record REUSING a genuine id with different content would have been
+ * silently skipped, and the genuine decision would have been consumed by the impostor's key. The
+ * stored `requestHash` is now COMPARED: same content is a replay (clean up, ack `applied`),
+ * different content is a `conflict` (refuse the impostor, and the genuine record still applies).
  */
 
-/** An adapter that can hand out the request record IO. Mirrors `lease.ts#LeaseCapableAdapter`. */
-export interface RequestIoCapableAdapter {
-  requestIo(): RequestIo;
+/** How long a decision may sit before both sides give up on it. ONE window, read by both roles. */
+export const REQUEST_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * THE STALE WINDOW MUST BITE NO LATER THAN THE IDEMPOTENCY KEY EXPIRES, and that is a real
+ * safety property rather than a tidy coincidence — `request-drain.test.ts` asserts it.
+ *
+ * The key at `meta-request:<id>` is what stops a second drain re-applying a record whose expunge
+ * failed. It has a TTL (`IDEMPOTENCY_TTL_MS`). Once it expires, a record still sitting in the
+ * folder would be claimable again — and a drain that re-claimed it would apply the same decision
+ * a second time, writing a second promoted rule for a press that happened once.
+ *
+ * What closes that is this inequality. A record old enough for its key to have expired is, by
+ * then, older than the stale window too, so step 5 refuses it as `stale` before step 8 can ever
+ * re-claim it. Widen this constant past the TTL and the double-apply comes back.
+ */
+export const REQUEST_STALE_MUST_NOT_EXCEED_MS = IDEMPOTENCY_TTL_MS;
+
+/**
+ * AT MOST THIS MANY RECORDS PER CYCLE, oldest decision first. A folder anyone can append to must
+ * not be able to turn one mailbox's pass into unbounded work; the rest are deferred, not dropped,
+ * and the next cycle takes the next batch in the same order.
+ */
+export const REQUEST_DRAIN_MAX_PER_CYCLE = 200;
+
+/**
+ * AND A WALL-CLOCK CEILING BESIDE THE COUNT, because the two bound different things. The count
+ * bounds how many records are read; this bounds how long applying them may take when each one is
+ * a real transaction against a database that is having a bad day. Checked between records, so a
+ * record already begun always finishes — a half-applied decision is the one outcome worse than a
+ * slow cycle.
+ */
+export const REQUEST_DRAIN_TIME_BUDGET_MS = 10_000;
+
+/** An adapter that can hand out the ORGANIZER's half of the request IO. */
+export interface RequestOrganizerIoCapableAdapter {
+  requestOrganizerIo(): RequestOrganizerIo;
 }
 
-/** Does this adapter expose the request record IO? */
-export function hasRequestIo(adapter: MailboxAdapter): adapter is MailboxAdapter & RequestIoCapableAdapter {
-  return typeof (adapter as Partial<RequestIoCapableAdapter>).requestIo === "function";
+/** An adapter that can hand out the READER's half. Separate type, separate capability. */
+export interface RequestReaderIoCapableAdapter {
+  requestReaderIo(): RequestReaderIo;
+}
+
+export function hasRequestOrganizerIo(
+  adapter: MailboxAdapter,
+): adapter is MailboxAdapter & RequestOrganizerIoCapableAdapter {
+  return typeof (adapter as Partial<RequestOrganizerIoCapableAdapter>).requestOrganizerIo === "function";
+}
+
+export function hasRequestReaderIo(
+  adapter: MailboxAdapter,
+): adapter is MailboxAdapter & RequestReaderIoCapableAdapter {
+  return typeof (adapter as Partial<RequestReaderIoCapableAdapter>).requestReaderIo === "function";
 }
 
 export interface ApplyMetaRequestsResult {
-  /** Requests successfully applied (or already applied on an earlier cycle, and now cleaned up). */
+  /** Applied here, or already applied on an earlier cycle and now cleaned up and acknowledged. */
   applied: number;
-  /** Requests refused — malformed wire format, invalid payload content, or an unhandled kind. */
+  /** Refused, acknowledged with a reason, and expunged. */
   refused: number;
-  /** Requests left standing for a retry — the apply or the expunge itself failed transiently. */
+  /** Left for a retry — the apply or the expunge itself failed transiently. */
   deferred: number;
+  /**
+   * LEFT STANDING and deliberately not acted on: a future protocol version, or a kind this build
+   * has no applier for. Neither applied nor refused nor destroyed. Counted separately
+   * because a nonzero value here is normal (a newer reader talking to this organizer) while a
+   * nonzero `refused` is not.
+   */
+  standing: number;
 }
 
-const EMPTY_RESULT: ApplyMetaRequestsResult = { applied: 0, refused: 0, deferred: 0 };
+const EMPTY_RESULT: ApplyMetaRequestsResult = { applied: 0, refused: 0, deferred: 0, standing: 0 };
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  THE CHANNEL IS CONTAINED — REQUEST AUTHENTICITY IS NOT BUILT, SO THE DRAIN APPLIES NOTHING
- * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * THE CONTENT AN IDEMPOTENCY KEY STANDS FOR — `sha256` over the record's own signed fields.
  *
- * A request record has to be signed with a per-account key before this drain may trust it: what
- * it reads from `ohmail/_meta` is an RFC822 message ANY process with write access to the mailbox
- * could have appended, not necessarily this account's own reader install. Nothing in the wire
- * format tells those two apart, and a drain that cannot tell them apart is a drain that files a
- * stranger's mail on their say-so.
- *
- * That signing is OWED, not done: the per-account key and its delivery, the verification itself,
- * binding the mailbox INSIDE the signed body, an idempotency key bound to the content it stands
- * for, and bounds on how much one cycle will read. So the feature waits rather than shipping the
- * surface — and waiting is TWO changes, because either alone leaves a hole:
- *
- *  1. `apps/worker/src/lease.ts#ORGANIZER_CAPABILITIES` no longer advertises
- *     {@link CAPABILITY_REQUESTS} (`@trafficflow/db/organizer-role.js`) — a reader's own
- *     `readRequestEligibility` read (`packages/db/src/organizer-role.ts`) sees no organizer
- *     capable of `requests` and `ScreenerService.decide` throws `OrganizedElsewhereError` (409
- *     `organizer_outdated`) BEFORE a request row is ever queued.
- *  2. THIS GUARD — because (1) alone is insufficient: it stops THIS install from advertising the
- *     capability, but says nothing about a record some OTHER process wrote directly into
- *     `ohmail/_meta` regardless of what this organizer advertises. `applyMetaRequests` must
- *     refuse to apply — or even parse — anything it finds there until the signature exists to
- *     tell a genuine reader's request apart from a forged one. Every record found is left
- *     standing and never expunged: an unverifiable record is not evidence of anything, so it is
- *     not destroyed either — the same disposition an unknown kind or a future protocol version
- *     gets. Their COUNT is logged once per drain that finds any, so a nonzero count is a signal
- *     worth investigating rather than a silently swallowed one.
- *
- * Flip this back to `true` ONLY once signature verification is wired into
- * `parseRequest`/`validateRequestPayload` and reviewed as the untrusted-input boundary it is.
+ * NOT `JSON.stringify(payload)`, which is what this was: key reuse with a different MAILBOX or a
+ * different `decidedAt` would have produced the same hash and read as a replay. The hash covers
+ * everything the signature covers, so "the same request" means the same request.
  */
-const REQUEST_AUTHENTICITY_IMPLEMENTED = false as boolean;
+function requestContentHash(e: RequestEnvelope): string {
+  return createHash("sha256")
+    .update([e.requestId, e.kind, e.mailboxId, e.installId, e.decidedAtRaw, String(e.protocol), e.encodedPayload].join(""))
+    .digest("hex");
+}
 
-/** `sha256(JSON.stringify(payload))` — a stable requestHash for the idempotency claim. Collisions cost nothing here: the KEY (`meta-request:<id>`) is what actually serializes, this is bookkeeping only. */
-function payloadHash(payload: unknown): string {
-  return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+/** A refusal decided before any database work — carries the reason its ack will name. */
+interface Refusal {
+  refusal: RequestRefusalReason;
+}
+
+/** Thrown inside the apply transaction when a spent key stands for DIFFERENT content. */
+class RequestConflictError extends Error {
+  constructor(readonly requestId: string) {
+    super(`request ${requestId} reuses a spent id with different content`);
+    this.name = "RequestConflictError";
+  }
+}
+
+/** Thrown inside the apply transaction when the key was spent by THIS EXACT request already. */
+class AlreadyAppliedError extends Error {
+  constructor(readonly requestId: string) {
+    super(`request ${requestId} was already applied on an earlier cycle`);
+    this.name = "AlreadyAppliedError";
+  }
 }
 
 /**
- * THE ORGANIZER'S DRAIN AS THE HOSTS CALL IT — the containment gate, and behind it the machinery. See {@link REQUEST_AUTHENTICITY_IMPLEMENTED} for why the gate is shut.
+ * DRAIN `ohmail/_meta` OF EVERY REQUEST THIS ORGANIZER CAN VERIFY, applying each in `decided_at`
+ * then id order — two doors deciding one sender in one cycle land in the order the human made them.
  *
- * The gate is HERE, on the entry point every host reaches (`apps/worker/src/index.ts`,
- * `apps/worker/src/reconcile-cron.ts`, `apps/sidecar/src/engine.ts`), rather than repeated at each
- * of those three call sites: a fourth host added later inherits the containment by construction
- * instead of by remembering to copy a condition. `request-drain-host-census.test.ts` holds that
- * structurally — the hosts call THIS function and never {@link applyMetaRequestsUnguarded}.
- *
- * A suppressed cycle still LOOKS: it lists the folder so a nonzero count reaches the log, then
- * leaves every record exactly where it is — no parse, no apply, no expunge, the same disposition
- * an unknown kind or a future protocol version gets. An unverifiable record is not
- * evidence of anything, so it is not destroyed either.
+ * The one entry point every host calls. There is no unguarded twin any more: the precondition is
+ * "this account has a request key", which is a fact rather than a flag, and it is checked here.
  */
 export async function applyMetaRequests(
   db: WorkerDb,
@@ -149,176 +215,265 @@ export async function applyMetaRequests(
   now: Date,
   log: (event: string, detail: Record<string, unknown>) => void,
 ): Promise<ApplyMetaRequestsResult> {
-  if (REQUEST_AUTHENTICITY_IMPLEMENTED) return applyMetaRequestsUnguarded(db, rt, now, log);
+  if (!hasRequestOrganizerIo(rt.adapter)) return EMPTY_RESULT;
 
-  if (!hasRequestIo(rt.adapter)) return EMPTY_RESULT;
-  let raw: Awaited<ReturnType<RequestIo["listRequests"]>>;
+  let io: RequestOrganizerIo;
   try {
-    raw = await rt.adapter.requestIo().listRequests();
+    io = rt.adapter.requestOrganizerIo();
   } catch {
-    // An unreadable folder is a look that failed, and under containment there is nothing this
-    // cycle would have done with the answer. Silent by design: the machinery's own
-    // `meta_requests_list_failed` line tells an operator a DRAIN was missed, and no drain is owed
-    // here.
-    return EMPTY_RESULT;
-  }
-  if (raw.length === 0) return EMPTY_RESULT;
-  log("organizer_requests_suppressed", {
-    mailboxId: rt.mailboxId, accountId: rt.accountId, count: raw.length,
-    reason: "a request cannot be verified yet, so nothing here is applied",
-  });
-  return EMPTY_RESULT;
-}
-
-/**
- * DRAIN `ohmail/_meta` OF EVERY REQUEST RECORD THIS ORGANIZER CAN SEE, applying each in
- * `decided_at` then id order — two doors deciding one sender in one cycle land in the order the
- * human made them.
- *
- * **UNGUARDED, AND NO HOST MAY CALL IT WHILE THE GATE IS SHUT.** This is the machinery the gate
- * contains: it trusts what it reads out of a folder any process with write access to the mailbox
- * could have appended to. It stays exported so its behaviour remains under test while the
- * channel is inert (`request-drain.test.ts`), and so enabling it later is one function rather
- * than a commented-out body to restore. `applyMetaRequests` above is the door; this is the room.
- */
-export async function applyMetaRequestsUnguarded(
-  db: WorkerDb,
-  rt: { mailboxId: string; accountId: string; adapter: MailboxAdapter },
-  now: Date,
-  log: (event: string, detail: Record<string, unknown>) => void,
-): Promise<ApplyMetaRequestsResult> {
-  if (!hasRequestIo(rt.adapter)) return EMPTY_RESULT;
-  let io: RequestIo;
-  try {
-    io = rt.adapter.requestIo();
-  } catch {
-    // See `driveOutstandingRequests`' own note: a retired adapter is a cycle that raced a
-    // reconnect, not a drain fault, and it must not page as one.
+    // A retired adapter — the cycle raced a reconnect or a shutdown. `requestOrganizerIo()` throws
+    // on one by design (`ImapAdapter`'s own `assertUsable`), and outside this try that throw
+    // reaches the host as an ERROR-level drain failure. It is not one: nothing was owed and
+    // nothing was lost, and the next cycle has a live connection.
     return EMPTY_RESULT;
   }
 
-  let raw: Awaited<ReturnType<RequestIo["listRequests"]>>;
+  // ── NO KEY, NO CHANNEL ──────────────────────────────────────────────────────────────────────
+  //
+  // Read BEFORE the folder is listed, so an organizer with no request channel costs no IMAP round
+  // trip at all. A NULL key is the resting state of every account that has never used a second
+  // install, and it is silent by design — logging it per mailbox per cycle would be a line about
+  // nothing, forever.
+  const key = await db.transaction((tx) => readRequestKey(tx, rt.accountId));
+  if (key === null) return EMPTY_RESULT;
+
+  let records: RawMetaMessage[];
   try {
-    raw = await io.listRequests();
+    records = await io.listMetaRecords();
   } catch (err) {
-    // Mirrors the lease peek's own rule: an unreadable folder is a look that failed, not
-    // evidence of anything. The next cycle tries again.
+    // Mirrors the lease peek's own rule: an unreadable folder is a look that failed, not evidence
+    // of anything. The next cycle tries again.
     log("meta_requests_list_failed", {
       mailboxId: rt.mailboxId, accountId: rt.accountId,
       err: err instanceof Error ? err.message : String(err),
     });
     return EMPTY_RESULT;
   }
-  if (raw.length === 0) return EMPTY_RESULT;
 
-  const parsed = raw
-    .map((m) => ({ ref: m.ref, record: parseRequest(m.raw, m.ref) }))
-    .filter((p): p is { ref: unknown; record: RequestMessageRecord } => p.record !== null);
-  if (parsed.length === 0) return EMPTY_RESULT;
+  const envelopes = requestEnvelopesIn(records);
+  const existingAcks = acksIn(records, key);
+  const staleAckRefs = existingAcks
+    .filter((a) => now.getTime() - a.ackedAt.getTime() > REQUEST_STALE_AFTER_MS)
+    .map((a) => a.ref)
+    .filter((r) => r !== undefined);
 
-  const removeSafely = async (refs: readonly unknown[]): Promise<boolean> => {
-    if (refs.length === 0) return true;
-    try {
-      await io.removeRequests(refs);
-      return true;
-    } catch (err) {
-      log("meta_request_expunge_failed", {
-        mailboxId: rt.mailboxId, accountId: rt.accountId,
-        err: err instanceof Error ? err.message : String(err),
-        reason: "the request record stays in the folder; the next cycle's drain retries it",
-      });
-      return false;
+  if (envelopes.length === 0) {
+    // Acks outlive the requests they answer, so somebody has to collect them, and only the
+    // organizer may expunge. Past the stale window the reader has already given up on the row, so
+    // a surviving ack answers a question nobody is still asking.
+    if (staleAckRefs.length > 0) {
+      try {
+        await io.remove(staleAckRefs);
+      } catch (err) {
+        log("meta_ack_sweep_failed", {
+          mailboxId: rt.mailboxId, accountId: rt.accountId,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
-  };
+    return EMPTY_RESULT;
+  }
+
+  // Which ids already carry an ack from a previous cycle whose expunge failed. Re-acking them
+  // would put a second ack in the folder for one request; the record still needs removing.
+  const alreadyAcked = new Set(existingAcks.map((a) => a.requestId));
+
+  // ── ORDER, THEN BOUND ───────────────────────────────────────────────────────────────────────
+  //
+  // Sorted BEFORE the ceiling is applied, so "the first 200" means the 200 oldest decisions rather
+  // than whatever order the IMAP server happened to list them in. A malformed record has no
+  // `decidedAt` to sort by and goes first: it is refused without any database work, so handling it
+  // early costs nothing and gets it out of the folder.
+  const malformed = envelopes.filter(isMalformedRequest);
+  const wellFormed = envelopes
+    .filter((e): e is RequestEnvelope => !isMalformedRequest(e))
+    .sort((a, b) => {
+      const byTime = a.decidedAt.getTime() - b.decidedAt.getTime();
+      if (byTime !== 0) return byTime;
+      return a.requestId < b.requestId ? -1 : a.requestId > b.requestId ? 1 : 0;
+    });
+
+  const budget = malformed.length + wellFormed.length;
+  const takeMalformed = malformed.slice(0, REQUEST_DRAIN_MAX_PER_CYCLE);
+  const takeWellFormed = wellFormed.slice(0, Math.max(0, REQUEST_DRAIN_MAX_PER_CYCLE - takeMalformed.length));
+  let deferred = budget - takeMalformed.length - takeWellFormed.length;
 
   let applied = 0;
   let refused = 0;
-  let deferred = 0;
+  let standing = 0;
 
-  // Malformed wire records (evidence of a request that cannot be trusted) are refused
-  // immediately, in no particular order — there is no `decided_at` to sort them by.
-  for (const p of parsed) {
-    if (!isMalformedRequest(p.record)) continue;
-    const ok = await removeSafely([p.ref]);
-    if (ok) {
-      refused++;
-      log("organizer_request_refused", {
-        mailboxId: rt.mailboxId, accountId: rt.accountId, reason: `malformed: ${p.record.reason}`,
-      });
-    } else {
-      deferred++;
+  /** Refusals and applies both end in "remove this record", batched into ONE STORE+EXPUNGE. */
+  const toRemove: unknown[] = [...staleAckRefs];
+  /** Acks to append, one per record whose outcome is decided this cycle. */
+  const toAck: Array<{ requestId: string; outcome: "applied" | "refused"; reason?: RequestRefusalReason }> = [];
+
+  const settle = (
+    e: { requestId?: string; ref?: unknown },
+    outcome: "applied" | "refused",
+    reason?: RequestRefusalReason,
+  ): void => {
+    if (e.ref !== undefined) toRemove.push(e.ref);
+    if (e.requestId !== undefined && !alreadyAcked.has(e.requestId)) {
+      toAck.push({ requestId: e.requestId, outcome, reason });
     }
+  };
+
+  for (const m of takeMalformed) {
+    // A malformed record has no readable id, so there is nobody to acknowledge TO — the reader
+    // that wrote it (if a reader wrote it at all) cannot match an ack to a row it cannot name.
+    // It is removed and counted, and the log line is the only account of it.
+    if (m.ref !== undefined) toRemove.push(m.ref);
+    refused++;
+    log("organizer_request_refused", {
+      mailboxId: rt.mailboxId, accountId: rt.accountId,
+      reason: "malformed", detail: m.reason,
+    });
   }
 
-  // Valid records, oldest decision first — `decided_at` then `requestId` (a stable tiebreak for
-  // two decisions the same instant, which is otherwise order-free across two doors).
-  const valid = parsed
-    .map((p) => (isMalformedRequest(p.record) ? null : { ref: p.ref, record: p.record as RequestRecord }))
-    .filter((v): v is { ref: unknown; record: RequestRecord } => v !== null)
-    .sort((a, b) => {
-      const byTime = a.record.decidedAt.getTime() - b.record.decidedAt.getTime();
-      if (byTime !== 0) return byTime;
-      return a.record.requestId < b.record.requestId ? -1 : a.record.requestId > b.record.requestId ? 1 : 0;
-    });
+  const startedAt = Date.now();
 
-  for (const { ref, record } of valid) {
-    if (record.kind !== "screener.decide") {
-      // `rule.*` is shaped and CHECK-closed in Postgres but has no applier yet. An
-      // organizer that meets one today refuses it exactly as it refuses a kind it has never
-      // heard of — never applies it, never guesses.
-      const ok = await removeSafely([ref]);
-      if (ok) {
-        refused++;
-        log("organizer_request_refused", {
-          mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: record.requestId,
-          reason: `unhandled kind: ${record.kind}`,
-        });
-      } else {
-        deferred++;
-      }
+  for (const e of takeWellFormed) {
+    // Checked BETWEEN records, never inside one: a record already begun finishes, because a
+    // half-applied decision is worse than a slow cycle. What is left is deferred, in order, and
+    // the next pass starts where this one stopped.
+    if (Date.now() - startedAt > REQUEST_DRAIN_TIME_BUDGET_MS) {
+      deferred++;
       continue;
     }
 
-    const decision = validateRequestPayload(record.payload);
+    // ── (2) A FUTURE PROTOCOL, OR A KIND WITH NO APPLIER: LEAVE IT STANDING ───────────────────
+    //
+    // The claim path's `c.protocol > ourProtocol` rule, one layer down. A record this build does
+    // not understand is not evidence of anything and is not this build's to destroy: a newer
+    // reader may be talking to an older organizer, and the record becomes applicable the moment
+    // that organizer updates. Refusing it would be a lie (it is not invalid) and expunging it
+    // would lose a decision a person made.
+    //
+    // Checked BEFORE the signature deliberately: an unknown protocol may sign over fields this
+    // build does not know about, so a signature failure here would mean "this build cannot check
+    // it", not "this is forged" — and the two must not share a disposition.
+    if (e.protocol > REQUEST_PROTOCOL) {
+      standing++;
+      log("organizer_request_standing", {
+        mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: e.requestId,
+        reason: "protocol_ahead", protocol: e.protocol,
+      });
+      continue;
+    }
+    if (e.kind !== "screener.decide") {
+      standing++;
+      log("organizer_request_standing", {
+        mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: e.requestId,
+        reason: "unhandled_kind", kind: e.kind,
+      });
+      continue;
+    }
+
+    // ── (3) THE SIGNATURE, BEFORE ANY DECODE ─────────────────────────────────────────────────
+    if (!verifyRequestEnvelope(e, key)) {
+      settle(e, "refused", "unauthenticated");
+      refused++;
+      log("organizer_request_refused", {
+        mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: e.requestId,
+        reason: "unauthenticated",
+      });
+      continue;
+    }
+
+    // ── (4) IT MUST NAME THE MAILBOX WHOSE FOLDER IT WAS READ FROM ───────────────────────────
+    //
+    // The id is inside the signed body, so a genuine record cannot be lifted out of one mailbox's
+    // `_meta` and replayed into another's — the signature still verifies (same account key) but
+    // the mailbox no longer matches, and this is the check that catches it.
+    if (e.mailboxId !== rt.mailboxId) {
+      settle(e, "refused", "wrong_mailbox");
+      refused++;
+      log("organizer_request_refused", {
+        mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: e.requestId,
+        reason: "wrong_mailbox", named: e.mailboxId,
+      });
+      continue;
+    }
+
+    // ── (5) OLDER THAN THE WINDOW THE READER ITSELF GAVE UP AT ───────────────────────────────
+    //
+    // An organizer that was offline for two days comes back to decisions the person has already
+    // been told expired, and may well have made again. Applying them would resurrect a queue they
+    // have moved on from — and, with the newer decision also in the folder, would apply BOTH in
+    // `decidedAt` order, leaving the older one as the final state. Refusing the stale one leaves
+    // exactly the rule the person last asked for.
+    if (now.getTime() - e.decidedAt.getTime() > REQUEST_STALE_AFTER_MS) {
+      settle(e, "refused", "stale");
+      refused++;
+      log("organizer_request_refused", {
+        mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: e.requestId,
+        reason: "stale", decidedAt: e.decidedAt.toISOString(),
+      });
+      continue;
+    }
+
+    // ── (6) NOW, AND ONLY NOW, DECODE ────────────────────────────────────────────────────────
+    const decoded = decodeRequestPayload(e);
+    if (isMalformedRequest(decoded)) {
+      settle(e, "refused", "invalid_payload");
+      refused++;
+      log("organizer_request_refused", {
+        mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: e.requestId,
+        reason: "invalid_payload", detail: decoded.reason,
+      });
+      continue;
+    }
+
+    // ── (7) AND VALIDATE WHAT CAME OUT ───────────────────────────────────────────────────────
+    const decision = validateRequestPayload((decoded as RequestRecord).payload);
     if (!decision) {
-      const ok = await removeSafely([ref]);
-      if (ok) {
-        refused++;
-        log("organizer_request_refused", {
-          mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: record.requestId,
-          reason: "invalid payload",
-        });
-      } else {
-        deferred++;
-      }
+      settle(e, "refused", "invalid_payload");
+      refused++;
+      log("organizer_request_refused", {
+        mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: e.requestId,
+        reason: "invalid_payload",
+      });
       continue;
     }
 
+    // ── (8) APPLY, UNDER A KEY BOUND TO THIS CONTENT ─────────────────────────────────────────
+    const hash = requestContentHash(e);
+    const idemKey = `meta-request:${e.requestId}`;
     try {
       await db.transaction(async (tx) => {
-        // FENCE FIRST, as the FIRST statement of this transaction — `erasure-fence.ts`'s own
-        // rule, and NOT redundant with `applyScreenerDecision`'s own internal fence: that read
-        // comes after `claimIdempotencyKey` below if this one is skipped, and a write before the
-        // fence is exactly the lock-order `deleteAccount` depends on to close its own race
-        // (`accounts FOR SHARE` first, always). Read here too, so the CATCH below (which needs
-        // `AccountErasedError` to decide whether to expunge) sees it before any other write in
-        // this transaction has touched a row.
+        // FENCE FIRST, as the FIRST statement of this transaction — `erasure-fence.ts`'s own rule,
+        // and NOT redundant with `applyScreenerDecision`'s own internal fence: a write before the
+        // fence is exactly the lock order `deleteAccount` depends on to close its own race
+        // (`accounts FOR SHARE` first, always). Read here too, so the CATCH below sees it before
+        // any other write in this transaction has touched a row.
         const erasedAt = await readAccountErasedAt(tx, rt.accountId);
         if (erasedAt != null) throw new AccountErasedError(rt.accountId);
 
+        // THE CONTENT COMPARISON, and it happens before the claim so the common conflict is
+        // caught without a write. A live row for this id whose hash differs is an id being reused
+        // for different content — refused, and the genuine record (a different id, or this same id
+        // arriving with its original content) is untouched.
+        const existing = await readIdempotencyKey(tx, rt.accountId, idemKey, now);
+        if (existing !== null) {
+          if (existing.requestHash !== hash) throw new RequestConflictError(e.requestId);
+          throw new AlreadyAppliedError(e.requestId);
+        }
+
         const claimed = await claimIdempotencyKey(tx, {
           accountId: rt.accountId,
-          key: `meta-request:${record.requestId}`,
-          requestHash: payloadHash(record.payload),
+          key: idemKey,
+          requestHash: hash,
           responseStatus: 200,
-          responseJson: { applied: true, requestId: record.requestId },
+          responseJson: { applied: true, requestId: e.requestId },
           seq: null,
           now,
         });
-        // NOT claimed = a previous cycle already applied this exact request (its expunge must
-        // have failed, or the record is a re-append). Nothing to write again; only the cleanup
-        // below is still owed.
-        if (!claimed) return;
+        // Lost the claim to a CONCURRENT drain that committed between the read above and here.
+        // Whether that was the same content or different content is a question the winner already
+        // answered by writing its own hash, so this transaction simply steps aside — it applies
+        // nothing, and the record's cleanup is owed either way.
+        if (!claimed) throw new AlreadyAppliedError(e.requestId);
+
         await applyScreenerDecision(tx, {
           accountId: rt.accountId,
           mailboxId: rt.mailboxId,
@@ -326,87 +481,193 @@ export async function applyMetaRequestsUnguarded(
           address: decision.address,
           appliedFolder: decision.appliedFolder,
           decision: decision.decision,
-          triggeringActionId: `screener:request:${record.requestId}`,
+          triggeringActionId: `screener:request:${e.requestId}`,
           now,
           // The drain never stamps `screening_baseline_at`. See
           // `ApplyScreenerDecisionInput.stampBaseline`'s own doc comment for why.
           stampBaseline: false,
         });
       });
+      settle(e, "applied");
+      applied++;
     } catch (err) {
-      if (err instanceof AccountErasedError) {
-        const ok = await removeSafely([ref]);
-        if (ok) {
-          refused++;
-          log("organizer_request_refused", {
-            mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: record.requestId,
-            reason: "account_erased",
-          });
-        } else {
-          deferred++;
-        }
+      if (err instanceof AlreadyAppliedError) {
+        // Exactly as done as one applied this cycle. The reader is owed the same `applied` ack.
+        settle(e, "applied");
+        applied++;
         continue;
       }
-      // Any other failure: leave the record standing. The idempotency key was NOT committed
-      // (the throw rolled the transaction back), so the next cycle's claim succeeds and retries
-      // the apply cleanly — this is not a partial-apply state.
+      if (err instanceof RequestConflictError) {
+        settle(e, "refused", "conflict");
+        refused++;
+        log("organizer_request_refused", {
+          mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: e.requestId,
+          reason: "conflict",
+        });
+        continue;
+      }
+      if (err instanceof AccountErasedError) {
+        settle(e, "refused", "account_erased");
+        refused++;
+        log("organizer_request_refused", {
+          mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: e.requestId,
+          reason: "account_erased",
+        });
+        continue;
+      }
+      // Any other failure: leave the record standing and acknowledge nothing. The idempotency key
+      // was NOT committed (the throw rolled the transaction back), so the next cycle's claim
+      // succeeds and retries the apply cleanly — this is not a partial-apply state.
       log("organizer_request_apply_failed", {
-        mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: record.requestId,
+        mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: e.requestId,
         err: err instanceof Error ? err.message : String(err),
       });
       deferred++;
-      continue;
-    }
-
-    const ok = await removeSafely([ref]);
-    if (ok) {
-      applied++;
-    } else {
-      // The apply committed (or was already committed); only the cleanup is owed now. Counted
-      // as `deferred` rather than `applied` — the request is not YET fully handled from a
-      // reader's point of view, which still sees it as `sent` until the record is gone.
-      deferred++;
     }
   }
 
-  if (applied > 0 || refused > 0 || deferred > 0) {
+  // ── THE ACKS, THEN THE ONE EXPUNGE ──────────────────────────────────────────────────────────
+  //
+  // Acks are appended BEFORE the records they answer are removed, and the order is load-bearing:
+  // if the expunge fails after the acks land, the next cycle re-reads the same records, finds the
+  // acks already there (`alreadyAcked`), and retries only the removal. The reverse order would
+  // remove the record and then possibly fail to acknowledge it, leaving the reader with a decision
+  // that vanished with no outcome — the exact ambiguity acks exist to remove.
+  //
+  // An ack that fails to append is NOT a reason to skip the expunge of a record that was applied:
+  // the effect is committed, and re-applying next cycle is prevented by the key, so leaving the
+  // record would only produce a permanent refusal loop. The reader falls back to its stale window.
+  let ackFailures = 0;
+  for (const a of toAck) {
+    try {
+      await io.ack(formatAck({
+        requestId: a.requestId, outcome: a.outcome, reason: a.reason, ackedAt: now, key,
+      }));
+    } catch (err) {
+      ackFailures++;
+      log("organizer_ack_append_failed", {
+        mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: a.requestId,
+        err: err instanceof Error ? err.message : String(err),
+        reason: "the outcome is not carried back this cycle; the reader falls back to its window",
+      });
+    }
+  }
+
+  if (toRemove.length > 0) {
+    try {
+      await io.remove(toRemove);
+    } catch (err) {
+      // The records stay in the folder. Everything applied is still applied (the key holds), and
+      // everything refused will be refused identically next cycle — so the counters are re-derived
+      // rather than lost. Reported as deferred work, because from a reader's point of view nothing
+      // has resolved yet.
+      log("meta_request_expunge_failed", {
+        mailboxId: rt.mailboxId, accountId: rt.accountId, count: toRemove.length,
+        err: err instanceof Error ? err.message : String(err),
+        reason: "the records stay in the folder; the next cycle's drain retries them",
+      });
+      deferred += applied + refused;
+      applied = 0;
+      refused = 0;
+    }
+  }
+
+  if (applied > 0 || refused > 0 || deferred > 0 || standing > 0) {
     log("organizer_requests_drained", {
-      mailboxId: rt.mailboxId, accountId: rt.accountId, applied, refused, deferred,
+      mailboxId: rt.mailboxId, accountId: rt.accountId,
+      applied, refused, deferred, standing, ackFailures,
     });
   }
 
-  return { applied, refused, deferred };
+  return { applied, refused, deferred, standing };
 }
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  THE READER'S OWN CYCLE — append pending decisions, observe what the organizer took (mail
- *  0088, 0.14.1)
+ *  THE READER'S OWN CYCLE — append pending decisions, and read what the organizer ANSWERED
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
- * "The reader's cycle (both doors, after the peek): APPEND each `pending` → `sent`; any `sent`
- * whose id is absent from the folder → `applied`; `sent` older than 24 h and still present →
- * `expired`." (the ruling, verbatim). This is the ONLY function on a reader's side that writes to
- * `ohmail/_meta`, and it writes exactly one thing: an APPEND. A reader never expunges — that is
- * the organizer's exclusive act on this table, closing the loop
- * {@link applyMetaRequests} opens.
+ * ── ABSENCE IS NOT EVIDENCE, AND THAT WAS THE BUG ───────────────────────────────────────────
  *
- * `organizer_requests` is THIS install's own bookkeeping (see its own schema header): nothing
- * here reads or writes any OTHER install's rows, because there are none to see — a different
- * install's decisions about the same mailbox live in a database this one cannot reach.
+ * 0.14.1's first cut moved a row to `applied` when its record was no longer in the folder. But an
+ * organizer removes a record for two OPPOSITE reasons — it applied it, or it refused it — and in
+ * both cases the record is gone. So a person who screened a sender out was told "done" whether
+ * their decision had been carried out or thrown away as malformed, stale, or about the wrong
+ * mailbox. No amount of care on this side could turn absence into evidence, because absence does
+ * not carry the outcome.
+ *
+ * An ACK does. The organizer appends one naming the request and what became of it, signed under
+ * the same account key, and this cycle moves a row only on an ack it can verify. A `sent` row with
+ * no ack stays `sent` until {@link REQUEST_STALE_AFTER_MS} expires it — which is the honest thing
+ * to say when nobody has answered: not "applied", not "refused", but "nobody took this".
+ *
+ * This is the ONLY function on a reader's side that writes to `ohmail/_meta`, and it writes exactly
+ * one thing: an APPEND. A reader never expunges — that is the organizer's exclusive act, and since
+ * 0090 the reader's IO object does not even have the verb (`RequestReaderIo`).
  */
-
-/** How long a `sent` request may sit in the mailbox before the reader gives up waiting. */
-export const REQUEST_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 
 export interface DriveOutstandingRequestsResult {
   sent: number;
   applied: number;
+  refused: number;
   expired: number;
 }
 
-const EMPTY_DRIVE_RESULT: DriveOutstandingRequestsResult = { sent: 0, applied: 0, expired: 0 };
+const EMPTY_DRIVE_RESULT: DriveOutstandingRequestsResult = { sent: 0, applied: 0, refused: 0, expired: 0 };
 
+/**
+ * WHAT ONE `sent` ROW SHOULD BECOME THIS CYCLE — the state machine, as a pure function.
+ *
+ * Extracted so it can be exercised as ONE table rather than inferred from the IO-shaped function
+ * around it. Every transition a row can make lives here, and the two that must NOT exist are as
+ * much the point as the three that must:
+ *
+ *   · absence of the record is NOT `applied` (that was the defect)
+ *   · absence of an ack is NOT `refused` either — it is silence, and silence times out
+ */
+export type ReaderOutcome =
+  | { next: "applied" }
+  | { next: "refused"; reason: RequestRefusalReason | null }
+  | { next: "expired" }
+  | { next: null };
+
+export function readerOutcomeFor(input: {
+  /** The ack naming this row's id, if one was found AND verified. */
+  ack: AckRecord | null;
+  /** When the record was appended. `null` cannot happen for a `sent` row; treated as "just now". */
+  sentAt: Date | null;
+  now: Date;
+  staleAfterMs?: number;
+}): ReaderOutcome {
+  const { ack, sentAt, now } = input;
+  const staleAfterMs = input.staleAfterMs ?? REQUEST_STALE_AFTER_MS;
+
+  // AN ACK OUTRANKS THE CLOCK. A row that is past its window AND has an answer gets the answer:
+  // the organizer did in fact respond, and "expired" would discard a real outcome in favour of a
+  // timeout that only means "we had heard nothing yet".
+  if (ack !== null) {
+    if (ack.outcome === "applied") return { next: "applied" };
+    return { next: "refused", reason: ack.reason };
+  }
+
+  // No ack. The ONLY other transition is the timeout, and it is measured from when the record was
+  // appended rather than from when the decision was made — the person's decision is not stale, the
+  // ORGANIZER's silence is.
+  const since = sentAt ?? now;
+  if (now.getTime() - since.getTime() > staleAfterMs) return { next: "expired" };
+
+  // Still waiting. Whether the record is in the folder or not changes nothing: an organizer that
+  // has taken the record but not yet acknowledged it is mid-cycle, not finished.
+  return { next: null };
+}
+
+/**
+ * THE READER'S CYCLE. Appends what is `pending`, then settles what is `sent` against the acks.
+ *
+ * Gated on the account holding a request key, exactly as the organizer's drain is: a reader with
+ * no key cannot SIGN a record, and an unsigned record is refused by every organizer — so appending
+ * one would put an unverifiable message in a shared folder for nothing.
+ */
 export async function driveOutstandingRequests(
   db: WorkerDb,
   rt: { mailboxId: string; accountId: string; adapter: MailboxAdapter },
@@ -414,145 +675,210 @@ export async function driveOutstandingRequests(
   now: Date,
   log: (event: string, detail: Record<string, unknown>) => void,
 ): Promise<DriveOutstandingRequestsResult> {
-  // ── THE WRITE HALF IS GATED TOO, AND THE REASON IS NOT SYMMETRY ──────────────────────────────
-  //
-  // The reader is supposed to be unable to reach this: `ScreenerService.requestAsReader` refuses
-  // unless the holder's stored capability set names `requests`, and no build advertises it. But
-  // that column is not a fact this install established — `refreshReaderHolder` copies it out of
-  // the `X-Ohmail-Capabilities` header of whatever claim a peek found in the folder, and a claim
-  // is a message any process with APPEND rights can write. So the value standing between a reader
-  // and "append my unsigned decisions to the mailbox every cycle" is one an attacker supplies.
-  //
-  // The gate that does not depend on that is this one. It is the same flag the drain reads,
-  // because it is the same missing thing: until a request can be SIGNED, this install does not
-  // put one in a mailbox either. Same door/room shape as `applyMetaRequests` above, and the host
-  // census holds it the same way.
-  if (!REQUEST_AUTHENTICITY_IMPLEMENTED) return EMPTY_DRIVE_RESULT;
-  return driveOutstandingRequestsUnguarded(db, rt, self, now, log);
-}
-
-/**
- * THE READER'S CYCLE ITSELF — appends what is `pending`, observes what the organizer took.
- *
- * **UNGUARDED, AND NO HOST MAY CALL IT WHILE THE GATE IS SHUT**, on
- * {@link applyMetaRequestsUnguarded}'s reasoning exactly: this one WRITES into a mailbox, and
- * what it writes cannot yet be signed.
- */
-export async function driveOutstandingRequestsUnguarded(
-  db: WorkerDb,
-  rt: { mailboxId: string; accountId: string; adapter: MailboxAdapter },
-  self: { installId: string; kind: OrganizerKind },
-  now: Date,
-  log: (event: string, detail: Record<string, unknown>) => void,
-): Promise<DriveOutstandingRequestsResult> {
-  if (!hasRequestIo(rt.adapter)) return EMPTY_DRIVE_RESULT;
-  let io: RequestIo;
+  if (!hasRequestReaderIo(rt.adapter)) return EMPTY_DRIVE_RESULT;
+  let io: RequestReaderIo;
   try {
-    io = rt.adapter.requestIo();
+    io = rt.adapter.requestReaderIo();
   } catch {
-    // A retired adapter — the cycle raced a reconnect or a shutdown. `requestIo()` throws on one
-    // by design (`ImapAdapter.requestIo`'s own `assertUsable`), and outside this try that throw
-    // reaches the host as an ERROR-level drive failure. It is not one: nothing was owed and
-    // nothing was lost, and the next cycle has a live connection.
+    // A retired adapter — the cycle raced a reconnect or a shutdown. Not a drive failure: nothing
+    // was owed and nothing was lost, and the next cycle has a live connection.
     return EMPTY_DRIVE_RESULT;
   }
+
+  const key = await db.transaction((tx) => readRequestKey(tx, rt.accountId));
+  if (key === null) return EMPTY_DRIVE_RESULT;
 
   const pending = await db.transaction((tx) => listPendingRequests(tx, rt.mailboxId));
   let sentCount = 0;
   for (const req of pending) {
-    // Only `screener.decide` has an appender today. A row of an unrecognised
-    // kind is left `pending` rather than appended malformed — it is THIS install's own insert,
-    // written by `ScreenerService.requestAsReader`, so an unrecognised kind here is a build
-    // mismatch to investigate, not evidence to act on.
+    // Only `screener.decide` has an appender today. A row of an unrecognised kind is left
+    // `pending` rather than appended malformed — it is THIS install's own insert, so an
+    // unrecognised kind here is a build mismatch to investigate, not evidence to act on.
     if (req.kind !== "screener.decide") {
       log("outstanding_request_kind_unappendable", {
         mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: req.id, kind: req.kind,
       });
       continue;
     }
+
+    // ── THE APPEND AND THE BOOKKEEPING ARE SEPARATE TRIES, AND THAT IS THE WHOLE POINT ────────
+    //
+    // One try around both meant a database failure AFTER a successful APPEND was caught as "the
+    // append failed": the row stayed `pending`, and the next cycle appended the SAME decision
+    // again, and the cycle after that, for ever — a growing pile of duplicate records in a shared
+    // folder, each one a real signed request the organizer would dutifully apply. Splitting them
+    // makes the two failures say different things, and the second one recoverable: the record is
+    // out there, so the row must be marked `sent` or nothing will ever settle it.
+    let appended = false;
     try {
       const raw = formatRequest({
         requestId: req.id,
         kind: "screener.decide",
+        mailboxId: rt.mailboxId,
         installId: self.installId,
         organizerKind: self.kind,
         decidedAt: req.decidedAt,
         payload: req.payload,
+        key,
       });
-      await io.appendRequest(raw);
-      await db.transaction((tx) => markRequestsSent(tx, [req.id], now));
-      sentCount++;
+      await io.append(raw);
+      appended = true;
     } catch (err) {
       log("outstanding_request_append_failed", {
         mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: req.id,
         err: err instanceof Error ? err.message : String(err),
         reason: "the request stays pending; the next cycle appends it",
       });
+      continue;
+    }
+
+    if (!appended) continue;
+    try {
+      await db.transaction((tx) => markRequestsSent(tx, [req.id], now));
+      sentCount++;
+    } catch (err) {
+      // The record IS in the folder. Losing the row update means this cycle cannot count it, but
+      // the next one must not append a second copy — `markRequestsSent` is guarded on the row
+      // still being `pending`, so the retry is safe and idempotent, and the duplicate-append loop
+      // above is what this branch exists to make visible rather than silent.
+      log("outstanding_request_mark_sent_failed", {
+        mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: req.id,
+        err: err instanceof Error ? err.message : String(err),
+        reason: "the record was appended; the row is retried next cycle",
+      });
     }
   }
 
   const sent = await db.transaction((tx) => listSentRequests(tx, rt.mailboxId));
   if (sent.length === 0) {
-    if (sentCount > 0) log("outstanding_requests_driven", { mailboxId: rt.mailboxId, accountId: rt.accountId, sent: sentCount, applied: 0, expired: 0 });
-    return { sent: sentCount, applied: 0, expired: 0 };
+    if (sentCount > 0) {
+      log("outstanding_requests_driven", {
+        mailboxId: rt.mailboxId, accountId: rt.accountId, sent: sentCount, applied: 0, refused: 0, expired: 0,
+      });
+    }
+    return { sent: sentCount, applied: 0, refused: 0, expired: 0 };
   }
 
-  let presentIds: Set<string>;
-  let unreadablePresent = 0;
+  let acks: AckRecord[];
   try {
-    const raw = await io.listRequests();
-    const parsed = raw.map((m) => parseRequest(m.raw, m.ref)).filter((r) => r !== null);
-    unreadablePresent = parsed.filter((r) => isMalformedRequest(r!)).length;
-    presentIds = new Set(
-      parsed.filter((r): r is RequestRecord => !isMalformedRequest(r!)).map((r) => r.requestId),
-    );
+    acks = acksIn(await io.listMetaRecords(), key);
   } catch (err) {
     // Could not look — leave every `sent` row exactly as it is. "I could not look" and "the
-    // organizer took it" must not be reachable from one another, on the lease's own rule one
-    // module over.
+    // organizer answered" must not be reachable from one another. An ABSENT FOLDER lands here
+    // too, by design: `listMetaRecords` raises rather than answering `[]`, because a missing
+    // folder used to read as "every record is gone" and therefore as "everything was applied".
     log("outstanding_requests_list_failed", {
       mailboxId: rt.mailboxId, accountId: rt.accountId,
       err: err instanceof Error ? err.message : String(err),
     });
-    return { sent: sentCount, applied: 0, expired: 0 };
+    return { sent: sentCount, applied: 0, refused: 0, expired: 0 };
   }
 
-  // ── ABSENCE IS THE ONLY EVIDENCE THIS FUNCTION HAS, SO IT MUST BE ABSENCE ────────────────────
-  //
-  // A record whose id could not be READ is present in the folder and missing from `presentIds`,
-  // which is the same shape as a record the organizer took — and the two mean opposite things.
-  // Marking on that would tell the person their decision was applied while the organizer is in
-  // fact about to refuse it as malformed. So a cycle that saw ANY unreadable record marks nothing
-  // applied and says so; the next cycle, over a folder the organizer has since refused and
-  // expunged, decides on a clean read. Same rule as the catch above, for the same reason.
-  const goneNow = unreadablePresent > 0
-    ? []
-    : sent.filter((r) => !presentIds.has(r.id)).map((r) => r.id);
-  if (unreadablePresent > 0) {
-    log("outstanding_requests_unreadable_present", {
-      mailboxId: rt.mailboxId, accountId: rt.accountId, count: unreadablePresent,
-      reason: "a record in the folder could not be read, so absence proves nothing this cycle",
-    });
-  }
-  if (goneNow.length > 0) {
-    await db.transaction((tx) => markRequestsApplied(tx, goneNow, now));
+  const ackById = new Map<string, AckRecord>();
+  for (const a of acks) if (!ackById.has(a.requestId)) ackById.set(a.requestId, a);
+
+  const appliedIds: string[] = [];
+  const expiredIds: string[] = [];
+  const refusedRows: Array<{ id: string; reason: RequestRefusalReason | null }> = [];
+
+  for (const row of sent) {
+    const outcome = readerOutcomeFor({ ack: ackById.get(row.id) ?? null, sentAt: row.sentAt, now });
+    if (outcome.next === "applied") appliedIds.push(row.id);
+    else if (outcome.next === "refused") refusedRows.push({ id: row.id, reason: outcome.reason });
+    else if (outcome.next === "expired") expiredIds.push(row.id);
   }
 
-  // Only what is STILL present can be stale — a request the organizer already took is `applied`,
-  // above, whatever its age.
-  const staleCutoff = new Date(now.getTime() - REQUEST_STALE_AFTER_MS);
-  const stillPresent = await db.transaction((tx) => listStaleSentRequests(tx, rt.mailboxId, staleCutoff));
-  const expiredNow = stillPresent.filter((r) => presentIds.has(r.id)).map((r) => r.id);
-  if (expiredNow.length > 0) {
-    await db.transaction((tx) => markRequestsExpired(tx, expiredNow, now));
+  if (appliedIds.length > 0) await db.transaction((tx) => markRequestsApplied(tx, appliedIds, now));
+  for (const r of refusedRows) {
+    await db.transaction((tx) => markRequestsRefused(tx, [r.id], r.reason, now));
   }
+  if (expiredIds.length > 0) await db.transaction((tx) => markRequestsExpired(tx, expiredIds, now));
 
-  if (sentCount > 0 || goneNow.length > 0 || expiredNow.length > 0) {
+  if (sentCount > 0 || appliedIds.length > 0 || refusedRows.length > 0 || expiredIds.length > 0) {
     log("outstanding_requests_driven", {
       mailboxId: rt.mailboxId, accountId: rt.accountId,
-      sent: sentCount, applied: goneNow.length, expired: expiredNow.length,
+      sent: sentCount, applied: appliedIds.length, refused: refusedRows.length, expired: expiredIds.length,
     });
   }
 
-  return { sent: sentCount, applied: goneNow.length, expired: expiredNow.length };
+  return {
+    sent: sentCount, applied: appliedIds.length,
+    refused: refusedRows.length, expired: expiredIds.length,
+  };
 }
+
+/**
+ * THE ROLE-FLIP DRAIN — an install that has BECOME the organizer still owes its own old rows an
+ * ending.
+ *
+ * Rows queued while this install was a reader do not disappear when it takes the mailbox over.
+ * They sit `pending` (never appended, because the reader cycle no longer runs here) or `sent`
+ * (appended, and now waiting for an ack from an organizer that IS this install and will never
+ * write one to itself). Either way the person is looking at "waiting for …" for a decision this
+ * install could simply make.
+ *
+ * `pending` rows are the interesting half and they are settled by APPLYING them: the decision was
+ * made by a human on this install, it has never been handed to anyone, and this install now has
+ * the standing to carry it out. `sent` rows are left to the ordinary stale window — their record
+ * is in the folder, this install's own drain will read it, verify it (same account key) and apply
+ * it through the normal path, which is exactly right and needs no special case.
+ *
+ * Called from the ORGANIZER branch, so it runs precisely when the flip has happened.
+ */
+export async function settleOwnOutstandingRequests(
+  db: WorkerDb,
+  rt: { mailboxId: string; accountId: string },
+  now: Date,
+  log: (event: string, detail: Record<string, unknown>) => void,
+): Promise<{ applied: number; expired: number }> {
+  const pending = await db.transaction((tx) => listPendingRequests(tx, rt.mailboxId));
+  let applied = 0;
+  for (const req of pending) {
+    if (req.kind !== "screener.decide") continue;
+    const decision = validateRequestPayload(req.payload);
+    if (!decision) continue;
+    try {
+      await db.transaction(async (tx) => {
+        const erasedAt = await readAccountErasedAt(tx, rt.accountId);
+        if (erasedAt != null) throw new AccountErasedError(rt.accountId);
+        await applyScreenerDecision(tx, {
+          accountId: rt.accountId,
+          mailboxId: rt.mailboxId,
+          scope: decision.scope,
+          address: decision.address,
+          appliedFolder: decision.appliedFolder,
+          decision: decision.decision,
+          triggeringActionId: `screener:request:${req.id}`,
+          now,
+          stampBaseline: false,
+        });
+        await markRequestsApplied(tx, [req.id], now, { from: "pending" });
+      });
+      applied++;
+    } catch (err) {
+      log("own_request_settle_failed", {
+        mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: req.id,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  // A `sent` row whose record nobody ever took still ages out here, so a flip cannot leave one
+  // outstanding for ever if the record itself was lost.
+  const staleCutoff = new Date(now.getTime() - REQUEST_STALE_AFTER_MS);
+  const stale = await db.transaction((tx) => listStaleSentRequests(tx, rt.mailboxId, staleCutoff));
+  const expiredIds = stale.map((r) => r.id);
+  if (expiredIds.length > 0) {
+    await db.transaction((tx) => markRequestsExpired(tx, expiredIds, now));
+  }
+
+  if (applied > 0 || expiredIds.length > 0) {
+    log("own_requests_settled", {
+      mailboxId: rt.mailboxId, accountId: rt.accountId, applied, expired: expiredIds.length,
+    });
+  }
+  return { applied, expired: expiredIds.length };
+}
+
+/** Re-exported so the host census and tests can name the parser the drain actually uses. */
+export { parseRequestEnvelope };
