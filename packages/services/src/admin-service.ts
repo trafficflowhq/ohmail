@@ -1961,8 +1961,31 @@ export async function adminAlerts(db: AdminDb, now: Date): Promise<AlertSummary[
   // `notifiedAt` come from the row for the same reason. This does not reintroduce the drift the
   // comment above guards against — that argument is about a class the CURRENT pass just
   // recomputed, and here there is no current computation to prefer.
+  // ── ONLY WHAT THIS READ GENUINELY COULD NOT EVALUATE ─────────────────────────────────
+  //
+  // "Scoped kind" is not the same claim as "this read could not evaluate it", and merging on the
+  // kind alone reintroduced cleared incidents. `evaluateAlerts` defaults to shard 0 when no
+  // shards are given, so THIS read does evaluate `worker_down:0`, `worker_degraded:0` and
+  // `ai_provider_down:0` — and when shard 0 has recovered but the driver has not yet deleted the
+  // row, their absence from `firing` is the correct answer, not a gap to fill. Merging them back
+  // put a cleared critical on the board until the next driver pass.
+  //
+  // What this read truly cannot answer is narrower and is enumerable:
+  //  · the DRIVER-keyed rules, because no driver is named here and both are gated on that;
+  //  · the ROLE-scoped one, because the counter lives in a table the content-blind handle this
+  //    console reads through is deliberately not granted — a property of the role, not a guess;
+  //  · any SHARD-keyed row for a shard outside the set this read used.
+  const READ_SHARDS = [0];
+  const evaluatedHere = new Set<string>();
+  for (const shard of READ_SHARDS) {
+    evaluatedHere.add(`worker_down:${shard}`);
+    evaluatedHere.add(`worker_degraded:${shard}`);
+    evaluatedHere.add(`ai_provider_down:${shard}`);
+  }
   const scoped = (await listOpenAlerts(db))
-    .filter((r) => SCOPED_ALERT_KINDS.has(r.kind) && !firing.some((a) => a.key === r.alertKey))
+    .filter((r) => SCOPED_ALERT_KINDS.has(r.kind)
+      && !evaluatedHere.has(r.alertKey)
+      && !firing.some((a) => a.key === r.alertKey))
     .map((r) => ({
       key: r.alertKey,
       kind: r.kind as AlertSummary["kind"],
