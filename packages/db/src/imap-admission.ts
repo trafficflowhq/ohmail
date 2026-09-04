@@ -135,8 +135,15 @@ export const IMAP_REFUSAL_KEY = "imap:refused:all";
  *
  * NEVER LET THIS THROW INTO THE CALLER. It runs on the refusal path, whose job is to return
  * "busy, try again" to a person waiting on an attachment; a counter that failed must not turn a
- * handled refusal into a 500. The call sites wrap it, and this function does not swallow on their
- * behalf — a swallow here would hide a real database fault from every caller at once.
+ * handled refusal into a 500. Its ONE caller — {@link acquireImapSlot}'s refusal branch — wraps
+ * it, and this function does not swallow on that caller's behalf: a swallow here would hide a
+ * database fault from a direct caller written later.
+ *
+ * That caller is the whole reachability story and it is worth stating, because the first cut of
+ * this rule had none: the counter was written, unit-tested and called from nowhere, so the rule
+ * that reads it could never fire in production. `alerts-reliability.test.ts` now drives a real
+ * refusal through {@link acquireImapSlot} and asserts the rule fires off it — the property that
+ * was missing, and one a test calling this function directly cannot see.
  */
 export async function recordImapRefusal(
   db: Tx, now: Date, windowMs: number = IMAP_REFUSAL_WINDOW_MS,
@@ -240,6 +247,25 @@ export async function acquireImapSlot(db: Tx, input: ImapSlotInput): Promise<boo
   const held = row?.failures ?? Number.MAX_SAFE_INTEGER;
   if (held <= input.max) return true;
   await releaseImapSlot(db, input.mailboxId, input.now);
+
+  // ── THE REFUSAL IS COUNTED HERE, WHICH IS THE ONLY PLACE IT CAN BE ────────────────────
+  //
+  // This is the single choke point: every admission site in the deployment reaches a refusal
+  // through this one `return false`, so counting here cannot be forgotten by a new call site.
+  // Counting at the call sites instead is exactly what shipped and did not work —
+  // {@link recordImapRefusal} had NO production caller at all, so the counter never moved,
+  // `imapRefusalsInWindow` always answered 0, and the `imap_admission_refused` rule was a guard
+  // nobody could watch fail. Built, tested and unreachable.
+  //
+  // SWALLOWED, on `writeHeartbeat`'s contract. This runs on the path whose job is to hand back
+  // "busy, try again" to a person waiting on an attachment, and a counter that failed must not
+  // turn a handled refusal into a 500 — observability may not cause the outage it reports. The
+  // cost of the swallow is stated rather than hidden: a database fault here makes the refusal
+  // counter under-report, and under-reporting is the direction a threshold rule is safe to be
+  // wrong in. A fault that broke this write would be visible in every other rule at once.
+  try {
+    await recordImapRefusal(db, input.now);
+  } catch { /* see above: the refusal must outlive its own bookkeeping */ }
   return false;
 }
 

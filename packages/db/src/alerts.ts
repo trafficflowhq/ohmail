@@ -580,6 +580,26 @@ export interface EvaluateOptions {
  */
 export type AlertDriver = "worker" | "api";
 
+/**
+ * The kinds only ONE ARM of the alerting evaluates, and therefore the only kinds a pass may not
+ * resolve merely because they are absent from its own firing set.
+ *
+ * Two shapes, one property. `worker_down`, `worker_degraded` and `ai_provider_down` are keyed by
+ * SHARD and evaluated only for the shards a pass was given — the worker passes none, because all
+ * three are statements about the worker. `schema_behind` and `alert_driver_dark` are keyed by
+ * DRIVER: each arm evaluates its own journal and the other arm's pulse, so for either key exactly
+ * one arm has an opinion.
+ *
+ * Every other kind is a fact about the deployment that both arms read out of the same database,
+ * so absence from a firing set genuinely means the condition cleared and the row should go.
+ *
+ * A new rule that either arm can decline MUST be added here. The cross-driver test in
+ * `alerts-reliability.test.ts` is what makes that a failure rather than a silent flap.
+ */
+export const SCOPED_ALERT_KINDS: ReadonlySet<string> = new Set<AlertKind>([
+  "worker_down", "worker_degraded", "ai_provider_down", "schema_behind", "alert_driver_dark",
+]);
+
 function secondsBetween(now: Date, then: Date | null): number | null {
   if (!then) return null;
   return Math.max(0, Math.round((now.getTime() - then.getTime()) / 1000));
@@ -2842,24 +2862,48 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   //
   // ── BUT A PASS MAY ONLY RESOLVE WHAT IT ACTUALLY EVALUATED ────────────────────────────
   //
-  // `worker_down` is the one rule a pass can decline to evaluate, and the WORKER declines it
-  // (`shards: []` — a process cannot testify to its own liveness). "Not in my firing set" is
-  // therefore not the same statement as "no longer true" for that rule: to a worker pass,
-  // `worker_down:0` is never firing, so an unscoped resolve would have the worker DELETE the
-  // row the external observer had just opened. The consequence is not a missed page but a
-  // flapping one — open, page, deleted, re-opened with `notified_at` back to NULL, paged
-  // again on the next external pass, for ever, with `opened_at` reset each time so "how long
-  // has this been broken" reads as seconds. Latent until an external driver existed; live the
-  // moment one does.
+  // Some rules are evaluated by only ONE of the two arms, and for those "not in my firing set"
+  // is not the same statement as "no longer true". A pass that resolved them anyway would
+  // DELETE the row the other arm had just opened. The consequence is not a missed page but a
+  // flapping one — open, page, deleted, re-opened with `notified_at` back to NULL, paged again
+  // on the other arm's next pass, for ever, with `opened_at` reset each time so "how long has
+  // this been broken" reads as seconds.
   //
-  // Residue, stated rather than discovered: a `worker_down:S` row for a shard NO pass
-  // evaluates any more (a shard removed from the configuration) is never resolved here and
-  // has to be deleted by hand. That is the safe direction — the alternative is the flap above
-  // — and with one shipped shard it is not a state this deployment can reach.
-  const evaluatedWorkerKeys = new Set(shards.map((s) => `worker_down:${s}`));
+  // ── THIS USED TO NAME ONE KIND, AND FOUR MORE HAD JOINED IT ───────────────────────────
+  //
+  // The exemption was written for `worker_down` when that was the only rule an arm declined,
+  // and it tested `r.kind !== "worker_down"`. Cloud 0030 added four rules with exactly the same
+  // property and none of them was covered, so all four flapped every cadence:
+  //
+  //  · `worker_degraded:S` and `ai_provider_down:S` sit inside the same `for (const shard of
+  //    shards)` loop as `worker_down`, and the WORKER passes `shards: []` — so it evaluates
+  //    none of the three, and deleted the two it was not exempted from one minute after the
+  //    API arm opened them.
+  //  · `schema_behind:D` and `alert_driver_dark:D` are keyed by DRIVER, and each arm evaluates
+  //    exactly one key: its own for `schema_behind`, the other's for `alert_driver_dark`. So
+  //    each arm deleted the other's row on every pass — and this pair flaps while BOTH hosts
+  //    are perfectly healthy, which is the worst version of it.
+  //
+  // The set is therefore keyed by WHAT THIS PASS ACTUALLY EVALUATED rather than by a kind
+  // name, so a sixth scoped rule cannot be added without either appearing here or failing the
+  // cross-driver test that now covers this.
+  //
+  // Residue, stated rather than discovered: a scoped row nothing evaluates any more (a shard
+  // removed from the configuration, a driver name retired) is never resolved here and has to
+  // be deleted by hand. That is the safe direction — the alternative is the flap above.
+  const evaluatedScopedKeys = new Set<string>();
+  for (const s of shards) {
+    evaluatedScopedKeys.add(`worker_down:${s}`);
+    evaluatedScopedKeys.add(`worker_degraded:${s}`);
+    evaluatedScopedKeys.add(`ai_provider_down:${s}`);
+  }
+  if (opts.driver) {
+    evaluatedScopedKeys.add(`schema_behind:${opts.driver}`);
+    evaluatedScopedKeys.add(`alert_driver_dark:${opts.driver === "worker" ? "api" : "worker"}`);
+  }
   const resolved = existing
     .filter((r) => !firingKeys.has(r.alertKey))
-    .filter((r) => r.kind !== "worker_down" || evaluatedWorkerKeys.has(r.alertKey))
+    .filter((r) => !SCOPED_ALERT_KINDS.has(r.kind) || evaluatedScopedKeys.has(r.alertKey))
     .map((r) => r.alertKey);
   for (const key of resolved) {
     await db.delete(alertState).where(eq(alertState.alertKey, key));
