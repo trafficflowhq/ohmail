@@ -35,8 +35,10 @@ signed with a key belonging to your account, and the organizing install verifies
 The organizing install also answers, which it could not before. A decision it carried out comes back
 as applied; one it declined comes back as declined, with the reason. Previously the only signal was
 the record disappearing from the mailbox — and it disappears either way, so a decision that had been
-thrown away was reported as done. A decision nobody answers is now reported as waiting until it
-times out, rather than quietly counted as a success.
+thrown away was reported as done. A decision that gets no answer at all is now reported as waiting
+until it times out, rather than quietly counted as a success — which is also what happens to a
+decision written before your password changed, since changing it replaces the key and the older
+decision can no longer be checked.
 
 **One direction is not on yet in this release.** A mailbox organized by ohmail Cloud takes decisions
 from your other installs, and that is the common setup. **A mailbox organized by a desktop install
