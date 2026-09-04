@@ -43,12 +43,17 @@ export type AdminAlertKind =
   | "worker_down" | "billing_events_failed" | "sends_stuck" | "sync_lag" | "storage_at_cap"
   | "billing_reconciliation_divergence" | "billing_reconciliation_stale" | "device_sync_stale"
   | "session_sync_stale" | "session_reuse_revoked"
-  // Cloud 0030's reliability rules. This union is a MIRROR of `AlertKind` in `alerts.ts` and a
-  // census asserts the two are equal in both directions — a kind the console cannot name renders
-  // as an unstyled row, and a kind the console names that no rule produces is dead code that
-  // reads as coverage.
+  // Cloud 0030's reliability rules. This union is a MIRROR of `AlertKind` in `alerts.ts`, and a
+  // census in the console's own suite asserts the two are equal in BOTH directions — a kind this
+  // DTO cannot carry stops `admin-service.ts` compiling, and a kind named here that no rule
+  // produces is dead vocabulary on the wire that reads as coverage. Only the first of those is a
+  // type error, which is why the census is not left to the compiler.
   | "worker_degraded" | "api_5xx_rate" | "schema_behind" | "imap_admission_refused"
-  | "ai_provider_down" | "credit_rollup_stale" | "alert_driver_dark" | "credential_replay_wide";
+  | "ai_provider_down" | "credit_rollup_stale" | "alert_driver_dark" | "credential_replay_wide"
+  // A metered model call was billed to an account on a day the cost table recorded nothing for
+  // any host — the recorder is injected, so a composition site left on its default logs the call
+  // and writes no row, and the only visible trace is a debit with no cost beside it.
+  | "ai_usage_unrecorded";
 /**
  * INCIDENT or SIGNAL — the class that decided whether this row went to a sink.
  *
