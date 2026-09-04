@@ -103,8 +103,8 @@ import { WATCHED_FOLDERS, type ImapAuth } from "./imap-types.js";
  * | the gate's read | a truncated read | why |
  * | --- | --- | --- |
  * | the ELECTION | ACTS on the window | it is CHOOSING between what it can see, and refusing stops the mail |
- * | the VERIFY after a renew | acts — safely | the only absence it tests is of the claim this gate JUST APPENDED, which is the newest record in the folder and therefore inside a newest-first window by construction |
- * | the handover CONFIRM | acts only where the window COVERS the ref | it asks whether specific OLD refs are gone, and old is exactly what a newest-first window drops |
+ * | the VERIFY after a renew | acts — safely | every claim it could NEWLY need to see was appended AFTER the election (our own, and a rival that renewed in the gap), and anything appended after the election is inside a newest-first window by construction. An older rival is the election's own documented residual, not a gap in this read |
+ * | the handover CONFIRM | acts only where the window COVERS the ref, and not at all across a UIDVALIDITY change | it asks whether specific OLD refs are gone, and old is exactly what a newest-first window drops — while a renumbering makes the two reads' refs incomparable outright |
  *
  * The distinction is between choosing and CUSTODY. An election over a partial folder picks the best
  * of what it can see and is bounded by the next cycle. A custody check asks "is the claim I
@@ -1845,6 +1845,16 @@ export interface LeaseIo {
   appendClaim(raw: string): Promise<void>;
   /** STORE `\Deleted` + EXPUNGE the given messages. */
   removeClaims(refs: readonly unknown[]): Promise<void>;
+  /**
+   * THE SELECTED FOLDER'S UID GENERATION, where the server reports one.
+   *
+   * OPTIONAL, and this is the one place in this module where an optional capability is the right
+   * shape rather than the trap the rest of it avoids. Absence means "this connection cannot tell
+   * me", which resolves to `null` on BOTH of the reads that are compared — so the comparison finds
+   * no change and the gate behaves exactly as it did before this existed. The capability can only
+   * ADD a refusal, never remove one, so a fake that omits it is not weaker than today; it is today.
+   */
+  uidValidity?(): number | bigint | null;
 }
 
 /**
@@ -1863,7 +1873,7 @@ export interface LeaseImapClient extends MetaFolderClient {
    * is a client-library convenience rather than a command: a fake that omits it must behave
    * exactly as before, so absence means "unknown", never "empty".
    */
-  readonly mailbox?: { exists?: number } | false;
+  readonly mailbox?: { exists?: number; uidValidity?: number | bigint } | false;
   /**
    * A NOOP, which is how a long-lived connection LEARNS what changed under it.
    *
@@ -1879,7 +1889,7 @@ export interface LeaseImapClient extends MetaFolderClient {
     range: string,
     query: { uid?: boolean; headers?: boolean | string[] },
     options?: { uid?: boolean },
-  ): AsyncIterableIterator<{ uid: number; headers?: Buffer }>;
+  ): AsyncIterableIterator<{ uid: number; seq?: number; headers?: Buffer }>;
   append(path: string, content: string | Buffer, flags?: string[]): Promise<unknown>;
   messageDelete(range: number[], options?: { uid?: boolean }): Promise<unknown>;
 }
@@ -1930,16 +1940,49 @@ export interface LeaseImapClient extends MetaFolderClient {
  * A NOOP that FAILS leaves the cached value standing, which is exactly where the caller was
  * before — so the failure is swallowed rather than turned into a lease fault.
  */
-async function selectedCount(client: LeaseImapClient): Promise<number | undefined> {
+async function selectedCount(
+  client: LeaseImapClient,
+): Promise<{ count: number | undefined; refreshed: boolean }> {
+  // `refreshed` is REPORTED rather than swallowed, and that is the whole of what changed here. A
+  // NOOP that fails leaves the caller exactly where it was — with a cached count that may be
+  // STALE-LOW — and a stale-low count is indistinguishable from a true one at the arithmetic below
+  // it. Saying so lets the one caller that can do something about it ask the server directly.
+  let refreshed = false;
   if (typeof client.noop === "function") {
     try {
       await client.noop();
+      refreshed = true;
     } catch {
-      /* see above: no worse than not asking */
+      /* see above: no worse than not asking — but the caller is told the answer is unrefreshed */
     }
   }
   const selected = client.mailbox;
-  return typeof selected === "object" && selected !== null ? selected.exists : undefined;
+  const count = typeof selected === "object" && selected !== null ? selected.exists : undefined;
+  return { count, refreshed };
+}
+
+/**
+ * ASK THE SERVER FOR THE LAST SEQUENCE NUMBER — one round trip, and the only reliable answer.
+ *
+ * `*` is the highest existing sequence number, so a fetch of exactly that message carries the
+ * folder's true message count in its own `seq`. It costs one round trip and it is asked only when
+ * the cheap answer is missing or untrustworthy — see {@link readMetaFolderWindow}.
+ *
+ * `undefined` on anything unexpected: a server that will not answer, or a client whose fetch does
+ * not report `seq` (every fake predating this). The caller then falls back to the sliding window,
+ * which is bounded in memory and correct about WHICH records it keeps, and merely costs the whole
+ * folder over the wire. Never a throw: this is an optimisation of a read that already works.
+ */
+async function lastSequence(client: LeaseImapClient): Promise<number | undefined> {
+  try {
+    let last: number | undefined;
+    for await (const m of client.fetch("*", { uid: true }, { uid: false })) {
+      if (typeof m.seq === "number") last = m.seq;
+    }
+    return last;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -2093,9 +2136,39 @@ export async function readMetaFolderWindow(client: LeaseImapClient): Promise<Met
   //
   // Read DEFENSIVELY: only a POSITIVELY KNOWN zero skips the fetch. A count we cannot see means
   // "unknown", so the fetch still runs.
-  const count = await selectedCount(client);
+  const { count, refreshed } = await selectedCount(client);
+  /* A POSITIVELY KNOWN ZERO STILL SKIPS EVERYTHING, refreshed or not.
+   *
+   * The probe below is a FETCH, and `*` against an empty mailbox is refused by the same servers
+   * that refuse `1:*` — which is the defence this line has always been. It is swallowed rather than
+   * raised, so it could not become a fault, but every fresh mailbox has an empty `ohmail/_meta` and
+   * spending a refused round trip on each of them is the cost this line exists to avoid.
+   *
+   * A zero that is STALE is not closed by the probe either way; it is closed by the NOOP above,
+   * which is what that measurement established. Where the NOOP is absent or failed, a stale zero
+   * reads as empty exactly as it did before any of this — no better, and no worse. */
   if (count === 0) return { records: [], truncated: false, total: 0 };
-  const total = typeof count === "number" ? count : null;
+
+  /* ── WHEN THE CHEAP COUNT IS MISSING OR UNTRUSTWORTHY, ASK ────────────────────────────────
+   *
+   * `from` is computed by counting BACK from the end, so a count that is wrong LOW moves the window
+   * toward the start of the folder and gives back exactly the oldest-first read this whole function
+   * exists to replace. Two ways to get one, and neither announces itself:
+   *
+   *   · the client reports no `exists` at all; or
+   *   · the NOOP that would have corrected a stale value FAILED — and its failure is swallowed by
+   *     design, because a refresh that did not happen leaves the caller no worse off than not
+   *     asking. No worse for the old code; for this arithmetic it is the difference between the
+   *     newest window and the oldest one.
+   *
+   * So in both cases the server is asked outright. One extra round trip, on a read that is already
+   * making one, and only on the paths where the cheap answer cannot be trusted — a live connection
+   * that answered its NOOP takes neither. The sliding eviction below still stands behind this for
+   * the case where even that answer does not come.
+   */
+  const probed = count === undefined || !refreshed ? await lastSequence(client) : undefined;
+  const total = probed ?? (typeof count === "number" ? count : null);
+  if (total === 0) return { records: [], truncated: false, total: 0 };
 
   // The window's start. Above the ceiling this deliberately skips the oldest records — see the
   // header: in this folder the oldest are the ones that have been superseded or were never ours.
@@ -2190,6 +2263,13 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
       }
     },
 
+    uidValidity(): number | bigint | null {
+      const selected = client.mailbox;
+      if (typeof selected !== "object" || selected === null) return null;
+      const v = selected.uidValidity;
+      return typeof v === "number" || typeof v === "bigint" ? v : null;
+    },
+
     async appendClaim(raw: string): Promise<void> {
       await client.append(await meta.path(), raw, ["\\Seen"]);
     },
@@ -2267,6 +2347,15 @@ export interface LeaseGateResult {
 interface GateRead {
   records: RawClaimMessage[];
   truncated: boolean;
+  /**
+   * THE FOLDER'S UID GENERATION AT THE MOMENT OF THE READ, where the server reports one.
+   *
+   * Refs are UIDs, and a UID means nothing across a UIDVALIDITY change: the server has renumbered
+   * everything, so a ref from an earlier read names a different message or none at all. The confirm
+   * compares refs between two reads, so a change between them makes its whole comparison
+   * meaningless — see there.
+   */
+  uidValidity: number | bigint | null;
 }
 
 export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResult> {
@@ -2309,19 +2398,24 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
    */
   const readClaims = async (op: () => Promise<RawClaimMessage[]>): Promise<GateRead> => {
     try {
-      return { records: await op(), truncated: false };
+      const records = await op();
+      return { records, truncated: false, uidValidity: io.uidValidity?.() ?? null };
     } catch (err) {
       if (err instanceof MetaFolderTruncatedError) {
         log("lease_meta_truncated", { read: err.read, limit: err.limit, total: err.total });
-        return { records: [...err.records], truncated: true };
+        return { records: [...err.records], truncated: true, uidValidity: io.uidValidity?.() ?? null };
       }
       throw err;
     }
   };
 
   let messages: RawClaimMessage[];
+  /** The UID generation the ELECTION saw — the confirm compares refs against this. See there. */
+  let electionUidValidity: number | bigint | null = null;
   try {
-    messages = (await readClaims(() => io.listClaims())).records;
+    const first = await readClaims(() => io.listClaims());
+    messages = first.records;
+    electionUidValidity = first.uidValidity;
   } catch (err) {
     throw new LeaseUnavailableError(
       `the organizer lease in ${META_FOLDER} could not be read; this mailbox cannot be organized safely`,
@@ -2524,15 +2618,22 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
      * ── AND THE ABSENCE THIS BLOCK TESTS IS SAFE UNDER A TRUNCATED WINDOW, WHICH THE CONFIRM'S
      *    IS NOT ─────────────────────────────────────────────────────────────────────────────
      *
-     * The guard below asks whether the claim THIS GATE JUST APPENDED came back. That record is the
-     * newest message in the folder, and the window is the newest N — so it is covered by
-     * construction and its absence is a real absence, not a gap in the read.
+     * The stronger statement, and the one that actually holds: **every claim this read could NEWLY
+     * need to see was appended AFTER the election**, and anything appended after the election is
+     * inside a newest-first window by construction. That covers our own claim, and it covers a
+     * rival that renewed in the gap — which is the case this verify exists to catch.
      *
-     * If a server ever broke that (a reorder, a non-ascending sequence), the guard degrades to
-     * "our claim is missing" — a lost race, which releases and retries. That is the safe direction,
-     * so the invariant is load-bearing for correctness and not for safety. The confirm below tests
-     * the absence of OLD refs, which a newest-first window genuinely can miss, and it carries its
-     * own coverage check for exactly that reason. */
+     * A rival that is OLDER than the window is not a gap in this read; it is the ELECTION's own
+     * documented residual, already reasoned about where the window is defined, and re-deciding it
+     * here would be a second opinion about the same folder rather than a check on this write.
+     *
+     * The earlier version of this argued only that our own appended claim is the newest record.
+     * True, and too narrow: it says nothing about the rival, which is the half the guard is for.
+     *
+     * If a server ever broke the ordering, the guard degrades to "our claim is missing" — a lost
+     * race, which releases and retries. Safe direction, so the invariant is load-bearing for
+     * correctness rather than for safety. The confirm below tests the absence of OLD refs, which a
+     * newest-first window genuinely can miss, and carries its own coverage check for that reason. */
     const after = (await readClaims(() => io.listClaims())).records;
     verifyClaims = after
       .map((m) => parseClaim(m.raw, m.ref))
@@ -2732,12 +2833,33 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
        * window's own floor is one this read could not have seen. Such a ref is treated exactly as a
        * SURVIVOR is — the handover is not confirmed this cycle — because "still there" and "I could
        * not look" have the same correct answer here, even though they are different facts. */
-      const coveredFloor = read.truncated
-        ? after.reduce<number>((lo, m) => (typeof m.ref === "number" && m.ref < lo ? m.ref : lo), Infinity)
-        : -Infinity;
-      const unprovable = verdict.displace.find(
-        (r) => !stillRefs.has(r) && !(typeof r === "number" && r >= coveredFloor),
-      );
+      /* ── AND A UIDVALIDITY CHANGE MAKES THE COMPARISON MEANINGLESS ALTOGETHER ─────────────
+       *
+       * Refs are UIDs, and a UID means nothing across a UIDVALIDITY change: the server has
+       * renumbered the folder, so a ref the election recorded names a different message now, or
+       * none. `stillRefs.has(r)` is then a comparison between two different numbering schemes —
+       * it can answer "gone" for a claim that is sitting there under a new uid, which is the same
+       * false confirmation the coverage rule exists to prevent, arrived at by another route.
+       *
+       * Treated exactly as a truncated read is, because it is the same fact: this read cannot
+       * speak about those refs. `null` on either side means the connection does not report the
+       * generation, which resolves to "no change detected" and leaves the gate as it was. */
+      const renumbered = read.uidValidity !== null
+        && electionUidValidity !== null
+        && read.uidValidity !== electionUidValidity;
+      /* An absence is only evidence for a ref the window COVERED — and the check is gated on
+       * `truncated` so the floor is a real observation rather than a sentinel doing the work. On a
+       * complete read there is nothing to prove: every ref that exists is in `after`. */
+      const unprovable = read.truncated || renumbered
+        ? verdict.displace.find((r) => {
+          if (stillRefs.has(r)) return false;
+          if (renumbered) return true;
+          const floor = after.reduce<number>(
+            (lo, m) => (typeof m.ref === "number" && m.ref < lo ? m.ref : lo), Infinity,
+          );
+          return !(typeof r === "number" && Number.isFinite(floor) && r >= floor);
+        })
+        : undefined;
       const survivor = verdict.displace.find((r) => stillRefs.has(r)) ?? unprovable;
 
       if (ownStanding.length === 0) {
