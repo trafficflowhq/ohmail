@@ -187,12 +187,29 @@ const MAX_CHARGES_BYTES = 64 * 1024 * 1024;
 /**
  * How far past "now" the charges range is allowed to reach.
  *
- * The window this port is asked about is the whole calendar month, and asking Vercel for days
- * that have not happened yet returns a zero record per service per region for each of them —
- * real bytes for no information. Clamping the REQUEST to just past the present keeps an
- * early-in-the-month pass small; it changes no figure, because a day that has not happened
- * cannot have been billed. The rows this adapter returns are still stamped with the calendar
- * month, which is the window the board reads and the key the upsert replaces on.
+ * ── IT LOOKS LIKE A SIZE OPTIMISATION AND IT IS A CORRECTNESS ONE ────────────────────────
+ *
+ * The obvious reading is bytes: the window this port is asked about is the whole calendar month,
+ * and asking for days that have not happened returns a zero record per service per region for
+ * each of them. That is true and it is the smaller half.
+ *
+ * The larger half is that **the range decides how much of a FLAT FEE the answer contains.**
+ * Measured 2026-09-04, four days into the month, same account, same call, two ranges: asking
+ * `to = 2026-10-01` reports the plan subscription at $19.04 — the WHOLE month's fee, accrued
+ * forward into days that have not happened — while asking `to = now + 1 day` reports $2.57, the
+ * part of it that has actually accrued. The board's headline is month-TO-DATE and its projection
+ * multiplies that figure by (days in month ÷ days elapsed), so the unclamped answer would be
+ * projected to roughly eight times the real bill. The clamped one projects back to about $19,
+ * which is the fee. So this constant is what makes the figure the one the projection is written
+ * against, and removing it to "simplify the request" silently breaks the number.
+ *
+ * A DAY rather than zero, because `to` is exclusive and the vendor's buckets are 24 hours offset
+ * by its billing timezone: clamping to the instant of asking can fall inside the open bucket and
+ * drop it. Including it costs nothing — the vendor reports that bucket's accrual so far, not a
+ * whole day of it.
+ *
+ * The rows this adapter returns are still stamped with the calendar month, which is the window
+ * the board reads and the key the upsert replaces on.
  */
 const CHARGES_LOOKAHEAD_MS = 24 * 60 * 60 * 1000;
 
