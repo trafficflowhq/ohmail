@@ -3066,9 +3066,20 @@ export const REQUEST_PAYLOAD_MAX_BYTES = 4096;
  * A request record is a message in a shared IMAP folder. Anyone with APPEND rights on the mailbox
  * can write one; nothing in the wire format distinguishes this account's own reader from a
  * stranger, because a forger writes the wire format too. The ONLY thing that distinguishes them is
- * a secret the two installs share and a forger does not: `account_settings.request_key`
- * (`@trafficflow/db#request-key.ts`), 32 bytes handed only to an install that proved it holds a
- * session for the account.
+ * a secret the two installs share and a forger does not — and it is DERIVED, never stored and
+ * never delivered: see {@link deriveRequestKey}. Every install that can open the mailbox already
+ * holds the one secret that draws exactly the right boundary, because the attacker in this threat
+ * model — a shared-folder grantee, a filing rule, another mail client — has folder rights and no
+ * password.
+ *
+ * **This paragraph described a stored `account_settings.request_key` handed to an install that
+ * proved it held an account session. That design was REFUSED and is not what ships.** It cannot
+ * work here: a single install is either session-bearing or IMAP-bearing and never both, so the
+ * process that appends or verifies a record has no session to fetch a key with, and handing one to
+ * a local install would mean adding a session to the sealed local artifact. The column, the route
+ * and the delivery step are all gone; only this sentence survived them, which is why it is
+ * corrected in place rather than deleted — a reader who finds the old design elsewhere should find
+ * out here that it was withdrawn.
  *
  * ── THE CANONICAL FORM IS LENGTH-PREFIXED, AND THAT IS NOT FUSSINESS ────────────────────────
  *

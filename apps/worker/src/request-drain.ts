@@ -353,12 +353,45 @@ export async function applyMetaRequests(
   // would put a second ack in the folder for one request; the record still needs removing.
   const alreadyAcked = new Set(existingAcks.map((a) => a.requestId));
 
-  // ── ORDER, THEN BOUND ───────────────────────────────────────────────────────────────────────
-  //
-  // Sorted BEFORE the ceiling is applied, so "the first 200" means the 200 oldest decisions rather
-  // than whatever order the IMAP server happened to list them in. A malformed record has no
-  // `decidedAt` to sort by and goes first: it is refused without any database work, so handling it
-  // early costs nothing and gets it out of the folder.
+  /* ══ ORDER, THEN BOUND — AND THE TWO KINDS DO NOT SHARE A BUDGET ═══════════════════════════
+   *
+   * Well-formed records are sorted BEFORE the ceiling is applied, so "the first 200" means the 200
+   * oldest decisions rather than whatever order the IMAP server happened to list them in.
+   *
+   * ── WHY THE CEILINGS ARE SEPARATE, WHICH THEY WERE NOT ───────────────────────────────────
+   *
+   * Malformed records used to be taken FIRST and out of the SAME 200, with the well-formed slice
+   * computed as the remainder. That let the cheapest possible record starve the most expensive
+   * guarantee: a malformed record needs no signature and no key — it need only carry
+   * `X-Ohmail-Request: 1` and then be unreadable — so anyone with APPEND rights on the folder could
+   * hold 200 of them in the read window and every genuine, SIGNED decision would be deferred, every
+   * cycle, for as long as they cared to keep appending. The drain's own counters would report it as
+   * healthy work: 200 refused, 0 applied, some deferred.
+   *
+   * The two kinds cost different things, so they get different allowances. Handling a malformed
+   * record is one ref in a batch that is already being sent — no transaction, no idempotency claim,
+   * no database work of any kind. Handling a well-formed one is a verify, a decode and a
+   * transaction. There is no reason for the cheap one to consume the expensive one's ceiling, and
+   * one very good reason for it not to.
+   *
+   * Both are still bounded, which is the point of a ceiling: an unbounded malformed sweep would
+   * hand the same attacker an unbounded expunge instead.
+   *
+   * ── AND EXPUNGING AN UNVERIFIABLE RECORD IS THE CORRECT DISPOSITION, NOT AN EXCEPTION ────
+   *
+   * A malformed record is removed WITHOUT a signature check, and that does not contradict the rule
+   * that a permanent disposition requires verification — it is the other side of it. That rule
+   * exists because LEAVING A RECORD STANDING is a courtesy: it reserves the folder, and a record
+   * that reaches it by merely SAYING `X-Ohmail-Protocol: 2` is a denial of service anyone can
+   * mount. So standing is extended only to records that proved where they came from.
+   *
+   * Removal is the default, not the courtesy. A malformed record has no signature to check — the
+   * fields the canonical form is taken over cannot be read — so verification is not something being
+   * skipped here, it is something that does not exist for this record. The alternatives are to keep
+   * it for ever (which is the reserved-folder attack, with extra steps) or to remove it. It is also
+   * unambiguously OURS to remove: it carries this build's own discriminator, which nothing but this
+   * build's writer emits, so it is either our own record gone wrong or a forgery — never somebody
+   * else's mail, which is what the "not its to destroy" rule protects. */
   const malformed = envelopes.filter(isMalformedRequest);
   const wellFormed = envelopes
     .filter((e): e is RequestEnvelope => !isMalformedRequest(e))
@@ -370,7 +403,7 @@ export async function applyMetaRequests(
 
   const budget = malformed.length + wellFormed.length;
   const takeMalformed = malformed.slice(0, REQUEST_DRAIN_MAX_PER_CYCLE);
-  const takeWellFormed = wellFormed.slice(0, Math.max(0, REQUEST_DRAIN_MAX_PER_CYCLE - takeMalformed.length));
+  const takeWellFormed = wellFormed.slice(0, REQUEST_DRAIN_MAX_PER_CYCLE);
   let deferred = budget - takeMalformed.length - takeWellFormed.length;
 
   let applied = 0;

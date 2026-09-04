@@ -875,8 +875,25 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
    * is why it is the mailbox row's address rather than this process's configured one — a
    * self-hosted install may be configured with a login that is not the address.
    */
-  const localRequestKey = (mailboxAddress: string): string | null =>
-    deriveRequestKey({ auth: config.imap.auth as ImapAuth, address: mailboxAddress });
+  /* ── THERE IS NO PROCESS-WIDE REQUEST KEY, AND THERE WAS ─────────────────────────────────
+   *
+   * This used to be `deriveRequestKey({ auth: config.imap.auth, address: mailboxAddress })` — the
+   * SEED's configured credential, salted with whichever mailbox was asking. For the seed that is
+   * right by accident. For every OTHER local mailbox it is wrong: `attachLocal` dials #2..N from
+   * their own stored credential (`resolveLogin()`), not from `config.imap`, whose `auth` for a
+   * non-seed row carries a user and NO password at all.
+   *
+   * The failure that produced is the worst available shape. The key still derives — HKDF over the
+   * wrong secret is still 32 bytes — so nothing errors, nothing logs, and every record this install
+   * writes or reads for that mailbox refuses as `unauthenticated`: the same answer a FORGERY gets.
+   * A person would see decisions time out reporting that nobody took them while both installs were
+   * live and correct, and the log would name an attack.
+   *
+   * So the key is derived per attachment, from the credential this attachment actually dialled
+   * with, next to the adapter that dialled it. That is the invariant the other two doors already
+   * hold by construction — the hosted worker derives from the per-mailbox credential it decrypted,
+   * and the single-mailbox cron from the env credential it opened — and stating it as one rule
+   * makes all three agree: DERIVE FROM THE CREDENTIAL YOU OPENED THIS MAILBOX WITH. */
 
   // ── THE BOOT CLOCK ────────────────────────────────────────────────────────────────────────
   //
@@ -2290,6 +2307,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * without making a connected socket's credentials mutable.
        */
       const imapConfig: ImapConfig = { ...mbImap, auth: { user: mbImap.auth.user, pass: login.pass ?? "" } };
+      /* THIS MAILBOX'S REQUEST KEY, from the credential on the line above — the one the socket is
+       * opened with. Deriving it anywhere else is how it comes to disagree with the other installs
+       * that share this mailbox; see the note where the old process-wide helper used to be. `null`
+       * when there is no password to derive from (an OAuth mailbox, or a login not yet resolved),
+       * which is the honest degraded mode: no key means the claim advertises no `requests` and a
+       * reader is refused at the door with the holder named. */
+      const requestKey = deriveRequestKey({ auth: imapConfig.auth, address: mb.address });
       const adapter = config.adapterFactory ? config.adapterFactory(imapConfig) : new ImapAdapter(imapConfig);
       const syncDeps = {
         repo, adapter, accountId: world.accountId, mailboxId: mb.id,
@@ -3001,7 +3025,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           adapter,
           self: { installId, kind: "local", displayName: machineName, lastNonce: leaseNonce },
           now: now(),
-          hasRequestKey: localRequestKey(mb.address) !== null,
+          hasRequestKey: requestKey !== null,
           // An explicit human choice, and the ONLY thing that distinguishes "this mailbox's last
           // organizer went quiet" from "the user wants this machine to have it". Without it the
           // lease reports such a mailbox as available and declines to take it, which is the right
@@ -3881,7 +3905,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               await applyMetaRequests(
                 db, {
                   mailboxId: mb.id, accountId: world.accountId, adapter,
-                  requestKey: localRequestKey(mb.address),
+                  requestKey,
                 }, now(),
                 noteRequestEvent,
               );
@@ -3895,7 +3919,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               await driveOutstandingRequests(
                 db, {
                   mailboxId: mb.id, accountId: world.accountId, adapter,
-                  requestKey: localRequestKey(mb.address),
+                  requestKey,
                 },
                 { installId, kind: "local" }, now(),
                 noteRequestEvent,
