@@ -9,7 +9,7 @@ import {
 import {
   parseRequestEnvelope, isMalformedRequest, formatRequest, formatAck, canonicalRequest,
   requestEnvelopesIn, acksIn, verifyRequestEnvelope, decodeRequestPayload,
-  REQUEST_PROTOCOL,
+  REQUEST_PROTOCOL, MetaFolderTruncatedError,
   type RequestReaderIo, type RequestOrganizerIo, type RawMetaMessage,
   type RequestEnvelope, type RequestRecord, type AckRecord, type OrganizerKind,
   type RequestRefusalReason,
@@ -235,6 +235,20 @@ class AlreadyAppliedError extends Error {
 }
 
 /**
+ * HOW FULL THE FOLDER WAS, when that is why a read failed — and `null` when it is not.
+ *
+ * The truncation is raised by the shared bounded read and reaches a drain WRAPPED in a
+ * `RequestUnavailableError`, so the count lives one level down in `cause`. Reading only the outer
+ * error found it never, which is worse than not logging it: a field that is always `null` reads as
+ * "this was never a full folder" on exactly the incident where it always is.
+ */
+function recordsPresentIn(err: unknown): number | null {
+  if (err instanceof MetaFolderTruncatedError) return err.total;
+  const cause = err instanceof Error ? (err as { cause?: unknown }).cause : undefined;
+  return cause instanceof MetaFolderTruncatedError ? cause.total : null;
+}
+
+/**
  * DRAIN `ohmail/_meta` OF EVERY REQUEST THIS ORGANIZER CAN VERIFY, applying each in `decided_at`
  * then id order — two doors deciding one sender in one cycle land in the order the human made them.
  *
@@ -278,13 +292,42 @@ export async function applyMetaRequests(
     log("meta_requests_list_failed", {
       mailboxId: rt.mailboxId, accountId: rt.accountId,
       err: err instanceof Error ? err.message : String(err),
+      // A FOLDER TOO FULL TO READ IN ONE WINDOW is the one thing that lands here and does not
+      // clear on its own, so its count rides as a field rather than only inside the sentence.
+      // Nothing is expunged on this path — a partial view of the folder is not evidence about
+      // any record in it.
+      records: recordsPresentIn(err),
     });
     return EMPTY_RESULT;
   }
 
   const envelopes = requestEnvelopesIn(records);
-  const existingAcks = acksIn(records, key).filter((a) => a.mailboxId === rt.mailboxId);
-  const staleAckRefs = existingAcks
+
+  /* ══ MATCHING IS PER-MAILBOX. COLLECTING IS NOT — AND THE TWO USED TO SHARE ONE FILTER ══════
+   *
+   * `acksIn` verifies under the ACCOUNT key, so everything here is this account's own bookkeeping,
+   * written by one of its own organizers. Which mailbox an ack NAMES decides whether it is an
+   * answer to anything in THIS folder, and that filter is load-bearing for the matching below: an
+   * ack signed for one mailbox must never be read as an answer in another's folder.
+   *
+   * It is the wrong question for the SWEEP. `staleAckRefs` fed the only path that expunges an ack,
+   * and it inherited the mailbox filter — so an ack that verifies under the account key but names
+   * some other mailbox id could never be collected by anybody. Not by this drain, which had just
+   * filtered it out; not by the drain for the mailbox it names, which reads a different folder.
+   * It sat in the customer's folder for ever, counting against the read ceiling on every cycle of
+   * every host.
+   *
+   * That is not hypothetical bookkeeping: a mailbox removed and re-added gets a NEW id, so an ack
+   * written moments before the removal names an id no mailbox has any more, in a folder that is
+   * still being read. The same shape covers an ack left behind by an older install and one
+   * misfiled by a copy between folders.
+   *
+   * So the sweep is by AGE alone. Past the stale window the reader has given up on the row and no
+   * ack can still be an answer to anything, whichever mailbox it names — while the matching below
+   * keeps the mailbox filter exactly as it was. */
+  const verifiedAcks = acksIn(records, key);
+  const existingAcks = verifiedAcks.filter((a) => a.mailboxId === rt.mailboxId);
+  const staleAckRefs = verifiedAcks
     .filter((a) => now.getTime() - a.ackedAt.getTime() > REQUEST_STALE_AFTER_MS)
     .map((a) => a.ref)
     .filter((r) => r !== undefined);
@@ -839,6 +882,9 @@ export async function driveOutstandingRequests(
     log("outstanding_requests_list_failed", {
       mailboxId: rt.mailboxId, accountId: rt.accountId,
       err: err instanceof Error ? err.message : String(err),
+      // As above: a full folder is the failure worth naming with a number, and appending without
+      // being able to check for a duplicate is the loop this read exists to prevent.
+      records: recordsPresentIn(err),
     });
     return EMPTY_DRIVE_RESULT;
   }
