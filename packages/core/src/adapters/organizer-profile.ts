@@ -648,17 +648,42 @@ export function makeProfileIo(client: ProfileImapClient, toServerPath: (canonica
         const from = typeof count === "number" && count > PROFILE_MESSAGES_MAX_PER_FETCH
           ? count - PROFILE_MESSAGES_MAX_PER_FETCH + 1
           : 1;
-        // BOTH AXES. `bytes` is not a second thought about the same bound: the count ceiling
-        // stops many small messages and this stops a few enormous ones, and an attacker with
-        // APPEND rights picks whichever is cheaper. See both constants.
+        /* ── BOTH AXES, AND BOTH EVICT FROM THE FRONT ──────────────────────────────────────
+         *
+         * `bytes` is not a second thought about the same bound: the count ceiling stops many small
+         * messages and the byte one stops a few enormous ones, and whoever can append picks
+         * whichever is cheaper.
+         *
+         * NEITHER MAY `break`. The window arrives oldest-first within its range, so stopping on a
+         * ceiling keeps the OLDEST records — the exact inversion this read was bounded to remove,
+         * reintroduced by the bound itself. The count ceiling could not reach it on the
+         * known-count path (the range already starts at the right place), but the BYTE ceiling
+         * could, and cheaply: one large append early in the window and the read returns everything
+         * except the current document, reporting "no settings have been published" for a mailbox
+         * that has some.
+         *
+         * So each message is pushed and then the oldest are dropped until both ceilings hold, with
+         * the evicted bytes subtracted — a sliding window rather than a stopping point.
+         *
+         * `win.length > 1` on the byte arm keeps the newest message even when it ALONE is over the
+         * ceiling: a document too large to be worth reading is the PARSER's refusal to make
+         * ({@link PROFILE_DOC_MAX_BYTES}), and silently returning nothing for it would be the same
+         * "no settings published" lie by another route. */
+        const win: Array<{ rec: RawProfileMessage; size: number }> = [];
         let bytes = 0;
         for await (const m of client.fetch(`${from}:*`, { uid: true, source: true }, { uid: false })) {
           if (!m.source) continue;
-          if (out.length >= PROFILE_MESSAGES_MAX_PER_FETCH) break;
-          bytes += m.source.byteLength;
-          if (bytes > PROFILE_BYTES_MAX_PER_FETCH) break;
-          out.push({ ref: m.uid, raw: m.source.toString("utf8") });
+          const size = m.source.byteLength;
+          win.push({ rec: { ref: m.uid, raw: m.source.toString("utf8") }, size });
+          bytes += size;
+          while (
+            win.length > PROFILE_MESSAGES_MAX_PER_FETCH
+            || (bytes > PROFILE_BYTES_MAX_PER_FETCH && win.length > 1)
+          ) {
+            bytes -= win.shift()!.size;
+          }
         }
+        for (const w of win) out.push(w.rec);
         return out;
       } finally {
         lock.release();
@@ -772,9 +797,14 @@ export const PROFILE_MESSAGES_MAX_PER_FETCH = 500;
  * exist — the count stops many small messages, this stops a few enormous ones.
  *
  * Generous against the legitimate population, which is ONE current document plus whatever has not
- * been collected yet, and far below anything that threatens the process. A read that reaches this
- * has already found the newest document — it is walking backwards through the folder by then — so
- * stopping is a bound on waste rather than a refusal.
+ * been collected yet, and far below anything that threatens the process.
+ *
+ * **It is a bound on what is KEPT, not a point at which the read stops** — and the difference is
+ * the whole of it. The window arrives OLDEST FIRST within its range (a sequence range always does),
+ * so stopping the loop on either ceiling keeps the oldest records and drops the newest — which is
+ * the current document. One large append early in the window would have been enough to make the
+ * read report "no settings have been published" for a mailbox that has some. So a message past
+ * either ceiling EVICTS FROM THE FRONT instead.
  */
 export const PROFILE_BYTES_MAX_PER_FETCH = 128 * 1024 * 1024;
 
