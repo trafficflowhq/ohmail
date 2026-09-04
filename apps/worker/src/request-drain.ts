@@ -62,10 +62,13 @@ type WorkerDb = Tx;
  * ── NO KEY MEANS NO CHANNEL, AND THAT IS THE OFF-SWITCH ─────────────────────────────────────
  *
  * An organizer that holds no `account_settings.request_key` applies nothing and advertises no
- * `requests` capability, so readers are refused honestly at their own door. There is no separate
- * feature flag any more: the containment 0.14.1 shipped with (`REQUEST_AUTHENTICITY_IMPLEMENTED`)
- * was a stand-in for exactly this condition, and a stand-in for a real precondition is worse than
- * the precondition, because it can be true when the precondition is false.
+ * `requests` capability, so readers are refused honestly at their own door.
+ *
+ * There is no separate feature flag any more, and there must not be one again. The containment
+ * 0.14.1 shipped with was a boolean constant standing in for exactly this condition, plus an
+ * unguarded twin of each function behind it — and a stand-in for a real precondition is worse than
+ * the precondition, because it can be true when the precondition is false. The gate is now a FACT
+ * the drain reads. `request-drain-host-census.test.ts` holds that the retired names stay retired.
  *
  * ── AFTER `runSyncCycle`, UNDER A TIME BUDGET ───────────────────────────────────────────────
  *

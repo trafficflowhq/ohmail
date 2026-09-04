@@ -110,7 +110,9 @@ import { OrganizerProfileSync } from "@trafficflow/worker/profile";
 // the same reason `OrganizerProfileSync` is: one implementation of "apply a reader's decision" or
 // "carry this install's own decisions to the mailbox", not a second one that could disagree with
 // what the hosted worker does. See `apps/worker/package.json`'s `//request-drain` note.
-import { applyMetaRequests, driveOutstandingRequests } from "@trafficflow/worker/request-drain";
+import {
+  applyMetaRequests, driveOutstandingRequests, settleOwnOutstandingRequests,
+} from "@trafficflow/worker/request-drain";
 // The SCHEDULED-RESURFACE FLIP, from the same package and for the third instance of the same
 // argument. "Resurfaces Friday at 9" is a dated promise the product makes to the user, and the
 // only thing that can keep it is a pass that notices the date has arrived. On a hosted account
@@ -3802,27 +3804,28 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // with explicit fields, and anything else it reports is counted under a fourth rather
           // than echoed verbatim.
           const noteRequestEvent = (event: string, detail: Record<string, unknown>): void => {
-            if (event === "organizer_requests_suppressed") {
-              log("organizer_requests_suppressed", {
-                mailboxId: mb.id, count: typeof detail.count === "number" ? detail.count : null,
-              });
-              return;
-            }
+            const num = (v: unknown): number | null => (typeof v === "number" ? v : null);
             if (event === "organizer_requests_drained") {
               log("organizer_requests_drained", {
                 mailboxId: mb.id,
-                applied: typeof detail.applied === "number" ? detail.applied : null,
-                refused: typeof detail.refused === "number" ? detail.refused : null,
-                deferred: typeof detail.deferred === "number" ? detail.deferred : null,
+                applied: num(detail.applied),
+                refused: num(detail.refused),
+                deferred: num(detail.deferred),
+                // Records this build deliberately left alone — a future protocol, or a kind it has
+                // no applier for. Nonzero here is normal; nonzero `refused` is not.
+                standing: num(detail.standing),
               });
               return;
             }
             if (event === "outstanding_requests_driven") {
               log("outstanding_requests_driven", {
                 mailboxId: mb.id,
-                sent: typeof detail.sent === "number" ? detail.sent : null,
-                applied: typeof detail.applied === "number" ? detail.applied : null,
-                expired: typeof detail.expired === "number" ? detail.expired : null,
+                sent: num(detail.sent),
+                applied: num(detail.applied),
+                // The organizer said no, and said why. Absent before the acknowledgement model:
+                // a reader could not tell a refusal from an application at all.
+                refused: num(detail.refused),
+                expired: num(detail.expired),
               });
               return;
             }
@@ -3831,11 +3834,26 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             // written above and the field is one the logger already keeps.
             log("organizer_requests_note", { mailboxId: mb.id, outcome: event });
           };
+          const cycles = await drain(maxCycles);
+
+          // ── THE REQUEST CHANNEL, AFTER THE MAIL ──────────────────────────────────────────
+          //
+          // Ordered deliberately, and the reason is not tidiness: `ohmail/_meta` is a folder any
+          // process with append rights on the mailbox can write to, so a drain that ran BEFORE the
+          // cycles would let a flood of records delay the pass that reads somebody's mail. A
+          // queued decision landing one pass later is not a regression anybody can perceive; mail
+          // arriving late is. The drain is bounded on both axes inside `request-drain.ts`.
           try {
             if (organizing) {
               await applyMetaRequests(
                 db, { mailboxId: mb.id, accountId: world.accountId, adapter }, now(),
                 noteRequestEvent,
+              );
+              // Rows this install queued while it was a READER are stranded the moment it becomes
+              // the organizer: nothing appends them, and no acknowledgement will ever arrive
+              // because the organizer they wait for is this process.
+              await settleOwnOutstandingRequests(
+                db, { mailboxId: mb.id, accountId: world.accountId }, now(), noteRequestEvent,
               );
             } else {
               await driveOutstandingRequests(
@@ -3850,7 +3868,6 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               reason: "this pass reads or organizes mail regardless; the next pass tries again",
             });
           }
-          const cycles = await drain(maxCycles);
           // ── THE PORTABLE PROFILE'S WRITE-BEHIND TICK, BEHIND THE GATE IT RIDES ────────────
           //
           // After the drain and not inside it: the tick reads the store the cycles just wrote, so

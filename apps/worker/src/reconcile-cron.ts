@@ -497,28 +497,6 @@ export async function runReconcileCron(
       // no worker leads, and it stands down the moment one does. A cold read per sweep is cheaper
       // to reason about than a memo whose whole safety argument is about who holds the mailbox.
     };
-    // ── THE REQUEST DRAIN, ONCE PER SWEEP, BEFORE THE FIRST CYCLE (0.14.1) ───────────
-    //
-    // This pass IS an organizer path (typed `role: "organizer"` above, reached only past the
-    // reader refusal and the lease permit), so it owes the same drain the always-on worker's
-    // `visitMailbox` owes — see `request-drain.ts`'s own header for why draining before
-    // `runSyncCycle` matters and why nothing here performs a physical IMAP move of its own (the
-    // `folder_state` rows it writes are picked up by THIS sweep's own `runSyncCycle` →
-    // `reconcileFolders`, same as `ensureFolders()` above running once per sweep rather than
-    // once per cycle). A second drain before the SECOND cycle is not owed: nothing new can have
-    // been appended to `ohmail/_meta` in the gap between two cycles this pass itself runs
-    // back-to-back, and the next sweep or the always-on worker picks up anything that does.
-    try {
-      await applyMetaRequests(
-        db, { mailboxId, accountId: row.accountId, adapter }, new Date(),
-        (event, detail) => log.info(cronEvent("reconcile", event), { mailboxId, accountId: row.accountId, ...detail }),
-      );
-    } catch (err) {
-      log.warn(cronEvent("reconcile", "organizer_requests_drain_failed"), {
-        mailboxId, accountId: row.accountId, err,
-        reason: "this sweep organizes mail regardless; the next sweep or the always-on worker drains it",
-      });
-    }
     try {
       // The hold is EVALUATED from the current facts before each pass — never cached (see
       // `importDecisionOpenNow`): an answer landing between the preflight and the first pass,
@@ -533,6 +511,30 @@ export async function runReconcileCron(
       // actually gone rather than to be served from the receipt.
       await permit.check();
       await runSyncCycle({ ...deps, importDecisionOpen: await profileSync.importDecisionOpenNow() });
+
+      // ── THE REQUEST DRAIN, ONCE PER SWEEP, AFTER THE CYCLES (0.14.1) ─────────────────────
+      //
+      // This pass IS an organizer path (typed `role: "organizer"` above, reached only past the
+      // reader refusal and the lease permit), so it owes the same drain the always-on worker's
+      // `visitMailbox` owes — and it owes it in the same ORDER. `ohmail/_meta` is a folder anyone
+      // with append rights on the mailbox can write to, so a drain that ran first would let a
+      // flood of records delay the sweep that reads somebody's mail. The `folder_state` rows the
+      // drain writes are picked up by the next sweep's own `reconcileFolders`, exactly as its
+      // twin's are; nothing here performs a physical IMAP move of its own.
+      //
+      // ONE drain per sweep rather than one per cycle: this pass runs its two cycles back to back,
+      // so nothing new can reach the folder in the gap between them.
+      try {
+        await applyMetaRequests(
+          db, { mailboxId, accountId: row.accountId, adapter }, new Date(),
+          (event, detail) => log.info(cronEvent("reconcile", event), { mailboxId, accountId: row.accountId, ...detail }),
+        );
+      } catch (err) {
+        log.warn(cronEvent("reconcile", "organizer_requests_drain_failed"), {
+          mailboxId, accountId: row.accountId, err,
+          reason: "this sweep organizes mail regardless; the next sweep or the always-on worker drains it",
+        });
+      }
     } catch (err) {
       // THE ORGANIZER handover, from any of the three `permit.check()` calls above. Same shape as
       // the leader handover below and for the same reason — it is the mechanism working, not a
