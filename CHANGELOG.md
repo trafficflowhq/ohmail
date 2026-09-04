@@ -29,8 +29,8 @@ The decision is carried in the mailbox itself, which is the only thing two insta
 machines share. That folder is ordinary mail, so anything with access to the mailbox can write to
 it: an organizer that acted on whatever it found there would file a stranger's mail on their say-so,
 and a single forged message would be enough to whitelist a sender permanently. So every decision is
-signed with a key belonging to your account, and the organizing install verifies the signature
-**before** it reads the decision at all. A record it cannot verify is refused and never acted on.
+signed, and the organizing install checks the signature **before** it reads the decision at all. A
+record it cannot verify is refused and never acted on.
 
 The organizing install also answers, which it could not before. A decision it carried out comes back
 as applied; one it declined comes back as declined, with the reason. Previously the only signal was
@@ -40,15 +40,22 @@ until it times out, rather than quietly counted as a success — which is also w
 decision written before your password changed, since changing it replaces the key and the older
 decision can no longer be checked.
 
-**One direction is not on yet in this release.** A mailbox organized by ohmail Cloud takes decisions
-from your other installs, and that is the common setup. **A mailbox organized by a desktop install
-still refuses a reader's press**, with the same honest message naming the install to go to. The
-reason is a deliberate part of how the desktop works: an install that organizes a mailbox itself
-talks only to your mail server, and never to our service — that separation is what makes a
-local-only install local-only, and it is enforced in the build rather than promised. It also means
-such an install has no way to receive the account key it would need to verify a decision, so it
-refuses rather than acting on something it cannot check. Closing that direction needs a way to hand
-the key over that does not weaken the separation, and it is not in this release.
+The key is not sent anywhere, and that is what lets this work in both directions. It is computed
+from your mailbox password, which every install that can open the mailbox already has — and which
+the thing being guarded against does not: somebody who can drop a message into your folder through
+a shared-folder permission or a server-side rule has no password. So an install that organizes your
+mail on your own machine takes part on exactly the same terms as ohmail Cloud, without ever
+contacting our service. That separation is what makes a local install local, and nothing here
+weakens it.
+
+Changing your mailbox password changes the key. Decisions written before the change stop verifying
+and time out, and everything after it works normally — which is the behaviour you would want from a
+password change anyway.
+
+**One case has no shared secret, and it says so.** If you signed the mailbox in with Google or
+Microsoft rather than a password, each install holds its own token and there is nothing for the two
+to compute the same key from. For those mailboxes decisions can only be made on the install that
+organizes the mailbox; pressing from another one is refused, naming the install to go to.
 
 ### Screener decisions from a reader no longer buy advice nobody can use
 

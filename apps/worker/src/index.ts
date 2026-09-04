@@ -121,13 +121,12 @@ import {
 import { OrganizerProfileSync } from "./profile.js";
 import {
   readMailboxLease, releaseMailboxClaim, cloudInstallId, CLOUD_DISPLAY_NAME, LeaseUnavailableError,
-  hostedRequestKeyHeld,
   type LeaseSelf, type LeasePeekCapableAdapter,
 } from "./lease.js";
 // The APPEND-less read of `ohmail/_meta` — see `LeasePeekCapableAdapter`. A reader LOOKS at the
 // lease every cycle to keep `organizer_state` and the holder columns honest, and looking must
 // never write a claim: `readLeasePeek` takes the read-only IO and creates nothing.
-import { readLeasePeek } from "@trafficflow/core/adapters/organizer-lease";
+import { readLeasePeek, deriveRequestKey } from "@trafficflow/core/adapters/organizer-lease";
 
 /** How often the leader runs the global maintenance pass (expired-idempotency-key sweep). */
 export const MAINTENANCE_EVERY_MS = 60 * 60 * 1000;
@@ -285,6 +284,19 @@ interface MailboxRuntime {
   accountId: string;
   mailboxId: string;
   adapter: MailboxAdapter;
+  /**
+   * THE SIGNING KEY FOR THIS MAILBOX'S REQUEST CHANNEL, or `null` when there is no shared secret.
+   *
+   * Derived from the mailbox PASSWORD at attach — `deriveRequestKey`, HKDF salted with the address
+   * — and held for the life of the runtime rather than recomputed per cycle. It is derived HERE
+   * because this is where the credential is decrypted; nothing downstream has one, and nothing
+   * downstream should.
+   *
+   * `null` for an OAuth mailbox: each install holds its own token, so there is no secret both
+   * sides share and no key to derive. Every consumer treats that as "this mailbox has no request
+   * channel", which is the honest answer rather than a failure.
+   */
+  requestKey: string | null;
   deps: SyncDeps;
   unwatch: (() => Promise<void>) | null;
   /** Consecutive runtime sync failures; at `maxSyncFailures` the mailbox is detached. */
@@ -1510,6 +1522,13 @@ export async function startWorkerWithLock(
       nonce: { leaseNonce: string | null },
       adapter: MailboxAdapter,
       phase: "attach" | "cycle",
+      /**
+       * The mailbox's derived request key, or `null` when there is no shared secret (OAuth). It
+       * decides ONE thing here: whether the claim this gate writes advertises `requests`. Passed
+       * in rather than read, because the credential it comes from is decrypted at attach and this
+       * function runs in both phases — at attach the runtime does not exist yet.
+       */
+      requestKeyForGate: string | null,
     ): Promise<boolean> {
       /* ══ THE RELEASE IS HONOURED FIRST, BEFORE THE LEASE IS READ AT ALL (0.14.1) ═══════
        *
@@ -1679,10 +1698,11 @@ export async function startWorkerWithLock(
        * Read AFTER the reader peek-only return above, so a mailbox this install merely reads never
        * mints a key it has no use for.
        */
-      const hasRequestKey = await hostedRequestKeyHeld(
-        db, mb.accountId, new Date(),
-        (event, detail) => { log.warn(event, { ...detail, mailboxId: mb.mailboxId }); },
-      );
+      // WHAT THIS CLAIM OFFERS A READER: `requests`, but only where a shared secret exists to
+      // verify one with. The key is derived from the mailbox password at attach and carried on the
+      // runtime; an OAuth mailbox has none, so this claim advertises nothing and a reader is
+      // refused honestly at its own door.
+      const hasRequestKey = requestKeyForGate !== null;
 
       const outcome = await readMailboxLease({
         adapter,
@@ -2342,7 +2362,8 @@ export async function startWorkerWithLock(
          * — a consent-less mailbox names no holder — and the log line each arm writes.
          */
         const role: OrganizerRole =
-          (await mayOrganize(mb, leaseRow, leaseState, adapter, "attach")) ? "organizer" : "reader";
+          (await mayOrganize(mb, leaseRow, leaseState, adapter, "attach",
+            deriveRequestKey({ auth: creds.imap.auth, address: mb.address }))) ? "organizer" : "reader";
         const leaseMs = Date.now() - tLease;
         if (role === "organizer") {
           leaseBlocked.delete(mb.mailboxId);
@@ -2597,6 +2618,7 @@ export async function startWorkerWithLock(
         // a mailbox that dies in `runKickstart` or `watch` does not linger in the rotation.
         const rt: MailboxRuntime = {
           accountId: mb.accountId, mailboxId: mb.mailboxId, adapter, deps, unwatch: null,
+          requestKey: deriveRequestKey({ auth: creds.imap.auth, address: mb.address }),
           failures: 0, lastSuccessAt: null, leaseNonce: leaseState.leaseNonce,
           lease: leaseRow,
           // Mail 0083. Mutable, and re-read by every cycle — see the fields.
@@ -3672,6 +3694,7 @@ export async function startWorkerWithLock(
           // "sync but do not organize" position available here: syncing IS organizing.
           const organize = await mayOrganize(
             { mailboxId: rt.mailboxId, accountId: rt.accountId }, rt.lease, rt, rt.adapter, "cycle",
+            rt.requestKey,
           );
           /* -- THE ROLE FLIP, IN BOTH DIRECTIONS, WITHOUT A RE-ATTACH  -------------
            *
@@ -3840,7 +3863,7 @@ export async function startWorkerWithLock(
           if (!organize) {
             try {
               await driveOutstandingRequests(
-                db, { mailboxId: rt.mailboxId, accountId: rt.accountId, adapter: rt.adapter },
+                db, { mailboxId: rt.mailboxId, accountId: rt.accountId, adapter: rt.adapter, requestKey: rt.requestKey },
                 { installId: organizerInstallId, kind: "cloud" }, new Date(),
                 (event, detail) => log.info(event, { mailboxId: rt.mailboxId, accountId: rt.accountId, ...detail }),
               );
@@ -3853,7 +3876,7 @@ export async function startWorkerWithLock(
           } else {
             try {
               await applyMetaRequests(
-                db, { mailboxId: rt.mailboxId, accountId: rt.accountId, adapter: rt.adapter }, new Date(),
+                db, { mailboxId: rt.mailboxId, accountId: rt.accountId, adapter: rt.adapter, requestKey: rt.requestKey }, new Date(),
                 (event, detail) => log.info(event, { mailboxId: rt.mailboxId, accountId: rt.accountId, ...detail }),
               );
               // THE ROLE FLIP'S OWN DEBT. Rows this install queued while it was a READER are

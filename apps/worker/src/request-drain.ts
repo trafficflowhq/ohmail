@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   applyScreenerDecision, AccountErasedError, validateRequestPayload, claimIdempotencyKey,
-  readIdempotencyKey, IDEMPOTENCY_TTL_MS, readAccountErasedAt, readRequestKey,
+  readIdempotencyKey, IDEMPOTENCY_TTL_MS, readAccountErasedAt,
   listPendingRequests, listSentRequests, markRequestsSent, markRequestsApplied,
   listStaleSentRequests, markRequestsExpired, markRequestsRefused,
   type Tx,
@@ -61,8 +61,10 @@ type WorkerDb = Tx;
  *
  * ── NO KEY MEANS NO CHANNEL, AND THAT IS THE OFF-SWITCH ─────────────────────────────────────
  *
- * An organizer that holds no `account_settings.request_key` applies nothing and advertises no
- * `requests` capability, so readers are refused honestly at their own door.
+ * An organizer with no request key applies nothing and advertises no `requests` capability, so
+ * readers are refused honestly at their own door. The key is HKDF over the mailbox PASSWORD
+ * (`deriveRequestKey`), so "no key" means an OAuth mailbox, where each install holds its own token
+ * and there is no shared secret to derive from — a real state with an honest answer, not a gap.
  *
  * There is no separate feature flag any more, and there must not be one again. The containment
  * 0.14.1 shipped with was a boolean constant standing in for exactly this condition, plus an
@@ -96,6 +98,26 @@ type WorkerDb = Tx;
  * stored `requestHash` is now COMPARED: same content is a replay (clean up, ack `applied`),
  * different content is a `conflict` (refuse the impostor, and the genuine record still applies).
  */
+
+/**
+ * WHAT EITHER ROLE NEEDS TO WORK ON ONE MAILBOX.
+ *
+ * `requestKey` is passed IN rather than read here, and that is the shape the derivation forces: the
+ * key is HKDF over the mailbox PASSWORD (`deriveRequestKey`), so it comes from the credential the
+ * host already decrypted to open IMAP at all. This module has no credential and no business
+ * decrypting one.
+ *
+ * `null` means there is no shared secret for this mailbox — an OAuth mailbox, where each install
+ * holds its own token and there is nothing to derive from. Both roles stop on it, which is the
+ * honest degraded mode rather than an error: no records are written, none are applied, and the
+ * organizer advertises no `requests` capability, so a reader is refused at its own door.
+ */
+export interface RequestRuntime {
+  mailboxId: string;
+  accountId: string;
+  adapter: MailboxAdapter;
+  requestKey: string | null;
+}
 
 /** How long a decision may sit before both sides give up on it. ONE window, read by both roles. */
 export const REQUEST_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
@@ -221,7 +243,7 @@ class AlreadyAppliedError extends Error {
  */
 export async function applyMetaRequests(
   db: WorkerDb,
-  rt: { mailboxId: string; accountId: string; adapter: MailboxAdapter },
+  rt: RequestRuntime,
   now: Date,
   log: (event: string, detail: Record<string, unknown>) => void,
 ): Promise<ApplyMetaRequestsResult> {
@@ -244,7 +266,7 @@ export async function applyMetaRequests(
   // trip at all. A NULL key is the resting state of every account that has never used a second
   // install, and it is silent by design — logging it per mailbox per cycle would be a line about
   // nothing, forever.
-  const key = await db.transaction((tx) => readRequestKey(tx, rt.accountId));
+  const key = rt.requestKey;
   if (key === null) return EMPTY_RESULT;
 
   let records: RawMetaMessage[];
@@ -359,27 +381,25 @@ export async function applyMetaRequests(
     // that organizer updates. Refusing it would be a lie (it is not invalid) and expunging it
     // would lose a decision a person made.
     //
-    // Checked BEFORE the signature deliberately: an unknown protocol may sign over fields this
-    // build does not know about, so a signature failure here would mean "this build cannot check
-    // it", not "this is forged" — and the two must not share a disposition.
-    if (e.protocol > REQUEST_PROTOCOL) {
-      standing++;
-      log("organizer_request_standing", {
-        mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: e.requestId,
-        reason: "protocol_ahead", protocol: e.protocol,
-      });
-      continue;
-    }
-    if (e.kind !== "screener.decide") {
-      standing++;
-      log("organizer_request_standing", {
-        mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: e.requestId,
-        reason: "unhandled_kind", kind: e.kind,
-      });
-      continue;
-    }
-
-    // ── (3) THE SIGNATURE, BEFORE ANY DECODE ─────────────────────────────────────────────────
+    // ── (3) THE SIGNATURE, BEFORE ANY DECODE — AND BEFORE THE LEAVE-STANDING BRANCHES ───────
+    //
+    // The two "leave it standing" cases below USED TO SIT ABOVE THIS CHECK, on the reasoning that
+    // a future protocol might sign over fields this build cannot reconstruct, so a verification
+    // failure would mean "cannot check" rather than "forged". That reasoning is sound and the
+    // ordering it produced was a hole big enough to switch the feature off from outside:
+    //
+    // leaving a record standing means never expunging it, and an unverified record could reach
+    // that disposition by SAYING `X-Ohmail-Protocol: 2` — no key required. Two hundred such
+    // messages, dated 1970 so they sort first, permanently occupy the per-cycle ceiling. Every
+    // genuine decision falls outside the slice for ever, the folder grows without bound, and
+    // nothing pages anybody, because a nonzero `standing` is documented as normal.
+    //
+    // So authenticity comes first, and "leave it standing" is a courtesy extended only to records
+    // that PROVED they came from a holder of the account's key. The forward-compatibility cost is
+    // real and is a constraint on the next protocol rather than a defect in this one: **a protocol
+    // bump must keep the signature verifiable under this canonical form**, or must ship to
+    // organizers before any reader emits it. That is a cheaper promise to keep than an
+    // unauthenticated record with a permanent right to sit in someone's mailbox.
     if (!verifyRequestEnvelope(e, key)) {
       // ── REMOVED, BUT NOT ACKNOWLEDGED, AND THE ASYMMETRY IS DELIBERATE ────────────────────
       //
@@ -397,6 +417,33 @@ export async function applyMetaRequests(
       log("organizer_request_refused", {
         mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: e.requestId,
         reason: "unauthenticated",
+      });
+      continue;
+    }
+
+    // ── (3b) VERIFIED, BUT NOT SOMETHING THIS BUILD UNDERSTANDS: LEAVE IT STANDING ───────────
+    //
+    // A future protocol version or a kind with no applier here is not invalid — it is unreadable
+    // BY THIS BUILD. A newer install on the same account wrote it, and it becomes applicable the
+    // moment this organizer updates. Refusing it would be a lie, and expunging it would lose a
+    // decision a person made.
+    //
+    // Reachable only by a holder of the account's key (see the block above), so the number of
+    // records that can sit here is bounded by the account's own installs rather than by whoever
+    // can append to the folder.
+    if (e.protocol > REQUEST_PROTOCOL) {
+      standing++;
+      log("organizer_request_standing", {
+        mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: e.requestId,
+        reason: "protocol_ahead", protocol: e.protocol,
+      });
+      continue;
+    }
+    if (e.kind !== "screener.decide") {
+      standing++;
+      log("organizer_request_standing", {
+        mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: e.requestId,
+        reason: "unhandled_kind", kind: e.kind,
       });
       continue;
     }
@@ -706,7 +753,7 @@ export function readerOutcomeFor(input: {
  */
 export async function driveOutstandingRequests(
   db: WorkerDb,
-  rt: { mailboxId: string; accountId: string; adapter: MailboxAdapter },
+  rt: RequestRuntime,
   self: { installId: string; kind: OrganizerKind },
   now: Date,
   log: (event: string, detail: Record<string, unknown>) => void,
@@ -721,7 +768,7 @@ export async function driveOutstandingRequests(
     return EMPTY_DRIVE_RESULT;
   }
 
-  const key = await db.transaction((tx) => readRequestKey(tx, rt.accountId));
+  const key = rt.requestKey;
   if (key === null) return EMPTY_DRIVE_RESULT;
 
   /* ── THE FOLDER IS READ ONCE, BEFORE ANYTHING IS WRITTEN, AND BOTH HALVES USE IT ───────────
@@ -874,21 +921,36 @@ export async function driveOutstandingRequests(
   };
 }
 
+
 /**
- * THE ROLE-FLIP DRAIN — an install that has BECOME the organizer still owes its own old rows an
- * ending.
+ * THE ROLE FLIP, AND THE ROWS THAT WOULD OTHERWISE BE IMMORTAL.
  *
- * Rows queued while this install was a reader do not disappear when it takes the mailbox over.
- * They sit `pending` (never appended, because the reader cycle no longer runs here) or `sent`
- * (appended, and now waiting for an ack from an organizer that IS this install and will never
- * write one to itself). Either way the person is looking at "waiting for …" for a decision this
- * install could simply make.
+ * Rows this install queued while it was a reader do not disappear when it takes the mailbox over.
+ * They sit `pending` — no cycle appends them any more — or `sent`, waiting for an acknowledgement
+ * from an organizer that is now this very process and will never write one to itself. Both leave
+ * the person looking at "waiting for …" for ever, and a `pending` row is worse than that: the
+ * Screener list EXCLUDES a sender with an outstanding decision, so the sender vanishes from the
+ * queue permanently while nothing is coming.
  *
- * `pending` rows are the interesting half and they are settled by APPLYING them: the decision was
- * made by a human on this install, it has never been handed to anyone, and this install now has
- * the standing to carry it out. `sent` rows are left to the ordinary stale window — their record
- * is in the folder, this install's own drain will read it, verify it (same account key) and apply
- * it through the normal path, which is exactly right and needs no special case.
+ * ── THEY ARE EXPIRED, NOT APPLIED, AND THE FIRST VERSION OF THIS APPLIED THEM ────────────────
+ *
+ * Applying looked obviously right — the decision was a human's, on this install, and this install
+ * now has the standing to carry it out — and it is wrong twice:
+ *
+ *  · **It can double-apply.** A `pending` row's record may ALREADY be in the folder: the reader's
+ *    append can succeed and the row update fail, which is the state `alreadyInFolder` exists to
+ *    recognise. The drain then applies that record, and this loop applies the same decision again.
+ *    Sharing the drain's idempotency key does not fix it either, because the two paths cannot
+ *    compute the same content hash — this one holds a row, not a record — so whichever wrote first
+ *    would make the other read a hash mismatch and refuse a genuine record as a `conflict`.
+ *  · **It can apply decisions the person has moved on from.** These rows accumulate for as long as
+ *    the install could not hand them over, and applying them oldest-first lets the OLDEST decision
+ *    win the final state for a sender who has since been decided the other way.
+ *
+ * Expiring loses nothing: the sender returns to the queue, where the person decides again on the
+ * install that now organizes the mailbox — which is the honest offer, and one press rather than a
+ * silent guess about what they meant weeks ago. It is also the same ending a reader's own cycle
+ * gives an unanswered decision, so there is one story for "nobody took this" rather than two.
  *
  * Called from the ORGANIZER branch, so it runs precisely when the flip has happened.
  */
@@ -897,54 +959,32 @@ export async function settleOwnOutstandingRequests(
   rt: { mailboxId: string; accountId: string },
   now: Date,
   log: (event: string, detail: Record<string, unknown>) => void,
-): Promise<{ applied: number; expired: number }> {
+): Promise<{ expired: number }> {
+  // `pending` — never handed over, and nothing here will hand it over now.
   const pending = await db.transaction((tx) => listPendingRequests(tx, rt.mailboxId));
-  let applied = 0;
-  for (const req of pending) {
-    if (req.kind !== "screener.decide") continue;
-    const decision = validateRequestPayload(req.payload);
-    if (!decision) continue;
-    try {
-      await db.transaction(async (tx) => {
-        const erasedAt = await readAccountErasedAt(tx, rt.accountId);
-        if (erasedAt != null) throw new AccountErasedError(rt.accountId);
-        await applyScreenerDecision(tx, {
-          accountId: rt.accountId,
-          mailboxId: rt.mailboxId,
-          scope: decision.scope,
-          address: decision.address,
-          appliedFolder: decision.appliedFolder,
-          decision: decision.decision,
-          triggeringActionId: `screener:request:${req.id}`,
-          now,
-          stampBaseline: false,
-        });
-        await markRequestsApplied(tx, [req.id], now, { from: "pending" });
-      });
-      applied++;
-    } catch (err) {
-      log("own_request_settle_failed", {
-        mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: req.id,
-        err: err instanceof Error ? err.message : String(err),
-      });
-    }
+  const pendingIds = pending.map((r) => r.id);
+  if (pendingIds.length > 0) {
+    await db.transaction((tx) => markRequestsExpired(tx, pendingIds, now, { from: "pending" }));
   }
 
-  // A `sent` row whose record nobody ever took still ages out here, so a flip cannot leave one
-  // outstanding for ever if the record itself was lost.
+  // `sent` past the window — its record is either gone or unreadable, and no acknowledgement is
+  // coming from an organizer that is this process. Inside the window it is left alone: this
+  // install's own drain may still be about to read the record and answer it properly.
   const staleCutoff = new Date(now.getTime() - REQUEST_STALE_AFTER_MS);
-  const stale = await db.transaction((tx) => listStaleSentRequests(tx, rt.mailboxId, staleCutoff));
-  const expiredIds = stale.map((r) => r.id);
-  if (expiredIds.length > 0) {
-    await db.transaction((tx) => markRequestsExpired(tx, expiredIds, now));
+  const staleSent = await db.transaction((tx) => listStaleSentRequests(tx, rt.mailboxId, staleCutoff));
+  const sentIds = staleSent.map((r) => r.id);
+  if (sentIds.length > 0) {
+    await db.transaction((tx) => markRequestsExpired(tx, sentIds, now));
   }
 
-  if (applied > 0 || expiredIds.length > 0) {
+  const expired = pendingIds.length + sentIds.length;
+  if (expired > 0) {
     log("own_requests_settled", {
-      mailboxId: rt.mailboxId, accountId: rt.accountId, applied, expired: expiredIds.length,
+      mailboxId: rt.mailboxId, accountId: rt.accountId,
+      expired, fromPending: pendingIds.length, fromSent: sentIds.length,
     });
   }
-  return { applied, expired: expiredIds.length };
+  return { expired };
 }
 
 /** Re-exported so the host census and tests can name the parser the drain actually uses. */

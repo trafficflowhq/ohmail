@@ -21,8 +21,6 @@ import {
   // Mail 0083 — the role vocabulary and the machine-name bound. One spelling for the sidecar's
   // gate, the worker's gate and the eleven service write doors; see `db/src/organizer-role.ts`.
   organizerDisplayName, isOrganizerRole, capabilitiesColumn,
-  // Mail 0090 — READ only. This door never mints a request key; see the call site for why.
-  readRequestKey,
   type MailboxDisabledReason, type OrganizerRole, type Tx,
 } from "@trafficflow/db";
 import {
@@ -104,7 +102,10 @@ import {
 // still be able to say who does, and `runLeaseGate` cannot answer that question without taking
 // the mailbox (its empty-folder arm claims). One method, no way to write. See
 // `notePeekedHolder`.
-import { readLeasePeek, type LeasePeekIo } from "@trafficflow/core/adapters/organizer-lease";
+import {
+  readLeasePeek, deriveRequestKey, type LeasePeekIo,
+} from "@trafficflow/core/adapters/organizer-lease";
+import type { ImapAuth } from "@trafficflow/core/adapters/imap-types";
 import { OrganizerProfileSync } from "@trafficflow/worker/profile";
 // THE SYMMETRIC-TAKEOVER REQUEST DRAIN (0.14.1), from the worker's own subpath for
 // the same reason `OrganizerProfileSync` is: one implementation of "apply a reader's decision" or
@@ -862,6 +863,20 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
   const log = config.log ?? ((): void => undefined);
   const now = config.now ?? ((): Date => new Date());
   const address = config.address ?? config.imap.auth.user;
+
+  /**
+   * THE REQUEST-CHANNEL SIGNING KEY FOR ONE MAILBOX, derived rather than stored.
+   *
+   * HKDF over the mailbox password, salted with the mailbox's own address — see
+   * `deriveRequestKey`. Computed at use: it costs one hash, and persisting it would put a second
+   * copy of a credential-equivalent secret somewhere the credential store does not protect.
+   *
+   * The address is the SALT and must match what every other install uses for this mailbox, which
+   * is why it is the mailbox row's address rather than this process's configured one — a
+   * self-hosted install may be configured with a login that is not the address.
+   */
+  const localRequestKey = (mailboxAddress: string): string | null =>
+    deriveRequestKey({ auth: config.imap.auth as ImapAuth, address: mailboxAddress });
 
   // ── THE BOOT CLOCK ────────────────────────────────────────────────────────────────────────
   //
@@ -2967,51 +2982,26 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           await notePeekedHolder(null);
           return false;
         }
-        /* ── WHAT THIS CLAIM OFFERS A READER, AND WHY THIS DOOR NEVER MINTS (mail 0090) ────────
+        /* ── WHAT THIS CLAIM OFFERS A READER (mail 0090) ─────────────────────────────────────
          *
-         * A request key is per ACCOUNT, and the account's key lives in the HOSTED database. This
-         * install has its own PGlite store, so a key it generated locally would be a key the Cloud
-         * reader has never seen — every record either side wrote would then be refused by the
-         * other as `unauthenticated`, which is worse than having no channel at all. So this is a
-         * plain READ, and it is the ONLY correct shape for this door.
+         * `requests`, but only where a shared secret exists to verify one with. The key is HKDF
+         * over the MAILBOX PASSWORD — the one secret this install and the hosted worker both hold,
+         * and one that whoever can merely APPEND to `ohmail/_meta` does not — so it is derived from
+         * the credential this process already opened IMAP with, and never stored or fetched.
          *
-         * ── AND TODAY IT ALWAYS READS NULL, WHICH IS THE HONEST STATE RATHER THAN A BUG ───────
+         * That is what makes this door work at all. A local install talks only to the mail server
+         * and has no session to fetch a distributed key on; deriving needs no network, so both
+         * directions of the channel are available to it on equal terms with Cloud.
          *
-         * Nothing delivers the account's key to a local install yet: this process makes no
-         * account-authenticated hosted call at takeover time (`cloud-auth.ts` and
-         * `cloud-engine.ts` have no organize/takeover request to ride), so the column below is
-         * never written on this side.
-         *
-         * The consequence is exact and deliberate: an install organizing a mailbox LOCALLY
-         * advertises no `requests` capability, and a Cloud reader of that mailbox is refused at
-         * its own door with `organizer_outdated` — truthfully, because this organizer genuinely
-         * cannot verify a record. The other direction is unaffected and fully live: when CLOUD
-         * organizes, both sides read the key from the account row.
-         *
-         * A STANDALONE install — no account at all — is the same picture and needs nothing more:
-         * it has no readers to serve, because a reader is another install signed into the SAME
-         * hosted account.
-         *
-         * Delivering the key to a local organizer is what would switch that direction on, and it
-         * needs a hosted call this build does not make. Until it exists, advertising nothing is
-         * the correct and complete answer.
+         * `null` for an OAuth mailbox: each install holds its own token, so there is no shared
+         * secret. This claim then advertises nothing and a reader is refused honestly at its own
+         * door — the correct answer rather than a gap.
          */
-        let localRequestKey: string | null = null;
-        try {
-          localRequestKey = await readRequestKey(db as unknown as Tx, world.accountId);
-        } catch (err) {
-          // Advertise nothing rather than guess. Mail keeps flowing either way.
-          log("organizer_request_key_unreadable", {
-            accountId: world.accountId,
-            err: err instanceof Error ? err.message : String(err),
-          });
-        }
-
         const outcome = await readMailboxLease({
           adapter,
           self: { installId, kind: "local", displayName: machineName, lastNonce: leaseNonce },
           now: now(),
-          hasRequestKey: localRequestKey !== null,
+          hasRequestKey: localRequestKey(mb.address) !== null,
           // An explicit human choice, and the ONLY thing that distinguishes "this mailbox's last
           // organizer went quiet" from "the user wants this machine to have it". Without it the
           // lease reports such a mailbox as available and declines to take it, which is the right
@@ -3861,7 +3851,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           try {
             if (organizing) {
               await applyMetaRequests(
-                db, { mailboxId: mb.id, accountId: world.accountId, adapter }, now(),
+                db, {
+                  mailboxId: mb.id, accountId: world.accountId, adapter,
+                  requestKey: localRequestKey(mb.address),
+                }, now(),
                 noteRequestEvent,
               );
               // Rows this install queued while it was a READER are stranded the moment it becomes
@@ -3872,7 +3865,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               );
             } else {
               await driveOutstandingRequests(
-                db, { mailboxId: mb.id, accountId: world.accountId, adapter },
+                db, {
+                  mailboxId: mb.id, accountId: world.accountId, adapter,
+                  requestKey: localRequestKey(mb.address),
+                },
                 { installId, kind: "local" }, now(),
                 noteRequestEvent,
               );

@@ -999,6 +999,21 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // `reason: "organizer_outdated"` regardless of the true holder, because a column that cannot
   // be read reads as "we have not looked". Deploy order: migration → API → worker, unchanged.
   ["mailboxes", "organized_by_capabilities"],
+  // mail 0090_request_key — ONE column, because the migration adds one.
+  //
+  // `organizer_requests.refused_reason` is what an organizer says when it declines a decision made
+  // on another install, and the row is selected whole by the reader's own cycle — so a worker
+  // ahead of this migration raises Postgres 42703 on every settle pass while `/health` would
+  // otherwise certify the schema fine.
+  //
+  // The migration's own name promises a key column that is NOT here and must not be probed for:
+  // the signing key is derived from the mailbox password at use and never stored (see the
+  // migration's header). Probing a column the migration does not create would fail on a correctly
+  // migrated database, which is the same lie as missing a marker, pointed the other way.
+  //
+  // The widened `state` CHECK gets no marker of its own — `organizer_requests.state` is already
+  // probed above, and a CHECK that gained a member cannot be detected by reading a column name.
+  ["organizer_requests", "refused_reason"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -1728,8 +1743,13 @@ export const MAIL_EXPECTED_MARKERS =
  * entry for why two columns and not four.
  *
  * `0089_organizer_capability` is probed as `mailboxes.organized_by_capabilities` — the fifth
- * holder column, a single additive nullable field, so one column is the whole probe. **It is the
- * newest entry, so it is also the tag below.**
+ * holder column, a single additive nullable field, so one column is the whole probe.
+ *
+ * `0090_request_key` is probed as `organizer_requests.refused_reason` — one additive nullable
+ * column, so one column is the whole probe. Its NAME promises a key column that the migration
+ * deliberately does not create (the signing key is derived, never stored), and probing for one
+ * would fail against a correctly migrated database. **It is the newest entry, so it is also the
+ * tag below.**
  *
  * That last sentence is the one this docblock keeps getting wrong, and it is now attached to the
  * marker that is actually newest rather than left on an older one. It stood on `0081` and then on
@@ -1748,7 +1768,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0089_organizer_capability";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0090_request_key";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */

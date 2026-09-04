@@ -82,13 +82,12 @@ export {
   type RequestState, type OrganizerRequestRow, type OutstandingMatch,
 } from "./organizer-requests.js";
 
-// The per-account request key (mail 0090) — what makes a reader's decision provable rather than
-// merely plausible. Here for `organizer-requests.js`'s reason exactly: the worker's own cycles
-// read and mint it every poll and may not import services at runtime.
-export {
-  readRequestKey, readOrMintRequestKey, rotateRequestKey, clearRequestKey, generateRequestKey,
-  REQUEST_KEY_BYTES, REQUEST_KEY_ENCODED_LENGTH,
-} from "./request-key.js";
+/* NO REQUEST-KEY EXPORTS HERE, and the absence replaces a module that used to exist.
+ *
+ * The signing key for a reader's decision is DERIVED from the mailbox password at use and never
+ * stored, so there is nothing in this package to read, mint, rotate or clear. It lives beside the
+ * signature it feeds: `deriveRequestKey` in
+ * `@trafficflow/core/adapters/organizer-lease`. */
 
 // The ONE spelling of "a stand-down closes the appointments it can no longer keep" — same
 // argument as the line above, four call sites (the sidecar's lease gate and its launch catch-up,

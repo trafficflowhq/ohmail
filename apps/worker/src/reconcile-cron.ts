@@ -3,6 +3,7 @@ import { closeStoodDownAppointments, type Tx } from "@trafficflow/db";
 import { providerAuthservIds, silentLogger, type Logger } from "@trafficflow/core";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
+import { deriveRequestKey } from "@trafficflow/core/adapters/organizer-lease";
 import { instanceIdFrom, selectionOf, type WorkerConfig } from "./config.js";
 import { acquireLeaderLock, leaderLockKeyFor } from "./leader-lock.js";
 import {
@@ -15,7 +16,7 @@ import { OrganizerProfileSync } from "./profile.js";
 import { makeStorageCapResolver } from "./storage-cap.js";
 import {
   CLOUD_DISPLAY_NAME, LeaseUnavailableError, OrganizerStandDownError, acquireLeasePermit,
-  cloudInstallId, hostedRequestKeyHeld, type LeasePermit,
+  cloudInstallId, mailboxHasRequestKey, type LeasePermit,
 } from "./lease.js";
 import { isCliEntry } from "./entry.js";
 import { cronEvent, runCronCli } from "./cron-log.js";
@@ -366,8 +367,7 @@ export async function runReconcileCron(
         // same one: this pass RENEWS the worker's claim rather than writing its own, so a
         // different capability set here would make `requests` appear and disappear under readers
         // depending on which process last renewed. See `hostedRequestKeyHeld`.
-        hasRequestKey: await hostedRequestKeyHeld(db as unknown as Tx, row.accountId, new Date(),
-          (event, detail) => log.warn(event, { ...detail, mailboxId })),
+        hasRequestKey: mailboxHasRequestKey({ auth: { user: config.imap.user, pass: config.imap.pass }, address: row.address }),
         self: {
           // The SAME identity the always-on worker claims with — a per-process id here would make
           // every backstop run look like a new organizer arriving and stand the worker down. See
@@ -526,7 +526,10 @@ export async function runReconcileCron(
       // so nothing new can reach the folder in the gap between them.
       try {
         await applyMetaRequests(
-          db, { mailboxId, accountId: row.accountId, adapter }, new Date(),
+          db, {
+          mailboxId, accountId: row.accountId, adapter,
+          requestKey: deriveRequestKey({ auth: { user: config.imap.user, pass: config.imap.pass }, address: row.address }),
+        }, new Date(),
           (event, detail) => log.info(cronEvent("reconcile", event), { mailboxId, accountId: row.accountId, ...detail }),
         );
       } catch (err) {

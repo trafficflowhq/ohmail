@@ -1,11 +1,12 @@
 import {
-  CAPABILITY_REQUESTS,
+  CAPABILITY_REQUESTS, deriveRequestKey,
   DEFAULT_STALE_AFTER_MS, LeaseUnavailableError, META_FOLDER, isMalformed, parseClaim, runLeaseGate,
   type LeaseIo, type LeaseOp, type LeaseSelf, type LeaseVerdict, type OrganizerClaim,
   type TakeoverAuthorization,
 } from "@trafficflow/core/adapters/organizer-lease";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
-import { readOrMintRequestKey, type MailboxDisabledReason, type Tx } from "@trafficflow/db";
+import type { ImapAuth } from "@trafficflow/core/adapters/imap-types";
+import type { MailboxDisabledReason } from "@trafficflow/db";
 
 /**
  * THE WORKER'S HALF OF THE ORGANIZER LEASE — composition, and nothing else.
@@ -84,15 +85,15 @@ export const CLOUD_DISPLAY_NAME = "ohmail Cloud";
  * ── WHAT THE BUILD SUPPORTS, WHICH IS NOT THE SAME AS WHAT AN ACCOUNT CAN USE (0090) ────────
  *
  * This constant answers "can this code drain a request record". Since mail 0090 there is a second,
- * genuinely per-account question — "does this account have a request key" — and the two are
- * different facts that must not be collapsed into one constant. A build with the drain but an
- * account with no key cannot verify anything, so advertising `requests` would invite readers to
+ * genuinely per-MAILBOX question — "is there a shared secret to sign one with" — and the two are
+ * different facts that must not be collapsed into one constant. A build with the drain but a
+ * mailbox with no key cannot verify anything, so advertising `requests` would invite readers to
  * queue decisions this organizer will refuse `unauthenticated` for ever.
  *
  * {@link organizerCapabilitiesFor} is where the two meet, and it is the ONLY way this set reaches
- * a claim. The per-call input it takes is a FACT about the account (read from the database), not a
- * preference a caller may express — which keeps the guarantee the paragraph above is about while
- * letting the honest degraded mode exist.
+ * a claim. The per-call input it takes is a FACT about the mailbox (derived from the credential),
+ * not a preference a caller may express — which keeps the guarantee the paragraph above is about
+ * while letting the honest degraded mode exist.
  */
 export const ORGANIZER_CAPABILITIES: readonly string[] = [CAPABILITY_REQUESTS];
 
@@ -100,7 +101,8 @@ export const ORGANIZER_CAPABILITIES: readonly string[] = [CAPABILITY_REQUESTS];
  * WHAT THIS ORGANIZER ADVERTISES FOR THIS ACCOUNT — no key means no capability, and this is the
  * one place that rule is applied.
  *
- * An organizer with no `account_settings.request_key` advertises NOTHING. A reader then reads
+ * An organizer with no derived key — an OAuth mailbox, where each install holds its own token and
+ * there is no shared secret — advertises NOTHING. A reader then reads
  * `organizer_outdated` off the row and refuses the press honestly at its own door, which is the
  * correct and complete degraded mode: no request is queued, no record is written, and nothing
  * waits for a drain that could never verify it.
@@ -117,47 +119,21 @@ export function organizerCapabilitiesFor(o: { hasRequestKey: boolean }): readonl
 }
 
 /**
- * DOES THIS HOSTED PROCESS HAVE A REQUEST KEY FOR THIS ACCOUNT — minting one if not.
+ * DOES THIS MAILBOX HAVE A REQUEST KEY — the one question `organizerCapabilitiesFor` needs.
  *
- * ── ONE IMPLEMENTATION BECAUSE FOUR PROCESSES RENEW THE SAME CLAIM ──────────────────────────
+ * A thin name over {@link deriveRequestKey}, kept because four hosted processes renew the SAME
+ * claim (`cloudInstallId` is deliberately shared, so a per-process id cannot stand the worker
+ * down) and must therefore advertise the SAME set. A backstop that renewed the claim without
+ * `requests` while the worker renewed it with would make the capability appear and disappear under
+ * readers depending on which process last ran.
  *
- * The always-on worker, the reconcile backstop, the junk sweep and the redacted restore all claim
- * with the SAME `installId` (`cloudInstallId`) deliberately — a per-process id would read as a new
- * organizer arriving and stand the worker down. Because they share the claim, they must also share
- * what it ADVERTISES: a backstop that renewed the claim without `requests` while the worker
- * renewed it with would make the capability appear and disappear under readers, and a reader's
- * answer to "will this holder take my decision" would depend on which process happened to renew
- * last. So this decision is made once, here, and every hosted claim writer calls it.
- *
- * MINTS, and only the HOSTED processes may: the account's key lives in the hosted database, so
- * this is where one can be created. A local install must never mint — it would generate a key the
- * Cloud reader has never seen, and every record either side wrote would be refused by the other.
- *
- * ── A FAILURE HERE ADVERTISES NOTHING RATHER THAN THROWING ──────────────────────────────────
- *
- * The request channel is secondary to reading mail, so a database that cannot answer must not stop
- * a mailbox syncing. Advertising nothing is the fail-safe direction: readers are refused honestly
- * at their own door, no record is written, and nothing waits on a drain that could not verify it.
- * The opposite default — advertise, and hope a key turns up — is an absent fact selecting the
- * dangerous branch, which is the failure this whole gate exists to avoid.
+ * There is nothing to mint and nothing to fail: the key is HKDF over the mailbox password, so this
+ * is a pure function of a credential the caller already decrypted to open IMAP at all. An OAuth
+ * mailbox answers `false`, which is the honest degraded mode — no shared secret exists, so no
+ * organizer can verify a record and none should invite one.
  */
-export async function hostedRequestKeyHeld(
-  db: Tx,
-  accountId: string,
-  now: Date,
-  log?: (event: string, detail: Record<string, unknown>) => void,
-): Promise<boolean> {
-  try {
-    await db.transaction((tx) => readOrMintRequestKey(tx, accountId, now));
-    return true;
-  } catch (err) {
-    log?.("organizer_request_key_unavailable", {
-      accountId,
-      err: err instanceof Error ? err.message : String(err),
-      reason: "this claim advertises no request capability; readers are refused at their door",
-    });
-    return false;
-  }
+export function mailboxHasRequestKey(o: { auth: ImapAuth; address: string }): boolean {
+  return deriveRequestKey(o) !== null;
 }
 
 /**

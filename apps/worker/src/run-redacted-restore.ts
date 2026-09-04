@@ -19,7 +19,7 @@ import { loadMailboxCreds } from "./mailboxes.js";
 import { redactedRestorePass } from "./redacted-restore.js";
 import {
   CLOUD_DISPLAY_NAME, LeaseUnavailableError, OrganizerStandDownError, acquireLeasePermit,
-  assertNoLiveTwin, cloudInstallId, hostedRequestKeyHeld,
+  assertNoLiveTwin, cloudInstallId, mailboxHasRequestKey,
 } from "./lease.js";
 
 const argv = process.argv.slice(2);
@@ -145,7 +145,7 @@ try {
       adapter,
       // The SAME set the worker and the backstop advertise — this command renews their shared
       // claim, so a narrower set here would make `requests` blink out for readers mid-repair.
-      hasRequestKey: await hostedRequestKeyHeld(db, mb.accountId, new Date()),
+      hasRequestKey: mailboxHasRequestKey({ auth: creds.imap.auth, address: mb.address }),
       self: {
         installId: process.env.TF_ORGANIZER_INSTALL_ID
           ?? cloudInstallId(process.env.TF_ENVIRONMENT ?? "production"),

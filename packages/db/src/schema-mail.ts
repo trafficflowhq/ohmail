@@ -2858,40 +2858,23 @@ export const accountSettings = pgTable("account_settings", {
    * three-valued read from two cutline implementations.
    */
   screeningScope: text("screening_scope").notNull().default("window"),
-  /**
-   * THE PER-ACCOUNT REQUEST KEY — what makes a reader's decision provable rather than merely
-   * plausible (mail 0090, 0.14.1). 32 random bytes, base64url, 43 characters; the length is
-   * closed by `account_settings_request_key_len`.
+  /*
+   * NO REQUEST-KEY COLUMN HERE, AND THE ABSENCE IS THE DESIGN (mail 0090).
    *
-   * `ohmail/_meta` is an ordinary IMAP folder, so the request records in it are messages ANY
-   * process with APPEND rights could have written — a shared-folder ACL, a sieve `fileinto`, a
-   * leaked device credential. Nothing in the wire format distinguishes this account's own reader
-   * from a stranger, and an organizer that cannot distinguish them files a stranger's mail on
-   * their say-so. This key is the thing that distinguishes them: a record carries
-   * `X-Ohmail-Request-Sig`, an HMAC over its own fields under this key, and the organizer
-   * verifies it BEFORE it decodes the payload.
+   * A reader's decision record is signed so an organizer can tell this account's own install from
+   * anything else with write access to `ohmail/_meta`. The first cut of that stored a per-account
+   * key on this row and handed it to each install over the hosted API. It is withdrawn: a LOCAL
+   * install talks only to the mail server and has no authenticated call to fetch one on, and
+   * giving it such a call would mean giving the sealed local artifact a session it deliberately
+   * does not have.
    *
-   * **A NULL here is not a degraded signature — it is NO CHANNEL.** An organizer holding no key
-   * advertises no `requests` capability, so a reader is refused honestly at the door rather than
-   * queueing a decision nobody can verify. That is the safe resting state and it is where every
-   * account starts; the key is minted on first need, never at signup, so an account that never
-   * uses two installs never grows one.
-   *
-   * **NEVER LEAVES THE SERVER EXCEPT TO AN INSTALL THAT PROVED IT HOLDS A SESSION**, and never
-   * reaches any admin surface, log line or DTO. It is a bearer secret: whoever holds it can make
-   * this account's organizer apply screener decisions.
+   * The key is HKDF-SHA256 over the MAILBOX PASSWORD instead — the one secret both installs
+   * already hold, and one the attacker in question (folder rights via an ACL or a sieve rule) does
+   * not — computed at use and never stored. See `deriveRequestKey`
+   * (`@trafficflow/core/adapters/organizer-lease`). Nothing to store here, nothing to leak from
+   * this table, and no rotation column: changing the password changes the key, which is exactly
+   * when older records should stop verifying.
    */
-  requestKey: text("request_key"),
-  /**
-   * WHEN {@link requestKey} was last replaced. Rotation is an overwrite — a password change and a
-   * consent reset both mint a fresh key — so records signed with the old one stop verifying and
-   * expire on the reader's own cycle.
-   *
-   * Kept because the refusal it causes is INDISTINGUISHABLE, in the log, from the attack the
-   * signature exists to stop: both read `unauthenticated`. An operator looking at a run of them
-   * needs to know whether a rotation happened first, and this is the only place that answers.
-   */
-  requestKeyRotatedAt: timestamp("request_key_rotated_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });

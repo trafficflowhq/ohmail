@@ -1,5 +1,5 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
-import { WATCHED_FOLDERS } from "./imap-types.js";
+import { createHmac, hkdfSync, timingSafeEqual } from "node:crypto";
+import { WATCHED_FOLDERS, type ImapAuth } from "./imap-types.js";
 
 /**
  * THE ORGANIZER LEASE — how two databases that can never see each other agree on who organizes
@@ -2485,6 +2485,60 @@ export const REQUEST_PAYLOAD_MAX_BYTES = 4096;
  * only after the record has proved it came from a holder of the key. Signing the decoded object
  * would invert that order and require parsing untrusted input to decide whether to trust it.
  */
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  THE KEY IS DERIVED FROM THE MAILBOX CREDENTIAL, NOT DISTRIBUTED
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Two installs need the same secret to sign and verify a record, and they cannot ask each other
+ * for one: a LOCAL install talks only to the mail server, never to the hosted service, and that
+ * seal is the product rather than an implementation detail. Handing the key out over the hosted
+ * API would have meant giving the local install a session it deliberately does not have.
+ *
+ * They already share exactly one secret, and it is the right one: **the mailbox password**. Every
+ * install that organizes or reads the mailbox holds it — it is how they open IMAP at all — and the
+ * attacker this signature exists to stop does NOT: somebody with APPEND rights through a
+ * shared-folder ACL, a sieve `fileinto`, or a stray client session can write to the folder without
+ * ever knowing the password. The trust boundary the derivation draws is therefore the exact one
+ * the threat model asks for.
+ *
+ * ── ROTATION IS THE PASSWORD CHANGE ITSELF ──────────────────────────────────────────────────
+ *
+ * There is no key id, no rotation record and no revocation call, because there is nothing stored
+ * to revoke: change the password and every install derives a different key on its next cycle,
+ * records signed under the old one stop verifying, and the reader expires them. A leaked password
+ * yields the signing key — and it already yielded the mailbox, so nothing new is lost.
+ *
+ * ── NEVER STORED, DERIVED AT USE ────────────────────────────────────────────────────────────
+ *
+ * The result is a value in memory for the length of one cycle. Persisting it would create a second
+ * copy of a credential-equivalent secret in a place the credential store does not protect, for no
+ * gain: deriving costs one HKDF.
+ *
+ * ── AND OAUTH MAILBOXES HAVE NO KEY, WHICH IS AN HONEST ANSWER RATHER THAN A GAP ────────────
+ *
+ * With OAuth there is no shared secret to derive from: each install holds its own short-lived
+ * token, issued to it alone. So this returns `null`, the organizer advertises no `requests`
+ * capability, and a reader is refused at its own door naming the holder. Decisions on such a
+ * mailbox are made on the install that organizes it.
+ */
+const REQUEST_KEY_INFO = "ohmail request key v1";
+
+/**
+ * THE ACCOUNT-SHARED SIGNING KEY FOR ONE MAILBOX, or `null` when there is no shared secret.
+ *
+ * The salt is the mailbox address, lower-cased — public and stable, which is all a salt has to be
+ * here. Its job is domain separation between mailboxes: two mailboxes that happen to share a
+ * password must not share a signing key, or a record from one would verify against the other.
+ */
+export function deriveRequestKey(o: { auth: ImapAuth; address: string }): string | null {
+  const pass = (o.auth as { pass?: unknown }).pass;
+  if (typeof pass !== "string" || pass === "") return null;
+  const salt = o.address.trim().toLowerCase();
+  if (salt === "") return null;
+  return Buffer.from(hkdfSync("sha256", pass, salt, REQUEST_KEY_INFO, 32)).toString("base64url");
+}
+
 function canonicalField(v: string): string {
   return `${Buffer.byteLength(v, "utf8")}:${v}`;
 }

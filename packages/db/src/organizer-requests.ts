@@ -243,12 +243,26 @@ export async function markRequestsRefused(
     .where(and(inArray(organizerRequests.id, [...ids]), eq(organizerRequests.state, "sent")));
 }
 
-/** `sent` → `expired`: still in the mailbox past the window. Nobody is organizing. */
-export async function markRequestsExpired(tx: Tx, ids: readonly string[], resolvedAt: Date): Promise<void> {
+/**
+ * `sent` → `expired`: still in the mailbox past the window. Nobody is organizing.
+ *
+ * `from` exists for the same reason {@link markRequestsApplied}'s does, and closes a row that
+ * would otherwise be IMMORTAL: a `pending` row is one this install could never hand over — it
+ * holds no key to sign with, or the append has failed every cycle — and every other expiry
+ * predicate requires `sent`, so nothing would ever resolve it and the sender would stay out of the
+ * Screener queue for ever.
+ */
+export async function markRequestsExpired(
+  tx: Tx, ids: readonly string[], resolvedAt: Date,
+  opts: { from?: "sent" | "pending" } = {},
+): Promise<void> {
   if (ids.length === 0) return;
   await tx.update(organizerRequests)
     .set({ state: "expired", resolvedAt })
-    .where(and(inArray(organizerRequests.id, [...ids]), eq(organizerRequests.state, "sent")));
+    .where(and(
+      inArray(organizerRequests.id, [...ids]),
+      eq(organizerRequests.state, opts.from ?? "sent"),
+    ));
 }
 
 /**

@@ -1,95 +1,63 @@
--- THE PER-ACCOUNT REQUEST KEY, AND THE OUTCOME A REFUSAL CARRIES BACK (0.14.1).
+-- THE REFUSAL AN ORGANIZER CAN CARRY BACK, AND THE READ THAT FINDS IT (0.14.1).
 --
 -- ══ WHAT THIS IS FOR ═══════════════════════════════════════════════════════════════════════
 --
 -- 0088 built a channel in which an install that READS a mailbox appends its screener decisions to
--- `ohmail/_meta` and the install that ORGANIZES that mailbox applies them. 0089 gave a reader a
--- way to ask, from a row alone, whether the holder is a build that drains such records at all.
--- Neither answered the question that decides whether the channel may be switched on: how does the
--- organizer know the record came from a reader of the SAME account?
+-- `ohmail/_meta` and the install that ORGANIZES that mailbox applies them. This migration carries
+-- the half of that channel which needs storage: the outcome an organizer sends back.
 --
--- It could not. `ohmail/_meta` is a folder on an IMAP server, and a request record is an RFC822
--- message. ANYONE with APPEND rights on that mailbox — a shared-folder ACL, a sieve `fileinto`, a
--- leaked device credential, any mail client the person ever signed in — could write one, and the
--- organizer would have applied it: a `promoted` rule, a `contacts` whitelist (a permanent Screener
--- bypass), a mark-read pushed to the server. Indistinguishable, in the product, from the account
--- owner's own press. That is why the channel shipped OFF in 0.14.1's first cut.
+-- ── WHY THERE IS NO KEY COLUMN HERE, THOUGH THE FILE IS NAMED FOR ONE ───────────────────────
 --
--- This migration is the first half of switching it on. `request_key` is 32 random bytes, minted
--- per account, held by every install that can prove it holds a session for that account, and used
--- to HMAC the fields of a request record. An organizer verifies that signature BEFORE it decodes
--- the payload; a record it cannot verify is refused and never parsed. A key nobody holds means an
--- organizer that advertises no `requests` capability, which is the honest degraded mode rather
--- than an open door.
+-- A record has to be signed, or an organizer cannot tell this account's own reader from anything
+-- else with write access to the mailbox — a shared-folder ACL, a sieve `fileinto`, a leaked device
+-- credential. The first cut of this migration stored a per-account key in `account_settings` and
+-- handed it to each install over the hosted API.
 --
--- ── WHY TEXT AND NOT `bytea` ────────────────────────────────────────────────────────────────
+-- That is withdrawn, and the reason is a boundary rather than a preference: a LOCAL install talks
+-- only to the mail server and never to the hosted service, so there is no authenticated call it
+-- could fetch a key on, and giving it one would mean giving the sealed local artifact a session it
+-- deliberately does not have.
 --
--- The key is base64url of the 32 raw bytes — 43 characters, which the CHECK below closes. This
--- half of the schema runs on BOTH a hosted Postgres (through postgres-js) and the desktop's
--- PGlite, and the two drivers hand a `bytea` back as different runtime types (a node `Buffer`
--- versus a `Uint8Array`). The key also travels to a local organizer as JSON over HTTP, where it
--- has to be a string in any case. One representation from the column to the wire means no
--- encoding seam for a signature to disagree across, and a signature that disagrees across a seam
--- fails as "forged".
+-- The two installs already share exactly one secret, and it is the right one: **the mailbox
+-- password**. The key is HKDF-SHA256 over it, salted with the mailbox address, computed at use and
+-- NEVER STORED — so there is nothing here to hold, nothing to leak from this table, and no
+-- rotation plumbing: changing the password changes the key, which is precisely when older records
+-- should stop verifying. See `deriveRequestKey` (`@trafficflow/core/adapters/organizer-lease`).
 --
--- ── WHY NOT A CHECK ON THE ALPHABET ─────────────────────────────────────────────────────────
+-- The file keeps its name because the journal tag is immutable once written: an adopting database
+-- records the tag it ran, and renaming it here would make this file disagree with that record.
 --
--- The length is the property worth closing in the database, because it is the one a partial write
--- or a truncating client could break silently. The ALPHABET is closed at the single write site
--- (`mintRequestKey`), which is the only thing that ever produces a value here; a CHECK with a
--- regexp would restate that at a layer where it can only ever fire on a bug this schema cannot
--- otherwise have.
---
--- ── ROTATION ────────────────────────────────────────────────────────────────────────────────
---
--- The key rotates on a password change and on a consent reset, and rotation is an overwrite: the
--- old key stops verifying, so records signed with it are refused and expire. `request_key_rotated_at`
--- records WHEN, so an operator reading a run of `unauthenticated` refusals can tell a rotation
--- (expected, self-healing on the reader's next cycle) from an attack (not).
---
--- ── ERASURE ─────────────────────────────────────────────────────────────────────────────────
---
--- Nothing owed. `account_settings` is deleted WHOLE by `deleteAccount` — `account-deletion.test.ts`
--- asserts the row count for this table goes to zero — so a column added here is erased by
--- construction rather than by a new clause someone has to remember. That is the reason the key
--- lives on this table rather than on a table of its own.
---
--- ══ THE REFUSAL AN ACK CARRIES ═════════════════════════════════════════════════════════════
+-- ══ THE REFUSAL ════════════════════════════════════════════════════════════════════════════
 --
 -- 0088's four states could not express "the organizer looked at this and said no". A reader
--- inferred `applied` from the record's ABSENCE from the folder, which is the same shape as a
--- record the organizer refused and expunged — and the two mean opposite things to the person who
--- pressed. `refused` is the fifth state, and `refused_reason` is what the organizer said, carried
--- back on an ack record and surfaced to the person rather than swallowed.
+-- inferred `applied` from the record's ABSENCE from the folder, and a record the organizer REFUSED
+-- and expunged is absent in exactly the same way — so a decision that had been thrown away was
+-- reported to the person as carried out. `refused` is the fifth state, and `refused_reason` is what
+-- the organizer said, carried back on a signed acknowledgement and shown rather than swallowed.
+--
+-- The reason is a CLOSED vocabulary this codebase defines and the organizer chooses; it is never a
+-- sentence a payload supplied. No CHECK on it, on `organized_by_name`'s precedent: a NEWER
+-- organizer may answer with a member this build has not heard of, and a closed set here would make
+-- the row unwritable the day that ships. The reader drops an unrecognised reason to NULL rather
+-- than rendering a stranger's token.
 --
 -- ══ COMPATIBILITY ══════════════════════════════════════════════════════════════════════════
 --
--- Purely additive: three nullable columns, one widened CHECK, one new index. No drop, no rename,
--- no type change. The CHECK is WIDENED, never narrowed, so a row an older build wrote still
+-- Purely additive: one nullable column, one WIDENED CHECK, one new index. No drop, no rename, no
+-- type change. The CHECK is widened and never narrowed, so a row an older build wrote still
 -- satisfies it and an older build keeps working against a migrated database — it simply never
 -- writes the new member.
 --
 -- Deploy order is migration → API → worker, 0083's and 0089's exact reason: the API selects whole
 -- rows (so it 42703s against an un-migrated database) and the worker is the process that starts
--- writing the new columns. The desktop engine self-migrates at launch and needs no ordering.
+-- writing the new column. The desktop engine self-migrates at launch and needs no ordering.
 --
--- ROLLBACK: drop the three columns and the index, and narrow the CHECK back — which requires
--- clearing any `refused` rows first, so the rollback is "narrow after the fleet stops writing it"
--- rather than a bare `ALTER`. Nothing outside this feature reads any of it; with `request_key`
--- absent no organizer advertises `requests`, which is the fail-safe direction (the channel is off)
--- rather than a fault.
+-- ROLLBACK: drop the column and the index, and narrow the CHECK back — which requires clearing any
+-- `refused` rows first, so the rollback is "narrow after the fleet stops writing it" rather than a
+-- bare `ALTER`. Nothing outside this feature reads any of it.
 --
 -- Idempotent throughout (`IF NOT EXISTS`, and the CHECK dropped-then-added, the shape
 -- `0007_staff_users` established), because a desktop engine replays this journal at every launch.
-
--- ── THE KEY ──────────────────────────────────────────────────────────────────────────────────
-
-ALTER TABLE "account_settings" ADD COLUMN IF NOT EXISTS "request_key" text;--> statement-breakpoint
-ALTER TABLE "account_settings" ADD COLUMN IF NOT EXISTS "request_key_rotated_at" timestamptz;--> statement-breakpoint
-
-ALTER TABLE "account_settings" DROP CONSTRAINT IF EXISTS "account_settings_request_key_len";--> statement-breakpoint
-ALTER TABLE "account_settings" ADD CONSTRAINT "account_settings_request_key_len"
-  CHECK ("request_key" IS NULL OR octet_length("request_key") = 43);--> statement-breakpoint
 
 -- ── WHAT THE ORGANIZER SAID ──────────────────────────────────────────────────────────────────
 

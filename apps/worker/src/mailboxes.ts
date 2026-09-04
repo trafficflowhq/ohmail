@@ -336,6 +336,12 @@ export async function loadMailboxById(
   {
     accountId: string; status: string; takeoverAuthorizedAt: Date | null;
     disabledReason: string | null;
+    /**
+     * Mail 0090. The SALT of the request key's derivation, so the backstop derives the same key
+     * every other install does — an address is public and stable, and its job here is to keep two
+     * mailboxes that share a password from sharing a signing key.
+     */
+    address: string;
     /** Mail 0083. The reconcile backstop is an ORGANIZER pass and must refuse a reader row. */
     organizerRole: OrganizerRole;
     /**
@@ -354,6 +360,7 @@ export async function loadMailboxById(
       disabledReason: mailboxes.disabledReason,
       organizerRole: mailboxes.organizerRole,
       releaseRequestedAt: mailboxes.releaseRequestedAt,
+      address: mailboxes.address,
     })
     .from(mailboxes).where(eq(mailboxes.id, mailboxId)).limit(1);
   const r = rows[0];
