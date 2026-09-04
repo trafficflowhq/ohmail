@@ -1960,11 +1960,12 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   // stopped does not fail anything. It serves figures that quietly stop moving — an account page
   // showing thirty daily bars that are all real and none of them from this week.
   //
-  // Fires only where a pass has EVER completed, which is `worker_down`'s contract and the
-  // reconciler's: a deployment that never armed the pass stays silent rather than paging about a
-  // feature it does not run. Failed runs (error non-null) do not reset the clock — a pass that
-  // fails every night is exactly as dark as one that stopped, and letting a failure row count
-  // would mean this never fires at all, which is the quiet branch the rule exists to remove.
+  // Fires only where the pass is ARMED — a deployment that never runs it stays silent rather
+  // than paging about a feature it does not have. Failed runs (error non-null) do not reset the
+  // clock: a pass that fails every night is exactly as dark as one that stopped, and letting a
+  // failure row count would mean this never fires at all, which is the quiet branch the rule
+  // exists to remove. What arming means is the paragraph below the clock, and it is not the same
+  // question as "has one ever completed".
   const [lastRollup] = await db
     .select({ ranAt: creditRollupRuns.ranAt })
     .from(creditRollupRuns)
@@ -1987,8 +1988,31 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
     .where(and(isNull(creditRollupRuns.error), isNotNull(creditRollupRuns.divergentAccounts)))
     .orderBy(sql`${creditRollupRuns.ranAt} desc`)
     .limit(1);
-  if (lastRollup) {
-    const staleSeconds = secondsBetween(now, lastRollup.ranAt);
+
+  // ── ARMED IS NOT THE SAME QUESTION AS "HAS ONE EVER COMPLETED" ────────────────────────
+  //
+  // The filter above is the right CLOCK and the wrong ARMING TEST. A deployment whose nightly
+  // roll-up has failed every time it ran writes rows carrying an error and no divergence
+  // verdict, so the filter removes every one of them, the read above comes back empty, and the
+  // rule is silent for ever — in exactly the state it exists to report. The silence is meant for
+  // a deployment that never runs the pass at all, not for one that runs it nightly and never
+  // gets through it, which is the louder of the two failures.
+  //
+  // So arming reads the OLDEST recorded attempt of either shape, successful or not. If this
+  // table has been accumulating rows for longer than the staleness threshold and still holds no
+  // completed nightly run, the divergence verdict is as absent as it would be had the pass
+  // stopped, and the alert carries the age of that first attempt — a lower bound on how long the
+  // figures have gone unverified. A deployment installed an hour ago, whose first nightly window
+  // has not come round yet, is younger than the threshold and stays quiet.
+  const [firstAttempt] = await db
+    .select({ ranAt: creditRollupRuns.ranAt })
+    .from(creditRollupRuns)
+    .orderBy(sql`${creditRollupRuns.ranAt} asc`)
+    .limit(1);
+
+  const rollupSince = lastRollup?.ranAt ?? firstAttempt?.ranAt ?? null;
+  if (rollupSince) {
+    const staleSeconds = secondsBetween(now, rollupSince);
     if ((staleSeconds ?? 0) * 1000 > t.creditRollupStaleMs) {
       alerts.push({
         key: "credit_rollup_stale",
@@ -1996,7 +2020,10 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
         severity: "warning",
         title: "The credit roll-up has stopped running",
         detail:
-          `The last completed credit roll-up was ${humanAge(staleSeconds)} ago (threshold ` +
+          (lastRollup
+            ? `The last completed credit roll-up was ${humanAge(staleSeconds)} ago (threshold `
+            : `No credit roll-up has ever completed the nightly work, and the oldest attempt on ` +
+              `record is ${humanAge(staleSeconds)} old (threshold `) +
           `${humanAge(Math.round(t.creditRollupStaleMs / 1000))}). Nothing fails while this is ` +
           `dark: the Billing board and every account's usage panel keep rendering the aggregates ` +
           `from the last pass that ran, so the figures are real and simply stop moving. The ` +
@@ -2194,9 +2221,24 @@ export async function platformSignalWindow(
   //
   // Flooring `now` to the bucket first makes the cut land exactly on a boundary: at 12:07 that
   // is 12:05, and 12:05 − 15min = 11:50, which is the oldest of the three complete buckets.
-  const cut = new Date(
-    Math.floor(now.getTime() / SIGNAL_BUCKET_MS) * SIGNAL_BUCKET_MS - windowMs,
+  //
+  // ── AND THE WINDOW IS CLOSED AT BOTH ENDS, BECAUSE TWO CLOCKS WRITE AND READ IT ───────
+  //
+  // The poller and this evaluator run in different processes, on hosts whose clocks agree only
+  // approximately. A lower bound alone therefore admits a bucket the reader has not reached yet:
+  // if the poller's clock is a minute ahead, it closes and persists the 12:05 bucket while this
+  // pass still floors `now` to 12:05, and `window_start >= 11:50` then sums FOUR buckets into a
+  // rate the rule describes — and thresholds — as three. The extra bucket is partial by
+  // construction, so it lifts the error ratio without lifting the request count that would
+  // justify it, and the direction of the mistake is a false page.
+  //
+  // The floored boundary is the exclusive upper bound as well as the anchor of the lower one, so
+  // the window is always exactly `windowMs` wide and always made of buckets that closed before
+  // this pass began.
+  const bucketEnd = new Date(
+    Math.floor(now.getTime() / SIGNAL_BUCKET_MS) * SIGNAL_BUCKET_MS,
   );
+  const cut = new Date(bucketEnd.getTime() - windowMs);
   const rows = await db
     .select({
       provider: platformSignals.provider,
@@ -2221,7 +2263,8 @@ export async function platformSignalWindow(
       )`,
     })
     .from(platformSignals)
-    .where(sql`${platformSignals.windowStart} >= ${cut.toISOString()}::timestamptz`)
+    .where(sql`${platformSignals.windowStart} >= ${cut.toISOString()}::timestamptz
+      and ${platformSignals.windowStart} < ${bucketEnd.toISOString()}::timestamptz`)
     .groupBy(platformSignals.provider, platformSignals.project);
   return rows.map((r) => ({
     provider: r.provider,
@@ -3498,6 +3541,26 @@ async function recordAlertPass(db: Tx, rec: AlertPassRecord): Promise<void> {
           sinkFailureStreak: rec.sinkFailureStreak,
           sinksConfigured: rec.sinksConfigured,
         },
+        // ── AN OLDER PASS MAY NOT OVERWRITE A NEWER ONE ─────────────────────────────────
+        //
+        // Nothing serialises two passes of the same driver. The API arm is poked by a scheduler
+        // whose retry can arrive while the first call is still running, and the worker arm runs
+        // on a plain interval that starts the next pass whether or not the last one finished. A
+        // slow pass therefore finishes AFTER a fast one that started later, and an unfenced
+        // upsert then writes its older snapshot over the newer row.
+        //
+        // Every column here is part of that snapshot, so the damage is not only a `ran_at` that
+        // walks backwards: the firing count, the delivery count and the sink-failure streak all
+        // revert to what the deployment looked like earlier, and the Reliability panel reports a
+        // driver as stale — or reports a sink as healthy — on evidence that has been superseded.
+        // A streak in particular is a running total, and rewinding it re-arms an alert the newer
+        // pass had already escalated past.
+        //
+        // The fence is the row's own stamp, the same shape the observation upsert uses further
+        // up: the update applies only when the row it is replacing is not already newer. The
+        // loser writes nothing and says nothing — its pass still happened, and the row simply
+        // continues to describe the most recent one.
+        setWhere: sql`${alertPassRuns.ranAt} <= ${rec.now.toISOString()}::timestamptz`,
       });
   } catch { /* see the header: the pass must outlive its own bookkeeping */ }
 }
