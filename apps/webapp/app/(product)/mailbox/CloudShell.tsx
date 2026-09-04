@@ -7,7 +7,8 @@ import { toMailboxFacts } from "./mailbox-facts";
 import { buildToken } from "../../shell/app-update";
 import { startBuildWatch } from "../../shell/build-watch";
 import { COMPOSE_ATTACH_STAGED_SURFACE_BYTES } from "../../components/ComposeAttach";
-import { auth, mailboxes as mailboxApi } from "../../api-client";
+import { mailboxes as mailboxApi } from "../../api-client";
+import { resolveOwnerOutcome } from "../session-outcome";
 import { AboutSection } from "./AboutSection";
 import { AccountLocale } from "./AccountLocale";
 import { AiCreditNotice } from "./AiCreditNotice";
@@ -56,9 +57,16 @@ beginOAuthReturn();
  *
  * `GET /auth/session` answers `{ user: SessionUser, scope }`. Only `scope === "full"`
  * counts — an enrollment-scoped session (the password factor alone) is not allowed
- * to open a mailbox, here for the same reason it is not allowed to at the gate. Every other
- * outcome, including a network failure, is `null`, and `EngineProvider` renders an
- * explanation instead of a shell.
+ * to open a mailbox, here for the same reason it is not allowed to at the gate.
+ *
+ * ── AND A FAILURE TO ASK IS NOT AN ANSWER, WHICH THIS PARAGRAPH USED TO DENY ──────────────
+ *
+ * It read: "Every other outcome, including a network failure, is `null`, and `EngineProvider`
+ * renders an explanation instead of a shell." True of the code and false about the world —
+ * the "explanation" was "You are signed out.", and a network failure is not evidence for it.
+ * `session-outcome.ts` now classifies into three, `EngineProvider` retries the middle one on
+ * a bounded schedule, and only an ANSWERED refusal reaches that screen. The production
+ * request that forced the change is in `AUTH-FLICKER-DIAGNOSIS.md`.
  */
 export function CloudShell({ demo }: { demo: boolean }) {
   /**
@@ -118,18 +126,30 @@ export function CloudShell({ demo }: { demo: boolean }) {
    */
   const firstRun = useCloudFirstRun(demo, devicePairing ? <DevicesSection /> : undefined);
 
-  const resolveOwner = useCallback(async (): Promise<string | null> => {
-    try {
-      const { user, scope } = await auth.session();
-      if (scope !== "full") return null;
-      const accountId = user?.accountId;
-      return typeof accountId === "string" && accountId !== "" ? accountId : null;
-    } catch {
-      // ApiError (401/403/5xx) and a dead network are the same answer: we cannot prove
-      // whose mailbox this is, so we do not open one.
-      return null;
-    }
-  }, []);
+  /**
+   * The shell's confirm, which is now nothing but a pass-through to the shared classifier.
+   *
+   * It used to hold the predicate itself, and the predicate was one line long:
+   *
+   *     } catch { return null; }
+   *
+   * with a comment stating the conflation as the design — "ApiError (401/403/5xx) and a dead
+   * network are the same answer". They are not. `null` was also what an enrollment-scoped
+   * session returned, so a `503 db_busy` and a revoked family reached `EngineProvider` as the
+   * same value and got the same screen: "You are signed out.", over a cookie that answered
+   * `200 scope=full` a moment later. Measured in production 2.7 s before it was reported.
+   *
+   * `session-outcome.ts` is that predicate now, shared with `/login` so the two screens that
+   * ask this question cannot answer it differently — which they demonstrably did, inside the
+   * same ten seconds. Nothing is classified here any more; `EngineProvider` schedules the
+   * retries and decides what to render.
+   *
+   * Not wrapped in `useCallback`: it is already the same function object on every render, which
+   * is what `EngineProvider`'s confirm effect needs of its `resolveOwner` dependency. A
+   * `useCallback` around an imported function would add a hook to say what the import already
+   * guarantees.
+   */
+  const resolveOwner = resolveOwnerOutcome;
 
   /**
    * WHAT STATE ARE THIS ACCOUNT'S MAILBOXES IN? Same seam, same reason.

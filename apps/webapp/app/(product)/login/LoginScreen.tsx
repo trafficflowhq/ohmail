@@ -33,7 +33,7 @@
  * is no "remember me", because that would mean a credential this code could read.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
@@ -43,6 +43,8 @@ import {
   type TwofaChallenge,
 } from "../../api-client";
 import { SELF_HOST_BUILD, serverHello } from "../../hello";
+import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "../../shell/confirm-schedule";
+import { resolveOwnerOutcome } from "../session-outcome";
 
 type Stage = "password" | "twofa";
 
@@ -83,6 +85,27 @@ export function LoginScreen() {
   const configured = apiConfigured();
 
   /**
+   * How the already-signed-in ladder below is stopped from OUTSIDE its own effect.
+   *
+   * The effect's cleanup covers unmount, and that is not enough: the ladder can still be
+   * waiting on a backoff timer when somebody starts typing, and a confirm that lands
+   * mid-ceremony would `router.replace` out from under a password already on the wire. The
+   * first submit calls this; the effect owns what it does.
+   */
+  const cancelBootstrapRef = useRef<(() => void) | null>(null);
+
+  /**
+   * HAS A CEREMONY STARTED? Latched on the first submit and never cleared.
+   *
+   * `cancelBootstrapRef` stops the ladder that is running; this stops the NEXT one. They are
+   * different guarantees and both are needed: the cancel belongs to one effect run, so any
+   * re-run — a `configured` flip, a router identity change — would arm a fresh ladder behind a
+   * password already on the wire. A latch on the component answers "this page is a ceremony
+   * now", which is the fact that actually matters, and it cannot be undone by a re-render.
+   */
+  const submittedRef = useRef(false);
+
+  /**
    * ALREADY SIGNED IN? THEN THIS PAGE IS NOT WHAT YOU WANTED.
    *
    * `/login` is a plain credential page — middleware does not gate it, so a visitor with a
@@ -96,19 +119,58 @@ export function LoginScreen() {
    *
    * `replace`, not `push`: signing in should not leave the login page in the back stack. The
    * fragment rides along so a link to `/login#/settings` lands on Settings.
+   *
+   * ── IT RETRIES, AND THAT IS THE OTHER HALF OF A REPORTED DEFECT ──────────────────────────
+   *
+   * The catch here was empty, and its comment said "no session, or unreachable — the form
+   * below is the right answer". The form IS the right answer for both — but only once the
+   * question has actually been asked. While the shell was rendering "You are signed out." on a single
+   * `503 db_busy` (`AUTH-FLICKER-DIAGNOSIS.md`), a person who pressed Sign in during the same
+   * burst met this effect's own 503 and got the form; a person who pressed it ten seconds
+   * later was forwarded straight into their mailbox. Same session, same minute, two answers —
+   * which reads as the product not knowing whether you are signed in, because it did not.
+   *
+   * So the ladder is the same ladder, from the same module, on the same schedule as the
+   * shell's confirm: `unknown` retries up to {@link CONFIRM_ATTEMPTS}, `none` stops, and a
+   * confirmed `owner` forwards. The FORM RENDERS THROUGHOUT — a form is not a verdict, and
+   * making somebody wait behind a spinner to be told they may type their password would be a
+   * worse trade than the one this fixes. It just stops contradicting the shell.
+   *
+   * Cancelled on unmount AND on the first submit: once a password is in flight, a late
+   * confirm arriving from the ladder must not navigate out from under the ceremony.
    */
   useEffect(() => {
     if (!configured) return;
     let cancelled = false;
-    void (async () => {
-      try {
-        const { scope } = await auth.session();
-        if (!cancelled && scope === "full") router.replace(`/${window.location.hash}`);
-      } catch {
-        /* no session, or unreachable — the form below is the right answer */
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    cancelBootstrapRef.current = () => {
+      cancelled = true;
+      if (timer !== undefined) clearTimeout(timer);
+    };
+    // A ceremony already owns this page — see `submittedRef`. Nothing to confirm.
+    if (submittedRef.current) return;
+    const ask = async (attempt: number): Promise<void> => {
+      // `resolveOwnerOutcome` answers rather than rejects for every network and server
+      // reason; the one thing it rethrows is an unarmed build, which `configured` above has
+      // already excluded. Caught anyway, and read as "stop asking": an unhandled rejection
+      // from a page whose whole job is to render a form would be a worse outcome than a
+      // ladder that ends early.
+      const outcome = await resolveOwnerOutcome().catch(() => null);
+      if (cancelled || outcome === null) return;
+      if (outcome.kind === "owner") {
+        router.replace(`/${window.location.hash}`);
+        return;
       }
-    })();
-    return () => { cancelled = true; };
+      // `none` is the server's own answer that there is nothing to forward to, which is
+      // exactly what this page is for. Stop asking.
+      if (outcome.kind === "none" || attempt >= CONFIRM_ATTEMPTS) return;
+      timer = setTimeout(() => void ask(attempt + 1), nextConfirmDelay(attempt, outcome.retryAfterMs));
+    };
+    void ask(1);
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) clearTimeout(timer);
+    };
   }, [configured, router]);
 
   /**
@@ -144,6 +206,10 @@ export function LoginScreen() {
 
   const submitPassword = (e: React.FormEvent) => {
     e.preventDefault();
+    // The ceremony owns the page from here: stop the ladder that is running, and refuse the
+    // next one. See `cancelBootstrapRef` and `submittedRef`.
+    submittedRef.current = true;
+    cancelBootstrapRef.current?.();
     void run(async () => {
       const result = await auth.login({ email: email.trim(), password });
       setPassword("");

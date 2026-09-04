@@ -58,10 +58,73 @@ export class ApiError extends Error {
     readonly code: string,
     message: string,
     readonly details?: unknown,
+    /**
+     * What the RESPONSE was, as distinct from what it said — see {@link ApiWire}. Defaulted so
+     * every existing construction (and every test's) keeps its exact meaning: a hand-built
+     * `ApiError` did not come off a wire, and `coded: false` is the truthful thing to say
+     * about one.
+     */
+    readonly wire: ApiWire = { coded: false },
   ) {
     super(message);
     this.name = "ApiError";
   }
+}
+
+/**
+ * ═══ FACTS ABOUT THE RESPONSE ITSELF, WHICH `status` AND `code` CANNOT CARRY ═══════════════
+ *
+ * `code` is the server's word. The problem is that a response with no server word gets one
+ * anyway: `attempt()` below fills `code: "internal"` when there is no envelope to read, so
+ * **a platform 502 with an HTML body and our own `internal` 500 arrive at every caller
+ * looking identical**. They are not the same thing. One means a route faulted; the other
+ * means nothing of ours ran — deployment protection, an alias mid-roll, a gateway. The
+ * session classifier has to tell them apart, and `session-refresh.ts` already records the
+ * same distinction for the refresh endpoint ("a 401 with no parseable `error.code` is a
+ * platform interposing itself").
+ *
+ * So `coded` is the one fact that was being thrown away: did this refusal come from OUR
+ * envelope?
+ *
+ * `retryable` and `retryAfterMs` come along because they are on the wire and were also being
+ * dropped. `db_busy` sends both — `retryable: true` and `Retry-After: 5` — and the shell used
+ * to answer that by declaring the session over.
+ *
+ * **`retryable` is carried, NOT used as a verdict predicate.** `sync-scheduler.ts` records
+ * what that costs: `HttpAdapter.rejectionOf` defaults the field to `status >= 500 ||
+ * status === 429`, so `retryable === false` is TRUE of almost every clean refusal and latching
+ * on it caught far more than a revoked session. It is here for backoff and for reporting.
+ */
+export interface ApiWire {
+  /** Did this come from our `{error:{code}}` envelope, rather than from a platform? */
+  coded: boolean;
+  /** The server's own `error.retryable`, when it stated one. Never a verdict — see above. */
+  retryable?: boolean;
+  /** `Retry-After`, in milliseconds, when the header named integer seconds. */
+  retryAfterMs?: number;
+}
+
+/**
+ * `Retry-After` → milliseconds, or `undefined`.
+ *
+ * INTEGER SECONDS ONLY. RFC 9110 allows an HTTP-date as well, and parsing one here would mean
+ * trusting the client clock to subtract it — on a machine whose clock is minutes out (this
+ * repository's own build host is ~two minutes slow) that yields a negative or absurd delay
+ * from a header that was perfectly correct. Every `Retry-After` this API sends is a
+ * delta-seconds integer (`packages/api/src/middleware.ts`), so the date form is refused rather
+ * than guessed at, and the caller falls back to its own backoff.
+ *
+ * `0` and negatives are `undefined` too: "retry immediately" from a server that just refused
+ * is not advice a client should take literally, and a caller seeding a backoff with 0 would
+ * spin. NO upper clamp here — the ceiling belongs to the consumer, which is the one that knows
+ * how long a person is willing to look at a blank screen (`confirm-schedule.ts`).
+ */
+function retryAfterMsOf(res: Response): number | undefined {
+  const raw = res.headers.get("retry-after");
+  if (raw === null || !/^\s*\d+\s*$/.test(raw)) return undefined;
+  const seconds = Number.parseInt(raw.trim(), 10);
+  if (!Number.isSafeInteger(seconds) || seconds <= 0) return undefined;
+  return seconds * 1000;
 }
 
 /** The one network failure that is not a refusal: we never reached the server. */
@@ -164,7 +227,10 @@ async function attempt<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   }
 
   if (!res.ok) {
-    const env = (parsed as { error?: { code?: string; message?: string; details?: unknown } } | undefined)?.error;
+    const env = (parsed as {
+      error?: { code?: string; message?: string; details?: unknown; retryable?: unknown };
+    } | undefined)?.error;
+    const retryAfterMs = retryAfterMsOf(res);
     throw new ApiError(
       res.status,
       env?.code ?? "internal",
@@ -173,6 +239,14 @@ async function attempt<T>(path: string, opts: RequestOptions = {}): Promise<T> {
       // than admitting we do not have one.
       env?.message ?? "Something went wrong. Please try again.",
       env?.details,
+      // `coded` is computed from the ENVELOPE, not from the fallback above — which is the
+      // whole point: `code` is `"internal"` either way, and this is the field that says
+      // whether a server of ours chose that word. See {@link ApiWire}.
+      {
+        coded: typeof env?.code === "string",
+        ...(typeof env?.retryable === "boolean" ? { retryable: env.retryable } : {}),
+        ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+      },
     );
   }
   return parsed as T;

@@ -42,10 +42,24 @@ export const API_BASE: string | null = noCloudBase;
 
 export const apiConfigured: () => boolean = noCloudConfigured;
 
+/**
+ * Facts about a response this build never receives — declared so the shared shell's types
+ * resolve, exactly as `status`/`code`/`details` are. Spelled out rather than imported: the
+ * whole purpose of this module is that `apps/webapp/app/api-client.ts` is not in the desktop
+ * bundle. `test/no-api-client-census.test.ts` compares the two files' export names, so this
+ * interface has to be here the moment the real one has it.
+ */
+export interface ApiWire {
+  coded: boolean;
+  retryable?: boolean;
+  retryAfterMs?: number;
+}
+
 export class ApiError extends Error {
   declare readonly status: number;
   declare readonly code: string;
   declare readonly details?: unknown | undefined;
+  declare readonly wire: ApiWire;
   constructor(..._args: any[]) {
     super();
     refuse();

@@ -27,6 +27,10 @@
     "endedTitle": "You are signed out.",
     "endedBody": "We could not confirm this session, so nothing has been loaded. Sign in again and your mail will be here.",
     "endedMidUse": "This session ended, so nothing new is loading — what is on screen is from before it ended. Sign in to pick up where you left off.",
+    "unconfirmedTitle": "The session check did not finish.",
+    "unconfirmedBody": "ohmail could not be reached, so nothing has been loaded. Your session has not ended — try again.",
+    "unconfirmedBodyWarm": "ohmail could not be reached, so nothing new has loaded. What is on screen is the mail already on this device. Your session has not ended — try again.",
+    "tryAgain": "Try again",
     "signIn": "Sign in",
     "openDemo": "Open the demo"
   },
