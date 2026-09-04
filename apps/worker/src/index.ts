@@ -5537,7 +5537,7 @@ export async function startWorkerWithLock(
     /** The live scheduling numbers, shared by `beat`, `pulse` and `stats`. */
     function counters(): {
       mailboxes: number; expected: number; accounts: number; quarantined: number;
-      degraded: boolean; lastCycleAt: Date | null;
+      degraded: boolean; lastCycleAt: Date | null; aiCircuitOpenSince: Date | null;
     } {
       const connected = runtimes.size;
       return {
@@ -5558,6 +5558,19 @@ export async function startWorkerWithLock(
         // publish. `anyDegradedCause` is the same predicate over the struct that carries the names.
         degraded: anyDegradedCause(degradedCauses()),
         lastCycleAt,
+        // THE CLASSIFIER CIRCUIT'S AGE, published so something outside this process can see it.
+        //
+        // The breaker is in-process by design (one circuit per process, sharing one API key), so
+        // an outage that opens it is invisible to every other host: mail keeps arriving, files by
+        // rules alone, and nothing fails, times out or writes an error row. That is the whole
+        // point of the breaker and it is also why the state has to leave the process — a fault
+        // whose entire symptom is "mail is routed worse" cannot be noticed by a liveness check.
+        //
+        // FIRST open of the current run, not the newest: the cooldown doubles per trip and the
+        // breaker half-opens between them, so a provider down for an hour produces a series of
+        // opens whose latest is always minutes old. `firstOpenedAt` is cleared by the first
+        // success, so a closed circuit publishes null and the rule stops firing on its own.
+        aiCircuitOpenSince: classifierCircuit?.state().firstOpenedAt ?? null,
       };
     }
 
@@ -5616,6 +5629,17 @@ export async function startWorkerWithLock(
         const result = await runAlertPass(db as unknown as Tx, {
           sinks: alertSinks, shards: [], source: "worker", environment,
           deliveryStreak: alertDeliveryStreak,
+          // THE DRIVER'S OWN NAME, which is what makes two of the rules possible.
+          //
+          // `alert_driver_dark` looks at the OTHER driver's row — never its own — because a
+          // process cannot testify to its own liveness. That is the same sentence `shards: []`
+          // one line up encodes for `worker_down`: this pass declines to evaluate the rule about
+          // itself, and the API host's pass is the one that answers it. The pair is now closed at
+          // both levels — the API watches this worker, and this worker watches the API's pass.
+          //
+          // It also names this host in `schema_behind`'s key, so "the worker is ahead of the
+          // database" and "the API is ahead of the database" stay two findings with two fixes.
+          driver: "worker",
         });
         for (const alert of result.firing) {
           log.warn("alert_firing", {

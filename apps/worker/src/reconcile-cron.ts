@@ -252,6 +252,11 @@ export async function runReconcileCron(
       // is null because nothing has synced yet — it is stamped by `stampMailboxSyncNow` below, on the
       // mailbox row, which is what `sync_lag` actually reads.
       mailboxes: 1, expected: 1, accounts: 1, quarantined: 0, degraded: false,
+      // The backstop composes no classifier and therefore no circuit breaker, so it has no
+      // circuit state to publish. `null` is the truth here and is also the healthy value, which
+      // is the right coincidence: this process cannot resolve an `ai_provider_down` the real
+      // worker opened, because it never claims the shard while that worker is alive.
+      aiCircuitOpenSince: null,
       lastCycleAt: null, startedAt: new Date(),
     });
     claimedHeartbeat = true;

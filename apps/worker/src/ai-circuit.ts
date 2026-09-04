@@ -76,6 +76,22 @@ export interface ClassifierCircuitState {
   opens: number;
   /** When the current OPEN state stops withholding the port (epoch ms), or `null`. */
   retryAt: number | null;
+  /**
+   * When the circuit FIRST opened in its current unbroken run of trips, or `null` while it has
+   * never opened since the last success.
+   *
+   * DIFFERENT FROM `retryAt` and from the newest trip, and the difference is the whole reason it
+   * exists. {@link cooldownMs} doubles per consecutive trip and the breaker half-opens between
+   * them, so a provider that has been down for an hour has tripped perhaps six times and the
+   * newest trip is minutes old. Anything reading `retryAt` to answer "how long has the AI been
+   * unavailable" therefore reads minutes, for ever, however long the outage runs.
+   *
+   * Set on the trip that opens a CLOSED circuit and left alone by every re-trip after it;
+   * cleared by {@link close}, which is the one event that means the provider answered. Published
+   * on the worker heartbeat, where it is the only evidence outside this process that mail is
+   * being filed rules-only.
+   */
+  firstOpenedAt: Date | null;
   /** The cooldown the NEXT trip will use. */
   cooldownMs: number;
 }
@@ -126,6 +142,7 @@ export function makeClassifierCircuit(
   let consecutiveFaults = 0;
   let opens = 0;
   let retryAt: number | null = null;
+  let firstOpenedAt: Date | null = null;
   let cooldownMs = baseCooldown;
   /** mailboxId → the attempt this process charged and has not seen delivered or refunded. */
   const openCharges = new Map<string, OpenCharge>();
@@ -146,6 +163,11 @@ export function makeClassifierCircuit(
   function trip(): void {
     opens++;
     retryAt = now() + cooldownMs;
+    // ONLY on the trip that opens a CLOSED circuit. A re-trip after a failed probe is the SAME
+    // outage continuing, and moving the stamp there would reset the age on every cooldown — so
+    // the one figure that says how long mail has been degraded would never exceed one cooldown,
+    // and the ten-minute rule built on it could never fire during the outage it is written for.
+    firstOpenedAt ??= new Date(now());
     log?.error("classifier_circuit_open", {
       consecutiveFaults, opens, cooldownMs, retryAt,
       reason: "consecutive model faults — degrading to RULES-ONLY routing; mail keeps flowing",
@@ -162,6 +184,8 @@ export function makeClassifierCircuit(
     }
     consecutiveFaults = 0;
     retryAt = null;
+    // The provider answered — the run of trips is over and the next open starts a new age.
+    firstOpenedAt = null;
     cooldownMs = baseCooldown;
   }
 
@@ -307,7 +331,10 @@ export function makeClassifierCircuit(
     },
 
     state(): ClassifierCircuitState {
-      return { open: retryAt !== null && now() < retryAt, consecutiveFaults, opens, retryAt, cooldownMs };
+      return {
+        open: retryAt !== null && now() < retryAt,
+        consecutiveFaults, opens, retryAt, cooldownMs, firstOpenedAt,
+      };
     },
   };
 }

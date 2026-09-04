@@ -66,7 +66,8 @@ import { silentLogger, type Logger } from "@trafficflow/core";
 export interface ApiCronTarget {
   /** Closed name, stable across renames of the path — the key an operator greps for. */
   target: "billing_reconcile" | "sessions_reap" | "smtp_size" | "scheduled_send"
-    | "send_reconcile" | "away_responder" | "billing_invoice_reconcile" | "platform_costs";
+    | "send_reconcile" | "away_responder" | "billing_invoice_reconcile" | "platform_costs"
+    | "platform_signals";
   /** The API route, poked as `GET {baseUrl}{route}` with the bearer secret. */
   route: string;
   /** The cadence. Jitter (up to {@link jitterMs}) is ADDED per wait, never subtracted. */
@@ -247,6 +248,41 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
     // goes last, behind every pass that has a customer waiting on it.
     firstDelayMs: 9 * 60 * 1000,
     timeoutMs: 60 * 1000,
+  },
+  {
+    // WHAT THE PLATFORM SERVED (cloud 0030) — the API host's own 5xx rate, which the API host
+    // cannot measure about itself.
+    //
+    // A serverless invocation that returns a 502 and dies writes nothing to the database, so the
+    // only surface that knows is the platform's request log. This clock pokes the route that
+    // reads it; the route lives on the API host because the token that can read that log is an
+    // env var on THAT deployment, and putting the poll here would mean provisioning the platform
+    // credential onto a second host to measure the first.
+    //
+    // EVERY FIVE MINUTES, the finest cadence in this table after the three one-minute senders,
+    // and the number is the rule's arithmetic rather than a preference: the alert reads a
+    // fifteen-minute window, and a window is only worth what its number of independent samples
+    // is. Three five-minute rows mean one missed poll still leaves two windows of evidence. A
+    // coarser clock would not make bigger windows — one poll writes one aligned window — it would
+    // make GAPS, and a gap and a quiet period are indistinguishable once summed.
+    //
+    // A deployment with no platform token writes NOTHING and says so, which the board renders as
+    // "5xx: not measured" — deliberately distinguishable both from a real zero and from a clock
+    // that never fired.
+    target: "platform_signals",
+    route: "/internal/platform-signals/run",
+    everyMs: 5 * 60 * 1000,
+    // Late in the first cycle: it is an observability read with no customer waiting on it, and
+    // its five-minute clock catches up within one cadence anyway. Distinct from `platform_costs`'
+    // nine minutes so a leader takeover does not put two platform-API calls on the same instant.
+    firstDelayMs: 3 * 60 * 1000,
+    // The route walks a paged log endpoint under its own page budget, inside a platform ceiling
+    // of 60 s; this is the caller's mirror of that ceiling, not a hope.
+    timeoutMs: 60 * 1000,
+    // A tenth of the cadence — {@link ApiCronTarget.jitterMs}'s rule. The default five minutes of
+    // jitter on a five-minute clock would be a schedule made entirely of jitter, and the window
+    // alignment that keeps re-polls idempotent would be doing all the work.
+    jitterMs: 30 * 1000,
   },
 ];
 
