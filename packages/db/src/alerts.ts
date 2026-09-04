@@ -3148,6 +3148,23 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
           claimedUntil: sql`case when ${alertState.cls} = 'incident' and ${alertClass(alert)} = 'signal'
             then null else ${alertState.claimedUntil} end`,
         },
+        // ── THE OBSERVATION FENCE: A STALE PASS MAY NOT OVERWRITE A NEWER ONE ────────────
+        //
+        // Two drivers overlap by design, and their evaluations can land out of order — a pass
+        // that read the world at 12:00 can reach this statement after one that read it at 12:01.
+        // Unconditionally, that reorders the world in BOTH directions and each is a real page:
+        //
+        //  · a stale SIGNAL landing after a promotion demotes the row and, by the clauses above,
+        //    clears the notification state and the lease of a live incident — so the promotion
+        //    that had just paged is un-paged and the next pass treats it as first-seen;
+        //  · a stale INCIDENT landing after a demotion resurrects a condition that has cleared
+        //    and pages a human about it.
+        //
+        // `last_seen_at` is this pass's own `now`, so it is exactly the observation's age. The
+        // fence keeps the NEWEST observation and makes an older one a no-op — which is also why
+        // the claim above re-reads `cls` under its lock rather than trusting what it evaluated:
+        // this statement may have declined to apply what that pass saw.
+        setWhere: sql`${alertState.lastSeenAt} <= ${now.toISOString()}::timestamptz`,
       });
   }
 
@@ -3220,12 +3237,25 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
           notifiedAt: alertState.notifiedAt,
           notifiedSignature: alertState.notifiedSignature,
           claimedUntil: alertState.claimedUntil,
+          // THE PERSISTED CLASS, read under the lock — see the check below.
+          cls: alertState.cls,
+          lastSeenAt: alertState.lastSeenAt,
         })
         .from(alertState)
         .where(eq(alertState.alertKey, alert.key))
         .limit(1)
         .for("update");
       if (!cur) return false; // resolved underneath this pass — nothing to page
+      // ── THE CLASS IS RE-READ UNDER THE LOCK, NOT TAKEN FROM THIS PASS'S MEMORY ────────
+      //
+      // The loop above skips signals using `alertClass(alert)` — this pass's OWN evaluation,
+      // computed before the lock was taken. With two drivers overlapping that is a stale read:
+      // pass A evaluates an incident, pass B demotes the same key to a signal and clears its
+      // notification state (which a demotion must do, or a later promotion is suppressed), and
+      // A then enters this transaction, sees `notified_at = null`, and pages for a condition
+      // that has since stopped being one. The row is the authority precisely because it is the
+      // thing both passes serialise on; the in-memory class is only a hint about what to try.
+      if (cur.cls === "signal") return false;
       const heldUntil = cur.claimedUntil ? new Date(cur.claimedUntil as unknown as string) : null;
       if (heldUntil !== null && heldUntil.getTime() > now.getTime()) return false; // in flight
       const notifiedAt = cur.notifiedAt ? new Date(cur.notifiedAt as unknown as string) : null;

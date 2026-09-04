@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { and, sql } from "drizzle-orm";
 import { platformSignals } from "@trafficflow/db/cloud";
 import type { Db } from "./context.js";
 
@@ -557,9 +557,20 @@ export async function runPlatformSignalPass(
   for (let i = 0; i < SIGNAL_BACKFILL_BUCKETS; i++) candidates.push(newestEnd - i * windowMs);
   const oldestStart = candidates[candidates.length - 1]! - windowMs;
   const haveRows = await db
+    // ── ONLY A FULLY COUNTED ROW COUNTS AS HELD ────────────────────────────────────────
+    //
+    // A walk that exhausts its budget after reading at least one page persists the bucket with
+    // `truncated: true`. The rule then EXCLUDES that row from its arithmetic — a sampled count
+    // cannot be divided into a rate — so a bucket that is held-but-excluded is a permanent hole:
+    // never retried because it is present, never counted because it is sampled. It ages out of
+    // the window without ever having contributed. The two halves were each correct and their
+    // conjunction was not, which is why this filter belongs next to the exclusion it mirrors.
     .select({ project: platformSignals.project, windowStart: platformSignals.windowStart })
     .from(platformSignals)
-    .where(sql`${platformSignals.windowStart} >= ${new Date(oldestStart).toISOString()}::timestamptz`);
+    .where(and(
+      sql`${platformSignals.windowStart} >= ${new Date(oldestStart).toISOString()}::timestamptz`,
+      sql`not ${platformSignals.truncated}`,
+    ));
   const held = new Set(
     haveRows.map((r) => `${r.project}@${new Date(r.windowStart as unknown as string).getTime()}`),
   );
