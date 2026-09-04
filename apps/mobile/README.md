@@ -324,16 +324,21 @@ generator, today's source produced ~45 000 pure-white pixels; `assets/icon-ios.p
 channel at all — produces none, and every opaque pixel is unchanged. The rounding
 is then applied once, by the platform, which is the only place it belongs.
 
-**The launch screen is not wired up on either platform, and `app.json` looks as
-though it is.** The `splash` block there is the pre-SDK-52 form: those keys now
-belong to the `expo-splash-screen` config plugin, which this app does not depend on,
-so nothing reads them. A regenerated Android project shows what actually ships —
-`splashscreen_background` is `#FFFFFF` rather than the configured `#fbfaf9`, the
-five `splashscreen_logo.png` densities are Expo's grey placeholder rather than the
-product mark, and there is no `values-night/` at all, so the dark variant is inert
-too. Fixing it is adding the dependency and moving the block into the plugin's
-config; it is called out here rather than papered over, because a configuration
-that looks applied is worse than one that is visibly absent.
+**The launch screen renders the configured colour and mark**, and there is one
+place it is configured. It comes from the `expo-splash-screen` config plugin, whose
+entry in `app.json` carries its properties outright: the plugin is a no-op when
+called without them, so a bare entry would look configured and change nothing.
+`imageWidth` is 200 rather than the default 100, which puts the visible mark at
+118dp — the mark occupies 58% of its own transparent canvas.
+
+The older top-level `splash` block is gone. Those keys are the pre-SDK-52 form of
+the same settings, nothing reads them any more, and leaving them beside the plugin
+entry left two sources for one setting with nothing to say which the build honours.
+Deleting them changes no generated file: a clean `expo prebuild --platform android`
+produces the same tree, sha256 for sha256, before and after. What that tree carries
+is the plugin's own output — `splashscreen_background` is `#fbfaf9` in `values/` and
+`#0e0b08` in `values-night/`, and `splashscreen_logo.png` is the product mark across
+ten buckets, five densities and five night.
 
 ### Two phone-only decisions the desktop never had to make
 
