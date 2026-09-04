@@ -3857,8 +3857,23 @@ export async function startWorkerWithLock(
            * pass's reconciler, which was always going to run anyway.
            *
            * Both halves live here, and both are bounded inside `request-drain.ts`
-           * (`REQUEST_DRAIN_MAX_PER_CYCLE`, `REQUEST_DRAIN_TIME_BUDGET_MS`). A failure in either
-           * never blocks the cycle: the mail is already synced by the time this runs.
+           * (`REQUEST_DRAIN_MAX_PER_CYCLE`, `REQUEST_DRAIN_TIME_BUDGET_MS`). A failure in either is
+           * caught and logged: the mail is already synced by the time this runs, so neither can
+           * cost this pass anything.
+           *
+           * ── AND THE CONVERSE IS TRUE, WHICH IS THE COST OF THIS ORDERING ────────────────────
+           *
+           * A `runSyncCycle` that THROWS — a storage-cap refusal, an IMAP fault, a leader fence —
+           * skips this block entirely, because it escapes to the per-mailbox catch below. So a
+           * mailbox with a PERSISTENT sync fault drains nothing for as long as the fault lasts,
+           * and a reader's decisions on it expire reporting that nobody took them while an
+           * organizer was live and connected throughout.
+           *
+           * Recorded rather than fixed here, deliberately: the fix is a restructure of this
+           * function's control flow — the drain has to run on a path that the sync failure does
+           * not leave, without also running the success bookkeeping — and doing that at the tail
+           * of a slice, in the loop that decides whether a customer's mail moves, is how the next
+           * incident gets written. It needs its own change with its own test.
            */
           if (!organize) {
             try {

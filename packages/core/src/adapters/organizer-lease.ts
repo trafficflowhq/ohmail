@@ -1586,6 +1586,22 @@ export function makeLeasePeekIo(client: LeaseImapClient, toServerPath: (canonica
         for await (const m of client.fetch("1:*", { uid: true, headers: true }, { uid: false })) {
           if (!m.headers) continue;
           out.push({ ref: m.uid, raw: m.headers.toString("utf8") });
+          // ── AND THE READ ITSELF IS BOUNDED ────────────────────────────────────────────────
+          //
+          // `REQUEST_DRAIN_MAX_PER_CYCLE` bounds how many records are APPLIED. It does not bound
+          // how many are fetched, retained or header-parsed, and this loop had no ceiling at all —
+          // so a folder anyone with APPEND rights can write to decided how much work every cycle
+          // did, on every host, for ever. At a large enough N the FETCH itself times out, and the
+          // organizer lease then reads that as "the lease could not be read", which is exempted
+          // from the failure counter and retried indefinitely: the mailbox's MAIL stops syncing,
+          // not just its request channel.
+          //
+          // The cap is generous against every legitimate population — a claim or two, an
+          // acknowledgement per decision in flight, and the decisions themselves — so reaching it
+          // means something is wrong rather than something is busy. Nothing is deleted on the way
+          // past: this folder is the customer's, and a message this build does not recognise is
+          // not its to destroy.
+          if (out.length >= META_RECORDS_MAX_PER_FETCH) break;
         }
         return out;
       } finally {
@@ -3222,6 +3238,16 @@ export interface RawMetaMessage {
   raw: string;
 }
 
+/**
+ * THE CEILING ON ONE FOLDER READ.
+ *
+ * Every legitimate population of `ohmail/_meta` is tiny: one claim per install, one acknowledgement
+ * per decision still in flight, and the decisions themselves — which the drain removes as it
+ * handles them. This is far above all of that, because its job is to stop an ATTACKER choosing how
+ * much work a cycle does, not to be tight.
+ */
+export const META_RECORDS_MAX_PER_FETCH = 500;
+
 /** The shared read. One `FETCH 1:*` of the folder's headers, unfiltered — the parsers sort it out. */
 export interface MetaRecordsIo {
   listMetaRecords(): Promise<RawMetaMessage[]>;
@@ -3315,6 +3341,22 @@ function makeMetaRecordsList(
         for await (const m of client.fetch("1:*", { uid: true, headers: true }, { uid: false })) {
           if (!m.headers) continue;
           out.push({ ref: m.uid, raw: m.headers.toString("utf8") });
+          // ── AND THE READ ITSELF IS BOUNDED ────────────────────────────────────────────────
+          //
+          // `REQUEST_DRAIN_MAX_PER_CYCLE` bounds how many records are APPLIED. It does not bound
+          // how many are fetched, retained or header-parsed, and this loop had no ceiling at all —
+          // so a folder anyone with APPEND rights can write to decided how much work every cycle
+          // did, on every host, for ever. At a large enough N the FETCH itself times out, and the
+          // organizer lease then reads that as "the lease could not be read", which is exempted
+          // from the failure counter and retried indefinitely: the mailbox's MAIL stops syncing,
+          // not just its request channel.
+          //
+          // The cap is generous against every legitimate population — a claim or two, an
+          // acknowledgement per decision in flight, and the decisions themselves — so reaching it
+          // means something is wrong rather than something is busy. Nothing is deleted on the way
+          // past: this folder is the customer's, and a message this build does not recognise is
+          // not its to destroy.
+          if (out.length >= META_RECORDS_MAX_PER_FETCH) break;
         }
         return out;
       } finally {
