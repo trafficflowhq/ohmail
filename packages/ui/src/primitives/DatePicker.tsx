@@ -247,8 +247,14 @@ export function DatePicker({
   const showMonth = (n: number) => {
     const first = addMonths({ y: view.y, m: view.m, d: 1 }, n);
     setView({ y: first.y, m: first.m });
-    // keep the cursor in the shown month so the tab stop is never on a hidden cell
-    setCursor(addMonths(cursor, n));
+    /* KEEP THE CURSOR IN THE MONTH BEING SHOWN. Stepping it by the same `n` is right only while
+       it sits in the month we are leaving; a cursor on a NEIGHBOUR's cell (they are rendered, and
+       focusable) would land two months from the new view, where no cell carries it — and then no
+       cell has `tabIndex=0` at all and Tab skips the whole calendar. */
+    setCursor((cur) => {
+      const moved = addMonths(cur, n);
+      return moved.y === first.y && moved.m === first.m ? moved : first;
+    });
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -333,12 +339,22 @@ export function DatePicker({
                   aria-label={label}
                   tabIndex={isCursor ? 0 : -1}
                   onClick={() => { if (ok) onPick(key); }}
-                  /* `move`, not a bare `setCursor`: a cell from a neighbouring month is
-                     `aria-disabled` rather than `disabled`, so it can still take focus — and a
-                     cursor left outside the shown month would then be stepped by `showMonth`
-                     into a month the grid is not rendering, leaving NO cell with `tabIndex=0`
-                     and the whole calendar unreachable by Tab. */
-                  onFocus={() => { if (!isCursor) move(d); }}
+                  /**
+                   * `setCursor`, NOT `move` — and this is the second time this line has been
+                   * wrong, in opposite directions.
+                   *
+                   * It cannot change the shown MONTH, because focus arrives before the press
+                   * completes: a real pointer press is `mousedown` → focus → `mouseup` → `click`.
+                   * Moving the view on focus unmounted the very cell being pressed, so a
+                   * neighbouring month's day could be focused and the month would change, but
+                   * `onPick` never ran — the day was unselectable by mouse, while a synthetic
+                   * `click` with no focus step passed happily.
+                   *
+                   * The tab-stop problem that made this `move` is instead solved where it
+                   * belongs, in `showMonth`: a cursor outside the shown month is clamped into it
+                   * when the month steps, so there is always exactly one cell with `tabIndex=0`.
+                   */
+                  onFocus={() => { if (!isCursor) setCursor(d); }}
                 >
                   {d.d}
                 </button>
