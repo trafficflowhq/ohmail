@@ -497,6 +497,9 @@ export async function runReconcileCron(
       // no worker leads, and it stands down the moment one does. A cold read per sweep is cheaper
       // to reason about than a memo whose whole safety argument is about who holds the mailbox.
     };
+    /* The sweep's failure is HELD rather than propagated, for exactly as long as it takes the
+     * request drain below to run — see that block, and the fence note inside it. */
+    let cycleError: unknown = null;
     try {
       // The hold is EVALUATED from the current facts before each pass — never cached (see
       // `importDecisionOpenNow`): an answer landing between the preflight and the first pass,
@@ -511,7 +514,11 @@ export async function runReconcileCron(
       // actually gone rather than to be served from the receipt.
       await permit.check();
       await runSyncCycle({ ...deps, importDecisionOpen: await profileSync.importDecisionOpenNow() });
+    } catch (err) {
+      cycleError = err;
+    }
 
+    {
       // ── THE REQUEST DRAIN, ONCE PER SWEEP, AFTER THE CYCLES (0.14.1) ─────────────────────
       //
       // This pass IS an organizer path (typed `role: "organizer"` above, reached only past the
@@ -524,21 +531,40 @@ export async function runReconcileCron(
       //
       // ONE drain per sweep rather than one per cycle: this pass runs its two cycles back to back,
       // so nothing new can reach the folder in the gap between them.
-      try {
-        await applyMetaRequests(
-          db, {
-          mailboxId, accountId: row.accountId, adapter,
-          requestKey: deriveRequestKey({ auth: { user: config.imap.user, pass: config.imap.pass }, address: row.address }),
-        }, new Date(),
-          (event, detail) => log.info(cronEvent("reconcile", event), { mailboxId, accountId: row.accountId, ...detail }),
-        );
-      } catch (err) {
-        log.warn(cronEvent("reconcile", "organizer_requests_drain_failed"), {
-          mailboxId, accountId: row.accountId, err,
-          reason: "this sweep organizes mail regardless; the next sweep or the always-on worker drains it",
-        });
+      //
+      // ── AND IT RUNS WHEN A CYCLE FAILED, WHICH IS WHY THE FAILURE IS HELD ABOVE ──────────
+      //
+      // A cycle that THREW used to escape straight to the arms below, skipping this drain, so a
+      // mailbox with a persistent sync fault drained nothing for as long as the fault lasted and a
+      // reader's decisions on it expired reporting that nobody took them.
+      //
+      // TWO failures are excluded, and they are the two that mean this pass no longer has standing
+      // to write to this mailbox at all: `OrganizerStandDownError` (somebody else organizes it now)
+      // and `LeaderFencedError` (this instance no longer leads its shard). Draining on either would
+      // be a write into a mailbox that has just been taken away — the very thing the permit and the
+      // fence exist to stop. Both are handed on unchanged to the arms below.
+      const mayStillWrite = !(cycleError instanceof OrganizerStandDownError)
+        && !(cycleError instanceof LeaderFencedError);
+      if (mayStillWrite) {
+        try {
+          await applyMetaRequests(
+            db, {
+              mailboxId, accountId: row.accountId, adapter,
+              requestKey: deriveRequestKey({ auth: { user: config.imap.user, pass: config.imap.pass }, address: row.address }),
+            }, new Date(),
+            (event, detail) => log.info(cronEvent("reconcile", event), { mailboxId, accountId: row.accountId, ...detail }),
+          );
+        } catch (err) {
+          log.warn(cronEvent("reconcile", "organizer_requests_drain_failed"), {
+            mailboxId, accountId: row.accountId, err,
+            reason: "this sweep organizes mail regardless; the next sweep or the always-on worker drains it",
+          });
+        }
       }
-    } catch (err) {
+    }
+
+    if (cycleError !== null) {
+      const err = cycleError;
       // THE ORGANIZER handover, from any of the three `permit.check()` calls above. Same shape as
       // the leader handover below and for the same reason — it is the mechanism working, not a
       // fault — but a DIFFERENT question, so it is answered by the same `standDown` the acquisition

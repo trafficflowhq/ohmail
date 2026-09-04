@@ -3806,7 +3806,13 @@ export async function startWorkerWithLock(
           // one cycle and the next without touching `sync.ts`, `pipeline.ts` or `SyncDeps`.
           /** When THIS visit's scan began — the eager stamp backdates to it (same rule as the pass). */
           const visitStartedMs = Date.now();
-          const { hasBacklog, owesFiling } = await runSyncCycle({
+
+          /* THE MAIL CYCLE'S FAILURE IS HELD, NOT PROPAGATED — for exactly as long as it takes the
+           * request channel below to run. See that block for why. */
+          let cycleError: unknown = null;
+          let syncOutcome: { hasBacklog: boolean; owesFiling: boolean } | null = null;
+          try {
+            syncOutcome = await runSyncCycle({
             ...rt.deps, ...aiFor(rt.mailboxId, rt.accountId), ...(await screeningFor(rt.accountId)),
             // Mail 0083. THE ROLE THE GATE JUST ANSWERED, spread over the attach-time deps so a
             // flip applies to THIS pass rather than to the one after the next re-attach. Placed
@@ -3841,9 +3847,22 @@ export async function startWorkerWithLock(
              * exactly what the reader model asks for; a reader that FETCHES a document it may
              * not act on is not.
              */
-            importDecisionOpen: rt.role === "organizer" ? await rt.profile.importDecisionOpenNow() : false,
-          });
-          rt.failures = 0;
+              importDecisionOpen: rt.role === "organizer" ? await rt.profile.importDecisionOpenNow() : false,
+            });
+          } catch (err) {
+            cycleError = err;
+          }
+
+          /* ── A FENCE IS NOT A FAULT, AND IT MUST NOT REACH THE CHANNEL ──────────────────────
+           *
+           * `LeaderFencedError` does not mean this cycle went wrong; it means a mail-bearing write
+           * was REFUSED because this instance no longer leads its shard. The successor is already
+           * syncing this mailbox. Draining on it would be this process writing into a mailbox it
+           * has just been told it no longer has standing to write to — appending an acknowledgement
+           * and expunging records out from under whoever took over. So the channel runs for an
+           * ORDINARY fault and never for this one, and the arms below still see exactly the error
+           * they saw before. */
+          const cycleMayStillWrite = !(cycleError instanceof LeaderFencedError);
 
           /* ══ THE REQUEST CHANNEL, AFTER THE MAIL — AND THE ORDER IS THE SECURITY PROPERTY ══
            *
@@ -3856,26 +3875,37 @@ export async function startWorkerWithLock(
            * perceive, and the `folder_state` rows the drain writes are picked up by the NEXT
            * pass's reconciler, which was always going to run anyway.
            *
-           * Both halves live here, and both are bounded inside `request-drain.ts`
-           * (`REQUEST_DRAIN_MAX_PER_CYCLE`, `REQUEST_DRAIN_TIME_BUDGET_MS`). A failure in either is
-           * caught and logged: the mail is already synced by the time this runs, so neither can
+           * Both halves are bounded inside `request-drain.ts` (`REQUEST_DRAIN_MAX_PER_CYCLE`,
+           * `REQUEST_DRAIN_TIME_BUDGET_MS`), so this needs no budget of its own. A failure in
+           * either is caught and logged: the mail is done by the time this runs, so neither can
            * cost this pass anything.
            *
-           * ── AND THE CONVERSE IS TRUE, WHICH IS THE COST OF THIS ORDERING ────────────────────
+           * ── AND IT RUNS WHEN THE CYCLE FAILED, WHICH IS WHY THE FAILURE IS HELD ABOVE ───────
            *
-           * A `runSyncCycle` that THROWS — a storage-cap refusal, an IMAP fault, a leader fence —
-           * skips this block entirely, because it escapes to the per-mailbox catch below. So a
-           * mailbox with a PERSISTENT sync fault drains nothing for as long as the fault lasts,
-           * and a reader's decisions on it expire reporting that nobody took them while an
-           * organizer was live and connected throughout.
+           * A `runSyncCycle` that THROWS — a storage-cap refusal, an IMAP fault, a classifier
+           * outage — used to escape straight to the per-mailbox catch below, skipping this block
+           * (a leader fence throws here too and is the one case deliberately left out, for the
+           * reason stated just above this comment). So a
+           * mailbox with a PERSISTENT sync fault drained nothing for as long as the fault lasted,
+           * and a reader's decisions on it expired reporting that NOBODY TOOK THEM while an
+           * organizer was live and connected throughout. That is the worst of the available
+           * outcomes, because the person is told something false rather than told to wait.
            *
-           * Recorded rather than fixed here, deliberately: the fix is a restructure of this
-           * function's control flow — the drain has to run on a path that the sync failure does
-           * not leave, without also running the success bookkeeping — and doing that at the tail
-           * of a slice, in the loop that decides whether a customer's mail moves, is how the next
-           * incident gets written. It needs its own change with its own test.
-           */
-          if (!organize) {
+           * So the throw is held in `cycleError`, this block runs, and the failure is rethrown
+           * immediately below with nothing else having happened — the failure counter, the
+           * backoff and the quarantine all see exactly what they saw before. Held rather than
+           * swallowed, and rethrown before the success bookkeeping rather than after: draining is
+           * not a claim that the cycle succeeded.
+           *
+           * ONE call site, on purpose. A second one — a copy of this block inside the catch — is
+           * how a decision gets applied twice, and the drain's idempotency key is a safety net
+           * rather than a licence to spend it. It is also what keeps the host census's textual
+           * "drains after the cycle" assertion meaning what it says. */
+          if (!cycleMayStillWrite) {
+            /* Nothing, deliberately, and it is not a silent skip: the fence arm below logs the
+             * handover with its own sentence, and the successor drains this mailbox on its next
+             * pass. */
+          } else if (!organize) {
             try {
               await driveOutstandingRequests(
                 db, { mailboxId: rt.mailboxId, accountId: rt.accountId, adapter: rt.adapter, requestKey: rt.requestKey },
@@ -3909,6 +3939,15 @@ export async function startWorkerWithLock(
               });
             }
           }
+
+          // The mail cycle's own failure, now that the channel has had its turn. Everything below
+          // this line is the bookkeeping of a cycle that COMPLETED and must not run for one that
+          // did not.
+          if (cycleError !== null) throw cycleError;
+          // Non-null on every path that reaches here: `syncOutcome` is assigned unless the cycle
+          // threw, and a cycle that threw was rethrown one line up.
+          const { hasBacklog, owesFiling } = syncOutcome as { hasBacklog: boolean; owesFiling: boolean };
+          rt.failures = 0;
 
           // …and the shard-wide database condition, on the ONLY evidence strong enough to end it:
           // a cycle that completed wrote mail, so the database is accepting writes again. See

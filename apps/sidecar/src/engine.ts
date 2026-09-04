@@ -3839,7 +3839,15 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             // written above and the field is one the logger already keeps.
             log("organizer_requests_note", { mailboxId: mb.id, outcome: event });
           };
-          const cycles = await drain(maxCycles);
+          /* The mail pass's failure is HELD rather than propagated, for exactly as long as it
+           * takes the request channel below to run. See that block. */
+          let cycleError: unknown = null;
+          let cycles = 0;
+          try {
+            cycles = await drain(maxCycles);
+          } catch (err) {
+            cycleError = err;
+          }
 
           // ── THE REQUEST CHANNEL, AFTER THE MAIL ──────────────────────────────────────────
           //
@@ -3848,6 +3856,26 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // cycles would let a flood of records delay the pass that reads somebody's mail. A
           // queued decision landing one pass later is not a regression anybody can perceive; mail
           // arriving late is. The drain is bounded on both axes inside `request-drain.ts`.
+          //
+          // ── AND IT RUNS WHEN THE MAIL PASS FAILED, WHICH IS WHY THE FAILURE IS HELD ABOVE ──
+          //
+          // A cycle that THROWS used to escape this block entirely, so a mailbox with a
+          // PERSISTENT sync fault drained nothing for as long as the fault lasted — and a
+          // decision made on another install expired reporting that NOBODY TOOK IT, while an
+          // organizer was live and connected the whole time. Telling somebody their decision was
+          // dropped when it was merely never looked at is worse than telling them to wait.
+          //
+          // So the throw is held, this block runs, and the failure is rethrown below with nothing
+          // else having happened. One call site, deliberately: a second copy inside a catch is how
+          // a decision gets applied twice.
+          //
+          // NO FAILURE IS EXCLUDED HERE, and the hosted twin excludes one — which is a difference
+          // in the doors rather than an oversight. There, a pass can fail because the instance lost
+          // the shard it leads, and draining after that would be a write into a mailbox another
+          // instance has already taken over. This door leads nothing and shares nothing: one
+          // process, one store, one mailbox. The gate above has already decided whether this
+          // install may write to this mailbox at all, and a cycle that throws does not change that
+          // answer.
           try {
             if (organizing) {
               await applyMetaRequests(
@@ -3879,6 +3907,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               reason: "this pass reads or organizes mail regardless; the next pass tries again",
             });
           }
+
+          // The mail pass's own failure, now that the channel has had its turn. Everything below
+          // is the tail of a pass that COMPLETED and must not run for one that did not.
+          if (cycleError !== null) throw cycleError;
+
           // ── THE PORTABLE PROFILE'S WRITE-BEHIND TICK, BEHIND THE GATE IT RIDES ────────────
           //
           // After the drain and not inside it: the tick reads the store the cycles just wrote, so
