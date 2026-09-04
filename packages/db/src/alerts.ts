@@ -598,6 +598,13 @@ export type AlertDriver = "worker" | "api";
  */
 export const SCOPED_ALERT_KINDS: ReadonlySet<string> = new Set<AlertKind>([
   "worker_down", "worker_degraded", "ai_provider_down", "schema_behind", "alert_driver_dark",
+  // `imap_admission_refused` is scoped by ROLE rather than by shard or driver name, and it is
+  // the one that had to be measured rather than reasoned about: the counter lives in
+  // `auth_throttle`, which `ohmail_admin` deliberately does NOT hold — that table is on the
+  // blind role's excluded list on purpose. So the API arm's read raises 42501, the rule swallows
+  // it and emits no key, and before this entry the API pass then DELETED the worker's row on
+  // every pass. Same flap as the four above, arriving through a grant rather than a signature.
+  "imap_admission_refused",
 ]);
 
 function secondsBetween(now: Date, then: Date | null): number | null {
@@ -625,11 +632,102 @@ export function humanAge(seconds: number | null): string {
  * the surface an operator looks at and the condition that pages them cannot drift apart —
  * and a console that could write would be a console that could silence a pager.
  */
+/**
+ * The column whose ABSENCE means this database is older than the bundle this host ships.
+ *
+ * `alert_state.cls` is chosen deliberately over any other: it is added by the newest cloud
+ * migration AND it is a column {@link runAlertPass} itself writes on every observation, so if it
+ * is missing the alert pass cannot function at all. A marker that the pass did not depend on
+ * could go missing without the pass caring, which would make this rule report a fault that had
+ * no consequence.
+ */
+const SCHEMA_BEHIND_MARKER = { table: "alert_state", column: "cls" } as const;
+
+/**
+ * IS THIS DATABASE OLDER THAN THE BUNDLE WE ARE RUNNING? — the alert pass's preflight.
+ *
+ * ── WHY `information_schema` AND NOT THE MIGRATOR'S TABLE ─────────────────────────────────
+ *
+ * The first cut compared `max(created_at)` in `drizzle_cloud.__drizzle_migrations` against the
+ * journal head this bundle ships. It could never fire in production, and the reason is a grant:
+ * `harden-staff-role.sql` revokes everything and grants back `public` and `admin` ONLY, and the
+ * runtime role has `public` alone — so NEITHER driver holds USAGE on the migrator's schema. Both
+ * raised 42501, the rule's own catch swallowed it as "a handle without USAGE costs exactly this
+ * rule", and the rule was decoration on every hardened deployment. Widening a deliberately narrow
+ * role to fix an observability read would have been the wrong trade.
+ *
+ * `information_schema.columns` needs no grant: it is readable by everyone and shows each role the
+ * objects it already has privileges on. Both drivers hold grants on `alert_state`, so both can
+ * see whether its marker column exists — which is the same mechanism `health-cloud.ts` already
+ * uses to answer `503 schema_incomplete`, now reused rather than reinvented.
+ *
+ * ── AND WHY IT IS A PREFLIGHT ─────────────────────────────────────────────────────────────
+ *
+ * Every other rule reads columns this bundle's migration adds. Against an older database those
+ * SELECTs raise 42703 and take the whole pass down before any rule can say why — so the one
+ * finding that explains the outage was structurally the one finding that could not be produced.
+ * This runs first, on `information_schema` alone, and when it fires the caller stops: there is
+ * nothing else this bundle can honestly read from a database it does not match.
+ */
+async function schemaBehindAlert(db: Tx, opts: EvaluateOptions): Promise<Alert | null> {
+  if (!opts.driver) return null;
+  const raw = await db.execute(
+    sql`select count(*)::int as n from information_schema.columns
+        where table_schema = 'public'
+          and table_name = ${SCHEMA_BEHIND_MARKER.table}
+          and column_name = ${SCHEMA_BEHIND_MARKER.column}`,
+  ) as unknown;
+  // BOTH RESULT SHAPES: `postgres.js` returns the rows AS the array, PGlite returns `{ rows }`.
+  // Destructuring the object form throws "is not iterable", which would take down the very pass
+  // this preflight exists to keep alive. Measured once already on this file's other raw query.
+  const rows = (Array.isArray(raw) ? raw : (raw as { rows?: unknown })?.rows ?? []) as
+    Array<{ n: number | string }>;
+  const present = Number(rows[0]?.n ?? 0) > 0;
+  if (present) return null;
+  return {
+    key: `schema_behind:${opts.driver}`,
+    kind: "schema_behind",
+    severity: "critical",
+    title: `The ${opts.driver} host is ahead of the database schema`,
+    detail:
+      `This ${opts.driver} deployment expects \`${SCHEMA_BEHIND_MARKER.table}.` +
+      `${SCHEMA_BEHIND_MARKER.column}\` and the database does not have it, so this host is ` +
+      `running against a schema older than the bundle it ships. Code that reads a column this ` +
+      `database does not have fails — loudly on a request path, and SILENTLY on any pass that ` +
+      `swallows its own errors, including this one. No other alert rule can be evaluated until ` +
+      `this is fixed. Run the cloud migrations, then re-run scripts/harden-staff-role.sql for ` +
+      `any grant the new migration widened.`,
+    count: 1,
+    oldestSeconds: null,
+    cls: "incident",
+    affectedAccounts: null,
+    fixHref: "/reliability",
+    signature: `behind|${SCHEMA_BEHIND_MARKER.table}.${SCHEMA_BEHIND_MARKER.column}`,
+  };
+}
+
+/**
+ * True when this pass found the database older than the bundle — i.e. the preflight fired and
+ * nothing else could be read. {@link runAlertPass} uses it to DELIVER without persisting, because
+ * `alert_state` is precisely one of the tables the older schema lacks columns for.
+ */
+export function isSchemaBehind(alerts: readonly Alert[]): boolean {
+  return alerts.length === 1 && alerts[0]!.kind === "schema_behind";
+}
+
 export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promise<Alert[]> {
   const now = opts.now ?? new Date();
   const t: AlertThresholds = { ...DEFAULT_ALERT_THRESHOLDS, ...opts.thresholds };
   const shards = opts.shards ?? [0];
   const alerts: Alert[] = [];
+
+  // ── PREFLIGHT, BEFORE ANY READ THAT THIS BUNDLE'S MIGRATION MADE POSSIBLE ─────────────
+  //
+  // If the database is older than this bundle, every rule below raises 42703 on a column that
+  // does not exist yet, and the pass dies without saying why. Answer that one question first,
+  // out of `information_schema`, and return it ALONE — there is nothing else worth reading.
+  const behind = await schemaBehindAlert(db, opts);
+  if (behind) return [behind];
 
   // ── 1. no leader heartbeat > threshold ────────────────────────────────────────────────
   //
@@ -1751,69 +1849,13 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
     });
   }
 
-  // ── 12. THIS HOST is running against a database older than the journal it ships ────────
+  // ── 12. (MOVED) the host-vs-database check is a PREFLIGHT — see `schemaBehindAlert` ────
   //
-  // HOST-LOCAL by construction, and the key says which host answered, because "the worker is
-  // ahead of the database" and "the API is ahead of the database" are two different deploys gone
-  // wrong with two different fixes. Both drivers evaluate it about THEMSELVES — this is the one
-  // rule in the file where the two arms are supposed to disagree, and a shared key would have
-  // each pass resolve the other's finding on every cadence.
-  //
-  // WHAT IT CATCHES: the deploy order in the runbook is migrations first, then the hosts. Run it
-  // backwards — or let one host's deploy fail while the other's lands — and the new host reads
-  // columns that do not exist. Some of those failures are loud (42703 on every request); the
-  // dangerous ones are quiet, because a column read through a defensive path or a table read by a
-  // pass that swallows its own errors degrades silently and looks like a feature nobody uses.
-  //
-  // The comparison is `max(created_at)` in the migrator's own bookkeeping table against
-  // {@link CLOUD_JOURNAL_HEAD_WHEN}, the constant this bundle ships with — which is what makes
-  // the answer local to the host: an API deployment carrying an older bundle carries an older
-  // constant, and correctly says nothing.
-  //
-  // A DATABASE AHEAD OF THE HOST IS NOT THIS RULE'S SUBJECT. That is the normal, safe window
-  // during a deploy (migrations land first, by design), and every migration in this journal is
-  // additive precisely so a host at N-1 keeps working against a database at N.
-  if (opts.driver) {
-    try {
-      // BOTH RESULT SHAPES, because the two drivers disagree and only one of them is in the unit
-      // suite. `postgres.js` returns the rows AS the array; PGlite returns `{ rows }`. Destructuring
-      // the object form throws "is not iterable" — which this catch would then have to decide
-      // about, and it is not a privilege error, so it would propagate and take the WHOLE alert pass
-      // down. Measured: it 503'd every `/internal/alerts` call in the API suite.
-      const raw = await db.execute(
-        sql`select max(created_at)::text as head from drizzle_cloud.__drizzle_migrations`,
-      ) as unknown;
-      const rows = (Array.isArray(raw) ? raw : (raw as { rows?: unknown })?.rows ?? []) as
-        Array<{ head: string | null }>;
-      const applied = rows[0];
-      const head = applied?.head == null ? null : Number(applied.head);
-      if (head !== null && Number.isFinite(head) && head < CLOUD_JOURNAL_HEAD_WHEN) {
-        alerts.push({
-          key: `schema_behind:${opts.driver}`,
-          kind: "schema_behind",
-          severity: "critical",
-          title: `The ${opts.driver} host is ahead of the database schema`,
-          detail:
-            `This ${opts.driver} deployment ships cloud journal head ${CLOUD_JOURNAL_HEAD_WHEN} ` +
-            `and the database's newest applied migration is ${head}. Code that reads a column ` +
-            `this database does not have fails — loudly on a request path, and SILENTLY on any ` +
-            `pass that swallows its own errors. Run the cloud migrations, then re-run ` +
-            `scripts/harden-staff-role.sql for any grant the new migration widened.`,
-          count: 1,
-          oldestSeconds: null,
-          cls: "incident",
-          affectedAccounts: null,
-          fixHref: "/reliability",
-          signature: `behind|${head}|${CLOUD_JOURNAL_HEAD_WHEN}`,
-        });
-      }
-    } catch (err) {
-      // A handle without USAGE on the migrator's schema costs exactly this rule. Everything else
-      // stays fatal, on this file's standing rule: a swallowed real fault is a silenced pager.
-      const code = (err as { code?: string })?.code ?? (err as { cause?: { code?: string } })?.cause?.code;
-      if (code !== "42501" && code !== "3F000" && code !== "42P01") throw err;
-    }
-  }
+  // It used to sit here, in rule order, and that made it unreachable in exactly the case it
+  // exists to report: by the time control arrived, rule 1 had already SELECTED columns this
+  // migration adds, so against an older database the pass threw before this line ever ran.
+  // A rule that reports "the database is behind" cannot be written to require the newer schema.
+  // It now runs before any other read; see the top of this function.
 
   // ── 13. IMAP admission is refusing connections in bulk ─────────────────────────────────
   //
@@ -2036,10 +2078,35 @@ export interface PlatformSignalWindow {
  * saying 0 — and the difference between "nobody asked" and "we asked and nothing failed" is the
  * whole reason this returns an array of what EXISTS instead of a figure per known project.
  */
+
+/**
+ * The width of ONE row in `platform_signals`, and it must equal `SIGNAL_WINDOW_MS` in
+ * `packages/services/src/platform-signals.ts`, which is what actually writes the rows.
+ *
+ * Duplicated rather than imported because `packages/db` does not depend on `packages/services`
+ * and must not start. `platform-signals.test.ts` asserts the two are equal, so the copy cannot
+ * drift: a reader that assumed a different bucket width would align its cut to a boundary the
+ * writer never uses, which is the same off-by-one-bucket this constant was added to remove.
+ */
+export const SIGNAL_BUCKET_MS = 5 * 60 * 1000;
+
 export async function platformSignalWindow(
   db: Tx, now: Date, windowMs: number,
 ): Promise<PlatformSignalWindow[]> {
-  const cut = new Date(now.getTime() - windowMs);
+  // ── THE CUT IS ALIGNED TO A BUCKET BOUNDARY, NOT TO `now` ────────────────────────────
+  //
+  // The poller writes one row per CLOSED five-minute bucket, so a raw `now - 15min` cut lands
+  // mid-bucket and drops the oldest one. At 12:07 the held buckets are 11:50, 11:55 and 12:00;
+  // `cut = 11:52` excludes 11:50, leaving TEN minutes of traffic under a rule that advertises
+  // fifteen — a numerator formed over two buckets divided by a window described as three. The
+  // absolute floor then needs ten errors in two buckets instead of three, and the rate is
+  // computed over a denominator that is short by the same third.
+  //
+  // Flooring `now` to the bucket first makes the cut land exactly on a boundary: at 12:07 that
+  // is 12:05, and 12:05 − 15min = 11:50, which is the oldest of the three complete buckets.
+  const cut = new Date(
+    Math.floor(now.getTime() / SIGNAL_BUCKET_MS) * SIGNAL_BUCKET_MS - windowMs,
+  );
   const rows = await db
     .select({
       provider: platformSignals.provider,
@@ -2724,6 +2791,49 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   const shards = opts.shards ?? [0];
   const sinks = opts.sinks ?? [];
   const firing = await evaluateAlerts(db, opts);
+
+  // ── THE DATABASE IS OLDER THAN THIS BUNDLE: DELIVER, DO NOT PERSIST ──────────────────
+  //
+  // `alert_state` is one of the tables the older schema lacks columns for — the preflight's
+  // marker IS a column this function writes on every observation — so the ordinary path would
+  // raise 42703 while trying to record the finding that explains the outage. The whole rule
+  // would be unreachable a second way, having just been made reachable a first.
+  //
+  // So this path hands the alert straight to the sinks and touches no table. The costs are
+  // stated rather than hidden: there is no dedup and no cooldown here, so a host left in this
+  // state pages once per pass. That is deliberate — the condition is a half-finished deploy,
+  // it is resolved by running the migrations, and it self-clears on the next pass once they
+  // are run. A quiet version of this alert would be worth nothing.
+  if (isSchemaBehind(firing)) {
+    const ctx: AlertNotifyContext = {
+      source: opts.source ?? "api",
+      environment: opts.environment ?? "production",
+      now,
+    };
+    const { delivered, failed, errors, outcomes } = await deliver(sinks, firing, ctx);
+    return {
+      now: now.toISOString(),
+      firing,
+      notified: firing,
+      // NOTHING IS RESOLVED FROM HERE, and that is not an omission. This pass could not read
+      // `alert_state` at all, so it knows nothing about what was open — and "I could not look"
+      // must never be spelled as "it cleared", which is the same rule the scoped-kind exemption
+      // above enforces for a rule an arm declines to evaluate.
+      resolved: [],
+      delivered,
+      failedSinks: failed,
+      sinkErrors: errors,
+      undeliverable: sinks.length === 0,
+      // The streak lives in `alert_state`'s neighbourhood and is not readable here either, so
+      // this pass neither advances nor clears it.
+      sinkFailureStreak: 0,
+      escalate: null,
+      sinkOutcomes: outcomes,
+      sinkDegraded: [],
+      sinkHealth: sinkHealthOf(sinks, undefined),
+    };
+  }
+
   const firingKeys = new Set(firing.map((a) => a.key));
 
   const existing = await db
@@ -2941,6 +3051,12 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
     evaluatedScopedKeys.add(`schema_behind:${opts.driver}`);
     evaluatedScopedKeys.add(`alert_driver_dark:${opts.driver === "worker" ? "api" : "worker"}`);
   }
+  // Only the WORKER arm runs on a handle that holds `auth_throttle`, so only the worker may
+  // resolve the refusal incident. The API arm cannot read the counter in a hardened deployment
+  // and must therefore not claim the condition has cleared. In a deployment where the API CAN
+  // read it, the rule fires, the key is in `firingKeys`, and this exemption never applies —
+  // so the narrower rule costs nothing there.
+  if (opts.driver === "worker") evaluatedScopedKeys.add("imap_admission_refused");
   const resolved = existing
     .filter((r) => !firingKeys.has(r.alertKey))
     .filter((r) => !SCOPED_ALERT_KINDS.has(r.kind) || evaluatedScopedKeys.has(r.alertKey))

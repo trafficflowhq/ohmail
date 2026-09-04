@@ -171,6 +171,8 @@ export {
   alertDriverStatuses, platformSignalWindow, CLOUD_JOURNAL_HEAD_WHEN,
   DEFAULT_ALERT_THRESHOLDS, DEFAULT_ALERT_REPEAT_MS, DEFAULT_ALERT_RENOTIFY_UNCHANGED_MS,
   SCOPED_ALERT_KINDS,
+  isSchemaBehind,
+  SIGNAL_BUCKET_MS,
   DEFAULT_CLAIM_TTL_MS,
   DEFAULT_SINK_FAILURE_ESCALATION,
   type Alert, type AlertKind, type AlertSeverity, type AlertThresholds, type AlertSink,

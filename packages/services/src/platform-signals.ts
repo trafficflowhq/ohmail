@@ -140,6 +140,16 @@ export const SIGNAL_PAGE_BUDGET = 20;
  */
 export const SIGNAL_WALL_CLOCK_MS = 40_000;
 
+/**
+ * How many CLOSED buckets a pass will fill in if they are missing.
+ *
+ * Three, which is `api5xxWindowMs / SIGNAL_WINDOW_MS` — the number of buckets the rule actually
+ * sums. Healing further back would spend the walk budget on data no rule reads; healing less far
+ * would leave a drift-skipped bucket inside the window the rule advertises.
+ */
+export const SIGNAL_BACKFILL_BUCKETS = 3;
+
+
 /** The window one poll covers. Matches the cron's cadence — three of these make the rule's 15 min. */
 export const SIGNAL_WINDOW_MS = 5 * 60 * 1000;
 
@@ -147,6 +157,32 @@ export const SIGNAL_WINDOW_MS = 5 * 60 * 1000;
 export const SIGNAL_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 const trimmed = (v: string | undefined): string => (v ?? "").trim();
+
+/**
+ * One log row's timestamp, in epoch milliseconds, or null when it cannot be read.
+ *
+ * THE CURSOR IS BUILT OUT OF THIS VALUE, which is why it is a shared helper with a refusal
+ * rather than an inline `Number()`. The log endpoint returns ISO-8601 STRINGS — `vercel-errors.mjs`
+ * has always read them with `Date.parse` and refuses outright when one will not parse, saying
+ * "the time cursor cannot advance", which is exactly the failure. `Number("2026-09-04T…")` is
+ * `NaN`, `NaN < oldest` is false, so `oldest` would never move: every window needing more than
+ * one page stopped after the first and reported the first page's counts as a truncated whole
+ * window. A busy deployment's 5xx rate would have been computed over fifty requests.
+ *
+ * A number is still accepted, because epoch millis are what the tests and any future shape of
+ * this endpoint would most plausibly send, and accepting both costs one branch.
+ */
+function parseStamp(v: unknown): number | null {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v === "string") {
+    const parsed = Date.parse(v);
+    if (Number.isFinite(parsed)) return parsed;
+    const asNumber = Number(v);
+    return Number.isFinite(asNumber) ? asNumber : null;
+  }
+  return null;
+}
+
 
 /**
  * Build the live port.
@@ -218,6 +254,15 @@ export function makePlatformSignalPort(
           // page budget bounds the number of laps; this bounds their total cost, and only the
           // second one can be crossed by an endpoint that answers slowly rather than deeply.
           if (pages >= budget || nowMs() >= deadline) {
+            // NOTHING READ IS NOT A ZERO, and this branch is where the wall-clock guard could
+            // manufacture one. With several projects configured, an earlier walk can consume the
+            // shared deadline and the next project enters this loop with `pages === 0` — never
+            // issuing a request, and returning `requests: 0, errors5xx: 0` for a window nobody
+            // looked at. The pass would persist that as a measured zero, which is precisely the
+            // state this whole file is built to make unrepresentable: a zero is only ever a row
+            // that says zero. An unread project is reported as a FAILURE, so the pass writes no
+            // row for it and the board says "not measured".
+            if (pages === 0) return { failed: "deadline_before_first_page" };
             return { row: { provider: "vercel", project, windowStart: window.start, requests, errors5xx, truncated: true } };
           }
           pages++;
@@ -266,8 +311,9 @@ export function makePlatformSignalPort(
             requests++;
             const status = Number(r.statusCode);
             if (Number.isFinite(status) && status >= 500 && status <= 599) errors5xx++;
-            const ts = Number(r.timestamp);
-            if (Number.isFinite(ts) && ts < oldest) oldest = ts;
+            const ts = parseStamp(r.timestamp);
+            if (ts === null) return { failed: "unparseable_timestamp" };
+            if (ts < oldest) oldest = ts;
           }
 
           if (data.hasMoreRows === false) break;
@@ -343,10 +389,38 @@ export async function runPlatformSignalPass(
   const windowMs = opts.windowMs ?? SIGNAL_WINDOW_MS;
   const retentionMs = opts.retentionMs ?? SIGNAL_RETENTION_MS;
 
-  const alignedEnd = new Date(Math.floor(now.getTime() / windowMs) * windowMs);
-  const start = new Date(alignedEnd.getTime() - windowMs);
+  // ── EVERY CLOSED BUCKET IN RANGE, NOT JUST THE NEWEST ────────────────────────────────
+  //
+  // Polling only `floor(now)` and rearming five minutes AFTER completion drifts: the clock is
+  // cadence + jitter + the walk's own duration, so the aligned end advances by more than one
+  // bucket whenever that sum crosses a boundary — 12:04:59 becomes 12:10:20, and the 12:00
+  // bucket is skipped PERMANENTLY, because nothing ever looks at a closed bucket twice. The rule
+  // then divides a numerator formed over two buckets by a window advertised as three.
+  //
+  // So the pass fills any of the last few closed buckets that has NO row yet, newest first. In
+  // the ordinary case exactly one is missing and this costs exactly what it did before; after a
+  // drift, a missed run or a deploy, the gap heals itself on the next pass instead of standing
+  // for ever. Re-polling is safe by construction — the primary key is
+  // `(provider, project, window_start)` and the write is an upsert — but buckets that already
+  // have a row are skipped anyway, because reading them again would spend the walk budget on
+  // data already held.
+  const newestEnd = Math.floor(now.getTime() / windowMs) * windowMs;
+  const candidates: number[] = [];
+  for (let i = 0; i < SIGNAL_BACKFILL_BUCKETS; i++) candidates.push(newestEnd - i * windowMs);
+  const haveRows = await db
+    .select({ windowStart: platformSignals.windowStart })
+    .from(platformSignals)
+    .where(sql`${platformSignals.windowStart} >= ${new Date(candidates[candidates.length - 1]! - windowMs).toISOString()}::timestamptz`);
+  const have = new Set(haveRows.map((r) => new Date(r.windowStart as unknown as string).getTime()));
+  const toPoll = candidates.filter((end) => !have.has(end - windowMs));
 
-  const answer = await opts.port.fetch({ start, end: alignedEnd });
+  const answers = [] as Array<Awaited<ReturnType<typeof opts.port.fetch>>>;
+  for (const end of toPoll) {
+    answers.push(await opts.port.fetch({ start: new Date(end - windowMs), end: new Date(end) }));
+  }
+  // NOTHING MISSING IS NOT A FAILURE. Every bucket in range already has a row, which is the
+  // healthy steady state on a deployment whose clock has not drifted.
+  const answer = answers[0] ?? { rows: [] as PlatformSignalRow[] };
 
   // PRUNE ON EVERY PASS, including an unconfigured one, and that is deliberate: a deployment that
   // had a token and lost it must not keep a week of rows for ever, and the sweep is one indexed
@@ -356,7 +430,9 @@ export async function runPlatformSignalPass(
   if ("unconfigured" in answer) return { outcome: "unconfigured", rows: 0, pruned };
   if ("failed" in answer) return { outcome: "failed", code: answer.failed, rows: 0, pruned };
 
-  for (const row of answer.rows) {
+  const written: PlatformSignalRow[] = [];
+  for (const a of answers) if (!("unconfigured" in a) && !("failed" in a)) written.push(...a.rows);
+  for (const row of written) {
     await db
       .insert(platformSignals)
       .values({
