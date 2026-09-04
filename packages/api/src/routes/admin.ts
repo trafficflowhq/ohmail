@@ -338,6 +338,10 @@ async function overview(ctx: StaffContext): Promise<OverviewSnapshot> {
     alerts,
     alertDrivers,
     platformSignals,
+    // SAID ON THE WIRE, not inferred from the empties above — see the field's own note. The
+    // console cannot derive this from `api.schemaOk`, because the grant half of it leaves that
+    // flag true.
+    alertsUnavailable: !schemaReady,
   };
 }
 

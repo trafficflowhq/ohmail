@@ -235,6 +235,24 @@ export interface OverviewSnapshot {
   alertDrivers: AdminAlertDriver[];
   /** The 5xx window per project. EMPTY = unconfigured — see {@link AdminPlatformSignal}. */
   platformSignals: AdminPlatformSignal[];
+  /**
+   * TRUE when the three alert reads above were SKIPPED rather than answered, so the console
+   * must render "not queried" instead of their empty states.
+   *
+   * ── WHY THIS IS NOT `api.schemaOk` ────────────────────────────────────────────────────
+   *
+   * `api.schemaOk` probes the RUNTIME connection and answers one question: did the migration
+   * land. There is a second, independent way these reads cannot run — the migration landed and
+   * `harden-staff-role.sql` was not re-run, so the content-blind handle the console reads
+   * through still has no grant on the new columns and tables. That is the deployment ruling's
+   * first ranked risk, and in that state `schemaOk` is TRUE.
+   *
+   * Collapsing it into empty arrays is what made the page draw "Nothing is wrong", "No signals"
+   * and "0 drivers" over reads nobody performed — the false-health rendering this whole lane
+   * kept meeting. An empty list and an unanswered question are different facts and the wire has
+   * to carry both, so the console is never left inferring one from the other.
+   */
+  alertsUnavailable: boolean;
 }
 
 /* ── accounts ──────────────────────────────────────────────────────────────────────────── */

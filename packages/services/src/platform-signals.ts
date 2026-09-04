@@ -242,8 +242,20 @@ export function makePlatformSignalPort(
   // only trigger is "wait forty seconds" is a guard nobody watches fail.
   const nowMs = opts.nowMs ?? (() => Date.now());
 
-  const resolvedProjects = trimmed(env.VERCEL_SIGNAL_PROJECTS).length > 0
-    ? trimmed(env.VERCEL_SIGNAL_PROJECTS).split(",").map((p) => p.trim()).filter(Boolean)
+  // ── A SEPARATOR-ONLY SETTING IS NOT A CONFIGURATION, AND `every` ON [] IS TRUE ────────
+  //
+  // `VERCEL_SIGNAL_PROJECTS=","` is non-blank, so it took the configured branch, and then the
+  // filter removed everything and left an EMPTY list. That is quietly catastrophic downstream:
+  // the pass asks whether every expected project already has a row for a bucket, and
+  // `[].every(...)` is `true` — so every bucket read as complete, no request was ever made, and
+  // the pass reported a successful `written` pass for ever while the detector sat dark.
+  //
+  // Falling back to the default keeps the parse total: whatever the value, this list is
+  // non-empty, so the vacuous-truth arm downstream is unreachable rather than merely unlikely.
+  const parsedProjects = trimmed(env.VERCEL_SIGNAL_PROJECTS)
+    .split(",").map((p) => p.trim()).filter(Boolean);
+  const resolvedProjects = parsedProjects.length > 0
+    ? parsedProjects
     : [...DEFAULT_SIGNAL_PROJECTS];
 
   return {
@@ -515,7 +527,11 @@ export async function runPlatformSignalPass(
   );
   // COMPLETE MEANS EVERY EXPECTED PROJECT, not "somebody wrote something here". The table's key
   // includes the project, so one project's row used to mark the bucket finished for all of them.
-  const expected = opts.port.projects;
+  // BELT AND BRACES against the vacuous `every`: the port now guarantees a non-empty list, and
+  // this refuses to treat an empty one as "everything is complete" if that ever stops holding.
+  const expected = opts.port.projects.length > 0
+    ? opts.port.projects
+    : [...DEFAULT_SIGNAL_PROJECTS];
   const target = candidates.find((end) => !expected.every((p) => held.has(`${p}@${end - windowMs}`)));
 
   // NOTHING MISSING IS NOT A FAILURE — the healthy steady state on a deployment whose clock has
