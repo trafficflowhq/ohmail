@@ -432,6 +432,14 @@ verifies updates against it, so an APK signed with a different key will not
 install over an existing one. If the key is ever lost, the recovery is
 uninstall/reinstall.
 
-iOS builds in the simulator but ships no artifact: there is no sideload path,
-and a store build needs an Apple Developer Program membership this project
-does not hold yet. Nothing here pretends otherwise.
+iOS ships no artifact yet. There is no sideload path on that platform, and a
+store build needs an Apple Developer Program membership this project does not
+hold. What *is* done is everything that does not need one: the bundle identifier
+is the final `app.ohmail`, the version and build number are authored in
+`app.json`, the Info.plist asks for the camera and nothing else, the privacy
+manifest is declared, and the app icon is flattened for Apple's pipeline rather
+than left to acquire white corners. `npx expo prebuild --platform ios` generates
+the project on a Mac, and `npx expo config --type public` shows what it will
+carry from any machine. The membership is the only thing between that and a
+build — which is a real gap, not a formality, and it is not described here as
+anything smaller than it is.
