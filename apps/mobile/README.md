@@ -33,10 +33,12 @@ Honest edges, stated here and on the screens themselves:
 - **Compose from scratch, search and attachment-open are not built yet.** No
   control for them renders; the More screen and the About block say they
   arrive with later updates.
-- **ohmail.app (the managed service) does not offer device pairing yet.** The
-  picker's managed card negotiates against the real server and reports what it
-  answers — today, that pairing arrives with a later update. No date is
-  promised.
+- **The picker never claims a door works — it asks.** Each card negotiates
+  `GET /hello` against the real server and offers a pairing step only where that
+  server answers `features.pairing: true`. The managed service answers that it
+  does, so its card leads to the code on the web client's Settings → Devices
+  pane; a self-hosted server answers for itself. Nothing here is a promise about
+  a server this app has not asked.
 - **New-mail wake works whether the app is open, backgrounded, or closed.** The
   server sends a fifteen-byte signal, encrypted to this device, through a
   [UnifiedPush][up] distributor you choose and install yourself; no Google or
@@ -146,6 +148,92 @@ npx expo config --type public   # ids, version, buildNumber, versionCode
 
 ---
 
+## What the iOS build asks the system for
+
+Every entry below is here because a line of this app's own code asks for it. The
+rule is the awkward direction of that sentence: a purpose string for a capability
+the app does not use is not harmless padding — it is a claim about the app that is
+false, and the person reading the prompt has no way to check it.
+
+| Key | Why it is there |
+| --- | --- |
+| `NSCameraUsageDescription` | `app/scan.tsx` asks for the camera to read a pairing QR code, and treats a refusal as a state rather than a dead end. Supplied through `expo-camera`'s `cameraPermission` so the string is written once. |
+| `ITSAppUsesNonExemptEncryption: false` | The app implements no encryption. Transport is the platform's own HTTPS, credentials sit in the platform Keychain, and the only use of `expo-crypto` is `randomUUID()` for identifiers. Answering here means the question is not asked again on every upload. |
+
+And the keys that are deliberately **absent**, each one a capability this app
+declines rather than one nobody thought about:
+
+- **Microphone.** `expo-camera` declares `NSMicrophoneUsageDescription` among its
+  defaults, and Expo's `applyPermissions` writes a default string whenever the
+  option is left undefined — only the literal value `false` removes the key. So
+  "we never set it" was shipping *"Allow ohmail to access your microphone"* for an
+  app that records nothing. It is now `microphonePermission: false`. The Android
+  half of this decision was already made — `recordAudioAndroid: false` keeps
+  `RECORD_AUDIO` out of the manifest — and iOS was the half still missing.
+- **Face ID.** `expo-secure-store` defaults `NSFaceIDUsageDescription` the same
+  way. This app stores refresh tokens with `WHEN_UNLOCKED_THIS_DEVICE_ONLY` and
+  never asks for biometric authentication, so the key is removed with
+  `faceIDPermission: false`.
+- **Photo library, contacts, calendar, location.** No API for any of them appears
+  in the app.
+- **Local network.** Nothing browses for services, and a same-network address is
+  refused rather than reached (see *Pairing, in one paragraph*). A purpose string
+  would describe a capability the app turns down.
+- **Background modes and remote notifications.** New-mail wake is UnifiedPush, and
+  UnifiedPush is Android-only (see below), so the iOS binary contains no push
+  client to wake. An entitlement for something that cannot fire is worse than not
+  having it.
+- **Associated domains.** Deep links are the `ohmail://` scheme, which Expo Router
+  serves. Verified app links would need `/.well-known/apple-app-site-association`
+  and `/.well-known/assetlinks.json` served from the domain; neither exists today,
+  so neither platform has them and the entitlement would fail to validate.
+
+### The privacy manifest
+
+`ios.privacyManifests` in `app.json` writes the app target's
+`PrivacyInfo.xcprivacy`. It declares no tracking, no tracking domains, and the four
+required-reason API categories the shipped binary genuinely reaches, with the
+reason that is true of *our* use:
+
+| Category | Reason | What actually uses it |
+| --- | --- | --- |
+| `FileTimestamp` | `C617.1` | Files inside the app container — the per-account sqlite mirrors and the install-generation database. |
+| `UserDefaults` | `CA92.1` | Read and written only for this app. |
+| `SystemBootTime` | `35F9.1` | Measuring elapsed time. |
+| `DiskSpace` | `E174.1` | Checking there is room before writing. `85F4.1` — *displaying* free space to the person — is deliberately **not** claimed, because no screen shows a disk figure. |
+
+The first three are what React Native's own aggregation adds for its core
+(`react-native/scripts/cocoapods/privacy_manifest_utils.rb`, `get_core_accessed_apis`);
+the fourth comes from `expo-file-system`, which arrives as a dependency of `expo`
+and declares it in its own pod manifest. That same aggregation step *merges* the
+pods' declarations into whatever the app target already has and de-duplicates the
+reasons, so declaring them here is additive rather than a conflict — and it puts
+the decision in a reviewed file instead of only in generated output.
+
+### iPad
+
+`supportsTablet` is **false**. The layout is phone-shaped on purpose: the rail and
+the two-pane deck were dropped rather than scaled (see *Tokens → React Native*),
+so a tablet build today would be a stretched single column. iPhone apps still
+install and run on an iPad in compatibility mode, so nothing is withheld from
+anyone — what is withheld is a claim to be an iPad app. Turning it on is a real
+piece of work, not a flag: a layout that uses the width, and screenshots to match.
+Android has no equivalent switch, and a phone-shaped layout stretches on an Android
+tablet too; that is the open half rather than a solved one.
+
+### Three halves that exist on Android and not on iOS
+
+Stated here because the app's own screens say so, and because a reader comparing
+the two builds should not have to infer it:
+
+| Feature | Android | iOS |
+| --- | --- | --- |
+| **Same-network pairing with a computer** | Works. `modules/host-pinning` pins the desktop's self-signed key, installed before React Native starts. | Refused. The native half is named but not built, `canPin()` is false, and the seam refuses rather than connecting unpinned. The remedy the screen offers is the Tailscale address from the same pane, which works on both. |
+| **New-mail wake** | Works, through a UnifiedPush distributor you install. | Absent. `expo-unified-push` declares `platforms: ["android"]`, so there is no wake client in the iOS binary. Foreground sync and pull-to-refresh are the floor on both. |
+| **Mail kept out of the OS backup** | Done, by this app's own rules (`plugins/backup-exclusions.js`). | Open. `expo-sqlite` writes into the documents directory, which the platform's backups include unless each file carries the exclude attribute — native code this repository does not yet write. Refresh tokens are *not* affected on either platform; they are Keychain items marked this-device-only. |
+
+---
+
 ## Stack, and why
 
 | Decision | Reason |
@@ -166,10 +254,20 @@ address is and offers a pairing step only when the server says
 `features.pairing: true` — never a dead button. The credential is
 `${origin}/pair#${token}`: the token rides the link's fragment, is spent
 exactly once in the body of `POST /pair/redeem`, and appears in no URL, no
-header and no log line. React Native's fetch has no secure-context gate and no
-CORS, so a plain `http://192.168…` LAN door pairs and syncs exactly like an
-https one — which is why the desktop's LAN pane says "browsers use Tailscale,
-the mobile app uses LAN".
+header and no log line.
+
+**A plain `http://` address is refused, and refused by this app rather than by
+the platform.** React Native's fetch has no secure-context gate and no CORS, so
+nothing in the runtime would stop a cleartext request to `http://192.168…` — the
+transport gate in `src/net/pairing.ts` (`admitOrigin`) does, before the first
+request to an origin, and it says why in words. Loopback is the one exception,
+because it is not a network hop. Two more refusals sit beside it: an IP-literal
+https address is either pinned or unverified, and unverified is worth nothing; and
+a build that cannot install a pin refuses rather than connecting without one. That
+is why the generated iOS configuration carries no transport-security exception and
+no local-network purpose string — the rule the app enforces in JavaScript is the
+one the platform's default already enforces, and an exception would only widen
+what the app declines to use.
 
 ### Metro in a workspace
 
