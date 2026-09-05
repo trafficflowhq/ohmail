@@ -107,6 +107,13 @@ export const apiOwnerBinding: () => { kind: "public" } = () => ({ kind: "public"
 
 export const apiOwnerHolds: (path: string, opts?: { ceremony?: boolean }) => boolean = () => true;
 
+/**
+ * The hosted client's cookie-writer census, for the test that derives it from the server's route
+ * table. Empty here: this door writes no browser cookies at all, so there is nothing to lock and
+ * nothing to compare — see the note above these five.
+ */
+export const cookieWritingPaths: () => readonly string[] = () => [];
+
 export interface SessionUser {
     userId: string;
     accountId: string;

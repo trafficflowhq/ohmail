@@ -508,6 +508,16 @@ function writesSessionCookies(path: string): boolean {
 }
 
 /**
+ * The census, for the test that DERIVES it from the server's own route table
+ * (`cookie-writer-census.test.ts`) instead of trusting this list. Exported for that alone: the
+ * first version of this list was written from memory and was wrong in both directions, and a
+ * comment cannot notice when a route is added on the other side.
+ */
+export function cookieWritingPaths(): readonly string[] {
+  return COOKIE_WRITING_PATHS;
+}
+
+/**
  * The refusal, as an `ApiError` so every existing caller's error path renders it.
  *
  * `status: 0` puts it beside `api_unconfigured` — a client-side refusal that never reached a

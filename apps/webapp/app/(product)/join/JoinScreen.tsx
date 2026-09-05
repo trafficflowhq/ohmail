@@ -188,6 +188,14 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
   const [totp, setTotp] = useState<{ secret: string; otpauthUrl: string } | null>(null);
   const [totpCode, setTotpCode] = useState("");
   const [recovery, setRecovery] = useState<string[] | null>(null);
+  /**
+   * WHICH ACCOUNT THIS WIZARD IS FOR — learned from the first `GET /auth/session` and never
+   * rewritten. See {@link fetchCodes} for what it is compared against and why it cannot be a
+   * cookie: an enrolment session sets no readable owner marker (`enrollmentCookies` writes none),
+   * so this screen is outside the reach of the marker-based boundary that protects the rest of
+   * the signed-in product. The only thing that knows is the server, asked again.
+   */
+  const [wizardAccount, setWizardAccount] = useState<string | null>(null);
   const [codesSaved, setCodesSaved] = useState(false);
   /** Has this tab asked for another verification link? Copy only; never a claim it landed. */
   const [resent, setResent] = useState(false);
@@ -241,6 +249,8 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
     if (!apiConfigured()) return;
     try {
       const s = await auth.session();
+      // The account this wizard belongs to, fixed at the first read. `fetchCodes` compares.
+      setWizardAccount(s.user.accountId);
       setEmail(s.user.email);
       setDisplayName(s.user.displayName);
       if (s.scope === "enrollment") { setStep("factor"); return; }
@@ -442,7 +452,35 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
     });
   };
 
+  /**
+   * ═══ RECOVERY CODES BELONG TO AN ACCOUNT, SO ASK WHICH ONE FIRST ══════════════════════════
+   *
+   * `POST /auth/2fa/recovery-codes` generates for whatever session the browser holds AT THAT
+   * MOMENT, and it DELETES the previous set — so under the wrong session it both hands somebody
+   * else's codes to whoever is looking at this screen and destroys the codes that account may
+   * already have written down. It is the most consequential button in the wizard.
+   *
+   * Everything else signed-in is protected by the account boundary in `api-client.ts`, which
+   * compares the browser's owner marker against the account the client is bound to. This screen
+   * is outside it by construction: an ENROLMENT session sets no marker at all
+   * (`enrollmentCookies` writes none), so there is nothing readable to compare and nothing to
+   * bind. Absence here is not the "silence" the gate reasons about — it is the normal state of
+   * being half signed up.
+   *
+   * So the question goes to the only party that can answer it. One extra round trip, immediately
+   * before the generate, and the answer is compared to the account this wizard started as. A
+   * mismatch STOPS: no codes are requested, nothing is deleted, and the screen says which account
+   * the browser is signed in as now, because that is the fact the person needs in order to act.
+   *
+   * Deliberately not a boundary and not a lock: those order writes or refuse them, and neither
+   * can tell that the enrolment session under this wizard has been replaced.
+   */
   const fetchCodes = () => void run(async () => {
+    const now = await auth.session();
+    if (wizardAccount !== null && now.user.accountId !== wizardAccount) {
+      setError(t("accountChanged", { email: now.user.email }));
+      return;
+    }
     const { codes } = await auth.recoveryCodes();
     setRecovery(codes);
   });
