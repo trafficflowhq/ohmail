@@ -35,7 +35,8 @@
  * seam, same reason as `MailboxSection` itself: this is Cloud-only code.
  */
 
-import { apiConfigured, mailboxes as mailboxApi, messageOf } from "../../api-client";
+import { apiConfigured, mailboxes as mailboxApi, messageOf, pendApiOwner } from "../../api-client";
+import { readOwner } from "../../shell/owner-cookie";
 
 /**
  * WHAT THE CONSENT REDIRECT LEFT IN THE QUERY.
@@ -159,6 +160,51 @@ function landOnMailboxesPane(): void {
  * a re-import, a remount, React's double-invoked development effects — free: a `state` is single-use
  * and a second POST would answer 400 about a ceremony that had just succeeded.
  */
+/**
+ * ═══ WHICH ACCOUNT STARTED THIS CEREMONY ══════════════════════════════════════════════════
+ *
+ * The consent flow leaves this origin and comes back, and "comes back" can be minutes later —
+ * long enough for another tab to have signed in as somebody else. The completion used to pend
+ * whatever the cookie jar named ON RETURN, which is the wrong account by exactly the amount that
+ * matters: the server then consumes the single-use `state` BEFORE it compares accounts, so the
+ * legitimate owner's ceremony is destroyed and they have to start over, with nothing on screen
+ * explaining why. No mailbox is attached to the wrong account — the server's comparison is sound
+ * — but the person who did everything right is the one who pays.
+ *
+ * So the account is written down when the ceremony STARTS, keyed by the `state` the server issued
+ * for it, and read back at return. `sessionStorage` because the lifetime is exactly right: one
+ * tab, across navigations, gone when the tab is.
+ *
+ * Best-effort by construction. A private window with storage disabled, a `state` that never got
+ * recorded, an entry evicted — all answer `null`, and the caller then falls back to the marker,
+ * which is what it did before this existed. This narrows a window; it is not a proof of identity,
+ * and it must not be able to BLOCK a legitimate completion.
+ */
+const OAUTH_OWNER_PREFIX = "ohmail.oauth.owner.";
+
+export function rememberOAuthOwner(state: string, accountId: string | null): void {
+  if (typeof sessionStorage === "undefined" || accountId === null) return;
+  try {
+    sessionStorage.setItem(OAUTH_OWNER_PREFIX + state, accountId);
+  } catch {
+    /* storage refused — the return falls back to the marker, as it always did */
+  }
+}
+
+function takeOAuthOwner(state: string): string | null {
+  if (typeof sessionStorage === "undefined") return null;
+  try {
+    const key = OAUTH_OWNER_PREFIX + state;
+    const owner = sessionStorage.getItem(key);
+    // Single use, like the `state` it is keyed by: a consumed ceremony must not leave an
+    // expectation behind for whatever navigates here next.
+    sessionStorage.removeItem(key);
+    return owner;
+  } catch {
+    return null;
+  }
+}
+
 export function beginOAuthReturn(): OAuthOutcome | null {
   if (started) return outcome;
   if (typeof window === "undefined") return null;
@@ -178,6 +224,13 @@ export function beginOAuthReturn(): OAuthOutcome | null {
     publish({ kind: "refused", reason: back.reason });
     return outcome;
   }
+
+  /*
+   * PEND THE ACCOUNT THAT STARTED THIS, not the one the jar happens to name now. See
+   * `rememberOAuthOwner`. Falling back to the marker keeps the pre-existing behaviour where
+   * nothing was recorded, which must never be a reason to refuse a legitimate completion.
+   */
+  pendApiOwner(takeOAuthOwner(back.state) ?? readOwner());
 
   publish({ kind: "running" });
   void (async () => {

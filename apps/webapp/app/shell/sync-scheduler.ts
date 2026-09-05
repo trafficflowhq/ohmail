@@ -1437,20 +1437,22 @@ export function startSyncScheduler(
    * shut and no bytes flowed, so nothing leaked; what disappeared was a true sentence the person
    * needed. Two bits, and a contradiction can only ever clear its own.
    *
-   * ── AND THERE IS NO TEST BESIDE THIS, WHICH IS A STATEMENT AND NOT AN OMISSION ─────────────
+   * ── AND THE SEQUENCE THAT DISTINGUISHES THEM IS REAL, WHICH I CLAIMED IT WAS NOT ───────────
    *
-   * I could not construct a sequence in which the two spellings differ, and one was written and
-   * deleted rather than kept. The obstacle is the loop's own shape: a terminal loop holds NO
-   * TIMER, so the only thing that can drive a tick — and therefore the only thing that can
-   * OBSERVE a marker change — is `wake()`'s probe, which is floored at `BACKOFF_CAP_MS` and
-   * guarded by `visible()`. Driving two observations through it while a server refusal stands
-   * produced a byte-identical published sequence with either spelling.
+   * This shipped with no test and a recorded argument that none was possible: a terminal loop
+   * holds NO TIMER, so the only thing that can drive a tick — and therefore observe a marker
+   * change — is `wake()`'s probe, floored at `BACKOFF_CAP_MS` and guarded by `visible()`.
    *
-   * So this is a latent hazard removed by construction, not a measured defect repaired. It stays
-   * because the invariant is then local and cheap — a cause can only clear its own bit — rather
-   * than resting on the reachability argument above continuing to hold after the next change to
-   * `wake`. A guard nobody has watched fail is not evidence, and this comment is the evidence
-   * that nobody has.
+   * The argument was wrong, and the way it was wrong is worth keeping. The floor is real; my
+   * attempt to drive two observations through it advanced past the cap before the SECOND wake and
+   * not before the FIRST, so the probe that was meant to OBSERVE the contradiction was itself
+   * throttled and the gate never saw the other account at all. Two identical published sequences
+   * came back and I read that as "no sequence exists" rather than "my sequence did not run".
+   *
+   * `sync-owner-gate.test.ts`'s "a contradiction that comes and goes does not erase the server's
+   * own refusal" is that sequence, with the cap before BOTH wakes. Measured: with one flag it goes
+   * red, with two bits green. A guard nobody has watched fail is not evidence — and neither is an
+   * argument that it cannot.
    */
   let terminalByServer = false;
   let terminalByIdentity = false;

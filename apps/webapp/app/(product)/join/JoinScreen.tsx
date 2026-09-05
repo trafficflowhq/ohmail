@@ -429,11 +429,21 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
       // The INVITE path still returns an enrollment session and still goes straight to the
       // passkey step, unchanged from the first build of this wizard.
       if (out.status === "ok") { setStep("sent"); return; }
+      /*
+       * THE ACCOUNT THIS WIZARD IS FOR, on the path that actually creates one.
+       *
+       * `wizardAccount` was assigned only by `bootstrap`, which is the RELOAD path. The ordinary
+       * first signup never runs it — its `GET /auth/session` 401s and is caught — so the wizard
+       * reached the codes step with `wizardAccount === null` and the comparison below disabled
+       * itself. The guard existed and, on the one path everybody takes, was not on.
+       */
+      setWizardAccount(out.user.accountId);
       setStep("factor");
     });
   };
 
   const enrollPasskey = () => void run(async () => {
+    if (!await sameAccount()) return;
     const { options } = await auth.webauthnRegisterOptions();
     const credential = await createPasskey(options);
     await auth.webauthnRegisterVerify({ credential, label: deviceLabel() });
@@ -441,11 +451,15 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
     setStep("codes");
   });
 
-  const startTotp = () => void run(async () => { setTotp(await auth.totpEnroll()); });
+  const startTotp = () => void run(async () => {
+    if (!await sameAccount()) return;
+    setTotp(await auth.totpEnroll());
+  });
 
   const activateTotp = (e: React.FormEvent) => {
     e.preventDefault();
     void run(async () => {
+      if (!await sameAccount()) return;
       await auth.totpActivate({ code: totpCode.trim() });
       setTotpCode("");
       setStep("codes");
@@ -475,12 +489,43 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
    * Deliberately not a boundary and not a lock: those order writes or refuse them, and neither
    * can tell that the enrolment session under this wizard has been replaced.
    */
-  const fetchCodes = () => void run(async () => {
+  /**
+   * ═══ IS THE BROWSER STILL SIGNED IN AS THE ACCOUNT THIS WIZARD IS FOR? ════════════════════
+   *
+   * Asked immediately before every action that acts on an account, and it FAILS CLOSED: an
+   * unknown wizard account refuses rather than waving through, because "we never learned who
+   * this is" is not evidence that it is the right one. That was the hole review found — the
+   * comparison was written `wizardAccount !== null && …`, and on the ordinary first signup
+   * `wizardAccount` was null, so the guard turned itself off on the one path everybody takes.
+   *
+   * ── WHY EVERY ACTION AND NOT JUST THE CODES ───────────────────────────────────────────────
+   *
+   * The codes step is the worst of them and it is not the only one. On an enrolment session the
+   * server accepts a passkey registration, a TOTP secret and its activation, a verification
+   * resend, a mailbox create and a checkout — each for whatever session the browser holds. Under
+   * a switched session that is a passkey enrolled on somebody else's account, their authenticator
+   * secret on this screen, their mail credentials attached, their card charged.
+   *
+   * ── WHY IT CANNOT BE THE ACCOUNT BOUNDARY ─────────────────────────────────────────────────
+   *
+   * `enrollmentCookies` writes no owner marker, so there is nothing readable for `pendApiOwner`
+   * to bind to and nothing for it to compare — `pending` would refuse every request on this
+   * screen. The only party that knows is the server, so it is asked. One round trip per action,
+   * on a wizard where each action is a deliberate press.
+   *
+   * WHAT IT DOES NOT CLOSE: the window between this answer and the request that follows it. That
+   * needs the server to carry an expected account on the write itself, which is the same thing
+   * `AF-RESPONSE-NOT-OWNER-BOUND` is waiting for. Stated rather than implied.
+   */
+  const sameAccount = async (): Promise<boolean> => {
     const now = await auth.session();
-    if (wizardAccount !== null && now.user.accountId !== wizardAccount) {
-      setError(t("accountChanged", { email: now.user.email }));
-      return;
-    }
+    if (wizardAccount !== null && now.user.accountId === wizardAccount) return true;
+    setError(t("accountChanged", { email: now.user.email }));
+    return false;
+  };
+
+  const fetchCodes = () => void run(async () => {
+    if (!await sameAccount()) return;
     const { codes } = await auth.recoveryCodes();
     setRecovery(codes);
   });
@@ -494,6 +539,7 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
    * be a readout of the mail limiter, and the endpoint deliberately does not tell us.
    */
   const resendVerification = () => void run(async () => {
+    if (!await sameAccount()) return;
     await auth.resendVerification();
     setResent(true);
   });
@@ -520,6 +566,8 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
     const chosen = provider;
     if (!chosen) return;
     void run(async () => {
+      // Mail credentials typed for one account must not be attached to another.
+      if (!await sameAccount()) return;
       const address = mbAddress.trim();
       const dto = await mailboxes.create({
         provider: chosen.id,
@@ -548,6 +596,8 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
   };
 
   const startCheckout = (plan: Plan) => void run(async () => {
+    // A card is charged at the end of this; it must be the account the wizard is for.
+    if (!await sameAccount()) return;
     const { url } = await billing.checkout(plan, interval);
     window.location.assign(url);
   });

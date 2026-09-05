@@ -80,9 +80,11 @@ import {
   type OrganizerPeek,
   type TwofaChallenge,
   type UpdateMailboxBody,
+  boundApiOwner,
 } from "../../api-client";
 import {
   OAUTH_REASONS, beginOAuthReturn, noOAuthOutcome, oauthOutcome, subscribeOAuthOutcome,
+  rememberOAuthOwner,
 } from "./oauth-return";
 import { hostsFor, providerById, providerLabel, type ProviderPreset } from "../../shell/providers";
 import { ProviderPicker } from "../../shell/ProviderPicker";
@@ -1099,7 +1101,7 @@ export function MailboxSection() {
     setOauthBusy("starting");
     void (async () => {
       try {
-        const { authorizeUrl } = await mailboxApi.oauthStart({
+        const { authorizeUrl, state } = await mailboxApi.oauthStart({
           ...(mailboxId ? { mailboxId } : {}),
           // Where the ceremony should land. The server validates it as a same-site relative path and
           // ignores anything else, so this is a preference and never a redirect target we control.
@@ -1107,6 +1109,17 @@ export function MailboxSection() {
           // 308s back to `/`, so naming it only ever added a redirect hop (see `OAUTH_RETURN_PATH`).
           returnTo: "/",
         });
+        /*
+         * WRITE DOWN WHOSE CEREMONY THIS IS, before leaving the origin.
+         *
+         * The consent flow comes back minutes later, and the completion used to pend whatever the
+         * cookie jar named ON RETURN — so a sign-in elsewhere in the meantime sent the completion
+         * under the wrong account. The server compares and refuses, correctly, but it consumes the
+         * single-use `state` first, so the person who did everything right loses their ceremony and
+         * has to start over with nothing on screen saying why. Keyed by that same `state`; read and
+         * removed by `beginOAuthReturn`.
+         */
+        rememberOAuthOwner(state, boundApiOwner());
         if (typeof window !== "undefined") window.location.assign(authorizeUrl);
       } catch (err) {
         if (!alive.current) return;
