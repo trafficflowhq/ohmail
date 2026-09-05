@@ -36,6 +36,7 @@
 
 import { csrfToken as readCsrfToken } from "./csrf";
 import { isRecoverable, mayRefreshFor, resumeSession } from "./session-refresh";
+import { readOwnerMarker } from "./shell/owner-cookie";
 
 /** The `/api` prefix the same-origin rewrite serves, or `null` on a build with no API armed. */
 export const API_BASE: string | null = process.env.NEXT_PUBLIC_API_BASE ?? null;
@@ -168,6 +169,99 @@ export function csrfToken(): string | null {
   return readCsrfToken();
 }
 
+
+/**
+ * ═══ WHOSE ACCOUNT IS THIS CLIENT SPEAKING FOR? — the one boundary every Cloud call crosses ══
+ *
+ * ── THE HOLE THIS CLOSES, AND WHY IT COULD NOT BE CLOSED ANYWHERE ELSE ─────────────────────
+ *
+ * The mail mirror has an owner-aware gate: a scheduled engine may not merge, read or act unless
+ * the browser's session still belongs to the account the mirror is named for. That gate wraps the
+ * ENGINE'S ADAPTER, which is exactly the wrong shape for the rest of the product, because most of
+ * the signed-in surface never goes near an adapter. Settings talks to this module directly.
+ *
+ * So when a browser signed into A held a shell for B — a sign-in in another tab, a sign-out the
+ * server refused — the mailbox correctly stopped, said so, and stayed MOUNTED. Everything beside
+ * it kept working against the new session: Security would show, and could REGENERATE, the other
+ * account's recovery codes and TOTP secret; Devices would list their devices and mint a fresh
+ * pairing token for their account; billing, profile, mailboxes and invitations the same. Those
+ * are credentials, not mail, and no amount of gating inside the sync scheduler reaches them.
+ *
+ * A per-pane check would close today's panes and not tomorrow's — the census is the point, and a
+ * census that lives in twelve files is a census with a hole in it the day somebody adds a
+ * thirteenth. This is the seam every one of them already goes through.
+ *
+ * ── WHAT IS ALLOWED THROUGH, AND WHY IT IS NOT "EVERYTHING UNDER /auth" ────────────────────
+ *
+ * The obvious allow-list is the auth prefix, and it is wrong in a way worth stating: half of
+ * `/auth` is the ceremony that ESTABLISHES an identity, and half is credential management for an
+ * identity that already exists. `/auth/2fa/recovery-codes` and `/auth/2fa/totp/enroll` are the
+ * second kind, and they are two of the exact disclosures this exists to stop. So the list names
+ * the ceremony paths one by one:
+ *
+ *   · learning what the server is, and whether this browser holds a session at all;
+ *   · signing in, including the second factor's VERIFY steps — a person completing a sign-in has
+ *     no confirmed owner yet by definition, and refusing them would lock the front door;
+ *   · signing out, and the refresh that keeps a session alive.
+ *
+ * Everything else needs the bound account to still hold. That includes enrolment, step-up,
+ * device pairing, and every non-auth route in the product.
+ *
+ * ── AND IT IS OFF UNTIL SOMETHING BINDS IT ────────────────────────────────────────────────
+ *
+ * `expectedOwner` is `null` on the marketing pages, on `/login`, and in every test that does not
+ * ask for it — so this costs nothing until a shell has been confirmed for an account. That is
+ * also what makes the failure mode safe: a surface that forgets to bind is exactly as permissive
+ * as it was before this existed, rather than mysteriously refusing.
+ */
+const OWNER_FREE_PATHS = [
+  "/hello",
+  "/version",
+  "/health",
+  "/auth/session",
+  "/auth/login",
+  "/auth/register",
+  "/auth/refresh",
+  "/auth/logout",
+  "/auth/verify-email",
+  // The sign-in ceremony's second factor. VERIFY only — enrolment and generation are account
+  // management and stay gated; see the header.
+  "/auth/2fa/totp/verify",
+  "/auth/2fa/recovery-codes/verify",
+  "/auth/2fa/webauthn/assert/",
+] as const;
+
+/** The account this client is speaking for, or `null` while nothing has said. */
+let expectedOwner: string | null = null;
+
+/**
+ * BIND this client to an account — called with the id `GET /auth/session` returned, from the one
+ * classifier that reads it (`session-outcome.ts`). `null` unbinds, which sign-out does.
+ */
+export function bindApiOwner(accountId: string | null): void {
+  expectedOwner = accountId;
+}
+
+/** The account this client is bound to, for a surface that needs to say so. `null` ⇒ unbound. */
+export function boundApiOwner(): string | null {
+  return expectedOwner;
+}
+
+/**
+ * Does the browser still hold the session this client was bound to?
+ *
+ * `absent` and `signed-out` both answer NO once bound, and that is the correction review forced:
+ * absence used to read as silence everywhere, and a sign-out whose server call failed erased the
+ * marker while leaving the session alive. A bound client whose marker has gone quiet is a client
+ * that can no longer prove anything, which is the moment to stop rather than the moment to trust.
+ */
+export function apiOwnerHolds(path: string): boolean {
+  if (expectedOwner === null) return true;
+  if (OWNER_FREE_PATHS.some((p) => path === p || path.startsWith(p))) return true;
+  const marker = readOwnerMarker();
+  return marker.kind === "account" && marker.id === expectedOwner;
+}
+
 /**
  * One request. Returns the parsed body, or throws {@link ApiError}.
  *
@@ -175,8 +269,14 @@ export function csrfToken(): string | null {
  * and `res.json()` on an empty body throws.
  */
 export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T> {
+  // BEFORE the request and AGAIN after it. The first stops a call being made under somebody
+  // else's session; the second stops an answer being handed back when the jar changed while it
+  // was in flight. Both are the same question — see {@link apiOwnerHolds}.
+  if (!apiOwnerHolds(path)) throw ownerMismatch(path);
   try {
-    return await attempt<T>(path, opts);
+    const answer = await attempt<T>(path, opts);
+    if (!apiOwnerHolds(path)) throw ownerMismatch(path);
+    return answer;
   } catch (err) {
     // ONE refresh, ONE retry. The access cookie lives fifteen minutes and nothing renewed it,
     // so this is the ordinary state of any tab left open — see `session-refresh.ts`, and note
@@ -184,9 +284,33 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
     if (!(err instanceof ApiError)) throw err;
     if (!isRecoverable(err.status, err.code) || !mayRefreshFor(path)) throw err;
     if (!(await resumeSession())) throw err;
+    // The refresh rewrites the whole jar, so the question has to be asked again before the
+    // retry: a refresh that landed as a different account must not be retried as this one.
+    if (!apiOwnerHolds(path)) throw ownerMismatch(path);
     // A second failure is the real answer: the caller sees the refused request, not a loop.
-    return attempt<T>(path, opts);
+    const retried = await attempt<T>(path, opts);
+    if (!apiOwnerHolds(path)) throw ownerMismatch(path);
+    return retried;
   }
+}
+
+/**
+ * The refusal, as an `ApiError` so every existing caller's error path renders it.
+ *
+ * `status: 0` puts it beside `api_unconfigured` — a client-side refusal that never reached a
+ * server, rather than something a server said — and `coded: false` keeps it out of every
+ * classifier that keys on the API's own envelope. In particular the session classifier must
+ * never read this as a verdict about a session: it is a statement about which account this
+ * client is for.
+ */
+function ownerMismatch(_path: string): ApiError {
+  return new ApiError(
+    0,
+    "owner_mismatch",
+    "This window is signed in to a different account than this browser now holds.",
+    undefined,
+    { coded: false },
+  );
 }
 
 async function attempt<T>(path: string, opts: RequestOptions = {}): Promise<T> {

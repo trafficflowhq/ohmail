@@ -9,7 +9,7 @@ import {
   type SyncParams,
   type SyncResponse,
 } from "@ohmail/client-engine";
-import { readOwner } from "./owner-cookie";
+import { readOwnerMarker, type OwnerMarker } from "./owner-cookie";
 
 /**
  * THE WAKE SIGNAL THIS APP DID NOT HAVE.
@@ -442,18 +442,48 @@ type GatedAdapter = EngineAdapter & { snapshot?: SnapshotFn; listMessages?: List
  *
  *  · `holds`         — this engine may merge. Either it has no name (an in-memory engine
  *                      cannot leak onto disk) or the confirm named it and the jar agrees.
- *  · `unconfirmed`   — nobody has told this gate whose mailbox it is. Built CLOSED: the
+ *  · `unconfirmed`   — nobody has told this gate whose mailbox it is YET. Built CLOSED: the
  *                      default is refusal, so a path that forgets to confirm syncs nothing
- *                      rather than syncing everything.
- *  · `contradicted`  — the jar names a DIFFERENT account. Not the same as unconfirmed: it is
- *                      positive evidence that this tab is now somebody else's, and it latches
- *                      the loop terminal rather than waiting quietly.
+ *                      rather than syncing everything. Reads are still allowed here — this is
+ *                      the ordinary warm open, the person is looking at their own mail, and
+ *                      blanking it for the length of a round trip is the flicker this slice
+ *                      exists to remove.
+ *  · `revoked`       — it WAS confirmed and the marker has since changed. Different from
+ *                      `unconfirmed` in the one way that matters: something happened. Reads
+ *                      refuse alongside merges until a fresh confirm, because the answer a
+ *                      read would come back with is now somebody else's business. The loop
+ *                      disarms QUIETLY — nothing here is a claim about the account, so the
+ *                      strip may not say the mailbox has stopped.
+ *  · `contradicted`  — the jar positively names somebody else, or says a sign-out was asked
+ *                      for and not confirmed. Evidence that this tab is not the one it was,
+ *                      and it latches the loop terminal rather than waiting quietly.
  *
- * **An ABSENT cookie is not a contradiction.** A legitimate cold-path session whose
- * `tf_owner` was dropped would otherwise never sync again — absence is silence, and silence
- * is not evidence. Only a present cookie naming somebody else contradicts.
+ * ── "AN ABSENT COOKIE IS NOT A CONTRADICTION" — STILL TRUE, AND NO LONGER THE WHOLE RULE ───
+ *
+ * That sentence stood alone here, and it was load-bearing in the wrong direction. It is right
+ * about what absence MEANS: a legitimate cold-path session whose `tf_owner` was dropped would
+ * otherwise never sync again, silence is not evidence, and only a present cookie naming
+ * somebody else contradicts. It was wrong about what absence PERMITS.
+ *
+ * The sequence review found: a sign-out whose server call FAILS still did its local half, and
+ * that half erased this marker while the HttpOnly session stayed live on the server. A window
+ * still open for another account then read the absence as silence, read silence as permission,
+ * and went on merging and reading through a session nobody in that window was signed in to.
+ * Absence was not evidence of anything — and a confirmation granted while the marker said A
+ * went on standing after the marker stopped saying A.
+ *
+ * Two changes, and they are the whole of the correction:
+ *
+ *  1. **A CONFIRMATION IS NOT PERMANENT.** Any change in what the marker says — A to absent, A
+ *     to B, absent to A, and every leg of an A→B→A — revokes it. What was confirmed was
+ *     "this browser is A's, now"; the moment "now" stops being true the grant lapses and the
+ *     gate waits for a fresh one. Absence still is not a contradiction: it is the END of a
+ *     confirmation, which is a different and weaker thing, and it is enough.
+ *  2. **A REFUSED SIGN-OUT IS SAID, NOT ERASED.** `sign-out.ts` writes
+ *     {@link OWNER_SIGNED_OUT} on that path instead of clearing, so the state that used to be
+ *     indistinguishable from silence now speaks for itself and contradicts.
  */
-export type SyncIdentity = "holds" | "unconfirmed" | "contradicted";
+export type SyncIdentity = "holds" | "unconfirmed" | "revoked" | "contradicted";
 
 export interface SyncGate {
   /** Wrap the engine's transport. Call once, at construction, on the adapter you pass in. */
@@ -486,15 +516,67 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
   let mayContinue: (() => boolean) | null = null;
   /** The account the server named for this engine, or `null` while nobody has said. */
   let confirmedFor: string | null = null;
+  /**
+   * Has a confirmation been TAKEN BACK? The difference between "nobody has said yet" and
+   * "somebody said, and then the world changed", which is the difference between a warm mirror
+   * that may still answer its own reader and one that may not. Cleared only by a fresh confirm.
+   */
+  let revoked = false;
   const openers = new Set<() => void>();
+
+  /**
+   * WHAT THE MARKER SAID LAST TIME ANYBODY LOOKED. `undefined` until the first look, which is
+   * not the same as `absent`: the first observation establishes a baseline and cannot itself be
+   * a transition, or a gate would revoke a confirmation it had just been given.
+   */
+  let lastSeen: OwnerMarker | undefined;
+
+  /** Two markers, same meaning? The comparison a transition is defined against. */
+  const sameMarker = (a: OwnerMarker, b: OwnerMarker): boolean =>
+    a.kind === b.kind && (a.kind !== "account" || b.kind !== "account" || a.id === b.id);
 
   const identity = (): SyncIdentity => {
     // An un-named engine has no mirror on disk to pollute. The source guard pins that the
     // live path never passes `null`; this arm is the demo's and the desktop's.
     if (mirrorOwner === null) return "holds";
-    const jar = readOwner();
-    if (jar !== null && jar !== mirrorOwner) return "contradicted";
-    if (confirmedFor !== mirrorOwner) return "unconfirmed";
+
+    const marker = readOwnerMarker();
+    /*
+     * ── THE TRANSITION IS THE EVENT, AND READING IS WHEN IT IS NOTICED ────────────────────
+     *
+     * A cookie has no change event, so there is nothing to subscribe to: the only moment this
+     * gate can observe the jar is when somebody asks it a question. It is asked before every
+     * request, at every page boundary and on every tick, which is exactly the set of moments a
+     * stale answer could do damage — so noticing here is noticing in time.
+     *
+     * Revoking is a SIDE EFFECT of a read, and that is deliberate rather than sloppy. The
+     * alternative is a separate `poll()` somebody has to remember to call, which is the shape of
+     * wiring bug this file's own history is full of. It is idempotent (a second read in the same
+     * state changes nothing) and monotone (a revocation is never undone except by `confirm`).
+     */
+    if (lastSeen !== undefined && !sameMarker(lastSeen, marker)) {
+      lastSeen = marker;
+      /*
+       * ANY change revokes, INCLUDING one that arrives back at the confirmed account. An
+       * A→B→A round trip leaves the marker saying exactly what it said before, and a
+       * comparison against the mirror's name cannot see that anything happened — which is
+       * precisely the window in which a response issued under B lands in A's tab. What was
+       * confirmed was "this browser is A's, NOW"; the round trip ends that, and the gate waits
+       * for the server to say it again.
+       */
+      if (confirmedFor !== null) {
+        confirmedFor = null;
+        revoked = true;
+      }
+    } else if (lastSeen === undefined) {
+      lastSeen = marker;
+    }
+
+    // A sign-out this browser asked for and the server did not confirm. Not silence: a session
+    // may still be live and it is not this window's to use. See `OWNER_SIGNED_OUT`.
+    if (marker.kind === "signed-out") return "contradicted";
+    if (marker.kind === "account" && marker.id !== mirrorOwner) return "contradicted";
+    if (confirmedFor !== mirrorOwner) return revoked ? "revoked" : "unconfirmed";
     return "holds";
   };
 
@@ -529,7 +611,15 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
    * @param what named in the message so a console line says which door refused.
    */
   const refuseIfForeign = (what: string): void => {
-    if (identity() === "contradicted") throw new ForeignSessionError(what);
+    /*
+     * `revoked` refuses alongside `contradicted`, and `unconfirmed` still does not. The three
+     * are one question asked at three strengths: nobody has said yet (the warm open — the mail
+     * is the person's own and refusing would blank it for a round trip); somebody said and the
+     * world has since changed (the grant has lapsed, and what a read returns now is not this
+     * window's business); the jar positively names somebody else or a refused sign-out.
+     */
+    const state = identity();
+    if (state === "contradicted" || state === "revoked") throw new ForeignSessionError(what);
   };
 
   /**
@@ -550,7 +640,34 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
     what: string,
   ): ((...args: A) => Promise<R>) => async (...args: A): Promise<R> => {
     refuseIfForeign(what);
-    return fn(...args);
+    const answer = await fn(...args);
+    /*
+     * ── AND AGAIN WHEN THE ANSWER LANDS ───────────────────────────────────────────────────
+     *
+     * The check above is a check at REQUEST time, and a request is not instantaneous. Between it
+     * and the browser attaching credentials — and for the whole flight after that — another tab
+     * can rewrite the shared jar. The response then belongs to whoever the jar named when the
+     * server read it, which is not necessarily who it named when this asked, and nothing in the
+     * body says which. Returning it would put those bytes on a surface built for somebody else.
+     *
+     * ONE CHECK AND NOT TWO, and the second one is worth saying out loud because it was written
+     * and then removed. The obvious shape is to capture the marker at issue and compare it at
+     * arrival. For a NAMED mirror that comparison can never be the check that decides: every
+     * change it could detect is a change `identity()` has already turned into `contradicted` or
+     * `revoked` on this same line, because reading is when a transition is noticed. And for an
+     * UN-NAMED engine it must not fire at all — there is no mirror on disk to protect. A guard
+     * whose verdict is always somebody else's verdict is a guard nobody can watch fail, which is
+     * exactly the shape this repository keeps paying for. So the arrival check is the same
+     * question as the departure check, asked again.
+     *
+     * WHAT IT DOES NOT CATCH: a round trip that begins and ends inside one flight with no read
+     * in between — A to B and back to A — leaves `lastSeen` and the current marker both reading
+     * A, so nothing client-side observed anything. No arrangement of client-side checks closes
+     * that; it needs the server to name the account it answered for. That is a `packages/api`
+     * change, out of this slice, and filed as its own gap row rather than implied away here.
+     */
+    refuseIfForeign(what);
+    return answer;
   };
 
   /**
@@ -568,18 +685,33 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
     fn: (...args: A) => Promise<R>,
     what: string,
   ): ((...args: A) => Promise<R>) => async (...args: A): Promise<R> => {
+    const refuse = (why: string): never => {
+      throw new SyncAbortedError(`${what}: ${why}`);
+    };
     if (identity() !== "holds") {
-      throw new SyncAbortedError(
-        `${what}: this mirror's account is not the one this browser's session belongs to`,
-      );
+      refuse("this mirror's account is not the one this browser's session belongs to");
     }
-    return fn(...args);
+    const page = await fn(...args);
+    // {@link gatedRead}'s arrival rule, and a page needs it more than a read does: this one is
+    // written STRAIGHT INTO the mirror on disk, where there is no tombstone for a row that
+    // should never have arrived. Same question as the departure check, asked again — see
+    // `gatedRead` for why a marker comparison beside it would be a guard that never decides.
+    if (identity() !== "holds") refuse("the session changed while the page was in flight");
+    return page;
   };
 
   return {
     identity,
     confirm(accountId) {
       confirmedFor = accountId;
+      // A fresh server answer is what a revocation was waiting for. Cleared BEFORE `identity()`
+      // is consulted below, or the gate would report `revoked` over the confirmation that had
+      // just arrived and never wake anybody.
+      revoked = false;
+      // The marker as it stands at the moment of the confirmation IS the baseline this grant is
+      // measured against. Without this the next read compares against a marker from before the
+      // sign-in and revokes the confirmation on the spot.
+      lastSeen = readOwnerMarker();
       // Only wake anybody if the confirmation actually opened the gate. A confirm naming
       // somebody else leaves it closed, which is the defence in depth behind that comparison:
       // the gate on
@@ -616,7 +748,14 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
           if (mayContinue && !mayContinue()) {
             throw new SyncAbortedError("its sync loop was torn down or its session terminally refused");
           }
-          return adapter.sync(params);
+          const page = await adapter.sync(params);
+          // {@link gatedRead}'s arrival rule. A delta page is written straight into the mirror on
+          // disk, so an answer that turns out to have been issued under another session must not
+          // be applied — and the mirror keeps no tombstone for a row that never belonged.
+          if (identity() !== "holds") {
+            throw new SyncAbortedError("the session changed while the page was in flight");
+          }
+          return page;
         },
         /**
          * GATED ON IDENTITY, AND ONLY ON IDENTITY — which reverses one sentence of the rule
@@ -634,14 +773,25 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
          * here would be read as non-retryable and the overlay rolled back — the click silently
          * discarded, which is the worse failure of the two.
          */
-        mutate: (m, opts): Promise<MutationOutcome> => {
-          if (identity() !== "holds") {
-            return Promise.reject(new MutationRejectedError(
+        mutate: async (m, opts): Promise<MutationOutcome> => {
+          const refuse = (): never => {
+            throw new MutationRejectedError(
               "ohmail: this mailbox is not the account this browser is signed in to",
               { retryable: true },
-            ));
-          }
-          return adapter.mutate(m, opts);
+            );
+          };
+          if (identity() !== "holds") refuse();
+          const outcome = await adapter.mutate(m, opts);
+          /*
+           * AND AGAIN ON THE WAY BACK, which matters more here than anywhere else on this list.
+           * A mutation's outcome is APPLIED to the mirror, so an answer issued under another
+           * session both acted on the wrong account's server state and would write the result
+           * into this one's. Retryable, as at the top: the verb stays queued under the same
+           * idempotency key and is flushed once the gate opens, so the click happens exactly
+           * once, under the right session, later.
+           */
+          if (identity() !== "holds") refuse();
+          return outcome;
         },
         /**
          * FORWARDED, NOT GATED ON CADENCE, REFUSED WHEN CONTRADICTED.
@@ -755,6 +905,37 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
          */
         ...(adapter.requestPull
           ? { requestPull: gatedRead(adapter.requestPull.bind(adapter), "a worker pull") }
+          : {}),
+
+        /*
+         * ── THE ONE-CLICK UNSUBSCRIBE — FORWARDED, REFUSED WHEN CONTRADICTED, AND SPREAD ───
+         *
+         * `POST /messages/:id/unsubscribe`: RFC 8058, performed server-side so the reader's IP
+         * and reading time never reach the sender.
+         *
+         * FORWARDED AT ALL — and this line is a REPAIR, not a precaution, the third on this
+         * list to be one. `OhmailEngine.unsubscribe` reads the capability structurally and
+         * answers `null` when the adapter has none, which a surface is entitled to read as
+         * "this client cannot unsubscribe". The gate is an explicit object literal and this
+         * method was not in it, so on the LIVE PATH — the only path this wrapper exists on —
+         * every account got `null`. `ScreenerView` maps that answer to the SUCCESS sentence:
+         * the control rendered, the press ran, no request left the browser, no unsubscribe was
+         * ever asked for, and the person was told it had been. A silent failure wearing the
+         * face of a completed action, with every suite green because they build engines from
+         * bare adapters. `test/sync-owner-gate.test.ts` builds the real engine through the gate
+         * and counts the request, so deleting this line goes red.
+         *
+         * REFUSED WHEN CONTRADICTED, on `requestPull`'s argument rather than `fetchBody`'s:
+         * this does not read, it ACTS, and it acts at a third party in the answering account's
+         * name. Under a foreign session it would unsubscribe somebody else's mail from
+         * somebody else's list, irreversibly, on a press made in a window that is not theirs.
+         *
+         * SPREAD, for the usual reason: the FixturesAdapter has no server, the demo makes no
+         * external request, and a wrapper that defined this unconditionally would put a live
+         * control over fixtures.
+         */
+        ...(adapter.unsubscribe
+          ? { unsubscribe: gatedRead(adapter.unsubscribe.bind(adapter), "an unsubscribe") }
           : {}),
 
         /*
@@ -1143,6 +1324,9 @@ export function startSyncScheduler(
    * And it is no longer set by the FIRST refusal either — that is `refusedAt`.
    */
   let terminal = false;
+  /** Was `terminal` latched by a cookie contradiction rather than by the server? See the release
+   *  in the tick's `revoked`/`unconfirmed` arm for why the two cannot share one flag. */
+  let terminalByContradiction = false;
   /**
    * WHEN a coded refusal arrived that has not been confirmed. Null when there is none.
    *
@@ -1437,6 +1621,7 @@ export function startSyncScheduler(
       const owns = gate?.identity() ?? "holds";
       if (owns === "contradicted") {
         terminal = true;
+        terminalByContradiction = true;
         bootstrapping = false;
         disarm();
         publish();
@@ -1446,7 +1631,37 @@ export function startSyncScheduler(
         );
         return;
       }
-      if (owns === "unconfirmed") {
+      /*
+       * `revoked` rides with `unconfirmed` HERE and not with `contradicted`, which is the
+       * opposite of how the read gate treats it — deliberately, and the two are answering
+       * different questions. The read gate asks "may this window act on the answer?" and a
+       * lapsed grant means no. The strip asks "what should the person be told?" and a lapsed
+       * grant is not a claim about the account: the marker changed, which happens on a sign-in
+       * elsewhere, a sign-out, a rotation. Saying "this mailbox has stopped syncing; sign in
+       * again" over that would be the slice's own defect in a new place — a sentence stronger
+       * than the evidence. So it disarms QUIETLY and waits for `onOpen`, exactly as an
+       * un-confirmed gate does.
+       */
+      if (owns === "unconfirmed" || owns === "revoked") {
+        /*
+         * AND THE CONTRADICTION'S OWN LATCH IS RELEASED, because its cause is gone.
+         *
+         * `terminal` says "this tab can no longer be served" and the strip says so out loud.
+         * When that claim was made because the jar named somebody else, and the jar has since
+         * stopped naming them, the claim has outlived its evidence — and a sentence stronger
+         * than its evidence is the defect this whole slice exists to remove. What is NOT
+         * released is a `terminal` the SERVER caused: a sustained refusal is the server's own
+         * statement about this account, and a marker changing underneath it does not withdraw
+         * it. Hence the flag rather than a bare `terminal = false`.
+         *
+         * Nothing resumes here either way. The loop stays disarmed and quiet until a fresh
+         * confirmation opens the gate; this only stops it announcing a stop it can no longer
+         * support.
+         */
+        if (terminalByContradiction) {
+          terminal = false;
+          terminalByContradiction = false;
+        }
         bootstrapping = false;
         disarm();
         publish();

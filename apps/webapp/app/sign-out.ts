@@ -6,7 +6,8 @@ import { REPLY_DRAFT_PREFIX, REPLY_META_PREFIX } from "./shell/mail-send";
 import {
   NOTIFICATION_SUBSCRIPTION_PREFIX, revokeWakeRegistration,
 } from "./shell/notification-settings";
-import { forgetOwner } from "./shell/owner-cookie";
+import { bindApiOwner } from "./api-client";
+import { forgetOwner, markSignedOutPending } from "./shell/owner-cookie";
 import { SCREENER_INTENTS_PREFIX } from "./shell/screener-intents";
 import { SEND_LOCKS_PREFIX } from "./shell/send-lock";
 
@@ -98,12 +99,47 @@ export async function forgetThisBrowser(
    * still had a session to do it with. Only `signOut` passes it, and only because it must: see
    * the block below.
    */
-  opts: { revokeWake?: boolean } = {},
+  opts: {
+    revokeWake?: boolean;
+    /**
+     * TRUE when the server MAY STILL HOLD THIS SESSION — the logout was refused, or never
+     * reached anybody. Only `signOut` passes it, and only from its own `serverRefused`.
+     *
+     * ── WHY IT CHANGES WHAT IS WRITTEN, RATHER THAN WHETHER ────────────────────────────────
+     *
+     * The local half runs whatever the server said, and that is right: somebody on a borrowed
+     * machine asking to be signed out is asking whether or not the network answers. Erasing the
+     * OWNER MARKER as part of it was the mistake, and only in this one case.
+     *
+     * The marker is the one thing on this origin that says whose session the browser holds, and
+     * a mailbox window open for a DIFFERENT account reads it before every request. Absence is
+     * read as silence — a legitimate session whose marker was dropped — so clearing it while an
+     * HttpOnly session was still live handed that window a permission it should never have had:
+     * it went on syncing, reading and mutating through the session this sign-out had just failed
+     * to revoke, into a mirror named for somebody else.
+     *
+     * So this path writes {@link OWNER_SIGNED_OUT} instead of erasing. Absence still means
+     * silence; the marker means "a session may still exist and it is not this browser's to
+     * use", which the sync gate reads as a contradiction until a fresh check names an owner.
+     * It is not an account id and `readOwner` never hands it back as one, so nothing downstream
+     * can name a mirror or a storage key with it.
+     */
+    serverHeld?: boolean;
+  } = {},
 ): Promise<{
   remaining: string[];
   inventoryComplete: boolean;
 }> {
-  forgetOwner();
+  if (opts.serverHeld) markSignedOutPending();
+  else forgetOwner();
+  /*
+   * AND THE CLOUD CLIENT STOPS SPEAKING FOR THAT ACCOUNT. `session-outcome.ts` bound it when the
+   * server named an owner; leaving the binding in place after a sign-out would make every later
+   * request refuse against an account nobody is signed in to any more — including the sign-in
+   * that comes next, which is on the ceremony's own allow-list but whose FOLLOW-UP reads are
+   * not. Unbinding is what lets the next confirmation bind cleanly.
+   */
+  bindApiOwner(null);
   /*
    * ── THE WAKE REGISTRATION GOES FIRST, BEFORE THE ID THAT NAMES IT IS SWEPT ──────────────
    *
@@ -272,7 +308,12 @@ export async function signOut(owner?: string): Promise<SignOutResult> {
   }
   {
     // `revokeWake: false` — already done above, with the session that authorized it.
-    const local = await forgetThisBrowser(owner, { revokeWake: false });
+    // `serverHeld` carries the one fact the marker has to reflect: whether a session may still
+    // be alive on the other end. See the parameter's own note.
+    const local = await forgetThisBrowser(owner, {
+      revokeWake: false,
+      serverHeld: serverRefused !== null,
+    });
     // `cleared` needs BOTH: nothing left, and a browser that could actually be asked. Where
     // neither `databases()` nor a usable registry exists, an empty list only means "the two
     // names I already knew are gone" — see `clearAllMirrors`'s own header.

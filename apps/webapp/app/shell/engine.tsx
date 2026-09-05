@@ -979,10 +979,16 @@ function SessionEnded({ sync, engine }: { sync: SyncStatus; engine: OhmailEngine
      * theirs, extending a session nobody in this window is signed in to and, in a bad
      * interleaving, presenting a token their own tab is about to present again.
      *
+     * `!== "holds"` and not `=== "contradicted"`, which is a correction: a REVOKED gate is one
+     * whose confirmation the marker has already outlived, and it has exactly as little business
+     * renewing a session as a contradicted one. The narrower test left the absent-marker case —
+     * a sign-out whose server call failed, then a refusal — free to refresh the session that
+     * sign-out could not revoke.
+     *
      * Read at EFFECT time rather than at render time: the jar can be rewritten between the two,
      * which is the whole event this arm is about.
      */
-    if (syncIdentityOf(engine) === "contradicted") return;
+    if (syncIdentityOf(engine) !== "holds") return;
     probed.current = true;
     probeSessionNow();
   }, [evidence, engine]);

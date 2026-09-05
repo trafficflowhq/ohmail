@@ -64,7 +64,7 @@
  * {@link ApiWire} for backoff and reporting; it decides nothing here.
  */
 
-import { ApiError, auth } from "../api-client";
+import { ApiError, auth, bindApiOwner } from "../api-client";
 import { lastRefreshOutcome } from "../session-refresh";
 import type { OwnerOutcome } from "../shell/engine";
 
@@ -104,7 +104,29 @@ export async function resolveOwnerOutcome(
     //     the same comparison `session-gate.ts` makes at the edge, for the same reason.
     if (scope !== "full") return { kind: "none" };
     const accountId = user?.accountId;
-    if (typeof accountId === "string" && accountId !== "") return { kind: "owner", accountId };
+    if (typeof accountId === "string" && accountId !== "") {
+      /*
+       * ── AND THE CLOUD CLIENT IS BOUND TO THIS ACCOUNT, HERE ─────────────────────────────
+       *
+       * This is the one place in the app that learns an account id from the server, so it is the
+       * one place that can say which account the rest of the client is speaking for. Everything
+       * signed-in goes through `api()`, and from this line on `api()` refuses any request whose
+       * cookie marker no longer names this id — see `apiOwnerHolds`.
+       *
+       * It exists because gating the mail engine was not enough: a shell for A whose browser
+       * became B kept the mailbox correctly stopped and left Settings talking to the new session,
+       * where the other account's recovery codes, TOTP secret, devices and pairing tokens were a
+       * click away. A per-pane check closes today's panes; this closes the seam they share.
+       *
+       * A side effect in a classifier, which is worth defending rather than hiding: the
+       * alternative is a second call somebody has to remember beside every `resolveOwnerOutcome`,
+       * and a binding that can be forgotten is a binding that is missing on exactly the surface
+       * nobody thought about. Both callers — the shell's confirm and `/login`'s ladder — want it,
+       * and rebinding to the same id is a no-op.
+       */
+      bindApiOwner(accountId);
+      return { kind: "owner", accountId };
+    }
     /*
      * `scope: "full"` with no account id is our server answering something it cannot mean.
      * It is not a refusal — nothing was refused — so it is not a verdict; it is a malformed

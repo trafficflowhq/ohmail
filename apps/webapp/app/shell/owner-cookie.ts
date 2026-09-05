@@ -62,6 +62,60 @@
 export const OWNER_COOKIE = "tf_owner";
 
 /**
+ * ═══ "A SIGN-OUT WAS ASKED FOR AND THE SERVER DID NOT CONFIRM IT" ══════════════════════════
+ *
+ * A reserved value this CLIENT writes. The API never sends it, and it is not an account id — no
+ * mirror is ever named for it and no storage key ever carries it, which is why
+ * {@link readOwner} answers `null` for it like any other value that cannot name an account.
+ *
+ * ── THE SEQUENCE IT EXISTS FOR ─────────────────────────────────────────────────────────────
+ *
+ * Sign-out does its local half whatever the server said, on purpose: somebody on a borrowed
+ * machine asking to be signed out is asking whether or not the network answers. Part of that
+ * half was clearing this cookie — and when the server call had FAILED, that left the browser in
+ * the one state nothing could reason about: an HttpOnly session still live on the server, and
+ * no readable marker saying whose it is.
+ *
+ * Absence used to be read as silence ("a legitimate session whose marker was dropped"), so a
+ * mailbox window still open for a DIFFERENT account read that silence as permission and went on
+ * syncing, reading and mutating through the session the failed sign-out had left behind. The
+ * marker was the only thing that could have contradicted it, and the sign-out had just erased
+ * it.
+ *
+ * So the failed half writes a value instead of erasing one. Absence still means silence; THIS
+ * means "a session may still exist and it is not this browser's to use", which is evidence, and
+ * the mirror's sync gate treats it as a contradiction until a fresh check names an owner.
+ */
+export const OWNER_SIGNED_OUT = "signed_out_pending";
+
+/**
+ * WHAT THE MARKER SAYS, in the three forms anything reading it has to tell apart.
+ *
+ * `readOwner` collapses two of these to `null` because its callers ask "which account is this
+ * browser's?", and both a missing cookie and a pending sign-out answer "none". The sync gate
+ * asks a different question — "may this mirror still be trusted?" — and for that the difference
+ * between silence and a refused sign-out is the whole answer.
+ */
+export type OwnerMarker =
+  | { kind: "account"; id: string }
+  | { kind: "signed-out" }
+  | { kind: "absent" };
+
+/**
+ * Read the marker without collapsing it. Synchronous and side-effect-free, like {@link readOwner},
+ * and `jar` is injectable for the same reason.
+ *
+ * A malformed value is `absent`: it can name no account and it is not the reserved word, so the
+ * only honest reading is that nothing was said. See {@link OWNER_SHAPE}.
+ */
+export function readOwnerMarker(jar?: string): OwnerMarker {
+  const raw = rawOwnerCookie(jar);
+  if (raw === null) return { kind: "absent" };
+  if (raw === OWNER_SIGNED_OUT) return { kind: "signed-out" };
+  return OWNER_SHAPE.test(raw) ? { kind: "account", id: raw } : { kind: "absent" };
+}
+
+/**
  * The characters an account id may have, and nothing else.
  *
  * A value that fails this is treated as absent rather than repaired. It is about to name a
@@ -93,14 +147,22 @@ export function isOwnerShaped(value: string): boolean {
  * server cannot see.
  */
 export function readOwner(jar?: string): string | null {
+  const value = rawOwnerCookie(jar);
+  // The reserved sign-out marker is NOT an account id, and this is the function everything that
+  // names a mirror or a storage key goes through — so it must never hand the word back as one.
+  if (value === null || value === OWNER_SIGNED_OUT) return null;
+  return OWNER_SHAPE.test(value) ? value : null;
+}
+
+/** The cookie's raw value, or `null` when it is not in the jar. Shared by both readers. */
+function rawOwnerCookie(jar?: string): string | null {
   const raw = jar ?? (typeof document === "undefined" ? "" : document.cookie);
   if (!raw) return null;
   for (const part of raw.split(";")) {
     const eq = part.indexOf("=");
     if (eq < 0) continue;
     if (part.slice(0, eq).trim() !== OWNER_COOKIE) continue;
-    const value = part.slice(eq + 1).trim();
-    return OWNER_SHAPE.test(value) ? value : null;
+    return part.slice(eq + 1).trim();
   }
   return null;
 }
@@ -130,4 +192,27 @@ export function forgetOwner(write?: (cookie: string) => void): void {
   }
   if (typeof document === "undefined") return;
   document.cookie = expired;
+}
+
+/**
+ * SAY THAT A SIGN-OUT WAS ASKED FOR AND NOT CONFIRMED — see {@link OWNER_SIGNED_OUT}.
+ *
+ * Written INSTEAD of clearing, and only on that one path: erasing the marker while the server
+ * may still hold a live session is what let a window for another account go on using it. The
+ * cookie is a session cookie here rather than an expired one, so closing the browser forgets it,
+ * which is the right lifetime for a claim about a request that may yet be retried.
+ *
+ * `Secure` on a secure page only, for {@link forgetOwner}'s reason: a plain-http development
+ * origin DISCARDS a `Secure` write silently, and a write that vanishes would leave the previous
+ * account's id in place — the worst of the three states.
+ */
+export function markSignedOutPending(write?: (cookie: string) => void): void {
+  const secure = typeof location !== "undefined" && location.protocol === "https:" ? "; Secure" : "";
+  const cookie = `${OWNER_COOKIE}=${OWNER_SIGNED_OUT}; Path=/; SameSite=Strict${secure}`;
+  if (write) {
+    write(cookie);
+    return;
+  }
+  if (typeof document === "undefined") return;
+  document.cookie = cookie;
 }

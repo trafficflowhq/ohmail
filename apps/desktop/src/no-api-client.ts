@@ -79,6 +79,27 @@ export const csrfToken: () => string | null = absent;
 
 export const api: <T>(path: string, opts?: RequestOptions) => Promise<T> = absent;
 
+/**
+ * ── THE OWNER BOUNDARY, AND THE THREE OF THESE THAT ARE **NOT** REFUSALS ───────────────────
+ *
+ * Everything else in this module refuses, because calling it on a build with no server is a
+ * wiring bug worth failing loudly. These three are the exception, and the reason is what they
+ * are FOR: on the hosted client they answer "is this window still speaking for the account it
+ * was bound to?", and a browser cookie jar shared between tabs is the whole problem they exist
+ * to solve. There is no such jar here — the desktop holds its mail through a local process and
+ * keys its engine to the mounted mailbox, so no two windows can disagree about whose session
+ * this is. The honest answer on this build is "yes, always", not "you should not have asked".
+ *
+ * Refusing instead would break the shared shell for no gain: `api-client`'s own callers reach
+ * these through code that ships in the desktop bundle, and a thrown refusal there would take a
+ * working window down over a question that has no meaning on it.
+ */
+export const bindApiOwner: (accountId: string | null) => void = () => {};
+
+export const boundApiOwner: () => string | null = () => null;
+
+export const apiOwnerHolds: (path: string) => boolean = () => true;
+
 export interface SessionUser {
     userId: string;
     accountId: string;
