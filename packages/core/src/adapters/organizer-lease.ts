@@ -1678,7 +1678,7 @@ export function makeLeasePeekIo(client: LeaseImapClient, toServerPath: (canonica
         // one window is reported as a read that FAILED, which {@link readLeasePeek} turns into
         // {@link LeaseUnavailableError}: this surface exists to tell a person who holds their
         // mailbox, and "I could not see all of it" must render as unknown rather than as nobody.
-        const read = await readMetaFolderWindow(client);
+        const read = await readMetaFolderWindow(client, at.path);
         if (read.truncated) throw new MetaFolderTruncatedError(read.records.length, read.total, read.records);
         return read.records;
       } finally {
@@ -1883,14 +1883,14 @@ export interface LeaseImapClient extends MetaFolderClient {
    */
   noop?(): Promise<unknown>;
   /**
-   * SEARCH over the selected folder — how this module asks the SERVER how many messages a folder
-   * holds. Optional: a client without it falls back to reading the folder whole. See
-   * {@link lastSequence} for why the count cannot be asked for with a `*` fetch.
+   * STATUS on a folder BY NAME — the only form of "how many messages" this module asks, because it
+   * is the only one that answers with a single number. Optional: a client without it falls back to
+   * reading the folder whole, which is bounded in what it RETAINS. See {@link lastSequence}.
    */
-  search?(
-    query: { all?: boolean },
-    options?: { uid?: boolean },
-  ): Promise<number[] | false | undefined>;
+  status?(
+    path: string,
+    query: { messages?: boolean },
+  ): Promise<{ messages?: number } | undefined>;
   mailboxCreate(path: string): Promise<unknown>;
   mailboxUnsubscribe(path: string): Promise<unknown>;
   getMailboxLock(path: string): Promise<{ release(): void }>;
@@ -1978,14 +1978,14 @@ async function selectedCount(
  */
 export interface SequenceProbeClient {
   /**
-   * SEARCH over the SELECTED folder. Optional, because a client that does not offer it simply
-   * falls back to reading the folder whole — see {@link lastSequence} for why this is the only
-   * form of the question this module now asks.
+   * STATUS by folder name. Optional, because a client that does not offer it simply falls back to
+   * reading the folder whole — see {@link lastSequence} for why this is the only form of the
+   * question this module asks.
    */
-  search?(
-    query: { all?: boolean },
-    options?: { uid?: boolean },
-  ): Promise<number[] | false | undefined>;
+  status?(
+    path: string,
+    query: { messages?: boolean },
+  ): Promise<{ messages?: number } | undefined>;
 }
 
 /**
@@ -2019,17 +2019,14 @@ export interface SequenceProbeClient {
  * and correct about WHICH records it keeps and merely costs the whole folder over the wire. Never
  * a throw: this is an optimisation of a read that already works without it.
  */
-export async function lastSequence(client: SequenceProbeClient): Promise<number | undefined> {
-  if (typeof client.search !== "function") return undefined;
+export async function lastSequence(
+  client: SequenceProbeClient,
+  path: string | undefined,
+): Promise<number | undefined> {
+  if (path === undefined || typeof client.status !== "function") return undefined;
   try {
-    const found = await client.search({ all: true }, { uid: false });
-    if (!Array.isArray(found)) return undefined;
-    // The HIGHEST sequence number is the count. Not `found.length`: a server is not required to
-    // answer in order, and a gap would make the length disagree with the range arithmetic that
-    // uses it. An empty folder answers `[]`, which is a KNOWN zero.
-    let max = 0;
-    for (const n of found) if (typeof n === "number" && n > max) max = n;
-    return max;
+    const st = await client.status(path, { messages: true });
+    return typeof st?.messages === "number" ? st.messages : undefined;
   } catch {
     return undefined;
   }
@@ -2172,7 +2169,10 @@ export class MetaFolderTruncatedError extends Error {
  * "the window runs from the END of the folder" asserted nowhere, and a ceiling that quietly went
  * back to keeping the oldest records would pass every guard above it.
  */
-export async function readMetaFolderWindow(client: LeaseImapClient): Promise<MetaFolderRead> {
+export async function readMetaFolderWindow(
+  client: LeaseImapClient,
+  path?: string,
+): Promise<MetaFolderRead> {
   // AN EMPTY `_meta` IS THE NORMAL STATE OF A FRESH MAILBOX, AND `1:*` IS NOT A VALID MESSAGESET
   // WHEN A MAILBOX HOLDS NOTHING.
   //
@@ -2219,7 +2219,7 @@ export async function readMetaFolderWindow(client: LeaseImapClient): Promise<Met
    * that answered its NOOP takes neither. The sliding eviction below still stands behind this for
    * the case where even that answer does not come.
    */
-  const probed = count === undefined || !refreshed ? await lastSequence(client) : undefined;
+  const probed = count === undefined || !refreshed ? await lastSequence(client, path) : undefined;
 
   /* ── AND WHEN THE SERVER DOES NOT ANSWER EITHER, DO NOT COUNT BACK FROM THE STALE VALUE ───
    *
@@ -2372,7 +2372,8 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
     },
 
     async listClaims(): Promise<RawClaimMessage[]> {
-      const lock = await client.getMailboxLock(await meta.path());
+      const metaPath = await meta.path();
+      const lock = await client.getMailboxLock(metaPath);
       try {
         // THE GATE'S READ IS BOUNDED, AND THIS IS THE READ THAT MOST NEEDED IT.
         //
@@ -2391,7 +2392,7 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
         // has already run by the time this is called — it is idempotent, and a folder full enough to
         // reach here plainly exists — so "no claim is appended, nothing is expunged" is the exact
         // guarantee rather than "no command is sent".)
-        const read = await readMetaFolderWindow(client);
+        const read = await readMetaFolderWindow(client, metaPath);
         // BESIDE THE RECORDS, INSIDE THE LOCK — see `generationAtLastRead`. Sampled before the
         // truncation throw as well, because the gate acts on that window too.
         sampleGeneration();
@@ -4101,7 +4102,7 @@ function makeMetaRecordsList(
         // The shared bounded read — see {@link readMetaFolderWindow}. An empty folder is a real
         // answer and comes back as one; a folder too full for a single window is not, and falls
         // into the refusal below for the same reason an ABSENT folder does.
-        const read = await readMetaFolderWindow(client);
+        const read = await readMetaFolderWindow(client, at.path);
         if (read.truncated) throw new MetaFolderTruncatedError(read.records.length, read.total, read.records);
         return read.records;
       } finally {

@@ -576,14 +576,14 @@ export interface ProfileImapClient extends MetaFolderClient {
    */
   noop?(): Promise<unknown>;
   /**
-   * SEARCH over the selected folder — how this module asks the SERVER how many messages a folder
-   * holds. Optional: a client without it falls back to reading the folder whole. See
-   * {@link lastSequence} for why the count cannot be asked for with a `*` fetch.
+   * STATUS on a folder BY NAME — the only form of "how many messages" this module asks, because it
+   * is the only one that answers with a single number. Optional: a client without it falls back to
+   * reading the folder whole, which is bounded in what it RETAINS. See {@link lastSequence}.
    */
-  search?(
-    query: { all?: boolean },
-    options?: { uid?: boolean },
-  ): Promise<number[] | false | undefined>;
+  status?(
+    path: string,
+    query: { messages?: boolean },
+  ): Promise<{ messages?: number } | undefined>;
   mailboxCreate(path: string): Promise<unknown>;
   mailboxUnsubscribe(path: string): Promise<unknown>;
   getMailboxLock(path: string): Promise<{ release(): void }>;
@@ -665,7 +665,10 @@ export function makeProfileIo(client: ProfileImapClient, toServerPath: (canonica
      * and was missed. A stale zero here reads as "nobody has published settings for this mailbox".
      */
     async listProfileMessages(opts?: { complete?: boolean }): Promise<RawProfileMessage[]> {
-      const lock = await client.getMailboxLock(await meta.path());
+      // Resolved ONCE and reused for both the lock and the count probe, so the two can never name
+      // different folders.
+      const metaPath = await meta.path();
+      const lock = await client.getMailboxLock(metaPath);
       try {
         const out: RawProfileMessage[] = [];
         // A NOOP that FAILS leaves the cached value standing, which is exactly where this was
@@ -702,7 +705,7 @@ export function makeProfileIo(client: ProfileImapClient, toServerPath: (canonica
          * derived from a stale 1000 against a folder of 400 is read as `400:501` and returns one
          * message, which here is "no settings have been published" for a mailbox that has some.
          * `undefined` falls through to `1:*`, where the sliding window below keeps the newest. */
-        const probed = count === undefined || !refreshed ? await lastSequence(client) : undefined;
+        const probed = count === undefined || !refreshed ? await lastSequence(client, metaPath) : undefined;
         const total = probed ?? (refreshed && typeof count === "number" ? count : undefined);
         if (total === 0) return out;
         const from = typeof total === "number" && total > PROFILE_MESSAGES_MAX_PER_FETCH
