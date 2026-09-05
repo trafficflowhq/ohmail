@@ -296,7 +296,7 @@ export function MessageHeader({
                 <span aria-hidden="true">⋯</span>
               </button>
               {menuOpen ? (
-                <MoreMenu items={menuItems} ariaLabel={tm("actions")} onClose={closeMenu} />
+                <MoreMenu items={menuItems} ariaLabel={tm("actions")} anchor={moreRef.current} onClose={closeMenu} />
               ) : null}
             </span>
           ) : null}

@@ -1017,6 +1017,7 @@ function ActionBar({
         <MoreMenu
           items={menuItems}
           ariaLabel={t("actionMore")}
+          anchor={moreRef.current}
           onClose={closeMenu}
         />
       ) : null}

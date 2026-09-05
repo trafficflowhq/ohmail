@@ -58,14 +58,28 @@ export interface MoreMenuItem {
 export function MoreMenu({
   items,
   ariaLabel,
+  anchor,
   onClose,
 }: {
   items: MoreMenuItem[];
   ariaLabel: string;
   /**
-   * Dismiss. The CALLER returns focus to the trigger — it owns the button, and a menu that
-   * grabbed a reference to the element that opened it would be holding one more thing than it
-   * needs to. See `ActionBar`.
+   * THE BUTTON THAT OPENED THIS, so a press on it is not read as a press outside.
+   *
+   * The menu used to hold nothing but `onClose`, on the argument that the caller owns the trigger
+   * and a menu holding a reference to it would be holding one more thing than it needs. That was
+   * right about ownership and wrong about the consequence: the dismissal listener asks whether the
+   * press landed outside the MENU, and the trigger is outside the menu, so pressing the open
+   * control counted as an outside press. See the listener below for what that did.
+   *
+   * `null` is a menu with no anchor — every press outside the menu dismisses it, which is the
+   * behaviour this had before and is still correct for a caller that does not have a trigger
+   * element to give.
+   */
+  anchor: HTMLElement | null;
+  /**
+   * Dismiss. The CALLER returns focus to the trigger — it owns the button, and the reference above
+   * is read for one comparison and never focused or written to.
    */
   onClose: () => void;
 }) {
@@ -98,15 +112,33 @@ export function MoreMenu({
     live()[0]?.focus();
   }, [live]);
 
+  /**
+   * ── DISMISS ON A PRESS OUTSIDE — AND THE TRIGGER IS NOT OUTSIDE ────────────────────────────
+   *
+   * `mousedown` and not `click`, matching the tag picker and the sender sheet: a `click` listener
+   * would race the very press that opened this and close it in the same gesture. That is still
+   * true and is why the listener is NOT moved back to `click`.
+   *
+   * What was wrong is what counts as outside. `rootRef` is the menu, and the button that opened it
+   * is not inside the menu — so pressing that button while the menu was open ran BOTH halves of a
+   * single press: `mousedown` reached this listener and closed the menu, then the `click` that
+   * followed reached the trigger's own toggle and opened it again. The menu could not be dismissed
+   * by pressing its own control, which is the first thing anybody tries. One press, two handlers,
+   * and they cancelled out.
+   *
+   * The anchor is excluded, exactly as `DatePicker` excludes its own. The trigger's toggle then
+   * owns that press by itself, so one press is one dismissal.
+   */
   useEffect(() => {
-    // `mousedown` and not `click`, matching the tag picker and the sender sheet: a `click`
-    // listener would race the very press that opened this and close it in the same gesture.
     const onDown = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) onClose();
+      const target = e.target as Node;
+      if (rootRef.current?.contains(target)) return;
+      if (anchor?.contains(target)) return;
+      onClose();
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
-  }, [onClose]);
+  }, [anchor, onClose]);
 
   /**
    * A KEY THE MENU HANDLES IS THE MENU'S, AND NOTHING ELSE'S.

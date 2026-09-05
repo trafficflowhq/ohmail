@@ -106,7 +106,11 @@ export function ContactPopover({
         <b>{label}</b>
         {state.name ? <small>{who}</small> : null}
       </div>
-      <MoreMenu items={items} ariaLabel={t("contactAria", { who })} onClose={onClose} />
+      {/* NO ANCHOR, and that is not an omission. This menu is the popover's whole content rather
+          than a disclosure hanging off a button this component owns — the chip that opened it
+          belongs to the recipients block and is not reachable from here. Every press outside the
+          menu dismisses it, which is what this surface did before and still wants. */}
+      <MoreMenu items={items} ariaLabel={t("contactAria", { who })} anchor={null} onClose={onClose} />
     </div>
   );
 }
