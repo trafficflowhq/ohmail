@@ -2258,6 +2258,16 @@ export class MetaFolderTruncatedError extends Error {
 export async function readMetaFolderWindow(
   client: LeaseImapClient,
   path?: string,
+  /**
+   * PAGE OLDER THAN THIS UID. Absent, the read covers the newest records, which is what every
+   * decision wants. Given, it covers the newest records BELOW the bound — the next page down —
+   * so a caller that has already handled a page can ask for the one before it and keep going.
+   *
+   * By UID rather than by position, for the reason the profile read learned the hard way: a
+   * sequence number is a position in the folder as it stood a round trip ago, and an expunge
+   * renumbers everything above it without saying so.
+   */
+  beforeUid?: number,
 ): Promise<MetaFolderRead> {
   // AN EMPTY `_meta` IS THE NORMAL STATE OF A FRESH MAILBOX, AND `1:*` IS NOT A VALID MESSAGESET
   // WHEN A MAILBOX HOLDS NOTHING.
@@ -2318,7 +2328,14 @@ export async function readMetaFolderWindow(
   const readFrom = async (start: number): Promise<{ records: RawMetaMessage[]; evicted: boolean }> => {
   const records: RawMetaMessage[] = [];
   let evicted = false;
-  for await (const m of client.fetch(`${start}:*`, { uid: true, headers: true }, { uid: false })) {
+  /* A PAGE BELOW THE CURSOR IS ADDRESSED BY UID, and the eviction below is what bounds it: the
+   * range names every record older than the cursor, and the newest ceiling's worth of those are
+   * what survive the walk. That is the same shape the unbounded read already has for a server
+   * that will not report `exists` — bounded in what it RETAINS, and correct about which. */
+  const range = beforeUid !== undefined ? `1:${Math.max(1, beforeUid - 1)}` : `${start}:*`;
+  const byUid = beforeUid !== undefined;
+  if (beforeUid !== undefined && beforeUid <= 1) return { records, evicted };
+  for await (const m of client.fetch(range, { uid: true, headers: true }, { uid: byUid })) {
     if (!m.headers) continue;
     records.push({ ref: m.uid, raw: m.headers.toString("utf8") });
     // ── PAST THE CEILING, DROP FROM THE FRONT — NEVER STOP AT IT ─────────────────────────────
@@ -4458,7 +4475,11 @@ void _searchCapMatchesCeiling;
 
 /** The shared read: the folder's headers, unfiltered and bounded — the parsers sort it out. */
 export interface MetaRecordsIo {
-  listMetaRecords(): Promise<RawMetaMessage[]>;
+  /**
+   * The newest records in `ohmail/_meta` — or, given `beforeUid`, the newest BELOW that uid, which
+   * is the next page down. See {@link readMetaFolderWindow}.
+   */
+  listMetaRecords(beforeUid?: number): Promise<RawMetaMessage[]>;
 }
 
 /** WHAT A READER MAY DO to `ohmail/_meta`: look, and append its own decisions. Nothing else. */
@@ -4593,8 +4614,8 @@ function makeMetaRecordsList(
   client: LeaseImapClient,
   meta: MetaFolderRef,
   op: RequestOp,
-): () => Promise<RawMetaMessage[]> {
-  return async (): Promise<RawMetaMessage[]> => {
+): (beforeUid?: number) => Promise<RawMetaMessage[]> {
+  return async (beforeUid?: number): Promise<RawMetaMessage[]> => {
     let at: MetaFolderLocation;
     try {
       at = await meta.locate();
@@ -4614,7 +4635,7 @@ function makeMetaRecordsList(
         // The shared bounded read — see {@link readMetaFolderWindow}. An empty folder is a real
         // answer and comes back as one; a folder too full for a single window is not, and falls
         // into the refusal below for the same reason an ABSENT folder does.
-        const read = await readMetaFolderWindow(client, at.path);
+        const read = await readMetaFolderWindow(client, at.path, beforeUid);
         if (read.truncated) throw new MetaFolderTruncatedError(read.records.length, read.total, read.records);
         return read.records;
       } finally {

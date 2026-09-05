@@ -145,6 +145,28 @@ export const REQUEST_STALE_MUST_NOT_EXCEED_MS = IDEMPOTENCY_TTL_MS;
 export const REQUEST_DRAIN_MAX_PER_CYCLE = 200;
 
 /**
+ * How many pages of a too-full folder one pass may walk looking for work. Bounds the round trips
+ * the way the ceiling bounds a page: a folder of nothing but acknowledgements would otherwise be
+ * walked to its bottom on every cycle to discover the same emptiness.
+ */
+const REQUEST_DRAIN_MAX_PAGES = 8;
+
+/** The lowest uid in a page, which is the bound for the page below it. `null` when unaddressable. */
+function lowestRef(records: readonly RawMetaMessage[]): number | null {
+  let low: number | null = null;
+  for (const r of records) {
+    if (typeof r.ref !== "number") continue;
+    if (low === null || r.ref < low) low = r.ref;
+  }
+  return low;
+}
+
+/** Is there anything on this page that THIS pass can settle? Acknowledgements are the sweep's. */
+function hasRequestRecord(records: readonly RawMetaMessage[]): boolean {
+  return records.some((r) => r.raw.includes("X-Ohmail-Request:"));
+}
+
+/**
  * AND A WALL-CLOCK CEILING BESIDE THE COUNT, because the two bound different things. The count
  * bounds how many records are read; this bounds how long applying them may take when each one is
  * a real transaction against a database that is having a bad day. Checked between records, so a
@@ -374,6 +396,50 @@ export async function applyMetaRequests(
           + "ceiling once the acknowledgements written in their place age past the sweep's cutoff",
       });
       records = [...err.records];
+      /* ── AND THE CURSOR ADVANCES EVEN WHEN A PAGE HOLDS NO WORK ─────────────────────────────
+       *
+       * The newest page is the same page every cycle. A folder over the ceiling whose newest
+       * records are all acknowledgements — not yet stale, so the sweep leaves them — gives this
+       * pass nothing to settle, and the next pass reads exactly the same window and finds the same
+       * nothing. The requests that WOULD unstick it sit below the window, and no amount of waiting
+       * moves them up: the state is stationary, which is the shape the paging was introduced to
+       * remove and which it did not remove for this folder.
+       *
+       * So the read walks DOWN. Each page's lowest uid becomes the bound for the next, which makes
+       * the cursor strictly decreasing — a page can only be re-read if the folder changed under
+       * it, and never in the same pass. The walk stops at the first page with work to do, at the
+       * bottom of the folder, or at the page budget, whichever comes first.
+       *
+       * WORK means a request record: that is what this pass settles, and settling one is what
+       * takes a record out of the folder. Acknowledgements are the sweep's business and it has
+       * already run, ahead of this read, for exactly that reason. */
+      let cursor = lowestRef(records);
+      for (let page = 1; page < REQUEST_DRAIN_MAX_PAGES; page++) {
+        if (hasRequestRecord(records) || cursor === null || cursor <= 1) break;
+        let older: RawMetaMessage[];
+        try {
+          older = await io.listMetaRecords(cursor);
+        } catch (pageErr) {
+          /* A PAGE BELOW THE CURSOR IS ALSO A BOUNDED READ, so it refuses in exactly the same way
+           * when what is left below is still more than one window — which for a genuinely full
+           * folder is every page but the last. Treating that as unreadable stopped the walk on its
+           * first step and made the whole thing a no-op; the refusal carries the page, and the
+           * page is what the walk wanted. Anything else really is a look that failed. */
+          if (!(pageErr instanceof MetaFolderTruncatedError) || pageErr.records.length === 0) break;
+          older = [...pageErr.records];
+        }
+        if (older.length === 0) break;
+        const next = lowestRef(older);
+        // The cursor must STRICTLY advance, or the walk is a loop with extra steps.
+        if (next === null || cursor !== null && next >= cursor) break;
+        records = older;
+        cursor = next;
+        log("meta_requests_page_advanced", {
+          mailboxId: rt.mailboxId, accountId: rt.accountId, page, cursor,
+          reason: "the page above held nothing this pass can settle, so the walk moved older "
+            + "rather than reading the same window again next cycle",
+        });
+      }
     } else {
       // Mirrors the lease peek's own rule: an unreadable folder is a look that failed, not
       // evidence of anything. The next cycle tries again.
