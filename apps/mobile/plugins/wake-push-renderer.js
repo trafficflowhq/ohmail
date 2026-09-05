@@ -123,10 +123,49 @@ const INITIALIZER_FQCN = `${PACKAGE}.${INITIALIZER_CLASS}`;
 const WAKE_PAYLOAD = '{"type":"wake"}';
 
 /**
- * The notice's title. Fixed, app-owned, never from the payload. Pinned against `copy.ts`'s `wake`
- * string by a test so the notification and the in-app label cannot drift.
+ * THE NOTICE'S TITLE AND ITS CHANNEL NAME, IN EVERY LANGUAGE THE APP SPEAKS.
+ *
+ * Fixed, app-owned, never from the payload. They used to be two Kotlin constants, which made them
+ * the one part of this app a German reader could not get in German: the notice is drawn by a
+ * NATIVE renderer in a process with no JS, so the copy deck cannot reach it, and neither can the
+ * language the person chose in Settings — that choice lives in the app's keystore and this code
+ * runs before anything reads it.
+ *
+ * Android already solves this. The strings go into `res/values/` and `res/values-de/`, and the
+ * platform picks by the DEVICE's locale, which is the only signal available in a JS-less process
+ * and is the right one: it is what every other notification on the phone follows. A person who set
+ * ohmail to German on an English phone still gets an English notice, and that is a real limit —
+ * written down here rather than left to be found, and the same limit any app has.
+ *
+ * The English must equal the deck's `wake` string; a test pins them so the notice and the in-app
+ * label cannot drift. The German equals the German deck's.
  */
-const NOTIFICATION_TITLE = "New mail";
+const NOTIFICATION_STRINGS = {
+  /** `res/values/` — the fallback for every locale without its own directory. */
+  "": { title: "New mail", channel: "New mail" },
+  "de": { title: "Neue Mail", channel: "Neue Mail" },
+};
+
+/** Kept for the pin against the deck, and for callers that only want the default. */
+const NOTIFICATION_TITLE = NOTIFICATION_STRINGS[""].title;
+
+/** The resource names the Kotlin reads. Namespaced so nothing in the template can collide. */
+const TITLE_RES = "ohmail_wake_title";
+const CHANNEL_RES = "ohmail_wake_channel";
+
+const xmlEscape = (v) => v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+
+/** One `strings.xml`, generated — never hand-edited, and overwritten on every prebuild. */
+function stringsXml(strings) {
+  return `<?xml version="1.0" encoding="utf-8"?>
+<!-- GENERATED at prebuild by apps/mobile/plugins/wake-push-renderer.js. Do not edit here. -->
+<resources>
+  <string name="${TITLE_RES}">${xmlEscape(strings.title)}</string>
+  <string name="${CHANNEL_RES}">${xmlEscape(strings.channel)}</string>
+</resources>
+`;
+}
 
 /** The process-static interactive flag, its own tiny file so both classes reference one source. */
 const APP_STATE_SOURCE = `package ${PACKAGE}
@@ -215,7 +254,9 @@ class ${INITIALIZER_CLASS} : ContentProvider() {
 }
 `;
 
-const RENDERER_SOURCE = `package ${PACKAGE}
+const rendererSource = (appPackage) => `package ${PACKAGE}
+
+import ${appPackage}.R
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -278,7 +319,7 @@ class ${CLASS} : PushPayloadRenderer {
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
         val channel = NotificationChannel(
           CHANNEL_ID,
-          CHANNEL_NAME,
+          ctx.getString(R.string.${CHANNEL_RES}),
           NotificationManager.IMPORTANCE_DEFAULT,
         )
         NotificationManagerCompat.from(ctx).createNotificationChannel(channel)
@@ -286,7 +327,7 @@ class ${CLASS} : PushPayloadRenderer {
 
       val builder = NotificationCompat.Builder(ctx, CHANNEL_ID)
         .setSmallIcon(android.R.drawable.sym_action_email)
-        .setContentTitle(NOTIFICATION_TITLE)
+        .setContentTitle(ctx.getString(R.string.${TITLE_RES}))
         .setPriority(NotificationCompat.PRIORITY_DEFAULT)
         .setAutoCancel(true)
 
@@ -315,9 +356,7 @@ class ${CLASS} : PushPayloadRenderer {
 
   private companion object {
     const val WAKE_PAYLOAD = ${JSON.stringify(WAKE_PAYLOAD)}
-    const val NOTIFICATION_TITLE = ${JSON.stringify(NOTIFICATION_TITLE)}
     const val CHANNEL_ID = "app.ohmail.push.new_mail"
-    const val CHANNEL_NAME = "New mail"
     const val NOTIFICATION_ID = 1
   }
 }
@@ -340,12 +379,31 @@ function withWakeRendererSources(config) {
       }
       const dir = path.join(javaRoot, ...PACKAGE.split("."));
       fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(path.join(dir, `${CLASS}.kt`), RENDERER_SOURCE);
+      fs.writeFileSync(path.join(dir, `${CLASS}.kt`), rendererSource(appPackageOf(cfg)));
       fs.writeFileSync(path.join(dir, "WakeAppState.kt"), APP_STATE_SOURCE);
       fs.writeFileSync(path.join(dir, `${INITIALIZER_CLASS}.kt`), INITIALIZER_SOURCE);
+
+      /* The localized notice strings, one `values` directory per language. Written here rather
+         than through `withStringsXml` because that modifier owns a single default file and this
+         needs a per-locale set; the directories are the platform's own selection mechanism. */
+      const resRoot = path.join(root, "app", "src", "main", "res");
+      for (const [locale, strings] of Object.entries(NOTIFICATION_STRINGS)) {
+        const values = path.join(resRoot, locale === "" ? "values" : `values-${locale}`);
+        fs.mkdirSync(values, { recursive: true });
+        fs.writeFileSync(path.join(values, "ohmail_wake_strings.xml"), stringsXml(strings));
+      }
       return cfg;
     },
   ]);
+}
+
+/**
+ * WHERE `R` LIVES. The generated Kotlin sits in its own package, but the resource class is
+ * generated at the APPLICATION's namespace, which is configuration — a throwaway build under a
+ * different applicationId would otherwise import a class that does not exist there.
+ */
+function appPackageOf(config) {
+  return (config.android && config.android.package) || "app.ohmail";
 }
 
 /** The provider's authority — unique per app, derived from the applicationId. */
@@ -390,8 +448,12 @@ module.exports.FQCN = FQCN;
 module.exports.INITIALIZER_FQCN = INITIALIZER_FQCN;
 module.exports.WAKE_PAYLOAD = WAKE_PAYLOAD;
 module.exports.NOTIFICATION_TITLE = NOTIFICATION_TITLE;
-module.exports.RENDERER_SOURCE = RENDERER_SOURCE;
+module.exports.NOTIFICATION_STRINGS = NOTIFICATION_STRINGS;
+module.exports.TITLE_RES = TITLE_RES;
+module.exports.CHANNEL_RES = CHANNEL_RES;
+module.exports.rendererSource = rendererSource;
+module.exports.RENDERER_SOURCE = rendererSource("app.ohmail");
 module.exports.APP_STATE_SOURCE = APP_STATE_SOURCE;
 module.exports.INITIALIZER_SOURCE = INITIALIZER_SOURCE;
 /** Back-compat alias: the census reads the emitted renderer Kotlin as `SOURCE`. */
-module.exports.SOURCE = RENDERER_SOURCE;
+module.exports.SOURCE = rendererSource("app.ohmail");
