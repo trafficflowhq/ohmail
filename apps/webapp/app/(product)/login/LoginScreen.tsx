@@ -44,7 +44,7 @@ import {
 } from "../../api-client";
 import { SELF_HOST_BUILD, serverHello } from "../../hello";
 import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "../../shell/confirm-schedule";
-import { refreshSettled, withSessionCookieLock } from "../../session-refresh";
+import { refreshSettled } from "../../session-refresh";
 import { resolveOwnerOutcome } from "../session-outcome";
 
 type Stage = "password" | "twofa";
@@ -256,20 +256,18 @@ export function LoginScreen() {
        */
       await refreshSettled();
       /*
-       * ── AND UNDER THE ORIGIN-WIDE LOCK, WHICH IS THE HALF `refreshSettled` CANNOT DO ──────
+       * ── THE ORIGIN-WIDE LOCK IS THE CLIENT'S NOW, NOT THIS SCREEN'S ─────────────────────
        *
-       * `refreshSettled` waits for a refresh in flight IN THIS TAB. Review named what that
-       * misses: `inFlight` is module state, so a refresh running in another tab of the same
-       * profile is invisible to it — that tab begins one, this one waits for nothing, signs in,
-       * and the other tab's response lands afterwards and rewrites every session cookie.
+       * This call took `withSessionCookieLock` explicitly, which fixed the sign-in and nothing
+       * else: registration, first-run, and four in-shell reauthentications write session cookies
+       * too and none of them knew. `auth.login` and every other cookie-writing method carries the
+       * lock itself now (`api-client.ts`), so this reads as an ordinary call and is ordered
+       * against a refresh in any tab whether or not this file remembers why.
        *
-       * Both writers now take the same lock the refresh already used, so the two are ordered
-       * whichever tab they are in. Held around this one request and not around the ceremony: a
-       * person finding their phone must not stall every other tab's refresh.
+       * `refreshSettled` above stays: it is the SAME-tab ordering, and it is what makes the
+       * common case wait for a refresh this tab started rather than queue behind it.
        */
-      const result = await withSessionCookieLock(
-        () => auth.login({ email: email.trim(), password }),
-      );
+      const result = await auth.login({ email: email.trim(), password });
       setPassword("");
       if (result.status === "enrollment") {
         // The re-entry path: registered, never finished 2FA. `/join` reads the live
@@ -292,10 +290,7 @@ export function LoginScreen() {
     if (!challenge) return;
     const { options } = await auth.webauthnAssertOptions({ loginToken: challenge.loginToken });
     const credential = await assertPasskey(options);
-    // Same lock as the other two factors: this is the call that writes the session.
-    await withSessionCookieLock(
-      () => auth.webauthnAssertVerify({ loginToken: challenge.loginToken, credential }),
-    );
+    await auth.webauthnAssertVerify({ loginToken: challenge.loginToken, credential });
     router.push("/");
   }, "passkey");
 
@@ -303,13 +298,13 @@ export function LoginScreen() {
     e.preventDefault();
     void run(async () => {
       if (!challenge) return;
-      // The second factor writes the session cookies, so it takes the same lock the password
-      // step does — see `submitPassword`. One round trip, then released.
-      await withSessionCookieLock(() => (
-        method === "recovery_code"
-          ? auth.recoveryVerify({ loginToken: challenge.loginToken, code: code.trim() })
-          : auth.totpVerify({ loginToken: challenge.loginToken, code: code.trim() })
-      ));
+      // The second factor writes the session cookies and is locked inside the client — see
+      // `submitPassword`.
+      if (method === "recovery_code") {
+        await auth.recoveryVerify({ loginToken: challenge.loginToken, code: code.trim() });
+      } else {
+        await auth.totpVerify({ loginToken: challenge.loginToken, code: code.trim() });
+      }
       router.push("/");
     }, "code");
   };
