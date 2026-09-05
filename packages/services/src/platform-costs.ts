@@ -61,6 +61,15 @@ import type { Db } from "./context.js";
  *    one record per (day × service × region), each carrying `BilledCost` — the amount that is
  *    the basis for invoicing — beside `ServiceName`, `ConsumedQuantity` and `ConsumedUnit`.
  *
+ *    **IT SELECTS BUCKETS BY THEIR END, WHICH IS NOT WHAT A CALENDAR MONTH IS.** Asking for
+ *    August with August's own UTC boundaries returns THIRTY buckets, not thirty-one: the one
+ *    starting `2026-08-31T07:00Z` ends seven hours past the range and is dropped, while the one
+ *    starting `2026-07-31T07:00Z` — July's — is returned. Both ends wrong, in opposite
+ *    directions, and no request range can fix both. So the range is deliberately widened past
+ *    the month and the parser assigns each bucket to the month its own START falls in. Measured
+ *    2026-09-05 and cross-checked against an independent count of the same stream: August is 31
+ *    buckets and $7.07, where the range-bounded read was 30 buckets missing the final day.
+ *
  *    **`GET /v1/usage` IS NOT THIS ENDPOINT AND IS NOT TO BE REACHED FOR AGAIN.** It is what
  *    this adapter was first written against, from a plausible guess. It exists, it authenticates,
  *    and it refuses every range: epoch milliseconds and `YYYY-MM-DD` fail its format check, full
@@ -185,6 +194,22 @@ const ANTHROPIC_MAX_PAGES = 12;
 const MAX_CHARGES_BYTES = 64 * 1024 * 1024;
 
 /**
+ * How much further than the month's end the charges range must reach to CONTAIN the month.
+ *
+ * Vercel selects charge buckets by their END, not by overlap: a range ending `2026-09-01T00:00Z`
+ * returns the bucket `2026-08-30T07:00Z → 2026-08-31T07:00Z` and NOT the one starting
+ * `2026-08-31T07:00Z`, because that one ends at `2026-09-01T07:00Z`, seven hours past the range.
+ * So asking for "August" with August's own UTC boundaries silently loses August's LAST DAY —
+ * measured 2026-09-05, a 31-bucket month coming back as 30 with the missing day at the end.
+ *
+ * One day of tail is enough for any billing-timezone offset, and it over-collects on purpose: the
+ * request is deliberately wider than the month and `parseVercelCharges` then keeps only the
+ * buckets whose START falls inside it. Selecting on the bucket's own start is what makes every
+ * bucket belong to exactly one month — no gap at the end, no duplicate at the front.
+ */
+const CHARGES_BUCKET_TAIL_MS = 24 * 60 * 60 * 1000;
+
+/**
  * How far past "now" the charges range is allowed to reach.
  *
  * ── IT LOOKS LIKE A SIZE OPTIMISATION AND IT IS A CORRECTNESS ONE ────────────────────────
@@ -292,11 +317,24 @@ export function makePlatformCostPort(
           // a missing one — strictly the worse of the two.
           if (!token || !team) return { unconfigured: true };
           // ISO-8601 with milliseconds, which is what the endpoint's own documented example is
-          // (`2025-01-01T00:00:00.000Z`) and what `Date.prototype.toISOString` produces. `to` is
-          // exclusive and clamped to just past the present — see CHARGES_LOOKAHEAD_MS.
+          // (`2025-01-01T00:00:00.000Z`) and what `Date.prototype.toISOString` produces.
+          //
+          // `to` is the smaller of two bounds and each one is load-bearing for a DIFFERENT
+          // number. CHARGES_BUCKET_TAIL_MS reaches past the month's end so the month's last
+          // bucket is inside the range at all (the endpoint selects on a bucket's END);
+          // CHARGES_LOOKAHEAD_MS holds the range near the present so a flat monthly fee is only
+          // accrued as far as today. On a CLOSED month the first wins, on the OPEN month the
+          // second does, and the parser filters the extra buckets the first one pulls in.
           const askedTo = new Date(Math.min(
-            window.end.getTime(), now().getTime() + CHARGES_LOOKAHEAD_MS,
+            window.end.getTime() + CHARGES_BUCKET_TAIL_MS,
+            now().getTime() + CHARGES_LOOKAHEAD_MS,
           ));
+          // A window that has not begun is REFUSED rather than dialled. The pass always asks
+          // about the month it is in, so this is unreachable from production — but the port is
+          // exported and a caller with a future window would otherwise be handed forward-accrued
+          // flat fees for a month that has not started, stamped as a measurement, or (further
+          // ahead still) send `to` before `from`.
+          if (askedTo.getTime() <= window.start.getTime()) return { failed: "window_not_started" };
           const url = `https://api.vercel.com/v1/billing/charges?teamId=${encodeURIComponent(team)}`
             + `&from=${window.start.toISOString()}&to=${askedTo.toISOString()}`;
           const res = await getLines(url, { authorization: `Bearer ${token}` });
@@ -315,8 +353,15 @@ export function makePlatformCostPort(
           // page size that reports the first SEVEN DAYS as the month's bill. See the module
           // header: the failure is a wrong figure, not a missing one, so nothing here may return
           // a total it knows is partial.
-          const buckets: unknown[] = [];
+          // Keyed by `starting_at`, which identifies a bucket for a fixed `bucket_width`. The
+          // cursor was measured to be EXCLUSIVE of the page it came from (`page_` decodes to the
+          // next bucket's start), so pages do not overlap today — but a total is the one thing
+          // here that may not be wrong, and a vendor changing to an inclusive cursor would
+          // double-count a day per page rather than fail. De-duplicating cannot lose a bucket
+          // and removes the whole class.
+          const buckets = new Map<string, unknown>();
           let page: string | null = null;
+          const walked = new Set<string>();
           for (let asked = 0; asked < ANTHROPIC_MAX_PAGES; asked += 1) {
             const url = page === null ? base : `${base}&page=${encodeURIComponent(page)}`;
             const res = await get(url, headers);
@@ -326,12 +371,26 @@ export function makePlatformCostPort(
             if (!body || typeof body !== "object" || !Array.isArray(body.data)) {
               return { failed: "unrecognised_shape" };
             }
-            buckets.push(...body.data);
-            if (body.has_more !== true) return parseAnthropic(buckets, window);
+            for (const raw of body.data) {
+              const at = (raw as { starting_at?: unknown } | null)?.starting_at;
+              // A bucket with no usable identity cannot be de-duplicated, so it is kept under a
+              // key that cannot collide and refused downstream by the parser's shape guard.
+              buckets.set(typeof at === "string" ? at : `#${buckets.size}`, raw);
+            }
+            // ONLY a literal `false` finishes the walk. `has_more` absent, or arriving as the
+            // STRING "true" after some future change, would otherwise read as completion — and
+            // completion here means writing seven days as a month, the exact defect this loop
+            // exists to remove. Anything that is not a boolean is an answer this adapter does
+            // not understand, which is `failed` and never a total.
+            if (body.has_more === false) return parseAnthropic([...buckets.values()], window);
+            if (body.has_more !== true) return { failed: "unrecognised_shape" };
             const next = typeof body.next_page === "string" && body.next_page ? body.next_page : null;
-            // `has_more` with no cursor, or a cursor that repeats, is an answer this adapter
+            // `has_more` with no cursor, or a cursor already walked, is an answer this adapter
             // cannot finish. Reporting the buckets it has would be the partial total again.
-            if (next === null || next === page) return { failed: "paging_stalled" };
+            // `walked` rather than a comparison with the previous cursor: an A→B→A cycle repeats
+            // no cursor consecutively and would otherwise spin to the page budget.
+            if (next === null || walked.has(next)) return { failed: "paging_stalled" };
+            walked.add(next);
             page = next;
           }
           return { failed: "too_many_pages" };
@@ -384,9 +443,9 @@ function parseVercelCharges(
   lines: string[], window: { start: Date; end: Date },
 ): PlatformCostFetch {
   const totals = new Map<string, { usd: number; quantity: number | null; unit: string | null }>();
-  // A RECOGNISED record is one carrying the four FOCUS fields this parser reads. Counting them
-  // is what separates "the vendor reported nothing charged" from "this parser did not understand
-  // the answer" — the two must never produce the same thing. See the module header.
+  // A RECOGNISED record is one carrying the fields this parser reads. Counting them is what
+  // separates "the vendor reported nothing charged" from "this parser did not understand the
+  // answer" — the two must never produce the same thing. See the module header.
   let recognised = 0;
   let currency = "usd";
 
@@ -397,20 +456,39 @@ function parseVercelCharges(
     try {
       record = JSON.parse(text) as Record<string, unknown>;
     } catch {
-      // ONE unreadable line is skipped rather than failing the response: a JSONL stream is a
-      // sequence of independent records. A response where NO line parses lands on `recognised
-      // === 0` below and is refused as a whole.
-      continue;
+      // ONE UNREADABLE LINE FAILS THE WHOLE RESPONSE, and this is a reversal of what stood
+      // here. Skipping it looked right — a JSONL stream is a sequence of independent records, so
+      // one bad line need not spoil the rest — and it is exactly wrong for a BILL. The commonest
+      // way a line fails to parse is a TRUNCATED STREAM, and skipping the truncated tail sums
+      // the records that did arrive and writes the answer as a measurement: an understatement
+      // wearing the typeface of a total. A bill is not a sequence of independent records, it is
+      // one answer delivered in pieces, and a piece missing makes the answer wrong rather than
+      // shorter.
+      return { failed: "unrecognised_shape" };
     }
     const service = typeof record.ServiceName === "string" ? record.ServiceName : null;
     const billed = num(record.BilledCost);
     // `ChargePeriodStart`/`ChargePeriodEnd` are required in FOCUS v1.3. Requiring them here is
     // what stops an unrelated JSON object that happens to carry a `BilledCost` from counting as
-    // a bill.
-    const periodShaped = typeof record.ChargePeriodStart === "string"
-      && typeof record.ChargePeriodEnd === "string";
-    if (service === null || billed === null || !periodShaped) continue;
+    // a bill — and the start is also what decides which MONTH this record belongs to, below.
+    const from = typeof record.ChargePeriodStart === "string"
+      ? Date.parse(record.ChargePeriodStart) : NaN;
+    if (service === null || billed === null || typeof record.ChargePeriodEnd !== "string"
+        || !Number.isFinite(from)) {
+      // Same rule as the unparseable line, for the same reason: a record this parser cannot read
+      // is a piece of the bill it cannot account for. `num` already refuses a string, a NaN and
+      // an Infinity, so a `BilledCost` that is any of those lands here rather than in the sum.
+      return { failed: "unrecognised_shape" };
+    }
     recognised += 1;
+    // THE MONTH IS DECIDED BY THE BUCKET'S OWN START, not by the request range, and this is what
+    // makes the figure whole. The request is deliberately wider than the month at both ends (see
+    // CHARGES_BUCKET_TAIL_MS): the endpoint selects buckets by their END, so a range stopping at
+    // the month's UTC midnight loses the month's last billing day, and a range starting at it
+    // still returns the PREVIOUS month's final bucket. Filtering on the start assigns every
+    // bucket to exactly one calendar month — nothing dropped at the end, nothing counted twice
+    // at the front.
+    if (from < window.start.getTime() || from >= window.end.getTime()) continue;
     if (typeof record.BillingCurrency === "string" && record.BillingCurrency) {
       currency = record.BillingCurrency.toLowerCase();
     }
@@ -428,24 +506,51 @@ function parseVercelCharges(
   // read, and the one thing this module may never do is decide that means nothing was spent.
   if (recognised === 0) return { failed: "unrecognised_shape" };
 
+  // ── A CREDIT COSTS THE BREAKDOWN, NOT THE FIGURE ────────────────────────────────────────
+  //
+  // `cost_cents` is a non-negative integer (the migration's CHECK), so a service whose month
+  // nets NEGATIVE — a credit note, an adjustment — cannot be written as itself. Clamping that
+  // service to zero was the previous answer and it is a wrong number: a $5 credit beside $100 of
+  // usage would report $100, and a month that was nothing but a credit would report $0.00 in the
+  // typeface of a measurement.
+  //
+  // So when any service nets negative, the provider gets ONE row carrying the month's NET across
+  // every service instead of a per-service breakdown that cannot represent it. The total is then
+  // right, the detail is gone, and the metric name says which of the two you are looking at. The
+  // breakdown is what is given up, deliberately: it is the part an operator reads, and a figure
+  // that is wrong is worth less than a figure with no detail.
+  const credited = [...totals.values()].some((t) => t.usd < 0);
+  if (credited) {
+    const net = [...totals.values()].reduce((sum, t) => sum + t.usd, 0);
+    return {
+      rows: [{
+        provider: "vercel", metric: "charges (net of credits)",
+        periodStart: window.start, periodEnd: window.end,
+        // Floored only where the whole month's net is below zero — the vendor credited more than
+        // it charged. Zero is then the nearest representable truth, and the metric name is what
+        // stops it reading as "nothing happened".
+        value: null, unit: null, costCents: Math.max(0, dollarsToCents(net)), currency,
+      }],
+    };
+  }
+
   const rows: PlatformCostRow[] = [];
   for (const [metric, acc] of totals) {
     // A service the account has never touched contributes an exact 0 on every day in the range —
     // fifty-five of the sixty-five service names in a live response are that. Writing them would
-    // fill the table with rows that say nothing, and it is safe to leave them out precisely
-    // because a month-to-date total only ever grows: a service that starts costing money gets
-    // its row on the next pass. A SUB-CENT service (`0.0001` USD) is NOT this case and is
-    // written, at zero cents, because it was genuinely used.
+    // fill the table with rows that say nothing. A SUB-CENT service (`0.0001` USD) is NOT this
+    // case and is written, at zero cents, because it was genuinely used.
+    //
+    // Rounding is per service and that is inherent rather than a choice: the row IS the service
+    // and the column is integer cents, so three separate $0.004 services are three zero-cent
+    // rows. The alternative is to stop storing a breakdown at all, which costs more than the
+    // half-cent it saves.
     if (acc.usd === 0) continue;
     rows.push({
       provider: "vercel", metric,
       periodStart: window.start, periodEnd: window.end,
       value: acc.quantity, unit: acc.unit,
-      // FLOORED, on the same reasoning as `parseAnthropic`'s total: this is a SUM over a month
-      // of that service's charges, so a credit inside the month legitimately reduces it, and
-      // dropping the credit would overstate the bill. The migration's `cost_cents >= 0` CHECK
-      // still has to be satisfied.
-      costCents: Math.max(0, dollarsToCents(acc.usd)),
+      costCents: dollarsToCents(acc.usd),
       currency,
     });
   }
@@ -480,29 +585,39 @@ function parseVercelCharges(
 function parseAnthropic(
   buckets: unknown[], window: { start: Date; end: Date },
 ): PlatformCostFetch {
-  let cents = 0;
+  // Dollars, summed as dollars and rounded ONCE at the end. Rounding each result before adding
+  // was the previous shape and it drifts: the recorded live month is 70.7614 + 10.3029 + 4.812 =
+  // 85.8763, which is 8588 cents, and three separate roundings make it 8587. A cent, and the
+  // wrong cent, on a figure whose whole purpose is to be compared against an invoice.
+  let usd = 0;
   // A RECOGNISED bucket is the shape a live report returns: a time window carrying a `results`
-  // array. Requiring `starting_at` is what makes an arbitrary object with a `results` key fail
-  // rather than count — and counting these, rather than counting readable amounts, is what lets
-  // a genuinely quiet month be told apart from an answer this parser did not understand.
+  // array. Requiring both timestamps is what makes an arbitrary object with a `results` key fail
+  // rather than count.
   let recognised = 0;
   let currency = "usd";
   for (const raw of buckets) {
     const bucket = raw as Record<string, unknown> | null;
     if (!bucket || typeof bucket !== "object") continue;
-    if (typeof bucket.starting_at !== "string" || !Array.isArray(bucket.results)) continue;
+    if (typeof bucket.starting_at !== "string" || typeof bucket.ending_at !== "string"
+        || !Array.isArray(bucket.results)) continue;
     recognised += 1;
-    for (const r of bucket.results as Array<Record<string, unknown>>) {
+    const results = bucket.results as Array<Record<string, unknown>>;
+    let read = 0;
+    for (const r of results) {
       const amount = typeof r?.amount === "string" ? Number(r.amount) : num(r?.amount);
       if (amount === null || !Number.isFinite(amount)) continue;
-      cents += dollarsToCents(amount);
+      usd += amount;
+      read += 1;
       if (typeof r?.currency === "string" && r.currency) currency = r.currency.toLowerCase();
     }
+    // A bucket that HAS results and none of them readable is a day this parser could not
+    // account for, and the whole month it belongs to is therefore not a total. Distinct from a
+    // bucket with `results: []`, which is the vendor saying that day cost nothing — a live
+    // August report holds two of those beside twenty-nine that cost money, so the quiet day is
+    // the ordinary case and must not be confused with the unreadable one.
+    if (results.length > 0 && read === 0) return { failed: "unrecognised_shape" };
   }
-  // No bucket of the shape this parser knows ⇒ a report it cannot read, which is `failed`. A
-  // report whose buckets ARE that shape and carry no results is a month in which nothing was
-  // charged, and it lands as a real zero row below — a live August report holds two such days
-  // beside twenty-nine that cost money, so this is the ordinary case and not a hypothetical.
+  // No bucket of the shape this parser knows ⇒ a report it cannot read, which is `failed`.
   if (recognised === 0) return { failed: "unrecognised_shape" };
   return {
     rows: [{
@@ -512,8 +627,9 @@ function parseAnthropic(
       // legitimately reduces it — that is real, and dropping the entry would overstate the bill
       // by the credited amount. The migration's `cost_cents >= 0` CHECK still has to be
       // satisfied, so a window whose credits outweigh its usage reports as zero rather than
-      // failing the whole provider for one period.
-      value: null, unit: null, costCents: Math.max(0, cents), currency,
+      // failing the whole provider for one period. Zero is the nearest representable truth here
+      // and not a fabrication: the vendor's own arithmetic put the month below nothing.
+      value: null, unit: null, costCents: Math.max(0, dollarsToCents(usd)), currency,
     }],
   };
 }
@@ -596,32 +712,61 @@ export async function runPlatformCostPass(
     // committed. A write failure is recorded exactly like a parse failure: nothing for THIS
     // provider, the previous row stands, and the loop continues.
     try {
-      for (const row of result.rows) {
-        await tx.insert(platformCosts).values({
-          provider: row.provider,
-          metric: row.metric,
-          periodStart: row.periodStart,
-          periodEnd: row.periodEnd,
-          value: row.value === null ? null : String(row.value),
-          unit: row.unit,
-          costCents: row.costCents,
-          currency: row.currency,
-          source: "api",
-          fetchedAt: at,
-        }).onConflictDoUpdate({
-          target: [
-            platformCosts.provider, platformCosts.metric,
-            platformCosts.periodStart, platformCosts.periodEnd, platformCosts.source,
-          ],
-          set: {
-            value: sql`excluded.value`,
-            unit: sql`excluded.unit`,
-            costCents: sql`excluded.cost_cents`,
-            currency: sql`excluded.currency`,
-            fetchedAt: sql`excluded.fetched_at`,
-          },
-        });
-      }
+      // ONE TRANSACTION PER PROVIDER, and it opens with a DELETE. Both halves answer a defect
+      // the previous shape had, and both are about a figure that is wrong rather than missing.
+      //
+      // THE DELETE. A successful measurement REPLACES this provider's API rows for the window;
+      // it does not merge into them. Upserting alone left behind any metric the vendor no longer
+      // reports — a service whose charge was revised down to nothing, or renamed — and
+      // `costsForMonth` SUMS a provider's metrics, so a stale row was added to a current one and
+      // the total carried the newest row's timestamp. The board then showed an overstatement
+      // labelled "measured". The parser's own skip of exact-zero services made it likelier, not
+      // less: a service that stops costing money is exactly the case that leaves a row nobody
+      // overwrites. `source` is in the predicate, so a MANUAL row for the same window is
+      // untouched — the operator's figure outranks the API's and must survive its refresh.
+      //
+      // THE TRANSACTION. The rows were written one statement at a time, so a row the database
+      // refused left every row before it committed while the pass reported `failed` for the
+      // provider — a half-written month presented as an unwritten one, which is the worst of
+      // both readings. All of it lands or none of it does.
+      await tx.transaction(async (t) => {
+        await t.delete(platformCosts).where(and(
+          eq(platformCosts.provider, provider),
+          eq(platformCosts.periodStart, start),
+          eq(platformCosts.periodEnd, end),
+          eq(platformCosts.source, "api"),
+        ));
+        for (const row of result.rows) {
+          await t.insert(platformCosts).values({
+            provider: row.provider,
+            metric: row.metric,
+            periodStart: row.periodStart,
+            periodEnd: row.periodEnd,
+            value: row.value === null ? null : String(row.value),
+            unit: row.unit,
+            costCents: row.costCents,
+            currency: row.currency,
+            source: "api",
+            fetchedAt: at,
+          }).onConflictDoUpdate({
+            // Kept although the DELETE above has already cleared this provider's API rows for
+            // the window: a response carrying the same metric twice would otherwise abort the
+            // whole provider on a primary-key collision, and the second line is the vendor's
+            // own correction of the first.
+            target: [
+              platformCosts.provider, platformCosts.metric,
+              platformCosts.periodStart, platformCosts.periodEnd, platformCosts.source,
+            ],
+            set: {
+              value: sql`excluded.value`,
+              unit: sql`excluded.unit`,
+              costCents: sql`excluded.cost_cents`,
+              currency: sql`excluded.currency`,
+              fetchedAt: sql`excluded.fetched_at`,
+            },
+          });
+        }
+      });
       report.providers.push({ provider, outcome: "written", rows: result.rows.length });
     } catch (err) {
       report.providers.push({
