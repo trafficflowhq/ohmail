@@ -401,6 +401,27 @@ export const DE: Deck = {
   setAsideNote: "Bleibt in Sicht, ohne die Ohbox zu beschäftigen.",
   resurfaceNote: "Kommt von selbst zurück, zu der Zeit, die du gewählt hast.",
 
+  storeFault: (code: string): string => {
+    switch (code) {
+      case "origin_not_normalized": return "diese Serveradresse hatte nicht die Form, in der dieses Telefon sie speichert";
+      case "account_id_missing": return "der Server hat das Konto nicht benannt, das diese Kopplung öffnet";
+      case "pairing_not_recorded": return "dieses Telefon konnte die Kopplung nicht erfassen, bevor es sie speichert";
+      case "pairing_still_held": return "dieses Telefon hält die Kopplung weiterhin";
+      case "pairing_still_listed": return "dieses Telefon führt die Kopplung weiterhin in seiner Liste";
+      case "no_such_profile": return "eine solche Kopplung gibt es auf diesem Telefon nicht";
+      case "wipe_queue_full": return "dieses Telefon hat bereits mehr unerledigte Löschungen, als es erfassen kann";
+      case "wipe_not_recorded": return "dieses Telefon konnte nicht erfassen, dass für die kopierte Post eine Löschung aussteht";
+      case "wipe_still_owed": return "dieses Telefon führt für dieses Postfach noch eine ausstehende Löschung";
+      case "wake_queue_full": return "dieses Telefon hat bereits mehr unerledigte Weckruf-Abmeldungen, als es erfassen kann";
+      case "wake_not_recorded": return "dieses Telefon konnte nicht erfassen, dass für die Weckruf-Registrierung eine Abmeldung aussteht";
+      case "wake_still_owed": return "dieses Telefon führt für diese Registrierung noch eine ausstehende Abmeldung";
+      case "index_unreadable": return "die Kopplungsliste dieses Telefons ließ sich nicht lesen";
+      case "purge_refused": return "der Schlüsselspeicher wollte die Kopplungen der früheren Installation nicht hergeben";
+      case "index_not_removed": return "der Schlüsselspeicher wollte die Kopplungsliste nicht entfernen";
+      default: return code;
+    }
+  },
+
   /* --------------------------------------------------------------- folders */
 
   folders: "Ordner",

@@ -643,6 +643,39 @@ const TABLE = {
   setAsideNote: "Kept in view without keeping the Ohbox busy.",
   resurfaceNote: "Comes back on its own, at the time you chose.",
 
+  /**
+   * WHAT THIS PHONE'S OWN STORE SAYS WHEN IT REFUSES — one sentence per enumerable failure.
+   *
+   * These reach a screen as the DETAIL inside a translated refusal (`pairNotStoredClosed`,
+   * `forgetCannotStart` and their neighbours). They used to arrive as `String(err)` from a thrown
+   * English `Error`, so a German reader met a German sentence with an English one inside it. The
+   * store throws a {@link StoreFault} carrying a code now, and this turns the code back into
+   * language. Anything that is NOT one of ours — a keystore's own exception, an SQLite failure —
+   * is still quoted verbatim, which is the diagnostic rule.
+   */
+  storeFault: (code: string): string => {
+    switch (code) {
+      case "origin_not_normalized": return "that server address was not in the form this phone stores";
+      case "account_id_missing": return "the server did not name the account this pairing opens";
+      case "pairing_not_recorded": return "this phone could not record the pairing before storing it";
+      case "pairing_still_held": return "this phone is still holding the pairing";
+      case "pairing_still_listed": return "this phone is still listing the pairing";
+      case "no_such_profile": return "there is no such pairing on this phone";
+      case "wipe_queue_full": return "this phone already has more unfinished deletions than it can record";
+      case "wipe_not_recorded": return "this phone could not record that the copied mail is owed a deletion";
+      case "wipe_still_owed": return "this phone still records a deletion owed for that mailbox";
+      case "wake_queue_full": return "this phone already has more unfinished wake removals than it can record";
+      case "wake_not_recorded": return "this phone could not record that the wake registration is owed a removal";
+      case "wake_still_owed": return "this phone still records a wake removal owed for that registration";
+      case "index_unreadable": return "this phone's list of pairings could not be read";
+      case "purge_refused": return "the keystore would not give up the earlier installation's pairings";
+      case "index_not_removed": return "the keystore would not remove the list of pairings";
+      /* A code this build does not know is a newer store talking to an older deck. Saying the code
+         is better than saying nothing, and it is the one arm that can reach a screen unworded. */
+      default: return code;
+    }
+  },
+
   /* --------------------------------------------------------------- folders */
 
   /*

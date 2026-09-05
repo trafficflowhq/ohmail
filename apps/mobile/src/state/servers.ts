@@ -37,6 +37,41 @@
  * makes every mutation see the previous one's writes.
  */
 
+/**
+ * ═══ AN APP-AUTHORED FAILURE CARRIES A CODE, NOT A SENTENCE ══════════════════════════════════
+ *
+ * Every throw below used to carry English prose, and the callers that catch them put
+ * `String(err)` inside a translated refusal — so a German reader met a German sentence with an
+ * English one wedged into it. That is the shape the copy census exists to prevent, arriving
+ * through the one door a census cannot watch: a value produced at runtime.
+ *
+ * The DIAGNOSTIC RULE (see `test/copy-census.test.ts`) draws the line: the platform's own words —
+ * a keystore's `SecurityException`, an SQLite failure, an HTTP status — are quoted verbatim,
+ * because a German paraphrase of them is worse for whoever has to search for the text. OUR
+ * failures are enumerable, so they get a code and the deck says them.
+ *
+ * The message is kept alongside the code and stays English: it is what a developer reads in a
+ * stack trace, and it is the value `String(err)` yields if any caller ever forgets the mapping.
+ */
+export type StoreFaultCode =
+  | "origin_not_normalized" | "account_id_missing"
+  | "pairing_not_recorded" | "pairing_still_held" | "pairing_still_listed" | "no_such_profile"
+  | "wipe_queue_full" | "wipe_not_recorded" | "wipe_still_owed"
+  | "wake_queue_full" | "wake_not_recorded" | "wake_still_owed"
+  | "index_unreadable" | "purge_refused" | "index_not_removed";
+
+export class StoreFault extends Error {
+  constructor(readonly code: StoreFaultCode, message: string) {
+    super(message);
+    this.name = "StoreFault";
+  }
+}
+
+/** `true` for a failure this app authored, and therefore one the deck has a sentence for. */
+export function isStoreFault(err: unknown): err is StoreFault {
+  return err instanceof StoreFault;
+}
+
 /** The two keystore calls this module needs — expo-secure-store's shape, injectable. */
 export interface SecureKV {
   get(key: string): Promise<string | null>;
@@ -340,9 +375,9 @@ export class ServerProfileStore {
   }): Promise<ServerProfile> {
     return this.enqueue(async () => {
       if (input.origin !== input.origin.trim().replace(/\/+$/, "").toLowerCase()) {
-        throw new Error(`profile origin must arrive normalized: "${input.origin}"`);
+        throw new StoreFault("origin_not_normalized", `profile origin must arrive normalized: "${input.origin}"`);
       }
-      if (!input.accountId.trim()) throw new Error("a profile needs the server-verified account id");
+      if (!input.accountId.trim()) throw new StoreFault("account_id_missing", "a profile needs the server-verified account id");
       const idx = await this.readIndex();
       const existing = (await Promise.all(idx.ids.map((id) => this.readProfile(id)))).find(
         (p) => p !== null && p.origin === input.origin && p.accountId === input.accountId,
@@ -386,7 +421,7 @@ export class ServerProfileStore {
       // credential written next under a key no list names, invisible to the purge that walks the
       // list. Read it back BEFORE the secret is written, not after.
       if (!(await this.readIndex()).ids.includes(profile.id)) {
-        throw new Error(`this phone could not record the pairing "${profile.id}" before storing it`);
+        throw new StoreFault("pairing_not_recorded", `this phone could not record the pairing "${profile.id}" before storing it`);
       }
       await this.writeProfile(profile);
       return profile;
@@ -410,7 +445,7 @@ export class ServerProfileStore {
       // the id then left the index, which is the only durable name those credential-bearing
       // bytes had. Whether the value PARSES is not the question a removal asks.
       if ((await this.kv.get(`${PREFIX}.${id}`)) !== null) {
-        throw new Error(`this phone still holds the pairing "${id}" — the keystore refused to forget it`);
+        throw new StoreFault("pairing_still_held", `this phone still holds the pairing "${id}" — the keystore refused to forget it`);
       }
       const idx = await this.readIndex();
       await this.writeIndex({
@@ -419,7 +454,7 @@ export class ServerProfileStore {
         ids: idx.ids.filter((i) => i !== id),
       });
       if ((await this.readIndex()).ids.includes(id)) {
-        throw new Error(`this phone still lists the pairing "${id}" — the keystore refused to forget it`);
+        throw new StoreFault("pairing_still_listed", `this phone still lists the pairing "${id}" — the keystore refused to forget it`);
       }
     });
   }
@@ -428,7 +463,7 @@ export class ServerProfileStore {
   setActive(id: string): Promise<void> {
     return this.enqueue(async () => {
       const idx = await this.readIndex();
-      if (!idx.ids.includes(id)) throw new Error(`no server profile "${id}" on this phone`);
+      if (!idx.ids.includes(id)) throw new StoreFault("no_such_profile", `no server profile "${id}" on this phone`);
       await this.writeIndex({ ...idx, active: id });
     });
   }
@@ -490,7 +525,7 @@ export class ServerProfileStore {
       const idx = await this.readIndex();
       const owed = idx.wipes ?? [];
       const held = owed.find((w) => w.owner === ownerKey);
-      if (!held && owed.length >= MAX_PENDING_WIPES) throw new Error(WIPE_QUEUE_FULL);
+      if (!held && owed.length >= MAX_PENDING_WIPES) throw new StoreFault("wipe_queue_full", WIPE_QUEUE_FULL);
       if (held) {
         if (held.id === profileId || profileId === "") return;
         await this.writeIndex({
@@ -510,7 +545,7 @@ export class ServerProfileStore {
       // credential still in place, which is the recoverable state.
       const back = (await this.readIndex()).wipes ?? [];
       if (!back.some((w) => w.owner === ownerKey && (profileId === "" || w.id === profileId))) {
-        throw new Error(`this phone could not record that "${ownerKey}" is owed a deletion`);
+        throw new StoreFault("wipe_not_recorded", `this phone could not record that "${ownerKey}" is owed a deletion`);
       }
     });
   }
@@ -532,7 +567,7 @@ export class ServerProfileStore {
       // deletes the mailbox they just re-authorized. The debt outliving its purpose is worse
       // than the debt never being written.
       if ((await this.readIndex()).wipes?.some((w) => w.owner === ownerKey) === true) {
-        throw new Error(`this phone still records a deletion owed for "${ownerKey}"`);
+        throw new StoreFault("wipe_still_owed", `this phone still records a deletion owed for "${ownerKey}"`);
       }
     });
   }
@@ -571,13 +606,13 @@ export class ServerProfileStore {
     return this.enqueue(async () => {
       const owed = await this.pendingWakeDrops();
       if (owed.some((d) => d.subscriptionId === subscriptionId)) return;
-      if (owed.length >= MAX_PENDING_WAKE_DROPS) throw new Error(WAKE_QUEUE_FULL);
+      if (owed.length >= MAX_PENDING_WAKE_DROPS) throw new StoreFault("wake_queue_full", WAKE_QUEUE_FULL);
       await this.kv.set(WAKE_DROPS_KEY, JSON.stringify([...owed, { profileId, subscriptionId }]));
       // READ BACK, for {@link Index.wipes}'s reason one queue over: a keystore `set` that
       // resolved without storing would leave the caller free to fire a delete whose only
       // retryable record does not exist.
       if (!(await this.pendingWakeDrops()).some((d) => d.subscriptionId === subscriptionId)) {
-        throw new Error(`this phone could not record that wake registration "${subscriptionId}" is owed a removal`);
+        throw new StoreFault("wake_not_recorded", `this phone could not record that wake registration "${subscriptionId}" is owed a removal`);
       }
     });
   }
@@ -594,7 +629,7 @@ export class ServerProfileStore {
       // no longer owes anything, and on a re-registered endpoint that is a live row being taken
       // down under the profile now using it.
       if ((await this.pendingWakeDrops()).some((d) => d.subscriptionId === subscriptionId)) {
-        throw new Error(`this phone still records a wake removal owed for "${subscriptionId}"`);
+        throw new StoreFault("wake_still_owed", `this phone still records a wake removal owed for "${subscriptionId}"`);
       }
     });
   }
@@ -624,7 +659,7 @@ export class ServerProfileStore {
       // every indexed credential in the keystore under keys it never asked about. The caller
       // turns this into `purge-refused`, which retries at every launch.
       if (await this.indexUnreadable()) {
-        throw new Error("this phone's pairing index could not be read, so it cannot be purged");
+        throw new StoreFault("index_unreadable", "this phone's pairing index could not be read, so it cannot be purged");
       }
       const idx = await this.readIndex();
       const survivors: string[] = [];
@@ -639,7 +674,7 @@ export class ServerProfileStore {
         if ((await this.kv.get(`${PREFIX}.${id}`)) !== null) survivors.push(id);
       }
       if (survivors.length > 0) {
-        throw new Error(
+        throw new StoreFault("purge_refused",
           `the keystore refused to purge ${survivors.length} pairing(s) (${survivors.join(", ")}) — ` +
             `their credentials are still on this phone`,
         );
@@ -653,7 +688,7 @@ export class ServerProfileStore {
       }
       await this.kv.remove(PREFIX);
       if ((await this.kv.get(PREFIX)) !== null) {
-        throw new Error("the keystore refused to remove the pairing index");
+        throw new StoreFault("index_not_removed", "the keystore refused to remove the pairing index");
       }
     });
   }

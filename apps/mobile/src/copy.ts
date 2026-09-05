@@ -40,6 +40,7 @@
 import { EN, type Deck } from "./copy.en";
 import { DE } from "./copy.de";
 import { activeLocale, type AppLocale } from "./i18n/locale";
+import { isStoreFault } from "./state/servers";
 
 export type { Deck };
 
@@ -73,3 +74,16 @@ function liveDeck(): Deck {
 }
 
 export const Copy: Deck = liveDeck();
+
+/**
+ * THE DETAIL INSIDE A TRANSLATED REFUSAL — our own failures worded, everything else quoted.
+ *
+ * The nine places that render a caught error used `String(err)`, which is right for a platform
+ * exception and wrong for a failure this app authored: an English sentence ends up inside a German
+ * one. A {@link StoreFault} carries a code, so it becomes language here; anything else is the
+ * platform's own words and stays exactly as they are, because a paraphrase would be worse for
+ * whoever has to search for the text.
+ */
+export function faultDetail(err: unknown): string {
+  return isStoreFault(err) ? Copy.storeFault(err.code) : String(err);
+}

@@ -72,7 +72,7 @@ import {
 /* Every sentence this module hands back reaches a screen, so they live in the copy deck and are
    translated with everything else. The `throw new Error(…)` messages below do not: they are
    programming faults nobody but a developer ever reads. */
-import { Copy } from "../copy";
+import { Copy, faultDetail } from "../copy";
 import { dropWakeRow } from "./push.js";
 import { resolveApiBase } from "./server-base.js";
 
@@ -101,7 +101,7 @@ export async function negotiate(fetchImpl: FetchLike, origin: string): Promise<N
   try {
     res = await fetchImpl(`${normalizeOrigin(origin)}/hello`);
   } catch (err) {
-    return { kind: "unreachable", detail: String(err) };
+    return { kind: "unreachable", detail: faultDetail(err) };
   }
   if (!res.ok) return { kind: "unreachable", detail: Copy.helloStatus(res.status) };
   let body: {
@@ -554,7 +554,7 @@ export async function pairWithServer(
     } catch (err) {
       return {
         kind: "refused",
-        reason: Copy.pairOwedDeletion(String(err)),
+        reason: Copy.pairOwedDeletion(faultDetail(err)),
       };
     }
   }
@@ -600,8 +600,8 @@ export async function pairWithServer(
     return {
       kind: "refused",
       reason: closed
-        ? Copy.pairNotStoredClosed(String(err))
-        : Copy.pairNotStoredOpen(String(err)),
+        ? Copy.pairNotStoredClosed(faultDetail(err))
+        : Copy.pairNotStoredOpen(faultDetail(err)),
     };
   }
   const connected = await buildSession(env, profile, tokens.accessToken);
@@ -732,7 +732,7 @@ export async function forgetProfile(
       // forget does not start. The credential stays, which is the recoverable state.
       return {
         kind: "partial",
-        reason: Copy.forgetCannotStart(String(err)),
+        reason: Copy.forgetCannotStart(faultDetail(err)),
       };
     }
   }
@@ -775,7 +775,7 @@ export async function forgetProfile(
   } catch (err) {
     return {
       kind: "partial",
-      reason: Copy.forgetKeystoreRefused(String(err)),
+      reason: Copy.forgetKeystoreRefused(faultDetail(err)),
     };
   }
 
@@ -793,7 +793,7 @@ export async function forgetProfile(
     // that could still open the mailbox — but the mail is still here and the wipe is still owed.
     return {
       kind: "partial",
-      reason: Copy.forgetMailRemains(String(err)),
+      reason: Copy.forgetMailRemains(faultDetail(err)),
     };
   }
   return told ? { kind: "forgotten" } : { kind: "partial", reason: NOT_TOLD() };
