@@ -329,6 +329,54 @@ describe("the desktop mailbox pane and a mail server it cannot reach", () => {
   });
 
   /**
+   * THE POLL ITSELF — its cadence, its independence from presses, and its END.
+   *
+   * `pressed()` filters this request out of every exact-equality assertion in this file, so the
+   * poll is the one piece of traffic those cases cannot see. This is the case that watches it,
+   * and it watches all three properties rather than only that it happens:
+   *
+   *  · ON MOUNT, once. A person opening Settings during an outage is who the line is for, so an
+   *    interval with no leading read would leave the row lying for fifteen seconds.
+   *  · A PRESS ADDS NOTHING HERE. If a press re-triggered the read, `pressed()` would still be
+   *    exact — but the pane would be issuing a request per click for a poll it already has, and
+   *    no assertion in this file could tell.
+   *  · UNMOUNT STOPS IT. A poll that outlives its pane is a leak this codebase has had before:
+   *    the interval keeps a closure, a `setState` and a bridge request alive for the life of the
+   *    process, on a component nobody is looking at.
+   */
+  it("polls on mount, does not re-read on a press, and stops when the pane goes", async () => {
+    bridgeReply = () => new Response(JSON.stringify({ items: [] }), {
+      status: 200, headers: { "content-type": "application/json" },
+    });
+    const reads = (): number =>
+      bridged.filter((c) => c.url === "/local/mailboxes/connections").length;
+
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const el = await render("local");
+      expect(reads(), "the pane waited a whole interval before asking").toBe(1);
+
+      // ── A PRESS IS NOT A REASON TO RE-READ ─────────────────────────────────────────────
+      await act(async () => { buttonSaying(el, "Sync now")!.click(); });
+      expect(pressed()).toEqual([{ url: "/mailboxes/mbx-1/resync", method: "POST" }]);
+      expect(reads(), "a press dragged the poll along with it").toBe(1);
+
+      // ── THE CADENCE ────────────────────────────────────────────────────────────────────
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+      expect(reads(), "the interval never came round").toBe(2);
+
+      // ── AND IT ENDS WITH THE PANE ──────────────────────────────────────────────────────
+      await act(async () => { root!.unmount(); });
+      root = null;
+      const atUnmount = reads();
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      expect(reads(), "the poll outlived the pane it belongs to").toBe(atUnmount);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
    * AN ENGINE THAT DOES NOT SERVE THE ROUTE IS "CANNOT TELL", NEVER "UNREACHABLE".
    *
    * A desktop updates on its own schedule, so a window newer than its engine is an ordinary
