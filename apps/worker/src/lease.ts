@@ -1,6 +1,6 @@
 import {
   CAPABILITY_REQUESTS, deriveRequestKey,
-  DEFAULT_STALE_AFTER_MS, LeaseUnavailableError, META_FOLDER, MetaFolderTruncatedError,
+  DEFAULT_STALE_AFTER_MS, LeaseUnavailableError, META_FOLDER,
   isMalformed, parseClaim, runLeaseGate,
   type LeaseIo, type LeaseOp, type LeaseSelf, type LeaseVerdict, type OrganizerClaim,
   type TakeoverAuthorization,
@@ -367,35 +367,37 @@ export async function releaseMailboxClaim(adapter: MailboxAdapter, installId: st
    * ours goes on holding the mailbox against the next install until it goes stale.
    *
    * `findOwnRecords` asks the SERVER which messages carry our id, so position stops mattering and
-   * the answer is a handful of records rather than a folder. Where the capability is absent the
-   * bounded window is still used — the same records as before — and the shortfall is REPORTED
-   * rather than counted as done. */
-  /* ── AND A SEARCH THE SERVER REFUSED IS NOT "THIS ADAPTER CANNOT SEARCH" ──────────────────
+   * the answer is a handful of records rather than a folder.
    *
-   * `findOwnRecords` answers `null` for BOTH, and this read them as one: refused searches fell
-   * through to the newest-window fallback exactly like an older adapter that has no search at
-   * all. The two are not the same claim. Where the capability is absent the window is the best
-   * this install has ever had and the fallback is honest; where the search was REFUSED, the
-   * complete answer exists on the server and this pass simply did not get it — so removing what
-   * the window happens to cover and returning a count says "released" about a mailbox that may
-   * still hold older residue of ours.
+   * ── AND THERE IS NO WINDOW FALLBACK LEFT, BY EITHER DOOR ─────────────────────────────────
    *
-   * The comment above promised the shortfall would be REPORTED rather than counted as done. It
-   * was not: the function returned a bare number and had no way to say so. It does now — and the
-   * report is a throw, because every caller already wraps this and logs
-   * `organizer_claim_release_failed` with copy that says the true consequence. */
-  const canSearchOwn = typeof io.findOwnRecords === "function";
-  const found = canSearchOwn ? await io.findOwnRecords!(installId) : null;
-  if (canSearchOwn && found === null) {
+   * There used to be one, taken when the search was REFUSED or when the adapter had no search at
+   * all. The refused case was closed first and the absent one was left beside it, which made the
+   * excuse the difference rather than the outcome: either way the window is not a complete answer,
+   * records of ours outside it are not removed, and the function still returns a COUNT that every
+   * caller reads as the mailbox released. A claim left behind holds it against the next install
+   * until it goes stale — the delayed handover this whole path exists to prevent.
+   *
+   * "This adapter cannot search" is a better excuse than "the server refused" and it is not a
+   * better outcome, so both now report the same thing: the release did not happen. Every caller
+   * already wraps this and logs `organizer_claim_release_failed`, whose copy says the true
+   * consequence — the claim ages out of the folder on its own.
+   *
+   * The fallback is DELETED rather than left unreachable. Every adapter this product builds
+   * provides the capability (`makeLeaseIo` defines it), so the branch could only ever have been
+   * taken by a test double, and code that only a double can reach is a place where a double's
+   * convenience quietly becomes the product's behaviour. */
+  const found = typeof io.findOwnRecords === "function"
+    ? await io.findOwnRecords(installId)
+    : null;
+  if (found === null) {
     throw new Error(
-      `the records this install owns in ${META_FOLDER} could not be asked for by id, so a release `
-      + "cannot be told from a partial one — nothing was removed on this pass",
+      `the records this install owns in ${META_FOLDER} could not be enumerated — this connection `
+      + "cannot ask for them by id, or the server refused — so a complete release cannot be told "
+      + "from a partial one, and nothing was removed on this pass",
     );
   }
-  const messages = found ?? await io.listClaims().catch((err: unknown) => {
-    if (err instanceof MetaFolderTruncatedError) return [...err.records];
-    throw err;
-  });
+  const messages = found;
   const ours = messages
     .map((m) => ({ ref: m.ref, claim: parseClaim(m.raw, m.ref) }))
     .filter((c) => c.claim !== null && !isMalformed(c.claim) && c.claim.installId === installId)
