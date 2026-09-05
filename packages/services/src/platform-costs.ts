@@ -48,6 +48,17 @@ import type { Db } from "./context.js";
  *    `{ data: [{ starting_at, ending_at, results: [{ amount, currency, … }] }], has_more,
  *    next_page }`, one bucket per day.
  *
+ *    **THE AMOUNTS ARE CENTS, NOT DOLLARS** — see `centsFromAnthropic`, which exists entirely to
+ *    say so. This is the one fact about either vendor that no response reveals and only the
+ *    documentation settles.
+ *
+ *    **IT EXCLUDES PRIORITY TIER**, by the vendor's own statement: *"Priority Tier costs use a
+ *    different billing model and are not included in the cost endpoint."* This deployment has no
+ *    Priority Tier commitment and its request builders never set `service_tier`, so today the
+ *    report is the whole bill. An organization that later buys one would find this figure
+ *    silently short, and nothing here could detect it — recorded so the next reader knows the
+ *    limit is the vendor's rather than this parser's.
+ *
  *    **`limit` IS NOT OPTIONAL AND ITS DEFAULT IS SEVEN.** A month-long range asked without it
  *    answers 200 with the first SEVEN days and `has_more: true`, and an adapter that reads
  *    `data` and stops has just reported one week's spend as the month's bill — a wrong figure,
@@ -153,8 +164,38 @@ export interface PlatformCostEnv {
 
 const trimmed = (v: string | undefined): string => (v ?? "").trim();
 
-/** USD → cents, rounded. A float of dollars is never stored; the column is an integer. */
+/**
+ * USD DOLLARS → cents, rounded. A float of dollars is never stored; the column is an integer.
+ *
+ * **ONLY VERCEL'S FIGURES GO THROUGH THIS.** FOCUS v1.3 reports `BilledCost` in the billing
+ * currency's major unit — dollars — so the plan line arrives as `19.0372` meaning $19.04.
+ * ANTHROPIC'S `amount` IS ALREADY CENTS and must never be multiplied here; see
+ * {@link centsFromAnthropic}. The two vendors disagree about the unit and nothing in either
+ * response says so, which is why each conversion is named for the vendor it belongs to.
+ */
 const dollarsToCents = (usd: number): number => Math.round(usd * 100);
+
+/**
+ * Anthropic's `amount` → cents. THE VALUE IS ALREADY IN CENTS; this exists to say so.
+ *
+ * ── THE MOST EXPENSIVE ASSUMPTION IN THIS MODULE ─────────────────────────────────────────
+ *
+ * The cost report's amounts are decimal STRINGS and they look exactly like dollars: a live
+ * September day reads `"70.7614"`. They are not dollars. Anthropic's own documentation settles
+ * it in one line — *"All costs in USD, reported as decimal strings in lowest units (cents)"* —
+ * so `"70.7614"` is 70.7614 CENTS, seventy-one cents, and that day cost about $0.71.
+ *
+ * This adapter multiplied by 100 for its whole life, so every Anthropic row it wrote was
+ * INFLATED ABOUT A HUNDREDFOLD: a month that cost $2.75 was published as $275.28, in the same
+ * typeface as a measurement, on the board an operator judges margin from. THREE separate live
+ * verifications missed it, because the parser and the expectation shared the assumption — the
+ * arithmetic was self-consistent and wrong, which is the one shape the three-outcome design
+ * cannot catch. Nothing in the response distinguishes the two readings; only the vendor's
+ * documentation does.
+ *
+ * A fractional cent is real, so the rounding happens ONCE on the month's sum, not per bucket.
+ */
+const centsFromAnthropic = (amount: number): number => amount;
 
 /** A shape guard that answers `null` rather than throwing — every parser below is built on it. */
 function num(v: unknown): number | null {
@@ -584,10 +625,13 @@ function parseVercelCharges(
   // name says which of the two you are looking at — the breakdown is what is given up, because a
   // figure that is wrong is worth less than a figure with no detail.
   if (credited) {
-    const net = dollarsToCents([...totals.values()].reduce((sum, t) => sum + t.usd, 0));
+    const netUsd = [...totals.values()].reduce((sum, t) => sum + t.usd, 0);
     // A month whose credits outweigh its charges is REFUSED rather than floored: `$0.00` written
-    // as a measurement would say the vendor charged nothing, and the vendor said it owed us.
-    if (net < 0) return { failed: "negative_total" };
+    // as a measurement would say the vendor charged nothing, and the vendor said it owed us. The
+    // sign is tested on the UNROUNDED total, because `Math.round(-0.004 * 100)` is negative zero
+    // and `-0 < 0` is false — rounding first would let a small credit through as a measured zero.
+    if (netUsd < 0) return { failed: "negative_total" };
+    const net = dollarsToCents(netUsd);
     return {
       rows: [{
         provider: "vercel", metric: "charges (net of credits)",
@@ -648,10 +692,10 @@ function parseVercelCharges(
 function parseAnthropic(
   buckets: unknown[], window: { start: Date; end: Date },
 ): PlatformCostFetch {
-  // Dollars, summed as dollars and rounded ONCE at the end. Rounding each result before adding
-  // drifts: the recorded live month is 70.7614 + 10.3029 + 4.812 = 85.8763, which is 8588 cents,
-  // and three separate roundings make it 8587.
-  let usd = 0;
+  // CENTS — see `centsFromAnthropic` for why this is not dollars, and what it cost to find out.
+  // Summed at full precision and rounded ONCE at the end, because the vendor reports fractional
+  // cents: the recorded live month is 70.7614 + 10.3029 + 4.812 = 85.8763 cents → 86.
+  let cents = 0;
   const currency = new Currency();
   // The bucket STARTS that landed inside the window, for the continuity check below.
   const starts: number[] = [];
@@ -681,7 +725,7 @@ function parseAnthropic(
       // Same rule one level down: a result this parser cannot read is money it cannot account
       // for, so the report is refused rather than summed around.
       if (amount === null || !Number.isFinite(amount)) return { failed: "unrecognised_shape" };
-      usd += amount;
+      cents += centsFromAnthropic(amount);
       currency.observe(r?.currency);
     }
   }
@@ -703,19 +747,23 @@ function parseAnthropic(
 
   const resolved = currency.resolve();
   if (resolved === null) return { failed: "mixed_currency" };
-  const cents = dollarsToCents(usd);
+  // THE SIGN IS TESTED BEFORE THE ROUNDING, and the ordering is the guard rather than a detail:
+  // `Math.round(-0.4)` is NEGATIVE ZERO and `-0 < 0` is false, so a small credit balance rounded
+  // first slips past the refusal below and is written as a measured $0.00 — the false zero this
+  // check exists to prevent, reintroduced by the rounding meant to satisfy the column.
+  if (cents < 0) return { failed: "negative_total" };
+  const rounded = Math.round(cents);
   // A NET-NEGATIVE MONTH IS REFUSED, not floored. Flooring was the previous answer and it
   // publishes `$0.00` as a MEASUREMENT for a month in which the vendor said it owed us money —
   // "a zero on this board is only ever a row that says zero, written because a vendor said
   // zero", and the vendor did not say zero. `cost_cents` cannot hold the real figure, so the
   // honest outcome is the one the union already has for an answer that cannot be stored: nothing
   // written, the previous row standing, and the board saying so.
-  if (cents < 0) return { failed: "negative_total" };
   return {
     rows: [{
       provider: "anthropic", metric: "tokens",
       periodStart: window.start, periodEnd: window.end,
-      value: null, unit: null, costCents: cents, currency: resolved,
+      value: null, unit: null, costCents: rounded, currency: resolved,
     }],
   };
 }
