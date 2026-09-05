@@ -463,6 +463,38 @@ export function readerHolder(role: ScreenerRole): { name: string | null } | null
 }
 
 /**
+ * WHAT A READER IS TOLD WHEN IT ASKS FOR A FOLDER MOVE — one function, `null` where it may move.
+ *
+ * The RULE was already written once (`screener-state.ts#refuseMove`), and its docstring names
+ * the members: "Releasing a screened-out sender, rescuing mail out of Quarantine and DELETING it
+ * are folder moves against mail another install is organizing. They are refused for EVERY
+ * reader, in both modes, because the channel a decision travels carries a decision and nothing
+ * else." Delete-by-key is the fourth member of that list, so it gets the same sentence — and the
+ * sentence is here, rather than beside either caller, because a second spelling of it is how the
+ * Screener and the keyboard come to describe one state differently.
+ *
+ * BOTH READER MODES, and that is the whole reason this is not `role.mode === "blocked"`: a
+ * `pending` reader's DECISIONS travel to its organizer and are carried out, so refusing those
+ * would withhold a press that works — but a move has no vocabulary in that channel at all
+ * (`REQUEST_KINDS` is `screener.decide`, `rule.create`, `rule.update`, `rule.delete`, and the
+ * column's CHECK is closed on exactly those). `readerHolder` is the narrowing that already
+ * states "either reader mode", so it is what this asks.
+ *
+ * The two sentences are passed in as thunks because this module renders nothing and holds no
+ * catalogue. What it owns is the DECISION — which reader modes are refused, and whether this
+ * build has a name to put in the sentence — which is the half that can drift; the keys are the
+ * `screener` namespace's two existing ones at both call sites.
+ */
+export function readerMoveRefusal(
+  role: ScreenerRole,
+  say: { named: (name: string) => string; unknown: () => string },
+): string | null {
+  const holder = readerHolder(role);
+  if (holder === null) return null;
+  return holder.name ? say.named(holder.name) : say.unknown();
+}
+
+/**
  * WHAT CHANGED ABOUT WHO ORGANIZES THESE MAILBOXES, AND HAS NOT BEEN ACKNOWLEDGED YET.
  *
  * One entry per mailbox whose `organizerEventAt` is newer than its `organizerEventSeenAt`. The

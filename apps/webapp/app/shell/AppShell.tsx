@@ -159,7 +159,9 @@ import { MailStateProvider, useMailState, type FreshnessProbe, type MailboxProbe
 /* The ONE stand-down predicate, aggregated over the roster: what may the Screener do here, and
    what changed about who organizes these mailboxes that nobody has acknowledged? Settings →
    Mailboxes renders its own state line from the same `readerStandDown` underneath. */
-import { organizerNotices, screenerMode } from "./mail-state";
+import { organizerNotices, readerMoveRefusal, screenerMode, type ScreenerRole } from "./mail-state";
+/* Backspace/Delete → Trash, and the window in which it has not happened yet. See the module. */
+import { deleteKeyBindings, hideMessages, useDeleteUndo } from "./delete-undo";
 /* The once-per-change line above the Ohbox, and the shape of the press that ends it. */
 import { OrganizerNotice, type OrganizerNoticeTransport } from "./OrganizerNotice";
 /* The OS-answer seam, threaded to `SettingsView` for the hosts that must inject one. */
@@ -1315,6 +1317,36 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    */
   const reader = engine.read();
   const toast = useToast();
+  /**
+   * DELETE, WITH THE WINDOW IN WHICH IT HAS NOT HAPPENED YET — see `delete-undo.ts` for why an
+   * Undo on this verb can only be a delayed commit.
+   *
+   * Declared HERE, above `presented`, because the held ids are what that projection subtracts:
+   * the row has to leave every pile on the press, and the mutation that would do that is the
+   * thing the window is postponing.
+   *
+   * `roleRef` and not `screenerRole` itself: the role is derived further down (it needs the
+   * polled mailbox facts), and the refusal has to answer with the role at PRESS time rather
+   * than with whatever it was when this line ran. The ref is assigned beside the derivation.
+   */
+  const roleRef = useRef<ScreenerRole>(screenerMode(null));
+  const deleting = useDeleteUndo({
+    mutate: (m) => engine.mutate(m),
+    toast,
+    copy: {
+      deleted: t("ohbox.toastDeleted"),
+      undo: t("screener.toastUndo"),
+      undone: t("ohbox.deleteUndone"),
+      failed: t("ohbox.deleteFailed"),
+    },
+    /* THE ONE RULE, from the module that owns it. `screener-state.ts#refuseMove` asks the same
+       function for the same sentence — a delete is a folder move against mail another install
+       is arranging, and both callers say so in the same words. */
+    refusal: () => readerMoveRefusal(roleRef.current, {
+      named: (name) => t("screener.readerMoveRefused", { name }),
+      unknown: () => t("screener.readerMoveRefusedUnknown"),
+    }),
+  });
   const theme = useTheme();
   const route = useHashRoute();
   // The registry owns ⌘K (see `keymap.tsx`). Leaving the hook's own binding on as well
@@ -1700,8 +1732,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * are read from `consentView.history`.
    */
   const presented = useMemo(
-    () => (consentView ? presentationReader(reader, consentView) : reader),
-    [reader, consentView],
+    /* …MINUS ANYTHING INSIDE ITS UNDO WINDOW. `hideMessages` returns the base reader unwrapped
+       while nothing is held, which is every render but the few seconds after a Delete, so the
+       normal path pays nothing and keeps its memo identities. It is composed HERE and not into
+       `reader` for `presentationReader`'s own reason: the mirror's reader is what every mutation,
+       body open and search reads, and a delete that has not happened yet must still be there. */
+    () => hideMessages(consentView ? presentationReader(reader, consentView) : reader, deleting.held),
+    [reader, consentView, deleting.held],
   );
 
   /**
@@ -2005,6 +2042,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * function is pure and has its own table test.
    */
   const screenerRole = useMemo(() => screenerMode(facts), [facts]);
+  /* …AND THE DELETE KEY ASKS THE SAME ANSWER. Assigned rather than passed because the queue is
+     built above this line (it feeds `presented`), and a refusal must be judged at the moment of
+     the press: a role captured at mount would let a mailbox that changed hands mid-session
+     answer with the role it had then. See `readerMoveRefusal`. */
+  roleRef.current = screenerRole;
   /**
    * WHAT CHANGED ABOUT WHO ORGANIZES THESE MAILBOXES, AND HAS NOT BEEN ACKNOWLEDGED.
    *
@@ -4662,20 +4704,32 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
           /**
            * THE DELETE VERB — a move to the provider's native \Trash, NEVER an expunge
            * (FOLDERS-SPEC.md §16.3; `packages/core/src/adapters/imap-types.ts`, the third
-           * user-commanded write). Dispatched ONLY from the confirm strip the ⋯ menu opens
-           * (`MessagePane.ActionBar`), which is the whole ceremony: there is no un-delete on
-           * the wire, so the ask happens BEFORE the act and no Undo is offered after it —
-           * the same confirm-no-undo shape the mobile reader ships.
+           * user-commanded write). Still the ONE dispatch site: the confirm strip the ⋯ menu
+           * opens (`MessagePane.ActionBar`) and the Backspace/Delete keys both arrive here, so
+           * there is one ceremony and one sentence however the delete was asked for.
            *
-           * The result is AWAITED for the toast, unlike the fire-and-forget verbs above,
-           * because the two honest sentences differ: the overlay tombstones the row the
-           * instant this dispatches, and a rejection (a mailbox with no \Trash folder answers
-           * 422 `no_trash_folder`) rolls that overlay back whole — the message is back where
-           * it was, and the toast must say so rather than claim a move that did not happen.
+           * ── AND IT NOW CARRIES AN UNDO, WHICH IT DID NOT ────────────────────────────────
+           *
+           * What stood here was: "there is no un-delete on the wire, so the ask happens BEFORE
+           * the act and no Undo is offered after it". The first half is still true — nothing in
+           * `EngineMutation` brings a deleted row back — and the second half is what changed:
+           * the press no longer dispatches, it opens a window. `delete-undo.ts` hides the row
+           * at once, the toast carries Undo for `UNDO_MS`, and the mutation goes out only when
+           * that window closes. An Undo inside it cancels a delete that never happened, which
+           * is the only undo this wire can honour, and it is the Screener's own answer to the
+           * identical fork (its endpoint has no un-decide either).
+           *
+           * A READER IS REFUSED BEFORE ANY OF THAT, in `refuseMove`'s exact words: a delete is
+           * a folder move against mail another install is arranging, and the channel a reader's
+           * decisions travel has no vocabulary for moving mail. Nothing is hidden and nothing
+           * reaches the wire — see `readerMoveRefusal`.
+           *
+           * The reader sheet is closed on the way, and only for THIS message: the mirror still
+           * holds the row for the length of the window, so `readerMessage` would otherwise keep
+           * a sheet standing over mail every list has already let go of.
            */
-          void engine.mutate({ kind: "message_delete", messageId: m.id }).then((res) => {
-            toast(res.status === "rolled_back" ? t("ohbox.deleteFailed") : t("ohbox.toastDeleted"));
-          });
+          if (readerFor === m.id) setReaderFor(null);
+          deleting.remove(m.id);
           break;
         }
         case "resurface_now":
@@ -4746,7 +4800,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
         }
       }
     },
-    [engine, toast, t, now, openReply, openForward, toggleReply, markSeen, draftReply, replyTo, replyAll],
+    [engine, toast, t, now, openReply, openForward, toggleReply, markSeen, draftReply, replyTo, replyAll,
+      /* `deleting.remove` and not `deleting`: the hook returns a fresh object each render (the
+         held set is state), and depending on it would rebuild this callback on every keystroke
+         anywhere. `remove` is the stable half. */
+      deleting.remove, readerFor],
   );
 
   /**
@@ -5486,35 +5544,55 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    *
    * Order is innermost-first and is the list's own order — the palette sits over the sheet,
    * which sits over a popover, which sits over the reader.
+   *
+   * ── THE THIRD MEMBER IS THE MODAL GATE, AND IT IS HERE FOR THE SAME REASON ─────────
+   *
+   * A destructive key must not fire into a question somebody is already being asked. That
+   * needs a list of what is OPEN — which is precisely this list, so it is answered from
+   * this list rather than from a second enumeration beside it. The lesson is the one the
+   * paragraph above records: two enumerations of the same overlays is a drift the type
+   * system cannot see, and an overlay added later would be missing from whichever copy its
+   * author did not think of. Here, forgetting the flag makes Escape inert for that overlay
+   * TOO, which is visible on first use.
+   *
+   * `true` is the default for anything that stands over the deck as a question. The two
+   * exceptions are stated where they sit: the READER SHEET is not a modal for this purpose —
+   * it is the reading surface, and deleting the message being read is the whole verb — and
+   * the reply editor is, because a Delete pressed beside a half-written answer means the
+   * text, not the mail.
    */
-  const escapeLayers: Array<[open: boolean, close: () => void]> = [
-    [palette.open, palette.closePalette],
-    [shortcutsOpen, () => setShortcutsOpen(false)],
+  const escapeLayers: Array<[open: boolean, close: () => void, modal?: boolean]> = [
+    [palette.open, palette.closePalette, true],
+    [shortcutsOpen, () => setShortcutsOpen(false), true],
     // Above the popover: the audit panel is opened FROM the sheet and replaces it, so it is
     // the innermost thing on screen whenever it exists.
-    [senderAudit != null, () => setSenderAudit(null)],
+    [senderAudit != null, () => setSenderAudit(null), true],
     // Above the sender popover for the same reason the audit panel is: the subject sheet is opened
     // FROM it and replaces it, so whenever both flags could be true the subject sheet is the thing
     // on screen. (It closes the popover on open, so in practice they are never both set — the
     // ordering is here so that stays a property of this list rather than of one callback.)
-    [subjectRule != null, () => setSubjectRule(null)],
-    [senderMenu != null, () => setSenderMenu(null)],
-    [picker != null, () => setPicker(null)],
-    [fr != null, () => setFr(null)],
+    [subjectRule != null, () => setSubjectRule(null), true],
+    [senderMenu != null, () => setSenderMenu(null), true],
+    [picker != null, () => setPicker(null), true],
+    [fr != null, () => setFr(null), true],
     // The 390px navigation drawer. It sits over the deck and intercepts every press until it
     // is dismissed, so while it is open it is the innermost thing a keyboard user is looking
     // at that is not one of the anchored popovers above — Escape closed everything else in
     // this list and left exactly this one standing (the backdrop tap was the only way out).
-    [railOpen, () => setRailOpen(false)],
+    [railOpen, () => setRailOpen(false), true],
     // The action bar's open destination strip (Move / Resurface / the delete confirm). Above
     // the reply editor and the reader because it stands OVER the bar inside them — a strip
     // opened by `m` or `d` is the innermost question on screen, and Escape answering it must
     // not close the editor or the sheet underneath instead.
-    [barPanel != null, () => setBarPanel(null)],
-    [replyTo != null, () => setReplyTo(null)],
+    [barPanel != null, () => setBarPanel(null), true],
+    [replyTo != null, () => setReplyTo(null), true],
+    // NOT a modal for the delete key's purpose: the sheet IS the reading surface, and
+    // Backspace on the message being read is exactly the verb somebody meant.
     [readerFor != null, () => setReaderFor(null)],
   ];
   const closeInnermost = escapeLayers.find(([open]) => open)?.[1] ?? null;
+  /** Is a question standing over the deck right now? One read of the one list. */
+  const modalOpen = escapeLayers.some(([open, , modal]) => open && modal === true);
 
   /**
    * AN OPEN OVERLAY OWNS ESCAPE WHILE IT IS OPEN.
@@ -5933,6 +6011,29 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
         }
       },
     },
+    /* BACKSPACE AND DELETE — the keys the mail apps everybody arrives from already use, filing
+       the focused message to Trash in one press with Undo in the toast. They are not a second
+       delete: both run `onMessageAction("delete", …)`, the ONE dispatch site `d`'s confirm
+       button also reaches, so there is one ceremony, one refusal and one sentence.
+
+       WHY THEY DO NOT ASK FIRST, WHILE `d` DOES. `d`'s two-press ceremony exists because a
+       delete used to be unrecoverable the instant it dispatched. It is not any more — the
+       press opens an undo window (`delete-undo.ts`) — so a key whose whole point is one press
+       does not need a strip in front of it. `d` keeps its ask because a keycap on a bar button
+       that deletes on a single press is a different promise; both now land in the same window.
+
+       The gates are `d`'s own, deliberately: the sheet must not advertise on one row a delete
+       the row beside it would refuse to draw. */
+    ...deleteKeyBindings({
+      focused,
+      label: t("shortcuts.deleteKey"),
+      modalOpen,
+      canDelete:
+        consent.foldersEnabled === true
+        && focused != null
+        && reader.get<EngineMessage>("message", focused.id) != null,
+      run: (m) => onMessageAction("delete", m),
+    }),
     {
       chord: "mod+k",
       group: "app",

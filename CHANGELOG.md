@@ -507,6 +507,23 @@ the server knows whose question it answered, so now it says so.
 A server states whether it sends this, so pointing an app at an older self-hosted install does not
 make every ordinary response look suspect.
 
+### Backspace and Delete move a message to Trash
+
+The two keys every other mail client binds now do the same thing here: press either one on the
+message you are looking at and it goes to the Trash folder on your own mail server. It is a move,
+never a permanent erase — ohmail does not expunge mail, and what happens to it after that is your
+mail server's Trash policy.
+
+The press is undoable. For a few seconds the toast carries an Undo, and nothing has been sent
+while it is up: pressing Undo puts the message straight back because the delete had not happened
+yet. Let the toast go and it is filed. Both keys are listed in the shortcut sheet (`?`), and they
+are inert wherever a delete would not be what you meant — while you are typing in any text field,
+and while a dialog, menu or panel is open over the app.
+
+On a mailbox another ohmail install is organizing, the keys do nothing and say so, in the same
+sentence the rest of the app uses for a move made where mail is not filed from. Nothing is sent
+and nothing disappears from the list.
+
 ### Controls fit the width they are given
 
 Four things in the app decided their own width from something other than the room they had, and

@@ -512,6 +512,7 @@
     "deleteNote": "Sie wandert in den Papierkorb-Ordner auf deinem eigenen Mailserver — ohmail löscht nie unwiderruflich. Ab dort gelten die Papierkorb-Regeln deines Mailservers.",
     "toastDeleted": "In den Papierkorb verschoben.",
     "deleteFailed": "Das Löschen konnte nicht gespeichert werden — die Nachricht ist noch an ihrem Platz.",
+    "deleteUndone": "Nicht gelöscht — die Nachricht ist noch an ihrem Platz.",
     "toastDownloadAllFailed": "Diese Dateien ließen sich nicht aus deinem Postfach holen. Versuch es einzeln.",
     "doorbell": "{count, plural, =0 {<b>Alles klar</b>} one {<b>1</b> wartet} other {<b>#</b> warten}}",
     "doorbellAction": "Screener ›",
@@ -2594,6 +2595,7 @@
     "move": "An einen anderen Ort verschieben",
     "deleteAsk": "Löschen — fragt zuerst",
     "deleteConfirm": "Löschen bestätigen",
+    "deleteKey": "In den Papierkorb verschieben",
     "panelClose": "Offene Zeile schließen"
   },
   "columns": {

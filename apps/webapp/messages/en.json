@@ -512,6 +512,7 @@
     "deleteNote": "It moves to the Trash folder on your own mail server — ohmail never erases mail. Your mail server's Trash rules apply from there.",
     "toastDeleted": "Moved to Trash.",
     "deleteFailed": "That delete could not be saved — the message is where it was.",
+    "deleteUndone": "Not deleted — the message is where it was.",
     "toastDownloadAllFailed": "Those files couldn't be fetched from your mailbox. Try one at a time.",
     "doorbell": "{count, plural, =0 {<b>All clear</b>} one {<b>1</b> waiting} other {<b>#</b> waiting}}",
     "doorbellAction": "Screener ›",
@@ -2594,6 +2595,7 @@
     "move": "Move to another place",
     "deleteAsk": "Delete — asks first",
     "deleteConfirm": "Confirm the delete",
+    "deleteKey": "Move it to Trash",
     "panelClose": "Close the open row"
   },
   "columns": {

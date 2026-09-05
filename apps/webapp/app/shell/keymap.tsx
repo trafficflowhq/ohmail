@@ -252,6 +252,11 @@ export function chordKeys(chord: string, mod = "⌘"): string[] {
     shift: "⇧",
     Enter: "↵",
     Escape: "esc",
+    /* The two keys that file a message to Trash, in the glyphs printed on the keys themselves.
+       Without a cap here the sheet would render the bare `e.key` string — "Backspace" — which
+       is a word in a row of keycaps rather than a key. */
+    Backspace: "⌫",
+    Delete: "⌦",
     ArrowUp: "↑",
     ArrowDown: "↓",
     ArrowLeft: "←",
