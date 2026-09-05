@@ -101,6 +101,7 @@ import { useAppLocale } from "./LocaleContext";
 import { useScreenerState } from "./screener-state";
 import { useJunkWindow, type JunkWire } from "./junk-window";
 import { useOlderBody, type OlderBodyWire } from "./older-body";
+import { syncIdentityOf } from "./sync-scheduler";
 import { useScreenerSuggestions, type SenderSuggestion, type SuggestWire } from "./screener-suggest";
 import { AutoSuggestRow } from "./AutoSuggestRow";
 import { ScreeningSection } from "./ScreeningSection";
@@ -2811,7 +2812,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
   // Destructured so `hydrateBody` can depend on the STABLE dispatch alone — the door's `bodyFor`
   // changes identity when an answer lands (that is how panes learn), and riding the whole object
   // would re-fire the urgent-selection effects once per delivered body for nothing.
-  const { open: openOlderBody, bodyFor: olderBodyFor } = useOlderBody(!demo, olderBodyWire);
+  /* The identity predicate, read at REQUEST time rather than at render time — a cookie can be
+     rewritten by a sign-in in another tab between the render that built this closure and the
+     press that uses it, and the whole point of the check is to catch exactly that. `useCallback`
+     with `[engine]` keeps the door's own dependency stable; the answer inside is always live. */
+  const mayReadOlderBody = useCallback(() => syncIdentityOf(engine) !== "contradicted", [engine]);
+  const { open: openOlderBody, bodyFor: olderBodyFor } =
+    useOlderBody(!demo, olderBodyWire, mayReadOlderBody);
   const hydrateBody = useCallback(
     (messageId: string, opts?: { retry?: boolean; urgent?: boolean }) => {
       if (engine.read().get<EngineMessage>("message", messageId) !== undefined) {

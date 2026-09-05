@@ -50,7 +50,7 @@ import {
   type ReactNode,
 } from "react";
 import { useDemoMode, useEngine, useFreshness, useSyncStatus } from "./engine";
-import { SYNC_FAILURE_STREAK } from "./sync-scheduler";
+import { SYNC_FAILURE_STREAK, syncIdentityOf } from "./sync-scheduler";
 import {
   deriveMailState,
   growthStep,
@@ -404,8 +404,33 @@ export function MailStateProvider({
 
   const read = useCallback(async (): Promise<void> => {
     if (!now.probe) return;
+    /**
+     * ── THE SECOND OWNERSHIP TEST, AND IT ASKS A DIFFERENT QUESTION ────────────────────────
+     *
+     * The one below compares REACT identities — this engine, this probe — and it is exactly
+     * right for the switch it was written for: the shell replaced the engine, so an answer for
+     * the old one may not be published over the new one.
+     *
+     * It cannot see the case that costs mail. When another tab of the same profile signs in as
+     * somebody else, the cookie jar is rewritten and NOTHING in this tree changes: the same
+     * engine, the same probe function, the same callbacks. The thirty-second poll then asks
+     * `GET /mailboxes` under the new session, `answering.current === now` is trivially true,
+     * and the strip and the From selector publish the other account's mailbox ids, addresses,
+     * sync state, errors and timestamps — automatically, with nobody pressing anything.
+     *
+     * So the identity that matters here is the SESSION's, and the mirror's sync gate already
+     * holds it (`syncIdentityOf`). Asked twice, before and after, because a request that left
+     * while the jar still agreed can answer after it has stopped agreeing — the same reason
+     * `answering.current` is read after the await rather than before it.
+     *
+     * `contradicted` and not `!== "holds"`: an UNCONFIRMED gate is the ordinary warm open, where
+     * the mailbox facts are this account's own and the strip has always shown them. Refusing
+     * there would blank the strip for a round trip on every load.
+     */
+    if (syncIdentityOf(probeEngine) === "contradicted") return;
     try {
       const got = await now.probe();
+      if (syncIdentityOf(probeEngine) === "contradicted") return;
       /* THE OWNERSHIP TEST. `now` is this callback's OWN identity, frozen when the callback was
          made; `answering.current` is what is on screen when the answer lands. A request issued for
          the previous account resolves whenever the network says so — `alive.current` only asks
@@ -422,7 +447,7 @@ export function MailStateProvider({
       // `SessionScreen`'s business, not this strip's.
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [now]);
+  }, [now, probeEngine]);
 
   const readFreshness = useCallback(async (): Promise<void> => {
     if (!now.freshnessProbe) return;
