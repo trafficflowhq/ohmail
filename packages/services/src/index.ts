@@ -323,6 +323,8 @@ export {
   // deployment, so an adapter that answered 0 when it could not ask would be a margin somebody
   // believes.
   makePlatformCostPort, runPlatformCostPass, recordManualPlatformCost, costsForMonth,
+  writeMeasuredRows, ZeroForChargedLine, ManualCostShapeConflict,
+  TOTAL_METRIC, isTotalMetric,
   API_COST_PROVIDERS, COST_STALE_AFTER_MS, MANUAL_COST_MIN_NOTE,
   type CostProvider, type PlatformCostPort, type PlatformCostFetch, type PlatformCostRow,
   type PlatformCostEnv, type PlatformCostPassReport, type PlatformCostPassOptions,

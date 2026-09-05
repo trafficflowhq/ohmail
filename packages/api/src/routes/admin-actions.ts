@@ -1,6 +1,8 @@
 import { silentLogger } from "@trafficflow/core";
 import { suspendAccount, resumeAccount, resyncMailbox } from "@trafficflow/db/cloud";
-import { recordManualPlatformCost, type CostProvider } from "@trafficflow/services";
+import {
+  recordManualPlatformCost, ManualCostShapeConflict, type CostProvider,
+} from "@trafficflow/services";
 import { resolveStaffSession, type StaffIdentity } from "./admin-staff.js";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
 import type { ApiDeps } from "../deps.js";
@@ -401,19 +403,30 @@ async function platformCost(
     return { status: 400, body: { error: { code: "currency_unsupported" } } };
   }
 
-  await recordManualPlatformCost(deps.db, {
-    provider: provider as CostProvider,
-    metric,
-    periodStart,
-    periodEnd,
-    costCents,
-    currency,
-    ...(typeof body.value === "number" && Number.isFinite(body.value) ? { value: body.value } : {}),
-    ...(typeof body.unit === "string" && body.unit.trim()
-      ? { unit: body.unit.trim().slice(0, 32) } : {}),
-    note: str(body.note).trim(),
-    enteredBy: staff.staffId,
-  });
+  try {
+    await recordManualPlatformCost(deps.db, {
+      provider: provider as CostProvider,
+      metric,
+      periodStart,
+      periodEnd,
+      costCents,
+      currency,
+      ...(typeof body.value === "number" && Number.isFinite(body.value) ? { value: body.value } : {}),
+      ...(typeof body.unit === "string" && body.unit.trim()
+        ? { unit: body.unit.trim().slice(0, 32) } : {}),
+      note: str(body.note).trim(),
+      enteredBy: staff.staffId,
+    });
+  } catch (err) {
+    // A FIGURE THAT WOULD NOT BE COUNTED IS REFUSED, NOT STORED. A manual total entered while
+    // this month is recorded as a per-service breakdown (or the reverse) is filtered out by the
+    // month read's family rule, so answering `ok` told an operator their correction had landed
+    // while the board went on publishing the vendor's number.
+    if (err instanceof ManualCostShapeConflict) {
+      return { status: 409, body: { error: { code: "cost_shape_conflict", message: err.message } } };
+    }
+    throw err;
+  }
 
   return {
     status: 200,

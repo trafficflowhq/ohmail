@@ -48,9 +48,13 @@ import type { Db } from "./context.js";
  *    `{ data: [{ starting_at, ending_at, results: [{ amount, currency, … }] }], has_more,
  *    next_page }`, one bucket per day.
  *
- *    **THE AMOUNTS ARE CENTS, NOT DOLLARS** — see `centsFromAnthropic`, which exists entirely to
- *    say so. This is the one fact about either vendor that no response reveals and only the
- *    documentation settles.
+ *    **THE AMOUNTS ARE CENTS, NOT DOLLARS.** The vendor's documentation settles it in one line:
+ *    *"All costs in USD, reported as decimal strings in lowest units (cents)."* So `"70.7614"`
+ *    is seventy-one cents, and NOTHING on this path multiplies by 100 —
+ *    {@link microCentsFromDecimalString} scales the digits and {@link centsFromMicroCents}
+ *    divides back. It is the one fact about either vendor that no response reveals and only the
+ *    documentation settles, and this adapter published every figure a hundredfold for its whole
+ *    life because the parser and its own test shared the assumption.
  *
  *    **IT EXCLUDES PRIORITY TIER**, by the vendor's own statement: *"Priority Tier costs use a
  *    different billing model and are not included in the cost endpoint."* This deployment has no
@@ -698,7 +702,9 @@ export function makePlatformCostPort(
 function parseVercelCharges(
   lines: string[], window: PlatformCostWindow, asOf: Date,
 ): PlatformCostFetch {
-  const totals = new Map<string, { micro: number; quantity: number | null; unit: string | null }>();
+  const totals = new Map<string, {
+    micro: number; quantity: number | null; unit: string | null; charged: boolean;
+  }>();
   // Counted only for records that fall INSIDE the window. Counting every recognised record was
   // the previous shape and it manufactured a zero: minutes after a month starts, the response can
   // hold only the PREVIOUS month's last bucket, which was recognised, then filtered out, and the
@@ -706,17 +712,30 @@ function parseVercelCharges(
   // answer is "did the vendor tell us anything about the month we asked about", and only an
   // in-window record does.
   let inWindow = 0;
+  // WHETHER THE VENDOR REPORTED ANYTHING POSITIVE AT ALL, read from the amounts as they arrive
+  // and BEFORE any rounding. `charged` used to be derived from the accumulated micro-cents,
+  // which is already rounded per record — so a positive amount below half a micro-cent became
+  // `charged: false` and `writeMeasuredRows` accepted a fresh API zero for it. The provenance
+  // has to come from what the vendor said, not from what the arithmetic made of it.
+  let vendorCharged = false;
   const currency = new Currency();
   // The distinct charge-period starts seen inside the window, for the coverage check below, and
   // the furthest END any of them reached — a period is only evidence for the time it covers.
-  // Keyed by start, so a repeated period is one period. `to` rides along for the contiguity
-  // check, which compares an end against the next start rather than assuming a stride.
-  const periods = new Map<number, { from: number; to: number }>();
+  // ── KEYED BY THE VENDOR'S OWN GRAIN, WHICH IS DAY × SERVICE × REGION ────────────────────
+  //
+  // `periods` was keyed by START ALONE, so two records sharing a start overwrote each other and
+  // whichever survived decided the contiguity join — reversing the line order changed the
+  // verdict, and a record covering 23 hours could be hidden behind one covering 24.
+  //
+  // The per-service coverage map was keyed by SERVICE alone, when the documented response grain
+  // is day × service × region. A missing `iad1` line for one day passed because the `fra1` line
+  // for the same service and day was present, and the region-short sum was written as the month.
+  //
+  // Both are keyed by the full grain now, and contiguity is checked PER SERIES rather than over
+  // a merged set — a series being one (service, region), which is the thing that actually runs
+  // day after day.
+  const periods = new Map<string, { from: number; to: number }>();
   let lastCoveredEnd = 0;
-  // Which SERVICES appeared on which day. Coverage used to prove only that each day had at least
-  // ONE record, so a stream carrying every service through the 29th and a single service on the
-  // 30th reached the trailing edge with most of that day's services missing.
-  const serviceDays = new Map<string, Set<number>>();
   // Detected on a RECORD rather than on a service's total: a credit that happens to be offset by
   // usage under the SAME service would otherwise keep a per-service breakdown, which is exactly
   // the shape that cannot represent a credit.
@@ -799,15 +818,16 @@ function parseVercelCharges(
     if (to - from < 23 * 60 * 60 * 1000 || to - from > 25 * 60 * 60 * 1000) {
       return { failed: "day_coverage_short" };
     }
-    periods.set(from, { from, to });
+    const region = typeof record.RegionId === "string" ? record.RegionId : "";
+    const series = `${service}\u0000${region}`;
+    periods.set(`${from}\u0000${series}`, { from, to });
     if (to > lastCoveredEnd) lastCoveredEnd = to;
-    const seen = serviceDays.get(service) ?? new Set<number>();
-    seen.add(from);
-    serviceDays.set(service, seen);
     currency.observeRequired(record.BillingCurrency);
     if (billed < 0) credited = true;
-    const acc = totals.get(service) ?? { micro: 0, quantity: null, unit: null };
+    if (billed > 0) vendorCharged = true;
+    const acc = totals.get(service) ?? { micro: 0, quantity: null, unit: null, charged: false };
     acc.micro += microCentsFromDollars(billed);
+    if (billed > 0) acc.charged = true;
     const quantity = num(record.ConsumedQuantity);
     if (quantity !== null) acc.quantity = (acc.quantity ?? 0) + quantity;
     if (acc.unit === null && typeof record.ConsumedUnit === "string" && record.ConsumedUnit) {
@@ -831,10 +851,21 @@ function parseVercelCharges(
   // with a hole in it, published as the month. Contiguity is each period ENDING where the next
   // BEGINS, rather than a fixed stride, so a daylight-saving day of 23 or 25 hours is covered
   // without this code needing to know the vendor's timezone — see the note above.
-  const covered = [...periods.values()].sort((a, b) => a.from - b.from);
-  for (let i = 1; i < covered.length; i += 1) {
-    if (covered[i - 1]!.to !== covered[i]!.from) return { failed: "day_coverage_short" };
+  // Contiguity PER SERIES. A merged set hid a short record behind a full-length one from another
+  // series that happened to share its start; each series is now walked on its own, so a 23-hour
+  // record leaves a gap in its own run and is caught wherever the other series sit.
+  const bySeries = new Map<string, Array<{ from: number; to: number }>>();
+  for (const [key, period] of periods) {
+    const series = key.slice(key.indexOf("\u0000") + 1);
+    (bySeries.get(series) ?? bySeries.set(series, []).get(series)!).push(period);
   }
+  for (const run of bySeries.values()) {
+    run.sort((a, b) => a.from - b.from);
+    for (let i = 1; i < run.length; i += 1) {
+      if (run[i - 1]!.to !== run[i]!.from) return { failed: "day_coverage_short" };
+    }
+  }
+  const covered = [...periods.values()].sort((a, b) => a.from - b.from);
   // THE LEADING EDGE, WHEN THE DATABASE PROVES THE ACCOUNT EXISTED — see `PlatformCostWindow`.
   if (window.requireFullStart && covered[0]!.from >= window.start.getTime() + CHARGES_DAY_MS) {
     return { failed: "day_coverage_short" };
@@ -867,15 +898,12 @@ function parseVercelCharges(
   // missing that service's last day, and the day-level check cannot see it because other services
   // covered the day. A service that legitimately started or stopped mid-month is not this: its
   // days are contiguous, and that is what is required rather than a full house.
-  // Per service, the same contiguity — expressed as POSITION in the month's own period list
-  // rather than as a stride, so a 23- or 25-hour day does not read as a hole here either.
-  const order = new Map(covered.map((p, i) => [p.from, i]));
-  for (const seen of serviceDays.values()) {
-    const idx = [...seen].map((f) => order.get(f) ?? -1).sort((a, b) => a - b);
-    for (let i = 1; i < idx.length; i += 1) {
-      if (idx[i]! - idx[i - 1]! !== 1) return { failed: "day_coverage_short" };
-    }
-  }
+  // The per-service pass that used to sit here is GONE, and its removal is the point. It walked
+  // a per-service map and checked the same property the per-series contiguity above
+  // already checks over a strictly finer key — so mutating it away left every test green, which
+  // is not "well covered", it is a second mechanism covering for the first. A guard nobody can
+  // make fail is not a guard; keeping it would have left something that reads as protection and
+  // rots quietly the next time the grain changes.
 
   const resolved = currency.resolve();
   if (typeof resolved !== "string") return resolved;
@@ -901,7 +929,7 @@ function parseVercelCharges(
         provider: "vercel", metric: TOTAL_METRIC,
         periodStart: window.start, periodEnd: window.end,
         value: null, unit: null, costCents: net, currency: resolved,
-        charged: netMicro > 0,
+        charged: vendorCharged && netMicro >= 0,
       }],
     };
   }
@@ -919,7 +947,7 @@ function parseVercelCharges(
     [...totals.values()].reduce((sum, t) => sum + t.micro, 0),
   );
   // The services that were actually used, in one order, so the allocation below can be indexed.
-  const used = [...totals.entries()].filter(([, acc]) => acc.micro !== 0);
+  const used = [...totals.entries()].filter(([, acc]) => acc.micro !== 0 || acc.charged);
   const allocation = allocateCents(providerCents, used.map(([, acc]) => acc.micro));
 
   // ── A SERVICE THAT CANNOT CARRY A CENT GETS NO LINE, RATHER THAN A LINE SAYING ZERO ─────
@@ -941,11 +969,15 @@ function parseVercelCharges(
   // as chosen here.
   const rows: PlatformCostRow[] = [];
   for (const [i, [metric, acc]] of used.entries()) {
-    if ((allocation[i] ?? 0) === 0 && acc.micro > 0) continue;
+    if ((allocation[i] ?? 0) === 0 && acc.charged) continue;
     // A service the account has never touched contributes an exact 0 on every day in the range —
     // fifty-five of the sixty-five service names in a live response are that. Writing them would
     // fill the table with rows that say nothing. A SUB-CENT service (`0.0001` USD) is NOT this
-    // case and is written, at zero cents, because it was genuinely used.
+    // case: it is DROPPED rather than written at zero, because a fresh `source='api'` row
+    // saying zero for a line the vendor charged is this module's forbidden sentence. Its cents
+    // are not lost — the allocation gives them to the lines that can carry them, so the rows
+    // still sum to the provider's total. (This said "is written, at zero cents" until 2026-09-06,
+    // describing the behaviour the round before last removed.)
     //
     // Rounding is per service and that is inherent rather than a choice: the row IS the service
     // and the column is integer cents, so three separate $0.004 services are three zero-cent
@@ -960,7 +992,7 @@ function parseVercelCharges(
       // direction. See `allocateCents`.
       costCents: allocation[i] ?? 0,
       currency: resolved,
-      charged: acc.micro > 0,
+      charged: acc.charged,
     });
   }
 
@@ -973,7 +1005,9 @@ function parseVercelCharges(
       periodStart: window.start, periodEnd: window.end,
       // The vendor answered and its answer was nothing — `charged: false` is what makes this
       // zero legal at the writer, and the only kind of zero that is.
-      value: null, unit: null, costCents: 0, currency: resolved, charged: false,
+      // `charged` is what the VENDOR said, not what rounding produced: if any amount in the
+      // window was positive this cannot be a legal zero, and the writer will refuse it.
+      value: null, unit: null, costCents: 0, currency: resolved, charged: vendorCharged,
     });
   }
   return { rows };
@@ -990,8 +1024,14 @@ function parseVercelCharges(
  * Summed into a single `tokens` row per window, because the board's question is "what did the
  * model cost this month" and the per-bucket detail is the Console's job.
  *
- * `amount` is a STRING of dollars in that report (`"70.7614"`), so it is parsed rather than read
- * — and a value that does not parse is skipped rather than treated as zero.
+ * `amount` is a STRING OF CENTS in that report (`"70.7614"` is seventy-one cents, not seventy
+ * dollars — the vendor's words are *"decimal strings in lowest units (cents)"*), so it is parsed
+ * digit-by-digit rather than read as a number, and a value that cannot be read exactly refuses
+ * the whole report rather than being skipped.
+ *
+ * This sentence said "dollars" until 2026-09-06, directly above the code that had been corrected
+ * to treat it as cents — a comment stating the opposite of its own function, which is how the
+ * original hundredfold error would have been re-introduced by the next person to trust it.
  */
 function parseAnthropic(
   buckets: unknown[], window: PlatformCostWindow, asOf: Date,
@@ -1001,6 +1041,8 @@ function parseAnthropic(
   // integers and rounded ONCE at the end: the recorded live month is
   // 70.7614 + 10.3029 + 4.812 = 85.8763 cents → 86.
   let micro = 0;
+  // See `parseVercelCharges`: provenance from what the vendor said, before rounding.
+  let vendorCharged = false;
   const currency = new Currency();
   // The bucket STARTS that landed inside the window, for the continuity check below.
   const starts: number[] = [];
@@ -1042,6 +1084,7 @@ function parseAnthropic(
       // for, so the report is refused rather than summed around.
       if (amount === null) return { failed: "unrecognised_shape" };
       micro += amount;
+      if (amount > 0) vendorCharged = true;
       currency.observeRequired(r?.currency);
     }
   }
@@ -1102,7 +1145,7 @@ function parseAnthropic(
       provider: "anthropic", metric: "tokens",
       periodStart: window.start, periodEnd: window.end,
       value: null, unit: null, costCents: rounded, currency: resolved,
-      charged: micro > 0,
+      charged: vendorCharged,
     }],
   };
 }
@@ -1196,6 +1239,13 @@ export async function writeMeasuredRows(
   }
 }
 
+/**
+ * Thrown by {@link recordManualPlatformCost} when the figure being entered belongs to a different
+ * SHAPE from the one this provider-month already holds — a total against a breakdown, or the
+ * reverse. Surfaced as a refusal rather than stored and then filtered out of the reader.
+ */
+export class ManualCostShapeConflict extends Error {}
+
 /** Thrown by {@link writeMeasuredRows} when a row would say zero for a line the vendor charged. */
 export class ZeroForChargedLine extends Error {}
 
@@ -1248,7 +1298,10 @@ export async function runPlatformCostPass(
   for (const provider of opts.providers ?? API_COST_PROVIDERS) {
     let result: PlatformCostFetch;
     try {
-      result = await opts.port.fetch(provider, window);
+      // The flag is resolved for THIS provider — see `PassWindow`.
+      result = await opts.port.fetch(provider, {
+        start, end, requireFullStart: window.requireFullStart(provider),
+      });
     } catch (err) {
       // A port that THROWS is a port that failed; the union exists so it does not have to, and
       // this is the belt to that. The class only — never the message.
@@ -1431,9 +1484,16 @@ export const CLOSED_MONTH_EAGER_MS = 7 * 24 * 60 * 60 * 1000;
  * 60-second invocation between them — so ordering the settling month last is ordering it to be
  * dropped, silently, with the pass reporting success.
  */
+interface PassWindow {
+  start: Date;
+  end: Date;
+  /** Per PROVIDER — one vendor's history says nothing about another's inception. */
+  requireFullStart: (p: CostProvider) => boolean;
+}
+
 async function passWindows(
   tx: Tx, at: Date, providers: readonly CostProvider[],
-): Promise<Array<{ start: Date; end: Date; requireFullStart: boolean }>> {
+): Promise<PassWindow[]> {
   const start = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), 1));
   const end = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth() + 1, 1));
   const prev = {
@@ -1449,11 +1509,27 @@ async function passWindows(
   // make a real month permanently unmeasurable. But the DATABASE can separate them. An `api` row
   // for an EARLIER month is proof the account was already billing, and from then on a late first
   // day is a short answer rather than an inception.
-  const earlier = await tx
-    .select({ provider: platformCosts.provider })
+  //
+  // TWO THINGS THIS GOT WRONG AND BOTH ARE FIXED HERE.
+  //
+  // The comparison was against `prev.start` for BOTH windows, so while measuring September it
+  // looked for rows before AUGUST — and a complete August row, which is exactly the proof the
+  // account was billing, did not count. A September response beginning on the 2nd then passed as
+  // the whole month. Each window asks about ITS OWN start now.
+  //
+  // And it was one flag for every provider (`providers.some(...)`), so one vendor's history
+  // demanded a first day from a DIFFERENT vendor whose account legitimately started mid-month —
+  // rejecting that vendor's inception month and writing no measurement for it at all. It is per
+  // provider, which is the only scope the evidence actually covers.
+  const earlierRows = await tx
+    .select({ provider: platformCosts.provider, periodStart: platformCosts.periodStart })
     .from(platformCosts)
-    .where(and(eq(platformCosts.source, "api"), lt(platformCosts.periodStart, prev.start)));
-  const established = new Set(earlier.map((r) => r.provider));
+    .where(and(eq(platformCosts.source, "api"), lt(platformCosts.periodStart, start)));
+  /** Providers with an `api` row for a month strictly before `windowStart`. */
+  const establishedFor = (windowStart: Date): Set<CostProvider> =>
+    new Set(earlierRows
+      .filter((r) => r.periodStart < windowStart)
+      .map((r) => r.provider as CostProvider));
 
   // SETTLED IS EVIDENCE: a reading taken a full day past the month's end (so the vendor's own
   // final period has closed and been indexed), or a reading of the NEXT month that already
@@ -1469,9 +1545,12 @@ async function passWindows(
     ));
   const settled = new Set(settledRows.map((r) => r.provider));
 
+  const openEstablished = establishedFor(start);
   const openWindow = {
     start, end,
-    requireFullStart: providers.some((p) => established.has(p)),
+    // Per provider — see above. The pass asks one provider at a time, so the flag it hands the
+    // port is that provider's own history.
+    requireFullStart: (p: CostProvider): boolean => openEstablished.has(p),
   };
   if (providers.every((p) => settled.has(p))) return [openWindow];
 
@@ -1483,11 +1562,12 @@ async function passWindows(
   const dailySlot = at.getUTCHours() < 6;
   if (!eager && !dailySlot) return [openWindow];
 
+  const prevEstablished = establishedFor(prev.start);
   return [
     {
       ...prev,
-      // An earlier month than the one being re-asked is the proof here.
-      requireFullStart: providers.some((p) => established.has(p)),
+      // A month earlier than the one being RE-ASKED is the proof here, per provider.
+      requireFullStart: (p: CostProvider): boolean => prevEstablished.has(p),
     },
     openWindow,
   ];
@@ -1506,7 +1586,11 @@ class StalePass extends Error {}
  * sat beside an API `charges (net of credits)` row and `costsForMonth` SUMMED them: a $23 month
  * rendered as $46, and the projection scaled the doubled figure.
  *
- * One name. A credited month says so in its `note`, not in its key. Every writer normalizes to
+ * One name. A credited month is not distinguished at all any more: `note` is a MANUAL-row
+ * column and `writeMeasuredRows` has no path to it, so an API total carries no mark saying a
+ * credit was folded in. That is a real loss of detail and it is recorded here rather than
+ * described as handled — an earlier version of this sentence claimed the note carried it.
+ * Every writer normalizes to
  * this, and {@link writeMeasuredRows} refuses a second total key for the same provider-month
  * rather than letting one through to be summed.
  */
@@ -1557,15 +1641,50 @@ export interface ManualCostEntry {
  */
 export async function recordManualPlatformCost(db: Db, entry: ManualCostEntry): Promise<void> {
   const tx = db as unknown as Tx;
+  // ── THE FAMILY GUARD APPLIES HERE TOO, AND A DROPPED WRITE MUST NOT ANSWER OK ───────────
+  //
+  // The guard lived only on the measured path, so the manual one could produce both defects it
+  // was written to prevent. A manual `compute = $20` beside a manual `charges = $30` total for
+  // one provider — three providers are manual-only, so this is their ordinary shape — was SUMMED
+  // to $50 for a month that cost $30. And a manual TOTAL entered while the API is reporting a
+  // BREAKDOWN is filtered out by the family rule on the read, so the operator saw
+  // `200 {ok:true}` and the board went on publishing the vendor's figure: a write that was
+  // accepted, stored, and then ignored.
+  //
+  // A row that will not be counted is REFUSED at the moment it is entered, with the reason. The
+  // operator can then do the thing that works — correct the line, or replace the whole month —
+  // instead of believing a figure that was never going to appear.
+  const metricNormalized = isTotalMetric(entry.metric) ? TOTAL_METRIC : entry.metric;
+  const siblings = await tx
+    .select({ metric: platformCosts.metric, source: platformCosts.source })
+    .from(platformCosts)
+    .where(and(
+      eq(platformCosts.provider, entry.provider),
+      eq(platformCosts.periodStart, entry.periodStart),
+      eq(platformCosts.periodEnd, entry.periodEnd),
+    ));
+  const wantsTotal = isTotalMetric(metricNormalized);
+  // What shape is this provider-month already in? The newest API rows decide the family; with no
+  // API rows at all, the manual rows themselves do.
+  const apiRows = siblings.filter((r) => r.source === "api");
+  const deciding = apiRows.length > 0 ? apiRows : siblings;
+  const familyIsTotal = deciding.length > 0 && deciding.some((r) => isTotalMetric(r.metric));
+  const familyIsBreakdown = deciding.length > 0 && deciding.some((r) => !isTotalMetric(r.metric));
+  if (deciding.length > 0 && wantsTotal !== familyIsTotal && !(wantsTotal && !familyIsBreakdown)) {
+    throw new ManualCostShapeConflict(
+      wantsTotal
+        ? "this month is recorded as a per-service breakdown; correct a line, or clear it first"
+        : "this month is recorded as a single total; replace the total, or clear it first",
+    );
+  }
   // NORMALIZED TO THE ONE TOTAL NAME. An operator typing a provider's whole month used to store
   // it under whichever word they were given, so a hand-entered `charges` sat beside an API
   // `charges (net of credits)` and the two were SUMMED — a $23 month rendered as $46. They are
   // one figure and they now share one key, which is what makes the manual row REPLACE the API's
   // total rather than add to it.
-  const metric = isTotalMetric(entry.metric) ? TOTAL_METRIC : entry.metric;
   await tx.insert(platformCosts).values({
     provider: entry.provider,
-    metric,
+    metric: metricNormalized,
     periodStart: entry.periodStart,
     periodEnd: entry.periodEnd,
     value: entry.value === null || entry.value === undefined ? null : String(entry.value),
