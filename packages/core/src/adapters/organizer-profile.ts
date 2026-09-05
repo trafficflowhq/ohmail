@@ -249,12 +249,47 @@ export function isEmptyProfilePayload(p: OrganizerProfilePayload): boolean {
  * different order — which is a rewrite of the document per poll interval on some drivers. Sorting
  * by the natural keys makes the fingerprint a function of the configuration and of nothing else.
  */
+/**
+ * ORDER TWO STRINGS THE SAME WAY ON EVERY MACHINE.
+ *
+ * `localeCompare` is a LOCALE-DEPENDENT collation, and every comparator in this file used it.
+ * That is a defect rather than a style question, because of what these orderings feed:
+ * {@link canonicalizeProfilePayload} exists so that a fingerprint is a function of the
+ * CONFIGURATION and of nothing else, and {@link profileFingerprint} hashes its output. Two
+ * installs holding byte-identical configuration, on runtimes whose collation differs, would
+ * therefore produce DIFFERENT fingerprints — and the fingerprint is compared ACROSS INSTALLS
+ * (see `writeOrganizerProfile`'s unseen-foreign check). A document that is in fact identical to
+ * ours would read as a stranger's on every takeover, and the write would be refused for ever.
+ *
+ * Dormant while every host is a full-icu Node, and dormant is not fixed: it is one small-icu
+ * build, one `--without-intl`, or one runtime with a different ICU version away from being live,
+ * and the symptom would be a mailbox that cannot be taken over with nothing in any log saying
+ * why.
+ *
+ * `rules.ts` already states this rule for the same reason, on the tie-break that decides which
+ * of two rules wins: *"`id` is the final NON-SEMANTIC tie-break and is compared with `<`/`>`
+ * rather than `localeCompare`: a locale-dependent collation is not a stable order across two
+ * machines."* This is that rule applied to the file it was written about.
+ *
+ * ── WHAT THIS ORDER IS, EXACTLY ───────────────────────────────────────────────────────────
+ *
+ * UTF-16 CODE UNIT order — what `<` and `>` do on JavaScript strings. It is not identical to
+ * UTF-8 byte order (they disagree only above U+FFFF, where surrogates sort below U+E000–U+FFFF),
+ * and the difference does not matter here: the property required is that EVERY runtime produces
+ * the SAME order, and code-unit comparison is defined by the language rather than by ICU data.
+ * Naming it precisely rather than calling it "byte order" is the point — a comment that
+ * overstates what a comparator does is the next person's wrong assumption.
+ */
+function byCodeUnit(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 export function canonicalizeProfilePayload(p: OrganizerProfilePayload): OrganizerProfilePayload {
   const str = (v: string | undefined | null): string => v ?? "";
   return {
     screener: [...p.screener]
       .map((s) => (s.name === undefined || s.name === null ? { address: s.address } : { address: s.address, name: s.name }))
-      .sort((a, b) => a.address.localeCompare(b.address)),
+      .sort((a, b) => byCodeUnit(a.address, b.address)),
     rules: [...p.rules]
       .map((r) => ({
         kind: r.kind, match: r.match, destination: r.destination,
@@ -263,17 +298,17 @@ export function canonicalizeProfilePayload(p: OrganizerProfilePayload): Organize
         ...(r.bodyContains === undefined || r.bodyContains === null ? {} : { bodyContains: r.bodyContains }),
       }))
       .sort((a, b) =>
-        a.kind.localeCompare(b.kind)
-        || a.match.localeCompare(b.match)
-        || str(a.subjectContains).localeCompare(str(b.subjectContains))
-        || str(a.bodyContains).localeCompare(str(b.bodyContains))
-        || a.destination.localeCompare(b.destination)
+        byCodeUnit(a.kind, b.kind)
+        || byCodeUnit(a.match, b.match)
+        || byCodeUnit(str(a.subjectContains), str(b.subjectContains))
+        || byCodeUnit(str(a.bodyContains), str(b.bodyContains))
+        || byCodeUnit(a.destination, b.destination)
         || a.priority - b.priority
-        || a.provenance.localeCompare(b.provenance)
+        || byCodeUnit(a.provenance, b.provenance)
         || Number(a.enabled) - Number(b.enabled)),
     notifyRules: [...p.notifyRules]
       .map((n) => ({ kind: n.kind, target: n.target }))
-      .sort((a, b) => a.kind.localeCompare(b.kind) || a.target.localeCompare(b.target)),
+      .sort((a, b) => byCodeUnit(a.kind, b.kind) || byCodeUnit(a.target, b.target)),
     awayResponder: p.awayResponder === null ? null : {
       enabled: p.awayResponder.enabled,
       body: p.awayResponder.body,
@@ -282,7 +317,7 @@ export function canonicalizeProfilePayload(p: OrganizerProfilePayload): Organize
       audience: p.awayResponder.audience,
       throttle: p.awayResponder.throttle,
     },
-    tagNames: [...p.tagNames].sort((a, b) => a.localeCompare(b)),
+    tagNames: [...p.tagNames].sort(byCodeUnit),
   };
 }
 
@@ -1425,7 +1460,12 @@ export async function readOrganizerProfile(io: ProfileIo): Promise<ProfileReadRe
     const bt = Date.parse(b.doc!.updatedAt);
     const d = (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at);
     if (d !== 0) return d;
-    return JSON.stringify(b.doc).localeCompare(JSON.stringify(a.doc));
+    /* THE SAME RULE AS `byCodeUnit`'s header, and this one decides WHICH DOCUMENT WINS.
+       Two records stamped the same instant are separated here, and under `localeCompare` two
+       installs reading the same folder could pick DIFFERENT documents as the newest — after
+       which each would go on believing the other's configuration was a stranger's. A tie-break
+       that is not stable across machines is not a tie-break. */
+    return byCodeUnit(JSON.stringify(b.doc), JSON.stringify(a.doc));
   })[0]!;
 
   return {
