@@ -1,5 +1,6 @@
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
+import { uptime as osUptime } from "node:os";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle, type PgliteDatabase } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
@@ -477,18 +478,171 @@ function alive(pid: number): boolean {
 }
 
 /**
+ * WHICH PROCESS, NOT MERELY WHICH NUMBER — the identity written into the lock file.
+ *
+ * A pid on its own is not an identity. Pids are recycled: the counter wraps, and a machine that
+ * lost power and came back hands the same numbers out again from the start. A lock left behind by
+ * a crash therefore names a number that some UNRELATED process is now using, `kill(pid, 0)` says
+ * "alive", and the engine refuses to open a mailbox it is the only owner of — permanently, until
+ * somebody is told to delete a file. That is the failure this record closes.
+ *
+ * ── EVERY FIELD IS OPTIONAL, BECAUSE THE PLATFORMS DISAGREE AND THE ANSWER MUST NOT ───────────
+ *
+ * `startTicks` and `bootId` come from `/proc`, so they are Linux-only. The rule below is written
+ * so that ABSENCE never decides anything: a missing field falls back to the behaviour this
+ * function has always had, and only a POSITIVE mismatch takes a lock away. Getting that backwards
+ * would open a second engine on a live PGlite directory, which corrupts it — a far worse outcome
+ * than the refusal being fixed.
+ */
+interface LockRecord {
+  pid: number;
+  /**
+   * The process's start time in clock ticks since boot, from `/proc/<pid>/stat` field 22.
+   *
+   * BOOT-RELATIVE and therefore exact: unlike a wall-clock start instant it involves no arithmetic
+   * over `os.uptime()`, so two reads of the same live process always agree to the tick. That is
+   * what makes it usable as an identity rather than as an estimate.
+   */
+  startTicks?: number;
+  /** `/proc/sys/kernel/random/boot_id` — a fresh UUID for every boot of this machine. */
+  bootId?: string;
+  /**
+   * When this machine booted, in ms since the epoch, derived from `os.uptime()`.
+   *
+   * The PORTABLE half, and deliberately fuzzy: it drifts by however much the clock is adjusted, so
+   * it is compared with a wide tolerance and only ever used to answer "has this machine rebooted
+   * since the lock was written", which is the common way a pid gets recycled.
+   */
+  bootAtMs?: number;
+}
+
+/** This machine's boot, as the two mechanisms see it. Read fresh; neither is cached. */
+function bootIdentity(): { bootId?: string; bootAtMs: number } {
+  let bootId: string | undefined;
+  try {
+    const raw = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+    if (raw) bootId = raw;
+  } catch {
+    /* not Linux, or a kernel without it — the portable half below still answers */
+  }
+  return { ...(bootId === undefined ? {} : { bootId }), bootAtMs: Date.now() - osUptime() * 1000 };
+}
+
+/**
+ * A live process's start time in clock ticks since boot, or null where it cannot be read.
+ *
+ * The field is the 22nd of `/proc/<pid>/stat`, and the parse starts AFTER the last `)` rather
+ * than splitting the whole line: field 2 is the executable name in parentheses and may itself
+ * contain spaces and parentheses, so a naive split puts every later field in the wrong place.
+ */
+function processStartTicks(pid: number): number | null {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const afterName = stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/);
+    // `afterName[0]` is field 3 (state), so field 22 is index 19.
+    const ticks = Number.parseInt(afterName[19] ?? "", 10);
+    return Number.isInteger(ticks) && ticks >= 0 ? ticks : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * HOW FAR TWO READINGS OF THIS MACHINE'S BOOT INSTANT MAY DIFFER AND STILL BE THE SAME BOOT.
+ *
+ * `os.uptime()` is integer seconds and `Date.now()` moves with every clock adjustment — an NTP
+ * step, a timezone-less RTC correction after a suspend, a VM resuming. Ten minutes is far wider
+ * than any of those and far narrower than the thing being detected, which is a machine that went
+ * down and came back. The direction of the error is what matters: too WIDE means a genuine reboot
+ * occasionally goes unnoticed and the lock behaves exactly as it does today, while too NARROW
+ * means a clock step takes a lock away from a live engine.
+ */
+const SAME_BOOT_TOLERANCE_MS = 10 * 60_000;
+
+/**
+ * Does `rec` describe THE PROCESS that is currently running as `rec.pid`?
+ *
+ * Answers `true` whenever it cannot tell, which is the whole design: `false` takes a lock away
+ * from a running engine, so it is returned only on evidence.
+ */
+function lockStillOurs(rec: LockRecord, nowBoot: { bootId?: string; bootAtMs: number }): boolean {
+  // A DIFFERENT BOOT: whatever holds this pid now, it is not the process that wrote this file.
+  if (rec.bootId !== undefined && nowBoot.bootId !== undefined) {
+    if (rec.bootId !== nowBoot.bootId) return false;
+  } else if (rec.bootAtMs !== undefined) {
+    if (Math.abs(rec.bootAtMs - nowBoot.bootAtMs) > SAME_BOOT_TOLERANCE_MS) return false;
+  }
+  // SAME BOOT (or we could not tell): the pid can still have been recycled within it.
+  if (rec.startTicks === undefined) return true;
+  const live = processStartTicks(rec.pid);
+  if (live === null) return true;           // no `/proc` for it — cannot tell, so do not act
+  return live === rec.startTicks;
+}
+
+/** The identity of THIS process, as it goes into the file. */
+function selfLockRecord(): LockRecord {
+  const boot = bootIdentity();
+  const ticks = processStartTicks(process.pid);
+  return {
+    pid: process.pid,
+    ...(ticks === null ? {} : { startTicks: ticks }),
+    ...boot,
+  };
+}
+
+/**
+ * Parse a lock file's contents. Understands the JSON record and the BARE PID this file used to
+ * write, because an install updating in place finds the old spelling and a lock that failed to
+ * parse would be treated as stale — which is the one direction that must never happen by
+ * accident.
+ */
+function parseLockRecord(raw: string): LockRecord | null {
+  const text = raw.trim();
+  if (text === "") return null;
+  if (text.startsWith("{")) {
+    try {
+      const o = JSON.parse(text) as Partial<LockRecord>;
+      if (!Number.isInteger(o.pid) || (o.pid as number) <= 0) return null;
+      return {
+        pid: o.pid as number,
+        ...(Number.isInteger(o.startTicks) ? { startTicks: o.startTicks as number } : {}),
+        ...(typeof o.bootId === "string" && o.bootId ? { bootId: o.bootId } : {}),
+        ...(Number.isFinite(o.bootAtMs) ? { bootAtMs: o.bootAtMs as number } : {}),
+      };
+    } catch {
+      return null;
+    }
+  }
+  const pid = Number.parseInt(text, 10);
+  // THE LEGACY SPELLING — a bare pid and nothing else. It carries no identity, so `lockStillOurs`
+  // will answer "cannot tell" for it and the behaviour is exactly what it was before this record
+  // existed. A lock written by an older build is not a lock this build may steal on a guess.
+  return Number.isInteger(pid) && pid > 0 ? { pid } : null;
+}
+
+/**
  * Take an exclusive lock on the data directory, or refuse.
  *
  * `wx` is `O_CREAT|O_EXCL`, which is atomic: two processes racing here cannot both win. A lock
  * left behind by a crash names a pid, and a pid that is gone releases it — the alternative, a
  * lock that outlives the crash, means a user whose laptop lost power cannot open their mail.
+ *
+ * ── AND A PID THAT IS *BACK* RELEASES IT TOO, WHICH IS THE HALF THAT WAS MISSING ─────────────
+ *
+ * "A pid that is gone releases it" was only half the rule, and the other half is the case a
+ * laptop actually produces: power is lost, the machine reboots, the pid counter starts again, and
+ * some unrelated process is issued the number the dead engine had written down. `kill(pid, 0)`
+ * answers "alive" for it, so the lock was held by a process that has never heard of this mailbox
+ * — permanently, until somebody was told to delete a file. See {@link LockRecord}: the file now
+ * records WHICH process, and a live pid whose identity does not match the record is taken over.
  */
 function lockDataDir(dataDir: string): () => void {
   const path = join(dataDir, LOCK_FILE);
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const fd = openSync(path, "wx");
-      writeSync(fd, `${process.pid}\n`);
+      // A TRAILING NEWLINE, as before: `cat`ing this file in a terminal is how somebody debugs it.
+      writeSync(fd, `${JSON.stringify(selfLockRecord())}\n`);
       closeSync(fd);
       return () => rmSync(path, { force: true });
     } catch (err) {
@@ -500,10 +654,12 @@ function lockDataDir(dataDir: string): () => void {
           return "";
         }
       })();
-      const pid = Number.parseInt(raw, 10);
-      if (Number.isInteger(pid) && pid > 0 && alive(pid)) throw new DataDirLockedError(dataDir, `pid ${pid}`);
-      // Stale (or unreadable): clear it and try exactly once more, so two processes both finding
-      // it stale still resolve to one winner via the O_EXCL race above.
+      const rec = parseLockRecord(raw);
+      if (rec && alive(rec.pid) && lockStillOurs(rec, bootIdentity())) {
+        throw new DataDirLockedError(dataDir, `pid ${rec.pid}`);
+      }
+      // Stale (or unreadable, or a recycled pid): clear it and try exactly once more, so two
+      // processes both finding it stale still resolve to one winner via the O_EXCL race above.
       rmSync(path, { force: true });
     }
   }
