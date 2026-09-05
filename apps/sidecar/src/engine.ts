@@ -842,6 +842,39 @@ export const DEFAULT_POLL_INTERVAL_MS = 15_000;
 const ONE_SHOT_DIAL: AdapterDialContext = { onConnectionError: () => { /* see above */ } };
 
 /**
+ * HOW LONG THE ORGANIZER LEASE MAY GO ON BEING UNREADABLE BEFORE THE CONNECTION IS CALLED DEAD.
+ *
+ * `LeaseUnavailableError` is exempt from every failure counter BY CLASS, and that exemption is
+ * correct — "I could not look" must never be recorded as "this mailbox is broken". With nothing
+ * else bounding the exempt arm, a permanently dead connection is retried for ever, which is the
+ * measured wedge: the same failure every poll interval, unbroken, healed only by a restart.
+ *
+ * The hosted worker reached this number first (`DEFAULT_LEASE_UNAVAILABLE_DETACH_MS`) and its
+ * argument for a DURATION rather than a cycle count holds here too: "after N cycles" is a proxy
+ * for time that silently retunes itself the day somebody changes `pollIntervalMs`. So the wall
+ * clock is the property, and this is the knob.
+ */
+export const LOCAL_CONNECTION_DEAD_AFTER_MS = 120_000;
+
+/**
+ * …AND THE CYCLE COUNT BESIDE IT, WHICH IS NOT A SECOND OPINION ABOUT THE SAME QUESTION.
+ *
+ * Whichever comes first. The duration is the product property; this is the arm that cannot be
+ * bypassed by a composition that owns the clock — an install whose `now` is injected, or a test
+ * driving drains by hand rather than waiting out two minutes of real time. Without it the bound
+ * would be provable only by a test that sleeps for two minutes, and a guard nobody can afford to
+ * run is a guard nobody runs.
+ *
+ * EIGHT, because eight polls at the shipped 15 s interval IS two minutes: on the configuration
+ * that ships, the two arms fire together and the count adds no behaviour at all. It bites only
+ * where the poll is faster than the product's, and there a re-dial arriving early costs one
+ * connection — which on this door is one process's own socket, not a shared pool. That is the
+ * asymmetry that makes the union safe here and would not make it safe in the hosted worker,
+ * where the same shape would be a re-attach storm across every account on a shard.
+ */
+export const LOCAL_CONNECTION_DEAD_AFTER_CYCLES = 8;
+
+/**
  * THE BUDGET FOR THE HISTORICAL-NAME REPAIR, per drain. See `backfillStoredNames` below.
  *
  * Two numbers rather than one, because they bound different things. The BATCH is how many rows one
@@ -2444,6 +2477,69 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         }).catch(() => { /* `serialize` never rejects for the caller's sake; belt and braces */ });
       };
 
+      /**
+       * THE DURATION BOUND'S TWO READINGS — both derived from cycles that actually ran.
+       *
+       * `since` is when the lease FIRST became unreadable in the current streak, `cycles` how
+       * many consecutive drains have failed that way. Neither is configuration: a cycle that
+       * serves clears both, so the state describes what this connection has been doing rather
+       * than what somebody set.
+       */
+      let leaseUnavailableSince: number | null = null;
+      let leaseUnavailableCycles = 0;
+
+      /**
+       * A DRAIN CAME BACK. The connection served, so the streak is over and so is any deadness
+       * the bound had concluded from it.
+       *
+       * It does NOT clear a death the ADAPTER reported. An event-marked connection is one the
+       * driver has told us is gone, and no amount of a drain returning zero cycles over it
+       * changes that — a stopped runtime returns 0 without touching the socket at all. Only a
+       * completed re-dial clears that one.
+       */
+      const noteCycleServed = (): void => {
+        leaseUnavailableSince = null;
+        leaseUnavailableCycles = 0;
+        if (connectionDeadBy === "bound") {
+          connectionDeadSince = null;
+          connectionDeadBy = null;
+        }
+      };
+
+      /**
+       * A DRAIN THREW. Only one class counts, and it is the one the wedge produced.
+       *
+       * `LeaseUnavailableError` is what a dead socket looks like from the gate: `mayOrganize`
+       * reads `ohmail/_meta` before anything else happens, the read fails, and the class is the
+       * by-class exemption every failure counter honours. Anything else that throws out of a
+       * drain — a store fault, a classifier fault, a bug — says nothing about the CONNECTION,
+       * and treating it as connection death would re-dial a healthy socket on every unrelated
+       * defect.
+       */
+      const noteCycleFailed = (err: unknown): void => {
+        if (!(err instanceof LeaseUnavailableError)) return;
+        leaseUnavailableSince ??= Date.now();
+        leaseUnavailableCycles += 1;
+        const unavailableMs = Date.now() - leaseUnavailableSince;
+        const due = unavailableMs >= LOCAL_CONNECTION_DEAD_AFTER_MS
+          || leaseUnavailableCycles >= LOCAL_CONNECTION_DEAD_AFTER_CYCLES;
+        if (!due || connectionDeadSince !== null) return;
+        connectionDeadSince = now();
+        connectionDeadBy = "bound";
+        log("mailbox_connection_unavailable", {
+          err, mailboxId: mb.id,
+          detectedBy: "bound",
+          // WHICH lease operation failed, from the error and not from this call site — `op` is a
+          // compile-time literal off a closed union, so it costs nothing and turns "the lease
+          // could not be read" from one sentence into the four different faults it covers.
+          op: err.op,
+          reason: "the organizer lease has been unreadable for every cycle past the bound, and " +
+            "no connection event said so — so the connection is treated as dead on the evidence " +
+            "of the cycles themselves; the next drain re-dials and re-reads the lease before it " +
+            "moves anything",
+        });
+      };
+
       let adapter: MailboxAdapter = dialAdapter();
       const syncDeps = {
         repo,
@@ -3891,7 +3987,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         return cycles;
       };
 
-      const syncUntilQuiet = async (maxCycles = 100): Promise<number> =>
+      const drainPass = async (maxCycles = 100): Promise<number> =>
         serialize(async () => {
           // ── THE GATE, IMMEDIATELY BEFORE `runSyncCycle` ────────────────────────────────────
           //
@@ -4134,6 +4230,36 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           if (organizing) await profileSync.onOrganize();
           return cycles;
         });
+
+      /**
+       * ONE DRAIN, WITH THE CONNECTION'S HEALTH ACCOUNTED FOR EITHER WAY.
+       *
+       * The wrapper is the whole of the SECOND detector, and it exists because the first one is
+       * not reachable from everywhere: `ImapAdapter#guardAsyncErrors` returns early for any
+       * client with no event surface, so an injected double bypasses the `close` listener
+       * entirely — which is exactly what the adapter's own comment says of it, and exactly why
+       * the hosted worker bounds the same arm by duration rather than trusting the event. An
+       * event-driven-only heal would be this repository's named `failure-looks-like-healthy`
+       * shape: a mechanism whose only tested path is the one production does not always take.
+       *
+       * It also covers a connection death that genuinely emits nothing — a socket that answers
+       * TCP and never completes another IMAP command, the half-open case a `close` event never
+       * describes.
+       *
+       * ON THE PUBLIC ENTRY POINT and not inside `serialize`, so the accounting sees the drain's
+       * OUTCOME rather than one step of it, and so a caller reaching this method directly (the
+       * shell's "sync now", `syncMailbox`) feeds the same bound the poll timer does.
+       */
+      const syncUntilQuiet = async (maxCycles = 100): Promise<number> => {
+        try {
+          const cycles = await drainPass(maxCycles);
+          noteCycleServed();
+          return cycles;
+        } catch (err) {
+          noteCycleFailed(err);
+          throw err;
+        }
+      };
 
       const schedule = (): void => {
         if (stopped) return;
