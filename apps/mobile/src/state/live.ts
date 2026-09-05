@@ -44,7 +44,9 @@ import {
   consentPartition,
   forwardSubject,
   isResurfaced,
+  dateClock,
   messageDisplayTime,
+  weekdayClock,
   feedPartition,
   ohboxView,
   physicalFolderOf,
@@ -2082,15 +2084,10 @@ export function scheduleLabel(iso: string, now: Date, zone: string): string {
   // speaks — so the near band is literally the same derivation, not a second copy of it.
   if (d.getTime() - now.getTime() < 6 * 24 * 60 * 60 * 1000) return whenLabel(iso, zone);
   try {
-    const parts = new Intl.DateTimeFormat("en", {
-      day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: false,
-      timeZone: zone,
-    }).formatToParts(d);
-    const get = (t: string) => parts.find((x) => x.type === t)?.value ?? "";
-    // `hour12:false` may render midnight as "24" on some ICU builds — `whenLabel`'s own pad.
-    const hour = get("hour") === "24" ? "00" : get("hour");
-    return `${get("day")} ${get("month")}, ${hour}:${get("minute")}`;
+    return dateClock(d, zone);
   } catch {
+    // An unknown zone throws rather than falling back to UTC, and this label survives it — the
+    // engine's own rule, with the caller that can carry on saying so.
     return iso;
   }
 }
@@ -2104,13 +2101,7 @@ export function whenLabel(iso: string, zone: string): string {
   if (!/^\d{4}-\d{2}-\d{2}T/.test(iso)) return iso;
   const d = new Date(iso);
   try {
-    const parts = new Intl.DateTimeFormat("en", {
-      weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: zone,
-    }).formatToParts(d);
-    const get = (t: string) => parts.find((x) => x.type === t)?.value ?? "";
-    // `hour12:false` may render midnight as "24" on some ICU builds; normalise like the webapp's pad.
-    const hour = get("hour") === "24" ? "00" : get("hour");
-    return `${get("weekday")} ${hour}:${get("minute")}`;
+    return weekdayClock(d, zone);
   } catch {
     return iso;
   }

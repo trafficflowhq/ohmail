@@ -1,6 +1,7 @@
 import { isSentFolderPath } from "@trafficflow/core/folder-name";
 import type { EntityReader } from "./store.js";
-import { zonedDayNumber, zonedFields } from "./zone.js";
+import { zonedFields } from "./zone.js";
+import { daysAgo, messageStamp, named } from "./stamp.js";
 import {
   FOLDER_OF_VIEW,
   VIEW_OF_FOLDER,
@@ -31,113 +32,14 @@ import {
  */
 
 /**
- * THE DAY AND MONTH NAMES THIS FILE MINTS, FROM `Intl`, IN THE CALLER'S LOCALE AND THE READER'S ZONE.
+ * THE ROW STAMP, UNDER THE NAME EVERY IMPORTER ALREADY USES.
  *
- * Three hardcoded English arrays stood here and they are the most-repeated words in the product:
- * every message row that is not from today renders one ({@link messageDisplayTime}), every Receipts
- * day heading renders one ({@link receiptsByDay}), and every screened-out sender carries one. A
- * German reader saw "Tue", "Thursday" and "2 Aug".
- *
- * THE LOCALE IS A PARAMETER AND DEFAULTS TO ENGLISH, which is what keeps this package free of an
- * i18n dependency: `@ohmail/client-engine` has no catalogue, no provider and no opinion about
- * language, and every one of its own tests keeps asserting the English strings it always did. The
- * web app is the caller that passes a reader's locale (`app/shell/format.ts`, `AppShell`,
- * `screener-state.ts`).
- *
- * THE ZONE IS A PARAMETER TOO, and unlike the locale it has no default here. It used to be the
- * literal `"UTC"`, matched by `getUTC*` everywhere below, and that was wrong on screen: a reader in
- * Zurich saw a message that arrived at 16:32 stamped "14:32", and a message that arrived after
- * their midnight named as the previous weekday. Which day a message is named on is a property of
- * where the reader is standing, not of the server that stored it. Storage is untouched — every
- * instant in the mirror is still UTC.
- *
- * Cached by locale-and-zone-and-shape: constructing a formatter is the expensive part and these are
- * called once per visible row.
+ * The rule itself moved to `stamp.ts`, which owns every time of day in the product — the bands, the
+ * clock and the reason the clock is not `Intl`-formatted are written out there. This alias is what
+ * keeps the move invisible to the web app, the phone and the Screener's own DTO minting, all of
+ * which import this name from this module.
  */
-const NAMERS = new Map<string, Intl.DateTimeFormat>();
-
-function named(locale: string, opts: Intl.DateTimeFormatOptions, d: Date, zone: string): string {
-  const key = `${locale}|${zone}|${opts.weekday ?? ""}|${opts.month ?? ""}`;
-  let fmt = NAMERS.get(key);
-  if (!fmt) {
-    fmt = new Intl.DateTimeFormat(locale, { ...opts, timeZone: zone });
-    NAMERS.set(key, fmt);
-  }
-  return fmt.format(d);
-}
-
-function pad2(n: number): string {
-  return String(n).padStart(2, "0");
-}
-
-/**
- * Midnights apart IN THE READER'S ZONE. Positive = in the past; negative = dated in the future.
- *
- * The reader's midnights and not UTC's, because that is what "today" and "yesterday" mean to the
- * person reading. Banded on UTC, every message a Zurich reader received between their midnight and
- * 01:00 (02:00 in summer) was stamped with yesterday's weekday, and a message from 01:30 on the 1st
- * of a month was dated to the last day of the previous one.
- */
-function daysAgo(d: Date, now: Date, zone: string): number {
-  return zonedDayNumber(now, zone) - zonedDayNumber(d, zone);
-}
-
-/**
- * The prototype's row stamp for a message: "09:12" today, "Mon" this week, "2 Aug" beyond it.
- *
- * Fixture rows carry the prototype's own string in `time`; server-fed rows carry only
- * `date`, so every surface that shows a stamp has to derive one. It lives here — beside
- * the selectors that build display DTOs — rather than in the web app, because
- * `screenerSegments()` mints `ScreenerSenderDTO.time` and `ScreenerHeldMail.time` for
- * senders that have no fixture row at all.
- *
- * ── A WEEKDAY NAME ONLY MEANS SOMETHING FOR SIX DAYS ────────────────────────────────────
- *
- * This used to answer `WEEKDAY_SHORT[d.getUTCDay()]` for EVERY message that was not from
- * today, so a message from March rendered as "Tue" — indistinguishable from one sent
- * yesterday, in a list sorted by date, which is the one place the reader is relying on the
- * stamp to tell things apart. Owner-reported.
- *
- * Seven bands would be over-thinking it; the rule is just that a label may not be reused
- * before it has stopped being unambiguous. "Tue" is unique within a six-day window and
- * repeats on the seventh, so that is exactly where it stops. Past that, the day-and-month
- * carries the year implicitly for the current year and explicitly outside it — a bare
- * "2 Aug" on a message from 2025 would be the same lie in a slower form.
- *
- * A FUTURE date (a resurfaced or scheduled row) takes the dated branch too: `daysAgo` goes
- * negative, and "Fri" for something that has not happened yet reads as the past.
- *
- * ── THE ZONE IS REQUIRED, AND THAT IS THE POINT OF IT ───────────────────────────────────
- *
- * Every band here is a statement about the reader's calendar, so it cannot be computed without
- * knowing which calendar that is. A DEFAULT would make the wrong answer the quiet one: a call site
- * that forgot would render a stamp — a plausible, well-formatted, two-hours-wrong stamp — and
- * nothing in the type system, the suite or the screen would say so. That is precisely how the UTC
- * version survived as long as it did. So there is no default, and a call site without a zone does
- * not compile; the engine's own tests pass `"UTC"` explicitly, which is what makes their UTC
- * expectations a choice rather than an accident.
- */
-export function messageDisplayTime(
-  m: Pick<EngineMessage, "time" | "date">,
-  now: Date,
-  /** The IANA zone the reader is in. REQUIRED — see above. */
-  zone: string,
-  /** Which language to name the day and month in. English by default — see {@link named}. */
-  locale = "en",
-): string {
-  if (m.time) return m.time;
-  if (!m.date) return "";
-  const d = new Date(m.date);
-  if (Number.isNaN(d.getTime())) return "";
-
-  const f = zonedFields(d, zone);
-  const ago = daysAgo(d, now, zone);
-  if (ago === 0) return `${pad2(f.hour)}:${pad2(f.minute)}`;
-  if (ago >= 1 && ago <= 6) return named(locale, { weekday: "short" }, d, zone);
-
-  const stamp = `${f.day} ${named(locale, { month: "short" }, d, zone)}`;
-  return f.year === zonedFields(now, zone).year ? stamp : `${stamp} ${f.year}`;
-}
+export const messageDisplayTime = messageStamp;
 
 /** Server list order (contract §5.2): date desc, id desc. */
 /**

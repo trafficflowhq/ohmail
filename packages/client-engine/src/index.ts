@@ -203,6 +203,16 @@ export {
   type ZonedWallClock,
 } from "./zone.js";
 
+// EVERY TIME OF DAY IN THE PRODUCT. The bands, the clock, and the reason the clock is not
+// `Intl`-formatted are in `stamp.ts`; `messageDisplayTime` keeps its name through `selectors.ts`.
+export {
+  clock,
+  dateClock,
+  fullDateTime,
+  messageStamp,
+  weekdayClock,
+} from "./stamp.js";
+
 // Selectors.
 export {
   bodyOf,

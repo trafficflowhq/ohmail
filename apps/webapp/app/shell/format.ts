@@ -4,10 +4,14 @@
  * mutations fall back to a clock/weekday derived from the ISO date.
  */
 import {
+  clock,
+  dateClock,
   folderLeaf,
   isOwnSent,
+  fullDateTime as stampFullDateTime,
   messageDisplayTime,
   VIEW_OF_FOLDER,
+  weekdayClock,
   zonedFields,
   zonedInstant,
   zonedWeekday,
@@ -19,59 +23,6 @@ import {
 import { TAG_HUES, type TagHueName } from "@ohmail/ui";
 import { displayAddress } from "./idn";
 import { activeFormatLocale, activeFormatZone, liveCopy } from "./locale";
-
-/**
- * THE DAY AND MONTH NAMES, FROM `Intl`, IN THE READER'S LOCALE AND THE READER'S ZONE.
- *
- * These were two hardcoded English arrays, and they are on screen: `resurfaceLabel` renders
- * "Fri 09:00" in a toast and on a Triage row, `fullDateTime` renders "Tue 5 Aug 2026, 14:32" as the
- * hover title of every message stamp. A German reader was getting "Fri" and "Aug".
- *
- * `Intl.DateTimeFormat` replaces the arrays rather than a second pair of German ones, because the
- * abbreviation rules are not ours to invent — German shortens Tuesday to "Di" and September to
- * "Sept." with a full stop, and a hand-written table gets that wrong in a way nobody reviews.
- *
- * ── `timeZone: "UTC"` USED TO STAND HERE, WITH A PARAGRAPH DEFENDING IT ────────────────────────
- *
- * It said the UTC read was "deliberate rather than an oversight", on the grounds that the fixtures
- * and the test surface are stamped in UTC and that localising the words is not localising the
- * clock. The second half is true and the conclusion was wrong, and the product said so: three
- * settings sections (`AboutSection`, `MailboxSection`, `BillingSection`) render account dates
- * through `toLocaleDateString`, which is the reader's zone. So the interface showed TWO clocks at
- * once, and the mail — the half a reader actually navigates by — was the one that was wrong. A
- * message that arrived at 16:32 was stamped "14:32" for a reader in Zurich, and a message that
- * arrived after their midnight was named with the previous day's weekday.
- *
- * A test surface stamped in UTC is an argument for TELLING the formatters which zone to read in,
- * not for pinning them to the server's. That is `activeFormatZone()` in `locale.ts`, beside
- * `activeFormatLocale()`; the tests inject `"UTC"` and keep every expectation they had.
- *
- * Cached per locale AND zone, because constructing a `DateTimeFormat` is the expensive part, these
- * are called once per visible row, and an injected zone has to be visible on the next call.
- */
-const DAY_NAMES = new Map<string, Intl.DateTimeFormat>();
-const MONTH_NAMES = new Map<string, Intl.DateTimeFormat>();
-
-function namer(cache: Map<string, Intl.DateTimeFormat>, opts: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
-  const locale = activeFormatLocale();
-  const zone = activeFormatZone();
-  const key = `${locale}|${zone}`;
-  const found = cache.get(key);
-  if (found) return found;
-  const made = new Intl.DateTimeFormat(locale, { ...opts, timeZone: zone });
-  cache.set(key, made);
-  return made;
-}
-
-/** "Fri" / "Fr" — the short weekday of an instant, in the reader's zone and the active locale. */
-function weekdayShort(d: Date): string {
-  return namer(DAY_NAMES, { weekday: "short" }).format(d);
-}
-
-/** "Aug" / "Aug." — the short month of an instant, in the reader's zone and the active locale. */
-function monthShort(d: Date): string {
-  return namer(MONTH_NAMES, { month: "short" }).format(d);
-}
 
 /** An instant's wall clock where the reader is standing — the one call the stamps below share. */
 function readerFields(d: Date): ReturnType<typeof zonedFields> {
@@ -173,8 +124,7 @@ function pad(n: number): string {
 
 /** "16:32" — the wall clock an instant shows where the reader is. */
 export function clockOf(iso: string): string {
-  const f = readerFields(new Date(iso));
-  return `${pad(f.hour)}:${pad(f.minute)}`;
+  return clock(new Date(iso), activeFormatZone());
 }
 
 /**
@@ -250,8 +200,7 @@ export function metaLine(...parts: Array<string | null | undefined>): string {
 export function resurfaceLabel(when: string): string {
   if (!/^\d{4}-\d{2}-\d{2}T/.test(when)) return when;
   const d = new Date(when);
-  const f = readerFields(d);
-  return `${weekdayShort(d)} ${pad(f.hour)}:${pad(f.minute)}`;
+  return weekdayClock(d, activeFormatZone(), activeFormatLocale());
 }
 
 /**
@@ -341,14 +290,14 @@ export function todayEvening(base: Date): string {
 export function scheduleLabel(when: string, now: Date): string {
   if (!/^\d{4}-\d{2}-\d{2}T/.test(when)) return when;
   const d = new Date(when);
-  const clock = clockOf(when);
-  if (d.getTime() - now.getTime() < 6 * 24 * 60 * 60 * 1000) {
-    return `${weekdayShort(d)} ${clock}`;
-  }
-  const day = new Intl.DateTimeFormat(activeFormatLocale(), {
-    timeZone: activeFormatZone(), day: "numeric", month: "short",
-  }).format(d);
-  return `${day}, ${clock}`;
+  const zone = activeFormatZone();
+  const locale = activeFormatLocale();
+  if (d.getTime() - now.getTime() < 6 * 24 * 60 * 60 * 1000) return weekdayClock(d, zone, locale);
+  /* THE FAR BAND IS DAY-FIRST, and the sentence above this function has said so all along. It was
+     built from a combined `{day, month}` pattern, which ICU orders month-first for `en` — so it
+     rendered "Sep 20, 07:05" while the docblock promised "12 Sep, 18:00", and while every dated ROW
+     stamp in the same product read "2 Aug". The appointment now speaks the list's order. */
+  return dateClock(d, zone, locale);
 }
 
 /**
@@ -541,11 +490,7 @@ export function fullDateTime(m: EngineMessage): string {
   if (!m.date) return "";
   const d = new Date(m.date);
   if (Number.isNaN(d.getTime())) return "";
-  const f = readerFields(d);
-  return (
-    `${weekdayShort(d)} ${f.day} ${monthShort(d)} ` +
-    `${f.year}, ${pad(f.hour)}:${pad(f.minute)}`
-  );
+  return stampFullDateTime(d, activeFormatZone(), activeFormatLocale());
 }
 
 /**
@@ -677,12 +622,12 @@ export function hueOf(tag: TagDTO): TagHueName {
 export function waterlineStamp(atIso: string, locale: string): string {
   const at = new Date(atIso);
   if (Number.isNaN(at.getTime())) return "";
-  return new Intl.DateTimeFormat(locale, {
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(at);
+  /* THE READER'S ZONE, WHICH THIS DID NOT HAVE. It asked `Intl` for a combined weekday-and-time
+     pattern with no `timeZone` at all, so alone among the product's stamps it read the BROWSER's
+     zone — a waterline that could name a different hour from the rows directly beneath it. The
+     combined pattern was the second defect: German renders it "Mi., 18:40", with a comma no caller
+     chose, while every other "a day this week at a time" in the product reads "Mi 18:40". */
+  return weekdayClock(at, activeFormatZone(), locale);
 }
 
 /**
