@@ -1935,7 +1935,7 @@ export const awayResponders = sqliteTable("away_responders", {
 }, (t) => ({ uqAccount: unique().on(t.accountId) }));   // one row per account ⇒ PUT upserts
 
 /**
- * THE AT-MOST-ONCE RECORD FOR AUTOMATIC REPLIES (mail 0051) — one row per
+ * ONE AUTOMATIC REPLY PER SENDER, AND THE ROW THAT PROVES IT — one row per
  * `(account, sender, enablement episode)`, and the UNIQUE is the guard rather than a diagnostic.
  *
  * ── WHAT AN "EPISODE" IS, AND WHY IT IS `responder_updated_at` ────────────────────────────────
@@ -2515,10 +2515,10 @@ export const messageTags = sqliteTable("message_tags", {
 }));
 
 /**
- * AUTO-UNSUBSCRIBE'S AT-MOST-ONCE RECORD — mail 0032.
+ * AUTO-UNSUBSCRIBE LEAVES A LIST ONCE, AND THIS IS THE ROW THAT MAKES IT ONCE.
  *
- * One row per (mailbox, list) the account has ever asked to leave. The migration carries the
- * full argument; the two things worth repeating where the code reads them:
+ * One row per (mailbox, list) the account has ever asked to leave. The migration that creates it
+ * carries the full argument; the two things worth repeating where the code reads them:
  *
  * `uqMailboxList` IS THE CONCURRENCY DESIGN, not an optimisation. The claim is `INSERT … ON
  * CONFLICT DO NOTHING RETURNING id`, so two workers racing the same list both attempt it,
