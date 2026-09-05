@@ -541,11 +541,50 @@ export abstract class BaseMirrorStore implements MirrorStore {
    * `settleWipe()` first, for the reason `flush` does it: nothing may be written while an owed
    * wipe stands, or the write lands on a baseline that is about to be cleared.
    */
+  /**
+   * ── THE DURABLE-WRITE LANE: `commitLocal` AND `resetForBootstrap` NEVER INTERLEAVE ───────────
+   *
+   * They are the store's two write-then-publish operations and they contradict each other. A
+   * reset decides WHICH rows survive by reading `records`; a commit does not appear in `records`
+   * until its transaction has already committed to disk. Run them concurrently and this happens:
+   *
+   *   1. a send's `commitLocal` opens its transaction — memory deliberately unchanged;
+   *   2. a 410 arrives and `resetForBootstrap` snapshots `records`, which does not hold the send;
+   *   3. the send's transaction commits and publishes to memory;
+   *   4. the wipe runs with the SNAPSHOT and re-puts only what it saw — the send's row is gone
+   *      from disk while sitting in memory, and `putOutbox` already answered success;
+   *   5. the send reaches the server; a kill before the answer leaves a reboot with no key, and
+   *      the next press mints a fresh one and can deliver the message twice.
+   *
+   * Sequencing is the fix rather than re-reading before the clear, because a re-read only narrows
+   * the window: the commit can always land in whatever gap is left between the last read and the
+   * clear. Ordering removes the gap instead of shrinking it. Whichever runs first, the other sees
+   * a settled world — a commit that finished is IN the snapshot, and one that had not started
+   * writes onto the new baseline afterwards, where the generation fence already expects it.
+   *
+   * The same promise-chain shape as the engine's outbox lane, and for the same reason: callers
+   * queue rather than being refused.
+   */
+  private writeChain: Promise<unknown> = Promise.resolve();
+
+  private serializeWrite<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.writeChain.then(fn, fn);
+    this.writeChain = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
   async commitLocal(
     puts: ReadonlyArray<{ type: string; id: string; entity: unknown }>,
     deletes: ReadonlyArray<{ type: string; id: string }>,
   ): Promise<void> {
     if (puts.length === 0 && deletes.length === 0) return;
+    return this.serializeWrite(() => this.commitLocalInner(puts, deletes));
+  }
+
+  private async commitLocalInner(
+    puts: ReadonlyArray<{ type: string; id: string; entity: unknown }>,
+    deletes: ReadonlyArray<{ type: string; id: string }>,
+  ): Promise<void> {
     const recs: MirrorRecord[] = puts.map((p) => {
       const rec: MirrorRecord = { type: p.type, id: p.id, seq: 0, entity: p.entity };
       return rec;
@@ -629,6 +668,12 @@ export abstract class BaseMirrorStore implements MirrorStore {
   }
 
   async resetForBootstrap(): Promise<void> {
+    // THE SAME LANE the durable commits take — see `serializeWrite`. The snapshot below is only
+    // trustworthy because no commit can be mid-transaction while this runs.
+    return this.serializeWrite(() => this.resetForBootstrapInner());
+  }
+
+  private async resetForBootstrapInner(): Promise<void> {
     /**
      * ── THE SEQ-0 ROWS SURVIVE THE 410, AND THEY SURVIVE IT INSIDE THE WIPE ─────────────────
      *

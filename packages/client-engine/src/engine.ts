@@ -1851,7 +1851,16 @@ export class OhmailEngine {
       // ONE ROAD. This loop used to hand-roll the deadline, the barrier and the hold, which is
       // how `retryAbandoned` came to be the road WITHOUT a deadline: the code that had one was
       // not reusable, so the third caller re-derived a subset of it. It is the same method now.
-      const { timedOut } = await this.dispatchWithDeadline(p, { deferReconcile: true });
+      // The drive's own drain follows this batch and carries every echo, so the reconcile this
+      // dispatch defers is deliberately DROPPED rather than issued — one drain, not two. That is
+      // the whole reason the deferred mode exists, and it is why `owed` is ignored here alone.
+      const { timedOut, held } = await this.dispatchOnLane(p);
+      if (held) {
+        // A hold armed while this batch ran. The rest stay queued in user order for the drive
+        // after; this one proceeds to its drain, because reads are never hostage to a write.
+        this.queue.unshift(...batch.slice(i));
+        return;
+      }
       if (timedOut) {
         // ORDER IS THE CONTRACT, so a timeout stops the BATCH, not just the wait: the hung
         // request may yet commit, and dispatching the entries behind it would let a newer write
@@ -3730,13 +3739,6 @@ export class OhmailEngine {
      * draft id is correct; an orphaned `queued` create is a twin factory.
      */
     const awaitsHold = enriched.kind === "draft_save" && enriched.draftId === null;
-    /**
-     * Set by `dispatch` when it skipped a reconcile this road must issue off the chain, and
-     * WHICH KIND: the no-echo branch's drain is awaited (the caller's result depends on it),
-     * the optimistic-send branch's is issued in the background (the compose must not wait on a
-     * poll). Guessing one from the result's status conflated them and made a send wait.
-     */
-    let owed: "await" | "background" | null = null;
     const queued = (): MutationResult => {
       this.queue.push(pending);
       return { id, key, status: "queued", seq: null };
@@ -3755,44 +3757,15 @@ export class OhmailEngine {
 
       // Deadline-bounded like every other road. A timeout leaves the attempt owning its entry
       // and arms the hold; the verb is answered `queued` rather than left on a hung request.
-      const out = await this.outboxGate(async () => {
-        // Released now — and a hold may have been armed by the dispatch we queued behind.
-        if (this.outboxHold) return null;
-        /**
-         * ── THE GATE COVERS THE WIRE, NOT THE RECONCILE ─────────────────────────────────────
-         *
-         * `deferReconcile` here for the reason it exists: the reconcile drain must happen
-         * OUTSIDE the chain. Held inside, it serializes the drains along with the dispatches,
-         * and three triage keystrokes during one in-flight poll stop sharing a single follow-up
-         * and pay one round trip each — measured the moment this road was gated, 5 syncs where
-         * the guard expects 3. The ordering contract is about what reaches the WIRE; once the
-         * POST has returned, the next verb may go, and the mirror catch-up belongs to whoever
-         * is draining anyway.
-         */
-        return this.dispatchWithDeadline(pending, {
-          deferReconcile: true,
-          onReconcileDeferred: (mode) => { owed = mode; },
-        });
-      });
-      if (out === null) {
+      const out = await this.outboxGate(() => this.dispatchOnLane(pending));
+      if (out.held) {
         if (!awaitsHold) return queued();
         continue; // the create re-reads the hold at the top and waits it out off the chain
       }
       if (out.timedOut || out.result === null) return queued();
-      // OFF THE CHAIN NOW, so concurrent verbs coalesce onto one drive exactly as they did
-      // before this road was gated. `syncFresh` joins an in-flight drain rather than starting a
-      // second; a failure leaves the overlay standing on `awaitingEcho`, which the deferred
-      // dispatch has already registered.
-      //
-      // ONLY WHEN THE DISPATCH ACTUALLY DEFERRED ONE. A mutation whose answer carried its own
-      // changes took the `applyChanges` branch and reconciles nothing — issuing a drain for it
-      // would put a round trip on the one path that is guaranteed not to need it, and behind a
-      // stalled poll it would hang the verb outright.
-      if (owed === "await") {
-        await this.syncFresh().catch(() => { /* the overlay stands until a drain proves the echo */ });
-      } else if (owed === "background") {
-        void this.syncFresh().catch(() => { /* the write landed; the next poll catches up */ });
-      }
+      // OFF THE CHAIN NOW, so concurrent verbs coalesce onto one drive exactly as they did before
+      // this road was gated: `syncFresh` joins an in-flight drain rather than starting a second.
+      await this.settleReconcile(out.owed);
       return out.result;
     }
   }
@@ -3867,6 +3840,63 @@ export class OhmailEngine {
    * persisted for the next boot), and becomes the order barrier {@link outboxHold} names, so no
    * other outbox dispatch may start behind it.
    */
+  /**
+   * ── THE ONE DISPATCH EVERY ROAD TAKES ────────────────────────────────────────────────────
+   *
+   * Round four found the gate global but two of the things that ride on it not: `retryAbandoned`
+   * and `flushPendingInner` had neither the release-time hold check nor `deferReconcile`, because
+   * both were added to `mutate` by hand and not carried across. That is the shape this method
+   * exists to make impossible — there is one place to add such a rule now, and a source census
+   * below the tests asserts nothing calls {@link dispatchWithDeadline} except this.
+   *
+   * It owns two rules and deliberately not a third:
+   *
+   *  · THE RELEASE-TIME HOLD CHECK. A caller joins the chain when it calls and is released when
+   *    everything ahead has settled — and a hold can be armed in between, by the very dispatch it
+   *    queued behind. Checking on entry would read `null` and release into the race the barrier
+   *    exists to prevent. `held` says so; each road answers in its own way, because what to do
+   *    about a hold differs (a fresh verb queues, a flush answers per entry, a drive skips).
+   *  · `deferReconcile`, ALWAYS. The reconcile drain must not run while the lane is held: inside
+   *    it, the deadline times the DRAIN rather than the dispatch, a completed POST can be reported
+   *    `queued`, and a slow drain arms a barrier that has nothing to do with the wire. The caller
+   *    gets `owed` back and issues the drain after releasing.
+   *
+   *  · NOT the gate. The unit of work owns that — `replayOutboxInner` and `flushPendingInner`
+   *    hold it across a whole BATCH, because a fresh verb landing between two replayed ones would
+   *    put a newer write ahead of older ones, and the batch is in user order. `mutate` and
+   *    `retryAbandoned` are single verbs and take it themselves. Taking the gate here as well
+   *    would have each batch queue behind itself, which is a deadlock, and a boolean "am I
+   *    nested" flag is not a fix — it reads true while a holder is merely suspended, so a
+   *    genuinely concurrent caller would take it as permission to run alongside.
+   */
+  private async dispatchOnLane(
+    p: PendingMutation,
+  ): Promise<{
+    result: MutationResult | null;
+    timedOut: boolean;
+    held: boolean;
+    owed: "await" | "background" | null;
+  }> {
+    if (this.outboxHold) return { result: null, timedOut: false, held: true, owed: null };
+    let owed: "await" | "background" | null = null;
+    const { result, timedOut } = await this.dispatchWithDeadline(p, {
+      deferReconcile: true,
+      onReconcileDeferred: (mode) => { owed = mode; },
+    });
+    return { result, timedOut, held: false, owed };
+  }
+
+  /** Issue the drain a dispatch deferred. OFF THE LANE — see {@link dispatchOnLane}. */
+  private settleReconcile(owed: "await" | "background" | null): Promise<void> {
+    if (owed === "await") {
+      return this.syncFresh().catch(() => { /* the overlay stands until a drain proves the echo */ });
+    }
+    if (owed === "background") {
+      void this.syncFresh().catch(() => { /* the write landed; the next poll catches up */ });
+    }
+    return Promise.resolve();
+  }
+
   private async dispatchWithDeadline(
     p: PendingMutation,
     opts: { deferReconcile?: boolean; onReconcileDeferred?: (mode: "await" | "background") => void } = {},
@@ -4259,12 +4289,29 @@ export class OhmailEngine {
       };
     }
 
-    const { result, timedOut } = await this.outboxGate(() => this.dispatchWithDeadline(p));
-    if (timedOut || result === null) {
+    const out = await this.outboxGate(() => this.dispatchOnLane(p));
+    if (out.held) {
+      /**
+       * A hold was armed while this press waited its turn. Dispatching behind a request still on
+       * the wire is the reordering the barrier exists to stop, so the press answers instead of
+       * joining the race.
+       *
+       * AND THE VERB GOES ON THE QUEUE, which the first cut of this branch forgot. By this point
+       * the record has already moved to the live collection on disk — that happens before the
+       * dispatch — so returning `queued` without queueing it left the verb in no collection this
+       * session held: not on the wire, not in `this.queue`, not in `abandoned()`. It would have
+       * come back on the next boot from its durable row, which is exactly the kind of "not really
+       * lost" that means a person watches their action do nothing until they restart the app.
+       */
+      this.queue.push(p);
+      return { id: p.id, key: p.key, status: "queued", seq: null };
+    }
+    if (out.timedOut || out.result === null) {
       // The in-flight attempt owns the entry from here; `outboxHold` is the barrier.
       return { id: p.id, key: p.key, status: "queued", seq: null };
     }
-    return result;
+    await this.settleReconcile(out.owed);
+    return out.result;
   }
 
   /** Throw an abandoned verb away for good. The overlay is long gone; this only clears the record. */
@@ -4983,8 +5030,21 @@ export class OhmailEngine {
     }
     // THE SAME SINGLE-FLIGHT every other outbox road takes — see {@link outboxGate}. Without it
     // two surfaces could flush concurrently and, for the null-key read verbs, land newer-then-older.
-    return this.outboxGate(() => this.flushPendingInner());
+    const results = await this.outboxGate(() => this.flushPendingInner());
+    // OFF THE LANE. One drain covers the whole batch: they all finished before this line, so a
+    // single drive that starts now began after every one of their POSTs returned and carries
+    // every echo — the same happens-before the boot replay relies on.
+    const owed = this.owedReconciles.splice(0);
+    if (owed.length > 0) await this.settleReconcile(owed.includes("await") ? "await" : "background");
+    return results;
   }
+
+  /**
+   * Reconciles a batch deferred, drained after the lane is released. A field rather than a return
+   * value because `flushPendingInner` already answers one result per entry, and a second channel
+   * through that signature would be a shape every future caller has to remember to unpack.
+   */
+  private readonly owedReconciles: Array<"await" | "background"> = [];
 
   private async flushPendingInner(): Promise<MutationResult[]> {
     // No in-flight wait and no hold check here: this body runs INSIDE {@link outboxGate}, which
@@ -5037,10 +5097,14 @@ export class OhmailEngine {
      * batch is left queued rather than dispatched behind it — the same rule the replay follows,
      * for the same reason: a newer verb must not land before an older one that may yet commit.
      */
+    // Reconciles owed by this batch, issued AFTER the lane is released — see `dispatchOnLane`.
+    // Held inside, a slow drain would time the dispatch that already succeeded and arm a barrier
+    // that has nothing to do with the wire.
+    const owedHere: Array<"await" | "background"> = [];
     for (let i = 0; i < batch.length; i++) {
       const p = batch[i]!;
-      const { result, timedOut } = await this.dispatchWithDeadline(p);
-      if (timedOut || result === null) {
+      const out = await this.dispatchOnLane(p);
+      if (out.held || out.timedOut || out.result === null) {
         results.push({ id: p.id, key: p.key, status: "queued", seq: null });
         for (const rest of batch.slice(i + 1)) {
           this.queue.push(rest);
@@ -5048,8 +5112,10 @@ export class OhmailEngine {
         }
         break;
       }
-      results.push(result);
+      if (out.owed !== null) owedHere.push(out.owed);
+      results.push(out.result);
     }
+    this.owedReconciles.push(...owedHere);
     return results;
   }
 
