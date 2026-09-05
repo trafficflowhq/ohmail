@@ -16,6 +16,7 @@ import {
   unhuskJunkFiledBody as unhuskJunkFiledBodyTx,
   type JunkHuskIdentity, type JunkUnhuskOutcome,
 } from "../husk-restore.js";
+import { dialect } from "@trafficflow/db/dialect";
 import { effectForDestination } from "../rules.js";
 // The Sent shape's single source — the stale-residue cleanup must never take a Sent row (its
 // export in imap-types.ts carries the watermark argument).
@@ -716,6 +717,18 @@ function inSubtree(col: unknown, path: string) {
 export class DrizzleRepo implements WorkerRepo, RoutingPort {
   constructor(private readonly db: Db) {}
 
+  /**
+   * The spelling of every construct below that the two stores disagree about.
+   *
+   * Read from the handle rather than chosen here, because this class is constructed once per
+   * request against whichever store this program has. Row locks are the case that matters: on the
+   * store a device carries they are the identity, and the reason is not that locking is optional
+   * there — it is that the store is reached through one serialized connection, so there is no
+   * second writer for a lock to exclude. The comments below say what each lock is FOR, and every
+   * one of those reasons is about ordering two writers.
+   */
+  private get d() { return dialect(this.db); }
+
   async findByDedupKey(mailboxId: string, dedupKey: string): Promise<StoredMessage | null> {
     const rows = await this.db.select().from(messages)
       .where(and(eq(messages.mailboxId, mailboxId), eq(messages.dedupKey, dedupKey))).limit(1);
@@ -1164,8 +1177,10 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     // consistent with ingest and the repair passes (counter row, then anything else) so no
     // ordering inversion can deadlock against the eviction path.
     await this.db.insert(accountStorage).values({ accountId, bytes: 0 }).onConflictDoNothing();
-    await this.db.execute(sql`
-      select bytes from ${accountStorage} where ${accountStorage.accountId} = ${accountId} for update`);
+    await this.d.forUpdate(
+      this.db.select({ bytes: accountStorage.bytes }).from(accountStorage)
+        .where(eq(accountStorage.accountId, accountId)),
+    );
     const [victim] = await this.db.select({
       id: messageBodies.id,
       freed: sql<string>`octet_length(${messageBodies.text}) + coalesce(octet_length(${messageBodies.html}), 0)`,
@@ -1903,9 +1918,11 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * instead of losing one another's participant.
    */
   async mergeThreadMessage(threadId: string, input: ThreadMergeInput): Promise<boolean> {
-    const rows = await this.db.select({
-      participants: threads.participants, lastMessageAt: threads.lastMessageAt,
-    }).from(threads).where(eq(threads.id, threadId)).limit(1).for("update");
+    const rows = await this.d.forUpdate(
+      this.db.select({
+        participants: threads.participants, lastMessageAt: threads.lastMessageAt,
+      }).from(threads).where(eq(threads.id, threadId)).limit(1),
+    );
     const row = rows[0];
     if (!row) return false;
 
@@ -1966,13 +1983,11 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * would silently leave it out of the backlog for ever.
    */
   async lockAccountThreadStructure(accountId: string): Promise<void> {
-    await this.db.execute(
-      sql`select pg_advisory_xact_lock(${ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS}, hashtext(${accountId}))`,
-    );
+    await this.d.advisoryLock(this.db, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, accountId);
   }
 
   async listThreadBacklog(accountId: string, limit: number): Promise<ThreadBacklogRow[]> {
-    const rows = await this.db.select({
+    const backlog = this.db.select({
       messageId: messages.id,
       messageIdHeader: messages.messageIdHeader,
       subject: messages.subject,
@@ -1983,8 +1998,8 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
       .where(and(eq(messages.accountId, accountId), sql`${messages.threadId} is null`))
       .orderBy(sql`${messages.date} asc nulls first`, messages.id)
-      .limit(limit)
-      .for("update", { of: messages });
+      .limit(limit);
+    const rows = await this.d.forUpdate(backlog, { of: messages });
 
     return rows.map((r) => ({
       messageId: r.messageId,
@@ -2126,7 +2141,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     ];
     if (opts.afterId) filters.push(sql`${messages.id} > ${opts.afterId}::uuid`);
 
-    const rows = await this.db.select({
+    const page = this.db.select({
       messageId: messages.id,
       fromAddress: messages.fromAddress,
       subject: messages.subject,
@@ -2137,11 +2152,11 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
       .where(and(...filters))
       .orderBy(messages.id)
-      .limit(opts.limit)
-      // `of: folderState` and not the whole join: `message_bodies` is on the NULLABLE side of a
-      // LEFT JOIN, which Postgres refuses to lock, and locking `messages` would serialize the
-      // pass against ordinary ingest for no benefit.
-      .for("update", { of: folderState });
+      .limit(opts.limit);
+    // `of: folderState` and not the whole join: `message_bodies` is on the NULLABLE side of a
+    // LEFT JOIN, which the server refuses to lock, and locking `messages` would serialize the
+    // pass against ordinary ingest for no benefit.
+    const rows = await this.d.forUpdate(page, { of: folderState });
 
     return rows.map((r) => ({
       messageId: r.messageId,

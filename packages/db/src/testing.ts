@@ -1,15 +1,18 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle, type PgliteDatabase } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
+import { drizzle as drizzleSqliteProxy } from "drizzle-orm/sqlite-proxy";
 import postgres from "postgres";
 import { adoptBaseline } from "./baseline.js";
 import { JOURNALS } from "./migrate.js";
 import { schema } from "./schema.js";
-import { brandDialect } from "./dialect/index.js";
+import { brandDialect, assertSqliteCapabilities } from "./dialect/index.js";
+import { migrateSqlite } from "./sqlite-migrate.js";
 
 /**
  * Create an in-process PGlite-backed Drizzle client with all migrations applied.
@@ -23,6 +26,7 @@ import { brandDialect } from "./dialect/index.js";
  * only production takes is a code path nothing checks.
  */
 export async function makeTestDb(): Promise<PgliteDatabase<typeof schema>> {
+  if (process.env[TEST_DIALECT_ENV] === "sqlite") return makeSqliteTestDb();
   const client = new PGlite();
   const db = brandDialect(drizzle(client, { schema }), "pg");
   for (const spec of JOURNALS) {
@@ -30,6 +34,73 @@ export async function makeTestDb(): Promise<PgliteDatabase<typeof schema>> {
     await migrate(db, { migrationsFolder: spec.dir, migrationsSchema: spec.migrationsSchema });
   }
   return db;
+}
+
+/**
+ * WHICH STORE THE SUITE RUNS AGAINST — and the reason this is an environment variable read in
+ * exactly one place.
+ *
+ * The matrix is two runs of the same files. Nothing else may branch on it: a test that asks which
+ * dialect it is on is a test that has stopped checking the thing both stores must do.
+ */
+export const TEST_DIALECT_ENV = "OHMAIL_TEST_DIALECT";
+
+/**
+ * The same schema, on SQLite, through the binding a device uses.
+ *
+ * ── ONE CONNECTION, SERIALIZED, AND THAT IS THE CONCURRENCY MODEL ─────────────────────────
+ *
+ * Every statement goes through one queue against one handle. That is not a convenience for the
+ * suite: it is what makes the store's absent row locks safe, and a harness that quietly allowed
+ * two overlapping statements would be testing a program the device cannot run. A second
+ * connection to the same file does not contend, it fails outright.
+ *
+ * ── THE ONE CAST, AND WHY IT IS HERE RATHER THAN IN EVERY CALLER ──────────────────────────
+ *
+ * Callers are typed against the server's handle, because that is what the services are typed
+ * against and the whole point is that neither changes for the other store. The substitution
+ * happens once, here, where the reason can be written down — not at three thousand call sites
+ * that would each have to be told there is a second dialect.
+ */
+async function makeSqliteTestDb(): Promise<PgliteDatabase<typeof schema>> {
+  // Reached through `createRequire` because the bundler this suite runs under does not yet know
+  // this module is a builtin and resolves the bare name to a package that is not there.
+  const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as {
+    DatabaseSync: new (path: string) => {
+      exec(sql: string): void;
+      prepare(sql: string): { all(...p: unknown[]): unknown[]; run(...p: unknown[]): unknown };
+    };
+  };
+  const raw = new DatabaseSync(":memory:");
+  raw.exec("PRAGMA foreign_keys=ON");
+
+  assertSqliteCapabilities({
+    version: String((raw.prepare("select sqlite_version() as v").all()[0] as { v: string }).v),
+    compileOptions: (raw.prepare("pragma compile_options").all() as { compile_options: string }[])
+      .map((r) => r.compile_options),
+  });
+
+  let tail: Promise<unknown> = Promise.resolve();
+  const serial = <T>(job: () => T): Promise<T> => {
+    const next = tail.then(job, job);
+    tail = next.catch(() => {});
+    return next;
+  };
+
+  await migrateSqlite({
+    run: (statement) => serial(() => { raw.exec(statement); }),
+    all: <T,>(statement: string) => serial(() => raw.prepare(statement).all() as T[]),
+  });
+
+  const db = drizzleSqliteProxy(async (query, params, method) => {
+    return serial(() => {
+      if (method === "run") { raw.prepare(query).run(...(params as never[])); return { rows: [] }; }
+      const rows = (raw.prepare(query).all(...(params as never[])) as Record<string, unknown>[])
+        .map((r) => Object.values(r));
+      return { rows: method === "get" ? (rows[0] ?? []) : rows };
+    });
+  });
+  return brandDialect(db, "sqlite") as unknown as PgliteDatabase<typeof schema>;
 }
 
 /** The database name in a URL — what a diagnostic may print, where the URL itself may not. */
