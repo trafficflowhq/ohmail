@@ -1890,7 +1890,7 @@ export interface LeaseImapClient extends MetaFolderClient {
   status?(
     path: string,
     query: { messages?: boolean },
-  ): Promise<{ messages?: number } | undefined>;
+  ): Promise<{ messages?: number } | false | undefined>;
   mailboxCreate(path: string): Promise<unknown>;
   mailboxUnsubscribe(path: string): Promise<unknown>;
   getMailboxLock(path: string): Promise<{ release(): void }>;
@@ -1985,7 +1985,7 @@ export interface SequenceProbeClient {
   status?(
     path: string,
     query: { messages?: boolean },
-  ): Promise<{ messages?: number } | undefined>;
+  ): Promise<{ messages?: number } | false | undefined>;
 }
 
 /**
@@ -2026,7 +2026,12 @@ export async function lastSequence(
   if (path === undefined || typeof client.status !== "function") return undefined;
   try {
     const st = await client.status(path, { messages: true });
-    return typeof st?.messages === "number" ? st.messages : undefined;
+    // `false` is a real answer here, not a missing one: the library returns it when the command's
+    // preconditions are not met or it fails, so this cannot optional-chain through `st`. Both that
+    // and a reply without the field mean the same thing to the caller — the count is unknown, use
+    // the whole-folder fallback.
+    const messages = typeof st === "object" && st !== null ? st.messages : undefined;
+    return typeof messages === "number" ? messages : undefined;
   } catch {
     return undefined;
   }

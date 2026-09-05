@@ -583,7 +583,7 @@ export interface ProfileImapClient extends MetaFolderClient {
   status?(
     path: string,
     query: { messages?: boolean },
-  ): Promise<{ messages?: number } | undefined>;
+  ): Promise<{ messages?: number } | false | undefined>;
   mailboxCreate(path: string): Promise<unknown>;
   mailboxUnsubscribe(path: string): Promise<unknown>;
   getMailboxLock(path: string): Promise<{ release(): void }>;
