@@ -536,6 +536,12 @@ uses — and the selection stays, so you do not have to build it again.
 Keyboard hints no longer draw on touch screens, or in windows too narrow to hold both the hint and
 the verb it belongs to.
 
+On a phone, hold a row for about half a second to start a selection. Until now there was no way
+in at all on a touch screen — picking a row needed a key or a modifier — so the whole selection
+bar was desktop-only. While a selection is up, tapping a row adds it or takes it out instead of
+opening it, and the count button ends the mode. A hold that moves is a scroll, and a hold with a
+mouse does nothing: the desktop already has x and Cmd-click.
+
 ### Text is a step larger on phones
 
 Every reading role in the app sat one to three pixels under what the phone platforms set beside it,

@@ -6,6 +6,7 @@
  * doorbell, and the reading column. j/k moves, ↵ opens the reader,
  * t opens the tag picker, x picks, u toggles unread.
  */
+import * as React from "react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
@@ -37,7 +38,7 @@ import type { OlderMail } from "../shell/older-mail";
 import { Key, MessagePane, MOVE_TARGETS, type BulkAction, type MessageAction, type MoveTarget } from "../shell/MessagePane";
 import { MoreMenu, type MoreMenuItem } from "../shell/MoreMenu";
 import { useBarDensity } from "../shell/bar-density";
-import { useDragToFile, type DragSource, type RailDropTarget } from "../shell/drag-file";
+import { DRAG_SLOP_PX, useDragToFile, type DragSource, type RailDropTarget } from "../shell/drag-file";
 import type { ScreeningDest } from "../shell/sender-screening";
 import "../shell/action-bar.css";
 
@@ -89,6 +90,16 @@ type PickPanel =
  * whether the product tells the truth.
  */
 const DWELL_MS = 2000;
+
+/**
+ * How long a finger must rest on a row before it starts a selection.
+ *
+ * 450ms is the figure both mobile platforms use for the same gesture, and the two directions of
+ * error are not symmetric: shorter and a tap that lingers picks a row somebody meant to open;
+ * longer and the gesture feels like a wait rather than a press. A constant and not a setting —
+ * a knob here would be a knob about whether a tap means what it says.
+ */
+const LONG_PRESS_MS = 450;
 
 /**
  * How long a row slides before it re-files under "Earlier".
@@ -1824,6 +1835,85 @@ export function OhboxView({
    * `stopPropagation` here means a shift-click extends the range INSTEAD of moving the cursor,
    * rather than doing both.
    */
+  /**
+   * ══ ENTERING A SELECTION ON A PHONE — A LONG PRESS ON A ROW ═══════════════════════════════
+   *
+   * A phone had NO WAY IN AT ALL. `x` needs a keyboard, ⇧-click needs a modifier, and a tap is
+   * the open — so every verb the selection bar offers was desktop-only, on a product whose
+   * phone layout is otherwise complete. The hold is the gesture both platforms already use for
+   * "start selecting" in a list, so it is the one to implement rather than a visible control:
+   * a checkbox on every row would cost the row its lead alignment for a mark the rail already
+   * makes, and a hover-reveal has no touch equivalent at all.
+   *
+   * FOUR CONDITIONS, and each one is there to keep this gesture out of another's way:
+   *
+   *   · `pointerType === "touch"`. A mouse hold is not this gesture — it is a click somebody
+   *     is taking their time over, and picking a row under it would be a control the desktop
+   *     never asked for. The desktop has `x` and ⌘-click.
+   *   · 450ms. Long enough not to fire on a tap that lingers, short enough to feel like a
+   *     press rather than a wait; it is the figure both platforms use for the same gesture.
+   *   · NO TRAVEL past `DRAG_SLOP_PX`. A finger that moves is scrolling the list, and a
+   *     selection appearing mid-scroll would be the worst kind of surprise. Same threshold
+   *     the drag-to-file gesture uses, imported rather than restated — and `drag-file.ts`
+   *     RETURNS EARLY on touch, so the two gestures cannot both arm on one pointer.
+   *   · The press that fired is not also a TAP. The `click` that follows a hold would open the
+   *     reader over the selection that just appeared, so the next one is swallowed.
+   *
+   * `contextmenu` is prevented while the timer runs: Android fires it on a long press and iOS
+   * raises the callout (`-webkit-touch-callout: none` on `.row` covers the second half).
+   */
+  const holdRef = useRef<{ id: string; x: number; y: number; timer: ReturnType<typeof setTimeout> } | null>(null);
+  /** A hold FIRED, so the `click` closing the same press is not a tap. Cleared by that click. */
+  const heldRef = useRef(false);
+
+  const cancelHold = useCallback(() => {
+    if (holdRef.current) clearTimeout(holdRef.current.timer);
+    holdRef.current = null;
+  }, []);
+
+  const onHoldPointerDown = useCallback((e: React.PointerEvent<HTMLElement>) => {
+    cancelHold();
+    /* A NEW PRESS ENDS THE LAST ONE'S CLAIM ON THE NEXT CLICK. The swallow flag is normally
+       cleared by the `click` that closes the hold's own press — but that click is not
+       guaranteed: Android suppresses it after some long presses, and a flag left standing would
+       eat the next unrelated tap instead, which on a phone is the tap that adds the second row.
+       Bounding it to the press that set it costs one line and removes the whole class. */
+    heldRef.current = false;
+    if (e.pointerType !== "touch") return;
+    const row = (e.target as HTMLElement).closest<HTMLElement>(".row[data-id]");
+    const id = row?.dataset.id;
+    if (!id) return;
+    /* NOT the sender circle: that tap opens the screening popover and always has. A hold that
+       started on it is a hold on the popover's control, not on the row. */
+    if ((e.target as HTMLElement).closest(".av")) return;
+    holdRef.current = {
+      id,
+      x: e.clientX,
+      y: e.clientY,
+      timer: setTimeout(() => {
+        holdRef.current = null;
+        heldRef.current = true;
+        togglePick(id);
+      }, LONG_PRESS_MS),
+    };
+  }, [cancelHold, togglePick]);
+
+  const onHoldPointerMove = useCallback((e: React.PointerEvent<HTMLElement>) => {
+    const h = holdRef.current;
+    if (!h) return;
+    if (Math.hypot(e.clientX - h.x, e.clientY - h.y) >= DRAG_SLOP_PX) cancelHold();
+  }, [cancelHold]);
+
+  /** The hold's own press must not also open the row — see `heldRef`. */
+  const onHoldClickCapture = useCallback((e: ReactMouseEvent<HTMLElement>) => {
+    if (!heldRef.current) return;
+    heldRef.current = false;
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  useEffect(() => cancelHold, [cancelHold]);
+
   const onRangeClickCapture = useCallback((e: ReactMouseEvent<HTMLElement>) => {
     /* ⌘/Ctrl TOGGLES ONE ROW AND NEVER MOVES THE CURSOR — the standard single-pick every list
        on both platforms has, and until now the only modifier-less way to pick was the keyboard
@@ -1994,7 +2084,13 @@ export function OhboxView({
       picked={picked.has(m.id)}
       actions={actions}
       onClick={() => {
-        if (readColumnHidden()) {
+        if (readColumnHidden() && picked.size > 0) {
+          /* THE LIST-SELECTION CONTRACT, and both platforms have it: once a selection exists,
+             a tap adds to it or takes away from it rather than opening. Without this the only
+             way to build a set on a phone would be one long press per row, and the FIRST tap
+             after entering the mode would leave the mode. The way out is the count capsule. */
+          togglePick(m.id);
+        } else if (readColumnHidden()) {
           // Mobile: a tap IS the open — there is no reading column to preview into. `open`
           // selects as well as commits, so the cursor lands here exactly once.
           open(m);
@@ -2147,7 +2243,11 @@ export function OhboxView({
         tags={tagsOfMessage(shown, tags).map((tag) => ({ name: tag.name, hue: hueOf(tag) }))}
         picked={g.members.every((m) => picked.has(m.id))}
         onClick={() => {
-          if (readColumnHidden()) {
+          if (readColumnHidden() && picked.size > 0) {
+            // The same contract as the singleton row above — and a folded row toggles all of
+            // its members, which is what `togglePick` does with a row id.
+            togglePick(target.id);
+          } else if (readColumnHidden()) {
             open(target);
           } else if (selected != null && g.members.some((m) => m.id === selected.id)) {
             open(target);
@@ -2218,8 +2318,15 @@ export function OhboxView({
   return (
     <section
       className="view split view-ohbox"
-      onClickCapture={onRangeClickCapture}
-      onPointerDownCapture={drag.onPointerDown}
+      onClickCapture={(e) => { onHoldClickCapture(e); onRangeClickCapture(e); }}
+      /* BESIDE the drag's own handler, not instead of it: `drag-file.ts` returns early for a
+         touch pointer and this one returns early for every other kind, so exactly one of the
+         two can arm on any given press. */
+      onPointerDownCapture={(e) => { drag.onPointerDown(e); onHoldPointerDown(e); }}
+      onPointerMoveCapture={onHoldPointerMove}
+      onPointerUpCapture={cancelHold}
+      onPointerCancelCapture={cancelHold}
+      onContextMenuCapture={(e) => { if (holdRef.current) e.preventDefault(); }}
     >
       <ListPane
         title={t("title")}

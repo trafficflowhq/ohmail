@@ -1,6 +1,12 @@
 /* one row language, everywhere (Ohbox · Reads · Receipts · Screener · Tag) */
+/* `-webkit-touch-callout: none` — A HOLD ON THIS ROW IS THE PRODUCT'S GESTURE, not the
+   platform's. The Ohbox reads a 450ms touch hold as "start a selection"; iOS Safari reads a
+   hold on a link or a button as "show me the callout menu", and it would raise that menu over
+   the row at roughly the moment the selection appears under it. The row is a `<button>`, so
+   there is no text selection to suppress and this is the only half that bites. Harmless
+   everywhere else: no other browser implements it, and no other surface holds a row. */
 .row{display:block;width:100%;text-align:left;padding:12px 14px;border-radius:calc(var(--r-card) * 16 / 14);border:0;cursor:pointer;
-  background:none;font:inherit;color:inherit;
+  background:none;font:inherit;color:inherit;-webkit-touch-callout:none;
   transition:background .16s var(--swift), box-shadow .2s var(--swift), transform .2s var(--swift)}
 .row:hover{background:var(--tint)}
 .row.sel{
