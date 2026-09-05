@@ -785,6 +785,17 @@ function parseVercelCharges(
     // not, because the hours it does not cover leave a hole. The bound here only rejects the
     // absurd. Measured 2026-09-05 over a live month: 32 periods, every start at 07:00:00Z, every
     // duration 24.0 h, zero non-contiguous joins.
+    //
+    // **FIRST CHANCE TO OBSERVE IT: 2026-11-01**, the next daylight-saving change in the
+    // UTC-7 offset every period so far has carried. Whoever is here then can settle in one call
+    // what this comment could only reason about — whether the period spanning it is 25 hours,
+    // whether the boundary moves to 08:00Z, or neither.
+    //
+    // THIS CHECK IS EXPECTED TO PASS EITHER WAY, and that is the point of choosing contiguity
+    // over a duration table: it does not depend on the answer. If the observation contradicts
+    // the UTC-7 reading, what changes is this comment, not the guard. Record what is seen —
+    // including "nothing changed" — rather than deleting the note, so the next reader knows the
+    // question was asked and answered instead of asking it again.
     if (to - from < 23 * 60 * 60 * 1000 || to - from > 25 * 60 * 60 * 1000) {
       return { failed: "day_coverage_short" };
     }
