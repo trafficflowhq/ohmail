@@ -35,8 +35,6 @@ import {
 } from "./session-truth";
 import {
   confirmSyncOwner,
-  onSyncNeedsConfirm,
-  syncIdentityOf,
   sameSyncStatus,
   startSyncScheduler,
   SYNC_BOOTSTRAPPING,
@@ -235,28 +233,12 @@ export function EngineProvider({
   demo: serverDemo,
   engine: provided,
   resolveOwner,
-  onConfirmed,
   children,
 }: {
   demo: boolean;
   /** See {@link ProvidedEngine}. Absent everywhere but the desktop app. */
   engine?: ProvidedEngine;
   resolveOwner?: OwnerResolver;
-  /**
-   * THE ACCOUNT THIS TAB HAS DECIDED IT IS FOR — called once, in the arm that has already
-   * believed the answer, and never from the classifier that produced it.
-   *
-   * The Cloud client is bound here (`CloudShell` supplies `bindApiOwner`). It cannot be done in
-   * `resolveOwnerOutcome`, and the reason is a sequence rather than a preference: that function
-   * runs for every attempt of the ladder, including attempts whose effect has since been
-   * cancelled, and it runs BEFORE the comparison that decides whether the answer is even about
-   * this mirror. Binding there mutated shared state that in-flight requests are judged against,
-   * so a request that left as A could be re-judged as B and allowed to recover under it.
-   *
-   * A prop rather than an import, for the reason `resolveOwner` is one: `app/shell/**` ships
-   * inside the desktop program, which has no session client. Absent on the desktop and the demo.
-   */
-  onConfirmed?: (accountId: string) => void;
   children: ReactNode;
 }) {
   // A mode change after mount (a client-side navigation from `/` to `/?demo=1`, or the
@@ -277,13 +259,6 @@ export function EngineProvider({
    * `"resolving"` is what everything else starts as, INCLUDING a browser that remembers whose
    * mailbox this is. The warm open is one render later and {@link browserPass} is why.
    */
-  /**
-   * A DEPLOYMENT ERROR, HELD UNTIL A RENDER CAN THROW IT. `null` in every healthy tab, for the
-   * life of the tab. Written only by the confirm's `.catch`, and only for the two errors that
-   * mean "this bundle has no server"; read once, below the hooks. See both sites for why the
-   * throw cannot happen where the error is caught.
-   */
-  const [fatal, setFatal] = useState<unknown>(null);
   const [binding, setBinding] = useState<Binding>(() => {
     const demo = resolveDemo(serverDemo);
     if (demo) return { status: "ready", demo, engine: createEngine(demo) };
@@ -544,12 +519,7 @@ export function EngineProvider({
            * into an engine swap. Before `setBinding` so the scheduler's first tick after the
            * transition already sees an open gate rather than racing it.
            */
-          if (owner === warm.owner) {
-            confirmSyncOwner(warm.engine, owner);
-            // AFTER the comparison and the cancellation check above: the client is bound to the account
-            // this tab has decided it is for, not to whatever the last resolver happened to see.
-            onConfirmed?.(owner);
-          }
+          if (owner === warm.owner) confirmSyncOwner(warm.engine, owner);
           setBinding(
             owner === warm.owner
               ? { status: "ready", demo: false, engine: warm.engine }
@@ -562,36 +532,25 @@ export function EngineProvider({
         // binding, for the same first-tick reason as the warm arm above.
         const built = createEngine(false, undefined, owner);
         confirmSyncOwner(built, owner);
-        onConfirmed?.(owner);
         setBinding({ status: "ready", demo: false, engine: built });
       })
       .catch((err: unknown) => {
+        // A build with no API base is NOT "we could not prove who you are" — it is a broken
+        // deployment, and rendering the session screen for it would be the same silent lie
+        // `EngineUnarmedError` exists to end: a signed-in user told their session expired
+        // when the truth is that this bundle was never wired to a server. Let it escape to
+        // the error boundary and the console instead of dressing it as an auth outcome.
+        if (err instanceof EngineUnarmedError) throw err;
         /*
-         * ═══ A BROKEN DEPLOYMENT REACHES THE ERROR BOUNDARY — BY BEING RE-THROWN IN A RENDER ═
+         * AND THE CLASSIFIER'S OWN RETHROW, which this branch used to swallow.
          *
-         * Two errors mean "this bundle was never wired to a server", and neither is an auth
-         * outcome: `EngineUnarmedError`, and the `ApiError(0, "api_unconfigured")` that
-         * `session-outcome.ts` deliberately rethrows. Rendering the session screen for either
-         * would be the silent lie `EngineUnarmedError` exists to end — a signed-in person told
-         * their session expired when the truth is that nobody finished the deploy.
-         *
-         * `throw err` HERE DOES NOT DO THAT, and the two lines that used to stand here said it
-         * did. This is a detached `.catch` on a promise nothing awaits: a throw from it is an
-         * unhandled rejection, which React error boundaries do not see (they catch throws from
-         * render, from lifecycles and from `useEffect` bodies — never from a callback that runs
-         * later on the microtask queue). So the promised deployment-error screen never appeared;
-         * what appeared was a tab wedged on `resolving`, or a warm mirror that never resolved,
-         * with a rejection in the console and no boundary anywhere.
-         *
-         * Held and rethrown from the RENDER instead — the one place a boundary is watching. The
-         * `fatal` state below is written once and never cleared: there is no recovery from a
-         * bundle with no server, and a Try again over it would be the same false promise in a
-         * different shape.
+         * `session-outcome.ts` deliberately rethrows `ApiError(0, "api_unconfigured")` — a
+         * bundle wired to no server is a broken deployment, not an auth outcome, and both
+         * files' comments promise it reaches the error boundary. It is not an
+         * `EngineUnarmedError`, so it fell through to the report-and-`unconfirmed` arm below
+         * and told the operator to press Try again forever at a build that can never succeed.
          */
-        if (err instanceof EngineUnarmedError || isApiUnconfigured(err)) {
-          if (!cancelled) setFatal(err);
-          return;
-        }
+        if (isApiUnconfigured(err)) throw err;
         /**
          * EVERY OTHER THROW IS ALSO NOT AN AUTH OUTCOME, and this branch used to say it was.
          *
@@ -628,14 +587,12 @@ export function EngineProvider({
    * A FRESH SESSION CLEARS AN UNCONFIRMED CHECK — the one automatic escape from `unconfirmed`.
    *
    * `unconfirmed` is the end of the ladder, so without this it stands until somebody presses
-   * Try again. But a `204` from `POST /auth/refresh` is a server-confirmed world change, and it
-   * can arrive from somewhere this tree is not watching — the sync loop's own probe, a body
-   * fetch, the attachments seam. `session-truth.ts` already publishes exactly that event for
-   * exactly this shape of stuck state, so the confirm joins them.
-   *
-   * (An earlier version of this paragraph also named "another tab whose refresh rotated the
-   * shared jar". It cannot: see the same-tab note below, which is the correction rather than a
-   * caveat on it.)
+   * Try again. But a `204` from `POST /auth/refresh` is a server-confirmed world change, and
+   * it can arrive from somewhere this tree is not watching: the sync loop's own probe, or
+   * another tab whose refresh rotated the shared jar (the Web Locks mutex in
+   * `session-refresh.ts` serialises them). `session-truth.ts` already publishes exactly that
+   * event for exactly this shape of stuck state — the attachments seam and the message body
+   * both use it — so the confirm joins them.
    *
    * Bounded by construction: at most one revival per successful refresh, and this returns the
    * binding to its FIRST attempt rather than resuming a ladder, so a revival cannot compound
@@ -762,33 +719,6 @@ export function EngineProvider({
         : { status: "resolving" },
     );
   }, [warmOwner, warmEngine]);
-  /**
-   * ═══ A REVOKED MIRROR ASKS TO BE CONFIRMED AGAIN ══════════════════════════════════════════
-   *
-   * Revocation is monotonic on purpose: once the marker has changed, only a fresh server answer
-   * reopens the gate, and it must not oscillate. That left one state with no way out. On a
-   * `ready` binding the confirm effect finished long ago and `ready` carries no owner to
-   * re-compare, so when the marker came back to naming this mirror the tab cleared its terminal
-   * strip — the contradiction really was gone — and then sat there with reads, sync, mutations
-   * and the wake stream all disabled, and nothing on screen saying so. It looked well.
-   *
-   * The gate now says when it could plausibly be asked about (`onNeedsConfirm`, once per
-   * revocation), and this puts the binding back to `warm` so the confirm ladder runs again with
-   * the SAME engine — nothing re-mounts, nothing re-hydrates, and the answer either reopens the
-   * gate or ends the tab honestly.
-   */
-  useEffect(() => {
-    if (!engine || !live) return;
-    let cancelled = false;
-    onSyncNeedsConfirm(engine, () => {
-      if (cancelled) return;
-      const named = readOwner();
-      if (named === null) return;
-      setBinding({ status: "warm", owner: named, engine });
-    });
-    return () => { cancelled = true; };
-  }, [engine, live]);
-
   useEffect(() => {
     if (!engine) return;
     /**
@@ -844,17 +774,6 @@ export function EngineProvider({
       wake: cloudWakeStream(),
     });
   }, [engine, live, onSyncStatus]);
-
-  /**
-   * THE ONE PLACE A BOUNDARY IS WATCHING. See the confirm's `.catch`: a throw from a detached
-   * promise callback is an unhandled rejection and reaches no error boundary, so a bundle wired
-   * to no server has to be re-thrown from a render to produce the deployment-error screen both
-   * this file and `session-outcome.ts` promise it will.
-   *
-   * After every hook, so the hook order is identical on the render that throws and the one
-   * before it. Never cleared: there is no recovery from a build with no API.
-   */
-  if (fatal !== null) throw fatal;
 
   if (binding.status === "resolving" || binding.status === "unauthenticated") {
     return <SessionScreen status={binding.status} />;
@@ -913,7 +832,7 @@ export function EngineProvider({
           confirmed owner withdraws it. That is the reported defect reached through a second
           door, and it is why the gate is the BINDING rather than `live`: a latch observed
           before this mount is not evidence about this mount, and one round trip settles it. */}
-      {live && (binding.status === "ready" || deathSeenHere) ? <SessionEnded sync={sync} engine={engine} /> : null}
+      {live && (binding.status === "ready" || deathSeenHere) ? <SessionEnded sync={sync} /> : null}
       {/* THE CHECK-DID-NOT-FINISH OVERLAY, and note what is NOT here: `checking` renders
           nothing at all. A tab whose confirm is being retried keeps painting its mirror
           exactly as `warm` does — no scrim, no dimming, no message. `warm` already paints
@@ -999,7 +918,7 @@ function useInertBackground(active: boolean): void {
  * or screen-reader user is standing on the remedy, not somewhere in a mailbox that no longer
  * answers.
  */
-function SessionEnded({ sync, engine }: { sync: SyncStatus; engine: OhmailEngine | null }) {
+function SessionEnded({ sync }: { sync: SyncStatus }) {
   const t = useTranslations("session");
   const dead = useSessionDead();
   const signInRef = useRef<HTMLAnchorElement | null>(null);
@@ -1017,31 +936,9 @@ function SessionEnded({ sync, engine }: { sync: SyncStatus; engine: OhmailEngine
       return;
     }
     if (probed.current) return;
-    /*
-     * …AND NOT WHEN THE EVIDENCE IS SOMEBODY ELSE'S SESSION.
-     *
-     * `sync.terminal` has two causes, and this probe is right for exactly one of them. A server
-     * refusal is a question about THIS account, and one `POST /auth/refresh` answers it in both
-     * directions. A CONTRADICTED mirror is not: the loop stopped because the cookie jar now
-     * names a different account, so the refresh this would send carries that account's cookies.
-     * It cannot heal anything here — this tab's session is not in the jar to be healed — and
-     * what it does instead is rotate somebody else's refresh token from a tab that is not
-     * theirs, extending a session nobody in this window is signed in to and, in a bad
-     * interleaving, presenting a token their own tab is about to present again.
-     *
-     * `!== "holds"` and not `=== "contradicted"`, which is a correction: a REVOKED gate is one
-     * whose confirmation the marker has already outlived, and it has exactly as little business
-     * renewing a session as a contradicted one. The narrower test left the absent-marker case —
-     * a sign-out whose server call failed, then a refusal — free to refresh the session that
-     * sign-out could not revoke.
-     *
-     * Read at EFFECT time rather than at render time: the jar can be rewritten between the two,
-     * which is the whole event this arm is about.
-     */
-    if (syncIdentityOf(engine) !== "holds") return;
     probed.current = true;
     probeSessionNow();
-  }, [evidence, engine]);
+  }, [evidence]);
 
   useEffect(() => {
     if (dead) signInRef.current?.focus();

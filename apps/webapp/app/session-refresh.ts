@@ -99,122 +99,6 @@ export function lastRefreshOutcome(): RefreshOutcome | null {
  */
 const REFRESH_LOCK = "ohmail:session-refresh";
 
-/**
- * ═══ THE SAME LOCK, HELD BY THE SIGN-IN CEREMONY ══════════════════════════════════════════
- *
- * `refreshSettled` orders THIS TAB's ceremony behind THIS TAB's refresh, and review named what
- * that cannot reach: `inFlight` is module state, so a refresh running in ANOTHER tab is invisible
- * to it. Tab A begins a refresh; tab B sees its own `inFlight === null`, waits for nothing, signs
- * in; A's response lands afterwards and rewrites every session cookie — restoring the previous
- * account or clearing the one just created. The Web Lock below serialises refreshes against each
- * other and did nothing about a login, because a login never asked for it.
- *
- * So the ceremony asks for it too. Every request that WRITES session cookies — the password step
- * and each second factor — runs inside the same origin-wide lock, so a refresh in any tab either
- * completes before the login starts or waits until after it. Ordering across tabs, by the same
- * instrument that already ordered refreshes across tabs.
- *
- * ── HELD AROUND THE REQUEST, NEVER AROUND THE HUMAN ───────────────────────────────────────
- *
- * One round trip at a time. Wrapping the whole ceremony — password, then a person finding their
- * phone, then a code — would hold an origin-wide lock for minutes and stall every other tab's
- * refresh behind it. Each call takes it, writes, and releases.
- *
- * ── AND THE WAIT HAS A FLOOR, FOR `refreshSettled`'S REASON ───────────────────────────────
- *
- * A lock is a queue, and a queue behind a holder that never finishes is the deadlock this slice
- * already fixed once in the other place. `AbortSignal` cancels the WAIT FOR A GRANT — never the
- * holder, which keeps whatever budget it had.
- *
- * ON EXPIRY THE CEREMONY REFUSES; IT DOES NOT PROCEED. This paragraph used to end "on expiry the
- * ceremony proceeds unlocked, which is exactly the behaviour it had before this existed", and
- * that sentence outlived the change that made it false — waiting out a holder and then writing
- * anyway is the original race with a delay in front of it, because the holder is still going to
- * write and its answer lands last. A `SessionBusyError` is thrown instead: retryable, rendered,
- * and clear by itself the moment the other tab settles.
- *
- * The one path that still proceeds unlocked is a browser with NO lock manager at all — a
- * different case, argued where it is taken, and the reason it is not this one is that a browser
- * without Web Locks would otherwise be unable to sign in at all.
- */
-export async function withSessionCookieLock<T>(fn: () => Promise<T>): Promise<T> {
-  /*
-   * PER CALL, in a closure, and never module state: two ceremonies can be in flight in one tab
-   * (a resend beside a verify), and a shared flag would let one decide the other's fate. It
-   * answers exactly one question — did `fn` get as far as running? — which is what separates
-   * "the ceremony failed" from "we never got a grant".
-   */
-  let started = false;
-  const run = async (): Promise<T> => {
-    started = true;
-    return fn();
-  };
-  try {
-    const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
-    if (locks?.request) {
-      const ctl = new AbortController();
-      const timer = setTimeout(() => ctl.abort(), SETTLE_DEADLINE_MS);
-      try {
-        return await locks.request(REFRESH_LOCK, { mode: "exclusive", signal: ctl.signal }, run) as T;
-      } finally {
-        clearTimeout(timer);
-      }
-    }
-  } catch (err) {
-    /*
-     * `fn` RAN AND THREW ⇒ its error is the answer, and it must not be retried: re-running a
-     * password step because the server said no is a second login attempt nobody asked for, and
-     * against a single-use login token it is a guaranteed second failure.
-     */
-    if (started) throw err;
-    /*
-     * ── THE DEADLINE REFUSES NOW; IT USED TO PROCEED UNLOCKED ──────────────────────────────
-     *
-     * Waiting out and then writing anyway is the original race with a delay in front of it: the
-     * holder is still going to write, this ceremony writes first, and the holder's answer lands
-     * last and restores the account it was refreshing or clears the one just created. Review
-     * pointed out that the test pinning that fallback DEMONSTRATED the attack rather than closing
-     * it, which was fair.
-     *
-     * A refusal is the honest outcome and it is not a dead end: it is retryable, it reaches the
-     * screen through the error path every one of these surfaces already renders, and the state it
-     * describes clears by itself in seconds. A visible "try that again" beats a silent
-     * wrong-account write, which is this slice's stated ordering applied to its own machinery.
-     *
-     * NOT the same case as having no lock manager at all — that falls through below and proceeds,
-     * because a browser without Web Locks would otherwise be unable to sign in, and there the
-     * server's grace window is the only instrument there has ever been.
-     */
-    if (isAbort(err)) {
-      throw new SessionBusyError();
-    }
-  }
-  return run();
-}
-
-/** Did the wait end because our own deadline aborted it, rather than because there is no lock? */
-function isAbort(err: unknown): boolean {
-  return typeof err === "object" && err !== null && (err as { name?: unknown }).name === "AbortError";
-}
-
-/**
- * ANOTHER TAB IS STILL WRITING THE SESSION. Retryable by construction: the lock it is waiting on
- * is released when that tab's request settles or when that tab goes away, so the next attempt is
- * seconds later and unremarkable.
- *
- * A distinct class rather than a generic failure so a surface can tell it apart from a refusal
- * the SERVER made — nothing has been decided about the credential here, and the copy must not
- * suggest it has.
- */
-export class SessionBusyError extends Error {
-  readonly code = "session_busy";
-  readonly retryable = true;
-  constructor() {
-    super("ohmail: another tab is finishing a sign-in or sign-out — try that again in a moment");
-    this.name = "SessionBusyError";
-  }
-}
-
 async function withCrossTabLock(fn: () => Promise<boolean>): Promise<boolean> {
   try {
     // BOTH the property lookup and the request live inside this try: a `navigator.locks`
@@ -237,15 +121,6 @@ async function withCrossTabLock(fn: () => Promise<boolean>): Promise<boolean> {
   }
   return fn();
 }
-
-/**
- * How long {@link refreshSettled} will wait to be ordered behind a refresh already in flight.
- *
- * Fifteen seconds: comfortably past a serverless cold start plus a rotation (the budget the
- * refresh itself is deliberately given no ceiling for), and far short of a form somebody decides
- * is broken. It is not a request timeout and must never become one — see `refreshSettled`.
- */
-export const SETTLE_DEADLINE_MS = 15_000;
 
 /**
  * ═══ WAIT FOR ANY REFRESH ALREADY IN FLIGHT, AND DO NOT CANCEL IT ═════════════════════════
@@ -271,27 +146,6 @@ export const SETTLE_DEADLINE_MS = 15_000;
  * up holding the credential the person actually asked for.
  *
  * Never rejects, and resolves immediately when nothing is in flight.
- *
- * ── AND IT GIVES UP, WHICH IS THE HALF THAT WAS MISSING ────────────────────────────────────
- *
- * "The refresh finishes and writes whatever it writes; the login then runs and writes last" was
- * written as though the refresh always finishes. Nothing here guaranteed that. The fetch has no
- * application deadline on purpose (a cold start must not become a sign-out —
- * `session-resume.test.ts` pins that), and the cross-tab Web Lock has none either: a queued tab
- * waits for a grant held by a tab that may be hung, suspended or wedged behind a network stack
- * that never settles. In that state a password submit awaited this for ever — no login request
- * was ever sent, the form stayed busy, and nothing on screen said why.
- *
- * That is a worse failure than the one the ordering exists to prevent. The collision it guards
- * against is a race that MAY happen; a wait with no floor is a sign-in that CANNOT happen. So the
- * wait is bounded and the caller proceeds.
- *
- * {@link SETTLE_DEADLINE_MS} bounds the WAIT, never the refresh — the request is untouched, is
- * still shared, still single-flight, and still gets however long it needs. What expires is one
- * caller's willingness to be ordered behind it. Past the deadline the ordering guarantee is gone
- * and the old race is back for that one submit: a refresh landing afterwards can still rewrite
- * the jar. That is the honest trade and it is stated here rather than glossed, because the
- * alternative is a form that never submits at all.
  */
 export async function refreshSettled(): Promise<void> {
   // Read once: `inFlight` is nulled by the callback's own `finally`, so re-reading after the
@@ -299,17 +153,7 @@ export async function refreshSettled(): Promise<void> {
   // bounded one. One refresh is the one this caller can have collided with.
   const pending = inFlight;
   if (!pending) return;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    await Promise.race([
-      pending.catch(() => undefined),
-      new Promise<void>((resolve) => { timer = setTimeout(resolve, SETTLE_DEADLINE_MS); }),
-    ]);
-  } finally {
-    // Cleared whichever arm won: a live timer holds the event loop open in Node and keeps a
-    // fake-timer test's queue non-empty, and the promise it resolves is already unreachable.
-    if (timer !== undefined) clearTimeout(timer);
-  }
+  await pending.catch(() => undefined);
 }
 
 /**
@@ -318,44 +162,10 @@ export async function refreshSettled(): Promise<void> {
  * Never throws and never rejects: every caller is on an error path already, and a refresh that
  * blew up would turn a recoverable 401 into an unhandled rejection.
  */
-/** What a caller may add to a resume. See {@link resumeSession}. */
-export interface ResumeOptions {
-  /**
-   * MAY THIS STILL RUN? Consulted inside the cross-tab lock, immediately before the request.
-   *
-   * `false` answers the resume as "did not happen" — deliberately not as a failure, because the
-   * caller that asked for the predicate is the one that knows what a refusal means for it. The
-   * splash reloads (the browser now holds somebody else's live session, so there is nothing to
-   * resume and the server will serve them); `api()` does not pass one at all.
-   */
-  mayProceed?: () => boolean;
-}
-
-export async function resumeSession(opts: ResumeOptions = {}): Promise<boolean> {
+export async function resumeSession(): Promise<boolean> {
   if (inFlight) return inFlight;
   inFlight = withCrossTabLock(async () => {
-    /*
-     * ── STILL THE SAME BROWSER? ASKED INSIDE THE LOCK, NOT BEFORE IT ─────────────────────
-     *
-     * A refresh ROTATES whatever session the jar holds, and this function's caller may have
-     * decided to call it a long time ago — the resume splash is chosen by the edge, under the
-     * cookies of that request, and its effect does not run until the page has hydrated. The
-     * lock adds a second wait on top of that. Either gap is enough for another tab to sign in,
-     * and the rotation would then spend that account's refresh token from a window that was
-     * never theirs — which their own tab can then present as a consumed one and be read as
-     * reuse.
-     *
-     * Here rather than at the call site for the same reason `csrfToken()` is read here: what
-     * matters is the jar as it is when the request LEAVES, not as it was when somebody decided
-     * to make one.
-     */
-
     try {
-      // INSIDE the `try`, so the `finally` below clears `inFlight`. Outside it, one refusal
-      // left the module's dedupe holding a settled promise for the life of the page and every
-      // later resume — including `api()`'s recovery — answered `false` without asking anything.
-      // Found by running the cases in file order rather than one at a time.
-      if (opts.mayProceed && !opts.mayProceed()) return false;
       /*
        * THE CSRF HEADER IS REQUIRED HERE, and the comment that used to stand in its place was
        * wrong in production.
@@ -445,32 +255,11 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<boolean> 
     } catch {
       lastOutcome = "unavailable";
       return false;                    // offline, aborted, DNS — not resumable right now
+    } finally {
+      inFlight = null;
     }
   });
-  /*
-   * ── CLEARED AFTER THE ASSIGNMENT, AND ONLY IF IT IS STILL OURS ──────────────────────────
-   *
-   * This used to be a `finally` inside the callback, and that is a race with its own assignment:
-   * a callback that settles before `withCrossTabLock` has returned — which an account predicate's
-   * early refusal makes ordinary rather than exotic — runs the `finally` FIRST, and the line
-   * below then stores a settled promise that nothing will ever clear. Every later resume,
-   * including `api()`'s recovery path, returns that cached answer without asking anything.
-   *
-   * Found by running this file's cases in order instead of one at a time: alone each passed, and
-   * together the second one wedged the third.
-   *
-   * NO IDENTITY CHECK ON THE CLEAR. One stood here — `if (inFlight === started)` — against "a
-   * newer resume having replaced it in the meantime", and there is no such sequence: the guard at
-   * the top of this function returns the live promise rather than starting a second, so while
-   * `started` IS `inFlight` nothing can replace it. Removed rather than kept as defence in depth,
-   * because a condition whose contrary state is unreachable cannot be watched fail — and this
-   * lane has twice now had such a line read by a later reviewer as a guarantee. What fixes the
-   * race is the PLACEMENT, after the assignment rather than inside the callback, and that is the
-   * whole of it.
-   */
-  const started = inFlight;
-  void started.finally(() => { inFlight = null; });
-  return started;
+  return inFlight;
 }
 
 /** Did this refusal come from OUR envelope — `{error: {code}}` — rather than from a platform? */
@@ -526,30 +315,6 @@ const NEVER_REFRESH = [
   "/auth/refresh",
   "/auth/verify-email",
   "/auth/2fa/",
-  /*
-   * `/auth/logout` — a 401 here is the server saying the session is ALREADY GONE, which is the
-   * outcome being asked for. `sign-out.ts` reads it exactly that way. Refreshing first re-mints
-   * a session in order to revoke it, which is absurd on its own terms; it also took the sign-out
-   * through a nested acquire of the ceremony lock, which is how the whole sign-out came to hang.
-   * The reentrancy above makes that survivable; this makes it not happen.
-   */
-  "/auth/logout",
-  /*
-   * `/hello` is the capability handshake, and it is here for a different reason from its
-   * neighbours: not because a 401 there is an ANSWER, but because a refresh cannot possibly be
-   * the remedy for one. The route carries no credential meaning — it reports what the server is
-   * and whether it has any accounts yet — and its callers are page mounts that treat any failure
-   * as "behave normally".
-   *
-   * What it cost while it was absent: `/login` asks `/hello` on mount, independently of the
-   * already-signed-in ladder. A delayed 401 there — an edge gate, a proxy, a server mid-deploy —
-   * sent `api()` into a refresh carrying the PREVIOUS account's cookies, and a refresh rewrites
-   * the whole jar whenever it lands. Arriving after somebody had finished signing in as a
-   * different account, it restored the old session or cleared the new one. The ceremony cannot
-   * order itself behind a request it does not know exists, so the fix is that this route never
-   * starts one.
-   */
-  "/hello",
 ];
 
 export function mayRefreshFor(path: string): boolean {

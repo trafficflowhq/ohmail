@@ -90,18 +90,7 @@ export async function resolveOwnerOutcome(
   opts: { signal?: AbortSignal } = {},
 ): Promise<OwnerOutcome> {
   try {
-    /*
-     * `ceremony: true` — THE FRONT DOOR, and this is the only call in the app that may say it.
-     *
-     * This request is how the client finds out whether the browser holds a session at all, so by
-     * definition it runs before anybody could be bound to an account and the account boundary
-     * cannot apply to it. `/auth/session` used to be exempt BY PATH, which handed the same
-     * exemption to six ordinary shell reads — the panes that want the signed-in person's email,
-     * account id and enrolled factors — and therefore handed them the OTHER account's answer
-     * whenever the browser had become somebody else. The exemption belongs to this caller, not
-     * to the route.
-     */
-    const { user, scope } = await auth.session({ ...opts, ceremony: true });
+    const { user, scope } = await auth.session(opts);
     /*
      * A 200 THAT IS NOT OUR ANSWER. A captive portal, a proxy interstitial and a cache with
      * ideas of its own all return 200 with a body this client can parse into an object with
@@ -115,28 +104,7 @@ export async function resolveOwnerOutcome(
     //     the same comparison `session-gate.ts` makes at the edge, for the same reason.
     if (scope !== "full") return { kind: "none" };
     const accountId = user?.accountId;
-    if (typeof accountId === "string" && accountId !== "") {
-      /*
-       * NOTHING IS BOUND HERE, AND THAT IS THE CORRECTION.
-       *
-       * This function used to call `bindApiOwner(accountId)` on its way past. It reads as
-       * convenient — one place learns the id, so one place records it — and it mutates SHARED
-       * state before the caller has decided whether to believe the answer.
-       *
-       * The sequence review found: a warm request for A leaves while the client is `pending(A)`;
-       * another tab signs in as B; this classifier answers B and rebinds the client to B on the
-       * spot; the in-flight A request's recovery path then re-reads the binding, sees B, and is
-       * judged to hold — so it refreshes and retries under B and accepts B's answer, all before
-       * the A shell has been torn down. A resolver whose effect was already CANCELLED did it too,
-       * because a cancelled promise still runs its `.then`.
-       *
-       * So the classifier returns an identity and commits nothing. The caller binds after its own
-       * cancellation check and its own comparison against the mirror's account — `EngineProvider`'s
-       * `onConfirmed`, called
-       * beside `confirmSyncOwner` in the arm where the answer has already been believed.
-       */
-      return { kind: "owner", accountId };
-    }
+    if (typeof accountId === "string" && accountId !== "") return { kind: "owner", accountId };
     /*
      * `scope: "full"` with no account id is our server answering something it cannot mean.
      * It is not a refusal — nothing was refused — so it is not a verdict; it is a malformed
