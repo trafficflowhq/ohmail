@@ -426,9 +426,16 @@ export abstract class BaseMirrorStore implements MirrorStore {
    * tags cost a whole-mirror pass, and one render's dozen small-type queries cost a dozen of
    * them. One walk per version builds every type's bucket; each call then copies its own
    * bucket only (a fresh array per call — callers sort the result in place, and that contract
-   * predates this cache). Keyed on `ver`, which every write path already bumps; a write
-   * between two reads of the same version cannot exist (writes bump), so a bucket can never
-   * serve stale rows.
+   * predates this cache). Keyed on `ver`, which every write path that MOVES A RECORD bumps — a
+   * record write between two reads of the same version cannot exist, so a bucket can never serve
+   * stale rows.
+   *
+   * "Every write path already bumps" is what this used to say, and it is no longer true: `setMeta`
+   * writes without bumping, and `applyResponse` bumps only when its dirty set is non-empty. Neither
+   * weakens the invariant this cache needs, because the invariant is about RECORDS. Meta lives in
+   * its own map and `bucketsOf` never reads it; a page that applied no changes left every record
+   * exactly where it was. The distinction is worth keeping sharp: anything that adds, removes or
+   * replaces a `MirrorRecord` must bump, and nothing else has to.
    */
   private typeBuckets: { v: number; byType: Map<string, MirrorRecord[]> } | null = null;
 
@@ -458,9 +465,39 @@ export abstract class BaseMirrorStore implements MirrorStore {
     return this.meta.get(key) as T | undefined;
   }
 
+  /**
+   * A META WRITE IS NOT AN ENTITY CHANGE, so it does not bump {@link version}.
+   *
+   * `version()` is documented one line up as the stamp that says a DERIVED CACHE is stale, and
+   * every consumer of it derives over entities: the shell re-runs `consentPartition`, the
+   * presentation projection and all four pile selectors whenever this number moves
+   * (`useEngineVersion` → `useSyncExternalStore`), and `messagesByDateDesc` throws away its
+   * shared order. The whole namespace is two keys — `LAST_DRAIN_AT_META` for
+   * {@link OhmailEngine.freshness} and the stale-resume verdict, `SNAPSHOT_PREFIX_SEQ_META` for the
+   * bootstrap's own bookkeeping — and `idb.ts`/`sql-store.ts` both keep their internal keys out of
+   * it precisely so a selector can never reach one.
+   *
+   * **"Nothing reads meta" is what this said, and it is NOT true**, so the argument is stated the
+   * way it actually holds. `apps/mobile/src/state/live.ts`'s `mirrorSettled` reads
+   * `getMeta(LAST_DRAIN_AT_META)` directly, and the phone's world memo
+   * (`apps/mobile/src/state/world.tsx`) calls it per derivation. What matters is that it does not
+   * derive that value THROUGH `version()`: it re-reads the store on each pass, and the pass is
+   * triggered by `conn.syncing`, which flips at the same settle. So the phone's settled state and
+   * its staleness label still clear in the render they always did — but they now rest on one
+   * trigger rather than two, and `world.tsx`'s comment beside that dependency array says so.
+   *
+   * The cost of bumping was not theoretical. `OhmailEngine.drain()` stamps the completion time
+   * here at the end of EVERY drain, including the overwhelmingly common one that carried no
+   * changes at all — so an idle desktop window over a large mailbox re-derived and
+   * re-rendered the entire mirror once every eight seconds, for ever, to record a timestamp
+   * nothing on screen reads through this stamp.
+   *
+   * The freshness label is unaffected and that is the point of separating the two: the drain
+   * announces its settle with its own `notify()`, and `useFreshness` subscribes to notifies
+   * rather than to this number, so "as of 14:32 · catching up" still clears at the settle.
+   */
   async setMeta(key: string, value: unknown): Promise<void> {
     this.meta.set(key, value);
-    this.ver++;
     await this.flush([], null, [[key, value]]);
   }
 
@@ -622,7 +659,25 @@ export abstract class BaseMirrorStore implements MirrorStore {
     const dirty = [...applied, ...this.cascadeLocalDeletes(changes, applied)];
     this.highSeq = Math.max(this.highSeq, maxSeqOf(changes));
     this.cursor = resp.cursor;
-    this.ver++;
+    /**
+     * THE VERSION MOVES FOR ROWS, NOT FOR THE CURSOR — {@link applyChanges}'s guard, which this
+     * method was missing.
+     *
+     * An idle poll is the common case, not the rare one: the drain loop asks every eight seconds
+     * and almost every answer is an empty page. This bumped anyway, and `version()` is what the
+     * shell's whole-mirror derivation keys on — so a mailbox that had not changed in hours still
+     * paid `consentPartition` + the presentation projection + every pile selector, over every
+     * message it holds, on every poll. At an eight-second cadence that is one pointless
+     * whole-mirror pass per poll for as long as the window stays open, each one also
+     * re-rendering the shell.
+     *
+     * An empty page still moves the CURSOR, and the cursor still has to become durable — hence
+     * the flush below is unconditional. What the version promises is only that a derived cache
+     * over ENTITIES is stale, and an empty page makes none of them stale. `dirty` covers the
+     * body cascade as well as the page's own rows, so a page that changed nothing visible but
+     * purged a body still counts as a change.
+     */
+    if (dirty.length > 0) this.ver++;
     // One atomic flush: page + cursor together (contract §3.3 step 3) — and, since the
     // persistence contract above, every page an earlier flush failed to write goes with it, so
     // the durable cursor can never run ahead of the rows it covers.
